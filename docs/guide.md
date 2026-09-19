@@ -533,7 +533,12 @@ a file: the two arrow buttons at the left of its title bar go back to the file y
 the link from and forward again (Alt+Left and Alt+Right do the same, and Cmd+[ and Cmd+] on a
 Mac, while no text box holds the keyboard), and a file you go back to opens at the place and
 in the view you left it. A file opened from the chat, from a listing or from the **Recent**
-list starts the trail over, and closing the viewer ends it.
+list starts the trail over, and closing the viewer ends it. Every picture in a rendered file has an
+**Open the picture** button at its top-right corner, shown while the pointer is over the picture or
+the button holds the keyboard focus: it opens the picture on its own in the viewer, and Back returns
+to the file at that place. A plain click on the picture does the same while the Comments panel is
+closed (with the panel open, a click offers a comment as before); a Cmd-click (Ctrl on Windows and
+Linux) opens the picture in a browser tab, and a picture from the web opens in a tab.
 
 **Text size and width.** The **A−** and **A+** buttons in the viewer's title bar make
 the text of any text file smaller or larger in fixed steps from 70% to 200%: a markdown

@@ -197,7 +197,7 @@ function highlight(source: string, range: { start: number; end: number }, tag = 
 
 /** The classes of the controls the viewer parks in the rendered markup, whose text is not the note's (anchor-map.ts CONTROL_CLASSES):
  *  every read of the rendered text below skips them, as the fallback's hay does. */
-const CONTROL_CLASSES = ["code-copy", "katex", "katex-error", "md-math-src", "md-fnback", "md-frontmatter-head", "fv-gate", "fv-figerr"];
+const CONTROL_CLASSES = ["code-copy", "katex", "katex-error", "md-math-src", "md-fnback", "md-frontmatter-head", "fv-gate", "fv-figerr", "fv-figopen"];
 const isControl = (n: FakeNode): boolean => n instanceof FakeElement && (n.getAttribute("class") || "").split(" ").some((c) => CONTROL_CLASSES.includes(c));
 /** The text under `n` less the controls': what the hay reads. */
 const textShown = (n: FakeNode): string => n.nodeType === 3 ? (n as FakeText).data : isControl(n) ? "" : n.childNodes.map(textShown).join("");

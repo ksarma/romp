@@ -7728,11 +7728,12 @@ view in place; the two audit items its refuters overturned.
 ## Follow-on: Link navigation (2026-09-19)
 
 Navigate a link from a file and come back (the user's ask, 2026-09-19). Branch `filereview-linknav`, cut from
-34142c262, the fork's main at the time. This section records L1, L2, L5 and L6 (the trail, Back and Forward, browser
-history, the boundary); L3 and L4 (a figure opened in detail, and the picture view reached from a report) are recorded
-here when they are built. Each rule below names the test that holds it: `ui/webview/file-trail.test.ts` (the pure
-functions, the chord table, and the wiring pinned at source) and `ui/webview/file-trail-browser.test.ts` (Chromium over
-the real Files page and the chat modal: the contract's cases 1 to 5 and 7); the bar's width leg is
+34142c262, the fork's main at the time. This section records L1 to L6 (the trail, Back and Forward, a figure opened in
+detail, the picture view reached from a report, browser history, the boundary). Each rule below names the test that holds
+it: `ui/webview/file-trail.test.ts` (the pure functions, the chord table, and the wiring pinned at source),
+`ui/webview/file-trail-browser.test.ts` (Chromium over the real Files page and the chat modal: the contract's cases 1 to 5
+and 7), `ui/webview/file-figure-open.test.ts` (the figure control's source pins) and
+`ui/webview/file-figure-open-browser.test.ts` (Chromium over the real chat modal: case 6); the bar's width leg is
 `file-view-text-size.test.ts`'s real-module case at 380, 420, 480 and 600 px, which measures the two glyphs with the
 actions (case 8).
 
@@ -7783,6 +7784,51 @@ meaning: a Back or Forward open in the Files pane records the file as any open t
 Held by file-trail.test.ts (the titles, the chord table, the bar and listener pins) and file-trail-browser.test.ts (Back
 at the block, the scrollTop and the view; Forward; the chords with and without a text field and under a prevented key;
 the default taken with and without a target).
+
+L3. **A figure opens in detail.** Every picture a rendered file embeds (`![]()`, an `<img>`, an image wikilink embed)
+wears an "Open the picture" control (file-view.ts `ensureFigureControl`): a glyph button of the bar's family (icons.ts
+`ICON_EXPAND`, two arrows out of opposite corners; `button.fileview-btn.fileview-icon.fv-figopen`, the words in its title
+and aria-label, found by its mark `data-fv-figopen` and never by its class), in the tab order as any button is. It is the
+img's SIBLING, inserted right after `figureAnchor`'s climb (the img, its `<picture>`, the regions layer's wrap, a link
+holding the figure alone), never a wrapper: the panel pairs pictures by img order and `data-fv-src`, the regions layer
+wraps THE img, the reader's place and the anchor map read the flow as the browser laid it, and a wrapper standing in the
+author's flow changed a figure's own layout (the regions layer's 2026-09-06 review). The sheets lay it over the figure's
+top-right corner from that place with no measuring (`.fileview-md .fv-figopen`: an inline-flex box aligned to the line's
+top, a zero-width margin box of a 28px negative left margin and a 6px right margin around the 22px glyph, and a 6px
+relative offset down), positioned so it paints and is hit above the layer's overlay while the panel is open; transparent
+at rest, revealed by the pointer over the figure or over itself and by a keyboard focus, kept visible on a device with no
+hover, every reveal under `screen`, so a print shows none of it and the print block carries no line for it. A figure the
+author floated with `align` stacks sideways: the control floats with it, a left float's at the top-right corner as
+before, a right float's at the top-LEFT corner (`fv-figopen-left`, `fv-figopen-right`: a later right float sits left of
+the earlier one, and the far edge cannot be reached without the figure's width). The text walks skip it as a control
+(anchor-map.ts and reader-place.ts CONTROL_CLASSES); the Rendered pairing leaves it out of the top-level nodes beside an
+html-block figure as it leaves the failed figure's label (anchor-map.ts `isFigureCompanion`); the label goes after the
+control when both stand (`figureLabelAfter`). What it opens (`figureTarget`): the file the authored source names on the
+session's disk, joined by the model's `figurePath` (file-comments-model.ts, the join rewriteFigureSrcs fetched through, so
+the picture opened is the one shown), through `openFromViewer("push", path, sid, null)`, so the shown file goes onto the
+trail and Back returns to it at the figure's place; a remote picture (an http or https source, a protocol-relative one)
+in a tab, never the viewer; nothing for a `data:` URL (inline bytes a tab will not show) or a figure with no source, which
+get no control. A gated placeholder (figure-gate.ts) gets none until its figure is loaded: `armFigureControls`, one
+capture-phase `load` listener on the body per open beside the labels', adds it at the load (the placeholder's click, a
+settings change restoring it, the chat page's heal landing a retry). A URL document (openUrlView) gets none: its figures
+are the web's. The clicks (the body's second click listener, beside the links'): a plain click on the control or on the
+bare figure opens it as above; a Cmd/Ctrl-click opens the kernel's /file URL in a tab, as a PDF's modified click does
+(`openFileTab`; a blocked popup falls through to the viewer), and stops before the row as a link's modified click does;
+the figure's own click yields to a figure inside a link (the author's link, through the links listener), to a picture the
+panel framed (`panelMark`: the card's), to the open Comments panel (a plain click is the panel's comment offer,
+`onImageClick`, and a drag its region; the layer's overlay takes the press on a fine pointer, and on a coarse one the click
+reaches the listener and stands down) and to a drag that selected and ended on the picture (`selectionOpenIn`). Held by
+file-figure-open.test.ts (the source pins: the builder, the target, the two insertion points, the click routing, the
+walks, the sheets) and file-figure-open-browser.test.ts (Chromium: the controls on a synthetic report, the hover reveal
+and the corner in both float cases, Tab and Enter, the place kept across the open and Back, the plain click with the
+panel closed, the modified click's tab, the linked figure, the gated remote figure, the inline data picture, print media,
+no hover, and with the panel open the comment offer, the region drag and the control's own click).
+
+L4. **The picture view reached from a report.** The control's open is the ordinary open of the picture's path
+(openFileView through openFromViewer), so the card shows the picture as `imgBlock` shows any picture, the bar names it
+(`.fileview-base`), and Back is enabled with the report's name in its title ("Back to report.md"), L1's push. No zoom
+control in this slice: a Fit / 1:1 toggle on the picture view is recorded as a follow-on for the owner. Held by
+file-figure-open-browser.test.ts (the bar's name and the Back title after Enter on the control).
 
 L5. **Browser history: not integrated.** The trail is the viewer's own: no pushState, no hashchange. A pushState per
 step would put entries on the joint session history that outlive the viewer, so the browser's Back after the viewer

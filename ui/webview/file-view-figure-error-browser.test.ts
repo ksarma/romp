@@ -45,12 +45,15 @@ const COMMENTS = [{ id: T0 + "-1", author: "you", ts: T0, body: "Note on the fig
 
 type Fig = { dest: string | null; alt: string | null; complete: boolean; natural: number; label: string | null; labelClass: string | null; display: string | null; border: string | null; width: number; parent: string; hasOnerror: boolean };
 /** Every figure of the Rendered box in order, with the label standing after it (or after the regions layer's wrap around it) when one
- *  does; `parent` is the block the author put the figure in, read through the layer's wrap when the panel has wrapped it. */
+ *  does, read past the figure's "Open the picture" control when that stands at the anchor's side (the link-navigation follow-on's L3:
+ *  a local figure wears one, and the viewer's figureLabelAfter reads past it the same way); `parent` is the block the author put the
+ *  figure in, read through the layer's wrap when the panel has wrapped it. */
 const figures = (page: any): Promise<{ figs: Fig[]; labels: number }> => page.evaluate(() => {
   const md = document.querySelector(".fileview-md") as HTMLElement;
   const figs = (Array.from(md.querySelectorAll("img")) as HTMLImageElement[]).map((i) => {
     const anchor = i.parentElement && i.parentElement.classList.contains("fc-imgwrap") ? i.parentElement : i;
-    const n = anchor.nextSibling as Element | null;
+    let n = anchor.nextSibling as Element | null;
+    if (n && n.nodeType === 1 && n.hasAttribute("data-fv-figopen")) n = n.nextSibling as Element | null;
     const lab = n && n.nodeType === 1 && n.hasAttribute("data-fv-figerr") ? n as HTMLElement : null;
     const cs = lab ? getComputedStyle(lab) : null;
     return { dest: i.getAttribute("data-fv-src"), alt: i.getAttribute("alt"), complete: i.complete, natural: i.naturalWidth, label: lab ? lab.textContent : null, labelClass: lab ? lab.className : null,
@@ -129,7 +132,7 @@ test("in a browser: a missing figure and a text file named as a figure each wear
           return {
             imgs: imgs.length, wraps: wraps.length, wrapped: imgs.every((i) => !!i.parentElement && i.parentElement.classList.contains("fc-imgwrap")),
             labels: md.querySelectorAll("[data-fv-figerr]").length,
-            afterWrap: imgs.filter((_, k) => k !== 2).every((i) => { const n = i.parentElement!.nextSibling as Element | null; return !!n && n.nodeType === 1 && n.hasAttribute("data-fv-figerr"); }),
+            afterWrap: imgs.filter((_, k) => k !== 2).every((i) => { let n = i.parentElement!.nextSibling as Element | null; if (n && n.nodeType === 1 && n.hasAttribute("data-fv-figopen")) n = n.nextSibling as Element | null; return !!n && n.nodeType === 1 && n.hasAttribute("data-fv-figerr"); }),   // past the figure's Open control, which stands right after the wrap
             inWrap: wraps.some((w) => w.querySelector("[data-fv-figerr]")),
             markText: mark ? mark.textContent : null, markWidth: mark ? mark.getBoundingClientRect().width : 0,
           };
@@ -256,7 +259,8 @@ const figures2 = (page: any): Promise<{ figs: Fig2[]; labels: number }> => page.
   const out = (Array.from(md.querySelectorAll("img")) as HTMLImageElement[]).map((i) => {
     let anchor: Element = i;
     for (let p = anchor.parentElement; p && (p.localName === "picture" || p.classList.contains("fc-imgwrap") || (p.localName === "a" && p.children.length === 1)); p = anchor.parentElement) anchor = p;
-    const n = anchor.nextSibling as Element | null;
+    let n = anchor.nextSibling as Element | null;
+    if (n && n.nodeType === 1 && n.hasAttribute("data-fv-figopen")) n = n.nextSibling as Element | null;   // past the figure's Open control (L3)
     const lab = n && n.nodeType === 1 && n.hasAttribute("data-fv-figerr") ? n as HTMLElement : null;
     const cs = lab ? getComputedStyle(lab) : null; const r = lab ? lab.getBoundingClientRect() : null;
     return { alt: i.getAttribute("alt"), asked: leaf(i.currentSrc || ""), natural: i.naturalWidth, label: lab ? lab.textContent : null, labelParent: lab ? lab.parentElement!.localName : null,

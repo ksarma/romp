@@ -437,11 +437,12 @@ const stripWs = (s: string): string => s.replace(/\s+/g, "");
  *  note's: the fence's Copy button (code-block.ts), a formula KaTeX rendered (math.ts), a footnote's back link and the
  *  front matter's fold label (md-config.ts), a gated figure's placeholder (figure-gate.ts), and the label the viewer parks
  *  beside a figure that failed to load (file-view.ts, Slice 7: `span.fv-figerr`, the img's next sibling, its text naming
- *  the source). These six are in anchor-map.ts's CONTROL_CLASSES, which every text walk there skips (isControl). That list also holds the fill's two
+ *  the source), and the figure's "Open the picture" control (file-view.ts, the link-navigation follow-on's L3: `button.fv-figopen`,
+ *  the img's next sibling, a glyph with no text). These seven are in anchor-map.ts's CONTROL_CLASSES, which every text walk there skips (isControl). That list also holds the fill's two
  *  fallback shapes (`katex-error`, `md-math-src`: the TeX shown as text), which are NOT skipped here on purpose: the
  *  map's tokens make a formula a zero-text hole, but an html block's fallback can only come from a placeholder the
  *  author typed, whose TeX the parse of the block's source reads too, so the texts agree and the pairing holds. */
-const CONTROL_CLASSES = ["code-copy", "katex", "md-fnback", "md-frontmatter-head", "fv-gate", "fv-figerr"];
+const CONTROL_CLASSES = ["code-copy", "katex", "md-fnback", "md-frontmatter-head", "fv-gate", "fv-figerr", "fv-figopen"];
 const isControl = (n: Node): boolean => {
   if (n.nodeType !== 1 || typeof (n as Element).getAttribute !== "function") return false;
   const c = " " + ((n as Element).getAttribute("class") || "") + " ";

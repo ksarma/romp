@@ -4964,6 +4964,27 @@ body.filebrowse-open { overflow: hidden; }
    wash, beside the gate's line (the block's .fileview-md ink is outranked by this rule). Byte-equal in both sheets
    (fileview-parity.test.ts). */
 .fileview-md .fv-figerr { display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; max-width: 100%; margin: 0 0.3em; padding: 0.5em 0.8em; border: 1px dashed var(--box-border); border-radius: 6px; background: var(--overlay-05); color: var(--warn); font-size: 0.86em; line-height: 1.3; text-align: center; vertical-align: middle; overflow-wrap: anywhere; }
+/* "Open the picture" on every figure of a rendered file (plans/markdown-viewer.md, "Follow-on: Link navigation", L3; file-view.ts
+   ensureFigureControl): a glyph button of the bar's family (.fileview-btn.fileview-icon, 14px glyph, 3px padding, 1px border:
+   22px square), the img's next sibling (after its <picture>, the regions layer's wrap or a link holding the figure alone), laid
+   over the figure's top-right corner with no wrapper and no measuring: an inline-flex box aligned to the line's top, its margin
+   box zero wide (a left margin of -28px and a right margin of 6px around the 22px), so the flow around the figure is as the
+   browser laid it, and the 6px relative offset down is the inset from the top edge (the -28 and the 6 give the inset from the
+   right). Positioned, so it paints and is hit above the regions layer's overlay (position: absolute with no z-index, earlier in
+   the tree) while the Comments panel is open; the page's background under the glyph, since it stands on a picture, and the
+   family's hover wash over that background. Transparent at rest and revealed by the pointer over the figure (the sibling before
+   it: `:hover +`), by the pointer over itself and by a keyboard focus (.code-copy's reveal); a touch device with no hover keeps
+   it visible (.code-copy's precedent); every reveal is under `screen`, so a print, where hover is none, shows none of it and the
+   print block needs no line for it. A figure floated by its align attribute stacks sideways: the control floats with it, a left
+   float's at the figure's top-right corner as before, a right float's at its top-LEFT corner (a later right float sits left of
+   the earlier one, and the far edge cannot be reached without the figure's width). Byte-equal in both sheets
+   (fileview-parity.test.ts); laid out in file-figure-open-browser.test.ts. */
+.fileview-md .fv-figopen { position: relative; z-index: 1; vertical-align: top; margin: 0 6px 0 -28px; top: 6px; padding: 3px; background: var(--bg); opacity: 0; }
+.fileview-md .fv-figopen:hover { background: var(--bg) linear-gradient(var(--accent-wash), var(--accent-wash)); }
+.fileview-md .fv-figopen-left { float: left; }
+.fileview-md .fv-figopen-right { float: right; margin: 0 -28px 0 6px; }
+@media screen { .fileview-md :hover + .fv-figopen, .fileview-md .fv-figopen:hover, .fileview-md .fv-figopen:focus-visible { opacity: 1; } }
+@media screen and (hover: none) { .fileview-md .fv-figopen { opacity: 0.8; } }   /* touch: no hover state, so keep it visible; never print */
 .fileview-md :not(pre) > code {
   font-family: var(--mono, ui-monospace, monospace); font-size: 0.92em;
   color: var(--code-fg, #e1c08d); background: var(--code-bg, rgba(217, 119, 87, 0.10));

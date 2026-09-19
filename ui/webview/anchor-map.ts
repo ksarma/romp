@@ -169,11 +169,13 @@ const CONTROL_CLASSES = [
   "md-frontmatter-head",    // the front matter's fold control (md-config.ts): its label is the viewer's
   "fv-gate",                // a gated figure's placeholder (figure-gate.ts): its label names the host, and holds the media
   "fv-figerr",              // a failed figure's label (file-view.ts, Slice 7): the img's next sibling, naming the source that failed
+  "fv-figopen",             // a figure's "Open the picture" control (file-view.ts, the link-navigation follow-on's L3): the img's next sibling, a glyph with no text
 ];
 const isControl = (n: DNode): boolean => CONTROL_CLASSES.some((cls) => hasClass(n, cls));
-/** The failed figure's label alone (CONTROL_CLASSES' last entry): the one control that stands at the top level BESIDE a block's
- *  node without being it or holding it, so the Rendered pairing leaves it out of the top-level nodes (analyzeRendered). */
-const isFigureLabel = (n: DNode): boolean => hasClass(n, "fv-figerr");
+/** A figure's two companions alone (CONTROL_CLASSES' last two entries, the failed figure's label and the "Open the picture"
+ *  control): the controls that stand at the top level BESIDE a block's node without being it or holding it, so the Rendered
+ *  pairing leaves them out of the top-level nodes (analyzeRendered). */
+const isFigureCompanion = (n: DNode): boolean => hasClass(n, "fv-figerr") || hasClass(n, "fv-figopen");
 /** The span the regions layer wraps a picture in while the Comments panel is open (file-comments-regions.ts: the <img> and its
  *  drawing overlay inside it). Where a tag test reads a node's element, this span stands for its IMG: an html block whose
  *  top-level tag is <img> renders that span with the panel open and the bare <img> without it, and the pairing must find the
@@ -2215,10 +2217,11 @@ function analyzeRendered(root: DElement, source: string): RenderedIndex {
   // label is top-level too, and it renders no source text (a control, isControl). Counted as a node it misaligned the html
   // block's run: the block owned [IMG, SPAN], and with the Comments panel open the wrap and the label ahead of the div
   // refused the heading nested in the div as "rendered text does not match" (anchor-map-wrappers-browser.test.ts; the
-  // Slice 7 consolidation pass). The label ALONE is left out, not every control: a display formula the fill could not render
-  // (`.katex-error`, `code.md-math-src`) at the top level IS its mathBlock's node, and a gated figure's placeholder (`.fv-gate`)
-  // holds the block's img (anchor-map-obsidian.test.ts, md-config-figure-gate-place.test.ts).
-  const holdsContent = (n: DNode): boolean => isElement(n) ? !blankMark(n) && !isFigureLabel(n) : isText(n) && stripWs(n.data) !== "";
+  // Slice 7 consolidation pass). The figure's "Open the picture" control (`.fv-figopen`, the link-navigation follow-on's L3)
+  // stands beside the img the same way and is left out with the label. Those two ALONE are left out, not every control: a
+  // display formula the fill could not render (`.katex-error`, `code.md-math-src`) at the top level IS its mathBlock's node, and
+  // a gated figure's placeholder (`.fv-gate`) holds the block's img (anchor-map-obsidian.test.ts, md-config-figure-gate-place.test.ts).
+  const holdsContent = (n: DNode): boolean => isElement(n) ? !blankMark(n) && !isFigureCompanion(n) : isText(n) && stripWs(n.data) !== "";
   let content = topNodes.filter(holdsContent);
   const nodeText = new Map<DNode, string>();
   const textKey = (n: DNode): string => stripWs(isText(n) ? n.data : textOf(n));

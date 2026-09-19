@@ -1169,7 +1169,7 @@ test("source: where an open lands (Slice 6 of plans/markdown-viewer.md, item 4):
 });
 
 test("source: changed on disk (Slice 6 of plans/markdown-viewer.md, item 5): the probe's HEAD through the panel's two readings, its listeners on the window's focus and the document's visibilitychange, registered as probeLive and dropped by both exits and the URL view's replace; the bar's words and its Reload through fetchFile; a landing settles the bar and the failure landing re-arms its own button; no timer anywhere in it", () => {
-  assert.match(VIEW, /import \{ headVerdict, mtimeMoved, ABSENT \} from "\.\/file-comments-model";/, "the panel's pure readings, imported as they are (not the poll, not its stopped set), and its token for a 404 (the bar's deletion words; the PR review's round 1)");
+  assert.match(VIEW, /import \{ headVerdict, mtimeMoved, ABSENT, figurePath \} from "\.\/file-comments-model";/, "the panel's pure readings, imported as they are (not the poll, not its stopped set), its token for a 404 (the bar's deletion words; the PR review's round 1), and since the link-navigation follow-on's L3 its figure join");
   assert.match(VIEW, /export const CHANGED_ON_DISK = "Changed on disk\.";/, "the bar's words (C4)");
   assert.match(VIEW, /let probeLive: \(\(\) => void\) \| null = null;\nfunction dropProbe\(\): void \{\n\s*if \(probeLive\) \{ const f = probeLive; probeLive = null; f\(\); \}\n\}/, "one live probe, the onKey idiom");
   const openFn = VIEW.split("export function openFileView")[1].split("function offersDownload")[0];
@@ -1201,7 +1201,7 @@ test("source: changed on disk (Slice 6 of plans/markdown-viewer.md, item 5): the
   assert.match(VIEW, /export const REASON_HEADER = "X-Romp-Reason";\nexport const REASON_MISSING = "missing";/, "the kernel's one-word cause: the header, and the one value that means gone");
   assert.match(probe, /raiseDiskBar\(words\); \};/, "the release's raise carries them");
   assert.match(VIEW, /export const DELETED_ON_DISK = "Deleted on disk\.";/, "the deletion's words, the manager's");
-  assert.match(VIEW, /import \{ headVerdict, mtimeMoved, ABSENT \} from "\.\/file-comments-model";/, "the model's own token for a 404, not a string of the viewer's");
+  assert.match(VIEW, /import \{ headVerdict, mtimeMoved, ABSENT, figurePath \} from "\.\/file-comments-model";/, "the model's own token for a 404, not a string of the viewer's");
   assert.match(openFn, /else if \(diskBar && diskBar\.under === mtimeNs && mtimeNs\) raiseDiskBar\(diskBar\.words\);/, "the editor's exit re-raises the bar with the words it had");
   assert.match(probe, /re\.type = "button"; re\.textContent = "Reload";/);
   assert.match(probe, /re\.disabled = true; re\.textContent = "Reloading";[^\n]*\n\s*fetchFile\(\);\n\s*diskBar\.asked = fetchSeq;/, "acknowledged at the click; the reload is fetchFile, which keeps the place; its landing is remembered");

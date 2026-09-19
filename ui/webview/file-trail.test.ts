@@ -153,7 +153,7 @@ test("both exits end the trail after their guards, the URL viewer's replace ends
 
 test("the two glyph buttons stand first in the bar with the icon family's drawings, aria-disabled alone when empty; the chord listener is capture-phase, stands down for a prevented key or a typing target, and leaves with the viewer", () => {
   assert.match(ICONS, /^export const ICON_BACK = svg\(/m); assert.match(ICONS, /^export const ICON_FORWARD = svg\(/m);
-  assert.match(VIEW, /import \{ ICON_DOWNLOAD, ICON_COPY, ICON_EDIT, ICON_ZOOM, ICON_CHECK, ICON_CROSS, ICON_BACK, ICON_FORWARD \} from "\.\/icons";/);
+  assert.match(VIEW, /import \{ ICON_DOWNLOAD, ICON_COPY, ICON_EDIT, ICON_ZOOM, ICON_CHECK, ICON_CROSS, ICON_BACK, ICON_FORWARD, ICON_EXPAND \} from "\.\/icons";/);   // the two arrows beside the bar's glyphs (and, since L3, the figure control's)
   assert.match(VIEW, /const nav = el\("span", "fileview-group fileview-nav"\);/);
   assert.match(VIEW, /b\.innerHTML = dir === "back" \? ICON_BACK : ICON_FORWARD; b\.dataset\.icon = "1";/);
   assert.match(VIEW, /if \(!target\) b\.setAttribute\("aria-disabled", "true"\);/, "the bar's precedent (the text-size ends): aria-disabled, never disabled, so the keyboard focus stays");

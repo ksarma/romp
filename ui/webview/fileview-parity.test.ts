@@ -90,6 +90,11 @@ const RULES = [
   ".md mark.md-mark, .fileview-md mark.md-mark {", ".md .fv-wikilink, .fileview-md .fv-wikilink {", ".fileview-md a.fv-embed {",
   ".fileview-md .fv-gate {", ".fileview-md .fv-gate:hover, .fileview-md .fv-gate:focus-visible {", '.fileview-md .fv-gate[data-act="fv-load"] > :not([data-fv-label]) {',
   ".fileview-md .fv-figerr {",   // the label after a figure that failed (Slice 7 of plans/markdown-viewer.md, item 2): the gate's dress in the error dress's ink; its print line is in the block pinned whole below
+  // the figure's "Open the picture" control (the link-navigation follow-on's L3): its place over the corner, its hover wash, the two
+  // float twins, and the two one-line screen blocks that reveal it (read whole from the line's start to the first close brace)
+  ".fileview-md .fv-figopen {", ".fileview-md .fv-figopen:hover {", ".fileview-md .fv-figopen-left {", ".fileview-md .fv-figopen-right {",
+  "@media screen { .fileview-md :hover + .fv-figopen, .fileview-md .fv-figopen:hover, .fileview-md .fv-figopen:focus-visible {",
+  "@media screen and (hover: none) { .fileview-md .fv-figopen {",
   ".fileview-cm {", ".fileview-cm .cm-editor {", ".fileview-editor {",
   ".fileview-dir-link {", ".fileview-dir-link:hover {",
   // links inside a shown file (file-view-links.ts): the light dress on a URL anchor and a path link, and the Markdown link that names a file

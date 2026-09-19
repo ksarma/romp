@@ -23,6 +23,8 @@ export const ICON_FORK = svg('<polyline points="2 12 9 12 15 7 22 7"/><polyline 
 /** the viewer's Back and Forward (plans/markdown-viewer.md, "Follow-on: Link navigation", L2): an arrow left, an arrow right */
 export const ICON_BACK = svg('<line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/>');
 export const ICON_FORWARD = svg('<line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>');
+/** a figure's "Open the picture" (the same follow-on, L3): two arrows out of opposite corners */
+export const ICON_EXPAND = svg('<polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/>');
 /** the acknowledgements a glyph button swaps to: done, and failed */
 export const ICON_CHECK = svg('<polyline points="20 6 9 17 4 12"/>');
 export const ICON_CROSS = svg('<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>');

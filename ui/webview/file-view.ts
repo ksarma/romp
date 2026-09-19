@@ -23,10 +23,10 @@ import { literalizeUnclosedTags } from "./md-literal-tags";   // an inline start
 import { gateRemoteFigures, gateOf, loadGatedHost, figureRefs, parseSrcset, serializeSrcset, GATE_ACT } from "./figure-gate";   // decision 8: a figure on an unlisted host loads on a click (figure-gate.ts)
 import { hostOf, bareId, hostNameNodes } from "./host-prefix";
 import { fileUrl } from "./preview";
-import { ICON_DOWNLOAD, ICON_COPY, ICON_EDIT, ICON_ZOOM, ICON_CHECK, ICON_CROSS, ICON_BACK, ICON_FORWARD } from "./icons";   // the bar's glyphs (T367); the trail's two arrows (L2)
+import { ICON_DOWNLOAD, ICON_COPY, ICON_EDIT, ICON_ZOOM, ICON_CHECK, ICON_CROSS, ICON_BACK, ICON_FORWARD, ICON_EXPAND } from "./icons";   // the bar's glyphs (T367); the trail's two arrows (L2); the figure control's arrows out of the corners (L3)
 import { openPdfTab, wantsOwnTab } from "./preview";   // a PDF's own tab, and the gesture that asks for it
 import { openFileTab, canPreview } from "./preview";   // any file's own tab, for the links inside a shown file, and the web-vs-webview test
-import { headVerdict, mtimeMoved, ABSENT } from "./file-comments-model";   // the panel's reading of a HEAD /file answer, shared by the changed-on-disk probe (Slice 6, item 5); ABSENT: a 404, the bar's deletion words
+import { headVerdict, mtimeMoved, ABSENT, figurePath } from "./file-comments-model";   // the panel's reading of a HEAD /file answer, shared by the changed-on-disk probe (Slice 6, item 5); ABSENT: a 404, the bar's deletion words; figurePath: where a figure's source points on the session's disk, the join the poll's HEAD and rewriteFigureSrcs agree on (file-comments-model-figures.test.ts), read by the figure's "Open the picture" (L3)
 import { kernelUrl } from "./media";
 import { quoteSrcLabel } from "./docreview";
 import { fileCommentsAction, panelMark } from "./file-comments";
@@ -2156,6 +2156,10 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // A figure of the Rendered box that fails to load says so beside itself (armFigureLabels, module level): the body's `error`
   // and `load` capture listeners, armed once per open like the re-seat's above and never per paint, dropped with the viewer.
   ctx.onClose(armFigureLabels(body));
+  // A figure whose load comes later than its paint gets its "Open the picture" control then (L3; armFigureControls: a gated
+  // placeholder restored, the chat page's heal landing a retry): the body's `load` capture listener, armed once per open like
+  // the labels' and dropped with the viewer.
+  ctx.onClose(armFigureControls(body, path));
   // The write, at the moments the reader leaves the file (runLeave: closeFileView and both replace paths; the window's
   // pagehide listener in initFileView runs it too): the place as the body stands, read once here and never per frame (the Slice 5 review's cost
   // lesson), at this file's mtime and scrollTop, with the Rendered view's open folds by ordinal, into the module's map and the
@@ -2706,6 +2710,38 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     if (ev.button !== 1) return;
     const x = linkOf(ev.target as Element | null);
     if (x && (x.dataset.act === "openpath" || x.classList.contains(FRAG_LINK_CLASS))) openLink(x, ev);
+  });
+  // ── a figure opens in detail (L3 of the link-navigation follow-on; the section before keepVideoShape) ── in a listener of
+  // its own beside the links': the two act on disjoint targets (a link and what it holds; a bare figure and its control), so
+  // neither reads the other's verdict. The gesture is the links' (wantsOwnTab): a plain click opens the picture in this
+  // viewer through openFromViewer, so the shown file goes onto the trail and Back returns to it at the figure's place (the
+  // replace's runLeave writes the reader's place as for any link); a Cmd/Ctrl-click opens the kernel's /file URL in a tab, as
+  // a PDF's modified click does (openFileTab; a blocked popup falls through to the viewer), and stops before the row, as a
+  // link's modified click does. A remote picture (an http source) opens in a tab whatever the gesture, never in the viewer.
+  // The control's click is the figure's own wherever it stands. The figure's own click yields where another gesture owns it:
+  // a figure inside a link (linkOf: the links listener follows the author's link), a picture the panel framed (panelMark: the
+  // card's, through the row's delegate), the Comments panel open (asideOpen: a plain click is the panel's comment offer,
+  // onImageClick, and a drag its region; the regions layer's overlay takes the press on a fine pointer, and on a coarse one the
+  // click reaches here and stands down), a drag that selected and ended on the picture (selectionOpenIn, the links' rule).
+  // A plain click is not stopped, as a link's is not.
+  const openFigure = (img: Element, ev: MouseEvent): void => {
+    const target = figureTarget(img, path);
+    if (!target) return;
+    if (wantsOwnTab(ev)) ev.stopPropagation();                                    // a modified click is the figure's alone: the row's delegate never sees it
+    if (target.kind === "web") { openUrlTab(target.href); return; }              // a remote picture: a tab, never the viewer
+    if (wantsOwnTab(ev) && openFileTab(target.path, sid || null)) return;      // its own tab off the /file route; a blocked popup falls through to the viewer
+    openFromViewer("push", target.path, sid || null, null);                     // the picture in this viewer: the shown file goes onto the trail (moveTrail)
+  };
+  body.addEventListener("click", (ev) => {
+    const t = ev.target as Element | null;
+    const control = figureControlOf(t, body);
+    if (control) { const img = figureOfControl(control); if (img) openFigure(img, ev); return; }
+    const img = bareFigureOf(t, body);
+    if (!img || linkOf(t)) return;
+    if (panelMark(t) && !wantsOwnTab(ev)) return;
+    if (asideOpen && !wantsOwnTab(ev)) return;
+    if (selectionOpenIn(box)) return;
+    openFigure(img, ev);
   });
 
   // ── edit mode (the raw-mode slice) ── a plain textarea holding the raw bytes: an embedded editor
@@ -4358,6 +4394,11 @@ function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
     // walks every `a`, the SVG anchor included (its xlink:href is a plain href by now, above), and writes each
     // attribute as one, so an SVG link is stamped like an HTML one.
     linkMarkdownAnchors(box, doc.path);
+    // Then every figure's "Open the picture" control (L3 of the link-navigation follow-on; ensureFigureControl and the section
+    // above it). After the anchors, so a link holding the figure alone is sorted before the control goes in after it: the
+    // control is no part of the author's link (figureAnchor climbs the link). A gated placeholder's control waits for its load
+    // (armFigureControls, in openFileView).
+    addFigureControls(box, doc.path);
   } else {
     // A URL document (openUrlView), or a caller with no location: links open a NEW tab, for the same reason. One
     // kind stays in the viewer: an IN-DOCUMENT `#fragment` link, which lands on its heading through the body's
@@ -4544,6 +4585,14 @@ export function rewriteFigureSrcs(root: ParentNode, dir: string, sid: string | n
 const FIGERR_MARK = "data-fv-figerr";
 /** The label's class, for the sheets alone (`.fileview-md .fv-figerr`: the gate's dress in the error dress's ink). */
 const FIGERR_CLASS = "fv-figerr";
+/** The mark on a figure's "Open the picture" control (ensureFigureControl, in the section after the labels): the control is
+ *  found by it, never by its class, as the label is by FIGERR_MARK. */
+const FIGOPEN_MARK = "data-fv-figopen";
+/** The control's class, for the sheets alone (`.fileview-md .fv-figopen`); with `-left` or `-right` after it, the float of a
+ *  figure the author aligned, which the control follows (the sheets' two float rules). */
+const FIGOPEN_CLASS = "fv-figopen";
+/** The control's words, its title and aria-label. */
+export const FIGURE_OPEN_TITLE = "Open the picture";
 /** The element the label follows: the img, or the outermost of the wrappers standing between it and its block that the label
  *  must not go inside, climbed while one stands: a `<picture>` (a span is not a picture's content), the regions layer's
  *  `span.fc-imgwrap` (file-comments-regions.ts wraps THE img while the Comments panel is open, before the error fires, and its
@@ -4572,10 +4621,18 @@ function oneImg(p: Element): boolean {
 function linkAround(p: Element, a: Element): boolean {
   return p.localName === "a" && p.children.length === 1 && p.children[0] === a && (p.textContent || "").trim() === "";
 }
-/** The label standing right after `anchor` (its next sibling carrying the mark), when one does. */
+/** The label standing right after `anchor`, when one does: its next sibling carrying the mark, or the sibling after the
+ *  figure's "Open the picture" control when that stands at the anchor's side (figureControlAfter). The control goes in at the
+ *  anchor's side at paint time, before any error can fire, so the label goes after it; a control added on a later load, a
+ *  gated figure's, goes in at the anchor's side as well, ahead of a label already standing, and the label is found past it. */
 function figureLabelAfter(anchor: Element): Element | null {
-  const n = anchor.nextSibling;
+  const n = (figureControlAfter(anchor) || anchor).nextSibling;
   return n && n.nodeType === 1 && (n as Element).hasAttribute(FIGERR_MARK) ? n as Element : null;
+}
+/** The "Open the picture" control standing right after `anchor` (its next sibling carrying FIGOPEN_MARK), when one does. */
+function figureControlAfter(anchor: Element): HTMLElement | null {
+  const n = anchor.nextSibling;
+  return n && n.nodeType === 1 && (n as Element).hasAttribute(FIGOPEN_MARK) ? n as HTMLElement : null;
 }
 /** `u` resolved against the document, as the browser resolves a figure's candidates for `currentSrc`; as written when it cannot be. */
 function absUrl(u: string): string {
@@ -4650,7 +4707,7 @@ function armFigureLabels(body: HTMLElement): () => void {
     label.setAttribute(FIGERR_MARK, "");
     label.textContent = words;
     const parent = anchor.parentNode;
-    if (parent) parent.insertBefore(label, anchor.nextSibling);
+    if (parent) parent.insertBefore(label, (figureControlAfter(anchor) || anchor).nextSibling);   // after the figure's control when one stands at the anchor's side (figureLabelAfter reads it back the same way)
   };
   const onLoad = (e: Event): void => {
     const img = figureOf(e);
@@ -4694,6 +4751,85 @@ function resolveFigureRefs(root: ParentNode, base: string): void {
     }
     if (abs !== ref.value) el.setAttribute(ref.attr, abs);
   }
+}
+
+// ── a figure opens in detail (plans/markdown-viewer.md, "Follow-on: Link navigation", L3) ─────────────────────────
+// Every picture a rendered FILE embeds (`![]()`, an `<img>`, an image wikilink embed) wears an "Open the picture" control, a
+// glyph button of the bar's family (ICON_EXPAND, the words in its title and aria-label), that opens the picture's file in this
+// viewer through openFromViewer, so the shown file goes onto the trail and Back returns to it at the figure's place. The
+// control is the img's SIBLING, put right after figureAnchor's climb (the img, its <picture>, the regions layer's wrap, a link
+// holding the figure alone), never a wrapper around it: the panel pairs pictures by img order and data-fv-src, the regions
+// layer wraps THE img, the reader's place and the anchor map read the flow as the browser laid it, and a wrapper standing in
+// the author's flow changed a figure's own layout (the regions layer's 2026-09-06 review). Outside a link holding the figure,
+// so the author's link keeps the figure's click and the control's click is its own. The sheets lay it over the figure's
+// top-right corner from that place with no measuring (`.fileview-md .fv-figopen`: a zero-width margin box aligned to the
+// line's top), transparent until the pointer is over the figure or over it, or a keyboard focus reaches it; always in the tab
+// order. A figure the author floated by its align attribute stacks sideways, so the control floats with it (the -left and
+// -right classes). It has no text of its own and the text walks skip it as a control (anchor-map.ts and reader-place.ts
+// CONTROL_CLASSES). A URL document (openUrlView) gets none: its figures are the web's, and it is no file of a session.
+// What the control opens (figureTarget): the file the authored source names on the session's disk (the model's figurePath,
+// the join rewriteFigureSrcs fetched through, so the picture opened is the one shown), or, for a remote picture (an http or
+// https source, a protocol-relative one), the address in a tab, never the viewer. A figure with nothing to open gets no
+// control: no source, a `data:` URL (inline bytes, which a tab will not show), any other scheme. A gated placeholder
+// (figure-gate.ts) gets none until its figure is loaded: armFigureControls hears the load on the body.
+/** What "Open the picture" opens for a figure, or null when there is nothing to open. `filePath` is the shown file's. */
+type FigureTarget = { kind: "file"; path: string } | { kind: "web"; href: string };
+function figureTarget(img: Element, filePath: string): FigureTarget | null {
+  const dest = pictureDest(img);                       // the authored source: data-fv-src when the viewer rewrote the src, else src as written
+  if (dest === null) return null;
+  const p = figurePath(filePath, dest);
+  if (p !== null) return { kind: "file", path: p };
+  if (/^https?:/i.test(dest) || dest.startsWith("//")) return { kind: "web", href: absUrl(dest) };   // resolved against the page, as the browser resolved the fetch
+  return null;
+}
+/** The control a click landed on, inside `within`: the element carrying FIGOPEN_MARK at or above the target, else null. */
+function figureControlOf(target: Element | null, within: Element): HTMLElement | null {
+  const c = target && typeof target.closest === "function" ? target.closest("[" + FIGOPEN_MARK + "]") as HTMLElement | null : null;
+  return c && within.contains(c) ? c : null;
+}
+/** The figure a control stands after: the img its anchor is or holds (the element before the control: the img itself, its
+ *  picture, the regions layer's wrap or the link holding it). Null when nothing stands before it or it holds no img. */
+function figureOfControl(control: Element): Element | null {
+  const a = control.previousElementSibling;
+  if (!a) return null;
+  return a.localName === "img" ? a : a.querySelector("img");
+}
+/** The bare figure a click landed on, inside `within`: an img of the Rendered box outside a gate's placeholder (figureOf's
+ *  rule, for a target rather than an event), else null. The media view's own picture stands outside the box and is none. */
+function bareFigureOf(target: Element | null, within: Element): Element | null {
+  const t = target;
+  if (!t || t.nodeType !== 1 || t.localName !== "img" || !within.contains(t)) return null;
+  if (!t.closest(".fileview-md") || t.closest('[data-act="' + GATE_ACT + '"]')) return null;
+  return t;
+}
+/** Put the control after `img`'s anchor when the figure has something to open and none stands there yet; an img inside a
+ *  gate's placeholder is left alone (its control waits for the load). */
+function ensureFigureControl(img: Element, filePath: string): void {
+  if (img.closest('[data-act="' + GATE_ACT + '"]')) return;
+  const anchor = figureAnchor(img);
+  if (figureControlAfter(anchor)) return;
+  if (figureTarget(img, filePath) === null) return;
+  const b = el("button", "fileview-btn fileview-icon " + FIGOPEN_CLASS) as HTMLButtonElement;
+  b.type = "button"; b.innerHTML = ICON_EXPAND; b.dataset.icon = "1";
+  b.setAttribute(FIGOPEN_MARK, "");
+  b.title = FIGURE_OPEN_TITLE; b.setAttribute("aria-label", FIGURE_OPEN_TITLE);
+  const align = (img.getAttribute("align") || "").toLowerCase();
+  if (align === "left" || align === "right") b.classList.add(FIGOPEN_CLASS + "-" + align);   // the figure floats that way (the sanitizer keeps `align`); the control floats with it
+  const parent = anchor.parentNode;
+  if (parent) parent.insertBefore(b, anchor.nextSibling);
+}
+/** Every figure of a freshly painted Rendered box gets its control (mdBlock, the file kind, after the links are sorted). */
+function addFigureControls(box: HTMLElement, filePath: string): void {
+  box.querySelectorAll("img").forEach((img) => { ensureFigureControl(img, filePath); });
+}
+/** A figure whose load comes after the paint gets its control then: a gated placeholder restored (figure-gate.ts, by its click
+ *  or a settings change), the chat page's heal landing a retry. One capture-phase `load` listener on the body per open (an
+ *  img's load does not bubble; armFigureLabels's idiom), dropped by the function returned; a figure that has its control is
+ *  left alone. */
+function armFigureControls(body: HTMLElement, filePath: string): () => void {
+  const onLoad = (e: Event): void => { const img = figureOf(e); if (img) ensureFigureControl(img, filePath); };
+  body.addEventListener("load", onLoad, true);
+  return () => { body.removeEventListener("load", onLoad, true); };
 }
 
 /** A pixel-sized `<video>` keeps the shape its `width` and `height` attributes give it, capped or not. The viewer's sheets

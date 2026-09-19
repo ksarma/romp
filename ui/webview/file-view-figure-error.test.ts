@@ -316,8 +316,11 @@ const txt = (s: string): Txt => new Txt(s);
 const block = (tag: string, ...kids: Array<El | Txt>): El => { const e = new El(tag); e.append(...kids); return e; };
 /** Every label under `root`, by the MARK (contract C2: the label is found by `[data-fv-figerr]`, never by its class). */
 const labels = (root: El): El[] => root.querySelectorAll("[data-fv-figerr]");
-/** The label right after `n`: its next sibling when that carries the mark, else null. */
-const labelAfter = (n: El): El | null => { const s = n.nextSibling; return s instanceof El && s.hasAttribute("data-fv-figerr") ? s : null; };
+/** The label right after `n`: its next sibling when that carries the mark, else null. Since the link-navigation follow-on's L3 a
+ *  figure that LOADED wears its "Open the picture" control as that sibling (file-view.ts armFigureControls hears the load; a figure
+ *  laid by hand here has none until then), and a label after such a figure stands after the control (figureLabelAfter): the read
+ *  steps past a sibling carrying the control's mark, as the viewer's own lookup does. */
+const labelAfter = (n: El): El | null => { let s = n.nextSibling; if (s instanceof El && s.hasAttribute("data-fv-figopen")) s = s.nextSibling; return s instanceof El && s.hasAttribute("data-fv-figerr") ? s : null; };
 const fire = (n: El, type: "error" | "load"): void => { n.dispatchEvent(new Ev(type)); };
 /** The body's capture listeners of `type` (the viewer's error and load listeners are armed there, once per open). */
 const captures = (body: El, type: string): number => body.listeners.filter((l) => l.type === type && l.capture).length;
@@ -722,7 +725,8 @@ test("source: armFigureLabels is armed in both viewers and dropped with each (ct
   assert.match(VIEW, /\nconst FIGERR_MARK = "data-fv-figerr";\n/, "the mark");
   assert.match(VIEW, /\nconst FIGERR_CLASS = "fv-figerr";\n/, "the class, for the sheets alone");
   assert.match(arm, /const label = el\("span", FIGERR_CLASS\);\n\s*label\.setAttribute\(FIGERR_MARK, ""\);/, "the label is a span wearing the class and the mark");
-  assert.match(VIEW, /function figureLabelAfter\(anchor: Element\): Element \| null \{\n\s*const n = anchor\.nextSibling;\n\s*return n && n\.nodeType === 1 && \(n as Element\)\.hasAttribute\(FIGERR_MARK\) \? n as Element : null;/, "found by the mark on the anchor's next sibling, never by the class");
+  assert.match(VIEW, /function figureLabelAfter\(anchor: Element\): Element \| null \{\n\s*const n = \(figureControlAfter\(anchor\) \|\| anchor\)\.nextSibling;\n\s*return n && n\.nodeType === 1 && \(n as Element\)\.hasAttribute\(FIGERR_MARK\) \? n as Element : null;/, "found by the mark on the next sibling of the anchor, or of the figure's Open control when one stands at the anchor's side (the link-navigation follow-on's L3), never by the class");
+  assert.match(arm, /parent\.insertBefore\(label, \(figureControlAfter\(anchor\) \|\| anchor\)\.nextSibling\);/, "inserted where figureLabelAfter reads it back: after the control when one stands");
   assert.match(VIEW, /const src = failedSource\(img\);\n\s*return FIGURE_FAILED \+ " " \+ \(src \? shownSource\(src\) : FIGURE_NO_SOURCE\) \+ \(alt \? " \(" \+ alt \+ "\)" : ""\);/, "the text (contract C2, the review's round 1 and its round 2): FIGURE_FAILED, a space, the source the browser asked for (failedSource) as the label shows it (shownSource) or FIGURE_NO_SOURCE when the figure names none (an empty destination), the alt in parentheses when not empty");
   // the review's round 1: the source is the candidate the browser asked for, read off currentSrc and matched against the srcset carriers
   // by the authored candidates rewriteFigureSrcs keeps in data-fv-srcset; the img's own src, or no currentSrc, keeps pictureDest's rule
