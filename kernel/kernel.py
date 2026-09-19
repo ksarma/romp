@@ -1049,7 +1049,8 @@ class _PerfStats:
                                    compares (cache reads that met a cached entry with a signature in
                                    hand: the pre-flight read, the re-read after a single-flight wait
                                    and the re-read under a claim, not the final compare, so a rebuild
-                                   counts two and a waiter three and compares can exceed pre) and
+                                   counts two, a served waiter one on a cold cache or two when its
+                                   pre-flight read met a stale entry, and compares can exceed pre) and
                                    compareIdenticalComponents (over those reads' operands the
                                    components equal by object identity, at every position whether or
                                    not the tuple compare reached it; the share is
@@ -37927,8 +37928,11 @@ def _chat_postal_relevant(ev):
 #                        tab past the gate (_chat_sig_note_pre), the re-read after a single-flight wait and the
 #                        re-read under a claim (_chat_sig_note_compare at both), and NOT the final compare, which
 #                        re-evaluates the last read's operands. A rebuild counts two (its pre-flight read and its
-#                        claim re-read: every ordinary rebuild takes the claim road) and a waiter three, so compares
-#                        can exceed pre
+#                        claim re-read: every ordinary rebuild takes the claim road); a served waiter counts one on a
+#                        cold cache (its post-wait re-read) or two when its pre-flight read met a stale entry; a visit
+#                        whose wait ended with no usable entry and then claimed counts up to three and is a rebuild,
+#                        not a waiter (tests/test_single_flight_builds.py pins the cold and the stale race). So
+#                        compares can exceed pre
 #   compareIdenticalComponents
 #                        over those reads' operands, the components equal by object identity (a tuple compare
 #                        answers a member by pointer before by value), counted at every position whether or not the

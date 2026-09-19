@@ -4088,15 +4088,18 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   hand: the pre-flight read, the re-read after a single-flight wait and the
   re-read under a claim, and not the final compare, which re-evaluates the
   last read's operands; so a rebuild counts two (every ordinary rebuild
-  takes the claim road), a waiter three, and `compares` can exceed `pre`.
-  `compareIdenticalComponents` counts the components of those reads'
-  operands equal by object identity, at every one of the 40 positions
-  whether or not the tuple compare reached it (a miss stops at the first
-  unequal position), so it is exact for a hit and an upper bound on the
-  pointer answers a miss took. The share stage 3's identity memos would
-  widen is `compareIdenticalComponents` divided by `compares` times the
-  label count (the components `bg_miss` lists, `len(_CHAT_SIG_LABELS)`, 40
-  today; both operands are always full-length), never by `compares` alone.
+  takes the claim road), a served waiter one on a cold cache (its post-wait
+  re-read) or two when its pre-flight read met a stale entry, and
+  `compares` can exceed `pre`. `compareIdenticalComponents` counts the
+  components of those reads' operands equal by object identity, at every
+  one of the 40 positions whether or not the tuple compare reached it (a
+  miss stops at the first unequal position), so it is exact for a hit and
+  an upper bound on the pointer answers a miss took. The share stage 3's
+  identity memos would widen is
+  `compareIdenticalComponents / (compares * len(_CHAT_SIG_LABELS))` (the
+  label count is the components `bg_miss` lists, 40 today; both operands
+  are always full-length signatures), never `compareIdenticalComponents`
+  over `compares` alone.
   `stats` counts the `os.stat`, `os.lstat` and `DirEntry.stat` calls made on
   the thread while a signature is open, whichever function or module makes
   them: `os.stat` and `os.lstat` in the wrappers the kernel installs around
