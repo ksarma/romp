@@ -84,17 +84,19 @@ function out(o){process.stdout.write(JSON.stringify(o));}
 """
 
 
-def _run(scenario, pre="", app="test", **shim_kw):
+def _run(scenario, pre="", app="test", before="", **shim_kw):
     """`app` and `shim_kw` reach km._shim_core_js as a served page's would (D2, review round 1, 2026-09-18: the park's
     feed exemption and the chat pane's fresh hold are keyed on APP, so a test names the pane it builds; the Files pane's
-    no_stale rides shim_kw). The default, "test", keeps every earlier scenario's core byte for byte."""
+    no_stale rides shim_kw). The default, "test", keeps every earlier scenario's core byte for byte. `before` runs after
+    the harness and BEFORE the core (the seam _run_linked has): a write to the harness's stubs the core reads at its load
+    (parentMobileVal for the phone dial's probe; `pre` runs ahead of the harness, whose own declarations reset it)."""
     node = shutil.which("node")
     if not node:
         raise unittest.SkipTest("node not installed")
     fx = tempfile.mkdtemp()
     path = os.path.join(fx, "run.js")
     with open(path, "w") as f:
-        f.write(pre + HARNESS + km._shim_core_js(app, **shim_kw) + "\n" + scenario)
+        f.write(pre + HARNESS + before + km._shim_core_js(app, **shim_kw) + "\n" + scenario)
     r = subprocess.run([node, path], capture_output=True, text=True, timeout=60)
     if r.returncode != 0:
         raise AssertionError("node failed:\n" + r.stderr)

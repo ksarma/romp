@@ -1485,9 +1485,12 @@ out({first:first,redial:redial,sockets:sockets.length,mobile:parentMobile()});""
         self.assertNotIn("reconnect=1", r["first"])
         self.assertEqual(r["sockets"], 2)
         self.assertNotIn("&skeleton=1", r["redial"], "a redial after a socket that died before the ready was answered dials as a fresh page, as the reload diet does (everConnected)")
-        # the other layouts, pane-only (the shell's probe stubbed): a desktop shell says false, a standalone page or the VS Code webview has none
-        for pre, why in (("parentMobileVal=false;", "a desktop shell"), ("", "no shell (standalone, VS Code)")):
-            d = _run_pane('out({url:sock().url});', pre=pre, app="chat")
+        # the other layouts, pane-only, the shell's probe stubbed AFTER the harness (its `before` seam: the harness declares parentMobileVal
+        # itself, so a `pre` write is reset; review round 1, 2026-09-19): a desktop shell says false, a standalone page or the VS Code webview
+        # has none. The probe the core read at its load is asserted, so the desktop iteration is known to run a desktop shell.
+        for before, mobile, why in (("parentMobileVal=false;", False, "a desktop shell"), ("", None, "no shell (standalone, VS Code)")):
+            d = _run_pane('out({url:sock().url,mobile:(parentMobile()===undefined?null:parentMobile())});', before=before, app="chat")
+            self.assertIs(d["mobile"], mobile, why + ": the probe the core read at its load")
             self.assertNotIn("skeleton=1", d["url"], why + ": the whole push, as before")
         js = km._shim_core_js("chat")
         self.assertIn('if(APP==="chat"&&!COL&&!SKEL&&parentMobile()===true)RESTART_DIET=true;', js, "the fork line sets the reload diet's flag; the dial line is upstream's text")
