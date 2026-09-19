@@ -38,7 +38,8 @@ whose text arrives at run time is not in the code and cannot be read from it: th
 command and a stored login's token command (kernel/credentials.py runs them through /bin/sh), the
 watch predicates a user registers (`romp watch`), the folder and terminal opener templates a user
 configures. Programs Romp starts that make requests of their own: `claude` (the agents' turns, the
-judge pipeline's calls, kernel/judge.py's `claude -p`, and the login flow), `codex`, the Codex SDK,
+judge pipeline's calls, kernel/judge.py's `claude -p`, and the login flow), `codex` (Codex sessions
+through the Codex SDK, and the judges when the engine is set to Codex, kernel/judge.py's `codex exec`)
 and `install.sh` inside the release update. A browser opened on the dashboard's own 127.0.0.1
 address. Directories outside the runtime: tests/, scripts/, tools/, assets/, ui/, hooks/ and the
 repo-root installers, which are the maintainers' and the installer's, not the kernel's. One connect
@@ -1009,8 +1010,8 @@ def scan_shell_tree(root):
 Entry = namedtuple("Entry", "file function kinds what gate doc")
 
 DOC_MODELS = ("the Anthropic Models API, for the model pickers' version list, with the credential Claude Code's "
-              "`apiKeyHelper` yields, at boot and when a session reports a model id the list lacks, off under "
-              "`ROMP_MODEL_CATALOG=off`")
+              "`apiKeyHelper` yields, at an install's first boot, when no cached list exists, and when a session "
+              "reports a model id the list lacks, off under `ROMP_MODEL_CATALOG=off`")
 DOC_PRICES = ("a public model-price table on GitHub, for the settings modal's token-cost chart, at most once per six "
               "hours when that chart is read, with no switch to turn it off")
 DOC_PUSH = ("a web push notification to the push service of every device you subscribed from the notifications "
@@ -1018,12 +1019,14 @@ DOC_PUSH = ("a web push notification to the push service of every device you sub
 DOC_FAST = ("Anthropic's fast-mode availability endpoint with the session's API key, at every connect of a key-billed "
             "session and never a login session")
 DOC_UPDATE = ("the release remote's tags and main by `git ls-remote`, for the update check and the drift watcher, off "
-              "under `ROMP_UPDATE_CHECK=off` or the update mode `off`, and a `git fetch` of main when an update is taken")
+              "under `ROMP_UPDATE_CHECK=off` or the update mode `off`, and a `git fetch` when an update is taken (of main "
+              "by the drift watcher, or of the release tag followed by the installer)")
 DOC_ORIGIN = ("the checkout's origin by `git ls-remote`, for the file viewer's GitHub link, when a file inside a git "
               "checkout with an origin is opened")
 DOC_GH = "a watched pull request by `gh pr view`, only for a PR you asked `romp watch-pr` to follow"
 DOC_SSH = ("`ssh` to every machine you attached as a linked kernel, the tunnel the linked kernels ride, plus that "
-           "machine's kernel start, restart, update and pull over it, off when you detach or forget the host")
+           "machine's kernel start, restart, update and pull over it and a terminal opened there from a remote "
+           "session's folder icon, off when you detach or forget the host")
 DOC_NPM = ("`npm install` in the extension directory, to refresh the UI bundle's dependencies when the bundle is stale "
            "at boot and its build fails, one retry, with no switch to turn it off")
 DOC_CODEX = ("the Codex runtime by `pip` from its pinned GitHub release URL, checked against a published digest, when "
@@ -1034,8 +1037,9 @@ DOC_UPLOAD = "Besides the upload, Romp makes these requests on its own"
 ALLOWLIST = (
     Entry("kernel/kernel.py", "_fetch_models_api", ("urlopen", "Request"),
           "GET every page of the Models API (MODELS_API_URL: ROMP_MODELS_URL or api.anthropic.com/v1/models)",
-          "_refresh_model_catalog at boot and when a session reports a model id the catalog lacks; skipped under "
-          "ROMP_MODEL_CATALOG=off; no apiKeyHelper means no fetch and a stderr line", DOC_MODELS),
+          "_refresh_model_catalog from _model_catalog_boot only when no cache exists (an install's first boot; with a "
+          "cache the list serves as is) and from _note_unknown_model when a session reports a model id the catalog "
+          "lacks; skipped under ROMP_MODEL_CATALOG=off; no apiKeyHelper means no fetch and a stderr line", DOC_MODELS),
     Entry("kernel/kernel.py", "_refresh_remote_prices", ("urlopen",),
           "GET the litellm model-price JSON (PRICE_FEED_URL on raw.githubusercontent.com) for the token-cost chart",
           "_model_prices from the analytics route, only when the cache is older than PRICE_TTL (six hours), on a "
@@ -1141,11 +1145,16 @@ SHELL_ALLOWLIST = (
           "romp watch-pr, run by the user", DOC_GH_REPO),
 )
 
-# The one connect that sends nothing, pinned in both directions like the allowlist.
+# The one connect that sends nothing, pinned in both directions like the allowlist, with the reference's words for
+# it (the Docs case reads them from the subsection, so the third class the census has is disclosed beside the other two).
+Probe = namedtuple("Probe", "file function reason doc")
+DOC_ROUTE_PROBE = ("One connect sends nothing: the kernel connects a UDP socket to a documentation address (`192.0.2.1`, "
+                   "reserved and never routed) to learn which local address the routing table picks, the event the "
+                   "linked kernels' tunnels key on, and no datagram leaves.")
 ROUTE_PROBES = (
-    ("kernel/kernel.py", "_primary_addr",
-     "a UDP connect to 192.0.2.1 (TEST-NET-1, never routed) that sends no datagram: the kernel's way to learn the "
-     "local address the routing table picks, the event the tunnels key on"),
+    Probe("kernel/kernel.py", "_primary_addr",
+          "a UDP connect to 192.0.2.1 (TEST-NET-1, never routed) that sends no datagram: the kernel's way to learn the "
+          "local address the routing table picks, the event the tunnels key on", DOC_ROUTE_PROBE),
 )
 
 
@@ -1201,9 +1210,9 @@ class Census(unittest.TestCase):
 
     def test_the_route_probe_is_the_one_connect_that_sends_nothing(self):
         probes = sorted({(s.file, s.function) for s in self.sites if s.klass == "route-probe"})
-        self.assertEqual(probes, sorted({(f, fn) for f, fn, _ in ROUTE_PROBES}),
+        self.assertEqual(probes, sorted({(p.file, p.function) for p in ROUTE_PROBES}),
                          "the SOCK_DGRAM connects in the tree and ROUTE_PROBES differ")
-        self.assertTrue(all(reason for _, _, reason in ROUTE_PROBES))
+        self.assertTrue(all(p.reason and p.doc for p in ROUTE_PROBES))
 
     def test_the_counts_are_derived_and_nothing_is_empty(self):
         # derived expectations fail on empty: a scanner that finds nothing is broken, not a clean tree
@@ -1235,7 +1244,7 @@ class Census(unittest.TestCase):
                     ("kernel/kernel.py", "_push_post"), ("cli/perf_upload.py", "post"),
                     ("kernel/sdk_backend.py", "_fetch_key_fast_org")):
             self.assertIn(key, found)
-        # and the judge makes no request of its own: its model calls run the claude binary
+        # and the judge makes no request of its own: its model calls run the claude or codex binary (the engine setting)
         self.assertFalse([s for s in self.sites if s.file == "kernel/judge.py" and s.klass == "outbound"])
 
 
@@ -1623,7 +1632,7 @@ class FormSpace(unittest.TestCase):
 # ---------------------------------------------------------------------------------------------------
 
 ITEMS_HEAD = "and on an entry with no site: "
-ITEMS_TAIL = ". The agents' and the judge pipeline's model calls go through `claude`"
+ITEMS_TAIL = ". The agents' and the judge pipeline's model calls go through `claude` or `codex`"
 
 
 def reference_items(flat):
@@ -1685,8 +1694,13 @@ class Docs(unittest.TestCase):
         self.assertFalse("the one non-local fetch the census allows in a shell script" in section,
                          "the subsection claims one non-local fetch in the shell scripts; the shell layer finds "
                          "%d" % len(SHELL_ALLOWLIST))
-        # the route probe: a connect that sends nothing is disclosed beside the loopback sentence
-        self.assertIn(ROUTE_PROBES[0][0].split("/")[-1], "kernel.py")
+        # the third class: the connect that sends nothing is disclosed in the subsection, in the words ROUTE_PROBES
+        # carries, once (a verifier found the earlier check here comparing a constant with itself and the subsection
+        # silent on the probe; this reads the section)
+        for p in ROUTE_PROBES:
+            self.assertEqual(section.count(p.doc), 1, "the route probe is not disclosed in the subsection once: " + p.doc)
+        self.assertEqual(section.count("classifies each as a `127.0.0.1` call, as the one connect that sends nothing"), 1,
+                         "the frame sentence no longer names the census's three classes")
 
     def test_the_guide_points_at_this_module_and_the_reference_subsection(self):
         flat = self._flat("docs", "guide.md")
@@ -1696,7 +1710,7 @@ class Docs(unittest.TestCase):
 
     def test_reference_items_reads_the_span_the_way_the_reference_spells_it(self):
         flat = ("... and on an entry with no site: alpha one; beta two; and gamma three. The agents' and the judge "
-                "pipeline's model calls go through `claude`, not ...")
+                "pipeline's model calls go through `claude` or `codex` (each ...")
         self.assertEqual(reference_items(flat), ["alpha one", "beta two", "gamma three"])
         self.assertIsNone(reference_items("no list here"))
 
