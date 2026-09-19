@@ -294,6 +294,8 @@ test("T6b (review round 3, 2026-09-19, extra8-1): the hold follows the shell's L
   assert.equal(nextPrefetch(st2, A, none, false, all), null, "…and the chain stops with the gate still open: nextPrefetch reads the hold (the refuter's no-op finding: setting the hold alone did nothing here before)");
   assert.equal(onLayoutWord(st2, false), true, "the flip back lifts it");
   assert.equal(nextPrefetch(st2, A, none, false, all), B, "…and the chain resumes (the gate never closed)");
+  assert.equal(st2.gate, true, "the gate is open after the lift");
+  assert.equal(gateOnShow(st2, A), false, "…and gateOnShow reports no opening over it (an open gate stays open, nothing opened NOW), so the caller that arms on the lift reads the gate itself as well (render.ts's panes handler, review round 4 verdict 1; skeleton-tabs-wiring.test.ts executes it)");
   // a cold open (no redial yet): the layout word holds nothing in either direction
   const st3 = newSkeletonState();
   applyTabOrderSkeleton(st3, [B, C], [A, B, C]);

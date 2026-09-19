@@ -185,7 +185,8 @@ export function onSocketUp(st: SkeletonState, phone?: boolean): void {
  *  re-decided from it and the redial record, so it never outlives the layout (review round 3, 2026-09-19, extra8-1). `phone` true after
  *  a redial holds (a flip to the phone inside the socket's life: the other tabs reload when tapped, as a phone redial's do); false lifts
  *  (a flip to the desktop: the grid gets its chain back). Before any redial nothing is held whatever the word (a cold open's chain is
- *  never held). Returns whether a STANDING hold was lifted now, so the caller can open the gate for the shown tab and arm the chain. */
+ *  never held). Returns whether a STANDING hold was lifted now, so the caller can open the gate for the shown tab and arm the chain (or arm
+ *  it over a gate already open, which gateOnShow refuses to re-open: render.ts reads `gate` beside it, review round 4, verdict 1). */
 export function onLayoutWord(st: SkeletonState, phone: boolean): boolean {
   const was = st.returnHold;
   st.returnHold = st.redialed && phone;
