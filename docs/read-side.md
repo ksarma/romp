@@ -261,7 +261,9 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   boot, the last unless the gear has that pane off), so a pane the phone never
   showed has no document and files no rows of any kind: its absence from the
   rows is the saving, not a field. A lazy pane whose document fails to load
-  (the load event over an error page, or no document by the 30 s backstop) is
+  (the load event over an error page or over an HTTP error body at the pane's
+  url, which the pane shim's marker in the frame's window tells from the pane's
+  own document, or no such document by the 30 s backstop) is
   put back where a tap finds it, says so over the pane area with a tap to retry,
   and files one `pane-load-failed` row (surface `shell`: `pane`, `via` `load`
   or `backstop`, `n` the failures for that pane on this page).
@@ -289,12 +291,14 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   A return on the phone (the redial that follows a socket the background left
   dead; the owner's decision of 2026-09-19) reloads the visible tab alone: the
   kernel re-skeletons the other tabs on the new socket as before, and each of
-  them loads when tapped, for that socket's life, never in the background. The
-  hold is keyed on the shim's socket-flip frame, which follows every reopen
-  after the first connection and cannot tell a return apart from a kernel
-  restart or a dropped link while the app is in the foreground, so on the phone
-  every such redial holds the chain the same way. The desktop's redial keeps
-  today's chain.
+  them loads when tapped. Two rules, decided 2026-09-19. The hold lasts the
+  socket's life: a tap loads the tapped tab alone, and the chain does not
+  resume after the first tap, because the owner's answer was that the other
+  tabs reload only when tapped, each on its own tap. The hold covers every
+  phone redial after the first connection, a kernel restart and a dropped
+  link while the app is in the foreground included, because the phone cannot
+  tell a return's redial from a restart's and a tab that loads when tapped
+  costs nothing on either. The desktop's redial keeps today's chain.
 - **The Outline pane's ages run on the kernel's clock.** Its timestamps are the
   kernel's, so the pane never reads the browser's clock against them: it anchors
   on the frame's `now` paired with the moment that frame arrived from the wire
