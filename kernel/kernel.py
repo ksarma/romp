@@ -12331,6 +12331,37 @@ def _latest_release_tag():
     return best
 
 
+def _is_primary_kernel():
+    """Whether this kernel is the manager's primary (registry id `main`), from ROMP_KERNEL_ID, which
+    bin/romp-manager's specEnv sets to each kernel's registry id at spawn (round 1 of the install-rewrite
+    review, 2026-09-18). Absent or empty reads as primary: a kernel no manager started (a hand-run
+    romp-kernel) is the only kernel there is, and a kernel an older manager spawned keeps the behaviour it
+    had. The release self-update runs from the primary alone: its install.sh rewrites the login service's
+    unit under the running manager, and there is one unit, the primary's, so an aux kernel's update (a
+    kernels.json profile, a /ensure kernel) would have baked its own port, state root and Claude config
+    dir into it, or now refuses the deploy over them (bin/romp-service rewrite compares them)."""
+    return os.environ.get("ROMP_KERNEL_ID", "") in ("", "main")
+
+
+# The per-instance variables the detached update child does NOT inherit (round 1 of the install-rewrite review,
+# 2026-09-18). install.sh runs `romp-service rewrite` under a running manager, which bakes nothing from its caller
+# but compares the caller's instance variables against the unit's own lines and refuses on a difference; this
+# process carries the ports the manager set for it (specEnv sets them for every kernel) and, through service.env,
+# values an older install never baked into the unit. The four ports and the Claude config dir go no further than
+# this process. ROMP_STATE_DIR is NOT in the list: bin/romp-sdk-setup builds the venv under it and install.sh reads
+# the token there, and a second OS user's primary has a root of its own, which its update must keep using.
+_UPDATE_CHILD_SCRUB = ("ROMP_SERVE_PORT", "ROMP_KERNEL_PORT", "ROMP_POSTAL_PORT", "ROMP_MANAGER_PORT",
+                       "CLAUDE_CONFIG_DIR")
+# The child is MARKED (round 2 of the install-rewrite review, 2026-09-18): bin/romp-service reads ROMP_UPDATE_CHILD on
+# its install road, which install.sh takes when the manager is not running under the service (`romp up --foreground`,
+# a hand-run install), and keeps an installed unit's own identity there as the rewrite does, where a person's install
+# bakes what their shell sets. Unmarked, the scrubbed child re-baked the unit from its own environment on that road:
+# the four ports and the Claude config dir dropped, the state root rewritten from the caller, exit 0, nothing said.
+_UPDATE_CHILD_MARK = ("ROMP_UPDATE_CHILD", "1")
+# The identity refusal's exit code (bin/romp-service EXIT_IDENTITY): the one exit the update's preflight aborts on.
+_SERVICE_IDENTITY_REFUSED = 5
+
+
 def _run_update(tag):
     """Start the self-update: fetch the tag, fast-forward EXACTLY onto it, install, report (+ restart
     on success), in a DETACHED child. Returns True when the child was launched. The tree lands on the
@@ -12341,6 +12372,12 @@ def _run_update(tag):
     passed _semver before it gets here; the guard repeats anyway because the string lands inside a
     shell script."""
     if not _semver(tag) or _UPDATE_STATE[0] == "running":
+        return False
+    if not _is_primary_kernel():
+        # before the latch: nothing is launched, so nothing is in flight (round 1 of the install-rewrite review)
+        _sync_notice("this kernel is not the primary (ROMP_KERNEL_ID=%s): the update to %s runs from the primary "
+                     "kernel, whose install rewrites the login service's unit; nothing was launched here"
+                     % (os.environ.get("ROMP_KERNEL_ID", ""), tag), ok=False)
         return False
     _UPDATE_STATE[0] = "running"
     q = shlex.quote
@@ -12356,6 +12393,14 @@ def _run_update(tag):
     # written at curl time (auto deploys used to leave the row anonymous).
     aud = q(str(jd.STATE / "restart-audit.jsonl"))
     tokf = q(str(jd.STATE / "serve-token"))
+    # The auto mode's once-only marker (_update_check writes it before this launch). The child REMOVES it on every
+    # leg where the checkout advanced and nothing restarted (round 2 of the install-rewrite review, 2026-09-18): the
+    # version's one automatic try was spent on an attempt that ran nothing new, and the report says the tree moved;
+    # the next boot runs the new code, so the marker would only misname that boot's state. A failure before the
+    # tree moved (the preflight's refusal, a failed fetch or fast-forward) leaves the marker: that attempt ran and
+    # failed, and the marker is what makes the next pass offer the banner instead of repeating it.
+    marker = q(str(jd.STATE / "update-attempted.json"))
+    unmark = "rm -f %s\n" % marker
     # The report is written AFTER the restart request, saying what the request actually did. It
     # used to be written first, claiming restarted:true whenever a manager port was known — so a
     # manager that never took the request (gone, or a stale port) left an "updated and restarted"
@@ -12389,15 +12434,18 @@ def _run_update(tag):
                    + "  if [ \"$rc\" -eq 0 ]; then\n"
                    + "    " + report({"ok": True, "tag": tag, "restarted": True})
                    + "  elif [ \"$rc\" -eq 28 ]; then\n"
+                   + "    " + unmark
                    + "    " + report({"ok": True, "tag": tag, "restarted": False,
                                       "why": "the manager on port %d did not answer the restart request within %d s"
                                              % (mport, _RESTART_REQUEST_MAX_S)})
                    + "  else\n"
+                   + "    " + unmark
                    + "    " + report({"ok": True, "tag": tag, "restarted": False,
                                       "why": "the manager on port %d did not take the restart request" % mport})
                    + "  fi\n")
     else:
         restart = ("  : # no manager — the new code arms on the next romp start (the report says so)\n"
+                   + "  " + unmark
                    + "  " + report({"ok": True, "tag": tag, "restarted": False, "why": _NO_MANAGER_WHY}))
     # advance() — the tree lands EXACTLY on the release commit. The fast-forward is the normal
     # release-to-release move, EXCEPT for an install sitting DETACHED off every tag: the
@@ -12419,18 +12467,80 @@ def _run_update(tag):
         + "    git checkout --detach refs/tags/%s >> %s 2>&1; return $?;\n" % (tag, log)
         + "  fi\n"
         + "  git merge --ff-only %s >> %s 2>&1; }\n" % (tag, log))
+    # preflight() (round 2 of the install-rewrite review, 2026-09-18): install.sh's service step under a running
+    # manager is `romp-service rewrite`, which keeps the login unit's own identity and REFUSES when this
+    # environment or this clone disagrees with it (exit 5), and that refusal used to be met inside the && chain
+    # AFTER advance() had put the checkout on the release: the tree on the new release, the kernel and manager on
+    # the old code, no restart, a report naming only "the fetch, fast-forward or install", and the auto mode's one
+    # try spent. Nothing inside install.sh can help, since advance() runs here, before it; so the same check runs
+    # here first, `rewrite --check` (the checks alone, nothing written, reloaded or journaled), and the identity
+    # refusal ends the run while the tree still holds the release the running code came from. Exit 3 (no unit at
+    # the path: install.sh takes its install road, or says so) and any other exit are install.sh's to handle
+    # after the tree moves, as before; only the refusal is known to be a deterministic no. ROMP_NO_SERVICE skips
+    # the service step, so it skips the preflight; ROMP_SERVICE_BIN is honoured as install.sh honours it.
+    preflight = (
+        "svc_default=%s\n" % q(str(ROOT / "bin" / "romp-service"))    # a shell assignment: the quoting holds there
+        + "preflight(){\n"
+        + "  [ -z \"${ROMP_NO_SERVICE:-}\" ] || return 0\n"
+        + "  svc=\"${ROMP_SERVICE_BIN:-$svc_default}\"\n"
+        + "  [ -x \"$svc\" ] || return 0\n"
+        + "  \"$svc\" rewrite --check >> %s 2>&1; prc=$?\n" % log
+        + "  [ \"$prc\" -ne %d ]; }\n" % _SERVICE_IDENTITY_REFUSED)
+    # The steps run as a chain that records how far it got (`step`), so the failure report can say WHERE the run
+    # stopped and whether the checkout moved (round 2: one report for every failure hid the half-done state, the
+    # tree on <tag> with the old code running). The success leg is the restart above; each failure leg is its own
+    # report, and the install leg, the one that fails with the tree already moved, withholds the auto marker.
+    # Whether the tree MOVED is read from the tree, HEAD before the chain against HEAD after it, never inferred from
+    # the step (round 3 of the install-rewrite review, 2026-09-19): advance() returns 0 on the no-op fast-forward too
+    # (a checkout already on or past the tag, the branch case the comment above keeps harmless), and keyed on the
+    # step alone the install leg claimed the checkout had moved to the tag and took the marker back over a tree that
+    # had not moved at all. An install that fails with the tree unmoved is a failure like the fetch's: the report
+    # says the tree did not move, and the marker stays (that attempt ran and failed; the next pass offers the banner).
     script = (
         "cd %s || exit 1\n" % q(str(ROOT))
         + "{ echo; echo \"== romp self-update to %s ==\"; date; } >> %s 2>&1\n" % (tag, log)
         + advance
-        + "if git fetch %s refs/tags/%s:refs/tags/%s >> %s 2>&1 && advance "
-          "&& ./install.sh >> %s 2>&1; then\n" % (_release_remote(), tag, tag, log, log)
+        + preflight
+        + "head0=\"$(git rev-parse HEAD 2>/dev/null)\"\n"
+        + "step=preflight\n"
+        + "preflight && step=fetch && git fetch %s refs/tags/%s:refs/tags/%s >> %s 2>&1 && step=advance && advance "
+          "&& step=install && ./install.sh >> %s 2>&1 && step=done\n" % (_release_remote(), tag, tag, log, log)
+        + "if [ \"$step\" = done ]; then\n"
         + restart
         + "else\n"
-        + "  " + report({"ok": False, "tag": tag, "why": "the fetch, fast-forward or install failed"})
+        + "  case \"$step\" in\n"
+        + "    preflight) " + report({"ok": False, "tag": tag,
+                                      "why": "the login service on disk and this kernel's environment or clone disagree, so "
+                                             "the deploy's unit rewrite would be refused (romp-service rewrite --check; "
+                                             "its lines are in update.log): nothing was fetched and the checkout did not move"})
+        + "    ;;\n"
+        + "    fetch) " + report({"ok": False, "tag": tag,
+                                  "why": "the fetch of %s failed; the checkout did not move" % tag})
+        + "    ;;\n"
+        + "    advance) " + report({"ok": False, "tag": tag,
+                                    "why": "the fast-forward onto %s failed; the checkout did not move" % tag})
+        + "    ;;\n"
+        + "    install)\n"
+        + "      if [ \"$(git rev-parse HEAD 2>/dev/null)\" != \"$head0\" ]; then\n"
+        + "        " + unmark
+        + "        " + report({"ok": False, "tag": tag, "advanced": True,
+                               "why": "the checkout moved to %s but its install failed, so the running romp is still the "
+                                      "previous release; update.log has install.sh's output, and the new code runs once "
+                                      "./install.sh succeeds in the clone and romp is restarted" % tag})
+        + "      else\n"
+        + "        " + report({"ok": False, "tag": tag, "advanced": False,
+                               "why": "the checkout was already on %s (the fast-forward moved nothing) and its install "
+                                      "failed, so the running romp is unchanged; update.log has install.sh's output" % tag})
+        + "      fi\n"
+        + "    ;;\n"
+        + "  esac\n"
         + "fi\n")
+    # this kernel's environment less _UPDATE_CHILD_SCRUB (the manager port went into the script above, so the
+    # restart leg keeps it; the token the script reads at run time rides through), plus the child's mark
+    child_env = {k: v for k, v in os.environ.items() if k not in _UPDATE_CHILD_SCRUB}
+    child_env[_UPDATE_CHILD_MARK[0]] = _UPDATE_CHILD_MARK[1]
     try:
-        subprocess.Popen(["bash", "-c", script], start_new_session=True, cwd=str(ROOT),
+        subprocess.Popen(["bash", "-c", script], start_new_session=True, cwd=str(ROOT), env=child_env,
                          stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except Exception as e:
         # the latch was taken above; a spawn that raises must give it back, or the kernel reads
@@ -12604,6 +12714,14 @@ def _update_check():
         return                                      # already discovered and acted on this kernel run
     prev, _UPDATE_AVAIL[0] = _UPDATE_AVAIL[0], latest
     if _update_mode() == "auto":
+        if not _is_primary_kernel():
+            # round 1 of the install-rewrite review (2026-09-18): the update's install.sh rewrites the login
+            # service's unit, the primary's; an aux kernel launches nothing and spends no once-only marker, and
+            # says so once per discovered version (the slot keeps the tag). No banner: the route refuses the click.
+            _sync_notice("a newer romp (%s) is available; this kernel is not the primary (ROMP_KERNEL_ID=%s), so the "
+                         "automatic update is the primary kernel's to run"
+                         % (latest, os.environ.get("ROMP_KERNEL_ID", "")), ok=False)
+            return
         tried = ""
         try:
             tried = json.loads((jd.STATE / "update-attempted.json").read_text()).get("tag", "")
@@ -12619,18 +12737,43 @@ def _update_check():
                 _send_to_app("shell", {"type": "updateAvail", "cur": _kernel_ver() or "", "tag": latest,
                                        "boot": _BOOT_ID})
             return
+        # The once-only marker is written BEFORE the launch and taken back when the launch is refused (round 2 of the
+        # install-rewrite review, 2026-09-18). The child removes it itself on every leg where the checkout advanced
+        # without a restart (_run_update), and a marker written after the spawn could land after that removal, so
+        # the order here is what makes the child's removal exact. Not written while another update holds the latch:
+        # the launch is refused before anything runs, and the write would replace the in-flight update's marker.
+        # The write is guarded (round 4 of the review, 2026-09-19, kernel-1): unguarded and ahead of the launch, a state
+        # root that could not be written aborted the whole pass with the discovery slot already latched on the tag, so
+        # the release was never attempted again for this kernel's life and nothing said so. A marker that cannot be
+        # written costs the once-only guarantee alone, which the pre-marker ordering already accepted; the launch goes
+        # on and the Log carries the reason (kind refused, the standard _set_update_mode uses for a state-root write).
+        # `wrote` guards the take-back too, so a refusal never removes a marker an older tag's pass left.
+        marker = jd.STATE / "update-attempted.json"
+        wrote = False
+        if _UPDATE_STATE[0] != "running":
+            try:
+                _atomic_write(marker, json.dumps({"tag": latest, "t": int(time.time())}))
+                wrote = True
+            except OSError as e:
+                _sync_notice("the once-only marker for the automatic update to %s (%s under the state root) could not be "
+                             "written: %s; the update runs anyway, and a run that does not land may be tried again at the "
+                             "next check" % (latest, marker.name, _errno_text(e)), ok=False, kind="refused")
         if not _run_update(latest):
             # a refused launch is not an attempt: nothing ran, so the once-only marker is not
-            # written — writing it first spent the version's one automatic try on a launch that
-            # never happened, and the next pass then reported it as "ran once without landing" —
+            # kept (a marker standing for a launch that never happened spent the version's one
+            # automatic try, and the next pass then reported it as "ran once without landing"),
             # and the discovery slot re-arms so the next pass tries again instead of standing on
             # a version it never attempted (the launch failure itself is already in the Log).
             # Unless the refusal is that ANOTHER update is still in flight (review find, 2026-09-08):
             # its tag is what /update-check reports as pending, nothing about it changed, so the slot
             # goes back to it; the newer release is found again once the latch is free.
+            if wrote:
+                try:
+                    marker.unlink()
+                except OSError:
+                    pass
             _UPDATE_AVAIL[0] = prev if _UPDATE_STATE[0] == "running" else ""
             return
-        _atomic_write(jd.STATE / "update-attempted.json", json.dumps({"tag": latest, "t": int(time.time())}))
     else:
         if latest in _dismissed_updates():
             return                    # Not-now'd THIS release, durably — a newer one offers again
@@ -13072,7 +13215,15 @@ _MANAGER_REFUSED_ACTION = "manager-refused-restart-all"   # the manager answered
 _NO_RESTART_ACTIONS = {"main-converge-skip", "bus-converge", "end-on-idle", "quiet-window",
                        "main-converge-declined",   # (a converge that found this kernel already leaving asked no restart)
                        "restart-folded", "restart-trailing", "restart-trailing-current",   # (the manager's notes of a request that rode a
-                       _MANAGER_REFUSED_ACTION}   #                                          restart in flight, or a trail found current)
+                       _MANAGER_REFUSED_ACTION,   #                                          restart in flight, or a trail found current)
+                       "service-rewrite"}   # (bin/romp-service rewrite, install.sh's unit rewrite under a running manager)
+# "service-rewrite" (round 1 of the install-rewrite review, 2026-09-18): install.sh rewrites the login service's unit
+# on every deploy under a running manager, and bin/romp-service journals that under this action, attribution of who
+# ran the deploy; the verb reloads systemd and restarts nothing. Absent from the set, the row was the request that
+# explained any SIGTERM within ninety seconds of a deploy: an unrequested kill filed as requested, its `signal`
+# verdict row never written, the row's own t consumed, and a parked quiet deploy hidden for the row's whole aged
+# lifetime (an aged request row ends the walk before the park). "service-install" stays OUT on purpose: an install is
+# a real request, the bootout on macOS and the reinstall on Linux, and its cut reads as such.
 # "quiet-window" is the manager's note of a quiet window APPLYING: a wait measured, T304; the restart it
 # releases writes its own manager-sigterm note.
 # The request rows a refused hop was written for, which the refusal consumes in _recent_restart_audit's walk
@@ -71076,7 +71227,12 @@ _UPD_JS = (
     "(function(){var box=document.getElementById('rupd');if(!box)return;"
     "var msg=box.querySelector('.rup-msg'),go=document.getElementById('rupd-go'),dm=document.getElementById('rupd-dismiss'),"
     "cx=document.getElementById('rupd-cancel'),lbl=document.getElementById('rupd-armed'),cf=document.getElementById('rupd-confirm');"
-    "var dismissedTag='',curTag='',waiting=false,bootNow='',armed=false,impact=null,press=false,arms=0,plain=null,failedEnd=false;"
+    # curTag and curKind are the OFFER this window shows (round 3 of the install-rewrite review, 2026-09-19): the
+    # identifier (a release tag, or a main sha) and its kind ('release', or 'main' for either drift form). The
+    # confirm posts both, so the kernel does what this banner said and nothing else: until then the route
+    # re-derived the action from its own slots at click time, and a banner reading "romp <tag> is available" on a
+    # non-primary kernel ran the main-drift converge (a pull of main and a restart of every kernel) on its click
+    "var dismissedTag='',curTag='',curKind='',waiting=false,bootNow='',armed=false,impact=null,press=false,arms=0,plain=null,failedEnd=false;"
     # Two clicks, never one (2026-09-10): a single click POSTed /update, and a click that only meant to
     # focus the dashboard window landed on the button and restarted every session on the box, cutting
     # every turn in flight. The first click ARMS the banner: the Update button gives its place to a
@@ -71263,7 +71419,7 @@ _UPD_JS = (
     "if(state==='running'){waiting=true;go.hidden=true;dm.hidden=true;"
     "show(manager===false?'romp is updating on disk; restart it yourself when it finishes':'romp is updating \\u2014 the dashboard reloads when it restarts\\u2026');poll();return;}"
     "if(boot&&bootNow&&boot!==bootNow)return;"
-    "if(waiting||!tag||tag===dismissedTag)return;curTag=tag;failedEnd=false;go.hidden=false;go.disabled=false;dm.hidden=false;"
+    "if(waiting||!tag||tag===dismissedTag)return;curTag=tag;curKind=drift?'main':'release';failedEnd=false;go.hidden=false;go.disabled=false;dm.hidden=false;"
     "if(drift==='pull')show('new romp commits are on main ('+tag+') \\u2014 Update pulls them and restarts romp.');"
     "else if(drift==='restart')show('romp '+tag+' is ready on disk \\u2014 Update restarts romp onto it.');"
     "else show('romp '+tag+' is available'+(cur?' \\u2014 you are on '+cur:'')+'.');}"
@@ -71278,7 +71434,7 @@ _UPD_JS = (
     # restarted, until Not now. A wait in progress reloads instead, above: the new life is the update's
     "window.__rompUpdBoot=function(b){if(!b)return;if(!bootNow){bootNow=b;return;}"
     "if(b!==bootNow){bootNow=b;impact=null;if(waiting){location.reload();return;}"
-    "if(box.classList.contains('show')){disarm();box.classList.remove('show');curTag='';failedEnd=false;}}};"
+    "if(box.classList.contains('show')){disarm();box.classList.remove('show');curTag='';curKind='';failedEnd=false;}}};"
     # a non-ok answer is not the update state (waiting, bootNow and the failed/done words would be written from its body)
     "function poll(){fetch('/update-check',{cache:'no-store'}).then(function(r){if(!r.ok)throw new Error('/update-check answered HTTP '+r.status);return r.json();}).then(function(d){"
     "if(!waiting)return;"
@@ -71311,7 +71467,7 @@ _UPD_JS = (
     # restart. Round 6 had the failed ending's Not now post the tag the
     # clicking window had offered (the refused target) and an empty tag from a pushed window, which the
     # kernel ignores, so one message dismissed durably in one window and nothing in another
-    "if(d.failed){waiting=false;var again=!!(d.tag||(d.drift&&d.driftSha));go.hidden=!again;go.disabled=false;dm.hidden=false;failedEnd=true;if(!again)curTag='';show('The update did not finish: '+d.failed);return;}"
+    "if(d.failed){waiting=false;var again=!!(d.tag||(d.drift&&d.driftSha));go.hidden=!again;go.disabled=false;dm.hidden=false;failedEnd=true;if(!again){curTag='';curKind='';}show('The update did not finish: '+d.failed);return;}"
     # the kernel words the step by case (`romp refresh` exits 1 with no manager, where `romp up` is
     # the step; review find, 2026-09-08); the fallback is the manager case, for an older kernel
     "if(d.updated){waiting=false;failedEnd=false;go.hidden=true;dm.hidden=false;show('romp updated to '+d.updated+' on disk'+(d.why?', but '+d.why:'')"
@@ -71327,14 +71483,21 @@ _UPD_JS = (
     "cf.onclick=function(e){if(!armed)return;if(e&&e.detail>1)return;"
     "waiting=true;failedEnd=false;disarm();go.disabled=true;dm.hidden=true;"
     "show((impact&&impact.manager===false)?'Updating romp on disk, this can take a minute; restart it yourself when it finishes':'Updating romp \\u2014 this can take a minute; the dashboard reloads when it restarts\\u2026');"
-    "fetch('/update',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirmed:true})}).then(function(r){"
+    # the offer this window shows rides the post (curKind, curTag: the comment at the top), so the route does what
+    # the banner said; a route that offers something else now answers 409 naming both, and the banner re-reads the
+    # offer (reoffer below) instead of leaving Update over an identifier the kernel no longer offers
+    "fetch('/update',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirmed:true,offer:{kind:curKind,id:curTag}})}).then(function(r){"
     "if(!r.ok)return r.text().then(function(t){throw new Error(t||('HTTP '+r.status));});poll();})"
     "['catch'](function(e){waiting=false;var em=String((e&&e.message)||e);"
     # 'nothing known' is not an error — it means the update this prompt offered already ran (another
     # window, a converge, a peer's push): retire quietly, file the fact in the Log, and let the reload
     # banner (already raised by that very restart) carry the one action left (the user 2026-08-15).
-    "if(/no newer release or main commit/.test(em)){box.classList.remove('show');curTag='';failedEnd=false;"
+    "if(/no newer release or main commit/.test(em)){box.classList.remove('show');curTag='';curKind='';failedEnd=false;"
     "if(window.__rompNotify)window.__rompNotify('sync','the update this prompt offered already ran \\u2014 nothing left to do');return;}"
+    # the offer this window showed is not what the kernel offers now (a newer release since, main moved): the kernel
+    # started nothing and said so; this window drops the stale offer, shows the reason and re-reads the current
+    # offer, which then stands beside it with a fresh Update (round 3 of the install-rewrite review, 2026-09-19)
+    "if(/^the banner offered /.test(em)){curTag='';curKind='';go.hidden=true;dm.hidden=false;show(em);reoffer(em);return;}"
     "go.disabled=false;dm.hidden=false;"
     "show('Could not start the update: '+em);});};"
     "cx.onclick=function(){disarm(true,true);};"
@@ -71394,16 +71557,20 @@ _UPD_JS = (
     "try{fetch('/update-dismiss',{method:'POST',headers:{'Content-Type':'application/json'},"
     "body:JSON.stringify({tag:curTag})}).catch(function(){});}catch(e){}};"
     # a page loaded while the update runs records no counts: the kernel answers none in that state (the
-    # registry read is skipped while no label can be worded) and the next arm re-reads
-    "fetch('/update-check',{cache:'no-store'}).then(function(r){if(!r.ok)throw new Error('/update-check answered HTTP '+r.status);return r.json();}).then(function(d){"
+    # registry read is skipped while no label can be worded) and the next arm re-reads. The same read serves
+    # the re-offer after the route refused a stale offer (`pre`: the refusal's text, kept in front of the
+    # current offer's so the reason stays readable; round 3 of the install-rewrite review, 2026-09-19)
+    "function reoffer(pre){fetch('/update-check',{cache:'no-store'}).then(function(r){if(!r.ok)throw new Error('/update-check answered HTTP '+r.status);return r.json();}).then(function(d){"
     "bootNow=(d&&d.boot)||'';"
     "if(d&&d.state==='running'){waiting=true;go.hidden=true;dm.hidden=true;"
     "show(d.manager===false?'romp is updating on disk; restart it yourself when it finishes':'romp is updating \\u2014 the dashboard reloads when it restarts\\u2026');poll();return;}"
     "note(d);"
     # a page loaded AFTER the push re-derives the pending offer — release or main drift alike
     "if(d&&d.mode==='ask'){if(d.tag)offer(d.cur||'',d.tag);"
-    "else if(d.drift&&d.driftSha)offer(d.cur||'',d.driftSha,d.drift);}})"
-    "['catch'](function(e){});})();")
+    "else if(d.drift&&d.driftSha)offer(d.cur||'',d.driftSha,d.drift);"
+    "if(pre&&curTag)msg.textContent=pre+' '+msg.textContent;}})"
+    "['catch'](function(e){});}"
+    "reoffer();})();")
 
 
 def _update_block():
@@ -74375,8 +74542,49 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(400, "the update starts only from a confirmed click on the banner "
                                       "(click Update, then the restart it turns into); reload the dashboard "
                                       "and try again", "text/plain")
+                # The click carries the OFFER the banner showed (round 3 of the install-rewrite review, 2026-09-19):
+                # {"offer": {"kind": "release" | "main", "id": <the tag, or the sha>}}, and the route does what the
+                # banner said or refuses. Until then the route re-derived the action from the kernel's slots at click
+                # time, with a pending release outranking drift, and the two could disagree with the banner: round 2
+                # gated the release branch to the primary while the banner still ranked the release first, so on a
+                # non-primary kernel in ask mode a banner reading "romp <tag> is available" fell through to the
+                # main-drift converge, a git pull of main and a restart of every kernel, on a confirmed click; and on
+                # the primary a banner showing main drift (the release dismissed, so /update-check offered none)
+                # ran the release update, since the route's slot still held the tag. A body without the offer is
+                # refused as the unconfirmed one is (a page from before this carries none; reload). An offer that
+                # is not what the kernel offers NOW (a newer release found since, main moved, the offer consumed by
+                # another window) is refused, naming both, and the banner re-reads the offer; never a guess.
+                offer = b.get("offer")
+                okind = offer.get("kind") if isinstance(offer, dict) else None
+                oid = offer.get("id") if isinstance(offer, dict) else None
+                if okind not in ("release", "main") or not isinstance(oid, str) or not oid:
+                    return self._send(400, "the click named no offer (the banner sends the release or the main commit it "
+                                      "showed, and the kernel does only what the banner said); reload the dashboard and "
+                                      "try again", "text/plain")
                 tag = _UPDATE_AVAIL[0]
-                if tag:
+                # ONE snapshot of what the kernel found: the kind and the commit it advertised come
+                # from the same read, so a slot emptied meanwhile (a refusal re-arming, a sync
+                # landing) can never pair a "pull" with an empty target, an unbound move
+                d0, d1 = _MAIN_DRIFT[0], _MAIN_DRIFT[1]
+                if not tag and not (d0 or d1):
+                    return self._send(409, "no newer release or main commit known to this kernel", "text/plain")
+                if (okind == "release" and oid != tag) or (okind == "main" and oid != (d0 or d1)):
+                    shown = ("romp %s" % oid) if okind == "release" else ("main at %s" % oid)
+                    known = ", ".join(x for x in (("romp %s" % tag) if tag else "", ("main at %s" % (d0 or d1)) if (d0 or d1) else "") if x)
+                    _sync_notice("an update click offered %s, which this kernel no longer offers (it offers %s); nothing "
+                                 "was started, and the banner re-reads the offer" % (shown, known), ok=False)
+                    return self._send(409, "the banner offered %s, but this kernel now offers %s; nothing was started. The "
+                                      "banner re-reads the offer." % (shown, known), "text/plain")
+                # The release is never a non-primary kernel's to run (round 1 of the install-rewrite review: its
+                # install would rewrite the primary's login unit): a release click there is refused naming the
+                # primary, before the audit row. A main-drift click is that kernel's own and converges (round 2),
+                # and since the click carries the banner's offer the two never cross.
+                primary = _is_primary_kernel()
+                if okind == "release" and not primary:
+                    return self._send(409, "this kernel is not the primary (ROMP_KERNEL_ID=%s): start the update "
+                                      "from the primary kernel's dashboard; its install rewrites the login "
+                                      "service's unit" % os.environ.get("ROMP_KERNEL_ID", ""), "text/plain")
+                if okind == "release":
                     if _UPDATE_STATE[0] != "running":
                         _audit_restart_request("self-update", tag=tag, addr=str(self.client_address[0]),
                                                via="update-confirmed")
@@ -74390,50 +74598,49 @@ class Handler(BaseHTTPRequestHandler):
                                               % tag, "text/plain")
                         _send_to_app("shell", _running_push(os.environ.get("ROMP_MANAGER_PORT")))
                     return self._send(200, json.dumps({"ok": True, "state": _UPDATE_STATE[0]}), "application/json")
-                # ONE snapshot of what the kernel found: the kind and the commit it advertised come
-                # from the same read, so a slot emptied meanwhile (a refusal re-arming, a sync
-                # landing) can never pair a "pull" with an empty target — an unbound move
-                d0, d1 = _MAIN_DRIFT[0], _MAIN_DRIFT[1]
-                kind = "pull" if d0 else ("restart" if d1 else "")
-                if kind:
-                    # one converge at a time (review round 5 of the confirm step, 2026-09-10): the flag is
-                    # taken here, before the thread starts and the running push goes out, so a poll landing
-                    # between the ack and the thread's entry already reads running; a click while a converge
-                    # runs (another window's, or the auto converge) hears converging like the first and starts
-                    # no second thread and writes no second audit row. The thread clears the flag on every
-                    # exit; a start that raises gives it back here, or every later poll would read running,
-                    # and gives back the outcome the take cleared (review round 7, 2026-09-10), or a window
-                    # still waiting on that outcome would poll the wait's neither state for good. The take
-                    # itself hands back what it cleared, read under the one lock hold (review round 8): a
-                    # separate read before the take saw an older slot when an auto converge ended between the
-                    # two lines, and the give-back then lost the newer outcome or reinstated the older one
-                    taken, out0 = _main_converge_begin()
-                    if not taken:
-                        return self._send(200, json.dumps({"ok": True, "state": "converging"}), "application/json")
-                    _audit_restart_request("main-converge", tag=d0 or d1,
-                                           addr=str(self.client_address[0]), via="update-confirmed")
-                    # same ack-time port resolution as /restart: the daemon thread's env read could
-                    # otherwise land after this response, on a value the caller has already restored;
-                    # the running push reads the same value (no manager: the banner words the wait so)
-                    mp = os.environ.get("ROMP_MANAGER_PORT")
-                    try:
-                        threading.Thread(target=_run_main_update, args=(kind, True),
-                                         kwargs={"manager_port": mp, "target": d0 or d1},
-                                         daemon=True).start()
-                    except Exception as e:
-                        # the give-back, under the lock every writer of the slot holds: only while nothing
-                        # newer was latched between the take and here (an auto converge ending: the slot is
-                        # then not None) and no tag child is running (the tag door's start, _run_update,
-                        # cleared the slot for the child it launched; a restore behind that child would be
-                        # served as a stale ending once the child's report is consumed: review round 8)
-                        with _MAIN_CONVERGE_LOCK:
-                            if _MAIN_CONVERGE_OUTCOME[0] is None and _UPDATE_STATE[0] != "running":
-                                _MAIN_CONVERGE_OUTCOME[0] = out0
-                            _main_converge_end()
-                        return self._send(500, "romp could not start the converge: %s" % e, "text/plain")
-                    _send_to_app("shell", _running_push(mp))
+                # the main-drift converge the banner offered: its kind from the snapshot above, whose target the
+                # click's id was checked against (so a "pull" is never paired with an empty target)
+                kind = "pull" if d0 else "restart"
+                # the kind is never empty (round 3 named it from the snapshot, whose target the click's id was checked against),
+                # so the guard that stood here and the second 409 after it were unreachable (round 4, kernel-2); the one 409
+                # for nothing known is the one above, before the offer is compared
+                # one converge at a time (review round 5 of the confirm step, 2026-09-10): the flag is
+                # taken here, before the thread starts and the running push goes out, so a poll landing
+                # between the ack and the thread's entry already reads running; a click while a converge
+                # runs (another window's, or the auto converge) hears converging like the first and starts
+                # no second thread and writes no second audit row. The thread clears the flag on every
+                # exit; a start that raises gives it back here, or every later poll would read running,
+                # and gives back the outcome the take cleared (review round 7, 2026-09-10), or a window
+                # still waiting on that outcome would poll the wait's neither state for good. The take
+                # itself hands back what it cleared, read under the one lock hold (review round 8): a
+                # separate read before the take saw an older slot when an auto converge ended between the
+                # two lines, and the give-back then lost the newer outcome or reinstated the older one
+                taken, out0 = _main_converge_begin()
+                if not taken:
                     return self._send(200, json.dumps({"ok": True, "state": "converging"}), "application/json")
-                return self._send(409, "no newer release or main commit known to this kernel", "text/plain")
+                _audit_restart_request("main-converge", tag=d0 or d1,
+                                       addr=str(self.client_address[0]), via="update-confirmed")
+                # same ack-time port resolution as /restart: the daemon thread's env read could
+                # otherwise land after this response, on a value the caller has already restored;
+                # the running push reads the same value (no manager: the banner words the wait so)
+                mp = os.environ.get("ROMP_MANAGER_PORT")
+                try:
+                    threading.Thread(target=_run_main_update, args=(kind, True),
+                                     kwargs={"manager_port": mp, "target": d0 or d1},
+                                     daemon=True).start()
+                except Exception as e:
+                    # the give-back, under the lock every writer of the slot holds: only while nothing
+                    # newer was latched between the take and here (an auto converge ending: the slot is
+                    # then not None) and no tag child is running (the tag door's start, _run_update,
+                    # cleared the slot for the child it launched; a restore behind that child would be
+                    # served as a stale ending once the child's report is consumed: review round 8)
+                    with _MAIN_CONVERGE_LOCK:
+                        if _MAIN_CONVERGE_OUTCOME[0] is None and _UPDATE_STATE[0] != "running":
+                            _MAIN_CONVERGE_OUTCOME[0] = out0
+                        _main_converge_end()
+                    return self._send(500, "romp could not start the converge: %s" % e, "text/plain")
+                _send_to_app("shell", _running_push(mp))
+                return self._send(200, json.dumps({"ok": True, "state": "converging"}), "application/json")
             if u.path == "/notify-all":
                 # the master bell's toggle (the user 2026-08-09). Kernel-authoritative: the click
                 # posts here first, and only a 200 flips the bell — the device push subscription is

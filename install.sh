@@ -344,6 +344,23 @@ if [[ -z "${ROMP_NO_EXT:-}" && -x "$ROMP_DIR/vscode-extension/install.sh" ]]; th
     "$ROMP_DIR/vscode-extension/install.sh" || ROMP_EXT_FAILED=1
 fi
 
+# The state root and the dashboard's port, for the service step's messages and the closing link. The port is the
+# state root's own `serve-port` record first (round 3 of the install-rewrite review, 2026-09-19): the kernel writes
+# the port it serves on beside its token, and it is the authoritative answer for a caller that has the state root and
+# not the shell's variables, which is exactly the kernel's detached update child, whose environment the kernel scrubs
+# of ROMP_KERNEL_PORT (the same value as the unit's line, which `romp-service rewrite` compares and would refuse over
+# a service.env override), so on a renumbered install every self-update's closing link named 29855, a port nothing
+# served, where before the scrub it named the real one. Then the environment's ROMP_KERNEL_PORT, for a shell whose
+# kernel has not written the record yet, then the default.
+_state_dir="${ROMP_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/romp}"
+_dashboard_port() {
+    local p; p="$(head -n1 "$_state_dir/serve-port" 2>/dev/null | tr -d '[:space:]')"
+    [[ "$p" =~ ^[0-9]+$ ]] || p="${ROMP_KERNEL_PORT:-}"
+    [[ "$p" =~ ^[0-9]+$ ]] || p=29855
+    printf '%s' "$p"
+}
+_kport="$(_dashboard_port)"
+
 # Auto-start: install the login service so the kernel supervisor (romp-manager) is
 # always up — you never run `romp up`; open the browser and you can even start
 # sessions FROM it. launchd on macOS, systemd --user on Linux. Opt out with
@@ -355,12 +372,72 @@ if [[ -z "${ROMP_NO_SERVICE:-}" ]]; then
         # Don't tear down a HEALTHY manager just to ship a webview dist/VSIX change. `romp-service
         # install` boots the running romp-manager OUT (SIGTERM, drains every kernel) then re-bootstraps;
         # a bootstrap that loses the drain-race exits 1 and leaves the dashboard dead on :29855. A routine
-        # webview deploy needs NO manager restart (the kernel serves the rebuilt dist live), so skip the
-        # whole bootout when the manager already reports `running`. Only (re)install when it is NOT
+        # webview deploy needs NO manager restart (the kernel serves the rebuilt dist live), so the
+        # bootout is skipped when the manager already reports `running`. Only (re)install when it is NOT
         # running — and then FAIL LOUDLY on a non-zero exit rather than `|| echo`-swallowing it, so a
         # webview deploy can never silently leave the manager unloaded (the user's rescue_me, 2026-07-21).
+        # Under a running manager the unit is still REWRITTEN (2026-09-18, the box admin's hazard review of
+        # the pull-in, 2026-09-16): skipping the whole step, as this did until then, meant a unit change a
+        # release carried (the MALLOC_ARENA_MAX=2 line the memory fix needs) never reached a box that
+        # installed while its manager ran, and the administrator added a drop-in by hand. `romp-service
+        # rewrite` writes the unit (the plist on macOS), reloads systemd on Linux, and restarts nothing: a
+        # unit on disk is inert until the service manager reads it, and the running manager keeps the
+        # definition it started under until its next restart, which the one line it prints says, with the
+        # command. Never a restart from here: that is the user's call, on their own schedule. A failed
+        # rewrite fails the run, as a failed install does: the manager is up, but the unit on disk or the
+        # loaded definition is not this release's, and that is the silent state this step exists to end.
+        # The rewrite bakes nothing from this run's environment (round 1 of the review, 2026-09-18): this
+        # runs from the kernel's detached update child and from sessions' shells, so the unit keeps its own
+        # ExecStart, ROMP_DIR, PATH and instance lines, and a compared value here that differs from the
+        # unit's (an instance variable, the service.env path when this environment sets it; ExecStart and
+        # ROMP_DIR against the clone; PATH is kept and never compared, since every shell carries one) is
+        # refused with its own exit code, 5 (round 2 of the review, 2026-09-18), the lines above naming
+        # both values and the way through for the class it is: a value this environment carries is fixed
+        # by a shell without it, another clone by running from the installed one. romp-service says which,
+        # so nothing is repeated or guessed here; the one retry line this printed for every failure sent
+        # the refusal back to the command that had just refused it. Exit 1 is a reload that failed, which
+        # a retry from the same shell can fix, so that arm keeps its retry line. The same code comes back
+        # from a plist the rewrite cannot read (re-saved by another tool, no plutil to parse it: round 3,
+        # 2026-09-19) and, since the addendum to round 3, from a unit or plist in any form romp-service's
+        # readers cannot read whole (a hand-split plist entry, a continuation line, a specifier, two
+        # assignments on one line), and the same arm handles it: romp-service's lines name the form and
+        # the remedy. The install road below branches on 5 the same way (round 3): the marked update
+        # child's install keeps an installed file's identity too, so that road refuses with the same code,
+        # and that code is every no-write refusal there (round 4, 2026-09-19): the identity, a manager path
+        # systemd refuses as an executable name, a form the reader does not read whole.
+        # Exit 3 under a running manager (round 2): status says `running` (systemd reports the service
+        # active) and `not installed` (no unit at the path romp-service writes), so the loaded unit is
+        # somewhere else (a unit deleted while active, a config home this shell does not name). The
+        # rewrite writes nothing then, since with no file there is no identity to keep and a fresh unit
+        # would bake this caller's environment, and this run does NOT fall through to `install`: under a
+        # running manager that is the bootout the gate exists to prevent, and inside the kernel's update
+        # child it would restart every kernel on an otherwise untouched box. Nor does it fail the deploy:
+        # romp is serving and nothing this run did changed that; the release's unit did not land, which
+        # is said, with the route that installs one (a person's `romp-service install` from the owning
+        # shell and clone, which restarts the manager).
+        # The convention these arms follow (round 2, so the next reader finds a decision): a service step
+        # that FAILED (a failed install, a failed or refused rewrite) ends the run here, before the
+        # closing report and the dashboard link, since capability banners and a tokened link over a
+        # state that means this release's unit did not land would read as success (and the link may be
+        # another clone's manager); a step that changed nothing while romp is serving (this exit 3, the
+        # install road's exit 3 below) goes on to the report. The install road's exit 3 exits non-zero at
+        # the end because the installed service is not the manager serving; this one exits zero because
+        # nothing about the serving manager is in question, only the file this release wanted to refresh.
         if "$_svc" status 2>/dev/null | grep -qx running; then
-            echo "  romp-manager already running — leaving it up (a webview deploy needs no restart)"
+            _svc_rc=0
+            "$_svc" rewrite || _svc_rc=$?
+            case "$_svc_rc" in
+              0) ;;
+              3)
+                echo "install.sh: romp-manager is running, but no login service unit is at the path romp-service writes (its line above), so this release's unit was not written and nothing was changed. romp is serving, and this run goes on. To install the unit, run  $_svc install  from the shell and clone that should own the service; that restarts the manager." >&2 ;;
+              5)
+                echo "install.sh: romp-service rewrite refused (the reason is printed above): romp-manager is still running on the definition it started under, and the login service on disk was not rewritten." >&2
+                exit 1 ;;
+              *)
+                echo "install.sh: romp-service rewrite FAILED (the line above says why): romp-manager is still running on the definition it started under, but the login service on disk may not be this release's." >&2
+                echo "  Retry by hand:  $_svc rewrite" >&2
+                exit 1 ;;
+            esac
         else
             echo "  Installing the romp login service (romp-manager)..."
             _svc_rc=0
@@ -372,8 +449,25 @@ if [[ -z "${ROMP_NO_SERVICE:-}" ]]; then
                 # fix: it used to exit here, before both) and exits non-zero at the end: the service is not the one running.
                 echo "install.sh: the login service is installed, but a manager already serving on the control port holds it (the line above), most likely a hand-run romp up outside the service. It retries once a minute and takes over when that manager stops; to hand over now, stop it (Ctrl+C in its terminal, or romp down then romp up) and re-run this install to verify." >&2
                 _svc_held=1
+            elif [[ "$_svc_rc" -eq 5 ]]; then
+                # The identity refusal on THIS road (round 3 of the review, 2026-09-19): the kernel's marked update child
+                # reaches `romp-service install` when the manager is not running under the service, and with a unit or
+                # plist on disk it keeps the file's identity as the rewrite does, refusing a differing value or another
+                # clone with the same code, nothing written or loaded. The arm above folded that 5 into the failure class:
+                # a false end state (the dashboard is not dead; whatever manager is serving keeps serving, since nothing
+                # was attempted) and the one retry line, which named the command whose unmarked run re-bakes the unit
+                # from this shell, the move the refusal had just prevented. romp-service's own lines above name both
+                # values and the deliberate route (a person's install from the shell and clone that should own the
+                # service); nothing is repeated or guessed here, and the run ends before the closing report and the
+                # tokened link, as the rewrite road's refusal does (the convention above). Exit 5 on this road is
+                # every refusal that writes nothing, not the identity alone (round 4 of the review, 2026-09-19): a
+                # manager path systemd refuses as an executable name, and under the marked child a form the reader
+                # does not read whole, come back as 5 too, so this arm is worded as the rewrite road's is, pointing
+                # at romp-service's reason, and claims nothing about which values were named.
+                echo "install.sh: romp-service install refused (the reason is printed above): nothing was written or loaded, the service on disk is untouched, and whatever manager is serving keeps serving; this release's unit did not land." >&2
+                exit 1
             elif [[ "$_svc_rc" -ne 0 ]]; then
-                echo "install.sh: romp-service install FAILED — romp-manager is NOT running; the dashboard will be dead on :29855." >&2
+                echo "install.sh: romp-service install FAILED: romp-manager is NOT running; the dashboard will be dead on :$_kport." >&2
                 echo "  Retry by hand:  $_svc install" >&2
                 exit 1
             fi
@@ -401,16 +495,23 @@ echo "  Override:  export ROMPHOME=\"/path/you/prefer\""
 # persists (bounded poll on the mint event's artifact; ROMP_INSTALL_TOKEN_TRIES
 # is the test seam) — and when it isn't there yet, say how to get the link
 # instead of printing one that would bounce to the login page.
-_state_dir="${ROMP_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/romp}"
-_kport="${ROMP_KERNEL_PORT:-29855}"
-_tok="$(cat "$_state_dir/serve-token" 2>/dev/null || true)"
-if [[ -z "$_tok" && -z "${ROMP_NO_SERVICE:-}" ]]; then
-    for _ in $(seq 1 "${ROMP_INSTALL_TOKEN_TRIES:-40}"); do
-        sleep 0.25
-        _tok="$(cat "$_state_dir/serve-token" 2>/dev/null || true)"
-        [[ -n "$_tok" ]] && break
-    done
+# Under ROMP_NO_SERVICE the token is not read at all (2026-09-18, the box admin's hazard review of the
+# pull-in, 2026-09-16): this install started nothing, so a token file here is another manager's (a
+# previous install's, a hand-run romp up's), and printing its URL put a credential into the terminal's
+# scrollback, and into the log of every scripted install, for a dashboard this run is not serving. That
+# road prints the bare URL and says where the token comes from.
+_tok=""
+if [[ -z "${ROMP_NO_SERVICE:-}" ]]; then
+    _tok="$(cat "$_state_dir/serve-token" 2>/dev/null || true)"
+    if [[ -z "$_tok" ]]; then
+        for _ in $(seq 1 "${ROMP_INSTALL_TOKEN_TRIES:-40}"); do
+            sleep 0.25
+            _tok="$(cat "$_state_dir/serve-token" 2>/dev/null || true)"
+            [[ -n "$_tok" ]] && break
+        done
+    fi
 fi
+_kport="$(_dashboard_port)"    # read again here: a fresh install's kernel writes its serve-port record beside the token it just minted
 # What is NOT working, said once, right before the link — the only place the user reliably
 # looks. Each line names the capability in the user's terms, what it costs them, and the exact
 # command that fixes it; romp is usable in every one of these states, which is why none of them
@@ -447,7 +548,13 @@ if [[ -n "$ROMP_EXT_FAILED$ROMP_CLAUDE_MISSING" ]]; then
 fi
 
 echo
-if [[ -n "$_tok" ]]; then
+if [[ -n "${ROMP_NO_SERVICE:-}" ]]; then
+    # No token on this road (the comment above the token read): the bare URL, and where the token comes from.
+    echo "  Auto-start was skipped (ROMP_NO_SERVICE): this install started nothing. Start romp with:  romp up"
+    echo "  Once it runs, the dashboard is at:  http://127.0.0.1:$_kport/"
+    echo "  The first visit asks for the access token; \`romp url\` prints the link with it (the kernel keeps"
+    echo "  the token in $_state_dir/serve-token)."
+elif [[ -n "$_tok" ]]; then
     # Lead with the command, not the URL. `romp` opens the dashboard AND prints the link, so it
     # is the shorter thing to remember and the thing the docs already tell you to type (the user
     # 2026-07-27). The link stays as the fallback, for two cases the command cannot cover: THIS
@@ -464,9 +571,6 @@ if [[ -n "$_tok" ]]; then
     echo "      http://127.0.0.1:$_kport/?token=$_tok"
     echo
     echo "  Print the link again anytime:  romp url"
-elif [[ -n "${ROMP_NO_SERVICE:-}" ]]; then
-    echo "  Auto-start was skipped (ROMP_NO_SERVICE). Start romp with:  romp up"
-    echo "  then open the dashboard link:  romp url"
 else
     echo "  romp is still starting; print the dashboard link in a moment:  romp url"
 fi

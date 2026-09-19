@@ -652,13 +652,61 @@ out({ atOnce: atOnce, after: state() });""")
         a = s["atOnce"]
         self.assertEqual(len(a["posts"]), 1, "the confirm posts")
         p = a["posts"][0]
-        self.assertEqual((p["method"], p["body"], p["type"]), ("POST", {"confirmed": True}, "application/json"))
+        self.assertEqual((p["method"], p["body"], p["type"]),
+                         ("POST", {"confirmed": True, "offer": {"kind": "release", "id": "v0.2.0"}}, "application/json"),
+                         "the confirmation, and the offer this banner showed (round 3 of the install-rewrite review, 2026-09-19)")
         self.assertTrue(a["goDisabled"], "acknowledged at once: the Update button comes back disabled under the wait")
         self.assertFalse(a["armed"], "the armed state ends with the click that used it")
         self.assertEqual((a["labelHidden"], a["confirmHidden"], a["cancelHidden"]), (True, True, True))
         self.assertTrue(a["msg"].startswith("Updating romp"))
         self.assertEqual(len(s["after"]["posts"]), 1, "once")
         self.assertEqual(s["after"]["reloads"], 0)
+
+    def test_the_confirm_posts_the_offer_the_banner_showed_for_either_kind_and_either_road(self):
+        # round 3 of the install-rewrite review (2026-09-19, kernel-1): the route does what the banner said, so the
+        # post names the offer. A release from the page load ('release', its tag); main drift from the page load
+        # ('main', its sha, for the pull form and the restart form alike); and the PUSH road, the shell's relay into
+        # __rompUpdateOffer for the kernel's ask-mode push, which carries no drift field and so is a release: on a
+        # non-primary kernel that push over a standing drift is the shape whose click ran the drift converge.
+        s = run_banner("""
+GO.onclick(); await tick(); await tick(); CF.onclick(); await tick(); out(state());""",
+                       check={"tag": "", "drift": "pull", "driftSha": "abcdef01"})
+        self.assertEqual([p["body"] for p in s["posts"]], [{"confirmed": True, "offer": {"kind": "main", "id": "abcdef01"}}], "the pull drift")
+        s = run_banner("""
+GO.onclick(); await tick(); await tick(); CF.onclick(); await tick(); out(state());""",
+                       check={"tag": "", "drift": "restart", "driftSha": "abcdef02"})
+        self.assertEqual([p["body"] for p in s["posts"]], [{"confirmed": True, "offer": {"kind": "main", "id": "abcdef02"}}], "the restart drift")
+        s = run_banner("""
+window.__rompUpdateOffer('v0.1.0', 'v0.3.0', '', 'b1', '', undefined); var pushed = state();
+GO.onclick(); await tick(); await tick(); CF.onclick(); await tick(); out({ pushed: pushed, after: state() });""",
+                       check={"tag": "", "drift": "pull", "driftSha": "abcdef01"})
+        self.assertEqual(s["pushed"]["msg"], "romp v0.3.0 is available \u2014 you are on v0.1.0.",
+                         "the ask-mode push re-renders the release text over the drift the load had offered")
+        self.assertEqual([p["body"] for p in s["after"]["posts"]], [{"confirmed": True, "offer": {"kind": "release", "id": "v0.3.0"}}],
+                         "and the click carries THAT offer, so the kernel cannot converge the drift for it")
+
+    def test_a_refused_stale_offer_re_reads_the_current_offer_and_the_next_confirm_posts_it(self):
+        # round 3 (2026-09-19): the route refuses an offer it no longer makes, naming both, and this window drops the
+        # stale one, keeps the reason in front of the current offer's text and re-reads /update-check, so the next
+        # confirm posts what the kernel offers now; a stale Update left standing would have been refused again
+        s = run_banner("""
+UPDATE_OK = false; UPDATE_TEXT = "the banner offered romp v0.2.0, but this kernel now offers romp v0.3.0; nothing was started. The banner re-reads the offer.";
+GO.onclick(); await tick(); await tick(); CHECK.tag = "v0.3.0"; CF.onclick(); await tick(); await tick(); await tick(); var reoffered = state();
+UPDATE_OK = true; GO.onclick(); await tick(); await tick(); CF.onclick(); await tick(); out({ reoffered: reoffered, after: state() });""")
+        r = s["reoffered"]
+        self.assertEqual(r["checks"], 3, "the load, the arm's re-read, and the re-offer's read")
+        self.assertTrue(r["msg"].startswith("the banner offered romp v0.2.0, but this kernel now offers romp v0.3.0"), r["msg"])
+        self.assertTrue(r["msg"].endswith("romp v0.3.0 is available \u2014 you are on v0.1.0."), "the current offer stands beside the reason: " + r["msg"])
+        self.assertEqual((r["armed"], r["goHidden"], r["goDisabled"], r["notNowHidden"], r["shown"]), (False, False, False, False, True))
+        self.assertEqual([p["body"]["offer"] for p in s["after"]["posts"]],
+                         [{"kind": "release", "id": "v0.2.0"}, {"kind": "release", "id": "v0.3.0"}],
+                         "the second confirm posts the re-read offer, never the stale one")
+        # with nothing offered any more the reason shows alone, with Not now and no Update
+        s = run_banner("""
+UPDATE_OK = false; UPDATE_TEXT = "the banner offered romp v0.2.0, but this kernel now offers main at abcdef01; nothing was started. The banner re-reads the offer.";
+GO.onclick(); await tick(); await tick(); CHECK.tag = ""; CF.onclick(); await tick(); await tick(); await tick(); out(state());""")
+        self.assertTrue(s["msg"].startswith("the banner offered romp v0.2.0"), s["msg"])
+        self.assertEqual((s["goHidden"], s["notNowHidden"], s["shown"], s["armed"]), (True, False, True, False))
 
     def test_a_second_activation_of_the_update_button_never_posts(self):
         # the confirm is a different control, beside the label that took Update's place: whatever
@@ -1017,7 +1065,9 @@ class Wiring(unittest.TestCase):
         order = [html.index(i) for i in ("rup-msg", "rupd-dismiss", "rupd-cancel", "rupd-go", "rupd-armed", "rupd-confirm")]
         self.assertEqual(order, sorted(order), "the plain row reads Not now, Update; the armed row Cancel, label, Restart, in one flow")
         js = km._UPD_JS
-        self.assertIn("body:JSON.stringify({confirmed:true})", js)
+        self.assertIn("body:JSON.stringify({confirmed:true,offer:{kind:curKind,id:curTag}})", js,
+                      "the confirmation and the offer this window shows (round 3 of the install-rewrite review, 2026-09-19)")
+        self.assertIn("curTag=tag;curKind=drift?'main':'release';", js, "the offer's kind is recorded where its identifier is")
         self.assertIn("go.onclick=function(){if(!armed)arm();};", js, "Update only ever arms")
         self.assertIn("cf.onclick=function(e){if(!armed)return;if(e&&e.detail>1)return;", js, "the confirm posts, the click-count guard kept")
         self.assertIn("function noRepeat(e){if(e&&e.repeat&&(e.key==='Enter'||e.key===' '))e.preventDefault();}", js)

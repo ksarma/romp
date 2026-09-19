@@ -87,11 +87,24 @@ test('specEnv carries the whole isolation story, and only what the spec sets', (
   assert.equal(full.CLAUDE_CONFIG_DIR, '/tmp/ca');
   assert.equal(full.ROMP_MANAGER_PID, '42');
   assert.equal(full.PATH, '/usr/bin', 'base env rides through');
+  // round 1 of the install-rewrite review (2026-09-18): every kernel learns its registry id, so the primary alone
+  // runs the release self-update (kernel/kernel.py _is_primary_kernel); an aux kernel's install.sh would otherwise
+  // rewrite the PRIMARY's login unit from its own profile
+  assert.equal(full.ROMP_KERNEL_ID, 'alice', 'an aux kernel is told its id');
   const bare = specEnv({ id: 'main', port: MAIN }, base, ids);
+  assert.equal(bare.ROMP_KERNEL_ID, 'main', 'the primary is told it is main');
   for (const k of ['ROMP_POSTAL_PORT', 'ROMP_STATE_DIR', 'CLAUDE_CONFIG_DIR']) {
     assert.ok(!(k in bare), k + ' must not leak into an unscoped kernel (main keeps the process defaults)');
   }
   assert.ok(!('ROMP_STATE_DIR' in base), 'the base object is never mutated');
+});
+
+test('specEnv overwrites a stale inherited ROMP_KERNEL_ID from the base env', () => {
+  // the manager's own env carries no id of its own, but a manager started by hand from inside a kernel's
+  // session shell inherits that kernel's; the spec's id has to win, or an aux kernel would read as main
+  const base = { PATH: '/usr/bin', ROMP_KERNEL_ID: 'main' };
+  const env = specEnv({ id: 'k30001', port: 30001 }, base, { managerPid: 42, controlPort: CTRL });
+  assert.equal(env.ROMP_KERNEL_ID, 'k30001');
 });
 
 test('specEnv overwrites a stale inherited ROMP_KERNEL_PORT from the base env', () => {

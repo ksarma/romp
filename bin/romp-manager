@@ -163,6 +163,11 @@ function specEnv(spec, base, ids) {
     ROMP_MANAGER_PID: String(ids.managerPid),  // → kernel's parent-death watchdog
     ROMP_MANAGER_PORT: String(ids.controlPort),
     ROMP_SHUTDOWN_GRACE_MS: String(SHUTDOWN_GRACE_MS),   // → the kernel's exit budgets (shares of the grace)
+    // The kernel's registry id (round 1 of the install-rewrite review, 2026-09-18): 'main' for the primary, a
+    // kernels.json profile's id, 'k<port>' for a /ensure kernel. The kernel gates the release self-update on it
+    // (kernel/kernel.py _is_primary_kernel): the update's install.sh rewrites the login service's unit, and there
+    // is one unit, the primary's. Always overwritten, like the ports: the base env may carry another kernel's.
+    ROMP_KERNEL_ID: String(spec.id),
   });
   if (spec.postalPort) env.ROMP_POSTAL_PORT = String(spec.postalPort);
   if (spec.stateDir) env.ROMP_STATE_DIR = spec.stateDir;
@@ -427,6 +432,12 @@ function ensureKernel(port) {
   const id = idForPort(port);
   const existing = kernels.get(id);
   if (existing) return { id, port: existing.spec.port, pid: existing.child.pid, spawned: false };
+  // The third door that brings a kernel up under the RUNNING manager, consulted like /restart and the crash respawn
+  // (round 2 of the install-rewrite review, 2026-09-18): after a deploy that restarted nothing (install.sh by hand,
+  // which by design restarts no manager) a kernel spawned here by the stale manager inherits its start-time
+  // environment, and reads as the primary when that environment predates ROMP_KERNEL_ID. Supervised, the manager
+  // exits for its own respawn instead and the front end's next /ensure meets the new manager.
+  if (staleManagerYields(`spawning kernel '${id}' for /ensure`)) return { id, port: Number(port), pid: null, spawned: false, managerRestart: true };
   spawnKernel({ id, port: Number(port) });
   const rec = kernels.get(id);
   return { id, port: Number(port), pid: rec ? rec.child.pid : null, spawned: true };
