@@ -390,6 +390,17 @@ try {
       const w = window; w.__labDocLoad = null;
       const f = document.getElementById("f-" + p);
       f.addEventListener("load", () => { let url = null; try { url = f.contentDocument ? f.contentDocument.URL : null; } catch (e) { url = "ERR"; } if (w.__labDocLoad === null && url && url !== "about:blank") w.__labDocLoad = { t: Date.now(), url }; }, { once: false });
+      // the loading state's RETIREMENT, stamped by the page: a MutationObserver over the body's and the pane div's class lists records the
+      // first moment the loading state it saw painted (body.pane-loading, or the pane div's `loading`) is gone. Armed here so a re-arm before
+      // an abort leg's re-tap resets it: the failure's own retirement of the first promotion's loader is not the loaded document's
+      w.__labLoadingRetired = null;
+      if (w.__labLoadingObs) { try { w.__labLoadingObs.disconnect(); } catch (e) { /* an observer of an earlier arm */ } }
+      const d = f.parentElement; let seen = false;
+      const read = () => { const on = document.body.classList.contains("pane-loading") || !!(d && d.classList.contains("loading")); if (on) seen = true; else if (seen && w.__labLoadingRetired === null) w.__labLoadingRetired = { t: Date.now() }; };
+      const obs = new MutationObserver(read);
+      obs.observe(document.body, { attributes: true, attributeFilter: ["class"] });
+      if (d) obs.observe(d, { attributes: true, attributeFilter: ["class"] });
+      w.__labLoadingObs = obs;
     }, cfg.tapPane);
     await armDocLoad();
     out.t.tap = now();
@@ -468,12 +479,15 @@ try {
     const docLoad = await page.evaluate(() => window.__labDocLoad || null);
     out.docLoadMs = docLoad ? docLoad.t - (out.t.retap || out.t.tap) : -1;   // the document's own load event, from the tap that loaded it
     out.docLoadUrl = docLoad ? docLoad.url : null;
+    const retired = await page.evaluate(() => window.__labLoadingRetired || null);
+    out.loadingRetiredMs = retired ? retired.t - (out.t.retap || out.t.tap) : -1;   // the page's stamp of the loading state's retirement (armDocLoad), from the same tap: comparable to docLoadMs to the millisecond
     // the pane PAINTED (tests-1): its own loader retired (#pane-spin.gone; the Files page carries none, null) and its app element has
     // children (fleet: #fleet-list, the sessions; waiting: #waiting-list, the rows or the empty line; files: #files-empty, the recent rows'
-    // title), polled to a deadline from the tap that loaded it
+    // title), polled to a deadline from the tap that loaded it. A pane with its document at boot (the boot-on-Feed legs' chat tap) is shown,
+    // not loaded, by the tap: no element to poll for and nothing to wait 15 s on (painted stays null; the test reads it for a lazy tap alone)
     const paintEl = { fleet: "fleet-list", waiting: "waiting-list", files: "files-empty", timeline: "host" }[cfg.tapPane] || null;
     const paneFrame = () => page.frames().find((fr) => { try { return new URL(fr.url()).pathname === "/" + cfg.tapPane; } catch (e) { return false; } });
-    const paintDeadline = now() + 15000;
+    const paintDeadline = paintEl && !(out.srcAtBoot || {})[cfg.tapPane] ? now() + 15000 : 0;
     let painted = null;
     while (now() < paintDeadline) {
       const fr = paneFrame();

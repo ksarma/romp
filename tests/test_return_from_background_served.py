@@ -621,17 +621,30 @@ class ReturnFromBackground(unittest.TestCase):
             self.assertNotIn(tap + "-pane", la.get("panes") or [], where + "its document loaded, so its .pane no longer carries the loading class: %r" % (la,))
             self.assertFalse(la.get("body"), where + "…and the shell's loader is down: %r" % (la,))
             # THE FIRST TAP'S WITNESS (review round 3, tests-1): the headline road in a real engine. Before this every browser leg that tapped a
-            # lazy pane aborted its first fetch, so a lazy pane was witnessed only as a second promotion after a failure. Now every tap leg reads
-            # the pane DOCUMENT's own load event (a listener armed before the tap that loaded it), the loader's retirement AT that load (never
-            # the 30 s backstop), and the pane PAINTED (its own loader retired, its app element with children); the no-abort legs (Waiting and
-            # Files in Chromium, the Outline in WebKit) witness the FIRST tap with no route in the way, the abort legs the re-tap's load
-            self.assertGreaterEqual(r.get("docLoadMs", -1), 0, where + "the pane's document fired its own load event after the tap that loaded it: %r" % (r.get("docLoadMs"),))
-            self.assertTrue(str(r.get("docLoadUrl") or "").endswith("/" + tap), where + "…for the pane's page: %r" % (r.get("docLoadUrl"),))
-            self.assertLessEqual(r.get("loadingClearedMs"), r.get("docLoadMs") + 250, where + "the loading state retired at the document's load (within a read's slack), not later: cleared %r ms, load %r ms" % (r.get("loadingClearedMs"), r.get("docLoadMs")))
-            pt = r.get("painted") or {}
-            self.assertGreaterEqual(pt.get("ms", -1), 0, where + "the pane painted within the wait: %r" % (pt,))
-            self.assertGreater(pt.get("count", -1), 0, where + "…its app element (%s) has children: %r" % (pt.get("el"), pt))
-            self.assertNotEqual(pt.get("spinGone"), False, where + "…and its own loader retired (or the page carries none, the Files pane): %r" % (pt,))
+            # lazy pane aborted its first fetch, so a lazy pane was witnessed only as a second promotion after a failure. Now every leg that taps
+            # a pane with NO document at boot (a lazy pane) reads the pane DOCUMENT's own load event (a listener armed before the tap that
+            # loaded it), the loading state's retirement AT that load (the page's own stamp, never the 30 s backstop), and the pane PAINTED (its
+            # own loader retired, its app element with children); the no-abort legs (Waiting and Files in Chromium, the Outline in WebKit)
+            # witness the FIRST tap with no route in the way, the abort legs the re-tap's load. An eager pane's tap is a SHOW, not a load (the
+            # boot-on-Feed legs tap the chat, whose document loaded at boot): no load event follows it and there is nothing to stamp, so the
+            # block is gated on the tapped pane's boot state (the touched-tests verifier's finding, review round 3: ungated, it red the three
+            # boot-on-Feed legs on every engine)
+            if tap not in _eager(shell):
+                self.assertGreaterEqual(r.get("docLoadMs", -1), 0, where + "the pane's document fired its own load event after the tap that loaded it: %r" % (r.get("docLoadMs"),))
+                self.assertTrue(str(r.get("docLoadUrl") or "").endswith("/" + tap), where + "…for the pane's page: %r" % (r.get("docLoadUrl"),))
+                # the retirement is the PAGE's stamp: a MutationObserver over the body's and the pane div's class lists, armed with the load
+                # listener before the tap, stamps the first moment the loading state it saw painted is gone. Both stamps are the page's, taken
+                # in the load event's own dispatch (the driver's listener, then the shell's, then the observer's microtask), so the gap between
+                # them is that dispatch and not the driver's poll cadence, which set the old bound's slack (a poll that starts after the
+                # socket-up poll can lag a fast load by more than a read on a loaded box)
+                lr, dl = r.get("loadingRetiredMs", -1), r.get("docLoadMs")
+                self.assertGreaterEqual(lr, 0, where + "the page's observer saw the loading state painted at the tap and then retired: %r" % (lr,))
+                self.assertGreaterEqual(lr, dl, where + "the loading state retired at the document's load, not before it: retired %r ms, load %r ms" % (lr, dl))
+                self.assertLessEqual(lr - dl, 250, where + "…in the load event's own dispatch, not on a later timer or event: retired %r ms, load %r ms" % (lr, dl))
+                pt = r.get("painted") or {}
+                self.assertGreaterEqual(pt.get("ms", -1), 0, where + "the pane painted within the wait: %r" % (pt,))
+                self.assertGreater(pt.get("count", -1), 0, where + "…its app element (%s) has children: %r" % (pt.get("el"), pt))
+                self.assertNotEqual(pt.get("spinGone"), False, where + "…and its own loader retired (or the page carries none, the Files pane): %r" % (pt,))
             if shell == "phone" and tap in LAZY_PHONE:
                 # ui-2 (review round 1): the shell's loader PAINTS, read by an observer armed before the tap the moment body.pane-loading
                 # was added: display flex, a box of some height, above the tab bar, with the romp loader inside it
