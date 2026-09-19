@@ -3049,7 +3049,8 @@ CLIENT_DIAG_KEYS = {
                             "code", "reason", "wasClean", "sinceOpenMs", "everConnected", "bundleReady",        # wsclose
                             "attempts", "firstFailMs",                                                          # wsconnfail
                             "wasDiscarded", "nav",                                                              # page-load
-                            "awaitLink", "linkUpMs")),                                                          # D3 (2026-09-18): return awaits the shell's link; return-fresh's linkUpMs is the path's own recovery
+                            "awaitLink", "linkUpMs",                                                            # D3 (2026-09-18): return awaits the shell's link; return-fresh's linkUpMs is the path's own recovery
+                            "parked")),                                                                         # D2 (2026-09-18): a return that parked its redial (the pane off screen on the phone layout) and the return-fresh that answers its tap; a bool, approved field by field
     "reload-core": frozenset(("reason", "detail", "hold", "ageMs")),
     "shell": frozenset(("sidAttached", "host", "why", "tabs", "status", "via", "boot", "hasSid", "hasCard", "hasPid", "controlled", "dup",
                         "sub", "rows", "err", "getNotifications", "displayed", "vanished", "superseded", "sid8", "ageS", "shape", "kind", "sw",
@@ -53323,6 +53324,7 @@ def _keepalive_all(now=None):
                     why = "no pong for %ds (last heard %ds ago)" % (int(now - pa), int(now - c.get("lastIn", 0)))
             if why:
                 _drop_dead_ws_client(c, why)
+                _retire_reveal_copy_at_reap(c)   # a reveal copy waiting on this socket's pong stops waiting (review round 2, 2026-09-18)
                 continue
             # not judged this beat — but still BEATEN: the ka must keep flowing to a client the kernel is
             # busy serving, or the shim's own silence watchdog closes a connection that is merely waiting
@@ -53366,8 +53368,54 @@ def _send_to_view(app, msg, wid):
     s = json.dumps(msg)
     with _clients_lock:
         targets = [c for c in _clients if c["app"] == app and (c.get("wid") or "") == wid and _client_ready(c)]
-    for c in targets:
-        _client_send(c, s)
+    # the clients that took the frame (review round 1, 2026-09-18), on this wid-targeted road only: _send_focus_to_view
+    # parks a focus nobody took, and keeps a copy when a taker is unproven. The empty-wid road above returns _send_to_app's
+    # None, not a list: a broadcast names no takers, and an empty list there would read as "nobody took it" and park a
+    # focus every chat pane already has (review round 4, 2026-09-18), so a caller that reads the list handles an empty wid
+    # itself, as _send_focus_to_view does; every other caller ignores the value
+    return [c for c in targets if _client_send(c, s)]
+
+
+def _send_focus_to_view(focus_msg, wid):
+    """The chat half of a reveal, on _reveal_request's road (review round 1, 2026-09-18, on the phone's parked
+    panes). A wid-targeted focus went through _send_to_view alone, which sends to the READY same-wid chat
+    clients and otherwise to nobody, parking nothing. On the phone that dropped every session tap made from
+    the feed, Sessions, Outline or the Log after a return on a non-chat tab: the chat pane is parked (no
+    socket) until the Chat tab is shown, or the kernel still holds the previous socket, dead without a close
+    for up to WS_DEAD_S. The shell reveal still went out, so the Chat tab opened, but on the pane's stored
+    session instead of the tapped one, and a dead session's revive prompt never appeared.
+
+    So the focus parks the way a push tap does: sent through _send_to_view to every ready same-wid chat
+    client as before (it returns the clients that took the frame); a copy kept in the window's _PENDING_REVEAL
+    entry, tagged with the takers, while EVERY taker is UNPROVEN (pingAt set: a ping on the wire nobody
+    answered; the pong retires the copy, _reveal_proven, and a socket that never pongs is redialed, whose first
+    tab strip consumes it); parked alone only when no ready target took it. Not "parked when no ready client
+    exists": the phone's usual shape is the dead socket still held, a ready target that swallows its frame.
+    Every taker, not any (review round 2, 2026-09-18, a deliberate departure from round 1's wording, which
+    mirrored _reveal_request): a proven live pane beside an unproven one displayed the focus, and a copy kept
+    for the unproven one outlived it as a stale replay at the pane's next redial, hours later, as a session
+    switch or a revive prompt the user never asked for. _reveal_request's own unproven road keeps the any
+    shape for push taps, pre-existing and not changed here. The
+    redial's first strip and the ready handler consume the park (_consume_pending_reveal), which re-mints the
+    frame from the sid alone: the focus that lands names the session and its liveness (a dead session gets
+    confirmRevive, as _reveal_or_confirm would have sent), but the original message's `anchor`, `cite` and
+    `anchorEventT` are lost, so a parked jump into a transcript lands on the session's tail rather than the
+    turn. Widening the slot to carry the message is a follow-on. An empty wid keeps _send_to_view's legacy
+    broadcast; a focus with no id has nothing to park. One journal line when the focus parks or keeps a copy,
+    none for a plain delivery: a click on a healthy dashboard is not an event the [reveal] journal needs."""
+    sid = str((focus_msg or {}).get("id") or "")
+    if not wid or not sid:
+        _send_to_view("chat", focus_msg, wid)
+        return
+    taken = _send_to_view("chat", focus_msg, wid) or []
+    unproven = [c for c in taken if c.get("pingAt") is not None]   # read after the send, as _reveal_request reads it
+    if not taken:
+        _PENDING_REVEAL[str(wid)] = {"sid": sid, "wid": str(wid)}
+        print("[reveal] focus sid=%s wid=%s: parked" % (sid[:8], str(wid)[:8]), file=sys.stderr)
+    elif unproven and len(unproven) == len(taken):
+        _PENDING_REVEAL[str(wid)] = {"sid": sid, "wid": str(wid), "sent": unproven}
+        print("[reveal] focus sid=%s wid=%s: delivered, copy parked (target unproven)" % (sid[:8], str(wid)[:8]),
+              file=sys.stderr)
 
 
 def _reveal_chat_for(client, focus_msg):
@@ -53394,7 +53442,7 @@ def _reveal_chat_for(client, focus_msg):
     # views dirty. The picker's explicit "Hidden — reveal" row keeps the real unhide (a deliberate
     # choice from the hidden list, via setTimelineViews), and the dead-session confirmRevive path
     # below this call is unchanged. tests/test_timeline_views.py pins the no-mutation contract.
-    _send_to_view("chat", focus_msg, wid)
+    _send_focus_to_view(focus_msg, wid)   # sends, or parks for the pane's redial or ready (the helper above)
     _send_to_view("shell", {"type": "reveal", "pane": "chat"}, wid)
 
 
@@ -62724,11 +62772,28 @@ def _sw_js():
 # then delivered to it at once with a copy kept here). Otherwise it parks here and is delivered on the exact event it was waiting
 # for: that window's chat pane saying "ready" (matched by wid — the per-dashboard id the shell
 # mints and every same-window pane shares — so a second dashboard's reload cannot steal it). One
-# slot, latest wins: two taps before a boot completes should land on the newer notification.
+# slot per window, latest wins within it: two taps before a boot completes should land on the newer notification.
 # `sent` (2026-09-06): the clients a LIVE tap was already handed to while unproven — see
 # _reveal_request; a pong from one of them retires the slot, a redial's first tab strip consumes it (a
 # redialed socket carries no ready, so _resolve_reconnect stamps it and its strip sender consumes).
-_PENDING_REVEAL = [None]                     # {"sid": ..., "wid": ...[, "sent": [clients]]} or None
+# Keyed by wid (review round 2, 2026-09-18): the slot was ONE for every window, so a session click in one window
+# (the chat focus road, _send_focus_to_view, which parks on this road since review round 1) overwrote a push tap
+# parked for another window, and that tap was lost. Each window's park is its own entry now, read and written by
+# _reveal_request, _send_focus_to_view, _reveal_proven and _consume_pending_reveal under the client's wid; the
+# empty-wid entry keeps the legacy match (a park with no wid lands on the first chat pane to arrive, whatever its
+# wid). A window's entry goes with its last client (_forget_pending_reveal_if_last, the way T347 drops the window's
+# active-chat record): before, nothing cleared a park on a disconnect, so a boot reveal whose page died before its
+# chat pane came up sat in the slot until the next tap overwrote it. A copy whose every target the reaper has
+# dropped becomes a plain park at the reap (_retire_reveal_copy_at_reap; review round 3, 2026-09-18): the reap ends
+# the wait on a pong, not the tap, which stands for the window's next chat redial; a target that leaves by a normal
+# close is struck in the handler's finally (_forget_pending_reveal_if_last; review round 4, 2026-09-18), the same
+# downgrade, so no entry names a disconnected client. Two residuals of the keyed slot, named and kept (review round
+# 3): the no-wid entry is bounded only by a consume or another no-wid park, so a wid-less park nobody consumed lands
+# on the next chat pane of ANY window, the legacy match, however much later;
+# and a park for a wid whose page never connected a socket has no end but a consume, since the drop at the last
+# client sees no client leave. A sweep of the park sites was tried in review and dropped live taps (a dead-shell-socket
+# phone park, a storage-blocked page's own park), so neither is closed here.
+_PENDING_REVEAL = {}                         # wid -> {"sid": ..., "wid": ...[, "sent": [clients]]}; "" is the no-wid entry
 # The roads a shell may name in /reveal's `via`, the log line's first word (the ledger block above _push_ledger has
 # the design): the worker's message to a live window ('sw'), the deep link the page opened on or was navigated to
 # ('link' — on Apple the OS's own tap callback for a killed app), the kernel's own clicked row ('ack') and the shown
@@ -62821,9 +62886,9 @@ def _reveal_request(sid, wid, boot=False, via=""):
         except Exception:
             pass
     if not delivered:
-        _PENDING_REVEAL[0] = {"sid": str(sid), "wid": str(wid or "")}
+        _PENDING_REVEAL[str(wid or "")] = {"sid": str(sid), "wid": str(wid or "")}
     elif sent:
-        _PENDING_REVEAL[0] = {"sid": str(sid), "wid": str(wid or ""), "sent": sent}
+        _PENDING_REVEAL[str(wid or "")] = {"sid": str(sid), "wid": str(wid or ""), "sent": sent}
     outcome = ("delivered, copy parked (%s)" % ("booting page" if boot else "target unproven") if sent else "delivered") if delivered else "parked"
     print("[reveal] %s sid=%s wid=%s%s: %s" % (via or "shell", str(sid)[:8], str(wid or "")[:8],
                                              " boot" if boot else "", outcome), file=sys.stderr)
@@ -62833,10 +62898,13 @@ def _reveal_request(sid, wid, boot=False, via=""):
 def _reveal_proven(client):
     """A pong or message from `client`: if the parked reveal was HANDED to it while unproven, the
     socket is alive and the focus frame ahead of this pong has landed — retire the copy."""
-    p = _PENDING_REVEAL[0]
+    key = str(client.get("wid") or "")   # a copy's targets wear its window's wid, so the client's wid names its entry
+    p = _PENDING_REVEAL.get(key)
     if p and any(c is client for c in (p.get("sent") or ())):
-        _PENDING_REVEAL[0] = None
-        print("[reveal] sid=%s: copy retired — its target answered" % str(p["sid"])[:8], file=sys.stderr)
+        _PENDING_REVEAL.pop(key, None)
+        # the line names the window (review round 4, 2026-09-18): the entries are per window, and a retire line without
+        # the wid could not be paired with the park line it ends when two windows' copies wait on one session
+        print("[reveal] sid=%s wid=%s: copy retired — its target answered" % (str(p["sid"])[:8], key[:8]), file=sys.stderr)
 
 
 def _consume_pending_reveal(client, why="the pane's ready"):
@@ -62848,13 +62916,17 @@ def _consume_pending_reveal(client, why="the pane's ready"):
     popped the flag): a redialed socket never carries a ready, so that strip is the event that
     consumes; the strip is sent first, for the same reason the ready push precedes the arm's
     consume. `why` names the event on the journal line, so a park's end says which of the two
-    landed it."""
-    p = _PENDING_REVEAL[0]
-    if not p or client.get("app") != "chat":
+    landed it. The park is the client's own window's entry; a chat pane whose window parked nothing takes the
+    no-wid entry, the legacy match (review round 2, 2026-09-18: one entry per window)."""
+    if client.get("app") != "chat":
         return
-    if p["wid"] and (client.get("wid") or "") != p["wid"]:
+    key = str(client.get("wid") or "")
+    p = _PENDING_REVEAL.get(key)
+    if p is None and key:
+        key, p = "", _PENDING_REVEAL.get("")
+    if not p:
         return
-    _PENDING_REVEAL[0] = None
+    _PENDING_REVEAL.pop(key, None)
     print("[reveal] sid=%s wid=%s: consumed — %s" % (str(p["sid"])[:8], str(p["wid"] or "")[:8], why), file=sys.stderr)
     try:
         m = _reveal_msg(p["sid"])
@@ -62870,6 +62942,91 @@ def _consume_pending_reveal(client, why="the pane's ready"):
         client["send"](json.dumps(m))
     except Exception:
         pass
+
+
+def _forget_pending_reveal_if_last(client):
+    """Drop a window's parked reveal when the client leaving was the last client of that wid (review round 2,
+    2026-09-18), the way _forget_active_chat_if_last drops the window's active-chat record: the entries are keyed
+    by dashboard window id, and nothing cleared one on a disconnect, so a boot reveal whose page died before its
+    chat pane came up sat in the slot until the next tap overwrote it, and a later page minting the same wid
+    through sessionStorage could take a tap it never saw. Called under _clients_lock, after the client left
+    _clients; a window with another pane still connected (the phone's shell and feed while its chat pane is
+    parked) keeps the park for that pane's redial. The no-wid entry names no window and is left to the first
+    chat pane, as before. The rule reads "no client of this wid" as "the window is gone", and that is a residual
+    named in review round 3 (2026-09-18): a live window whose sockets all go dark together between the gesture and
+    the pane's dial (a page fully suspended for that instant), or a reaped socket that was the window's only client,
+    loses its park here although the gesture stands. Stamping the entry or carrying the page instance in it are the
+    shapes a fix would take; neither is this change's.
+
+    Before that test, the client leaving is struck from its window's copy (review round 4, 2026-09-18, kernel-2,
+    settled by execution before the fix): a copy's target that left by a NORMAL close (the peer's close frame, a
+    reload, the twin drop in _register_ws_client) never went through _retire_reveal_copy_at_reap, which only the
+    keepalive's drop calls, so the entry stayed a copy naming a disconnected client dict, and its send queue with it,
+    until the consume or this drop popped the entry, with no journal line at the close. The run showed the tap still
+    landing (the consume never reads the targets, so a copy with a dead target is consumed like a plain park); what
+    changes here is the retained dict and the journal's silence, not where the tap lands. The strike is the reap's
+    downgrade: a copy left with no target becomes a plain park, a copy with another target left keeps waiting on that
+    one, and one line says the wait ended and what the park now stands for; a client that was the window's last gets
+    no such line, since the drop's line follows and tells the whole story. The no-wid entry's targets are struck too
+    (a client wearing no wid can be a target of the no-wid copy through _reveal_request); that entry is still never
+    dropped here. Runs under _clients_lock like the rest of this function, taking no lock of its own. A reaped socket
+    whose handler's finally runs before the beat's retire is struck here first, and the retire then finds it gone and
+    does nothing."""
+    wid = str(client.get("wid") or "")
+    p = _PENDING_REVEAL.get(wid)
+    if not p:
+        return
+    downgraded = False
+    if any(c is client for c in (p.get("sent") or ())):
+        left = [c for c in p["sent"] if c is not client]
+        if left:
+            p["sent"] = left
+        else:
+            p.pop("sent", None)
+            downgraded = True
+    if wid and not any(str(c.get("wid") or "") == wid for c in _clients):
+        _PENDING_REVEAL.pop(wid, None)
+        print("[reveal] sid=%s wid=%s: dropped, its window's last client left" % (str(p["sid"])[:8], wid[:8]), file=sys.stderr)
+        return
+    if downgraded:
+        successor = any(c.get("app") == "chat" and str(c.get("wid") or "") == wid for c in _clients)
+        print("[reveal] sid=%s wid=%s: copy's target closed, the park stands for %s"
+              % (str(p["sid"])[:8], wid[:8], "the window's other chat pane" if successor else "the pane's redial"), file=sys.stderr)
+
+
+def _retire_reveal_copy_at_reap(client):
+    """The reaper dropped `client` (review round 2, 2026-09-18): a copy of a focus or tap handed to it while it was
+    unproven is no longer waiting on its pong. Strike it from the copy's targets. A copy left with no target becomes
+    a PLAIN PARK, never a popped entry (review round 3, 2026-09-18, the ruling): the reap ends the waiting-on-a-pong
+    state, not the user's gesture. A tap stands until a pane consumes it or the window itself goes away, so the park
+    stays for the next chat redial of the window, whether that redial is already in _clients (the phone's tap in the
+    racy order: the shell reveal showed the pane, its redial registered as the dead socket's twin, the twin was
+    dropped with the successor present) or has not registered yet (the beat landing between the tap and the redial
+    the tap itself caused, a few hundred milliseconds on a good link; a push tap's boot copy whose previous page's
+    socket the beat judged first). Round 2 popped the entry on the no-successor path and lost both taps, the focus
+    road's and the boot road's, re-creating the loss round 1 fixed. The successor check below only words the journal
+    line; both branches do the same thing, and `c is not client` is required because the reaped client is still in
+    _clients here (the handler's finally removes it later). The stale-replay exposure the pop was cutting (a copy
+    nobody consumed replaying at a later redial) is bounded by _forget_pending_reveal_if_last: the park goes with
+    the window's last client. Residual, named: a park whose reaped socket was the window's ONLY client goes with it
+    through that rule when the handler's finally runs, so a boot tap on a page whose shell socket is also gone is
+    lost; out of this function's reach. Called from _keepalive_all after its drop, outside _clients_lock, as the
+    drop is. The handler's finally strikes the client from the copy too (_forget_pending_reveal_if_last, review round
+    4, 2026-09-18), so on the reap road whichever of the two runs first does the work and the other finds the client
+    gone; this function's line is the beat's, that one's the close's."""
+    key = str(client.get("wid") or "")
+    p = _PENDING_REVEAL.get(key)
+    if not p or not any(c is client for c in (p.get("sent") or ())):
+        return
+    left = [c for c in p["sent"] if c is not client]
+    if left:
+        p["sent"] = left
+        return
+    p.pop("sent", None)
+    with _clients_lock:
+        successor = any(c is not client and c.get("app") == "chat" and str(c.get("wid") or "") == key for c in _clients)
+    print("[reveal] sid=%s wid=%s: copy's target reaped, the park stands for %s"
+          % (str(p["sid"])[:8], key[:8], "the window's other chat pane" if successor else "the pane's redial"), file=sys.stderr)
 
 
 def _cached_timeline(now, live_map, sig, connect=False):
@@ -64381,12 +64538,27 @@ data:{app:APP,why:why||"",ready:ws?ws.readyState:-1,quietMs:lastRecv?Date.now()-
 // send() queues while the socket is down, so a row survives the very redial it describes.
 var frozeAt=0,resumedAt=0,resumeQuiet=-1,hiddenAt=0,foregroundedAt=0,returnAt=0,returnBytes=0,returnRedialed=false,returnRow=null,eagerDial=false;   // eagerDial: the one immediate redial each return window gets   // returnRow: a keep-decision row held until a close inside the return window (or the watchdog, at the provisional bound) proves its socket was already dead; retired by the flush once its return-fresh has filed
 var awaitLink=false,linkUpMs=-1;   // [fork] D3 (2026-09-18): this return is waiting for the shell socket's link to come up (the shell is the page's one probe, kernel.py _LANDING_MOBILE_JS); linkUpMs is foreground->link-up, the path's own recovery split from the code-owned wait (return-fresh.ms minus it); reset each return, in the fast path below
+var onScreen=undefined,parked=false,returnParked=false;   // [fork] D2 (2026-09-18): onScreen is the shell's last panes word for THIS pane (on[APP]; undefined until a word arrives: a standalone page, the VS Code webview, a shell too old to tell, the settings frame outside the shell's KEYS); parked latches a return whose redial waits for the pane's tab (the phone layout only, the user's ruling of 2026-09-18); returnParked marks the return-fresh that answers a parked return
 // [fork] D3: the shell's published link, read SYNCHRONOUSLY for a same-origin pane iframe so the return decision does
 // not depend on the order the documents' visibilitychange handlers run. The shell is PRESENT when its publication
 // exists: window.parent.__rompLink is a function (the ruling of 2026-09-18: not the phone media query, not a foreign
 // parent alone). undefined for a standalone page, the VS Code webview, or a shell too old to publish one: those keep
 // the upstream fast-path lines below, byte for byte.
 function parentLink(){try{return (window.parent!==window&&typeof window.parent.__rompLink==="function")?window.parent.__rompLink():undefined;}catch(e){return undefined;}}
+// [fork] D2 (2026-09-18): the phone LAYOUT, read synchronously from the shell (its _MOBILE_MQ probe, _LANDING_MOBILE_JS
+// window.__rompMobileOn) the way parentLink() reads the link, so the decision does not depend on a cached word from before a
+// layout flip. Parking is phone-only (the user's ruling): the desktop's rail-collapsed panes keep their background redial
+// byte for byte. The shell is present when its probe exists, window.parent.__rompMobileOn is a function, as parentLink()'s
+// gate reads the link; undefined off a shell (standalone, VS Code, an older shell): parks nothing.
+function parentMobile(){try{return (window.parent!==window&&typeof window.parent.__rompMobileOn==="function")?!!window.parent.__rompMobileOn():undefined;}catch(e){return undefined;}}
+// [fork] D2: park this pane's socket. abandon()'s teardown (the four handlers detached, close, ws nulled, so the watchdog tick
+// is inert on !ws and no onclose timer can arm) and its quiet-stale rule, but ONE state word to the shell, "parked", never
+// abandon()'s "down": a parked pane is not a broken one, so the shell's connection log stays silent and its cue dark
+// (_LANDING_ERRS_JS reads parked as its own state). romp:wsdown still tells this page's bundle and loader the wire is down.
+function park(){var d=ws;if(d){d.onopen=d.onmessage=d.onclose=d.onerror=null;try{d.close();}catch(e){}ws=null;}
+if(d&&stalePending&&openSock===d){var qw=stalePending;stalePending="";raiseStale(qw+"-quiet");}
+freshPending=false;window.__rompFreshPending=false;try{if(window.__rompReload)window.__rompReload.ended();}catch(e){}   // [fork] D2 (review round 1, 2026-09-18): the fast path armed the reload core's fresh hold a line before the park branch (the upstream armFresh line), and only a frame on a socket ends it; a parked pane dials nothing until its tap, so the hold would stand for FRESH_HOLD_MS with nothing coming and the core would hold an accepted reload on this pane's word. End it here, as onmessage's resync line does, and tell the core so a reload already held goes now; the tap's open arms it again with its own stamp (ws.onopen's wasReconn branch)
+parked=true;returnParked=true;netState("parked");try{window.dispatchEvent(new Event("romp:wsdown"));}catch(e){}}
 function returnDiag(what,data){try{data.app=APP;send({type:"clientDiag",surface:"pane-shim",what:what,data:data});}catch(e){}}
 var nav="";try{var ne=performance.getEntriesByType("navigation");nav=(ne&&ne[0]&&ne[0].type)||"";}catch(e){}
 // the page-load row exists to catch a tab the browser DISCARDED and reloaded on return (Memory Saver: the return is a
@@ -64477,6 +64649,7 @@ if(!o){if(mine)have.remove();return;}if(mine){have.firstChild.textContent=o.text
 function raiseBuild(dv){var R=window.__rompReload;if(R){R.noteDv(dv);return;}   // the core decides (an offer, deduped by build; in a shell, the shell's)
 if(buildRaised)return;buildRaised=true;selfBar("A newer romp build is available.","build");}   // no core on this page: the bar, once
 function connect(){if(ws&&(ws.readyState===0||ws.readyState===1))return;   // one live attempt at a time — a lost timer + the watchdog can both call in
+if(parked)return;   // [fork] D2 (2026-09-18): a parked pane dials nothing until the shell's word shows it (the panes listener below): a blind onclose timer armed before the park, or a lost-timer redial, must not dial ahead of the tap
 if(awaitLink)return;   // [fork] D3 (review round 2, 2026-09-18): while this return awaits the shell's link nothing dials. Every legitimate caller (the fast path's up branch, the link listener, the backstop's two arms, the next return) clears awaitLink before it calls in; the one that does not is the blind 1.5 s redial a close the page saw while hidden armed before the return, and it is refused here. Before this that stray dial stood as ws for the whole await: the link listener and the backstop (both inert with a socket up) never ended it, and the return-fresh carried no linkUpMs though the return row said awaitLink true
 if(returnAt)returnRedialed=true;   // a dial inside a return window (whatever path led here) → the return-fresh row says so
 connT=Date.now();var proto=location.protocol==="https:"?"wss://":"ws://";
@@ -64564,6 +64737,7 @@ ws.onerror=function(){try{ws.close();}catch(e){}};}
 function send(m){var s=JSON.stringify(m);if(m&&m.type==="ready"){bundleReady=true;readyProto=(m.proto===2?2:1);readyMsg=s;}   // the bundle's listener is installed: from here a redial may declare itself (the dial term in connect)
 if(m&&m.type==="ready"&&PM.bundleReady===undefined)PM.bundleReady=pnow();if(m&&m.type==="clientDiag"&&diagMuted())return;   // the beacon extension: the bundle's ready stamp; the kill switch drops every clientDiag row (the shim's, the reload core's and the collector's alike) before it is sent or queued
 if(m&&m.type==="clientDiag"&&m.what==="return-fresh"&&m.data&&linkUpMs>=0){m.data.linkUpMs=linkUpMs;s=JSON.stringify(m);}   // [fork] D3 (2026-09-18): the return-fresh row carries linkUpMs (foreground->link-up) only when this return awaited the shell's link (-1 otherwise, reset each return); stamped here, in the one funnel, so no upstream shim line is modified, and re-serialized because the first line above already built s
+if(m&&m.type==="clientDiag"&&m.what==="return-fresh"&&m.data&&returnParked){m.data.parked=true;returnParked=false;s=JSON.stringify(m);}   // [fork] D2 (2026-09-18): the first fresh frame after a parked return answers the TAP (the show word reset the return window), so its row says parked; the same funnel and the same re-serialization as the D3 stamp above, and no upstream shim line modified
 if(ws&&ws.readyState===1){ws.send(s);return;}
 if(m&&m.type==="ready")readyQueued=true;   // ...and this one waits for the open: the redial that carries it dials as a fresh page (onopen clears the bit after the flush)
 if(m&&m.type==="clientDiag"){if(queuedDiag>=DIAG_QUEUE_MAX)return;queuedDiag++;}   // breadcrumbs waiting for a reconnect are capped; everything else queues as before
@@ -64697,6 +64871,17 @@ if(m.link==="up"&&awaitLink&&!ws){awaitLink=false;if(returnAt&&linkUpMs<0)linkUp
 setInterval(function(){if(!awaitLink||ws)return;var L=parentLink();if(L===undefined)return;
 if(L.up){awaitLink=false;if(returnAt&&linkUpMs<0)linkUpMs=Date.now()-foregroundedAt;connect();return;}
 if(L.connT&&Date.now()-L.connT>25000){awaitLink=false;if(returnAt&&linkUpMs<0)linkUpMs=Date.now()-foregroundedAt;staleDiag("link-backstop","");connect();}},5000);
+// [fork] D2 (2026-09-18): the shell's panes word says which pane is on screen (on[k]: on the phone the tab showing, on the
+// desktop the rail flag; _LANDING_COLLAPSE_JS panesMsg, told on apply, iframe load, tab switch and layout flip). Cached for
+// the return decision below. The SHOW is the parked pane's event: the pane comes back through the return path (a fresh return
+// window from the tap, the loader re-raised by romp:wsdown after its 30 s failsafe has long hidden the badge, the
+// return-fresh that follows says parked) and dials once through D3's link rule: now if the link is up or unknown (an older
+// shell), else on the link-up word (awaitLink; the listener and the backstop above end it). A layout no longer the phone's
+// (a rotation, a resize across the breakpoint) ends a park too: the desktop keeps its background redial.
+try{window.addEventListener("message",function(e){var m=e&&e.data;if(!m||m.romp!=="panes"||!m.on)return;onScreen=m.on[APP];
+if(parked&&(onScreen===true||parentMobile()!==true)){parked=false;foregroundedAt=Date.now();eagerDial=true;returnAt=foregroundedAt;returnBytes=0;returnRedialed=false;returnRow=null;awaitLink=false;linkUpMs=-1;
+try{window.dispatchEvent(new Event("romp:wsdown"));}catch(e2){}
+var L=parentLink();if(L===undefined||L.up){if(L!==undefined)linkUpMs=Date.now()-foregroundedAt;connect();}else{awaitLink=true;}}});}catch(e){}
 // visibility fast-path (the user 2026-07-05): a BACKGROUNDED tab has its timers throttled, so the 5s watchdog
 // above can lag and the browser may have quietly dropped the socket while it slept. The instant the tab is
 // foregrounded, if the socket isn't open or has gone quiet past the watchdog window, treat the view as stale:
@@ -64710,8 +64895,23 @@ var row={decision:stale?((!ws||ws.readyState!==1)?"redial-closed":"redial-stale"
 frozenMs:(res&&frozeAt>=hiddenAt&&resumedAt>frozeAt)?resumedAt-frozeAt:0,quietMs:lastRecv?Date.now()-lastRecv:-1,quietAtResumeMs:res?resumeQuiet:-1,ready:ws?ws.readyState:-1};
 returnAt=Date.now();returnBytes=0;returnRedialed=false;returnRow=null;   // every return starts with no held row (review find, 2026-09-08): a keep row left over from an earlier return must not ride this one's close or abandon
 awaitLink=false;linkUpMs=-1;   // [fork] D3: every return starts not awaiting the shell's link
+returnParked=false;if(onScreen!==undefined)row.parked=false;   // [fork] D2: a pane the shell has told about says whether this return parked (false until the branch below says otherwise; a standalone row carries no such field), and the fresh that answers a return that did not park is not a parked one
 if(!stale){returnRow=row;returnDiag("return",row);return;}   // the socket stands: the row rides it now — and is HELD, because a FIN queued in the same thaw burst would swallow it (review find 2026-09-07; onclose re-files)
 pendingWhy="foreground";freshPending=true;armFresh();   // the reconnect's arm reads "foreground" (upstream's two-event prompt)
+// [fork] D2 (2026-09-18): a pane the shell's word says is OFF SCREEN on the PHONE layout parks its redial (the user's ruling,
+// phone-only). Measured before this: five of six phone panes redialed at every return and each took a whole connect push
+// (feed frames, bars) on one link and one thread in the same second as the visible chat's session frame. Now the tab is the
+// event: the socket goes down for every state (park(); the tick inert on !ws), the return row says parked, and nothing
+// dials: not the blind timer (connect()'s guard), not the link-up word (awaitLink stays false). The pane dials once when its
+// word says on screen (the panes listener above). Standalone / VS Code / an older shell (no word) and the desktop layout fall
+// through to the D3 block and the upstream lines below.
+// The FEED pane is EXEMPT (the user's ruling of 2026-09-18, after review round 1): its socket carries the card-trouble entries the
+// shell's bell mirrors (warning chips, failed follow-ups, retry storms, sync faults), and the bell surfaces trouble the user was not
+// looking at, so a parked feed would defer those entries to the Feed tab's tap and lose any whose episode ended first. It falls
+// through to the D3 block and dials on return like the visible pane; one extra redial per return is the accepted cost. Keyed on the
+// pane's app alone, never on width or timing.
+if(onScreen===false&&parentMobile()===true&&APP!=="feed"){park();row.parked=true;returnDiag("return",row);return;}
+parked=false;   // [fork] D2 (review round 1, 2026-09-18): a return on an ALREADY parked pane that passes the branch above (the layout no longer the phone's, with no panes word yet to end the park) ends the park here, so the D3 block and the upstream lines below can dial and the row's parked:false, set above, is the truth
 // [fork] D3 (2026-09-18): when this pane sits in a shell that publishes a link, put the socket down for EVERY state
 // (abandon nulls ws, so the tick is inert and no onclose timer arms) and dial only once the link is up: now if it
 // already is (linkUpMs 0, the whole wait is code-owned), else on the shell's link-up word (awaitLink; the panes
@@ -65803,6 +66003,12 @@ window.addEventListener('message',function(e){var m=e&&e.data;if(!m||m.romp!=='w
 var col=(m.app==='chat'&&window.__rompColOf)?window.__rompColOf(e.source):'';   // a split column reports under its own key (the sender frame says which)
 if(col){var sc=(m.state==='up')?'up':'down',pc=stc[col];stc[col]=sc;
 if(sc==='down'&&pc!=='down'&&shown('chat'))window.__rompNotify('conn','Kernel connection lost: chat split '+col+' (reconnecting)');else paint();return;}
+// A PARKED pane (2026-09-18: off screen on the phone, its redial waiting for its tab; the shim's netState("parked")) is its
+// own state here, never 'down': nothing is lost and nothing is reconnecting, so the cue stays dark and the log silent; its
+// later drop still logs, since the rule below then reads prev as parked, not down. One fork-only line, ahead of the tracking
+// line, which is upstream's and stays byte for byte (review round 1, 2026-09-18: the PR had rewritten that line, and two
+// upstream test pins went red).
+if(m.state==='parked'){st[m.app]='parked';paint();return;}
 var s=(m.state==='up')?'up':'down',prev=st[m.app];st[m.app]=s;
 if(s==='down'&&prev!=='down'&&shown(m.app))
 window.__rompNotify('conn','Kernel connection lost: '+paneLabel(m.app)+' pane (reconnecting)');
@@ -75887,6 +76093,7 @@ class Handler(BaseHTTPRequestHandler):
                     _clients.remove(client)
             with _clients_lock:
                 _forget_active_chat_if_last(client)   # the window's focus record goes with its last pane (T347)
+                _forget_pending_reveal_if_last(client)   # and its parked reveal (review round 2, 2026-09-18)
 
     def _remote_ws(self, host, query):
         """GET /remote/<host>/ws — relay a federated-dashboard WebSocket to an attached host's

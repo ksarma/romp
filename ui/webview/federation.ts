@@ -338,6 +338,20 @@ export function stripHost(host: string, id: string): string {
   return host && typeof id === "string" && id.startsWith(host + ":") ? id.slice(host.length + 1) : id;
 }
 
+/** The jump ops a kernel answers with a chat focus (kernel.py _reveal_chat_for, or _reveal_or_confirm for a dead
+ *  session's revive prompt). A jump routed to a REMOTE host posts the shell's chat reveal from the sending pane
+ *  (FederationManager.outbound): the remote kernel tells its OWN shell clients to reveal the chat and has none here.
+ *  The set is the KERNEL's, derived by AST in tests/test_remote_chat_reveal_ops.py (every arm of _dispatch_ws and _drive
+ *  that reaches either function) and pinned equal to this constant, so an op the kernel gains fails there until it is
+ *  listed here (review round 3 of the parked-pane change, 2026-09-18; round 2 hand-listed the first five, a list no test
+ *  could fail for a missing name). The last five leave the chat pane's own bundle alone (the + modal, the picker, the fork
+ *  and promote menus), where the pane is already forward and the post duplicates render.ts revealSelfPane, idempotently;
+ *  they are listed so the constant is what its name says. */
+export const REMOTE_CHAT_REVEAL_OPS: ReadonlySet<string> = new Set([
+  "openSession", "showOnTimeline", "deepLink", "viewReadOnly", "reviveSession",
+  "createSession", "pickResult", "openByName", "forkSession", "commentPromote",
+]);
+
 export function routeOutbound(msg: any, knownHosts?: ReadonlySet<string>): Route[] {
   if (!msg || typeof msg !== "object") return [{ host: LOCAL, msg }];
 
@@ -1509,17 +1523,38 @@ export class FederationManager {
     if (m && (m.type === "askClear" || m.type === "askClearMany" || m.type === "clearAll")) {
       this.lastClearHosts = routes.length ? routes.map((r) => r.host) : [LOCAL];
     }
-    for (const r of routes) this.sendTo(r.host, r.msg);
+    let delivered = false;   // a remote route whose socket was OPEN took the op (sendTo's word; the local route says nothing)
+    for (const r of routes) delivered = this.sendTo(r.host, r.msg) || delivered;
+    // A jump to a REMOTE host's session brings the chat pane forward from HERE (review round 2 of the parked-pane
+    // change, 2026-09-18). The kernel that answers a jump with a chat focus also tells its OWN shell clients to reveal
+    // the chat, and a remote kernel has none (the shell socket is local-only), so a tap on a remote session from the
+    // feed, Sessions or Outline reached the shell through one road alone: the chat pane's revealSelfPane when the focus
+    // landed on its relay. On the phone a chat pane parked since a return holds its local socket down and defers its
+    // relay dials until it is shown (the shim's park; this module's __rompLocalUp gate), so the remote's focus found no
+    // chat client, parked at that kernel, and the Chat tab never came forward. The pane that sends the jump posts the
+    // reveal waiting.ts openSession and render.ts revealSelfPane post: the shell shows the chat pane, the parked pane
+    // dials, its romp:wsup runs localUp() and the relay dials, and the remote's parked copy lands on the relay's first
+    // strip. Once per outbound, whatever the route count; a local route needs none (the local kernel's shell line does
+    // it), and a chat pane posting for itself duplicates revealSelfPane, idempotently. On the desktop the shell's reveal
+    // un-hides a collapsed chat pane, what the local kernel's shell line already does for a local tap. Only for a jump a
+    // remote socket TOOK (review round 3, 2026-09-18): sendRemote drops a jump whose host's socket is not open, with its
+    // toast, and a reveal posted for it moved the phone's tab and un-collapsed a desktop chat pane for an op that reached
+    // no kernel, on a session the user never tapped; the local road posts nothing in that case, the parity that settles it.
+    if (m && REMOTE_CHAT_REVEAL_OPS.has(m.type) && delivered) {
+      try { if (window.parent && window.parent !== window) window.parent.postMessage({ romp: "reveal", pane: "chat" }, "*"); } catch (e) { /* standalone page: no shell to ask */ }
+    }
   }
 
-  /** One send to one kernel: the local one through the page's own socket, a remote one through its conn. */
-  private sendTo(host: string, msg: any): void {
+  /** One send to one kernel: the local one through the page's own socket, a remote one through its conn. Says whether a
+   *  REMOTE socket took the message, OPEN at the send (sendRemote's word); the local route says nothing, since the local
+   *  kernel's own shell line follows a local jump (review round 3, 2026-09-18). */
+  private sendTo(host: string, msg: any): boolean {
     if (host === LOCAL) {
       const s = (window as any).__rompLocalSend;
       if (typeof s === "function") s(msg);
-    } else {
-      this.sendRemote(host, msg);
+      return false;
     }
+    return this.sendRemote(host, msg);
   }
 
   // The ONE remote send path (the user 2026-08-28, whose mid-restart Edit consent never reached the
@@ -1543,11 +1578,13 @@ export class FederationManager {
   //   minutes later can be worse than dropping it — a deliberate non-goal) but the drop lands a
   //   client-diag breadcrumb naming the type and host, beside the existing warn toast: a drop is never
   //   silent.
-  private sendRemote(host: string, msg: any): void {
+  // Returns whether the message went out on an OPEN socket now: a queued setting, a held bookkeeping row and a drop
+  // all say false (outbound posts the shell's chat reveal for a jump only on true; review round 3, 2026-09-18).
+  private sendRemote(host: string, msg: any): boolean {
     const c = this.conns.get(host);
     if (c && c.ws && c.ws.readyState === 1) {
       c.ws.send(JSON.stringify(msg));
-      return;
+      return true;
     }
     if (c && msg && typeof msg.type === "string" && KERNEL_SETTING.has(msg.type)) {
       // not dropped — it rides the next open, so no toast; but never silent either: the breadcrumb
@@ -1559,7 +1596,7 @@ export class FederationManager {
       this.diag("sendqueue", { host, msgType: msg.type, gt: typeof msg.gt === "number" ? msg.gt : 0,
                                rs: c.ws ? c.ws.readyState : -1,
                                ...(prev ? { superseded: typeof prev.gt === "number" ? prev.gt : true } : {}) });
-      return;
+      return false;
     }
     const key = bookkeepingKey(msg);
     if (key !== null) {
@@ -1568,13 +1605,14 @@ export class FederationManager {
       // dialed, or detached since) has nothing to hold it on: dropped with the breadcrumb alone. Journaled
       // once per KEY, at the not-held → held transition, in the hostconn family: a hover held per pointer
       // move would otherwise write a row per move; the open row names everything that flushed.
-      if (!c) { this.diag("senddrop", { host, msgType: msg.type, why: "no-conn" }); return; }
+      if (!c) { this.diag("senddrop", { host, msgType: msg.type, why: "no-conn" }); return false; }
       if (!c.pending.has(key)) this.diag("hostconn", { host, ev: "hold", msgType: msg.type, rs: c.ws ? c.ws.readyState : -1 });
       c.pending.set(key, msg);
-      return;
+      return false;
     }
     this.diag("senddrop", { host, msgType: (msg && msg.type) || "" });
     this.dropWarn(host, msg);
+    return false;
   }
 
   /** Deliver the settings that arrived while this host's socket was down, on the open event itself —

@@ -8,10 +8,15 @@ pane documents plus the shell, seven WebSockets, one main thread; every socket d
 35 s at the median; a connect / watchdog-close / reconnect loop on the federation relay (76 `watchdog-close` rows, 55 of
 them `connecting`). The reconnect design's PR plan lands the fixes as PRs 2 to 5; this harness is PR 1: it records the
 baseline the fixes are measured against and asserts SHAPES only (rows present, fields typed, counts recorded into a
-JSON artifact), never counts. The count assertions arrive with each fix (relay redials that wait for the local socket:
-zero `watchdog-close connecting`; hidden panes that park their redial: five phone `return` rows with `parked:true` and
-one pane `wsopen` at the return; the shell leading the visible pane's redial: zero pane `wsconnfail` and one
-`return-probe`), so a count pinned here would pin today's storm.
+JSON artifact), never counts ahead of the fix that earns them. The count assertions arrive with each fix (relay redials
+that wait for the local socket: zero `watchdog-close connecting`; hidden panes that park their redial, LANDED as D2 on
+2026-09-18 and pinned in `_parked` below: on the phone FOUR panes tell the shell `parked` at the return (every pane but
+the chat and the feed) and two dial, the visible chat and the feed, which is exempt from parking by the user's ruling of
+2026-09-18 so the shell's bell keeps receiving card-trouble entries while the Feed tab is hidden, one extra redial per
+return accepted; the witness is the shell's wsState words the driver records, because a parked pane's own `return` row
+with `parked:true` waits in its queue for the tap, which no leg makes, so within a leg only the dialing panes' rows reach
+the kernel; the shell leading the visible pane's redial: zero pane `wsconnfail` and one `return-probe`), so a count
+pinned here ahead of its fix would pin today's storm.
 
 The lab: one kernel from test_ship_reship_served.kernel_env (a private XDG root, `session-hosts` floored off,
 ROMP_MANAGER_PORT=1, no catalog or update fetch, a hermetic postal bus), with ROMP_WS_KEEPALIVE=2 (WS_DEAD_S 6 s, a floor for a socket the
@@ -361,7 +366,40 @@ class ReturnFromBackground(unittest.TestCase):
         Path(art).write_text(json.dumps(m, indent=1, sort_keys=True))
         type(self).measurements[name] = m
         self._shapes(name, r, m, regime)
+        self._parked(name, r, m)
         return m
+
+    # ---- D2's count pin (2026-09-18): which panes parked, through the wsState words the driver recorded ----
+    def _parked(self, name, r, m):
+        """Hidden panes park their return redial on the phone (D2, 2026-09-18). Pinned through the shell's wsState words the
+        driver recorded, not the panes' `return` rows: a parked pane's row is queued on its down socket and reaches the kernel
+        only at a tap, which these legs never make. On the phone every pane but two says `parked` exactly once after the return
+        and the kernel accepts no socket from it; the visible chat dials as before, and so does the FEED, exempt from parking by
+        the user's ruling of 2026-09-18 (its socket carries the card-trouble entries the shell's bell mirrors, and the bell
+        surfaces trouble the user was not looking at; one extra redial per return is the accepted cost), keyed on the app alone.
+        Both dialing panes file `return` rows saying parked:false. On the desktop nothing parks: no pane says `parked`, every
+        pane's return row says parked:false, and every pane files one (the desktop leg's 7 dials, the shell's and six panes')."""
+        where = name + ": "
+        t_return = (r.get("t") or {}).get("return", 0)
+        words = [w for w in (r.get("wsWords") or []) if w.get("t", 0) >= t_return]
+        parked_apps = sorted({w.get("app") for w in words if w.get("state") == "parked"})
+        if r.get("shell") == "phone":
+            dialing = {VISIBLE, "feed"}
+            self.assertEqual(parked_apps, sorted(set(APPS) - dialing),
+                             where + "every pane but the visible chat and the exempt feed parks at the return (parked words: %r)" % (parked_apps,))
+            for app in parked_apps:
+                self.assertEqual([w.get("state") for w in words if w.get("app") == app].count("parked"), 1, where + "%s says parked once: %r" % (app, words))
+                self.assertNotIn(app, m["wsopenReturn"], where + "a parked pane dials nothing at the return (kernel wsopen by app: %r)" % (m["wsopenReturn"],))
+            for app in sorted(dialing):
+                self.assertIn(app, m["wsopenReturn"], where + "%s dials at the return (kernel wsopen by app: %r)" % (app, m["wsopenReturn"]))
+                rows = m["return"].get(app) or []
+                self.assertTrue(rows, where + "%s filed a return row: %r" % (app, m["return"]))
+                self.assertEqual([row.get("parked") for row in rows], [False] * len(rows), where + "%s return rows say parked:false: %r" % (app, rows))
+        else:
+            self.assertEqual(parked_apps, [], where + "nothing parks on the desktop (parked words: %r)" % (parked_apps,))
+            self.assertEqual(sorted(m["return"]), sorted(APPS), where + "every pane filed a return row: %r" % (sorted(m["return"]),))
+            for app, rows in m["return"].items():
+                self.assertEqual([row.get("parked") for row in rows], [False] * len(rows), where + "%s return rows say parked:false: %r" % (app, rows))
 
     # ---- shapes only: rows present, fields typed, counts recorded; never a count pinned (the PR plan tightens them) ----
     def _shapes(self, name, r, m, regime):
