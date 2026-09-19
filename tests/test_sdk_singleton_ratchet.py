@@ -627,6 +627,25 @@ SCRATCH_P = SCRATCH_HEAD + textwrap.dedent("""\
             assert not km._sdk_backend.state_dir.exists()
 """)
 
+SCRATCH_G = SCRATCH_HEAD + textwrap.dedent("""\
+    import types
+
+    class Fake:
+        __module__ = "romp_sdk_backend"               # the kernel's module name claimed by a class defined here
+        def __init__(self, root):
+            self.state_dir = root
+
+    class Cases(unittest.TestCase):
+        def test_a_a_look_alike_claiming_the_kernels_module_as_the_workers_first_value_fails(self):
+            assert km._sdk_backend is None
+            km._sdk_backend = Fake(jd.STATE)
+
+        def test_b_a_reexecution_then_a_simplenamespace_left_fails(self):
+            load_source("romp_kernel", KERNEL)
+            assert km._sdk_backend is None            # the reload's module-level reset
+            km._sdk_backend = types.SimpleNamespace(state_dir=jd.STATE)
+""")
+
 
 def nested_run(text, follower=None):
     """pytest in a child over one scratch module written to a fresh directory, under this checkout's conftest
@@ -1121,6 +1140,24 @@ class ClassTeardownPutsBackAnObjectWhoseDirectoryItRemoved(_NestedRun, unittest.
     def test_the_class_that_inherits_the_gone_object_is_quiet(self):
         self.assertRatchetPassed("Three", "test_a_does_nothing_under_the_gone_object")
         self.assertIsNone(boundary(self.out, "::Three"), self.out)
+        self.assertIsNone(boundary(self.out, ""), self.out)
+
+class ValuesOnTheOtherRoads(_NestedRun, unittest.TestCase):
+    SCRATCH = SCRATCH_G
+    ERRORS = 2
+
+    def test_a_look_alike_claiming_the_kernels_module_is_refused_and_rendered_module_qualified(self):
+        text = self.assertObjectRoad("Cases", "test_a_a_look_alike_claiming_the_kernels_module_as_the_workers_first_value_fails")
+        self.assertTrue(text.startswith("changed after its teardown: before None (not built), after romp_sdk_backend.Fake over "), text)
+        self.assertNotIn(GONE, text)
+
+    def test_a_reexecution_that_leaves_a_value_that_is_not_the_kernels_build_is_named(self):
+        text = self.assertObjectRoad("Cases", "test_b_a_reexecution_then_a_simplenamespace_left_fails")
+        self.assertTrue(text.startswith(REEXEC + " as a value that is not the kernel's build: types.SimpleNamespace over "), text)
+        self.assertNotIn("changed", text)
+
+    def test_the_class_and_module_ends_are_quiet_on_the_named_object(self):
+        self.assertIsNone(boundary(self.out, "::Cases"), self.out)
         self.assertIsNone(boundary(self.out, ""), self.out)
 
 if __name__ == "__main__":
