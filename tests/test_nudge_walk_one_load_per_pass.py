@@ -143,10 +143,11 @@ moved transcript skips (1 failed, 10 passed); the working gate answering true be
 10 passed); SID_A's store re-seeded before that pass, a miss in place of a hit, and the cache switched off before it, two
 fallbacks and two hand-offs (1 failed, 10 passed each); a send in the look (3 failed, 8 passed); the served snapshot handing
 out zero loads, 0 against 5, the counter preset to 100 after setUp, 105 against 5, the bump adding a float, and `loads`
-denied in the public fold (1 failed, 10 passed each). The writerLoads element of three tuples cannot fail on its own: on
-the skip pass and on the state-gate case's first pass a hand-off needs a read an earlier line pins to zero, and on the run
-pass a hand-off gives the walk a private store in place of the shared view, so the gate derives and its line fires first
-(the cache switched off before that pass shows it). The state-gate case: the working gate moved below the store read (1 failed, 10 passed); a served bump in the
+denied in the public fold (1 failed, 10 passed each). Four case-level tuples carried the writer door's counter and the store's
+counters beside the walk's counter, on the two skip passes, the run pass and the state-gate case's first pass, and neither
+element could fail on its own there: a counter that moves with no recorded call reds _pass's reconciliation first, and on the
+run pass a non-hit gives the walk a new view object, so the gate derives and its line fires first; those tuples carry the walk's
+counter alone now and _pass holds the rest (review round 3). The state-gate case: the working gate moved below the store read (1 failed, 10 passed); a served bump in the
 working branch (contrived; 1 failed, 10 passed); the loads bump moved above the working gate (2 failed, 9 passed, the
 census the other); the verdict renamed (1 failed, 10 passed); `_put_walk_gate` made a no-op, so the second pass skips (2
 failed, 9 passed); a read conditioned on a memo row standing (contrived; 3 failed, 8 passed); a read in the skip branch (5
@@ -652,8 +653,9 @@ class OneSharedLoadPerAliveSessionPerPass(_WalkHarness):
         self.assertEqual(p2["gate"], {SID_A: 0, SID_B: 0},
                          "the placement gate makes no currency check on a skipped look: it is never reached (condition 7, the gate's bound)")
         self.assertEqual((p2["looks"], p2["skippedParses"], p2["parses"]), (2, 2, 0), p2)
-        self.assertEqual((p2["loads"], p2["writerLoads"], p2["shared"]), (0, 0, {}),
-                         "and neither the counter, the writer door's counter nor the store's counters move")
+        self.assertEqual(p2["loads"], 0, "and the counter does not move (the store's counters and the writer door's are _pass's here: with the "
+                                         "walk, the gate and the sweep at zero, a counter that moved with no recorded call reds the reconciliation "
+                                         "there first)")
         # (a) again with the gate SERVED: the ledger is the tenth keyed file, so its move re-evaluates every session once while
         # the parse and the store stand; the walk loads once per session and the gate not at all
         os.utime(jd.STATE / "auto-nudge.json", (NOW + 8, NOW + 8))
@@ -663,12 +665,14 @@ class OneSharedLoadPerAliveSessionPerPass(_WalkHarness):
                          "the walk takes exactly one shared load per alive session when its look reaches the store (condition 7, the walk's bound)")
         self.assertEqual((p3["gate"], p3["memo"]), ({SID_A: 0, SID_B: 0}, (2, 0)),
                          "the placement gate is served and makes no currency check (condition 7, the gate's bound)")
-        self.assertEqual((p3["loads"], p3["writerLoads"], p3["shared"]), (2, 0, {"hit": 2}), "the counter moves by the walk's two, no hand-off, two hits")
+        self.assertEqual(p3["loads"], 2, "the counter moves by the walk's two (that both reads hit and the door handed nothing to load_goals is the "
+                                         "gate's line above: a non-hit gives the walk a new view object, so the gate derives; and _pass's "
+                                         "reconciliations)")
         # (b) again
         p4 = self._pass(NOW + 15)
         self.assertEqual((p4["walk"], p4["gate"]), ({SID_A: 0, SID_B: 0}, {SID_A: 0, SID_B: 0}),
                          "the walk takes no shared load on a skipped look, and the placement gate is never reached (condition 7, both bounds)")
-        self.assertEqual((p4["skippedParses"], p4["loads"], p4["shared"]), (2, 0, {}))
+        self.assertEqual((p4["skippedParses"], p4["loads"]), (2, 0), "skipped again, and the counter stays")
         # one session's transcript moves: its look runs and derives (the parse key moved), the other's skips; per session
         pa = Path(self.rows[SID_A]["path"])
         pa.write_text(pa.read_text() + json.dumps({"type": "user", "uuid": "aaaaaaaa", "timestamp": "2026-09-10T00:01:00Z",
@@ -706,7 +710,8 @@ class OneSharedLoadPerAliveSessionPerPass(_WalkHarness):
                          "the walk takes no load on a look a state gate ends before the store read (condition 7, the walk's bound)")
         self.assertEqual((p1["gate"], p1["memo"]), ({SID_A: 0, SID_B: 0}, (0, 0)),
                          "and the placement gate, never reached, checks nothing (condition 7, the gate's bound)")
-        self.assertEqual((p1["loads"], p1["writerLoads"], p1["shared"]), (0, 0, {}), "no counter, no writer-door counter and no store counter moves")
+        self.assertEqual(p1["loads"], 0, "and the counter does not move (the store's and the writer door's counters are _pass's here: with the walk, "
+                                         "the gate and the sweep at zero, a counter move reds the reconciliation first)")
         for sid in SIDS:
             self.assertEqual(self._row(sid)[-1], "working", "the verdict recorded, file-keyed, for %s" % sid[-4:])
         p2 = self._pass(NOW + 5)
