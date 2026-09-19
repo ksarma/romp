@@ -621,8 +621,9 @@ def _loader_births(path, judge):
     through. Each constant is reported once, by the clause that reaches it first (the walk is breadth-first, so a Call or a
     Subscript is visited before its constant). The first cut read a dynamic lookup's arguments alone, and a verifier of the
     consolidation pass planted both subscript forms and `jd.__dict__.get(...)` as a real load inside a replaced helper's body with
-    the module green. The limit that remains is the assembled class alone: a concatenation or a format that splits the needle
-    (`"load_" + "goals_shared"`, `"load_%s_shared" % "goals"`) spells it in no constant this pin reads and is outside every static
+    the module green. The limit that remains is the assembled class alone: a concatenation, a format or an f-string that splits the
+    needle (`"load_" + "goals_shared"`, `"load_%s_shared" % "goals"`, `f"load_{'goals'}_shared"`) spells it in no constant this pin
+    reads and is outside every static
     pin in this module (_LIMITS names the class `assembled`, and the enumeration holds each form of the string and assembled
     classes on the side it falls). The name bound to a variable before the lookup (`n = "load_goals_shared"; getattr(jd, n)`)
     was that class's until the round-4 fixes and is the string class's now: the constant spells the door whole where it is bound,
@@ -1581,7 +1582,9 @@ class TheCountersOneSite(unittest.TestCase):
 # type-parameter nodes that 3.14 and 3.12 add, so the grammar table's newest classes are read by the census and not only listed);
 # the round-4 fixes moved F07d from the assembled class to the string class and F45 from none to string (the pin refuses a constant
 # spelling a door whole wherever it appears, so the name bound to a variable is read where it is bound and a dict key spelled whole
-# is read under its Dict). The bodies' `romp_judge` is the stub's name when loaded. For a form of the string or
+# is read under its Dict) and added six rows (F07f, F07g, F64 to F67: the f-string handed to getattr with and without a piece
+# interpolated, and the four doors the round found on no list, methodcaller, itemgetter over vars(jd), a partial of getattr and a
+# match-mapping key). The bodies' `romp_judge` is the stub's name when loaded. For a form of the string or
 # the assembled class the enumeration also runs the kernel-wide pin, _loader_births, over the form's file and expects a birth from
 # the first and none from the second, so each class is held on the side it falls.
 _STUB_JUDGE, _STUB_KERNEL = "romp_judge_c7pin_stub", "romp_kernel_c7pin_stub"
@@ -1594,12 +1597,14 @@ _FORM_PRE = ("import functools, importlib, operator, sys\n"
 _LIMITS = {
     "string": "a loader reached through a string CONSTANT (getattr, exec, eval, compile, operator.attrgetter, __getattribute__, getattr on "
               "an importlib.import_module result, vars(jd)[...], jd.__dict__[...], jd.__dict__.get(...), the name bound to a variable "
-              "first, a dict key spelled whole, or any receiver nobody listed): the limit _loader_sites states, refused by the kernel-wide "
+              "first, a dict key spelled whole, methodcaller, itemgetter over vars(jd), a partial of getattr, a match-mapping key, an "
+              "f-string of the whole name, or any receiver nobody listed): the limit _loader_sites states, refused by the kernel-wide "
               "pin, _loader_births: a constant spelling a door whole wherever it appears and whatever receives it, and a constant "
               "containing the name where it reaches a listed lookup, a dict read or a subscript key; the enumeration runs that pin over "
               "each form of this class and expects a birth",
     "assembled": "a loader reached through a name assembled at run time from pieces none of which spells a door whole (a concatenation "
-                 "or a format that splits the needle): spelled in no node and in no constant either census reads, so outside every static "
+                 "or a format that splits the needle, an f-string interpolating a piece): spelled in no node and in no constant either "
+                 "census reads, so outside every static "
                  "pin in this module, the kernel-wide pin included; the enumeration runs that pin over each form of this class and expects "
                  "no birth, so the class is held on the side it falls",
     "outside": "a loader that reaches the scanned body under a name bound outside it (a module-level alias, an import alias at module "
@@ -1635,6 +1640,10 @@ _LOADER_FORMS = [
      "def f(sid):\n    n = 'load_goals_shared'\n    return getattr(jd, n)(sid)\n", 'f', None, [], 0, 'string'),
     ('F07e', 'getattr with a %-format that splits the needle',
      "def f(sid):\n    return getattr(jd, 'load_%s_shared' % 'goals')(sid)\n", 'f', None, [], 0, 'assembled'),
+    ('F07f', 'getattr with an f-string assembling the name from pieces (the JoinedStr limit the round-4 ruling names)',
+     "def f(sid):\n    return getattr(jd, f\"load_{'goals'}_shared\")(sid)\n", 'f', None, [], 0, 'assembled'),
+    ('F07g', 'getattr with an f-string carrying no interpolation (one Constant, the whole name, reached by the consumer clause through getattr and by the value rule)',
+     "def f(sid):\n    return getattr(jd, f'load_goals_shared')(sid)\n", 'f', None, [], 0, 'string'),
     ('F08', 'importlib.import_module(...).<loader>',
      "def f(sid):\n    return importlib.import_module('romp_judge').load_goals_shared(sid)\n", 'f', None, [1], 0, None),
     ('F08b', "getattr(importlib.import_module(...), '<loader>')",
@@ -1815,6 +1824,17 @@ _LOADER_FORMS = [
      'def f[T: jd.load_goals_shared](sid):\n    return sid\n', 'f', (3, 12), [0], 1, None),
     ('F63', 'type parameter default naming the loader, def f[T = jd.<loader>] (3.13+)',
      'def f[T = jd.load_goals_shared](sid):\n    return sid\n', 'f', (3, 13), [0], 1, None),
+    # The doors review round 4 found on no list (correctness-1, tests-1, extra6-1): each spells the name whole in a constant that no
+    # listed lookup receives, and the value rule refuses the constant whatever receives it.
+    ('F64', 'operator.methodcaller with a string',
+     "def f(sid):\n    return operator.methodcaller('load_goals_shared', sid)(jd)\n", 'f', None, [], 0, 'string'),
+    ('F65', 'operator.itemgetter over vars(jd)',
+     "def f(sid):\n    return operator.itemgetter('load_goals_shared')(vars(jd))(sid)\n", 'f', None, [], 0, 'string'),
+    ('F66', 'functools.partial(getattr, jd) handed the name',
+     "def f(sid):\n    return functools.partial(getattr, jd)('load_goals_shared')(sid)\n", 'f', None, [], 0, 'string'),
+    ('F67', 'match mapping pattern with the loader name as the KEY',
+     "def f(sid):\n    match vars(jd):\n        case {'load_goals_shared': L}:\n            return L(sid)\n        case _:\n            return None\n",
+     'f', None, [], 0, 'string'),
 ]
 # The bump forms: the statement placed on the line after the load in `def f(sid)`, the bump indices _bump_sites answers, and
 # whether the walk census's adjacency (one bump, one load, the bump on the line after) holds.
@@ -1898,9 +1918,12 @@ class TheCensusOverEveryForm(unittest.TestCase):
 
     def test_every_loader_form_is_a_site_where_the_table_says_or_a_stated_limit(self):
         here = sys.version.split()[0]
-        self.assertEqual(len(_LOADER_FORMS), 102, "the table carries the lens's 95 loader forms, a consolidation-pass verifier's four and the "
-                                                  "round-3 fixes' three (a t-string interpolation, a type-parameter bound and a type-parameter default)")
-        self.assertEqual(len({row[0] for row in _LOADER_FORMS}), 102, "with distinct ids")
+        self.assertEqual(len(_LOADER_FORMS), 108, "the table carries the lens's 95 loader forms, a consolidation-pass verifier's four, the "
+                                                  "round-3 fixes' three (a t-string interpolation, a type-parameter bound and a type-parameter "
+                                                  "default) and the round-4 fixes' six (methodcaller, itemgetter over vars(jd), a partial of "
+                                                  "getattr, a match-mapping key, and an f-string handed to getattr with and without a piece "
+                                                  "interpolated)")
+        self.assertEqual(len({row[0] for row in _LOADER_FORMS}), 108, "with distinct ids")
         counted, limits, gated = 0, {}, []
         for fid, form, body, dotted, needs, sites, jds, limit in _LOADER_FORMS:
             self.assertEqual(limit is None, bool(sites), "%s (%s): a form the census counts names no limit and a form it misses names one" % (fid, form))
@@ -1934,11 +1957,12 @@ class TheCensusOverEveryForm(unittest.TestCase):
                 counted += 1
             else:
                 limits[limit] = limits.get(limit, 0) + 1
-        self.assertEqual(counted + sum(limits.values()) + len(gated), 102, "every row was counted, a limit, or gated: %d, %r, %r" % (counted, limits, gated))
-        self.assertEqual(limits, {"string": 13, "assembled": 2, "outside": 9, "wrapper": 2, "none": 5},
+        self.assertEqual(counted + sum(limits.values()) + len(gated), 108, "every row was counted, a limit, or gated: %d, %r, %r" % (counted, limits, gated))
+        self.assertEqual(limits, {"string": 18, "assembled": 3, "outside": 9, "wrapper": 2, "none": 5},
                          "the missed forms by limit: the lens's classification with its string class split by what the kernel-wide pin refuses "
-                         "(the round-4 fixes moved F07d and F45 into the string class: a constant spelling a door whole is refused wherever it "
-                         "appears)")
+                         "(the round-4 fixes moved F07d and F45 into the string class, a constant spelling a door whole being refused wherever "
+                         "it appears, and added five string rows for the doors the round found on no list and one assembled row for the "
+                         "f-string that splits the needle)")
 
     def test_every_bump_form_reads_as_the_table_says(self):
         self.assertEqual(len(_BUMP_FORMS), 20, "the table carries the lens's 20 bump forms")
