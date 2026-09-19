@@ -1086,8 +1086,12 @@ class _PerfStats:
                                    through _entry_stat and its twins in judge.py, event_model.py and
                                    sdk_backend.py, since a DirEntry stats in C; not countable from
                                    Python and not counted: open()'s and scandir()'s fstats, a
-                                   DirEntry predicate on a symlink entry or without d_type, and a
-                                   cold cwd memo's git children's stats), namesReads (raw
+                                   DirEntry predicate on a symlink entry or without d_type, and the
+                                   stats made in another process by any git child a signature forks
+                                   (the set is pinned by execution in
+                                   tests/test_chat_build_sig_inputs.py; a fork's wall lands on the
+                                   row of the part that forked it, its CPU on no row, since
+                                   RUSAGE_THREAD excludes a child)), namesReads (raw
                                    names-registry reads), switchReads
                                    (the user-todos switch file), regReads (sdk_backend.read_reg file
                                    reads), and the warm-tab census: warmEligible (a cached tab no
