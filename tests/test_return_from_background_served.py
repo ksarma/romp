@@ -388,14 +388,14 @@ class ReturnFromBackground(unittest.TestCase):
         art = os.path.join(self.lab, "return-harness-%s.json" % name)
         Path(art).write_text(json.dumps(m, indent=1, sort_keys=True))
         type(self).measurements[name] = m
+        if abort:
+            self._abort(name, r, rows, tap, engine, error_body)   # first on an abort leg: a detector that takes the failed fetch for a load leaves no shim to park or dial, so every later check fails after it, and the red should name the refused input (review round 2 closeout)
         self._shapes(name, r, m, regime)
         self._parked(name, r, m)
         self._lazy(name, r, m, tap)
         self._dial(name, r, boot_tab, tap)
         self._feed_paint(name, r, boot_tab)
         self._return_chain(name, r, rows)
-        if abort:
-            self._abort(name, r, rows, tap, engine, error_body)
         return m
 
     # ---- the return's chain (the owner's decision, 2026-09-19): on the phone the redial reloads the visible tab alone ----
