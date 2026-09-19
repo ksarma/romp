@@ -332,12 +332,17 @@ try {
       if (tapUp[cfg.tapPane] === "up") break;
       await sleep(100);
     }
-    out.tapUpMs = tapUp[cfg.tapPane] === "up" ? now() - (out.t.retap || out.t.tap) : -1;   // from the tap that loaded it (the re-tap, under abortPane)
+    out.t.tapUp = now();
+    out.tapUpMs = tapUp[cfg.tapPane] === "up" ? out.t.tapUp - (out.t.retap || out.t.tap) : -1;   // from the tap that loaded it (the re-tap, under abortPane)
     out.loaderSeen = await page.evaluate(() => window.__labLoaderSeen || null);   // what the observer saw the moment the loader went up
     out.srcAfterTap = await page.evaluate(() => Object.fromEntries(Array.from(document.querySelectorAll("iframe[id^=f-]")).map((f) => [f.id.slice(2), f.getAttribute("src")])));
     out.loadingAfterTap = await page.evaluate(() => ({ body: document.body.classList.contains("pane-loading"), failed: document.body.classList.contains("pane-failed"), panes: Array.from(document.querySelectorAll(".pane.loading")).map((d) => d.id), failedPanes: Array.from(document.querySelectorAll(".pane.failed")).map((d) => d.id) }));
     await page.click("#mtabs button[data-pane=chat]");
     await sleep(Math.max(300, (cfg.settleMs || 1500) / 2));
+    // the kernel's wsopen rows carry whole seconds and the measurement's return window opens one second early, so the tapped
+    // pane's own socket must be at least two seconds old at the return or its boot dial reads as a dial AT the return (one
+    // run of the full file counted it so, 1.3 s before the return; review round 1's build)
+    await sleep(Math.max(0, 2500 - (now() - out.t.tapUp)));
     out.tapped = cfg.tapPane;
     // the chat pane's idle prefetch (stage 0, review round 1): a phone opened on another tab holds the chain while the chat is
     // display:none; the Chat tab's show re-arms it. Counted from the chat socket's needFull asks: none before the tap, one after
