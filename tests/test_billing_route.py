@@ -17,6 +17,7 @@ and the machine default, for a dormant session from its reg.
 Real Handler on loopback (tests/test_kernel_headless_ops.py's pattern); the backend is a fake that records calls.
 SYNTHETIC fixtures only: the notes-api demo world (web, api, tests), host TESTHOST, placeholder sids.
 """
+import ast
 import json
 import os
 import tempfile
@@ -1834,7 +1835,100 @@ class BackendHelpers(unittest.TestCase):
         self.assertEqual(len(rows), 1, self.be.problems(10))
         self.assertIn("auth (api): the pick key was asked of this session, but its step failed (PermissionError", rows[0])
         self.assertIn("it keeps following the machine default and stays on the login", rows[0])
-        self.assertTrue(any("1 step failed (api), left following the default with no ask standing" in m for m in self.logs), self.logs[-1:])
+        self.assertTrue(any("1 step failed (api), left following the default as the step found it" in m for m in self.logs), self.logs[-1:])
+
+    def test_set_auth_followers_fault_leaves_a_followers_standing_ask_as_the_step_found_it(self):
+        # the reviewer's round 2 (2026-09-19; its kernel-1) replaced the walk's round-1 handler, which wiped the failed
+        # follower to a fixed clean state, with one guard that restores what stood when the step began, COMPARED before the
+        # write: an ask the step did not write is not the step's to wipe. The verb's walk kept a copy of the round-1 handler
+        # through its rebase, so a follower carrying the default walk's parked ask (a CLI reporting the login, no landing of
+        # this kernel stamped, the default moved to the login: the ask waits for the landing) lost that ask when its own
+        # set_auth step raised at the reg mirror. Through the guard the follower is a follower again with its ask standing
+        # for its landing, the retry mirrors the pair and the flag, and the row says which ask stands
+        web, api = self._sess("web", launched="login"), self._sess("api")
+        for s in (web, api):
+            self._queue_loop(s)
+        api.auth_live = "login"                             # the report restored from the reg; no landing has stamped
+        api._auth_pending, api._auth_pending_login = "login", ""
+        self.be._update_reg(api.sid, apiKeyAuth=False, authPending=True)
+        real_write = sb.write_reg
+
+        def refused(state_dir, sid, reg):
+            if sid == api.sid and reg.get("auth") == "key":
+                raise PermissionError(13, "Permission denied", str(sb._reg_path(state_dir, sid)))
+            return real_write(state_dir, sid, reg)
+        with mock.patch.object(sb, "write_reg", refused):
+            out = self.be.set_auth_followers("key")
+        self.assertEqual((out["moved"], out["failed"]), (["web"], ["api"]))
+        self.assertEqual((api.auth, api.auth_login, api._auth_pending, api._auth_pending_login, api._relaunch_bounded, api._landing_ask_bounded),
+                         ("", "", "login", "", False, False), "as the step found it: a follower, its standing ask kept, no slot memo")
+        reg = self._reg(api.sid)
+        self.assertEqual((reg.get("auth", ""), reg.get("authPending")), ("", True), "the retry mirrored the pair and the standing ask")
+        self.assertFalse(api._reconnect or api._reconnect_when_idle, "no request: the ask waits for its landing as it did")
+        rows = [p["text"] for p in self.be.problems(10) if "step failed" in p["text"]]
+        self.assertEqual(len(rows), 1, self.be.problems(10))
+        self.assertIn("auth (api): the pick key was asked of this session, but its step failed (PermissionError", rows[0])
+        self.assertIn("it keeps following the machine default and stays on the login until its next connect or the next default "
+                      "write, with the login ask it already carried standing for that event", rows[0])
+        self.assertTrue(any("1 step failed (api), left following the default as the step found it" in m for m in self.logs), self.logs[-1:])
+
+    def test_follow_default_auth_runs_both_hops_through_the_one_guard_and_a_refused_mirror_leaves_the_session_as_found(self):
+        # the reviewer's round 2 (2026-09-19; its kernel-1): one guarded entry point for every follower step, so a raise
+        # inside it (the ask's reg mirror on a full or read-only state directory) is contained the same way on every road.
+        # The verb's `default` road called _follow_default and _follow_default_unlanded bare, so the raise went up through
+        # POST /billing with the pending written in memory and no arm behind it: the dots on, and a later pick of that side
+        # read as already applying. Both hops now run under the guard: the landed step (a session running the login while
+        # the default is the key) and the unlanded step (no running side, a connect in flight composed from the old pick)
+        web = self._sess("web", auth="login", launched="login")
+        web.auth_live = "login"
+        self.be._update_reg(web.sid, apiKeyAuth=False)
+        wq = self._queue_loop(web)
+        api = self._sess("api", auth="login")
+        api._launching = dict(self.be._launch_shape(api))   # composed from the pick, the login; the default is the key
+        aq = self._queue_loop(api)
+        real_write = sb.write_reg
+
+        def refused(state_dir, sid, reg):
+            if sid in (web.sid, api.sid) and reg.get("authPending"):
+                raise PermissionError(13, "Permission denied", str(sb._reg_path(state_dir, sid)))
+            return real_write(state_dir, sid, reg)
+        with mock.patch.object(sb, "write_reg", refused):
+            self.assertTrue(self.be.follow_default_auth(web.sid), "the pick is cleared, which is what happened; the fault is a row")
+            self.assertTrue(self.be.follow_default_auth(api.sid))
+        for s, q in ((web, wq), (api, aq)):
+            self.assertEqual((s.auth, s.auth_login), ("", ""), "%s: the verb's own clear stands" % s.name)
+            self.assertEqual((s._auth_pending, s._auth_pending_login, s._relaunch_bounded), ("", "", False),
+                             "%s: left as the step found it, no half-written ask" % s.name)
+            self.assertEqual(len(q), 0, "%s: no request behind a restored pending" % s.name)
+            reg = self._reg(s.sid)
+            self.assertEqual((reg["auth"], reg.get("authPending", False)), ("", False), "%s: the retry mirrored the clear" % s.name)
+        rows = [p["text"] for p in self.be.problems(10) if "step failed" in p["text"]]
+        self.assertEqual(len(rows), 2, self.be.problems(10))
+        self.assertIn("auth (web): follows the machine default again: automatic, but this session's step failed (PermissionError", rows[0])
+        self.assertIn("; it stays on the login until its next connect or the next default write, with no ask standing", rows[0])
+        self.assertIn("auth (api): follows the machine default again: automatic, but this session's step failed (PermissionError", rows[1])
+        self.assertIn("; it stays on the side it is on until its next connect or the next default write, with no ask standing", rows[1])
+
+    def test_the_follower_step_is_reached_only_through_the_guard_and_its_own_hand_offs(self):
+        # CENSUS PIN (the verb's rebase onto the reviewer's round 2, 2026-09-19): every caller of the follower's step runs
+        # it through _follow_default_guarded, so the only bare calls of _follow_default and _follow_default_unlanded are the
+        # guard's and the two steps' hand-offs to each other. A new caller lands here first
+        src = Path(os.path.join(BIN, "romp_sdk_backend.py")).read_text()
+        calls = {}
+
+        def walk(node, fn):
+            for child in ast.iter_child_nodes(node):
+                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    fn = child.name
+                if (isinstance(child, ast.Call) and isinstance(child.func, ast.Attribute)
+                        and child.func.attr in ("_follow_default", "_follow_default_unlanded")):
+                    calls.setdefault(fn, []).append(child.func.attr)
+                walk(child, fn)
+        walk(ast.parse(src), None)
+        self.assertEqual(calls, {"_follow_default_guarded": ["_follow_default"],
+                                 "_follow_default": ["_follow_default_unlanded", "_follow_default"],   # the `because` hand-off,
+                                 #                                                                        then the landed-in-the-gap re-run
+                                 "_follow_default_unlanded": ["_follow_default"]})                     # the landed hop back
 
     def test_the_verbs_ask_lines_end_with_the_stagger_clause(self):
         # the walk's lines end with the stagger clause since the reviewer's round 1 (the relaunch waits for a spawn slot
