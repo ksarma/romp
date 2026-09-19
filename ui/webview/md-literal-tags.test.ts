@@ -14,18 +14,13 @@ import * as path from "node:path";
 import { marked, type Token, type Tokens } from "marked";
 import { applyMdConfig } from "./md-config";
 import { literalizeUnclosedTags, escapeInlineText, VOID_ELEMENTS } from "./md-literal-tags";
+import { viewerHtml } from "./file-view";   // the viewer's parse (mdBlock's recipe): the lexer, the rule, the per-call walk, the parser
 import { headingSlug } from "./md-links";
 
 applyMdConfig();
 const UI = path.resolve(process.cwd(), "..", "ui", "webview");
 const read = (f: string): string => fs.readFileSync(path.join(UI, f), "utf8");
 
-/** The viewer's parse (mdBlock's three steps): the lexer, the rule, the parser. */
-function viewerHtml(src: string): string {
-  const tokens = marked.lexer(src);
-  literalizeUnclosedTags(tokens);
-  return marked.parser(tokens);
-}
 /** The lexed tree with the rule applied. */
 function lexed(src: string): Token[] { const tokens = marked.lexer(src); literalizeUnclosedTags(tokens); return tokens; }
 /** The inline tokens of the first block of `src` (a paragraph's, a heading's), flattened in document order. */
@@ -146,13 +141,17 @@ test("the converted text is escaped as marked's inline text tokenizer escapes te
   assert.equal(JSON.stringify(tokens), once, "a second pass changes nothing");
 });
 
-test("source: one rule, two callers. file-view.ts mdBlock runs the lexer, the rule and the parser at the function's own level (the walkTokens it ran inside marked.parse unchanged and in the same order, over a copy of the singleton's defaults as marked.parse copies them); anchor-map.ts placeTokens runs the rule on the line after Lexer.lex; md-config.ts registers nothing for it and the chat's md() (render.ts) still parses with marked.parse; the module imports marked's types alone", () => {
+test("source: one rule, two callers. file-view.ts viewerHtml, mdBlock's parse, runs the lexer, the rule, the caller's walk and the parser at the function's own level, over a copy of the singleton's defaults as marked.parse copies them, and mdBlock hands it the walkTokens it ran inside marked.parse, unchanged and in the same order; anchor-map.ts placeTokens runs the rule on the line after Lexer.lex; md-config.ts registers nothing for it and the chat's md() (render.ts) still parses with marked.parse; the module imports marked's types alone", () => {
   const VIEW = read("file-view.ts"), MAP = read("anchor-map.ts"), CONFIG = read("md-config.ts"), RENDER = read("render.ts"), MOD = read("md-literal-tags.ts"), CHAT = read("chat-md.ts");
   assert.match(VIEW, /^import \{ literalizeUnclosedTags \} from "\.\/md-literal-tags";/m, "the viewer imports the rule");
+  const recipe = VIEW.split("export function viewerHtml(text: string, walk?: (token: Token) => void): string {")[1].split("\n}\n")[0];
+  assert.match(recipe, /^\n {2}const opts = \{ \.\.\.marked\.defaults \};\n {2}const tokens = marked\.lexer\(text, opts\);\n {2}literalizeUnclosedTags\(tokens\);\n {2}if \(walk\) marked\.walkTokens\(tokens, walk\);\n {2}return marked\.parser\(tokens, opts\);$/,
+    "the lexer, the rule, the caller's walk, the parser, each at the function's own level, and nothing else");
   const mdFn = VIEW.split("function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {")[1].split("\n}\n")[0];
-  assert.match(mdFn, /\n {2}const base = marked\.defaults\.walkTokens;\n(?: {2}\/\/[^\n]*\n)* {2}const opts = \{ \.\.\.marked\.defaults \};\n {2}const tokens = marked\.lexer\(text, opts\);\n {2}literalizeUnclosedTags\(tokens\);\n {2}marked\.walkTokens\(tokens, \(t\) => \{\n {4}if \(t\.type === "code"\) \{ const c = t as Tokens\.Code; fences\.push\(\{ text: c\.text, indented: c\.codeBlockStyle === "indented" \}\); \}\n {4}if \(doc && doc\.kind === "file"\) viewerWalkTokens\(t\);\n {4}if \(base\) void base\.call\(marked, t\);\n {2}\}\);\n {2}const dirty = marked\.parser\(tokens, opts\);\n/,
-    "the lexer, the rule, the walk (its three steps as before, in order), the parser, each at the function's own level");
-  assert.equal((mdFn.match(/marked\.parse\(/g) || []).length, 0, "mdBlock no longer calls marked.parse (the tokens are in hand between its lexer and its parser)");
+  assert.match(mdFn, /\n {2}const base = marked\.defaults\.walkTokens;\n(?: {2}\/\/[^\n]*\n)* {2}const dirty = viewerHtml\(text, \(t\) => \{\n {4}if \(t\.type === "code"\) \{ const c = t as Tokens\.Code; fences\.push\(\{ text: c\.text, indented: c\.codeBlockStyle === "indented" \}\); \}\n {4}if \(doc && doc\.kind === "file"\) viewerWalkTokens\(t\);\n {4}if \(base\) void base\.call\(marked, t\);\n {2}\}\);\n/,
+    "mdBlock's parse is the recipe's, the walk it ran before (its three steps in order) handed over");
+  assert.equal((mdFn.match(/marked\.parse\(/g) || []).length, 0, "mdBlock no longer calls marked.parse (the tokens are in hand between the recipe's lexer and its parser)");
+  assert.equal((mdFn.match(/marked\.(lexer|parser)\(|literalizeUnclosedTags\(/g) || []).length, 0, "and holds no step of its own: the recipe does");
   assert.match(MAP, /^import \{ literalizeUnclosedTags, VOID_ELEMENTS \} from "\.\/md-literal-tags";/m, "the map imports the rule and the void list");
   assert.match(MAP, /\n {2}try \{ tokens = Lexer\.lex\(N\); literalizeUnclosedTags\(tokens\); \} catch \(e\) \{ lexError = /, "the rule right after the lex, before anything reads the tokens");
   assert.match(MAP, /^const VOID_TAGS = VOID_ELEMENTS;/m, "one void list, the module's");

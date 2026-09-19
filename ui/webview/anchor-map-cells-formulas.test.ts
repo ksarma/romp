@@ -25,7 +25,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { marked } from "marked";
 import { applyMdConfig } from "./md-config";
-import { literalizeUnclosedTags } from "./md-literal-tags";   // the viewer's parse runs it between marked's lexer and parser (file-view.ts mdBlock), as the map does after its own lex
+import { viewerHtml } from "./file-view";   // the viewer's parse (mdBlock's recipe: marked's lexer, the literal-tags rule of md-literal-tags.ts, the per-call walk, its parser), the stand-in's too
 import { mapRenderedSelection, mapRawSelection, paintChangesRendered, unpaintChanges, type SelLike, type MapResult, type ChangePaint } from "./anchor-map";
 import { hideEdges } from "../test-dom-shim";
 
@@ -137,15 +137,6 @@ function standInFill(root: FakeElement): void {
       root.replaceChild(repl, el);
     } else standInFill(el);
   }
-}
-/** marked's HTML as the viewer's mdBlock renders it (file-view.ts): its lexer, the literal-tags rule (md-literal-tags.ts: an inline start
- *  tag with no end tag in its block is literal text, decision 52, the same rule the map applies after its own lex), its parser, over a
- *  copy of the singleton's defaults as marked.parse copies them. */
-function viewerHtml(text: string): string {
-  const opts = { ...marked.defaults };
-  const tokens = marked.lexer(text, opts);
-  literalizeUnclosedTags(tokens);
-  return marked.parser(tokens, opts);
 }
 /** `.fileview-md > the viewer's marked output`, filled as the viewer's body is. */
 function buildRendered(text: string): FakeElement {

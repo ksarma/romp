@@ -1319,8 +1319,10 @@ test("source: the PR review's round 1 of Slice 6 (plans/markdown-viewer.md): the
 test("source: mdBlock keeps no try, no catch and no fallback; both viewers' renderBody wrap the block's build and the swap in one try whose catch records the message, paints the RENDER_FELL line and then the Raw rows; mode() reads the record; the line's words are exported", () => {
   // mdBlock: the parse and the sanitize at the function's own level (a two-space indent, inside no try), no fallback write, no flag
   const mdFn = VIEW.split("function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {")[1].split("\n}\n")[0];
-  assert.match(mdFn, /\n {2}const base = marked\.defaults\.walkTokens;\n(?: {2}\/\/[^\n]*\n)* {2}const opts = \{ \.\.\.marked\.defaults \};\n {2}const tokens = marked\.lexer\(text, opts\);\n {2}literalizeUnclosedTags\(tokens\);\n {2}marked\.walkTokens\(tokens, \(t\) => \{\n/, "the parse at the function's own level: marked's lexer, the literal-tags rule and the walk (md-literal-tags.test.ts pins the three steps)");
-  assert.match(mdFn, /\n {2}const dirty = marked\.parser\(tokens, opts\);\n/, "the parser at the function's own level");
+  assert.match(mdFn, /\n {2}const base = marked\.defaults\.walkTokens;\n(?: {2}\/\/[^\n]*\n)* {2}const dirty = viewerHtml\(text, \(t\) => \{\n/, "the parse at the function's own level: the exported recipe (marked's lexer, the literal-tags rule, this walk, marked's parser; md-literal-tags.test.ts pins its steps), the walk handed to it");
+  const recipe = VIEW.split("export function viewerHtml(text: string, walk?: (token: Token) => void): string {")[1].split("\n}\n")[0];
+  assert.match(recipe, /\n {2}return marked\.parser\(tokens, opts\);$/, "the parser at the recipe's own level");
+  assert.doesNotMatch(recipe, /try \{/, "inside no try: a throw from the lexer or the parser propagates to mdBlock and on to the caller");
   assert.match(mdFn, /\n {2}box\.replaceChildren\(\.\.\.Array\.from\(sanitizeMd\(dirty, mintHeadingIds\)\.childNodes\)\);\n/, "the sanitize and the adoption at the function's own level: a throw from either propagates");
   assert.doesNotMatch(mdFn, /\n {2}try \{/, "no try at the function's own level (the fence highlight's and the URL parse's inner ones stand)");
   assert.doesNotMatch(mdFn, /box\.textContent = text;|let rendered|rendered = false|if \(rendered/, "no fallback write and no `rendered` flag: the caller keeps the content, and both link passes run on every render");

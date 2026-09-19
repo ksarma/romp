@@ -23,7 +23,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { marked } from "marked";
 import { applyMdConfig, resolveWikilink } from "./md-config";
-import { literalizeUnclosedTags } from "./md-literal-tags";
+import { viewerHtml } from "./file-view";   // the viewer's parse (mdBlock's recipe: marked's lexer, the literal-tags rule of md-literal-tags.ts, the per-call walk, its parser), the stand-in's too
 import { mapRenderedSelection, sourceBlockSpans, renderedBlockIndex, renderedBlockElements, renderedBlockWrappers, paintRendered, type SelLike, type MapResult } from "./anchor-map";
 import { hideEdges, sameNodes } from "../test-dom-shim";
 
@@ -172,22 +172,13 @@ function standInFill(root: FakeElement): void {
     } else standInFill(el);
   }
 }
-/** marked's HTML as the viewer's mdBlock parses a file document (file-view.ts): its lexer, the literal-tags rule (md-literal-tags.ts:
- *  an inline start tag with no end tag in its block is literal text, decision 52 of plans/file-review.md, the rule the map applies
- *  after its own lex too), the file kind's wikilink stamp as the per-call walk marked.parse ran applied it before (resolveWikilink),
- *  its parser, over a copy of the singleton's defaults as marked.parse copies them. */
-function viewerHtml(text: string): string {
-  const opts = { ...marked.defaults };
-  const tokens = marked.lexer(text, opts);
-  literalizeUnclosedTags(tokens);
-  marked.walkTokens(tokens, (t) => { resolveWikilink(t); });
-  return marked.parser(tokens, opts);
-}
+// The stand-in renders through the viewer's own parse (file-view.ts viewerHtml, mdBlock's recipe) with the file kind's wikilink
+// stamp as the per-call walk (resolveWikilink), the walk marked.parse ran for it before.
 /** `.fileview-md > marked output`, sanitized and filled as the viewer's body is (the file kind's wikilink stamp applied as file-view-links.ts applies it). */
 function buildRendered(text: string): FakeElement {
   const doc = new FakeDocument();
   const box = doc.createElement("div"); box.setAttribute("class", "fileview-md");
-  for (const n of parseHTML(doc, viewerHtml(text))) box.appendChild(n);
+  for (const n of parseHTML(doc, viewerHtml(text, (t) => { resolveWikilink(t); }))) box.appendChild(n);
   standInSanitize(box);
   standInFill(box);
   return box;

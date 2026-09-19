@@ -16,7 +16,7 @@
 // BROWSER (file-browse.ts, feed bundle) opens files through this same viewer in the FEED document, so
 // whichever bundle imports it gets the identical modal.
 import hljs from "highlight.js/lib/core";
-import { marked, type Tokens } from "marked";
+import { marked, type Token, type Tokens } from "marked";
 import { sanitizeMd, revealFragmentTarget } from "./md-sanitize";
 import { applyMdConfig } from "./md-config";   // the one markdown configuration (md-config.ts)
 import { literalizeUnclosedTags } from "./md-literal-tags";   // an inline start tag with no end tag in its block renders as literal text, on this parse's tokens (plans/file-review.md, decision 52)
@@ -4121,6 +4121,24 @@ function gateKeys(body: HTMLElement): void {
 // No location at all (a caller with nothing to say) leaves the markup as marked emitted it.
 type MdDocLoc = { kind: "url"; href: string } | { kind: "file"; path: string; sid: string | null };
 
+/** marked's HTML for `text` as the viewer parses it: marked.parse's three steps called one by one (its lexer, the per-call
+ *  walkTokens, its parser, over a copy of the singleton's defaults as marked.parse copies them), so the token tree is in hand
+ *  between the lexer and the walk, where an inline start tag with no end tag in its block becomes literal text
+ *  (md-literal-tags.ts literalizeUnclosedTags, the rule the anchor map applies to its own lex of the same text in placeTokens;
+ *  plans/file-review.md, decision 52), on THIS parse's tokens alone: the chat's md() parses the same singleton with marked.parse
+ *  and renders as before. `walk` is the caller's per-call token walk, run after the rule and before the parser (mdBlock's collects
+ *  the code tokens, runs the file kind's link hook and the defaults' walk, in that order); no walk, no walkTokens call. The
+ *  return is the dirty HTML: the sanitizer (sanitizeMd) is the caller's step. A throw from the lexer or the parser reaches the
+ *  caller as marked's own error, without the report-this sentence marked.parse appended to its message (fellMessage still cuts
+ *  one). Exported for the test suites that stand a Rendered body in for the viewer's: they render through this one recipe, not
+ *  through marked.parse alone, whose HTML for a block holding such a tag is not the viewer's (decision 52's review, 2026-09-19). */
+export function viewerHtml(text: string, walk?: (token: Token) => void): string {
+  const opts = { ...marked.defaults };
+  const tokens = marked.lexer(text, opts);
+  literalizeUnclosedTags(tokens);
+  if (walk) marked.walkTokens(tokens, walk);
+  return marked.parser(tokens, opts);
+}
 // Markdown rendered as the prose it means (the user 2026-08-09: Rendered is the default, Raw one click
 // away). The file is arbitrary bytes off a disk and marked emits raw HTML verbatim, so, exactly like the
 // chat's md() in render.ts, the output goes through the shared sanitizer (sanitizeMd, md-sanitize.ts)
@@ -4143,22 +4161,13 @@ function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
   // collects the code tokens: the lexer expanded the note's leading tabs to spaces before it cut them, and the fence
   // pass below reads each fence's text back out of the note for its Copy button (fence-source.ts).
   const base = marked.defaults.walkTokens;
-  // marked.parse's three steps, each called here (its lexer, the per-call walkTokens, its parser, over a copy of the singleton's
-  // defaults as marked.parse copies them), so the token tree is in hand between the lexer and the walk: an inline start tag with
-  // no end tag in its block becomes literal text there (md-literal-tags.ts literalizeUnclosedTags, the rule the anchor map applies
-  // to its own lex of the same text in placeTokens; plans/file-review.md, decision 52), on THIS parse's tokens alone, so the
-  // chat's md(), which parses the same singleton, renders as before. The walk runs unchanged and in the same order. A throw from
-  // the lexer or the parser reaches the caller as marked's own error, without the report-this sentence marked.parse appended to
-  // its message (fellMessage still cuts one).
-  const opts = { ...marked.defaults };
-  const tokens = marked.lexer(text, opts);
-  literalizeUnclosedTags(tokens);
-  marked.walkTokens(tokens, (t) => {
+  // The parse is viewerHtml's (above): the lexer, the literal-tags rule, this walk, the parser. The walk runs unchanged and in the
+  // same order it ran inside marked.parse.
+  const dirty = viewerHtml(text, (t) => {
     if (t.type === "code") { const c = t as Tokens.Code; fences.push({ text: c.text, indented: c.codeBlockStyle === "indented" }); }
     if (doc && doc.kind === "file") viewerWalkTokens(t);
     if (base) void base.call(marked, t);
   });
-  const dirty = marked.parser(tokens, opts);
   // The one sanitizer the chat's md() uses too (md-sanitize.ts): html + svg (a note's own inline SVG), no data-*
   // (a document's `<span data-act="stopRetrying">` would otherwise bubble to render.ts's document-level delegate
   // and interrupt the active session; review find on #958, 2026-09-07), and rules modelled on GitHub's for a

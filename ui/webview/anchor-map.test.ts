@@ -23,7 +23,7 @@ import cssLang from "highlight.js/lib/languages/css";
 import markdown from "highlight.js/lib/languages/markdown";
 import { marked } from "marked";
 import { applyMdConfig } from "./md-config";   // the one markdown configuration, applied here as the viewer applies it
-import { literalizeUnclosedTags } from "./md-literal-tags";   // the rule mdBlock runs between marked's lexer and its parser (viewerHtml)
+import { viewerHtml } from "./file-view";   // the viewer's parse (mdBlock's recipe: marked's lexer, the literal-tags rule of md-literal-tags.ts, the per-call walk, its parser), the stand-in's too
 import {
   mapRawSelection, mapRenderedSelection, makeAnchor, locateComment, paintRaw, paintRendered,
   rawOffsetToLine, rawRowForOffset, type SelLike, type MapResult, type SourceRange,
@@ -201,15 +201,6 @@ function buildRaw(text: string, filePath: string): RawDom { return buildRawWith(
 /** The viewer's grid since Slice 7 (the replica wrapNumberedHtml: the three-ending split), the highlighter included. */
 function buildRawViewer(text: string, filePath: string): RawDom { return buildRawWith(wrapNumberedHtml, text, filePath); }
 type MdDom = { body: FakeElement; box: FakeElement; before: FakeElement };
-/** marked's HTML as the viewer's mdBlock parses it (file-view.ts): its lexer, the literal-tags rule (md-literal-tags.ts: an inline
- *  start tag with no end tag in its block is literal text, decision 52 of plans/file-review.md, the rule the map applies after its
- *  own lex too), its parser, over a copy of the singleton's defaults as marked.parse copies them. */
-function viewerHtml(text: string): string {
-  const opts = { ...marked.defaults };
-  const tokens = marked.lexer(text, opts);
-  literalizeUnclosedTags(tokens);
-  return marked.parser(tokens, opts);
-}
 /** `.fileview-body > div.fileview-md > marked output` (mdBlock without DOMPurify, see the header). */
 function buildRendered(text: string): MdDom {
   const doc = new FakeDocument();
@@ -318,8 +309,11 @@ test("pins: the viewer's Raw rows, marked configuration, and lexer identity", ()
   // since the Slice 3 review, collecting the code tokens for the fence pass's Copy (fence-source.ts); it reads them, never
   // rewrites them, so the lexer's shapes stand. Since decision 52 the parse is marked.parse's three steps called apart (its lexer,
   // the walk, its parser, over a copy of the defaults as marked.parse copies them), with the literal-tags rule between the lexer and
-  // the walk (md-literal-tags.ts): the one rewrite of the tokens, and the same one this map applies after its own lex (placeTokens)
-  assert.match(VIEW, /const opts = \{ \.\.\.marked\.defaults \};\n\s*const tokens = marked\.lexer\(text, opts\);\n\s*literalizeUnclosedTags\(tokens\);\n\s*marked\.walkTokens\(tokens, \(t\) => \{\n\s*if \(t\.type === "code"\) \{ const c = t as Tokens\.Code; fences\.push\(\{ text: c\.text, indented: c\.codeBlockStyle === "indented" \}\); \}\n\s*if \(doc && doc\.kind === "file"\) viewerWalkTokens\(t\);\n\s*if \(base\) void base\.call\(marked, t\);\n\s*\}\);\n\s*const dirty = marked\.parser\(tokens, opts\);/);  const MAP = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "anchor-map.ts"), "utf8");
+  // the walk (md-literal-tags.ts): the one rewrite of the tokens, and the same one this map applies after its own lex (placeTokens).
+  // Since that decision's review (2026-09-19) the three steps are the exported viewerHtml, the recipe this suite's stand-in renders
+  // through too, and mdBlock hands it the walk
+  assert.match(VIEW, /export function viewerHtml\(text: string, walk\?: \(token: Token\) => void\): string \{\n\s*const opts = \{ \.\.\.marked\.defaults \};\n\s*const tokens = marked\.lexer\(text, opts\);\n\s*literalizeUnclosedTags\(tokens\);\n\s*if \(walk\) marked\.walkTokens\(tokens, walk\);\n\s*return marked\.parser\(tokens, opts\);\n\}/);
+  assert.match(VIEW, /const dirty = viewerHtml\(text, \(t\) => \{\n\s*if \(t\.type === "code"\) \{ const c = t as Tokens\.Code; fences\.push\(\{ text: c\.text, indented: c\.codeBlockStyle === "indented" \}\); \}\n\s*if \(doc && doc\.kind === "file"\) viewerWalkTokens\(t\);\n\s*if \(base\) void base\.call\(marked, t\);\n\s*\}\);/);  const MAP = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "anchor-map.ts"), "utf8");
   assert.match(MAP, /try \{ tokens = Lexer\.lex\(N\); literalizeUnclosedTags\(tokens\); \}/, "the walk lexes with the viewer's configured singleton (no private options) and runs the literal-tags rule right after its lex, as the viewer's parse does (md-literal-tags.ts)");
   assert.doesNotMatch(MAP, /marked\.(setOptions|use)\(/, "anchor-map holds no options of its own: it applies the one configuration (applyMdConfig) and lexes under it");
   assert.match(MAP, /^applyMdConfig\(\);/m, "…at load, so the static lexer sees every extension the renderer has, whichever module loaded first");

@@ -19,6 +19,7 @@ import assert from "node:assert/strict";
 import { marked, Lexer, type Token } from "marked";
 import { applyMdConfig } from "./md-config";
 import { literalizeUnclosedTags } from "./md-literal-tags";
+import { viewerHtml } from "./file-view";   // the viewer's HTML: mdBlock's recipe (its lexer, the rule, the per-call walk, its parser), exported
 
 applyMdConfig();
 
@@ -28,13 +29,6 @@ const viewerLex: Lex = (src) => { const opts = { ...marked.defaults }; const tok
 /** placeTokens' lex (anchor-map.ts): the static Lexer.lex over the module defaults, then the rule. */
 const mapLex: Lex = (src) => { const tokens = Lexer.lex(src); literalizeUnclosedTags(tokens); return tokens; };
 const LEXES: Array<[string, Lex]> = [["mdBlock's lex", viewerLex], ["placeTokens' lex", mapLex]];
-/** The viewer's HTML: mdBlock's lexer, the rule and its parser, over one copy of the defaults (its walkTokens changes no text). */
-function viewerHtml(src: string): string {
-  const opts = { ...marked.defaults };
-  const tokens = marked.lexer(src, opts);
-  literalizeUnclosedTags(tokens);
-  return marked.parser(tokens, opts);
-}
 /** Each paragraph's and heading's inline run as one string: a text token's text as it is (escaped or not, which is the
  *  point), any other token as `[type:raw]`. */
 function inlineText(tokens: Token[]): string[] {

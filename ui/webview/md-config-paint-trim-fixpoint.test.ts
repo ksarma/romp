@@ -19,7 +19,7 @@
 // Synthetic prose, no paths.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { marked } from "marked";
+import { viewerHtml } from "./file-view";   // the viewer's parse (mdBlock's recipe: marked's lexer, the literal-tags rule of md-literal-tags.ts, the per-call walk, its parser), the stand-in's too
 import { applyMdConfig } from "./md-config";
 import { paintRendered, trimCollapsedMarks, TRIM_PASSES_MAX, TRIM_STATS } from "./anchor-map";
 import { hideEdges, defineHidden } from "../test-dom-shim";
@@ -162,7 +162,7 @@ function parseHTML(doc: FakeDocument, html: string): FakeNode[] {
 function buildRendered(text: string): { doc: FakeDocument; box: FakeElement } {
   const doc = new FakeDocument(true);
   const box = doc.createElement("#root"); box.setAttribute("class", "fileview-md");
-  for (const n of parseHTML(doc, marked.parse(text) as string)) box.appendChild(n);
+  for (const n of parseHTML(doc, viewerHtml(text))) box.appendChild(n);
   return { doc, box };
 }
 const El = (n: FakeNode) => n as unknown as Element;

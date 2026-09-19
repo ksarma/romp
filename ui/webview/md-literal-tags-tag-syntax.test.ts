@@ -14,11 +14,10 @@ import assert from "node:assert/strict";
 import { marked, type Token, type Tokens } from "marked";
 import { applyMdConfig } from "./md-config";
 import { literalizeUnclosedTags, isSelfClosingTag, escapeInlineText, VOID_ELEMENTS } from "./md-literal-tags";
+import { viewerHtml } from "./file-view";   // the viewer's parse (mdBlock's recipe): the lexer, the rule, the per-call walk, the parser
 
 applyMdConfig();
 
-/** The viewer's parse (mdBlock's three steps): the lexer, the rule, the parser. */
-function viewerHtml(src: string): string { const tokens = marked.lexer(src); literalizeUnclosedTags(tokens); return marked.parser(tokens); }
 /** The inline tokens of block `at` after the rule, flattened in document order. */
 function inlineOf(src: string, at = 0): Token[] {
   const tokens = marked.lexer(src);
