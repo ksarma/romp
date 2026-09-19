@@ -1672,7 +1672,12 @@ class TheCountersOneSite(unittest.TestCase):
         boundary wrapper hands to _or_fault, the four doors are defined once each and undecorated, and the same list of births is
         empty (its three error strings that mention a door contain the name and spell none whole, so the value rule reports them
         not). The population read is asserted too, so an empty file or a moved door cannot pass as clean: the kernel calls the
-        judge's four doors by `jd.<door>` and no other spelling (58 references at this head), and the two hand-offs are the two
+        judge's four doors by `jd.<door>` and no other spelling, at exactly the call sites per spelling the pin asserts (58 at the
+        head of the round-4 fixes, 27 through load_goals, 9 through load_goals_or_fault, 7 through load_goals_shared and 15 through
+        load_goals_shared_or_fault; review round 4, tests-3: the figure was prose and the case asserted the set of spellings, which a
+        kernel that kept one call site per spelling passed; the dict is pinned rather than the sum, since a swap between doors moves
+        two counts and the sum not at all, so an upstream fold that adds, removes or re-doors a kernel call site reds here by design
+        and the number moves with a re-read of the reference's other-readers clause or of a bound), and the two hand-offs are the two
         outer wrappers'. The limit that stays: a name assembled at run time from pieces none of which spells a door whole is spelled
         in no constant the pin reads (the `assembled` class of _LIMITS, which the enumeration holds on that side). Review round 4,
         correctness-1, tests-1 and extra6-1: the string class was stated closed by a list of receivers, nine lookups, four dict
@@ -1684,10 +1689,13 @@ class TheCountersOneSite(unittest.TestCase):
                                    "no string constant spells one whole, wherever it appears and whatever receives it, and none containing the "
                                    "name reaches a dynamic lookup, a dict read or a subscript key: %s"
                                    % (KERNEL_FILE, "; ".join("line %d, %s" % b for b in born)))
-        self.assertEqual(set(called), {"jd.load_goals", "jd.load_goals_or_fault", "jd.load_goals_shared", "jd.load_goals_shared_or_fault"},
-                         "%s: the kernel calls the judge's four doors by attribute and no other loader spelling (the pin above read a non-empty "
-                         "population; a spelling missing here is a door the kernel no longer calls or a file that is not the kernel's, a fifth is "
-                         "a new door or a new base, which needs a recorder or a bound before this set grows): %r"
+        self.assertEqual(called, {"jd.load_goals": 27, "jd.load_goals_or_fault": 9, "jd.load_goals_shared": 7, "jd.load_goals_shared_or_fault": 15},
+                         "%s: the kernel calls the judge's four doors by attribute and no other loader spelling, at exactly these call sites per "
+                         "spelling, 58 in all: the population the pin above read, so an empty file, a file that is not the kernel's or a kernel "
+                         "that kept one call site per spelling and lost the rest cannot pass as clean. A change here is a new, a removed or a "
+                         "re-doored call site (a swap between doors moves two counts and the sum not at all, which is why the dict is pinned and "
+                         "not the sum), which needs the reference's other-readers clause or a bound re-read before the number moves; a fifth "
+                         "spelling is a new door or a new base, which needs a recorder or a bound before this dict grows: %r"
                          % (KERNEL_FILE, {k: v for k, v in sorted(called.items())}))
         self.assertEqual((defs, handoffs), ({}, []), "%s: the kernel defines no loader and hands none to _or_fault" % KERNEL_FILE)
         born, called, defs, handoffs = _loader_births(Path(os.path.realpath(jd.__file__)), judge=True)
