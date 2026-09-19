@@ -2690,7 +2690,12 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   each about 3 s holding the interpreter lock, 8.5% of a core. At 1,000 the
   collector's own generation-1 count (5.6 a second measured there) keeps
   them at least 1,001 generation-1 collections apart, at that rate at least
-  179 s, at most about 20 an hour; each pause's length is unchanged. The
+  179 s, at most about 20 an hour. Each pause stays about the same length:
+  it walks the same long-lived population either way and also frees the
+  cyclic garbage accrued since the previous one, about five times today's
+  per pass (a lab with an acyclic churn read the mean pause 5% higher; one
+  where cyclic garbage outgrew the live set read it nine times longer), so
+  read `gen.2`'s `msLast`, `msMax` and `collectedLast` after a deploy. The
   event is the collector's count, never a clock. On a collector where the
   third threshold is not the generation-2 trigger (the free-threaded build;
   CPython 3.14.0 to 3.14.4, whose incremental collector ignores it) the
