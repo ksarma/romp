@@ -1127,10 +1127,15 @@ class Cli(unittest.TestCase):
         (perf_export.document_text), the file's spelling is nowhere in it, it differs from the file's bytes, and
         Content-Length and the summary line follow the body. A fresh export re-serialises to itself byte for byte (the
         same function wrote it), so a file as the export wrote it goes out as the file. Fails before: the three bodies
-        were the files' bytes, each digit run in them. WHAT THIS DOES NOT CHANGE is the checks' scope: the scan reads keys
-        and string values, so the same listed digit run written as a plain integer is a number to every check and is on the
-        wire as that number, before and after (pinned last, as what it is), where the quoted spelling is the scan's refusal;
-        the re-serialisation closes the spelling channel and does not widen what the checks read."""
+        were the files' bytes, each digit run in them. AND THE SCAN READS THE SPELLING THAT GOES OUT (the same round, its
+        lens over the final artifact): perf_public.identifier_hits searches every number by its wire spelling, json.dumps,
+        the writer's own, so the listed run written as a number in any spelling whose canonical form carries it (a plain
+        integer, a float, a negative, embedded in a longer run, a fraction, two exponent forms that canonicalise to
+        4242424242.0 and so put the run on the wire from a file that never spelled it, a listed float-shaped entry and its
+        exponent respelling, an element of a list, a leaf under usage) is refused by the scan naming the kind and the path,
+        the run in no output, nothing sent; 4242424242e-3 still travels, as 4242424.242, a spelling that carries no listed
+        run. Fails before: every numeric spelling was sent, the run on the wire as the number every check passed, where the
+        quoted spelling alone was the scan's refusal."""
         base = ["--yes", "--receiver", self.fake.url]
         text = self.data.decode("utf-8")
         anchor = '"uptime_s": 60'
@@ -1138,8 +1143,9 @@ class Cli(unittest.TestCase):
         self.assertEqual(_wire(pu.strict_loads(self.data)), self.data, "a fresh export re-serialises to itself: the writer is the same function")
         os.makedirs(os.path.join(self.home, ".config", "romp"))
         with open(os.path.join(self.home, ".config", "romp", "private-strings.txt"), "w", encoding="utf-8") as fh:
-            fh.write("4242424242\n")
+            fh.write("4242424242\n1234.5678\n")
         self.assertNotIn(b"4242424242", self.data)
+        self.assertNotIn(b"1234.5678", self.data)
         edited = os.path.join(self.xdg, "edited.json")
         for literal, canonical, digits in (("0.30000000000000004441", "0.30000000000000004", b"4441"),
                                            ("1700000000e-9", "1.7", b"1700000000"),
@@ -1168,12 +1174,34 @@ class Cli(unittest.TestCase):
                           "refused: a string this machine knows (private string) survives as the value at perf/zzratio; nothing sent")
         self.assertNotIn("4242424242", r.stdout + r.stderr)
         self.assertEqual(self.fake.requests, [])
+        refusal = "refused: a string this machine knows (private string) survives as the value at %s; nothing sent"
+        for literal in ("4242424242", "4242424242.0", "4242424242.5", "-4242424242", "14242424242", "0.4242424242",
+                        "4.242424242e9", "4242424242e0", "1234.5678", "12345678e-4"):      # as a NUMBER: the scan reads the wire spelling
+            with open(edited, "w", encoding="utf-8") as fh:
+                fh.write(text.replace(anchor, anchor + ', "zzratio": ' + literal))
+            self.assertTrue(any(run in json.dumps(json.loads(literal)) for run in ("4242424242", "1234.5678")),
+                            "the canonical spelling of %s carries a listed run" % literal)
+            r = self._refused(_run([edited] + base, self.state, home=self.home), 1, refusal % "perf/zzratio")
+            for run in ("4242424242", "1234.5678", "12345678"):
+                self.assertNotIn(run, r.stdout + r.stderr, literal)
+            self.assertEqual(r.stdout, "", literal)
         with open(edited, "w", encoding="utf-8") as fh:
-            fh.write(text.replace(anchor, anchor + ', "zzratio": 4242424242'))            # as a plain integer: a number to every check
-        r = _run([edited] + base, self.state, home=self.home)
-        self.assertEqual(r.returncode, 0, r.stderr + " (a number is a measurement to every check; the scan reads keys and string values)")
-        self.assertIn(b'"zzratio": 4242424242', self.fake.requests[0][2],
-                      "the residual the re-serialisation leaves: the listed digit run travels as the number every check passed")
+            fh.write(text.replace(anchor, anchor + ', "zzlist": [4242424242, 1]'))            # an element of a list
+        self._refused(_run([edited] + base, self.state, home=self.home), 1, refusal % "perf/zzlist/0")
+        xdg, state = _state_root()
+        self.addCleanup(shutil.rmtree, xdg, True)
+        with open(_export(xdg, state, usage=True), encoding="utf-8") as fh:
+            usage = fh.read()
+        self.assertEqual(usage.count('"send": 7'), 1, "the usage block's one action count is where the leaf is planted")
+        with open(edited, "w", encoding="utf-8") as fh:
+            fh.write(usage.replace('"send": 7', '"send": 7, "zzratio": 4242424242'))       # a leaf under usage, walked like perf
+        self._refused(_run([edited] + base, state, home=self.home), 1, refusal % "usage/actions/zzratio")
+        self.assertEqual(self.fake.requests, [], "no numeric spelling whose canonical form carries a listed run was sent")
+        with open(edited, "w", encoding="utf-8") as fh:
+            fh.write(text.replace(anchor, anchor + ', "zzratio": 4242424242'))
+        r = _run([edited] + base, self.state)                                              # the synthetic HOME has no list: a number like any other
+        self.assertEqual(r.returncode, 0, r.stderr + " (without the list, no probe is a digit run and the number passes)")
+        self.assertIn(b'"zzratio": 4242424242', self.fake.requests[0][2])
 
     def test_an_edited_file_the_fold_would_have_changed_is_refused_by_kind_and_key_path_and_never_sent(self):
         """The re-check holds the file to the export's FOLD, not to the walk's shapes alone (the upload's second review

@@ -1430,6 +1430,35 @@ class Cli(unittest.TestCase):
         self.assertEqual(_hits({"a": {"b": "x " + SID2[:8]}}, probes), [("session id", "the value at a/b")])
         self.assertEqual(_hits({"TESTHOST": 1}, probes), [("hostname", "a key under the root")])
 
+    def test_a_number_is_scanned_by_its_wire_spelling_so_a_listed_digit_run_in_a_numeric_leaf_is_a_hit(self):
+        """The identifier scan reads every NUMBER by its wire spelling, json.dumps(node), the spelling perf_export.document_text
+        writes and `romp perf upload` sends (the upload's fourth review round, 2026-09-19, its lens over the final artifact:
+        the private list may hold a digit run, and a listed run written as a number travelled unread while the same run in
+        quotes was refused). A hit is a value finding at the number's path, whatever the file spelled: a plain integer, a
+        float, a negative, a run embedded in a longer one, a fraction, an exponent form whose canonical spelling carries the
+        run (4.242424242e9 is 4242424242.0), a listed float-shaped entry and its exponent respelling, a list element. A
+        number whose canonical spelling does not carry the run is no hit (4242424242e-3 is 4242424.242, and a float that
+        merely rounds near it), nor are a bool or null under a probe that spells them, nor any number under the machine's
+        word and path probes (a hostname, a login, a home directory, a session id, a working directory spell letters,
+        slashes or dashes a number never carries). Fails before: every numeric leaf was skipped."""
+        listed = [(pp.PRIVATE_KIND, "4242424242"), (pp.PRIVATE_KIND, "1234.5678")]
+        for value, where in ((4242424242, "a/n"), (4242424242.0, "a/n"), (4242424242.5, "a/n"), (-4242424242, "a/n"), (14242424242, "a/n"),
+                             (0.4242424242, "a/n"), (4.242424242e9, "a/n"), (1234.5678, "a/n"), (12345678e-4, "a/n"), ([1, 4242424242], "a/n/1")):
+            self.assertEqual(_hits({"a": {"n": value}}, listed), [(pp.PRIVATE_KIND, "the value at %s" % where)], repr(value))
+            self.assertIn(json.dumps(value if not isinstance(value, list) else value[1]).strip("-"), pe.document_text({"a": {"n": value}}),
+                          "the spelling scanned is the spelling the writer puts in the file")
+        for value in (4242424242e-3, 4242424241.9999, 42424242, True, False, None, "x"):
+            self.assertEqual(_hits({"a": {"n": value}}, listed), [], repr(value))
+        self.assertEqual(_hits({"a": {"n": True, "m": None}}, [(pp.PRIVATE_KIND, "true"), (pp.PRIVATE_KIND, "null")]), [],
+                         "a bool and null are not scanned")
+        with mock.patch.object(pp.socket, "gethostname", return_value="TESTHOST.example"):
+            machine = pp.machine_probes(self.state, env={"HOME": HOME, "USER": "tester"})
+        self.assertEqual(_hits({"a": {"n": 4242424242, "f": 1234.5678, "l": [1e100, -0.0, 1.5e12]}}, machine), [],
+                         "the machine's words and paths are never spelled by a number")
+        self.assertEqual(_hits({"a": {"n": 4242424242}}, [("session id", "11111111")]), [], "an all-digit id prefix elsewhere is no hit")
+        self.assertEqual(_hits({"a": {"n": 911111111}}, [("session id", "11111111")]), [("session id", "the value at a/n")],
+                         "an all-digit id prefix a counter carries is a hit, the rare cost the docstring names")
+
     def test_the_private_strings_list_feeds_the_probes_when_present_and_is_a_no_op_absent(self):
         """The machine-local list the repository's pre-push hook reads (~/.config/romp/private-strings.txt: one string per
         line, `#` comments, blanks) is the maintainer's own list of what must never be published, a coined project nickname
@@ -1606,6 +1635,29 @@ class Cli(unittest.TestCase):
         self.assertFalse(os.path.exists(os.path.join(self.state, "perf-exports")))
         r = _run(["--public", "--from", self.src], state=self.state)
         self.assertEqual(r.returncode, 0, r.stderr + " (without the list, abc is a grammar-fitting word)")
+
+    def test_a_listed_digit_run_a_counter_spells_refuses_the_export_naming_the_value_path_and_never_the_number(self):
+        """The scan over numbers (identifier_hits, the upload's fourth review round, 2026-09-19) is the shared check's, so the
+        export child refuses a snapshot whose counter spells a listed digit run, an integer or a float, naming the kind and the
+        value's path and never the number, and writes nothing; the same snapshot without the list exports, the counter a
+        number like any other. This is the cost the reference states for a listed string that is romp vocabulary, and the
+        remedy is the same, editing the list. Fails before: exit 0, the file written with the run in it."""
+        listed = os.path.join(self.xdg, "private-strings.txt")
+        with open(listed, "w", encoding="utf-8") as fh:
+            fh.write("4242424242\n")
+        for value in (4242424242, 4242424242.0, 4.242424242e9):
+            snap = leak_snapshot()
+            snap["pusher"]["cycles"] = value
+            with open(self.src, "w") as fh:
+                json.dump(snap, fh)
+            r = _run(["--public", "--from", self.src], env_extra={"ROMP_PRIVATE_STRINGS": listed}, state=self.state)
+            self.assertEqual(r.returncode, 1, repr(value) + "\n" + r.stdout + r.stderr)
+            self.assertEqual(r.stderr, "romp perf export: refused: a string this machine knows (private string) survives as the value at "
+                                       "perf/pusher/cycles; nothing written\n", repr(value))
+            self.assertNotIn("4242424242", r.stdout + r.stderr, repr(value))
+            self.assertFalse(os.path.exists(os.path.join(self.state, "perf-exports")), repr(value))
+        r = _run(["--public", "--from", self.src], state=self.state)
+        self.assertEqual(r.returncode, 0, r.stderr + " (without the list, the counter is a number like any other)")
 
     def test_a_fifo_at_the_private_strings_path_is_no_list_said_on_stderr_and_the_export_returns_at_once(self):
         """The private list must be a REGULAR file (pp.open_regular: opened O_NONBLOCK, fstat'ed, S_ISREG required); anything

@@ -50,9 +50,15 @@ exponent, a listed private string that is a digit run respelled inside a numeric
 order; the repeated-key refusal closed one instance of that divergence and left the class open. The re-serialisation
 closes the class by construction: the artifact the checks bind is the document they read, and the bytes on the wire
 are a function of that document alone. A file as the export wrote it re-serialises to itself byte for byte (the same
-function wrote it; pinned), so an unedited export goes out as the file. What the re-serialisation does not change is
-what the checks read: a number is a measurement to every check (the scan reads keys and string values), so a listed
-digit run written as a plain number is on the wire in its canonical spelling, as the number every check passed.
+function wrote it; pinned), so an unedited export goes out as the file. And the checks read the spelling that goes out:
+the identifier scan (perf_public.identifier_hits) searches every number by its wire spelling, json.dumps, the same
+spelling document_text writes, so a listed private string that is a digit run is refused in a numeric leaf too, however
+the file spelled it (4242424242, 4242424242.0, -4242424242, 0.4242424242, or 4.242424242e9, which canonicalises to
+4242424242.0 and so once put the run on the wire from a file that never spelled it), where until the same round a number
+was a measurement to every check and the run travelled as the number they passed; the paste walk and the denylist walk
+judge a number by its value, as before. The same scan serves the export and restart-metrics, so a counter that spells a
+listed string refuses those too, naming the kind and the path, the cost the docs already accept for a listed word that
+is romp vocabulary; the remedy is editing the list.
 
 Before sending, the verb prints the path, the byte size of the body it will send (the file's own size for a file as
 the export wrote it) and the URL it will dial (the address as configured

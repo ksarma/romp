@@ -98,9 +98,11 @@ working directories the state directory's sdk registry holds; and the strings li
 and absent on a clone that never set one up, which adds nothing, in silence; every other road to no list, a path that
 is there but is not a regular file, one that cannot be read, a ROMP_PRIVATE_STRINGS naming a file that is not there, is
 said on stderr at the moment it happens, LIST_UNREADABLE, naming the path and the reason, since a check that turns
-itself off must say so) are searched for in every key and string value of
-the finished document, case-insensitively, and a hit refuses the write naming the key path and the kind of
-string, never the value. A hostname or a login is a WORD and is matched as a run of whole tokens
+itself off must say so) are searched for in every key, string value and NUMBER of
+the finished document, case-insensitively (a number by its wire spelling, json.dumps, the spelling the export's writer
+puts in the file and the upload puts on the wire, so a listed digit run inside a numeric leaf is found however the file
+spelled it, the fourth review round, 2026-09-19; a bool and null are not scanned), and a hit refuses the write naming
+the key path and the kind of string, never the value. A hostname or a login is a WORD and is matched as a run of whole tokens
 (a key or value split on everything outside letters and digits): romp's own vocabulary contains common ones as
 substrings (a user named mark and `intrMarks`, a machine named work or arch and `cpu_ms_workers`, `archive`),
 and a substring match would refuse every export on such a machine for good. An id or a directory is matched
@@ -464,8 +466,9 @@ class Problem(collections.namedtuple("Problem", "kind is_key path text depth")):
 
 class Hit(collections.namedtuple("Hit", "kind is_key path depth")):
     """One finding of the identifier scan (identifier_hits), shaped like Problem: `kind` the probe's kind (hostname,
-    username, home directory, session id, session directory), `is_key`, `path` and `depth` as Problem's. The string
-    that matched is not carried: a key IS the string, and the scan's callers print the finding in a refusal."""
+    username, home directory, session id, session directory, private string), `is_key`, `path` and `depth` as
+    Problem's. The string that matched is not carried (a number's is its wire spelling): a key IS the string, and the
+    scan's callers print the finding in a refusal."""
     __slots__ = ()
 
 
@@ -930,11 +933,21 @@ def probe_in(kind, probe, s):
 
 
 def identifier_hits(doc, probes, skip=()):
-    """[Hit] for every key or string value of `doc` that carries a probe (probe_in), case-insensitively, one per
-    string (the first probe that matches), in walk order. A Hit is structured like the walk's Problem (the kind,
+    """[Hit] for every key, string value or NUMBER of `doc` that carries a probe (probe_in), case-insensitively, one
+    per string (the first probe that matches), in walk order. A Hit is structured like the walk's Problem (the kind,
     key or value, the key path, its depth) and the caller formats it (place), so the string itself is never in the
     report (a key IS the string, so its own path is not named, and its dict's is). `skip` names top-level keys
-    whose string value is not searched."""
+    whose string value is not searched. A number is scanned by its WIRE SPELLING, json.dumps(node), which is the
+    spelling perf_export.document_text puts in the file and `romp perf upload` puts on the wire (json.dumps spells a
+    number the same way whatever the indent, and the upload sends the checked document re-serialised by that writer),
+    so the spelling scanned is the spelling sent: the private list may hold a digit run, and a listed run written as
+    a number (4242424242, 4242424242.0, -4242424242, 0.4242424242, or 4.242424242e9, which canonicalises to
+    4242424242.0 and so put the run on the wire from a file that never spelled it) travelled unread while the same run
+    in quotes was refused (the upload's fourth review round, 2026-09-19, the round's lens over the final artifact). A
+    bool and null are not scanned (they spell no probe). What this costs: a number spells no path, no uuid, no
+    hostname and no login (a hex id's eight-character prefix can be all digits, rarely, and a login can be, and then
+    a counter carrying it is refused naming the kind and the path, like a listed word that is romp vocabulary), so
+    the scan over numbers finds a probe that is a digit run alone, which is what the private list is for."""
     hits = []
 
     def scan(s, where, key):
@@ -956,6 +969,8 @@ def identifier_hits(doc, probes, skip=()):
                 walk(v, where + (i,))
         elif isinstance(node, str):
             scan(node, where, False)
+        elif isinstance(node, (int, float)) and not isinstance(node, bool):
+            scan(json.dumps(node), where, False)      # the number as the export writes it and the upload sends it
 
     walk(doc, ())
     return hits

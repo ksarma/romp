@@ -3805,8 +3805,10 @@ envelope without one, and a saved snapshot carries one only when it was
 written beside it. `--usage` adds a `usage` block, off by
 default, with the session counts, the user's actions and the panes opened
 (from the http table's route counts) and the kernel's uptime bucket, all from
-keys the snapshot already carries. Before writing, the document is searched
-for the strings only this machine knows (its hostname, user and home
+keys the snapshot already carries. Before writing, the document is searched,
+every key, string value and number (a number by the spelling the export
+writes, so a listed digit run inside a counter is found however the file
+spelled it), for the strings only this machine knows (its hostname, user and home
 directory, the session ids and working directories in the state directory's
 registry, and the lines of `~/.config/romp/private-strings.txt` when that
 file exists, the list the repository's pre-push hook reads, one string per
