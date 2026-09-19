@@ -2267,22 +2267,28 @@ class Docs(unittest.TestCase):
         travel is said in the same breath, and two uploads from one kernel remain linkable by design. The load-bearing words
         are pinned, and the blanket promise is pinned absent. Fails before: the old sentence was in the reference. The closing
         check found the enumeration incomplete (sent but unlisted: threads, hwm_kb, rss_anon_kb, gc_gen2, allocated_blocks, the
-        malloc block and the fixed string process/source, and every leaf under heap and gc), so the sentence now lists every leaf
-        under process, heap and gc that a fresh export of 2026-09-19 carried, says the usage bucket travels only with --usage,
-        and the needles hold each group."""
+        malloc block and the fixed string process/source, and every leaf under heap and gc), so the sentence lists every leaf
+        under process, heap and gc that a fresh Linux export of 2026-09-19 carried, plus the one leaf macOS adds (rss_peak_kb, the
+        peak resident size, which the kernel writes on darwin alone and which reaches the wire like every other measurement;
+        the closing check found the paragraph false on a Mac), and says the usage bucket travels only with --usage. WHAT IS
+        PINNED WHERE: this case pins the WORDING and the macOS clause's PLACEMENT (the process parenthetical is one needle
+        and the clause is another that must follow it OUTSIDE the closing parenthesis, so the parenthetical the reader has
+        already scanned is not silently widened); the LEAF POPULATION is pinned live in tests/test_perf_stats.py (Disclosed),
+        over a real km._PerfStats().snapshot() through the public fold, because a fixed list here cannot see an added leaf:
+        the closing check added three leaves to a temp copy of the kernel one at a time and each travelled to a recording
+        receiver over the real export-then-upload road while this case stayed at 2 passed; what went stale was the
+        disclosure, not the protection: the recomputing paste-safety walk folded the probe gauge's path and uuid to `other`
+        and no identifier reached the wire. The heap and gc enumerations that used to be needles here are therefore gone;
+        the live pin holds them."""
         text = self._flat("docs", "reference.md")     # asserted by boolean, so a failure names the words and never dumps the page
         self.assertFalse("Nothing about the machine travels" in text, "the blanket promise is still in the reference")
+        process = ("every leaf under `process` (`rss_kb`, `rss_anon_kb`, `hwm_kb`, `cpu_s`, `threads`, `gc_gen2`, `allocated_blocks`, "
+                   "the `malloc` block's `arena`, `fordblks`, `hblkhd` and `uordblks`, and the fixed string `source`)")
+        darwin = " plus, on macOS alone, `rss_peak_kb` (the peak resident size)"
         for words in ("The request carries nothing that names the machine beyond the file: no hostname, account or filename anywhere in it, "
                       "and no second file; the receiver names the stored object itself. What does travel is the file's content, and that is "
                       "paste-safe, not unlinkable:",
-                      "every leaf under `process` (`rss_kb`, `rss_anon_kb`, `hwm_kb`, `cpu_s`, `threads`, `gc_gen2`, `allocated_blocks`, "
-                      "the `malloc` block's `arena`, `fordblks`, `hblkhd` and `uordblks`, and the fixed string `source`)",
-                      "every leaf under `heap` (`allocatedBlocks`, `assemblyEntries`, `judgeUsageRows`, `lazyIndexes`, `materializedLruSlots`, "
-                      "`parseSlots`, `tracing`, the `builtChat` block's `events`, `serializedBytes` and `tabs`, the `hydrated` and `imgCache` "
-                      "blocks' `bytes` and `entries`, and the `gc` block's `enabled`, `counts`, `thresholds` and each generation's "
-                      "`collections`, `collected` and `uncollectable`)",
-                      "every leaf under `gc` (`hooked`, `frozen`, `errors`, `counts`, `thresholds` and each generation's `collections`, "
-                      "`collectedLast`, `msLast`, `msMax` and `msSum`)",
+                      process, darwin, process + darwin,        # the clause follows the parenthetical, outside it
                       "the ten memory-fraction bounds coarsened to a power of two",
                       "the uptime rounded down to the minute and, with `--usage` alone, its bucket under `usage`", "the kernel commit",
                       "so two uploads from one kernel remain linkable by design"):

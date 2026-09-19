@@ -2668,5 +2668,80 @@ class ServedSnapshotIsPasteSafe(unittest.TestCase):
             self.assertEqual(pp.paste_problems({"http": {k: {"count": 1}}}, ident=self.IDENT)[-1].kind,
                              "outside the image of the route register", k)
 
+
+class Disclosed(unittest.TestCase):
+    """The upload's disclosure paragraph in docs/reference.md (the one a user reads before typing yes: what does travel is
+    the file's content, paste-safe, not unlinkable) names every leaf of the process, heap and gc blocks an upload carries,
+    pinned against the LIVE collector through the public fold, never a fixture. The closing check (2026-09-19) added three
+    leaves to a temp copy of the kernel one at a time (process/vm_data_kb, heap/hydrated/evicted, process/malloc/keepcost)
+    and each travelled to a recording receiver over the real export-then-upload road while the reference's fixed-substring
+    pin in tests/test_perf_upload.py stayed at 2 passed: a pin that reads no snapshot cannot see an added leaf. The population
+    cannot come from that module's own export either: its planted_snapshot is an old-kernel document (process cpu_s, rss_kb,
+    threads; heap tracing; no gc), so a pin over it enumerates four names and misses every real gauge. This module already
+    loads the kernel (km) and the shared public shape (pp) and owns the process block's shape pins, so the pin lives here.
+    What goes stale when a gauge is added is the DISCLOSURE, not the protection: the recomputing paste-safety walk and the
+    fold protect an added leaf whatever its name (the closing check's probe gauge carrying a path and a uuid folded to
+    `other` and no identifier reached the wire). This pin is what makes the paragraph move with the snapshot."""
+
+    def test_every_leaf_of_process_heap_and_gc_an_upload_carries_is_named_in_its_own_blocks_clause_of_the_references_disclosure(self):
+        """Every key under process, heap and gc of a live snapshot's public form (pp.fold, the projection the export writes
+        and the upload sends: it drops pid, so the paragraph need not name it), the leaves AND the blocks the walk descends
+        through (malloc, builtChat, hydrated, imgCache, heap's gc and its stats, gc's gen; the generation indexes, digit
+        strings, excepted), is named in backticks INSIDE ITS OWN BLOCK'S CLAUSE of the paragraph, the text from "every leaf
+        under `process`" to "every leaf under `heap`", from there to "every leaf under `gc`", and from there to the bounds
+        clause. Per block and not anywhere in the paragraph, because the paragraph names `bytes` and `entries` for two heap
+        blocks and they are the commonest gauge names in the whole fold (caches, recordCache, chatPages, fileSlice), so a
+        process-level `bytes` or a new process/cache block with `entries` would have passed a paragraph-wide match with the
+        suite green (the closing delta's verifier planted both: process/bytes = 4242 and process/cache/entries = 7 travelled
+        and the paragraph-wide pin stayed at 1 passed). Naming the blocks too is what makes a new block red by its own name
+        before its leaves are asked for. AND THE OTHER DIRECTION: every backticked name inside a clause is a live key of that
+        block, or the block's own name, or, in the process clause off darwin, `rss_peak_kb`, so a leaf the kernel stops
+        writing cannot stay disclosed as travelling. The darwin-only leaf rss_peak_kb is named with its platform in so many
+        words, so the pin holds on every CI platform, and is in the live keys exactly on darwin. Fails on: a gauge added to the
+        kernel and not to its block's clause, naming the block and the gauge (a reused name included); a block added to the
+        kernel and not to the paragraph; a name kept in a clause after its gauge went; the macOS clause removed; the fold
+        replaced by the raw snapshot (pid would then be demanded of a paragraph that describes the wire, which never carries
+        it)."""
+        text = " ".join(Path(HERE).parent.joinpath("docs", "reference.md").read_text(encoding="utf-8").split())
+        start = text.index("What does travel is the file's content")
+        para = text[start:text.index("so two uploads from one kernel remain linkable by design", start)]
+        blocks = ("process", "heap", "gc")
+        starts = [para.index("every leaf under `%s`" % b) for b in blocks]
+        self.assertEqual(starts, sorted(starts), "the three clauses come in the blocks' order")
+        ends = starts[1:] + [para.index("the ten memory-fraction bounds")]
+        clause = {b: para[i:j] for b, i, j in zip(blocks, starts, ends)}
+        snap = km._PerfStats().snapshot()
+        public = pp.fold(snap)                                   # the projection on the wire (perf_export.export_document)
+        self.assertIn("pid", snap["process"], "the raw snapshot carries the pid the fold drops")
+        keys = set()                                             # (block, key) for every leaf and every block the walk descends through
+
+        def walk(block, node):
+            if isinstance(node, dict):
+                for k, v in node.items():
+                    if not k.isdigit():                          # a generation index is a position, not a name
+                        keys.add((block, k))
+                    walk(block, v)
+            elif isinstance(node, list):
+                for x in node:
+                    walk(block, x)
+        for block in blocks:
+            self.assertIsInstance(public[block], dict, block)
+            walk(block, public[block])
+        self.assertGreaterEqual(len(keys), 40, sorted(keys))       # the three blocks of 2026-09-19 carry far more than the fixture's four
+        for block, name in sorted(keys):
+            self.assertTrue(re.search(r"`%s`" % re.escape(name), clause[block]),
+                            "an upload carries `%s` under `%s` and the `%s` clause of the disclosure paragraph in docs/reference.md "
+                            "does not name it" % (name, block, block))
+        for block in blocks:
+            live = {name for b, name in keys if b == block} | {block}
+            if block == "process" and sys.platform != "darwin":
+                live.add("rss_peak_kb")                          # named with its platform: disclosed for the Mac, not live here
+            for name in re.findall(r"`([^`]+)`", clause[block]):
+                self.assertIn(name, live, "the `%s` clause names `%s`, which no upload from this kernel carries there" % (block, name))
+        self.assertNotIn(("process", "pid"), keys, "the fold drops pid; the paragraph describes the wire")
+        self.assertIn("on macOS alone, `rss_peak_kb`", clause["process"], "the darwin-only leaf is named with its platform, in its block's clause")
+        self.assertEqual(("process", "rss_peak_kb") in keys, sys.platform == "darwin", sorted(keys))
+
+
 if __name__ == "__main__":
     unittest.main()

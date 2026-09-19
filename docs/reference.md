@@ -3969,19 +3969,22 @@ content, and that is paste-safe, not unlinkable: the per-process and
 per-machine measurements the export keeps go with it, every leaf under
 `process` (`rss_kb`, `rss_anon_kb`, `hwm_kb`, `cpu_s`, `threads`, `gc_gen2`,
 `allocated_blocks`, the `malloc` block's `arena`, `fordblks`, `hblkhd` and
-`uordblks`, and the fixed string `source`), every leaf under `heap`
+`uordblks`, and the fixed string `source`) plus, on macOS alone, `rss_peak_kb`
+(the peak resident size), every leaf under `heap`
 (`allocatedBlocks`, `assemblyEntries`, `judgeUsageRows`, `lazyIndexes`,
 `materializedLruSlots`, `parseSlots`, `tracing`, the `builtChat` block's
-`events`, `serializedBytes` and `tabs`, the `hydrated` and `imgCache` blocks'
-`bytes` and `entries`, and the `gc` block's `enabled`, `counts`, `thresholds`
-and each generation's `collections`, `collected` and `uncollectable`), every
-leaf under `gc` (`hooked`, `frozen`, `errors`, `counts`, `thresholds` and each
-generation's `collections`, `collectedLast`, `msLast`, `msMax` and `msSum`),
+`events`, `serializedBytes` and `tabs`, the `hydrated` block's `bytes`,
+`entries` and `capBytes`, the `imgCache` block's `bytes` and `entries`, and
+the `gc` block's `enabled`, `counts`, `thresholds` and, per generation under
+`stats`, `collections`, `collected` and `uncollectable`), every leaf under
+`gc` (`hooked`, `frozen`, `errors`, `counts`, `thresholds` and, per generation
+under `gen`, `collections`, `collectedLast`, `msLast`, `msMax` and `msSum`),
 the ten memory-fraction bounds coarsened to a power of two (`hydrated.capBytes`
 among them), the uptime rounded down to the minute and, with `--usage` alone,
 its bucket under `usage`, and the kernel commit (the list is every leaf of
-those three blocks in a fresh export of 2026-09-19), so two uploads from one
-kernel remain linkable by design. The one answer accepted is `201` with
+those three blocks in a fresh Linux export of 2026-09-19, with the one leaf
+macOS adds), so two uploads from one kernel remain linkable by design. The
+one answer accepted is `201` with
 a JSON body of exactly `{"receipt": <uuid4>, "retention_days": <integer>,
 "av": "ok"|"skipped"}`, printed as `uploaded: receipt <uuid> (kept <N> days;
 delete by sending the receipt to the project)`. Any other status (a redirect
