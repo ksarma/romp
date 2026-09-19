@@ -4467,6 +4467,38 @@ loads a checkout's kernel in-process and reports each builder's cost on
 real-sized data; two checkouts can run against one copy for a before-and-after
 comparison. Its module docstring is the reference.
 
+### Requests Romp makes on its own
+
+Besides the upload, Romp makes these requests on its own. The list is what
+`tests/test_outbound_requests_census.py` finds today, derived from the code
+rather than kept by hand: the test enumerates every request site under
+`kernel/`, `cli/`, `bin/` and `postal/`, classifies each as a `127.0.0.1` call
+or as one of these, and fails on a site it does not name and on an entry with no
+site: the Anthropic Models API, for the model pickers' version list, with the
+credential Claude Code's `apiKeyHelper` yields, at boot and when a session
+reports a model id the list lacks, off under `ROMP_MODEL_CATALOG=off`; a public
+model-price table on GitHub, for the settings modal's token-cost chart, at most
+once per six hours when that chart is read, with no switch to turn it off; a web
+push notification to the push service of every device you subscribed from the
+notifications popover, for each bell and for the popover's test button, and none
+when no device is subscribed; Anthropic's fast-mode availability endpoint with
+the session's API key, at every connect of a key-billed session and never a
+login session; the release remote's tags and main by `git ls-remote`, for the
+update check and the drift watcher, off under `ROMP_UPDATE_CHECK=off` or the
+update mode `off`, and a `git fetch` of main when an update is taken; the
+checkout's origin by `git ls-remote`, for the file viewer's GitHub link, when a
+file inside a git checkout with an origin is opened; a watched pull request by
+`gh pr view`, only for a PR you asked `romp watch-pr` to follow; and `ssh` to
+every machine you attached as a linked kernel, the tunnel the linked kernels
+ride, plus that machine's kernel start, restart, update and pull over it, off
+when you detach or forget the host. The agents' and the judge pipeline's model
+calls go through `claude`, not through any of these. Every other request site
+the census finds dials `127.0.0.1`: the kernel's own bus, the manager, a
+tunnel's local end, and the CLI and postal clients. The installer's download of
+`get-pip.py` in `bin/romp-sdk-setup` (off under `ROMP_NO_GET_PIP=1`) runs once,
+when you run the installer, and is the one non-local fetch the census allows in
+a shell script.
+
 ### The chat wire's two protocols
 
 A chat page announces the protocol it speaks in its `ready` frame. A bundle
