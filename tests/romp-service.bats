@@ -4228,6 +4228,24 @@ EOF
     [ "$(_sd_read "$unit" exec0)" = "$mgr" ]
 }
 
+@test "rewrite (Linux): D3 over its four letters in one pin: %c, %r and %R in a kept Environment value are refused as %h is, on rewrite, rewrite --check and the marked child's install (exit 5, the specifier named in the variable as one systemd expands and this reader would take literally, the absolute path as the remedy, the file byte for byte), and %r in ExecStart's path is refused the same way, %c %R %h beside it; a narrowing that exempts the deprecated letters, or %h alone, turns this red" {
+    # round 5 preface (2026-09-19; the ruling on the fold, class B accepted as left): systemd 255 still resolves the deprecated %c %r %R
+    # (with a deprecation warning), so D3, a specifier the reader would take literally is refused with the absolute path as the remedy,
+    # covers four letters, and nothing held the three deprecated ones by the whole refusal text or the remedy (the oracle-only case
+    # above asserts the short phrase). Green at the head it was written on, since the reader already refuses: the red here is a future
+    # narrowing's, _unit_specifiers exempting c, r and R (the documented table alone) or h alone.
+    local unit="$ROMP_SYSTEMD_DIR/romp-manager.service" c
+    _old_unit "$unit"; cp "$unit" "$unit.clean"
+    for c in c r R h; do
+        cp "$unit.clean" "$unit"; _svc_line "$unit" "Environment=CLAUDE_CONFIG_DIR=/x/a%${c}b"
+        _three_roads_refuse "$unit" "the specifier %$c in CLAUDE_CONFIG_DIR, which systemd expands and this reader would take literally"
+        _three_roads_refuse "$unit" "Write the absolute path in its place (a literal % is written %%)"
+        grep -v '^ExecStart=' "$unit.clean" > "$unit"; _svc_line "$unit" "ExecStart=/x/%${c}/romp-manager up"
+        _three_roads_refuse "$unit" "ExecStart carries the specifier %$c, which systemd expands and this reader would take literally"
+        _three_roads_refuse "$unit" "Write the absolute path in its place (a literal % is written %%)"
+    done
+}
+
 @test "unit reader: the header's numbered list of refusals is one item per _unit_refuse call site in _unit_scan, 1 to N with no gap, every call site in the file inside that function, and N is 21" {
     # the mutation pass (2026-09-19): the header states the list's definition (the call sites) and its count, and nothing held either;
     # a refusal added without its item, or an item without its call site, turns this red until the header is brought level
