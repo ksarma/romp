@@ -3966,10 +3966,22 @@ variable. The request carries nothing that names the machine beyond the
 file: no hostname, account or filename anywhere in it, and no second file;
 the receiver names the stored object itself. What does travel is the file's
 content, and that is paste-safe, not unlinkable: the per-process and
-per-machine measurements the export keeps (the `rss_kb` and `cpu_s` figures,
-the ten memory-fraction bounds coarsened to a power of two, the uptime rounded
-down to the minute and its bucket under `usage`, the kernel commit) go with
-it, so two uploads from one kernel remain linkable by design. The one answer accepted is `201` with
+per-machine measurements the export keeps go with it, every leaf under
+`process` (`rss_kb`, `rss_anon_kb`, `hwm_kb`, `cpu_s`, `threads`, `gc_gen2`,
+`allocated_blocks`, the `malloc` block's `arena`, `fordblks`, `hblkhd` and
+`uordblks`, and the fixed string `source`), every leaf under `heap`
+(`allocatedBlocks`, `assemblyEntries`, `judgeUsageRows`, `lazyIndexes`,
+`materializedLruSlots`, `parseSlots`, `tracing`, the `builtChat` block's
+`events`, `serializedBytes` and `tabs`, the `hydrated` and `imgCache` blocks'
+`bytes` and `entries`, and the `gc` block's `enabled`, `counts`, `thresholds`
+and each generation's `collections`, `collected` and `uncollectable`), every
+leaf under `gc` (`hooked`, `frozen`, `errors`, `counts`, `thresholds` and each
+generation's `collections`, `collectedLast`, `msLast`, `msMax` and `msSum`),
+the ten memory-fraction bounds coarsened to a power of two (`hydrated.capBytes`
+among them), the uptime rounded down to the minute and, with `--usage` alone,
+its bucket under `usage`, and the kernel commit (the list is every leaf of
+those three blocks in a fresh export of 2026-09-19), so two uploads from one
+kernel remain linkable by design. The one answer accepted is `201` with
 a JSON body of exactly `{"receipt": <uuid4>, "retention_days": <integer>,
 "av": "ok"|"skipped"}`, printed as `uploaded: receipt <uuid> (kept <N> days;
 delete by sending the receipt to the project)`. Any other status (a redirect

@@ -2180,14 +2180,26 @@ class Docs(unittest.TestCase):
         third review round): a false privacy promise in the paragraph a user decides on. The sentence now holds the standard
         the PR states everywhere else, paste-safe, not unlinkable: the negative is scoped to what NAMES the machine, what does
         travel is said in the same breath, and two uploads from one kernel remain linkable by design. The load-bearing words
-        are pinned, and the blanket promise is pinned absent. Fails before: the old sentence was in the reference."""
+        are pinned, and the blanket promise is pinned absent. Fails before: the old sentence was in the reference. The closing
+        check found the enumeration incomplete (sent but unlisted: threads, hwm_kb, rss_anon_kb, gc_gen2, allocated_blocks, the
+        malloc block and the fixed string process/source, and every leaf under heap and gc), so the sentence now lists every leaf
+        under process, heap and gc that a fresh export of 2026-09-19 carried, says the usage bucket travels only with --usage,
+        and the needles hold each group."""
         text = self._flat("docs", "reference.md")     # asserted by boolean, so a failure names the words and never dumps the page
         self.assertFalse("Nothing about the machine travels" in text, "the blanket promise is still in the reference")
         for words in ("The request carries nothing that names the machine beyond the file: no hostname, account or filename anywhere in it, "
                       "and no second file; the receiver names the stored object itself. What does travel is the file's content, and that is "
                       "paste-safe, not unlinkable:",
-                      "the `rss_kb` and `cpu_s` figures", "the ten memory-fraction bounds coarsened to a power of two",
-                      "the uptime rounded down to the minute and its bucket under `usage`", "the kernel commit",
+                      "every leaf under `process` (`rss_kb`, `rss_anon_kb`, `hwm_kb`, `cpu_s`, `threads`, `gc_gen2`, `allocated_blocks`, "
+                      "the `malloc` block's `arena`, `fordblks`, `hblkhd` and `uordblks`, and the fixed string `source`)",
+                      "every leaf under `heap` (`allocatedBlocks`, `assemblyEntries`, `judgeUsageRows`, `lazyIndexes`, `materializedLruSlots`, "
+                      "`parseSlots`, `tracing`, the `builtChat` block's `events`, `serializedBytes` and `tabs`, the `hydrated` and `imgCache` "
+                      "blocks' `bytes` and `entries`, and the `gc` block's `enabled`, `counts`, `thresholds` and each generation's "
+                      "`collections`, `collected` and `uncollectable`)",
+                      "every leaf under `gc` (`hooked`, `frozen`, `errors`, `counts`, `thresholds` and each generation's `collections`, "
+                      "`collectedLast`, `msLast`, `msMax` and `msSum`)",
+                      "the ten memory-fraction bounds coarsened to a power of two",
+                      "the uptime rounded down to the minute and, with `--usage` alone, its bucket under `usage`", "the kernel commit",
                       "so two uploads from one kernel remain linkable by design"):
             self.assertTrue(words in text, "not in the reference: " + words)
 
