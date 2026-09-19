@@ -7721,13 +7721,14 @@ is left for the owner to rule on.
 
 **What existed.** Item 12's `@media print` block at the end of styles.css and feed.css, byte-equal
 (fileview-parity.test.ts and file-view-print-browser.test.ts pin it), with the pane's overrides in files-pane.css. With
-a file open (`body.fileview-open`) the browser's own print, Ctrl+P or Cmd+P, printed the file body alone, black on
-white, the chrome hidden. No Print button and no script stood in front of window.print, so nothing awaited a picture:
-the figure loader in file-view.ts leaves the load events to its caller, a figure on a host outside the list (decision 8;
+a file open (`body.fileview-open`) the browser's own print (its menu; Ctrl+P or Cmd+P on a page without the dashboard's
+command palette, whose dispatcher held that chord on the dashboard, P1) printed the file body alone, black on white, the
+chrome hidden. No Print button and no script stood in front of window.print, so nothing awaited a picture: the figure
+loader in file-view.ts leaves the load events to its caller, a figure on a host outside the list (decision 8;
 figure-gate.ts) printed as its placeholder naming the host, a picture still loading printed as the browser had it at
 that instant, a picture opened directly (imgBlock, `img.fileview-img`) kept the screen rule's `max-height: 82vh` on
-paper under its box's 14px padding with its corners clipped by the radius, and a PDF (pdfBlock, an iframe at a blob
-URL) printed as one viewport of a frame the sheet named nowhere.
+paper under its box's 14px padding with its corners clipped by the radius, and a PDF (pdfBlock, an iframe at a blob URL)
+printed as one viewport of a frame the sheet named nowhere.
 
 **Decisions.**
 
@@ -7735,44 +7736,49 @@ P1. **A Print glyph button in the viewer bar, beside Download and in its shape, 
 `installFilePrint` in ui/webview/file-print.ts builds the button (`.fileview-btn.fileview-icon.fileview-print`, the
 printer glyph `ICON_PRINT` in icons.ts drawn in the bar's stroke family as Download's tray is, the title and aria-label
 "Print", the bar's `data-icon` mark) and the caller places it: openFileView appends it to the file group right after
-Download, and openUrlView inserts it before Copy URL, since the URL viewer has no Download. The first build placed a word
-button reading "Print" here, and the word widened the bar's wrapped action row past the chat modal's card at 380px
-(file-view-text-size.test.ts's browser leg, red at that build: the row's leftmost action at x -5.2 against a card edge at
-9.5); the glyph fits, and the leg is green at 380, 420, 480 and 600px in both modals (2026-09-19).
-It carries a direct click listener like Download's: the bar is built once per open and is not rebuilt while it stands.
-The driver registers one document keydown listener per open, in the capture phase, and the viewer's close hooks remove
-it with the card (the driver leg closes and reopens the card several times, then one chord arms once and shows one
-line). Ctrl+P or Cmd+P (either case of the key, so Caps Lock counts; not with Shift or Alt) is prevented and treated as
-a press only while four conditions hold: `body.fileview-open` stands, the card is connected, no text field in the
-document holds the keyboard (`typingHere`, beside isTypingTarget in file-view.ts), and no listener ahead of this one has
-prevented the key. The press is the chord's first keydown, not a key repeat, since a held chord would arm and disarm on
-alternate repeats; a held chord's later keydowns are prevented too under those conditions, since the browser's default
-for each is its own print, and nothing else happens (`isPrintKeys` names the keys and `isPrintChord` adds the no-repeat
-condition; the first build let the repeats through to the browser). With one of the first three conditions failing the
-key stays the browser's or the field's, and with no file open nothing changes. The fourth condition is the build's
-departure from the contract, which had the chord run the flow wherever a file is open. On the dashboard the shell page
-loads the command palette's dispatcher (palette-main.ts, a capture-phase keydown listener on the shell document and on
-every pane document at each frame's load, so ahead of the viewer's per-open listener); Mod+P is the palette's default
-binding (commands.ts, `palette.toggle`); and the dispatcher prevents and stops every chord it maps that carries a
-modifier, whatever holds the keyboard, key repeats aside (keybindings.ts, `dispatchable`), then toggles the palette.
-There the chord is the palette's alone: the flow stands down on the prevented key (`e.defaultPrevented`), so one
-keystroke does not open the palette and print too, nothing prints, and the bar's Print button prints. On a page without
-that dispatcher ahead of the flow (the /chat page on its own, or the page the browser legs serve) the chord prints. The
-driver leg builds a stand-in dispatcher from keybindings.ts's own predicates and commands.ts's own binding and pins the
-real module's wiring from its source; the guide's sentence says the key opens the palette there (P5); whether the
-palette should yield instead is open point 4. The same listener reads Escape while the bar is armed: it disarms, and the
-event is stopped there, before the viewer's own Escape (a bubble listener on the document, which closes the card) hears
-it, so a focused control's own Escape handler does not hear it either. Three Escapes are exceptions, each some control's
-own: the flow leaves it to that control and the bar stays armed for the next Escape. They are an Escape from inside a
+Download, and openUrlView inserts it before Copy URL, since the URL viewer has no Download. The first build placed a
+word button reading "Print" here, and the word widened the bar's wrapped action row past the chat modal's card at 380px
+(file-view-text-size.test.ts's browser leg, red at that build: the row's leftmost action at x -5.2 against a card edge
+at 9.5); the glyph fits, and the leg is green at 380, 420, 480 and 600px in both modals (2026-09-19). It carries a
+direct click listener like Download's: the bar is built once per open and is not rebuilt while it stands. The driver
+registers one document keydown listener per open, in the capture phase, and the viewer's close hooks remove it with the
+card (the driver leg closes and reopens the card several times, then one chord arms once and shows one line). Ctrl+P or
+Cmd+P (either case of the key, so Caps Lock counts; not with Shift or Alt) is prevented and treated as a press only
+while four conditions hold: `body.fileview-open` stands, the card is connected, no text field in the document holds the
+keyboard (`typingHere`, beside isTypingTarget in file-view.ts), and no listener ahead of this one has prevented the key.
+The press is the chord's first keydown, not a key repeat, since a held chord would arm and disarm on alternate repeats;
+a held chord's later keydowns are prevented too under those conditions, since the browser's default for each is its own
+print, and nothing else happens (`isPrintKeys` names the keys and `isPrintChord` adds the no-repeat condition; the first
+build let the repeats through to the browser). With one of the first three conditions failing the key stays the
+browser's or the field's, and with no file open nothing changes. The fourth condition is the build's departure from the
+contract, which had the chord run the flow wherever a file is open. On the dashboard the shell page loads the command
+palette's dispatcher (palette-main.ts, a capture-phase keydown listener on the shell document and on every pane document
+at each frame's load, so ahead of the viewer's per-open listener); Mod+P is the palette's default binding (commands.ts,
+`palette.toggle`); and the dispatcher prevents and stops every chord it maps that carries a modifier, whatever holds the
+keyboard, key repeats aside (keybindings.ts, `dispatchable`), then toggles the palette. There the chord is the palette's
+alone: the flow stands down on the prevented key (`e.defaultPrevented`), so one keystroke does not open the palette and
+print too, nothing prints, and the bar's Print button prints. On a page without that dispatcher ahead of the flow (the
+/chat page on its own, or the page the browser legs serve) the chord prints. The driver leg builds a stand-in dispatcher
+from keybindings.ts's own predicates and commands.ts's own binding and pins the real module's wiring from its source;
+the guide's sentence says the key opens the palette there (P5); whether the palette should yield instead is open point
+4. The same listener reads Escape while the bar is armed: it disarms, and the event is stopped there, before the
+viewer's own Escape (a bubble listener on the document, which closes the card) hears it, so a focused control's own
+Escape handler does not hear it either. Four Escapes are exceptions, each some control's own: the flow leaves it to that
+control and the bar stays armed for the next Escape. They are a key a listener ahead of this one already stopped, read
+through the event's stop flag (`e.cancelBubble`: stopPropagation stops no listener on the same node, so the flag is how
+a later one reads the claim; the text-size flyout's dismiss, `wireZoomDismiss`, a capture-phase document listener wired
+at the viewer's init, so ahead of the per-open one, closes the flyout and stops the key); an Escape from inside a
 control that owns its Escape, the patterns whose Escape closes the widget and returns the keyboard itself
 (`OWN_ESCAPE_SEL`: role menu, menubar, listbox, dialog or alertdialog; the viewer's Outline popover is a role=menu whose
 Escape closes it and puts the keyboard back on its button; the driver leg's popover case); an Escape while a popup
-stands open in the card, found by its trigger's aria-haspopup with aria-expanded true (`OPEN_POPUP_SEL`: the text-size
-flyout, whose dismiss is a document listener that closes it from wherever the keyboard is, and the Outline button; the
-Print button's own aria-expanded while armed has no aria-haspopup and is not matched); and an Escape from a text field
-holding the keyboard (`typingHere` again; the Comments composer, whose Escape cancels the draft). Round 1 made the first
-rule; the second review added the other two. At rest, during the wait and during the print Escape is left alone, and the
-viewer's own closes the card. The button is disabled until the body is in (P7).
+stands open in the card, found by its trigger's aria-haspopup with aria-expanded true (`OPEN_POPUP_SEL`: a popup whose
+own handler runs after this listener; the flyout is closed by its dismiss before the flow reads the card, so this
+selector never finds it open, and the second review's record, which named the flyout here, was corrected at the
+consolidation; the Print button's own aria-expanded while armed has no aria-haspopup and is not matched); and an Escape
+from a text field holding the keyboard (`typingHere` again; the Comments composer, whose Escape cancels the draft).
+Round 1 made the second rule; the second review added the other three, the armed leg's case (B) executing the flyout's
+and the composer's. At rest, during the wait and during the print Escape is left alone, and the viewer's own closes the
+card. The button is disabled until the body is in (P7).
 
 P2. **Over gated placeholders the bar arms instead of printing; then every picture is awaited, 8 s at most; then
 window.print.** The machine is `step`, a pure function over a state (disabled, resting, armed, preparing, printing; the
@@ -7848,31 +7854,38 @@ max-height under print media is 700px where the screen reads 574px, and a 400 by
 the pane (styles.css) and the feed modal (feed.css). The flow treats a picture as a document: its one `<img>` is
 awaited and the page prints.
 
-P4. **A PDF prints itself: the frame's own print when the frame holds the document, else the /file URL in a new tab
-and a line saying so.** openFileView passes the file's kind, read at each press (`kind`: the kernel's Content-Type sets
+P4. **A PDF prints itself: the frame's own print when the frame holds the document, else the /file URL in a new tab and
+a line saying so.** openFileView passes the file's kind, read at each press (`kind`: the kernel's Content-Type sets
 isPdf when the bytes land, after the bar is built), and an opener, `openFileTab` in preview.ts, the one a modified click
 on a PDF uses; openUrlView passes neither, so the URL viewer's flow is a document's. A press at rest over a PDF is the
 machine's `printPdf` act whatever the counts, since a frame holds no placeholder and no picture. `pdfFrameWindow` reads
 the body's `iframe.fileview-frame` and answers its window when the frame holds the PDF and can print: the window
 reachable, its document's content type `application/pdf` (what Chromium's PDF viewer document reports) or the window's
-location the frame's own blob URL with any `#page=N` fragment set aside, and `print` a function. The contract's test
-was the window reachable and print a function; the build tightened it because a probe of this box's browsers
-(2026-09-19) showed that a browser without a PDF viewer (Playwright's headless shell, headless Firefox) turns the
-frame's navigation into a download and leaves the window at about:blank, where print is a function too and would print
-a blank page. When the frame holds the PDF the driver calls that window's print and the bar rests with no line; when it
-does not, the /file URL opens in a new tab and a line under the bar reads "Print from the tab that opened.", or "The
-browser did not open a tab for this PDF." when the opener answered false (a blocked pop-up, or a page not served over
-http or https, the VS Code webview's, where openFileTab declines); the contract named the first line alone, and the
-second was added rather than print the page or say nothing. That line is a notice: it stands at rest until the next
-press drops it or the viewer closes; Escape at rest is the viewer's, whose close takes the line with the card. The
-page's own window.print never runs for a PDF. The Comments panel's PDF pages are out of scope: with the panel open the
-body holds the pdf.js canvases and no frame, so Print opens the /file tab and the PDF prints from there, never the
-canvases with their comments (a frame kept under a notice after the panel's chunk failed to load prints itself, since
-the detector finds it); the project's out-of-scope line, the PDF viewer, stands, since nothing in the viewer changed.
-Verified in the full Chromium build: the blob frame's window is same-origin, its document reports application/pdf at
-the blob URL, and its print is a function the parent may call and replace. Not verified, since headless Chromium opens
-no print dialog: that the real call prints the PDF's pages. Not run at all: desktop Firefox with pdf.js enabled
-(headless Firefox downloads instead) and Safari, where the detector's location clause would accept the frame.
+location the frame's own blob URL with any `#page=N` fragment set aside, and `print` a function. The contract's test was
+the window reachable and print a function; the build tightened it because a probe of this box's browsers (2026-09-19)
+showed that a browser without a PDF viewer (Playwright's headless shell, headless Firefox) turns the frame's navigation
+into a download and leaves the window at about:blank, where print is a function too and would print a blank page. When
+the frame holds the PDF the driver calls that window's print and the bar rests with no line; when it does not, the /file
+URL opens in a new tab and a line under the bar reads "Print from the tab that opened.", or "The browser did not open a
+tab for this PDF." when the opener answered false (a blocked pop-up, or a page not served over http or https, the VS
+Code webview's, where openFileTab declines); the contract named the first line alone, and the second was added rather
+than print the page or say nothing. The frame being in is not the frame holding the document: the body is reported in
+(P7) at the media paint that inserts the frame, and the frame's navigation to the blob lands a few milliseconds later (4
+to 30 ms after the bytes, measured in Chromium at the review), so a press in that window finds the window at about:blank
+and takes the tab path. The button is not held to the frame's load event, since a browser that downloads the PDF instead
+never fires it, which would leave Print disabled for good and the tab path unreachable; a deadline in its place would be
+the timer shape the design rule avoids; and a check at the press would move the tab's open out of the click's task,
+where a pop-up blocker refuses it (file-print-media-browser.test.ts asserts the tab opens inside the click's task). That
+line is a notice: it stands at rest until the next press drops it or the viewer closes; Escape at rest is the viewer's,
+whose close takes the line with the card. The page's own window.print never runs for a PDF. The Comments panel's PDF
+pages are out of scope: with the panel open the body holds the pdf.js canvases and no frame, so Print opens the /file
+tab and the PDF prints from there, never the canvases with their comments (a frame kept under a notice after the panel's
+chunk failed to load prints itself, since the detector finds it); the project's out-of-scope line, the PDF viewer,
+stands, since nothing in the viewer changed. Verified in the full Chromium build: the blob frame's window is
+same-origin, its document reports application/pdf at the blob URL, and its print is a function the parent may call and
+replace. Not verified, since headless Chromium opens no print dialog: that the real call prints the PDF's pages. Not run
+at all: desktop Firefox with pdf.js enabled (headless Firefox downloads instead) and Safari, where the detector's
+location clause would accept the frame.
 
 P5. **The guide's printing sentence.** The one sentence in docs/guide.md's "Opening a markdown document" paragraph now
 says that Print in the file's bar, or the chord with a file open, prints the file alone, black on white, with its
@@ -7910,14 +7923,16 @@ exists and both viewers call it, and the words quoted here are the module's. One
 ui/webview/file-view-print-takings-browser.test.ts, is outside that listing (its name starts with the viewer's) and is
 named below so the list stays two-way. tools/markdown-viewer-plan-print-record.test.mjs holds the review rounds'
 sentences here to the tree, statements only, the sources read with their comments removed: the chord's fourth condition
-against the palette's binding, its dispatcher's wiring and the shell page that loads it; the repeats; the three Escapes
-the armed bar leaves alone against the two selectors, the typing predicate and the Outline popover; the machine's phases
-and events; the re-aim and the recount, at a repaint and at a placeholder activated by hand; the loader on the wait's
-line against the flow, both sheets and the parity pin; the two titles and the kept hosts; the focus hand-back; P5's
-palette clause against the guide; the count in the listing sentence above against the listing; the takings module's
-name; and open point 2's Chromium clause against the driver leg. tools/markdown-viewer-plan-print-vocabulary.test.mjs
-holds this section's words to CONTEXT.md's File comment entry: what the Comments panel draws over a PDF page is called
-comments here, never `annotation`, which that entry lists under _Avoid_ (a review finding, 2026-09-19).
+against the palette's binding, its dispatcher's wiring and the shell page that loads it; the repeats; the four Escapes
+the armed bar leaves alone against the stop flag, the flyout's dismiss, the two selectors, the typing predicate and the
+Outline popover; the machine's phases and events; the re-aim and the recount, at a repaint and at a placeholder
+activated by hand; the loader on the wait's line against the flow, both sheets and the parity pin; the two titles and
+the kept hosts; the focus hand-back; P4's window between the frame's insertion and its document against the viewer's
+report; P5's palette clause against the guide; the count in the listing sentence above against the listing; the takings
+module's name; open point 2's Chromium clause against the driver leg; and open point 5's standing collision against the
+panel's Escape listener. tools/markdown-viewer-plan-print-vocabulary.test.mjs holds this section's words to CONTEXT.md's
+File comment entry: what the Comments panel draws over a PDF page is called comments here, never `annotation`, which
+that entry lists under _Avoid_ (a review finding, 2026-09-19).
 
 - ui/webview/file-print.test.ts, under node with no DOM: `step` over every phase and event, the words, the chord,
   `settlePictures` over fake pictures and a fake clock (the incomplete pictures alone are waited on; load or error
@@ -7994,7 +8009,9 @@ comments here, never `annotation`, which that entry lists under _Avoid_ (a revie
 
 **Open points for the owner.**
 
-1. Wording. A gated clip counts as a picture in the armed line.
+1. Wording. A gated clip counts as a picture in the armed line, and one placeholder naming two hosts (a picture whose
+   source and its img sit on different hosts) reads "1 picture from another host is not loaded.", the count being of
+   pictures; the with-button's title names both hosts.
 2. Not measured here. Headless Chromium opens no print dialog, so "the raw print is prevented" is measured as
    defaultPrevented on the chord, the afterprint path is exercised by the machine test and by print's return under the
    stub, and the frame's real print is measured as a call on its stub. The poster and svg probes run under node with
@@ -8007,3 +8024,8 @@ comments here, never `annotation`, which that entry lists under _Avoid_ (a revie
 4. The chord on the dashboard. Mod+P is the command palette's there and the flow stands down on it (P1), so the chord
    prints only on a page without the dispatcher and on the dashboard the button prints; whether the palette should yield
    over an open file instead, or the print take another default chord, is a ruling.
+5. Escape with a re-place pending in the Comments panel while the bar is armed. The panel's cancel of a pending re-place
+   (file-comments.ts `escapeReplace`, a capture-phase document listener wired when the panel opens, so after the flow's)
+   and the flow's disarm both act on that one key: stopPropagation stops no listener on the same node, and nothing in
+   the DOM marks a pending re-place for the flow to read. Which of the two should yield, by a mark or by an order, is a
+   ruling.

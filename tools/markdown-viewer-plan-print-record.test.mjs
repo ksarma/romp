@@ -1,6 +1,6 @@
 // The plan's print follow-on (plans/markdown-viewer.md, "## Follow-on: Print (2026-09-19)") records what the print
 // build did, and its review rounds changed the flow after the record was written: the chord yields to a key the
-// dashboard's command palette already claimed, a held chord's repeats are prevented and not pressed, three Escapes are
+// dashboard's command palette already claimed, a held chord's repeats are prevented and not pressed, four Escapes are
 // left to the control they belong to while the bar is armed, the machine gained the disabled phase and the body and
 // recount events, the wait is re-aimed at a repainted body under the press's deadline, the armed line is recounted at a
 // repaint and at a placeholder the person activates by hand and its "Print with them" loads the hosts its title named,
@@ -110,11 +110,17 @@ test('P1: a held chord\'s repeats are prevented and none is a press', () => {
 
 // ── P1: the three Escapes the armed bar leaves alone ───────────────────────────────────────────────
 
-test('P1: while armed an Escape from a control that owns it, under an open popup in the card, or from a text field is left to that control and the bar stays armed', () => {
-  assert.ok(P1.includes('Three Escapes are exceptions, each some control\'s own: the flow leaves it to that control and the bar stays armed for the next Escape.'));
+test('P1: while armed a key a listener ahead already stopped, an Escape from a control that owns it, under an open popup in the card, or from a text field is left to that control and the bar stays armed', () => {
+  assert.ok(P1.includes('Four Escapes are exceptions, each some control\'s own: the flow leaves it to that control and the bar stays armed for the next Escape.'));
   const escape = between(onKey, 'if (e.key === "Escape") {', 'return;\n    }');
-  assert.ok(escape.includes('if (state.phase !== "armed" || ownsEscape(e.target, host.card) || host.typing()) return;'), 'the three gates, before the disarm');
-  inOrder(escape, ['ownsEscape(e.target, host.card) || host.typing()) return;', 'e.preventDefault(); e.stopPropagation();', 'feed({ kind: "escape" });'], 'the Escape branch');
+  assert.ok(escape.includes('if (e.cancelBubble) return;'), 'the stopped key first');
+  assert.ok(escape.includes('if (state.phase !== "armed" || ownsEscape(e.target, host.card) || host.typing()) return;'), 'then the three gates, before the disarm');
+  inOrder(escape, ['if (e.cancelBubble) return;', 'ownsEscape(e.target, host.card) || host.typing()) return;', 'e.preventDefault(); e.stopPropagation();', 'feed({ kind: "escape" });'], 'the Escape branch');
+  // (0) the stopped key: the flyout's dismiss, a capture-phase document listener wired at the viewer's init, closes the flyout and stops the key
+  assert.ok(P1.includes('They are a key a listener ahead of this one already stopped, read through the event\'s stop flag (`e.cancelBubble`'));
+  assert.ok(viewer.includes('document.addEventListener("keydown", (e) => { const z = live(); if (e.key === "Escape" && z) { z.close(); e.stopPropagation(); } }, true);'), 'the flyout\'s dismiss closes it and stops the key');
+  assert.ok(between(viewer, 'function wireZoomDismiss(): void {', '\n}').includes('document.addEventListener("keydown"'), 'inside wireZoomDismiss');
+  assert.ok(viewer.indexOf('wireZoomDismiss();') < viewer.indexOf('export function openFileView('), 'wired at the viewer\'s init, ahead of any per-open listener');
   // (1) the roles: the section names the five and the selector holds them
   assert.ok(flow.includes('export const OWN_ESCAPE_SEL = \'[role="menu"], [role="menubar"], [role="listbox"], [role="dialog"], [role="alertdialog"]\';'));
   assert.ok(P1.includes('(`OWN_ESCAPE_SEL`: role menu, menubar, listbox, dialog or alertdialog; the viewer\'s Outline popover is a role=menu whose Escape closes it and puts the keyboard back on its button'));
@@ -124,7 +130,9 @@ test('P1: while armed an Escape from a control that owns it, under an open popup
   assert.ok(flow.includes('export const OPEN_POPUP_SEL = \'[aria-haspopup][aria-expanded="true"]\';'));
   const owns = between(flow, 'export function ownsEscape(target: EventTarget | null, scope?: ParentNode | null): boolean {', '\n}');
   assert.ok(owns.includes('t.closest(OWN_ESCAPE_SEL) !== null) return true;') && owns.includes('scope.querySelector(OPEN_POPUP_SEL) !== null;'), 'the target\'s ancestors, then the scope\'s open popup');
-  assert.ok(P1.includes('while a popup stands open in the card, found by its trigger\'s aria-haspopup with aria-expanded true (`OPEN_POPUP_SEL`: the text-size flyout'));
+  assert.ok(P1.includes('while a popup stands open in the card, found by its trigger\'s aria-haspopup with aria-expanded true (`OPEN_POPUP_SEL`: a popup whose own handler runs after this listener'));
+  assert.ok(P1.includes('the flyout is closed by its dismiss before the flow reads the card, so this selector never finds it open'), 'the flyout is the stop flag\'s, not the selector\'s');
+  assert.ok(!P1.includes('(`OPEN_POPUP_SEL`: the text-size flyout'), 'the second review\'s attribution is gone');
   assert.ok(viewer.includes('trigger.setAttribute("aria-haspopup", "true"); trigger.setAttribute("aria-expanded", "false");'), 'the text-size trigger');
   assert.ok(viewer.includes('outlineBtn.setAttribute("aria-haspopup", "menu"); outlineBtn.setAttribute("aria-expanded", "false");'), 'the Outline button');
   assert.ok(!flow.includes('btn.setAttribute("aria-haspopup"'), 'the Print button carries no aria-haspopup, so its own aria-expanded while armed is not matched');
@@ -192,6 +200,15 @@ test('P2: the wait\'s line carries the viewer\'s loader after its words, under o
   assert.ok(read('ui', 'webview', 'file-print-browser.test.ts').includes('const loaderFacts = (page: any): Promise<Loader> => page.evaluate(() => {'), 'the gated leg reads the loader in Chromium');
 });
 
+test('P4: the window between the frame\'s insertion and its document is recorded, and the body is reported in at the media paint, before the frame loads', () => {
+  const P4 = part('P4. **', 'P5. **');
+  assert.ok(P4.includes('The frame being in is not the frame holding the document: the body is reported in (P7) at the media paint that inserts the frame'));
+  assert.ok(P4.includes('The button is not held to the frame\'s load event, since a browser that downloads the PDF instead never fires it'));
+  assert.ok(/if \(objUrl === null\) return;[ \t]*\n\s+viewError = null;[ \t]*\n\s+print\.bodyIn\(true\);/.test(viewer), 'the media paint reports the body in before any frame is built (a stripped trailing comment leaves its spaces)');
+  assert.ok(!viewer.includes('frame.addEventListener("load"') || !between(viewer, 'frame.addEventListener("load"', '\n').includes('bodyIn'), 'no report waits on the frame\'s load');
+  assert.ok(read('ui', 'webview', 'file-print-media-browser.test.ts').includes('one tab opened, inside the click\'s own task'), 'the media leg\'s in-task assertion the section cites');
+});
+
 test('P2: the word buttons\' titles are the module\'s, the hosts are read at the arm and kept for the click, and a line button holding the keyboard hands it to the Print button', () => {
   const withTitle = between(flow, 'export function withTitle(hosts: string[]): string {', '\n}');
   assert.ok(withTitle.includes('hosts.slice(0, -1).join(", ") + " and " + hosts[hosts.length - 1]'), 'the hosts in order, the last after "and"');
@@ -245,6 +262,17 @@ test('Tests: the count the section gives for `ls ui/webview/file-print*.test.ts`
   assert.ok(TESTS.includes('- ui/webview/file-print-driver-browser.test.ts, headless Chromium over the real viewer') && exists('ui', 'webview', 'file-print-driver-browser.test.ts'));
   assert.ok(TESTS.includes('- tests/test_guide_print_palette_chord.py, Python:'));
   assert.ok(TESTS.includes(path.basename(fileURLToPath(import.meta.url)) + ' holds the review rounds\' sentences here to the tree'), 'the section names this pin');
+});
+
+test('Open point 1 records the two-host placeholder\'s wording, and open point 5 the re-place Escape collision, which stands in the panel\'s listener', () => {
+  assert.ok(OPEN.includes('1. Wording. A gated clip counts as a picture in the armed line, and one placeholder naming two hosts'));
+  assert.ok(flow.includes('return n === 1 ? "1 picture from another host is not loaded." : n + " pictures from other hosts are not loaded.";'), 'the words count pictures');
+  assert.ok(OPEN.includes('5. Escape with a re-place pending in the Comments panel while the bar is armed.'));
+  const fc = code(read('ui', 'webview', 'file-comments.ts'));
+  assert.ok(fc.includes('document.addEventListener("keydown", this.escapeReplace, true);'), 'the panel\'s listener, capture phase on the document');
+  const esc = between(fc, 'escapeReplace = (ev: KeyboardEvent) => {', '\n  };');
+  assert.ok(esc.includes('ev.preventDefault(); ev.stopPropagation();') && esc.includes('this.closeComposer();'), 'cancels the re-place and stops the key');
+  assert.ok(!esc.includes('cancelBubble') && !esc.includes('defaultPrevented'), 'and reads no claim by the flow: the collision the open point records stands (a fix here closes the point)');
 });
 
 test('Open point 2 says the poster and svg probes run in Chromium too, and the driver leg does run them there', () => {
