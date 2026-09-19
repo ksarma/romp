@@ -3871,7 +3871,15 @@ document stands on its own, each with the reasoning it was given.
     the boundary B2 states). The cost, measured against the corpus (285 entries, no verdict changes) and the dollar matrix
     and stated in the PR body: a `~/` value resolves through HOME at no cost; `declare -i x=5` (and `-a`, `-A`) then `$x`,
     `let x=5` then `$x`, a pipeline-tail assignment (which zsh keeps) and a piped plain group then `$x` each refuse from a
-    tracked cwd where the shell's value was known.
+    tracked cwd where the shell's value was known. The addendum the same day, four items: a plain top-level `HOME=<path>`
+    assignment is the one readable write to HOME (`readableHomeWrites`), read for the commands after it, inherited by a
+    `$(...)` and by a script handed to a named shell (the shells keep HOME exported), with the prefix form `HOME=<path> cmd`
+    excluded and refused with its own reason (`unreadableExpandedNames`, kind `homePrefix`), since bash, zsh and dash expand
+    cmd's `$HOME` and `~` before the prefix applies and cmd runs under the new HOME; the refusal for a cd under `builtin`,
+    `command` or `time` says what each shell does (`WRAPPED_CD_WHY`: bash and zsh move under `builtin`, bash and dash under
+    `command`, bash and zsh under `time`; the verdict stays unknown) where it said the shell does not move; the prefix
+    form's own text; and the test file's real-zsh evidence legs run through one probe that reports a missing zsh with a
+    `NOT RUN` line per leg, never a silent pass.
     Without ROMP_SID it exits 0 before reading stdin (decision 24). Cost: about 60 ms
     per Bash call when no target needs the link closure (a read, a literal target outside any project, an explicit
     hit on the project's tracked list, an empty list); a write to a file inside a tracking project that the list

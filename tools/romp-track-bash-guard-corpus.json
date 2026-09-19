@@ -291,5 +291,8 @@
   {"kind": "cost", "cwd": "proj", "verdict": "refuse", "since": "seventh pass", "command": "n=a; { n=b; } | cat; echo x > <out>/scratch/$n.log", "remedy": "assign outside the piped group (a subshell), or spell the path out"},
   {"kind": "cost", "cwd": "proj", "verdict": "refuse", "since": "seventh pass", "command": "n=a; export n; echo x > <out>/scratch/$n.log", "remedy": "`export n=a` in one word, or spell the path out"},
   {"kind": "cost", "cwd": "proj", "verdict": "refuse", "since": "seventh pass", "command": "echo n; n=a; echo x > <out>/scratch/$n.log", "remedy": "a bare word spelling the name before the write reads as a possible write to it: spell the path out"},
-  {"kind": "b2-readable", "cwd": "proj", "verdict": "allow", "command": "n=a; unset n; n=b; echo x > <out>/scratch/$n.log"}
+  {"kind": "b2-readable", "cwd": "proj", "verdict": "allow", "command": "HOME=<out>/scratch; echo x > ~/h.log"},
+  {"kind": "b2-readable", "cwd": "out", "verdict": "allow", "command": "HOME=<out>/scratch; echo x > ~/h.log"},
+  {"kind": "b2-readable", "cwd": "proj", "verdict": "allow", "command": "n=a; unset n; n=b; echo x > <out>/scratch/$n.log"},
+  {"kind": "cost", "cwd": "proj", "verdict": "refuse", "since": "seventh pass", "command": "HOME=<out>/scratch printf x > ~/h.log", "remedy": "assign HOME in a word of its own (`HOME=<out>/scratch; printf x > ~/h.log`), or spell the path out"}
 ]

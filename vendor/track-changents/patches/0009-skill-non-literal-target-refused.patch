@@ -52,12 +52,14 @@
 # name is readable only after plain top-level NAME=plain-string writes and nothing else, any other construct that can
 # write it (a tilde opening the value, a transforming declaration flag, a nameref, a name the shell fills in, a pipeline
 # or a piped group, a wrapper's argument, a function definition of any spelling called later, a subscript) leaving it
-# unreadable. The section gains one sentence before the contract paragraph saying so.
+# unreadable; HOME is read after a plain top-level HOME=<path> of its own, the prefix form excluded; and the refusal for
+# a cd under builtin, command or time says which shells move. The section gains one sentence before the contract
+# paragraph saying so.
 diff --git a/skill/SKILL.md b/skill/SKILL.md
-index f7d8bc9..ad13b68 100644
+index f7d8bc9..687012e 100644
 --- a/skill/SKILL.md
 +++ b/skill/SKILL.md
-@@ -59,6 +59,166 @@ heredoc included), no `sed -i` or `perl -i`, no python `open(..., 'w')` or node
+@@ -59,6 +59,171 @@ heredoc included), no `sed -i` or `perl -i`, no python `open(..., 'w')` or node
  the write: its status is 0 when tracking is ON, so `track-config ... && cp ...` runs
  the copy on exactly the file it must not touch.
  
@@ -181,45 +183,50 @@ index f7d8bc9..ad13b68 100644
 +transforming declaration flag, a nameref, a name the shell fills in, a pipeline
 +or a piped group, a wrapper's argument, a `function NAME {` definition called
 +later or a subscript each leaves it unreadable, and a plain `unset` frees it
-+again). This guard is best-effort against known write forms: it refuses the
-+shell writes it models and, by design, allows anything it does not recognise, so
-+it never blocks ordinary work it cannot read; it is a backstop, not a complete
-+boundary. The allow-by-default for an unmodelled writer is deliberately not
-+flipped, since flipping it would refuse almost all normal work. What it does
-+refuse, while a tracked project is in play, is a write it reads but cannot
-+place: a target it cannot read, a path it cannot check (a stat error other than
-+not-found), an option on a modelled writer or wrapper it does not parse in full,
-+an env -S string, a shell option it does not know to be inert for paths, a link
-+whose source it cannot read, a `~` or `$HOME` write beside a mention of HOME or
-+beside a variable name the shell fills in, a template or format string as an
-+interpreter's write path, and, from any working directory, a write through an
-+alias the command makes (a hard link, `cp -l`, `cp -s`, `link`, a link whose
-+source it cannot read) whose source lies in a tracked project or is one it
-+cannot read. A value it can read is resolved first and the real path judged. A
-+name is readable only when every write to it in the command is a plain top-level
-+`NAME=plain-string` the shell performs as spelled: no tilde opening the value,
-+no declaration flag that transforms it, no nameref reaching it, no name the
-+shell fills in, no subshell, pipeline, piped group or body scope, no wrapper
-+argument, no call of a function the command defines in any spelling, no
-+subscript; any other construct that can write the name, listed here or not,
-+leaves it unreadable, the doctrine a `read` and a loop variable already had.
-+HOME, PWD, OLDPWD, `~+` and `~-` are read the same way, none of the three once
-+the command names or may fill in the name. These write forms are not modelled
-+and still reach a tracked file: rsync; awk with a redirect inside its program;
-+ed; ex; make; find with -delete or -exec; a git subcommand that writes the
-+working tree (checkout, stash, apply, reset, rm, clean, mv); a computed or
-+escaped path inside an interpreter (a name, sys.argv, os.environ or process.env,
-+a concatenation or an escape sequence in the string, in python3 -c or node -e);
-+a script the shell reads from elsewhere (eval, xargs, a sourced file, trap, a
-+command whose name is an expansion, a script held in a variable); a command that
-+runs another command and is outside the guard's wrapper set (unshare, nsenter,
-+script, setarch, setpriv, strace, coproc and their kin); a link made by a writer
-+outside the model (python, tar, rsync) that a later modelled write follows; shuf
-+-o; a cd through CDPATH; and an opaque expansion from a cwd outside every
-+project, leading or after a literal head outside every project (a `..` inside
-+the value could climb into a project; from a cwd in a tracked project the same
-+word is refused as not literal). Whichever way you write a tracked file, use
-+`track-edit`, so your change comes back to be accepted or rejected.
++again), reads a plain top-level `HOME=<path>` for the commands after it (the
++prefix `HOME=<path> cmd` excluded, since the shells expand that command's
++`$HOME` and `~` first), and makes the refusal for a `cd` under `builtin`,
++`command` or `time` say which shells move. This guard is best-effort against
++known write forms: it refuses the shell writes it models and, by design, allows
++anything it does not recognise, so it never blocks ordinary work it cannot read;
++it is a backstop, not a complete boundary. The allow-by-default for an
++unmodelled writer is deliberately not flipped, since flipping it would refuse
++almost all normal work. What it does refuse, while a tracked project is in play,
++is a write it reads but cannot place: a target it cannot read, a path it cannot
++check (a stat error other than not-found), an option on a modelled writer or
++wrapper it does not parse in full, an env -S string, a shell option it does not
++know to be inert for paths, a link whose source it cannot read, a `~` or `$HOME`
++write beside a mention of HOME or beside a variable name the shell fills in, a
++template or format string as an interpreter's write path, and, from any working
++directory, a write through an alias the command makes (a hard link, `cp -l`, `cp
++-s`, `link`, a link whose source it cannot read) whose source lies in a tracked
++project or is one it cannot read. A value it can read is resolved first and the
++real path judged. A name is readable only when every write to it in the command
++is a plain top-level `NAME=plain-string` the shell performs as spelled: no tilde
++opening the value, no declaration flag that transforms it, no nameref reaching
++it, no name the shell fills in, no subshell, pipeline, piped group or body
++scope, no wrapper argument, no call of a function the command defines in any
++spelling, no subscript; any other construct that can write the name, listed here
++or not, leaves it unreadable, the doctrine a `read` and a loop variable already
++had. HOME, PWD, OLDPWD, `~+` and `~-` are read the same way: HOME after a plain
++top-level `HOME=<path>` assignment of its own, and none of the three once the
++command names or may fill in the name in any other form. These write forms are
++not modelled and still reach a tracked file: rsync; awk with a redirect inside
++its program; ed; ex; make; find with -delete or -exec; a git subcommand that
++writes the working tree (checkout, stash, apply, reset, rm, clean, mv); a
++computed or escaped path inside an interpreter (a name, sys.argv, os.environ or
++process.env, a concatenation or an escape sequence in the string, in python3 -c
++or node -e); a script the shell reads from elsewhere (eval, xargs, a sourced
++file, trap, a command whose name is an expansion, a script held in a variable);
++a command that runs another command and is outside the guard's wrapper set
++(unshare, nsenter, script, setarch, setpriv, strace, coproc and their kin); a
++link made by a writer outside the model (python, tar, rsync) that a later
++modelled write follows; shuf -o; a cd through CDPATH; and an opaque expansion
++from a cwd outside every project, leading or after a literal head outside every
++project (a `..` inside the value could climb into a project; from a cwd in a
++tracked project the same word is refused as not literal). Whichever way you
++write a tracked file, use `track-edit`, so your change comes back to be accepted
++or rejected.
 +
  For ANY change to the file, use the CLI, NOT the Edit/Write/MultiEdit tools:
  
