@@ -292,9 +292,10 @@ test("the LOCAL socket's frames pass untouched: the shim reassembles its own del
 // ── the one frame neither path decodes (2026-09-19) ──────────────────────────────────────────────────────────────────
 // A patch for a slot this receiver has no table for (a kernel newer than this bundle) is asked for whole by the receiver
 // (needSlot on this conn, view-deltas.ts recover) and said first by the manager: one hostconn row under keys the family
-// already has (ev delta-unknown-slot, why = the slot), and a console line. A patch with no slot at all is said the same
-// way and asked for nothing (there is no slot to name). Neither reaches the pane, and the known slot's base stands.
-test("a remote patch for a slot this side does not decode is said (a hostconn row naming the slot) and asked for whole on the sending socket; a slotless one is said and dropped; the known slot's base survives", async () => {
+// already has (ev delta-unknown-slot, why = the slot), and a console line. A patch with no slot at all is the same event
+// (a frame this bundle does not decode, from the same remote: said no more once a row stands, the next test) and is asked
+// for nothing (there is no slot to name). Neither reaches the pane, and the known slot's base stands.
+test("a remote patch for a slot this side does not decode is said (a hostconn row naming the slot) and asked for whole on the sending socket; a slotless one is dropped and asks for nothing; the known slot's base survives", async () => {
   await withManager("timeline", ({ fm, emitted, sent }) => {
     seedLocalTimeline(fm);
     const ws = attached(fm);
@@ -306,8 +307,8 @@ test("a remote patch for a slot this side does not decode is said (a hostconn ro
     assert.equal(barsOf(emitted).length, before, "nothing emitted for it");
     assert.equal(emitted.filter((m) => m && m.type === "delta").length, 0, "the raw patch never reached the pane");
     ws.frame({ type: "delta" });
-    assert.deepEqual(rows().map((r) => r.why), ["lanes", ""], "a slotless patch is said too (an empty why)");
-    assert.deepEqual(ws.sent, [{ type: "needSlot", slot: "lanes" }], "…and asks for nothing: there is no slot to name");
+    assert.deepEqual(rows().map((r) => r.why), ["lanes"], "a slotless patch is the same event (a frame this bundle does not decode, from the same remote): the standing row says it");
+    assert.deepEqual(ws.sent, [{ type: "needSlot", slot: "lanes" }], "…and it asks for nothing: there is no slot to name");
     ws.frame(barsPatch(0, bar("seg-2", 1010, 1015, "second"), 506));
     assert.deepEqual(ids(last(barsOf(emitted)).turns[HOST + ":" + SID_A]), ["seg-1", "seg-2"], "the bars base held through both: a known slot's patch still applies");
     assert.deepEqual(localAsks(sent), []);
@@ -315,12 +316,14 @@ test("a remote patch for a slot this side does not decode is said (a hostconn ro
   });
 });
 
-// The row and the console line are said once per distinct ROW (Conn.saidDelta, sayDeltaOnce): the slot (the empty
-// string for a slotless patch its own) and the remote's build when the hub's /tunnels row names one (this rig has no
-// row, so none), the rule the refused-base row shares below; the needSlot stays per patch, since it is the resync itself
-// and the kernel coalesces asks. A detach ends the conn and its latch; a redial keeps the conn, and the same slot from
-// the same remote on the redialed socket is the same event, said no more (the build case is further down).
-test("the unknown-slot breadcrumb is said once per event: a second patch for the slot is asked for whole again but said no more, a second slot has its own row, a re-attached host is said again, a redialed socket (the same slot, the same remote) is not", async () => {
+// The row and the console line are said once per EVENT (Conn.saidDelta, sayDeltaOnce), and the event is this bundle's,
+// not the slot name's: a patch for ANY slot this bundle does not decode, the slotless patch included, from the same
+// remote on the same build (the hub's /tunnels row; this rig has none, so no build) is one event, one row naming the first
+// slot seen and one console line, however many names the remote uses (the bound is this side's, further down), the rule
+// the refused-base row shares below; the needSlot stays per patch, since it is the resync itself and the kernel coalesces
+// asks. A detach ends the conn and its latch; a redial keeps the conn, and the same remote on the redialed socket is the
+// same event, said no more (the build case is further down).
+test("the unknown-slot breadcrumb is said once per event, and the event is this bundle's: a second patch for the slot, a second unknown slot and a slotless patch are said no more (and asked for where a slot is named); a re-attached host is said again; a redialed socket (the same remote) is not", async () => {
   await withManager("timeline", ({ fm, sent }) => countingConsoleErrors((errors) => {
     seedLocalTimeline(fm);
     const ws = attached(fm);
@@ -331,10 +334,11 @@ test("the unknown-slot breadcrumb is said once per event: a second patch for the
     assert.equal(errors.length, 1, "and one console line: " + errors.join(" | "));
     assert.deepEqual(ws.sent, [{ type: "needSlot", slot: "lanes" }, { type: "needSlot", slot: "lanes" }], "asked per patch all the same: the ask is the resync");
     ws.frame({ type: "delta", slot: "marks", base: 0, rev: 1, coll: {} });
-    assert.deepEqual(rows().map((r) => r.why), ["lanes", "marks"], "a second unknown slot has its own row");
+    assert.deepEqual(rows().map((r) => r.why), ["lanes"], "a second unknown slot is the same event: this bundle decodes neither, and the standing row (the first name seen) says so");
+    assert.deepEqual(last(ws.sent), { type: "needSlot", slot: "marks" }, "…asked for whole all the same");
     ws.frame({ type: "delta" }); ws.frame({ type: "delta" });
-    assert.deepEqual(rows().map((r) => r.why), ["lanes", "marks", ""], "the slotless patch is its own key, said once");
-    assert.equal(errors.length, 3);
+    assert.deepEqual(rows().map((r) => r.why), ["lanes"], "the slotless patch too: nothing new to say");
+    assert.equal(errors.length, 1, "one console line for the lot");
     // a redial on the conn (the watchdog's abandon-and-dial) keeps the latch: it is the conn's, not the socket's
     const conn = fm.conns.get(HOST);
     clock += REMOTE_STALE_MS + 1000;
@@ -344,16 +348,16 @@ test("the unknown-slot breadcrumb is said once per event: a second patch for the
     assert.equal(fm.conns.get(HOST), conn);
     ws2.open();
     ws2.frame({ type: "delta", slot: "lanes", base: 0, rev: 1, coll: {} });
-    assert.deepEqual(rows().map((r) => r.why), ["lanes", "marks", ""], "not said again on the redialed socket");
+    assert.deepEqual(rows().map((r) => r.why), ["lanes"], "not said again on the redialed socket");
     assert.deepEqual(ws2.sent, [{ type: "needSlot", slot: "lanes" }], "…but asked, on the new socket");
-    // a detach ends the conn and its latch: the re-attached host's first unknown patch is said again
+    // a detach ends the conn and its latch: the re-attached host's first unknown patch is said again, naming the slot it came with
     fm.closeRemote(HOST);
     fm.openRemote(HOST, true);
     const ws3 = last(FakeWS.made);
     ws3.open();
-    ws3.frame({ type: "delta", slot: "lanes", base: 0, rev: 1, coll: {} });
-    assert.deepEqual(rows().map((r) => r.why), ["lanes", "marks", "", "lanes"], "said again on the new conn");
-    assert.equal(errors.length, 4);
+    ws3.frame({ type: "delta", slot: "marks", base: 0, rev: 1, coll: {} });
+    assert.deepEqual(rows().map((r) => r.why), ["lanes", "marks"], "said again on the new conn, with the first name that conn saw");
+    assert.equal(errors.length, 2);
     fm.conns.get(HOST).closed = true;
   }));
 });
@@ -678,6 +682,60 @@ test("the unknown-slot breadcrumb shares the rule: the same slot from the same b
       assert.deepEqual(rows().map((r) => r.why), ["lanes @aaaaaaaaa", "lanes @bbbbbbbbb"], "the redial across the remote's deploy says it again, naming the new build");
       assert.equal(errors.length, 2);
       assert.match(errors[1], /bbbbbbbbb/);
+      fm.conns.get(HOST).closed = true;
+    }));
+  } finally { restore(); }
+});
+
+// The latch's key is this side's to bound (review round 4: keyed on the wire slot name, 200 invented slot names from one
+// remote were 200 rows, 200 console lines and 200 Set entries, held across a redial, and the bound was the peer's). Now
+// every slot this bundle does not decode is one key per build (federation.ts UNKNOWN_SLOT_KEY); the first name rides in the
+// row, cut to 32 characters so the kernel's 64-character cut of `why` (CLIENT_DIAG_STR_MAX) keeps the build tag behind it;
+// and Conn.saidDelta holds at most seven keys per build the /tunnels row has named on the conn (the six refusals this
+// side's table can produce, and the one unknown-slot marker).
+test("a remote that names a new unknown slot in every patch spends one row, one console line and one latch key per build: 200 names are one row naming the first, a redial adds none, a new build adds one, and a long name is cut so the build tag survives the kernel's cut", async () => {
+  const row: Record<string, any> = { kernelSha: "aaaaaaaaa" };
+  const restore = tunnelsStub(row);
+  try {
+    await withManager("timeline", ({ fm, sent }) => countingConsoleErrors(async (errors) => {
+      seedLocalTimeline(fm);
+      const ws = attached(fm);
+      await fm.poll();
+      const conn = fm.conns.get(HOST);
+      const rows = () => sent.filter((x) => x && x.type === "clientDiag" && x.what === "hostconn" && x.data && x.data.ev === "delta-unknown-slot").map((x) => x.data);
+      const lane = (i: number) => ({ type: "delta", slot: "lane" + i, base: 0, rev: 1, coll: {}, rest: { now: 505 } });
+      for (let i = 0; i < 200; i++) ws.frame(lane(i));
+      assert.deepEqual(rows(), [{ host: HOST, ev: "delta-unknown-slot", why: "lane0 @aaaaaaaaa" }], "200 slot names from one remote: one row, naming the first seen and the build");
+      assert.equal(errors.length, 1, "one console line");
+      assert.equal(conn.saidDelta.size, 1, "one latch key: the set's size is this side's, not the remote's");
+      assert.equal(ws.sent.length, 200);
+      assert.ok(ws.sent.every((m: any, i: number) => m.type === "needSlot" && m.slot === "lane" + i), "asked per patch all the same, each by its wire name: the ask is the resync, and the kernel coalesces asks");
+      clock += REMOTE_STALE_MS + 1000;
+      fm.watchdog(clock);
+      const ws2 = last(FakeWS.made);
+      assert.notEqual(ws2, ws, "redialed");
+      ws2.open();
+      for (let i = 200; i < 400; i++) ws2.frame(lane(i));
+      assert.equal(rows().length, 1, "200 more names on the redialed socket: the same event, no row");
+      assert.equal(conn.saidDelta.size, 1);
+      // the remote redeploys: the row's kernelSha changes, a poll lands it, a redial; the first patch this bundle does not
+      // decode from the new build is one more row and one more key, its (long) name cut so the build tag stands
+      row.kernelSha = "bbbbbbbbb";
+      await fm.poll();
+      clock += REMOTE_STALE_MS + 1000;
+      fm.watchdog(clock);
+      const ws3 = last(FakeWS.made);
+      assert.notEqual(ws3, ws2);
+      ws3.open();
+      const long = "l".repeat(80);
+      ws3.frame({ type: "delta", slot: long, base: 0, rev: 1, coll: {}, rest: {} });
+      assert.deepEqual(rows().map((r) => r.why), ["lane0 @aaaaaaaaa", "l".repeat(32) + " @bbbbbbbbb"], "the new build is a new key: one row, the peer's name cut to 32 so the build tag stands inside the kernel's 64-character cut of why");
+      assert.ok(last(rows()).why.length <= 64, "under the kernel's cut");
+      assert.deepEqual(ws3.sent, [{ type: "needSlot", slot: long }], "asked with the whole name: the ask is the wire's");
+      ws3.frame({ type: "delta" }); ws3.frame(lane(1));
+      assert.equal(rows().length, 2, "a slotless patch and another name under the same build: nothing");
+      assert.equal(conn.saidDelta.size, 2, "two keys for two builds");
+      assert.equal(errors.length, 2);
       fm.conns.get(HOST).closed = true;
     }));
   } finally { restore(); }
