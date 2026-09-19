@@ -135,6 +135,48 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   `romp-manager-origin.bats`'s control port), and any literal collides when
   two checkouts run bats at once on one machine. The helper picks below
   the ephemeral range, so a transient source port cannot hold the pick.
+- **`romp-service-differential.py`**, a documented command, not a test: the
+  unit oracle in `romp-service.bats` (`_sd`, a python that reads a unit the
+  way systemd 255 does) run against the real `systemd-analyze --user verify`,
+  offline, over the fixture set round 4 of fork PR #778's review used as a lens
+  (684 synthetic units: every specifier letter on three surfaces, the escape
+  set on six, the ExecStart forms) plus a small batch the fold added. It needs
+  a `systemd-analyze` on PATH and exits 2 saying so when there is none; it
+  never skips, and it is not a bats case because its counts are a claim about
+  one systemd build (a mac has no systemd-analyze, and a runner's build may
+  differ from the one below), so a case that must fail loudly without one
+  would fail every mac run and go red on a build change with no change here.
+  Run it when the oracle or the reader in `bin/romp-service` changes:
+  `python3 tests/romp-service-differential.py` (about ten seconds, four
+  verify runs at a time; `--list` prints the fixtures without running).
+  A disagreement in the dangerous direction (the oracle accepting what
+  systemd drops or refuses) is a defect in the oracle, and where the reader
+  follows the oracle, in the reader; the other direction is a false refusal.
+  Taken against `systemd 255 (255.4-1ubuntu8.17)` at the fold head
+  (2026-09-19; 256 may move any class, and a different build prints a notice
+  beside the counts):
+
+  | class | cases | agree | REFUSES | DISAGREE |
+  |---|---|---|---|---|
+  | A (% before a non-alphanumerical character) | 31 | 31 | 0 | 0 |
+  | B (the deprecated %c %r %R) | 9 | 0 | 9 | 0 |
+  | C (\u noncharacter escapes) | 8 | 8 | 0 | 0 |
+  | D (\U surrogate or noncharacter escapes) | 42 | 42 | 0 | 0 |
+  | E (a trailing backslash on the last line) | 2 | 2 | 0 | 0 |
+  | F (the @ prefix's argv) | 7 | 7 | 0 | 0 |
+  | G (repeated or conflicting prefixes) | 8 | 8 | 0 | 0 |
+  | H (a quoted or escaped ; argument) | 3 | 3 | 0 | 0 |
+  | I (filename and path validity) | 4 | 4 | 0 | 0 |
+  | J (the simplified exec path) | 3 | 3 | 0 | 0 |
+  | K (the - prefix's downgrade) | 8 | 8 | 0 | 0 |
+  | (none) | 559 | 421 | 138 | 0 |
+  | total | 684 | 537 | 147 | 0 |
+
+  REFUSES is the oracle raising NotImplementedError on a form it does not
+  model (a specifier whose value is the host's, the cgroup's or the unit
+  path's), not a disagreement; the fold batch of 10 agrees 10 of 10; the
+  dangerous-direction count is 0. Before the fold the lens counted 421 agree,
+  138 REFUSES and 125 DISAGREE over the same 684.
 - **node suites** — live beside their sources in `ui/webview/*.test.ts` and
   `vscode-extension/src/*.test.ts`, run with `npm test` from
   `vscode-extension/`. Many pin lines of `kernel/kernel.py` as strings — run

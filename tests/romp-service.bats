@@ -1760,23 +1760,33 @@ _sd() {   # the oracle: a python that reads a unit the way systemd v255 does, wr
           # refuses), since what systemd hands the manager is then nothing, and a case that expects a value there is wrong.
     local py="$TEST_DIR/sd.py"
     [ -f "$py" ] || cat > "$py" <<'PY'
-# The oracle models systemd 255 (255.4-1ubuntu8.17, the box this was written on, 2026-09-19). How that was checked: every rule
-# below was run against `systemd-analyze --user verify` on that box over the boundary cases its comment names (the round-4 probe
-# set: line endings, continuations, comments, headers, escapes, names, ExecStart shapes, EnvironmentFile shapes), the case the
-# rule refuses and the case it accepts, before the rule was written here; the function names are systemd v255's (conf-parser.c,
-# fileio.c read_line, extract-word.c, escape.c cunescape_one, load-fragment.c config_parse_environ / config_parse_exec /
-# config_parse_unit_env_file, service.c service_verify). It models the forms these tests feed it and RAISES on anything outside
-# that set (a specifier other than %% and %h, an EnvironmentFile path that path_simplify would change, an ExecStop or
-# SuccessAction that would rescue a unit with no ExecStart), so a case leaning on the oracle where it is not modelled fails loudly
-# rather than validating against a guess (round 4, extra6-6: the specifier table and the escape set were wrong, and an ExecStart
-# path came out as the literal string None). Text is handled as latin-1 so every byte of the file survives; a value is written out
-# as bytes.
-import os, re, sys
+# The oracle models systemd 255 (255.4-1ubuntu8.17, the box this was written on, 2026-09-19), and that build alone: a claim checked
+# against 255.4 says nothing about 256, which may move any rule below. How that was checked: every rule was run against
+# `systemd-analyze --user verify` on that box over the boundary cases its comment names (the round-4 probe set: line endings,
+# continuations, comments, headers, escapes, names, ExecStart shapes, EnvironmentFile shapes), the case the rule refuses and the case
+# it accepts, before the rule was written here; and the whole model is run against systemd by tests/romp-service-differential.py (the
+# fold of 2026-09-19, after the oracle lens of round 4 found eleven classes of disagreement), whose fixture set, expected counts and
+# systemd version are recorded in that file and in tests/README.md. The function names are systemd v255's (conf-parser.c, fileio.c
+# read_line, extract-word.c extract_first_word, escape.c cunescape_one, specifier.c specifier_printf, utf8.c utf8_is_valid,
+# path-util.c path_simplify / path_is_valid / filename_is_valid, load-fragment.c config_parse_environ / config_parse_exec /
+# config_parse_unit_env_file, service.c service_verify). It models the forms these tests feed it and RAISES on anything outside that
+# set (a specifier other than %% and %h, the deprecated %c %r %R included, an EnvironmentFile path that path_simplify would change,
+# an ExecStop or SuccessAction that would rescue a unit with no ExecStart), so a case leaning on the oracle where it is not modelled
+# fails loudly rather than validating against a guess (round 4, extra6-6: the specifier table and the escape set were wrong, and an
+# ExecStart path came out as the literal string None). Text is handled as latin-1 so every byte of the file survives; a value is
+# written out as bytes.
+import json, os, re, sys
 WS = " \t\n\r"          # WHITESPACE: strstrip, the comment test's skip and extract_first_word's separators (not \f or \v: verified,
                         # a form-feed-indented line is an unknown key and a form feed inside a value does not split it)
 KNOWN = set("aAbBCdEfgGHiIjJlLmMnNopPqsStTuUvVwWyY")   # systemd.unit(5)'s table on 255, %h and %% apart
+KNOWN |= set("crR")     # undocumented and deprecated, and still resolved on 255 (the unit's cgroup path, the slice's, the root's, with a
+                        # deprecation warning): the fold, class B, where they were read as letters outside the table and the item dropped
+ALNUM = set("0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")   # POSSIBLE_SPECIFIERS less %: ASCII letters and digits
 SECTIONS = {"Unit", "Service", "Install"}
+NAME_MAX, PATH_MAX = 255, 4096
 class Fatal(Exception): pass
+class WordError(Exception): pass    # extract_first_word's -EINVAL, its text saying which form (an unbalanced quote, a trailing backslash,
+                                    # an escape cunescape_one refuses)
 
 def read_lines(data):
     # read_line: a line ends at \n, \r or a NUL; after one of them each further terminator of a kind not yet seen in that ending is
@@ -1794,16 +1804,25 @@ def read_lines(data):
     if cur: lines.append(bytes(cur))
     return lines
 
+def unichar_is_valid(cp):
+    # unichar_is_valid: below the end of the code space, not a surrogate, not a noncharacter (U+FDD0 to U+FDEF, and the last two code
+    # points of every plane); cunescape_one applies it to a \U escape and utf8_is_valid to every decoded character
+    return cp < 0x110000 and not 0xD800 <= cp <= 0xDFFF and not 0xFDD0 <= cp <= 0xFDEF and (cp & 0xFFFE) != 0xFFFE
+
 def utf8_ok(s):
-    try: s.encode("latin-1").decode("utf-8"); return True
+    # utf8_is_valid: the encoding, then unichar_is_valid on each character (the fold, class C: python's decoder passes a noncharacter,
+    # systemd drops an assignment carrying one and refuses the whole file on a line carrying one raw; verified on 255.4)
+    try: t = s.encode("latin-1").decode("utf-8")
     except UnicodeError: return False
+    return all(unichar_is_valid(ord(c)) for c in t)
 
 ESC = {"\\": "\\", '"': '"', "'": "'", "s": " ", "n": "\n", "t": "\t", "r": "\r", "a": "\a", "b": "\b", "f": "\f", "v": "\v"}
 def cunescape_one(s, i):
     # (text, consumed), or None for an escape systemd refuses: \x needs two hex digits and not 00, an octal three digits below 400 and
-    # not 000, \u four and \U eight hex digits, not 0 and not above 10FFFF; an eight-bit byte comes back raw (a latin-1 char), a code
-    # point as its UTF-8 bytes, a surrogate included (verified: \ud800 gives three bytes that are not UTF-8, and the assignment is then
-    # dropped as invalid, not refused as syntax)
+    # not 000, \u four hex digits and not 0 (a surrogate or a noncharacter is encoded as bytes, which the assignment check then drops:
+    # verified, \ud800 gives three bytes that are not UTF-8), \U eight hex digits and a code point unichar_is_valid accepts (the fold,
+    # class D: \U0000D800 and \U0000FFFE are refused by cunescape_one itself, where the oracle refused only 0 and above 10FFFF); an
+    # eight-bit byte comes back raw (a latin-1 char), a code point as its UTF-8 bytes
     c = s[i]
     if c in ESC: return ESC[c], 1
     if c == "x":
@@ -1822,43 +1841,57 @@ def cunescape_one(s, i):
         if not re.fullmatch(r"[0-9A-Fa-f]{%d}" % k, h): return None
         cp = int(h, 16)
         if cp == 0 or cp > 0x10FFFF: return None
+        if c == "U" and not unichar_is_valid(cp): return None
         return chr(cp).encode("utf-8", "surrogatepass").decode("latin-1"), 1 + k
     return None
 
-def words(rv, relax=False):
-    # extract_first_word with EXTRACT_UNQUOTE|EXTRACT_CUNESCAPE over the rvalue, word by word: (words, err), err naming the failure
-    # (an unbalanced quote, a trailing backslash, an escape cunescape_one refuses) and words holding the ones before it. relax is
-    # EXTRACT_UNESCAPE_RELAX, extract_first_word_and_warn's retry for ExecStart: an escape systemd does not know is kept as the
-    # backslash and the character (Ignoring unknown escape sequences) and a trailing unquoted backslash verbatim; an unbalanced quote
-    # still fails (Unbalanced quoting)
-    out, i, n = [], 0, len(rv)
-    while True:
-        while i < n and rv[i] in WS: i += 1
-        if i >= n: return out, None
-        w, q = "", None
-        while i < n:
-            c = rv[i]
-            if q is None and c in WS: break
-            if c == "\\":
-                i += 1
-                if i >= n:
-                    if relax and q is None: w += "\\"; break
-                    return out, "trailing backslash"
-                r = cunescape_one(rv, i)
-                if r is None:
-                    if relax: w += "\\" + rv[i]; i += 1; continue
-                    return out, "unknown escape"
-                w += r[0]; i += r[1]; continue
-            if q is None and c in "\"'": q = c; i += 1; continue
-            if q is not None and c == q: q = None; i += 1; continue
-            w += c; i += 1
-        if q is not None: return out, "unbalanced quote"
-        out.append(w)
+def extract_first_word(s, i, relax=False):
+    # extract_first_word with EXTRACT_UNQUOTE|EXTRACT_CUNESCAPE (and EXTRACT_UNESCAPE_RELAX when relax) from position i: (word, next i)
+    # past the separators that follow, or None at the end; WordError for -EINVAL. Inside quotes an end of text is an unbalanced quote
+    # (a backslash there too, since the relaxed retry does not save it, which is why systemd reports it as Unbalanced quoting); unquoted,
+    # a backslash at the end is kept verbatim under relax and refused otherwise, and an escape cunescape_one refuses is kept as the
+    # backslash and the character under relax and refused otherwise
+    n = len(s)
+    while i < n and s[i] in WS: i += 1
+    if i >= n: return None
+    w, q = "", None
+    while i < n:
+        c = s[i]
+        if c == "\\":
+            i += 1
+            if i >= n:
+                if q is None and relax: w += "\\"; break
+                raise WordError("unbalanced quote" if q is not None else "trailing backslash")
+            r = cunescape_one(s, i)
+            if r is None:
+                if relax: w += "\\" + s[i]; i += 1; continue
+                raise WordError("unknown escape")
+            w += r[0]; i += r[1]; continue
+        if q is not None:
+            if c == q: q = None
+            else: w += c
+            i += 1; continue
+        if c in WS: break
+        if c in "\"'": q = c; i += 1; continue
+        w += c; i += 1
+    if q is not None: raise WordError("unbalanced quote")
+    while i < n and s[i] in WS: i += 1
+    return w, i
+
+def extract_first_word_and_warn(s, i):
+    # extract_first_word_and_warn: the strict read, then, on -EINVAL, one retry under EXTRACT_UNESCAPE_RELAX (Ignoring unknown escape
+    # sequences); what still fails is reported as Unbalanced quoting
+    try: return extract_first_word(s, i)
+    except WordError:
+        try: return extract_first_word(s, i, relax=True)
+        except WordError: raise WordError("unbalanced quote")
 
 def specifiers(w):
-    # unit_env_printf / unit_path_printf: %% is %, a trailing % a %, %h the home (HOME here, which is what the tests mean by it; systemd
-    # reads the passwd entry); every other letter of the table expands to a host-, user- or unit-path-dependent value no test feeds,
-    # raised; a letter outside the table fails to resolve (Invalid slot), None, and the caller says what systemd does with the item
+    # unit_env_printf / unit_path_printf / unit_full_printf, all specifier_printf: %% is %, a trailing % a %, %h the home (HOME here,
+    # which is what the tests mean by it; systemd reads the passwd entry); every other letter of the table (the deprecated %c %r %R
+    # with it) expands to a host-, user-, cgroup- or unit-path-dependent value no test feeds, raised; a letter or a digit outside the
+    # table fails to resolve (Invalid slot), None, and the caller says what systemd does with the item; a % before any other character
+    # is copied with the character (POSSIBLE_SPECIFIERS is alphanumerical: the fold, class A, where a%/b failed to resolve here)
     out, i, n = "", 0, len(w)
     while i < n:
         c = w[i]
@@ -1867,8 +1900,9 @@ def specifiers(w):
             d = w[i + 1]
             if d == "%": out += "%"
             elif d == "h": out += os.environ.get("HOME", "")
-            elif d in KNOWN: raise NotImplementedError("the specifier %%%s is not modelled (its value is the host's or the unit path's)" % d)
-            else: return None
+            elif d in KNOWN: raise NotImplementedError("the specifier %%%s is not modelled (its value is the host's, the cgroup's or the unit path's)" % d)
+            elif d in ALNUM: return None
+            else: out += "%" + d
             i += 2; continue
         out += c; i += 1
     return out
@@ -1879,9 +1913,128 @@ def env_name_ok(k):   # env_name_is_valid (verified: A-B, A.B, 1A, an empty name
 def unsafe(p):        # string_is_safe's complement: a quote, a backslash, DEL or a control character
     return any(c in "\"'\\\x7f" or ord(c) < 32 for c in p)
 
+def filename_is_valid(p):   # not empty, not . or .., no slash, at most NAME_MAX bytes
+    return p not in ("", ".", "..") and "/" not in p and len(p.encode("latin-1")) <= NAME_MAX
+
+def path_is_valid(p):       # not empty, below PATH_MAX, every component at most NAME_MAX bytes (verified: a 256-byte component fails)
+    return p != "" and len(p.encode("latin-1")) < PATH_MAX and all(len(c.encode("latin-1")) <= NAME_MAX for c in p.split("/"))
+
+def path_simplify(p):       # duplicate slashes and . components dropped, .. kept, the leading slash kept (exec->path, not argv[0]: the fold,
+                            # class J, where the oracle's path was the written form)
+    parts = [c for c in p.split("/") if c not in ("", ".")]
+    return ("/" if p.startswith("/") else "") + "/".join(parts) if parts else ("/" if p.startswith("/") else p)
+
+def parse_exec(rv, cmds):
+    # config_parse_exec over one rvalue, appending to cmds ({path, argv, ignore}); returns None, or the text of a fatal error. Word by word
+    # as systemd reads it: the first word through extract_first_word_and_warn (a failure there yields nothing more from the line, the
+    # commands before it standing); a first word that is exactly ; (unquoted or quoted) separates; the prefix characters each once, `!!`
+    # the one pair, + and ! exclusive, a repeated or conflicting one left in the path (the fold, class G); the path through the
+    # specifiers, then Empty path, string_is_safe, a trailing slash, path_is_valid or filename_is_valid (the fold, class I); argv[0] is
+    # the written path unless @ separates it (the fold, class F), and exec->path the simplified one; the arguments through the raw-text
+    # checks for an unquoted ; and a \; before each word (the fold, class H); with the - prefix every error after the first word drops
+    # that command and the rest of the line with a warning (the fold, class K), without it the unit fails
+    p, n = 0, len(rv)
+    while True:
+        try: r = extract_first_word_and_warn(rv, p)
+        except WordError: return None                                  # Unbalanced quoting, ignoring: nothing more from the line
+        if r is None: return None
+        first, p = r
+        if first == ";": continue                                       # a lone ; is a separator (verified: `;` first, quoted too)
+        flags, sep0, f = set(), False, 0
+        while f < len(first):
+            ch = first[f]
+            if ch == "-" and "ignore" not in flags: flags.add("ignore")
+            elif ch == "@" and not sep0: sep0 = True
+            elif ch == ":" and "noenv" not in flags: flags.add("noenv")
+            elif ch == "+" and not flags & {"priv", "nosetuid", "ambient"}: flags.add("priv")
+            elif ch == "!" and not flags & {"priv", "nosetuid", "ambient"}: flags.add("nosetuid")
+            elif ch == "!" and not flags & {"priv", "ambient"}: flags.discard("nosetuid"); flags.add("ambient")
+            else: break
+            f += 1
+        ignore = "ignore" in flags
+        def fail(msg):
+            return None if ignore else msg
+        path = specifiers(first[f:])
+        if path is None: return fail("Failed to resolve unit specifiers in the ExecStart command: the unit will not be started")
+        if path == "": return fail("Empty path in command line: the unit will not be started")
+        if unsafe(path): return fail("Executable name contains special characters: " + path)
+        if path.endswith("/"): return fail("Executable path specifies a directory: " + path)
+        if not (path_is_valid(path) if path.startswith("/") else filename_is_valid(path)):
+            return fail("Neither a valid executable name nor an absolute path: " + path)
+        argv = [] if sep0 else [path]
+        path = path_simplify(path)
+        semicolon = False
+        while p < n:
+            if rv[p] == ";" and (p + 1 >= n or rv[p + 1] in WS):
+                p += 1
+                while p < n and rv[p] in WS: p += 1
+                semicolon = True; break
+            if rv[p] == "\\" and rv[p + 1:p + 2] == ";" and (p + 2 >= n or rv[p + 2] in WS):
+                argv.append(";"); p += 2
+                while p < n and rv[p] in WS: p += 1
+                continue
+            try: r = extract_first_word_and_warn(rv, p)
+            except WordError: return fail("Unbalanced quoting in an ExecStart argument: the unit will not be started")
+            if r is None: break
+            word, p = r
+            a = specifiers(word)
+            if a is None: return fail("Failed to resolve unit specifiers in an ExecStart argument: the unit will not be started")
+            argv.append(a)
+        if not argv: return fail("Empty executable name or zeroeth argument: the unit will not be started")
+        cmds.append({"path": path, "argv": argv, "ignore": ignore})
+        if not semicolon: return None
+
 def parse(path):
     data = open(path, "rb").read()
-    sec, env, execs, envfiles, cont, etype, rescue = None, {}, [], [], None, "simple", False
+    st = {"sec": None, "env": {}, "execs": [], "envfiles": [], "etype": "simple", "rescue": False}
+    def line(p, ln):
+        s = p.strip(WS)
+        if not s: return
+        if not utf8_ok(s): raise Fatal("String is not UTF-8 clean (line %d): the unit fails to load" % ln)
+        if s[0] == "[":
+            # the name is what lies between [ and the LAST character, which must be ]; a bad header is fatal for the whole file
+            # (verified: [Instal, [Service]x, [Install]   # comment, [Ser"vice], a control character; [Ser vice], [], [Ser.vice] and
+            # [Service]] are only unknown sections, ignored with a warning, and an X- section silently)
+            if s[-1] != "]": raise Fatal("Invalid section header %s (line %d): the unit fails to load" % (s, ln))
+            name = s[1:-1]
+            if unsafe(name): raise Fatal("Bad characters in section header %s (line %d): the unit fails to load" % (s, ln))
+            st["sec"] = name if name in SECTIONS else None
+            return
+        if "=" not in s: return                                            # Missing '=', ignoring line (verified)
+        lv, rv = s.split("=", 1); lv, rv = lv.strip(WS), rv.strip(WS)
+        if st["sec"] != "Service": return                                  # outside a section or in another one: ignored
+        if lv == "Type": st["etype"] = rv; return
+        if lv in ("ExecStop", "SuccessAction"): st["rescue"] = True; return
+        if lv == "Environment":
+            if rv == "": st["env"] = {}; return
+            # config_parse_environ commits each item as it goes (verified: `1A=1 B=\q` warns on 1A first, then Invalid syntax), so the
+            # items before a failing one stand and the failing one and the rest of the line are dropped
+            i = 0
+            while True:
+                try: r = extract_first_word(rv, i)
+                except WordError: return                                   # Invalid syntax, ignoring: the rest of the line
+                if r is None: return
+                w, i = r
+                res = specifiers(w)
+                if res is None: continue                                   # Failed to resolve specifiers, ignoring (the item)
+                k, sep, v = res.partition("=")
+                if sep and env_name_ok(k) and utf8_ok(v): st["env"][k] = v  # env_assignment_is_valid (verified: \xff in a value drops it)
+            return
+        if lv == "ExecStart":
+            if rv == "": st["execs"] = []; return
+            err = parse_exec(rv, st["execs"])
+            if err is not None: raise Fatal(err)
+            return
+        if lv == "EnvironmentFile":
+            if rv == "": st["envfiles"] = []; return
+            r = specifiers(rv)
+            if r is None: return                                           # Failed to resolve unit specifiers, ignoring
+            pfx, fp = ("-", r[1:]) if r.startswith("-") else ("", r)
+            if not fp.startswith("/"): return                              # EnvironmentFile= path is not absolute, ignoring (a quoted path too)
+            if "//" in fp or "/./" in fp or (len(fp) > 1 and fp.endswith("/")): raise NotImplementedError("path_simplify is not modelled")
+            st["envfiles"].append((pfx, fp))
+    cont = None
+    ln = 0
     for ln, raw in enumerate(read_lines(data), 1):
         l = raw.decode("latin-1")
         if ln == 1 and l.startswith("\xef\xbb\xbf"): l = l[3:]          # the UTF-8 byte order mark, skipped (verified)
@@ -1893,84 +2046,15 @@ def parse(path):
             elif ch == "\\": esc = True
         if esc: cont = p[:-1] + " "; continue                              # the trailing backslash becomes a blank, the next line joins
         cont = None
-        s = p.strip(WS)
-        if not s: continue
-        if not utf8_ok(s): raise Fatal("String is not UTF-8 clean (line %d): the unit fails to load" % ln)
-        if s[0] == "[":
-            # the name is what lies between [ and the LAST character, which must be ]; a bad header is fatal for the whole file
-            # (verified: [Instal, [Service]x, [Install]   # comment, [Ser"vice], a control character; [Ser vice], [], [Ser.vice] and
-            # [Service]] are only unknown sections, ignored with a warning, and an X- section silently)
-            if s[-1] != "]": raise Fatal("Invalid section header %s (line %d): the unit fails to load" % (s, ln))
-            name = s[1:-1]
-            if unsafe(name): raise Fatal("Bad characters in section header %s (line %d): the unit fails to load" % (s, ln))
-            sec = name if name in SECTIONS else None
-            continue
-        if "=" not in s: continue                                          # Missing '=', ignoring line (verified)
-        lv, rv = s.split("=", 1); lv, rv = lv.strip(WS), rv.strip(WS)
-        if sec != "Service": continue                                      # outside a section or in another one: ignored
-        if lv == "Type": etype = rv; continue
-        if lv in ("ExecStop", "SuccessAction"): rescue = True; continue
-        if lv == "Environment":
-            if rv == "": env = {}; continue
-            ws, err = words(rv)
-            # config_parse_environ commits each item as it goes (verified: `1A=1 B=\q` warns on 1A first, then Invalid syntax), so
-            # the items before a failing one stand and the failing one and the rest of the line are dropped
-            for w in ws:
-                r = specifiers(w)
-                if r is None: continue                                     # Failed to resolve specifiers, ignoring (the item)
-                k, sep, v = r.partition("=")
-                if sep and env_name_ok(k) and utf8_ok(v): env[k] = v       # env_assignment_is_valid (verified: \xff in a value drops it)
-            continue
-        if lv == "ExecStart":
-            if rv == "": execs = []; continue
-            ws, err = words(rv)
-            if err in ("unknown escape", "trailing backslash"): ws, err = words(rv, relax=True)
-            if err == "unbalanced quote":
-                # in the first word the line yields no command (Unbalanced quoting, ignoring); in a later word the unit fails
-                # (verified: exec-unbal-first then "no ExecStart"; exec-unbal-arg "fatal error, unit will not be started")
-                if not ws: continue
-                raise Fatal("Unbalanced quoting in an ExecStart argument: the unit will not be started")
-            if err is not None: raise NotImplementedError("word error %r under EXTRACT_UNESCAPE_RELAX" % err)
-            cmds, cur = [], None
-            for w in ws:
-                if w == ";":                                               # a lone ; separates commands (verified: `up;` is one word)
-                    if cur: cmds.append(cur); cur = None
-                    continue
-                if cur is None:
-                    f = w
-                    while f and f[0] in "-@:+!": f = f[1:]                 # the prefix characters (| is a later version's)
-                    p = specifiers(f)
-                    if p is None: raise Fatal("Failed to resolve unit specifiers in the ExecStart command: the unit will not be started")
-                    if p == "":
-                        # Empty path in command line: with the - prefix the rest of the line yields nothing (verified: `- up` leaves no
-                        # command), without it the unit fails
-                        if "-" in w[:len(w) - len(f)]: break
-                        raise Fatal("Empty path in command line: the unit will not be started")
-                    if unsafe(p): raise Fatal("Executable name contains special characters: " + p)
-                    if p.endswith("/"): raise Fatal("Executable path specifies a directory: " + p)
-                    if not (p.startswith("/") or "/" not in p): raise Fatal("Neither a valid executable name nor an absolute path: " + p)
-                    cur = [p]
-                else:
-                    a = specifiers(w)
-                    if a is None: raise Fatal("Failed to resolve unit specifiers in an ExecStart argument: the unit will not be started")
-                    cur.append(a)
-            if cur: cmds.append(cur)
-            execs.extend(cmds)
-            continue
-        if lv == "EnvironmentFile":
-            if rv == "": envfiles = []; continue
-            r = specifiers(rv)
-            if r is None: continue                                         # Failed to resolve unit specifiers, ignoring
-            fp = r[1:] if r.startswith("-") else r
-            if not fp.startswith("/"): continue                            # EnvironmentFile= path is not absolute, ignoring (a quoted path too)
-            if "//" in fp or "/./" in fp or (len(fp) > 1 and fp.endswith("/")): raise NotImplementedError("path_simplify is not modelled")
-            envfiles.append(fp)
+        line(p, ln)
+    if cont is not None: line(cont, ln + 1)                                # config_parse parses a continuation still pending at the end of
+                                                                           # the file (the fold, class E: it was never parsed here)
     # service_verify (verified: no ExecStart refused for Type=simple and Type=oneshot alike; two refused unless Type=oneshot)
-    if not execs:
-        if rescue: raise NotImplementedError("a unit with no ExecStart and an ExecStop or SuccessAction is not modelled")
+    if not st["execs"]:
+        if st["rescue"]: raise NotImplementedError("a unit with no ExecStart and an ExecStop or SuccessAction is not modelled")
         raise Fatal("Service has no ExecStart=, ExecStop=, or SuccessAction=: Refusing")
-    if len(execs) > 1 and etype != "oneshot": raise Fatal("Service has more than one ExecStart= setting, which is only allowed for Type=oneshot services: Refusing")
-    return env, execs, envfiles
+    if len(st["execs"]) > 1 and st["etype"] != "oneshot": raise Fatal("Service has more than one ExecStart= setting, which is only allowed for Type=oneshot services: Refusing")
+    return st["env"], st["execs"], st["envfiles"]
 
 what = sys.argv[2]
 try:
@@ -1980,10 +2064,11 @@ except Fatal as e:
 else:
     if what == "env": out = env.get(sys.argv[3], "")
     elif what == "has": out = "yes" if sys.argv[3] in env else "no"
-    elif what == "exec0": out = execs[0][0]
-    elif what == "execn": out = str(len(execs[0]))
+    elif what == "exec0": out = execs[0]["path"]                           # exec->path, the simplified one systemd runs and verifies
+    elif what == "execn": out = str(len(execs[0]["argv"]))                 # systemd's argv: the path is in it unless @ separated it
     elif what == "execs": out = str(len(execs))
-    elif what == "envfile": out = envfiles[0] if envfiles else ""
+    elif what == "envfile": out = envfiles[0][1] if envfiles else ""
+    elif what == "dump": out = json.dumps({"env": env, "execs": execs, "envfiles": [{"prefix": a, "path": b} for a, b in envfiles]}, ensure_ascii=False)
     else: raise SystemExit("unknown mode %r" % what)
 sys.stdout.buffer.write(out.encode("latin-1") + b"\n")
 PY
@@ -3905,6 +3990,169 @@ EOF
     cp "$unit.clean" "$unit"; _svc_line "$unit" 'Environment=_A=1 CLAUDE_CONFIG_DIR=/x/cc'
     [ "$(_sd_read "$unit" has _A)" = yes ]
     _three_roads_refuse "$unit" "CLAUDE_CONFIG_DIR is assigned beside another assignment on one line"
+}
+
+@test "rewrite (Linux): the fold of the oracle lens, the reader's classes, each with its accepted neighbour: a % before a non-alphanumerical character is a % to systemd and reads as one in a kept value, in ExecStart and in EnvironmentFile (A), where a letter or a digit after it is still the refused specifier; a \\u noncharacter, a \\U surrogate or noncharacter and a raw noncharacter are refused as systemd drops or refuses them (C, D), where U+FDF0 and U+1FFFD read whole; a continuation backslash on the file's last line is read as systemd parses it and goes back without it (E), where one before another line is still the refused continuation" {
+    # the fold (2026-09-19) after round 4's oracle lens: 125 disagreements between the oracle and systemd 255.4 in 11 classes; these four
+    # were the READER's as well (classified by running bin/romp-service on each class beside systemd-analyze --user verify). A: the
+    # specifier pass refused a%/b, which systemd keeps as written (specifier_printf resolves letters and digits alone), so a working unit
+    # was refused. C, D: a \uFFFE was carried and written back raw, a line systemd loads NOTHING from (String is not UTF-8 clean), where
+    # systemd drops the escaped assignment alone; a \U0000FFFE was carried where cunescape_one refuses it (Invalid syntax, the item and
+    # the rest of the line dropped); a \U0000D800 was refused with the \u form's explanation. E: the last line's backslash was refused as a
+    # join to a next line that does not exist, where config_parse parses the pending continuation at the end of the file.
+    local unit="$ROMP_SYSTEMD_DIR/romp-manager.service" form v raw
+    _old_unit "$unit"; cp "$unit" "$unit.clean"
+    # A, a kept value: accepted, written in the writer's form (%% doubled), and read back as the same value by the oracle
+    for form in '/x/a%/b' '/x/a%-b' '/x/a%.b' '/x/a%~b' '/x/a%:b'; do
+        cp "$unit.clean" "$unit"; _svc_line "$unit" "Environment=CLAUDE_CONFIG_DIR=$form"
+        [ "$(_sd_read "$unit" env CLAUDE_CONFIG_DIR)" = "$form" ]                     # systemd keeps % and the character
+        CLAUDE_CONFIG_DIR="$form" ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite --check
+        [ "$status" -eq 0 ]
+        CLAUDE_CONFIG_DIR="$form" _marked_install_ok
+        ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite
+        [ "$status" -eq 0 ]
+        grep -qxF "Environment=\"CLAUDE_CONFIG_DIR=${form//%/%%}\"" "$unit"
+        [ "$(_sd_read "$unit" env CLAUDE_CONFIG_DIR)" = "$form" ]
+    done
+    # A, the neighbour: a letter or a digit after the % is a specifier systemd resolves or fails, refused as before
+    for form in '/x/a%1b' '/x/a%zb'; do
+        cp "$unit.clean" "$unit"; _svc_line "$unit" "Environment=CLAUDE_CONFIG_DIR=$form"
+        [ "$(_sd_read "$unit" has CLAUDE_CONFIG_DIR)" = no ]                          # Invalid slot: the item is dropped
+        _three_roads_refuse "$unit" "the specifier %${form:5:1} in CLAUDE_CONFIG_DIR"
+    done
+    # A, ExecStart's path and EnvironmentFile's path
+    ROMP_MANAGER_BIN="$TEST_DIR/pct%-dir/romp-manager" ROMP_OS_OVERRIDE=Linux ROMP_SERVICE_NO_LOAD=1 "$SVC" install >/dev/null
+    grep -qxF "ExecStart=\"$TEST_DIR/pct%%-dir/romp-manager\" up" "$unit"            # the writer doubles it
+    grep -v '^ExecStart=' "$unit" > "$unit.new" && mv -f "$unit.new" "$unit"; _svc_line "$unit" "ExecStart=$TEST_DIR/pct%-dir/romp-manager up"
+    [ "$(_sd_read "$unit" exec0)" = "$TEST_DIR/pct%-dir/romp-manager" ]
+    ROMP_MANAGER_BIN="$TEST_DIR/pct%-dir/romp-manager" ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite --check
+    [ "$status" -eq 0 ]
+    cp "$unit.clean" "$unit"; grep -v '^EnvironmentFile=' "$unit" > "$unit.new" && mv -f "$unit.new" "$unit"; _svc_line "$unit" 'EnvironmentFile=-/nx/%-/env'
+    [ "$(_sd_read "$unit" envfile)" = '/nx/%-/env' ]
+    ROMP_SERVICE_ENV_FILE='/nx/%-/env' ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite --check
+    [ "$status" -eq 0 ]
+    ROMP_SERVICE_ENV_FILE='/nx/%-/env' ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite
+    [ "$status" -eq 0 ]
+    grep -qxF 'EnvironmentFile=-/nx/%%-/env' "$unit"
+    [ "$(_sd_read "$unit" envfile)" = '/nx/%-/env' ]
+    # C: a \u noncharacter, which systemd decodes and then drops the assignment for (the item alone: a later item stands)
+    for form in '\uFFFE' '\uFFFF' '\uFDD0' '\uFDEF'; do
+        cp "$unit.clean" "$unit"; _svc_line "$unit" "Environment=CLAUDE_CONFIG_DIR=/x/$form ADMIN_KNOB=1"
+        [ "$(_sd_read "$unit" has CLAUDE_CONFIG_DIR)" = no ]
+        [ "$(_sd_read "$unit" env ADMIN_KNOB)" = 1 ]                                    # the rest of the line stands
+        _three_roads_refuse "$unit" "the escape $form, a noncharacter, which systemd decodes into bytes that are not UTF-8 by its rule" "systemd does not decode"
+        [[ "$output" == *"this reader does not model that reading"* ]]
+    done
+    # D: a \U surrogate or noncharacter, which cunescape_one refuses: the item and the rest of the line are dropped as invalid syntax
+    for form in '\U0000D800|a surrogate' '\U0000DFFF|a surrogate' '\U0000FFFE|a noncharacter' '\U0000FDD0|a noncharacter' '\U0001FFFE|a noncharacter'; do
+        cp "$unit.clean" "$unit"; _svc_line "$unit" "Environment=CLAUDE_CONFIG_DIR=/x/${form%%|*} ADMIN_KNOB=1"
+        [ "$(_sd_read "$unit" has CLAUDE_CONFIG_DIR)" = no ]
+        [ "$(_sd_read "$unit" has ADMIN_KNOB)" = no ]                                    # the rest of the line is dropped too
+        _three_roads_refuse "$unit" "the escape ${form%%|*}, ${form#*|}, which systemd refuses in the \\U form" "does not model that reading"
+        [[ "$output" == *"drops the item and the rest of the line as invalid syntax (the items before it on the line stand)"* ]]
+    done
+    # D in ExecStart's path: the relaxed retry keeps the backslash and string_is_safe refuses the executable name; the unit never starts
+    cp "$unit.clean" "$unit"; grep -v '^ExecStart=' "$unit" > "$unit.new" && mv -f "$unit.new" "$unit"
+    _svc_line "$unit" "ExecStart=$TEST_DIR/a\\U0000FFFEb/romp-manager up"
+    [[ "$(_sd_read "$unit" exec0)" == "ERROR: Executable name contains special characters: "* ]]
+    ROMP_MANAGER_BIN="$TEST_DIR/a"$'\xef\xbf\xbe'"b/romp-manager" _three_roads_refuse "$unit" "ExecStart's command has the escape \\U0000FFFE, a noncharacter, which systemd refuses in the \\U form"
+    # C raw: a noncharacter written as its bytes is a line systemd refuses the whole file on, where iconv and python pass it
+    for raw in $'\xef\xbf\xbe' $'\xef\xb7\x90' $'\xf0\x9f\xbf\xbe'; do
+        cp "$unit.clean" "$unit"; _svc_line "$unit" "Environment=CLAUDE_CONFIG_DIR=/x/$raw"
+        [[ "$(_sd_read "$unit" exec0)" == "ERROR: String is not UTF-8 clean"* ]]
+        CLAUDE_CONFIG_DIR="/x/$raw" _three_roads_refuse "$unit" "it is not valid UTF-8, on which systemd refuses the whole file"
+    done
+    # C and D, the neighbours: the code points beside the refused ranges read whole, agree with the shell and round-trip
+    for form in '\uFDF0|'$'\xef\xb7\xb0' '\U0001FFFD|'$'\xf0\x9f\xbf\xbd' '\uE000|'$'\xee\x80\x80'; do
+        v="/x/${form#*|}"
+        cp "$unit.clean" "$unit"; _svc_line "$unit" "Environment=CLAUDE_CONFIG_DIR=/x/${form%%|*}"
+        [ "$(_sd_read "$unit" env CLAUDE_CONFIG_DIR)" = "$v" ]
+        CLAUDE_CONFIG_DIR="$v" ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite --check
+        [ "$status" -eq 0 ]
+        ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite
+        [ "$status" -eq 0 ]
+        [ "$(_sd_read "$unit" env CLAUDE_CONFIG_DIR)" = "$v" ]
+        CLAUDE_CONFIG_DIR="$v" _marked_install_ok
+    done
+    # E: the [Service] section moved to the end of the file, so its hand line is the file's LAST line and ends in a backslash: systemd parses
+    # the pending continuation without it, and so does the reader on all three roads; the rewrite writes the line without the backslash
+    for form in 'Environment=CLAUDE_CONFIG_DIR=/x/cc|env CLAUDE_CONFIG_DIR|/x/cc' "ExecStart=$ROMP_MANAGER_BIN up|exec0|$ROMP_MANAGER_BIN"; do
+        { sed -n '/^\[Install\]/,$p' "$unit.clean"; echo; sed '/^\[Install\]/,$d' "$unit.clean"; } > "$unit"
+        [[ "$form" != ExecStart=* ]] || { grep -v '^ExecStart=' "$unit" > "$unit.new" && mv -f "$unit.new" "$unit"; }
+        printf '%s\\' "${form%%|*}" >> "$unit"                                          # no newline after the backslash: the file's end
+        v="${form#*|}"; [ "$(_sd_read "$unit" ${v%|*})" = "${v#*|}" ]
+        CLAUDE_CONFIG_DIR=/x/cc ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite --check
+        [ "$status" -eq 0 ]
+        CLAUDE_CONFIG_DIR=/x/cc _marked_install_ok
+        ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite
+        [ "$status" -eq 0 ]
+        run grep -c '\\$' "$unit"
+        [ "$status" -ne 0 ]                                                             # no line ends in a backslash any more
+        [ "$(_sd_read "$unit" ${v%|*})" = "${v#*|}" ]
+    done
+    # E, the neighbour: the same line followed by another is the continuation systemd joins, refused as before
+    { sed -n '/^\[Install\]/,$p' "$unit.clean"; echo; sed '/^\[Install\]/,$d' "$unit.clean"; } > "$unit"
+    printf 'Environment=CLAUDE_CONFIG_DIR=/x/cc\\\n# a comment after it\n' >> "$unit"
+    _three_roads_refuse "$unit" "it ends in a backslash, a continuation systemd joins to the next line"
+}
+
+@test "unit oracle: the fold's oracle-only classes, where the reader's answer stood and the oracle's moved to systemd's: %c %r %R raise as not modelled rather than dropping the item (B); the @ prefix's argv leaves the path out and @path alone is refused (F); a repeated or conflicting prefix stays in the path (G); a quoted or escaped ; is an argument (H); . and .. are no executable names (I); exec0 is the simplified path (J); the - prefix drops a failing command and the rest of the line, the others standing (K)" {
+    # the fold (2026-09-19): these seven classes were the ORACLE's alone, since the reader refuses every prefix character and every
+    # argument shape but `up` alone and compares an ExecStart path as a place; each oracle reading here was run against systemd-analyze
+    # --user verify on 255.4 by tests/romp-service-differential.py, which carries the whole fixture set
+    local unit="$ROMP_SYSTEMD_DIR/romp-manager.service" mgr="$ROMP_MANAGER_BIN" c
+    _old_unit "$unit"; cp "$unit" "$unit.clean"
+    for c in c r R; do                                                                   # B: deprecated, undocumented, still resolved on 255
+        cp "$unit.clean" "$unit"; _svc_line "$unit" "Environment=CLAUDE_CONFIG_DIR=/x/a%${c}b"
+        run _sd_read "$unit" has CLAUDE_CONFIG_DIR
+        [ "$status" -ne 0 ]
+        [[ "$output" == *"NotImplementedError"* && "$output" == *"the specifier %$c is not modelled"* ]]
+        _three_roads_refuse "$unit" "the specifier %$c in CLAUDE_CONFIG_DIR"             # the reader's standing answer to a resolving specifier
+    done
+    _x() { grep -v '^ExecStart=' "$unit.clean" > "$unit"; _svc_line "$unit" "$@"; }
+    _x "ExecStart=@$mgr up"                                                              # F: argv[0] is the word after the path
+    [ "$(_sd_read "$unit" exec0)" = "$mgr" ]
+    [ "$(_sd_read "$unit" execn)" = 1 ]
+    _x "ExecStart=@$mgr"
+    [[ "$(_sd_read "$unit" exec0)" == "ERROR: Empty executable name or zeroeth argument"* ]]
+    _x "ExecStart=!!$mgr up"                                                             # G: !! is the one accepted pair
+    [ "$(_sd_read "$unit" exec0)" = "$mgr" ]
+    for c in "!!!" "--" "@@" "+!" "!+" "::" "++"; do
+        _x "ExecStart=$c$mgr up"
+        [[ "$(_sd_read "$unit" exec0)" == "ERROR: "* ]]                                  # the extra character stays in the path, which is no name
+    done
+    _x "ExecStart=--$mgr up"
+    [[ "$(_sd_read "$unit" exec0)" == "ERROR: Service has no ExecStart"* ]]              # under -, the failing command is dropped, nothing is left
+    _x "ExecStart=!!!$mgr up"
+    [[ "$(_sd_read "$unit" exec0)" == "ERROR: Neither a valid executable name nor an absolute path: !"* ]]
+    _x "ExecStart=$mgr up \";\" x"                                                       # H: a quoted ; is an argument, not a separator
+    [ "$(_sd_read "$unit" execs)" = 1 ]
+    [ "$(_sd_read "$unit" execn)" = 4 ]
+    _x "ExecStart=$mgr up \; x"                                                         # \; is the argument ;
+    [ "$(_sd_read "$unit" execs)" = 1 ]
+    [ "$(_sd_read "$unit" execn)" = 4 ]
+    _x "ExecStart=$mgr up ; $mgr down" "Type=oneshot"                                    # the unquoted ; separates, as before
+    [ "$(_sd_read "$unit" execs)" = 2 ]
+    _x "ExecStart=."                                                                     # I: . and .. are no executable names; .x is one
+    [[ "$(_sd_read "$unit" exec0)" == "ERROR: Neither a valid executable name nor an absolute path: ."* ]]
+    _x "ExecStart=.."
+    [[ "$(_sd_read "$unit" exec0)" == "ERROR: Neither a valid executable name nor an absolute path: .."* ]]
+    _x "ExecStart=.x"
+    [ "$(_sd_read "$unit" exec0)" = ".x" ]
+    _x "ExecStart=${mgr%/romp-manager}//romp-manager up"                                 # J: exec0 is exec->path, simplified; the reader agrees as a place
+    [ "$(_sd_read "$unit" exec0)" = "$mgr" ]
+    ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite --check
+    [ "$status" -eq 0 ]
+    _x "ExecStart=${mgr%/romp-manager}/./romp-manager up"
+    [ "$(_sd_read "$unit" exec0)" = "$mgr" ]
+    _x "ExecStart=-/nx/%1/x" "ExecStart=$mgr up" "Type=oneshot"                          # K: - drops the failing command, the next line stands
+    [ "$(_sd_read "$unit" execs)" = 1 ]
+    [ "$(_sd_read "$unit" exec0)" = "$mgr" ]
+    _x "ExecStart=/nx/%1/x" "ExecStart=$mgr up" "Type=oneshot"                           # without -, the unit fails
+    [[ "$(_sd_read "$unit" exec0)" == "ERROR: Failed to resolve unit specifiers in the ExecStart command"* ]]
+    _x "ExecStart=$mgr up ; -/nx/a\\\\b ; /nx/bin/c" "Type=oneshot"                      # the commands before the failing one stand, the rest of the line goes
+    [ "$(_sd_read "$unit" execs)" = 1 ]
+    [ "$(_sd_read "$unit" exec0)" = "$mgr" ]
 }
 
 @test "unit reader: the header's numbered list of refusals is one item per _unit_refuse call site in _unit_scan, 1 to N with no gap, every call site in the file inside that function, and N is 21" {

@@ -1592,7 +1592,8 @@ unknown key; only `[Service]` counts; an `Environment=` value is word-split
 and unquoted as systemd.syntax(7) describes (either quote character, the C
 escapes systemd decodes: `\\`, `\"`, `\'`, `\s`, `\n`, `\t`, `\r`, `\a`,
 `\b`, `\f`, `\v`, `\xNN`, `\NNN`, `\uNNNN`, `\UNNNNNNNN`; `%%` a literal
-`%`), a bare value with whitespace is its first word and the rest dropped as
+`%`, and a `%` before anything but a letter, a digit or another `%` the two
+characters, as systemd keeps them), a bare value with whitespace is its first word and the rest dropped as
 systemd drops it, a later assignment of a name replaces an earlier one, and
 an `EnvironmentFile=` path that is not absolute is no file, as systemd reads
 it; the compare reads what systemd hands the manager, so the update child's
@@ -1600,16 +1601,21 @@ own environment is never refused over the file's spelling. A form the reader
 cannot read whole is refused, exit 5, nothing written, with the line, the
 form and the remedy named: a carriage return anywhere but before the LF, or a
 NUL byte (line ends systemd reads and bash's `read` does not, so a CR-only
-unit read as one line); a line ending in a backslash (a continuation); a
-line that is not UTF-8, and a section header systemd refuses (`[Instal`,
+unit read as one line); a line ending in a backslash (a continuation), except
+on the file's last line, where systemd parses the pending continuation without
+the backslash and the reader reads the line the same way; a line that is not
+UTF-8 by systemd's rule (the encoding, and no surrogate or noncharacter, which
+systemd refuses the whole file on where iconv passes them), and a section header systemd refuses (`[Instal`,
 `[Service]x`, a quote or a control character in the name), on which systemd
-loads nothing from the file; a specifier (`%h`, `%d` and the like outside a
-doubled `%%`; the remedy is the absolute path) in a value the writer
+loads nothing from the file; a specifier (`%h`, `%d` and the like, a `%`
+before a letter or a digit, outside a doubled `%%`; the remedy is the absolute
+path) in a value the writer
 re-encodes, where a `PATH` line is replayed as written and its specifier is
-systemd's to expand; an unbalanced quote or an escape systemd refuses (it
-drops the item and the rest of the line, the items before it standing); an
-eight-bit or surrogate escape, which systemd decodes into raw bytes it then
-judges as UTF-8, a reading this reader does not model; a kept value ending in
+systemd's to expand; an unbalanced quote or an escape systemd refuses (a `\U`
+escape naming a surrogate or a noncharacter among them; it drops the item and
+the rest of the line, the items before it standing); an eight-bit, `\u`
+surrogate or `\u` noncharacter escape, which systemd decodes into raw bytes
+it then judges as UTF-8, a reading this reader does not model; a kept value ending in
 a newline, which every read loses through a command substitution; a second
 assignment on a line that assigns a value the rewrite keeps (one assignment a
 line); a second `ExecStart=` or `EnvironmentFile=` line; an `ExecStart` whose

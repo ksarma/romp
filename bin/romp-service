@@ -313,7 +313,8 @@ _unit_env_file_line() {   # EnvironmentFile=: the whole rvalue is the path, read
 # naming another clone was re-pointed at this one, past the identity guard: the lens, D4); a section header runs from [ to a ]
 # as its last character, and only [Service] is read. An Environment= rvalue is split into words on blanks; a word is unquoted
 # (either quote character opens a quote, anywhere in the word) and its C escapes undone as systemd's cunescape undoes them (\\ \"
-# \' \s \n \t \r \a \b \f \v, \xNN, \NNN octal, \uNNNN, \UNNNNNNNN), then its %% undone, and it is kept when it is NAME=VALUE with
+# \' \s \n \t \r \a \b \f \v, \xNN, \NNN octal, \uNNNN, \UNNNNNNNN), then its %% undone (a % before anything but a letter, a digit or
+# another % is a % to systemd and stays, the fold, class A), and it is kept when it is NAME=VALUE with
 # a name of letters, digits and underscores not beginning with a digit and dropped otherwise, as systemd drops it with a warning
 # (so `Environment=X=/a b` reads /a, the lens's U16, and the shell carrying what systemd handed the manager agrees: D6); a later
 # assignment of a name replaces an earlier one; an empty rvalue resets what was read so far. ExecStart's command is the rvalue's
@@ -327,8 +328,11 @@ _unit_env_file_line() {   # EnvironmentFile=: the whole rvalue is the path, read
 #      through a line ending, round 4);
 #   3. a line ending in a backslash, a continuation systemd joins to the next line (round 3 replayed the physical line, so the
 #      backslash joined it to the next WRITTEN line and swallowed that: D5; round 4 put the CR strip and the comment skip before the
-#      count, since a CRLF continuation was not refused and a comment ending in a backslash, which systemd joins to nothing, was);
-#   4. a line that is not valid UTF-8, 5. a section header not ending in ], and 6. one whose name carries a quote, a backslash or a
+#      count, since a CRLF continuation was not refused and a comment ending in a backslash, which systemd joins to nothing, was), except
+#      on the file's last line, where systemd parses the pending continuation without its backslash and so does this reader (the fold,
+#      class E);
+#   4. a line that is not UTF-8 by systemd's rule (the encoding, and no surrogate or noncharacter: the fold, class C, where a noncharacter
+#      written raw passed iconv), 5. a section header not ending in ], and 6. one whose name carries a quote, a backslash or a
 #      control character: systemd refuses the WHOLE file on each (String is not UTF-8 clean; Invalid section header; Bad characters
 #      in section header) and loads nothing from it, where this reader read on and replayed a kept value under [Service], where it
 #      took effect for the first time (round 4, extra6-1); a well-formed header systemd does not know ([Ser vice], []) is only ignored
@@ -343,12 +347,14 @@ _unit_env_file_line() {   # EnvironmentFile=: the whole rvalue is the path, read
 #      unit never starts; the second pass over the addendum: the round-trip test had installed the manager at such a path and its
 #      oracle read the path back, a reading no systemd produces); 14. arguments that are not `up` alone;
 #   15. a second EnvironmentFile= line; 16. a specifier in its path;
-#   17. an Environment= item with an unbalanced quote, a trailing backslash or an escape systemd refuses (systemd drops the item
-#      and the rest of the line as invalid syntax; the items before it on the line stand), or 18. an eight-bit or surrogate escape
-#      this reader does not model (systemd decodes \xNN and \NNN at or above 0x80 into raw bytes and then judges the assignment as
-#      UTF-8; the ASCII range and every other escape are decoded here as systemd decodes them: round 4, correctness-4, where they
-#      were refused with a text saying systemd drops them, which it does not); 19. a specifier, % followed by anything but %, in a
-#      value the writer re-encodes (systemd expands it and this reader would take it literally: a state root under %h/ had its audit
+#   17. an Environment= item with an unbalanced quote, a trailing backslash or an escape systemd refuses (a \U escape naming a surrogate
+#      or a noncharacter among them, the fold, class D; systemd drops the item and the rest of the line as invalid syntax; the items
+#      before it on the line stand), or 18. an eight-bit, surrogate or noncharacter escape this reader does not model (systemd decodes
+#      \xNN and \NNN at or above 0x80, and a \u surrogate or noncharacter, into raw bytes and then judges the assignment as UTF-8; the
+#      ASCII range and every other escape are decoded here as systemd decodes them: round 4, correctness-4, where they were refused
+#      with a text saying systemd drops them, which it does not; the fold, class C, where a \u noncharacter was carried and written
+#      raw); 19. a specifier, % followed by a letter or a digit (a % before any other character is a % to systemd: the fold, class A), in
+#      a value the writer re-encodes (systemd expands it and this reader would take it literally: a state root under %h/ had its audit
 #      row written under a relative %h/ in the caller's working directory, and an EnvironmentFile under %h/ was re-doubled into a
 #      path that is not absolute: D3), where PATH's line, replayed as written, and a variable the rewrite drops keep theirs
 #      (round 4, extra5-2: a hand-written `Environment=PATH=%h/bin:...` refused every deploy over a line that goes back byte for
@@ -376,9 +382,15 @@ _unit_refuse() {   # $1 the line number, $2 the form, $3 the remedy; $4 non-empt
     fi
     return 1
 }
-_unit_utf8() {   # $1 text: exit 0 when it is valid UTF-8 (systemd refuses the whole file on a line that is not; iconv is on every Linux and mac)
-    if command -v iconv >/dev/null 2>&1; then printf '%s' "$1" | iconv -f UTF-8 -t UTF-8 >/dev/null 2>&1; return; fi
-    printf '%s' "$1" | python3 -c 'import sys; sys.stdin.buffer.read().decode("utf-8")' >/dev/null 2>&1
+_unit_utf8() {   # $1 text: exit 0 when it is UTF-8 to systemd's utf8_is_valid, which refuses the whole file on a line that is not: the encoding
+                 # first (iconv is on every Linux and mac, python3 the fallback; both refuse a surrogate), then the code points, since systemd's
+                 # check applies unichar_is_valid to each and so refuses a noncharacter (U+FDD0 to U+FDEF, and the last two code points of every
+                 # plane) that iconv and python's decoder both pass (the fold, class C, 2026-09-19: a noncharacter written raw in a value was
+                 # read on and written back where systemd loads nothing from the file; verified on 255.4: String is not UTF-8 clean, the load
+                 # fails). The byte patterns are the UTF-8 forms of those code points, matched under the C locale.
+    if command -v iconv >/dev/null 2>&1; then printf '%s' "$1" | iconv -f UTF-8 -t UTF-8 >/dev/null 2>&1 || return 1
+    else printf '%s' "$1" | python3 -c 'import sys; sys.stdin.buffer.read().decode("utf-8")' >/dev/null 2>&1 || return 1; fi
+    ! LC_ALL=C grep -qE $'\xef\xb7[\x90-\xaf]|\xef\xbf[\xbe\xbf]|[\xf0-\xf4][\x8f\x9f\xaf\xbf]\xbf[\xbe\xbf]' <<< "$1"
 }
 _unit_byte() {   # $1 a byte value from \xNN or \NNN, $2 the escape as written: _W_CH the byte; 1 (and _W_ERR, _W_KIND) for one not carried
     local o
@@ -388,11 +400,23 @@ _unit_byte() {   # $1 a byte value from \xNN or \NNN, $2 the escape as written: 
     if (( $1 >= 128 )); then _W_ERR="the escape $2, a byte at or above 0x80, which systemd writes into the value raw and then judges the whole assignment as UTF-8 by; this reader does not model that reading"; _W_KIND=carry; return 1; fi
     printf -v o '\\%03o' "$1"; printf -v _W_CH "$o"
 }
-_unit_unichar() {   # $1 a code point from \uNNNN or \UNNNNNNNN, $2 the escape as written: _W_CH its UTF-8 bytes; 1 for one not carried
+_unit_unichar() {   # $1 a code point from \uNNNN or \UNNNNNNNN, $2 the escape as written: _W_CH its UTF-8 bytes; 1 for one not carried.
+                    # systemd's cunescape_one (v255) refuses U+0000 in both forms and, in the \U form alone, every code point unichar_is_valid
+                    # rejects: above U+10FFFF, a surrogate, a noncharacter (U+FDD0 to U+FDEF, and the last two code points of every plane);
+                    # the \u form encodes a surrogate or a noncharacter as bytes, which env_assignment_is_valid then judges as not UTF-8 and
+                    # drops the assignment for. The fold (2026-09-19, classes C and D of the oracle lens): a noncharacter in either form was
+                    # carried here and written back raw, a line systemd loads nothing from, and a \U surrogate was refused with the \u
+                    # form's explanation.
+    local what=""
     _W_CH=""
     if (( $1 == 0 )); then _W_ERR="the escape $2, U+0000, which systemd refuses"; _W_KIND=drop; return 1; fi
     if (( $1 > 0x10FFFF )); then _W_ERR="the escape $2, above U+10FFFF, which systemd refuses"; _W_KIND=drop; return 1; fi
-    if (( $1 >= 0xD800 && $1 <= 0xDFFF )); then _W_ERR="the escape $2, a surrogate, which systemd writes as bytes that are not UTF-8 and then drops the assignment for; this reader does not model that reading"; _W_KIND=carry; return 1; fi
+    if (( $1 >= 0xD800 && $1 <= 0xDFFF )); then what="a surrogate"
+    elif (( ($1 >= 0xFDD0 && $1 <= 0xFDEF) || ($1 & 0xFFFE) == 0xFFFE )); then what="a noncharacter"; fi
+    if [[ -n "$what" ]]; then
+        if [[ "${2:0:2}" == '\U' ]]; then _W_ERR="the escape $2, $what, which systemd refuses in the \\U form"; _W_KIND=drop; return 1; fi
+        _W_ERR="the escape $2, $what, which systemd decodes into bytes that are not UTF-8 by its rule (an Environment= assignment carrying them is dropped); this reader does not model that reading"; _W_KIND=carry; return 1
+    fi
     _utf8_char "$1" _W_CH
 }
 _unit_first_word() {   # $1 an rvalue: _W_WORD its first word, unquoted and unescaped as systemd's extract_first_word does with EXTRACT_UNQUOTE
@@ -447,8 +471,13 @@ _unit_first_word() {   # $1 an rvalue: _W_WORD its first word, unquoted and unes
     if [[ -n "$bs" ]]; then _W_ERR="a trailing backslash"; _W_KIND=drop; return 1; fi
     _W_WORD="$out"
 }
-_unit_specifiers() {   # $1 a word: _W_WORD with its %% undone; 1 (and _W_ERR the specifier) when a % is followed by anything but %, unless $2
-                       # is `keep`, when such a specifier stays as written (a value the writer never re-encodes is systemd's to expand)
+_ALNUM='0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'   # systemd's POSSIBLE_SPECIFIERS less %: ASCII letters and digits, listed
+                                                                        # so no locale widens the set (a % before a non-ASCII letter is a % to systemd)
+_unit_specifiers() {   # $1 a word: _W_WORD with its %% undone; 1 (and _W_ERR the specifier) when a % is followed by a letter or a digit, unless $2
+                       # is `keep`, when such a specifier stays as written (a value the writer never re-encodes is systemd's to expand). A % before
+                       # any other character, or at the end, is a % to systemd: specifier_printf (v255) resolves a letter or a digit and copies %
+                       # and the character otherwise, so the two characters stay (the fold, 2026-09-19, class A of the oracle lens: a%/b in a kept
+                       # value, an ExecStart path or an EnvironmentFile path was refused as the specifier %/, which systemd never expands)
     local s="$1" out="" c
     _W_WORD=""; _W_ERR=""
     while [[ "$s" == *%* ]]; do
@@ -456,6 +485,7 @@ _unit_specifiers() {   # $1 a word: _W_WORD with its %% undone; 1 (and _W_ERR th
         if [[ -z "$s" ]]; then out+="%"; break; fi     # a stray % at the end is a % to systemd too
         c="${s:0:1}"; s="${s:1}"
         if [[ "$c" == % ]]; then out+="%"
+        elif [[ "$_ALNUM" != *"$c"* ]]; then out+="%$c"
         elif [[ "${2:-}" == keep ]]; then out+="%$c"
         else _W_ERR="%$c"; return 1; fi
     done
@@ -464,7 +494,8 @@ _unit_specifiers() {   # $1 a word: _W_WORD with its %% undone; 1 (and _W_ERR th
 _unit_scan() {
     [[ -z "$_U_SCANNED" ]] || return 0
     _U_KEYS=(); _U_VALS=(); _U_LINES=(); _U_EXEC=""; _U_ENVFILE=""; _U_ENVFILE_PREFIX=""
-    local raw t line sec="" lv rv n=0 c w v k kept rest items i j found execs=0 envfiles=0 pfx
+    local raw t line sec="" lv rv n=0 c w v k kept rest items i j found execs=0 envfiles=0 pfx total=0
+    local -a ls=()
     [[ -f "$UNIT" ]] || { _U_SCANNED=1; return 0; }
     # The line ending, before anything else (round 4, 2026-09-19): systemd's read_line ends a line at LF, CR, CRLF, LFCR (the CR taken
     # with the LF) or a NUL byte; bash's read ends one at LF alone and drops a NUL. One trailing CR is the CRLF ending and comes off
@@ -478,7 +509,10 @@ _unit_scan() {
         n="$(tr -d '\000' < "$UNIT" | cmp - "$UNIT" 2>/dev/null | sed -n 's/.* line \([0-9][0-9]*\).*/\1/p')"
         _unit_refuse "${n:-?}" "it carries a NUL byte, which systemd reads as a line end and this reader does not" "Remove the NUL byte"; return 1
     fi
-    while IFS= read -r raw || [[ -n "$raw" ]]; do
+    # the lines first, so the last one is known below: systemd's config_parse parses a continuation still pending when the file ends
+    while IFS= read -r raw || [[ -n "$raw" ]]; do ls[total]="$raw"; total=$((total + 1)); done < "$UNIT"
+    while (( n < total )); do
+        raw="${ls[$n]}"
         n=$((n + 1))
         t="$raw"
         (( n > 1 )) || t="${t#$'\xef\xbb\xbf'}"      # a UTF-8 byte order mark on the first line, which systemd skips
@@ -492,7 +526,13 @@ _unit_scan() {
         # backslash, and that form is the word reader's refusal below, with its own true text
         c=0; w="$t"
         while [[ "$w" == *\\ ]]; do w="${w%\\}"; c=$((c + 1)); done
-        if (( c % 2 == 1 )); then _unit_refuse "$n" "it ends in a backslash, a continuation systemd joins to the next line, which this reader reads as a line of its own" "Write the continued lines as one line, without the backslash"; return 1; fi
+        if (( c % 2 == 1 )); then
+            # on the file's LAST line there is no next line: systemd's config_parse parses the pending continuation when the file ends, the
+            # backslash a blank that its strip then removes, so the line stands without it, here too (the fold, 2026-09-19, class E of the
+            # oracle lens: it was refused as a join to a line that does not exist); anywhere else it joins the next line, refused below
+            if (( n == total )); then t="${t%\\}"; line="${t#"${t%%[!$_WS]*}"}"
+            else _unit_refuse "$n" "it ends in a backslash, a continuation systemd joins to the next line, which this reader reads as a line of its own" "Write the continued lines as one line, without the backslash"; return 1; fi
+        fi
         line="${line%"${line##*[!$_WS]}"}"
         [[ -n "$line" ]] || continue
         if ! _unit_utf8 "$line"; then _unit_refuse "$n" "it is not valid UTF-8, on which systemd refuses the whole file (String is not UTF-8 clean) and loads nothing from it" "Write the line in UTF-8"; return 1; fi
@@ -570,11 +610,12 @@ _unit_scan() {
                 j=""; i=0
                 while (( i < ${#_U_KEYS[@]} )); do [[ "${_U_KEYS[$i]}" == "$k" ]] && j=$i; i=$((i + 1)); done
                 [[ -n "$j" ]] || j=${#_U_KEYS[@]}
-                _U_KEYS[$j]="$k"; _U_VALS[$j]="${v#*=}"; _U_LINES[$j]="$t"    # the line as read, its CR off
+                _U_KEYS[$j]="$k"; _U_VALS[$j]="${v#*=}"; _U_LINES[$j]="$t"    # the line as read, its CR off (and, on the file's last line, its
+                                                                             # continuation backslash off, as systemd reads it)
             done
             if [[ -n "$found" ]] && (( items > 1 )); then _unit_refuse "$n" "$found is assigned beside another assignment on one line, where this rewrite writes one assignment a line" "Write each assignment on its own Environment= line"; return 1; fi ;;
         esac
-    done < "$UNIT"
+    done
     _U_SCANNED=1
 }
 # Drop-ins (round 4, 2026-09-19, extra6-2, in the refuters' form): systemd composes the service from the unit file and every
