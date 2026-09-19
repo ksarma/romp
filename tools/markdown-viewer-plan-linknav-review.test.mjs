@@ -9,7 +9,11 @@
 // source's: L3 names the floor's constant and the number the source gives it, both exclusions with their functions, the web
 // test's place before the join and the click's yield; L3's Held-by sentence and the Tests paragraph name the two shapes
 // modules, which exist; L6 names tests among the directories and the two files under it, which the Tests paragraph names
-// too, and no longer calls the records commit the follow-on's last. Synthetic: only the repo's own text.
+// too, and no longer calls the records commit the follow-on's last. The review's consolidation added the last test: round 2
+// made figureTarget read the candidate the browser chose (chosenSource) and added two modules for it, and the record still
+// said the authored source and named neither; L1's Held-by sentence named the pure cases and the wiring pins of a module that
+// also drives the conflict Reload in Chromium; and open point 1 gave Alt+Left the trail's meaning under history integration
+// where the dashboard's shell takes the key first. Synthetic: only the repo's own text.
 // Run: node --test tools/markdown-viewer-plan-linknav-review.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -108,4 +112,39 @@ test('L6 names tests among the directories the branch changes and the two files 
   }
   assert.ok(L6.includes('both named in the Tests paragraph below'));
   assert.ok(!section.includes(String.fromCharCode(0x2014)), 'no em dash in the section');
+});
+
+// ── the consolidation's corrections ────────────────────────────────────────────────────────────────
+
+const CHOSEN = ['file-view-figure-chosen.test.ts', 'file-view-figure-chosen-browser.test.ts'];
+const L1 = between(section, 'L1. **A trail.**', 'L2. **Back and Forward.**');
+const trailTest = read('ui', 'webview', 'file-trail.test.ts');
+
+test('L3 names the candidate the browser chose by its function, which figureTarget reads first and the failed label delegates to, and names the two chosen modules, as the Tests paragraph does; both exist and name the follow-on', () => {
+  assert.ok(viewer.includes('function chosenSource(img: Element): string | null {'), 'the source defines chosenSource');
+  const target = between(viewer, 'function figureTarget(img: Element, filePath: string): FigureTarget | null {', '\n}\n');
+  inOrder(target, ['const dest = chosenSource(img);', 'if (/^https?:/i.test(dest) || dest.startsWith("//")) return { kind: "web", href: absUrl(dest) };', 'const p = figurePath(filePath, dest);'], 'figureTarget');
+  assert.ok(!target.includes('pictureDest(img)'), 'figureTarget reads the src alone nowhere: chosenSource applies that rule when the browser chose the src or has not picked');
+  assert.ok(viewer.includes('function failedSource(img: Element): string | null {\n  return chosenSource(img);\n}'), 'the failed label delegates');
+  assert.ok(L3.includes('else the file named by the candidate the browser chose for the figure, as the author wrote it (`chosenSource`'), 'L3 names chosenSource where the join was the authored source');
+  assert.ok(L3.includes('the failed figure\'s label, `failedSource`, delegates to it'), 'and the delegation');
+  assert.ok(!L3.includes('the file the authored source names'), 'the round-2 wording, the authored source, is gone');
+  for (const f of CHOSEN) {
+    assert.ok(exists('ui', 'webview', f), f + ' exists');
+    assert.match(read('ui', 'webview', f), /Follow-on: Link navigation/, f + ' names the follow-on');
+    assert.ok(L3.slice(L3.indexOf('Held by')).includes(f), 'L3\'s Held-by sentence names ' + f);
+    assert.ok(tests.includes('ui/webview/' + f), 'the Tests paragraph names ui/webview/' + f);
+  }
+});
+
+test('L1\'s Held-by sentence names the conflict Reload driven in Chromium, which file-trail.test.ts carries through the real viewer leg, and open point 1 keeps Alt+Left outside the dashboard, where the shell takes the key first', () => {
+  assert.ok(L1.includes('Held by file-trail.test.ts (the pure cases, the three wiring pins, and the conflict bar\'s Reload file driven in Chromium at the module\'s end'), 'L1 names the Reload leg');
+  assert.match(trailTest, /import \{[^}]*\} from "\.\/real-viewer-leg";/, 'file-trail.test.ts drives the real viewer');
+  assert.ok(trailTest.includes('the conflict bar\'s Reload file keeps the trail'), 'and carries the Reload leg by that name');
+  assert.ok(trailTest.includes('"Reload file"'), 'the bar\'s button, read in the leg');
+  const op1 = between(section, '1. Browser history. The trail is the viewer\'s own (L5).', '2. A Fit / 1:1 toggle');
+  assert.ok(op1.includes('would give the browser\'s Back and a back-swipe the trail\'s meaning, and Alt+Left too outside the dashboard, whose shell takes the key first (open point 10)'), 'the premise names the dashboard exception');
+  assert.ok(!op1.includes('a back-swipe and Alt+Left the trail\'s meaning'), 'the unconditional wording is gone');
+  const op10 = between(section, '10. The chords inside the dashboard shell (L2).', 'is a ruling');
+  assert.ok(op10.includes('takes Alt+Left and Alt+Right first on every pane document'), 'open point 10 is the one it points at');
 });

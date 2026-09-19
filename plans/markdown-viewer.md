@@ -7775,9 +7775,11 @@ ENDS the trail (closeFileView, once its guard has passed): the person left the r
 from Recent starts a new one. The alternative, keeping the trail for the page's life so that such a reopen finds its
 Back again, was not taken: a Back reaching into a review the reader had closed would move the card on nothing they did
 since. A URL document replacing the viewer (openUrlView) ends the trail the same way, its entries being files; the
-contract named no such case. Held by file-trail.test.ts (the pure cases and the three wiring pins) and
-file-trail-browser.test.ts (the Files page: a link followed, a Recent row and the relay rooting the trail, the section
-link, the web address, the same-file target, the close; the chat modal: the default opener).
+contract named no such case. Held by file-trail.test.ts (the pure cases, the three wiring pins, and the conflict bar's
+Reload file driven in Chromium at the module's end: a link push, Edit, a change, a Save refused as changed on disk,
+Reload file, the fresh card's Back still titled with the report's name, then Back to the report with the reloaded file
+ahead) and file-trail-browser.test.ts (the Files page: a link followed, a Recent row and the relay rooting the trail,
+the section link, the web address, the same-file target, the close; the chat modal: the default opener).
 
 L2. **Back and Forward.** Two glyph buttons in the icon family (icons.ts `ICON_BACK`, `ICON_FORWARD`: an arrow left and
 an arrow right), the bar's first group (`.fileview-group.fileview-nav`), before the pane's "‹ Files" link, which keeps
@@ -7843,8 +7845,14 @@ the control when both stand (`figureLabelAfter`). What it opens (`figureTarget`)
 source, a protocol-relative one) in a tab, never the viewer, the web test run FIRST, before the model's join, since
 `figurePath` reads a protocol-relative source as an absolute path of the disk (read after the join, a `//host/pic.svg`
 source opened the viewer on the kernel's /file route at that path, a 404 and a bogus entry on the trail; the review's
-round 1); else the file the authored source names on the session's disk, joined by the model's `figurePath`
-(file-comments-model.ts, the join rewriteFigureSrcs fetched through, so the picture opened is the one shown), through
+round 1); else the file named by the candidate the browser chose for the figure, as the author wrote it (`chosenSource`,
+the review's round 2: `currentSrc`, when it is set and is not the img's own src, matched against the srcset carriers, a
+`<picture>`'s sources then the img, and named by the authored spelling rewriteFigureSrcs kept beside the rewritten
+candidates; else the src by pictureDest's rule, which is also the paint-time read, before the browser has picked, that
+decides whether the control exists, the target being read again at the click; the failed figure's label, `failedSource`,
+delegates to it; read from the src alone, the control opened the fallback src a `<picture>` or a srcset figure had
+skipped), joined by the model's `figurePath` (file-comments-model.ts, the join rewriteFigureSrcs fetched through, so the
+picture opened is the one shown and its request is the paint's), through
 `openFromViewer("push", path, sid, null)`, so the shown file goes onto the trail and Back returns to it at the
 figure's place; nothing for a `data:` URL (inline bytes a tab will not show) or a figure with no source, which get no
 control. A gated placeholder (figure-gate.ts) gets none until its figure is loaded: `armFigureControls`, one
@@ -7876,13 +7884,17 @@ the builder, the target, the two insertion points, the click routing, the walks,
 file-figure-open-browser.test.ts (Chromium: the controls on a synthetic report, the hover reveal and the corner in
 both float cases, Tab and Enter, the place kept across the open and Back, the plain click with the panel closed, the
 modified click's tab, the linked figure, the gated remote figure, the inline data picture, print media, no hover, and
-with the panel open the comment offer, the region drag and the control's own click), and, for the round-1 rules,
+with the panel open the comment offer, the region drag and the control's own click on a fine pointer, and on a coarse
+one the tap standing down to the offer, the modified click's tab and the control's open), and, for the round-1 rules,
 file-view-figure-shapes.test.ts (the source pins: the web test before the join, the floor and the link exclusion in
 the builder's order, the measure's reads, the click's yield to an anchor with an href) and
 file-view-figure-shapes-browser.test.ts (Chromium: eleven shapes on one report, which wear a control and where it
 stands, the badge's face and the prose before the icon under the pointer, the plain click on the captioned links, on
 the badge and on the two web links, the control of the figure alone in a web link, and the protocol-relative figure's
-tab from its control and from its click).
+tab from its control and from its click), and, for the chosen candidate, file-view-figure-chosen.test.ts (the source
+pins: chosenSource's body, figureTarget's read of it first, failedSource's delegation and the two callers) and
+file-view-figure-chosen-browser.test.ts (Chromium: a `<picture>`, a srcset img and a gated remote `<picture>` open the
+candidate shown, through the paint's URL).
 
 L4. **The picture view reached from a report.** The control's open is the ordinary open of the picture's path
 (openFileView through openFromViewer), so the card shows the picture as `imgBlock` shows any picture, the bar names it
@@ -7922,7 +7934,11 @@ the prose before the icon under the pointer, the plain click on the captioned li
 and the protocol-relative figure's tab); its round 2 added tests/test_guide_trail_chords_and_figure_button.py (the
 guide's two sentences, pinned flattened, held to the lines that make them true: the dashboard shell's ownership of
 Alt+Left and Alt+Right to the shell script's listener, onNavKey's stand-downs and navChord's two chord families; the
-three kinds of picture without the button to the floor's constant, the builder's refusals and the click listener).
+three kinds of picture without the button to the floor's constant, the builder's refusals and the click listener), and,
+for figureTarget's read of the candidate the browser chose, ui/webview/file-view-figure-chosen.test.ts (the source pins:
+chosenSource's body, figureTarget's order, failedSource's delegation and the two callers) and
+ui/webview/file-view-figure-chosen-browser.test.ts (Chromium over the real chat modal: a `<picture>`, a srcset img and a
+gated remote `<picture>` open the candidate shown through the paint's URL).
 Ten standing suites were re-aimed, not undone:
 ui/webview/file-view-text-size.test.ts (its real-module bar leg at 380, 420, 480 and 600 px in the chat and feed modals
 measures the two glyphs among the actions, case 8), ui/webview/file-view.test.ts and ui/webview/file-view-links.test.ts
@@ -7957,9 +7973,9 @@ Playwright browser).
 **Open points for the owner.**
 
 1. Browser history. The trail is the viewer's own (L5). Integrating it (a pushState per step, popped at the close, the
-   Files pane's iframe told from the shell) would give the browser's Back, a back-swipe and Alt+Left the trail's
-   meaning; the cost is entries that outlive the viewer and a design for the pane's frame. A ruling on whether to
-   design it.
+   Files pane's iframe told from the shell) would give the browser's Back and a back-swipe the trail's meaning, and
+   Alt+Left too outside the dashboard, whose shell takes the key first (open point 10); the cost is entries that
+   outlive the viewer and a design for the pane's frame. A ruling on whether to design it.
 2. A Fit / 1:1 toggle on the picture view (L4): a picture reached from a report shows as imgBlock shows any picture,
    shrunk to the card, with no zoom.
 3. The trail across a close (L1). Closing the viewer ends it; the alternative keeps it for the page's life so a reopen
