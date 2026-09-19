@@ -26,8 +26,10 @@ remain linkable through them. No hostname, path, pid, session id, username or cl
 is searched for the strings only this machine knows (perf_public.identifier_hits), walked once more
 (perf_public.paste_problems) and walked for the denylist (perf_public.denylist_problems: a key the fold drops, a key or
 a string value the fold would have written as `other`, an uptime not on whole minutes, a bound not on a power of two, a
-float inside a clock stamp's epoch window under any other key; a fold's own output carries none of the six, so here it
-is a belt, and for `romp perf upload`, which runs the same check over a file the user may have edited, it is the check
+float inside a clock stamp's epoch window under any other key; a fold's own output carries none of the six, except in
+one stated case, two measurement floats merged under one `other` key whose sum lands inside a stamp window, where this
+verb refuses to write (check_document's docstring and pp._merge name it), so here it is a belt, and for `romp perf
+upload`, which runs the same check over a file the user may have edited, it is the check
 that what the export dropped, folded or coarsened does not travel, while the measurements it keeps pass, the export's
 own rule: paste-safe, not unlinkable); any finding refuses
 the write, and the SHALLOWEST finding across the three is

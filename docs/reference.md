@@ -3844,8 +3844,10 @@ a duration key, a name that carries the token `ms` between underscores or
 camelCase boundaries (`cycle_cpu_ms_sum`, `wallMs`; `sendMax` and `startedAt`
 are not), its own key or any key above it (`stages_ms` names the measure and
 its entries the stages), a millisecond total the kernel's sums carry through
-the seconds window in weeks: a check the export's own output passes by
-construction, and which
+the seconds window in weeks: a check the export's own output passes, with
+one stated exception, two measurement floats merged under one `other` key
+whose sum lands inside a stamp window, where the export refuses to write
+rather than keep a number it cannot tell from a stamp, and which
 `romp perf upload` runs again over a file you may have edited); any finding
 refuses
 the write and names the kind of
