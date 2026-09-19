@@ -1106,6 +1106,31 @@ test("a bars full refused as unkeyable (judging a flat list, the pre-T278c shape
   });
 });
 
+// The gen's form on the bars road, the mirror of the feed file's leg: genOf is the one reader for both slots, so a value
+// off the kernel's form (a number, an empty string, a string carrying '.' or ',') seeds a base holding no gen here too.
+test("the gen's form on the bars road: a number, an empty string or a string carrying either separator reads as no stamp, so the bars full seeds a base holding no gen, its per-cycle patch applies on the base-plus-one test alone, and the redial declares nothing", async () => {
+  for (const bad of [7, 0, "", GEN_STAMP + ".7", GEN_STAMP + ",7", null, true]) {
+    await withManager("timeline", ({ fm, emitted }) => {
+      seedLocalTimeline(fm);
+      fm.openRemote(HOST, true);
+      const ws = last(FakeWS.made);
+      ws.open();
+      ws.frame({ ...remoteBarsStamped(G), gen: bad });
+      assert.equal(heldBars(fm), null, "no pair for a gen of this form: " + JSON.stringify(bad));
+      const before = barsOf(emitted).length;
+      ws.frame({ ...barsCycle(G, 0, bar("seg-2", 1010, 1015, "second"), 505), gen: bad });
+      assert.equal(barsOf(emitted).length, before + 1, "the patch applied on the base-plus-one test, as a gen-less one does: " + JSON.stringify(bad));
+      assert.deepEqual(ws.sent, [], "nothing asked");
+      assert.equal(heldBars(fm), null, "…and the base still holds no gen");
+      ws.readyState = 3;
+      const redials = armedRedials(() => ws.onclose!({ code: 1006, wasClean: false }));
+      redials[0]();
+      assert.equal(qOf(last(FakeWS.made).url).get("caps"), "feedDelta", "nothing declared for a base holding no gen: " + JSON.stringify(bad));
+      fm.conns.get(HOST).closed = true;
+    });
+  }
+});
+
 // Every patch a stamping kernel sends carries `through` (equal to its rev on a per-cycle patch, R on a composed frame), so
 // through's presence does not tell the two apart: a per-cycle patch stamped base r, rev r+1, through r+1 and no newGen is
 // accepted (rev at or above base), applies with no needSlot and leaves (gen, r+1), the pair a through-less one leaves.

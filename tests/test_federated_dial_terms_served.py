@@ -85,11 +85,11 @@ def _stamp_field(f, k):
 def held_pair(frames, slot):
     """The (gen, rev) pair the client holds for `slot` ("feed" or "bars") after `frames`, the recorded frames of a host's relay
     sockets in arrival order, by federation.ts's rule: a full carrying gen leaves (gen, 0) and a full carrying none clears
-    the pair; a stamped delta carrying through leaves (newGen when carried, else gen; through), which is (newGen, R) for a
-    composed frame and (gen, rev) for the stamping kernel's per-cycle delta (through equal to rev, no newGen), and one
-    carrying no through leaves (gen, rev); a gen-less delta moves nothing. A stamped delta the client would refuse (its gen
-    not the held one, its base above the held rev) is not modelled: a lab's stream is the kernel's own and applies. None
-    when no pair is held."""
+    the pair; a stamped delta leaves (newGen when carried, else gen; through), which is (newGen, R) for a composed frame and
+    (gen, rev) for the stamping kernel's per-cycle delta (through equal to rev, no newGen); a stamped delta carrying no
+    through is refused by the client (every stamped delta carries it: a needFullFeed, nothing applied) and moves nothing, as
+    a gen-less delta does. A stamped delta the client would otherwise refuse (its gen not the held one, its base above the
+    held rev) is not modelled: a lab's stream is the kernel's own and applies. None when no pair is held."""
     full, delta = ("feed", "feedDelta") if slot == "feed" else ("bars", "delta")
     pair = None
     for f in frames:
@@ -101,11 +101,10 @@ def held_pair(frames, slot):
             g = _stamp_field(f, "gen")
             if g is None or pair is None:
                 continue
-            through, rev, new_gen = _stamp_field(f, "through"), _stamp_field(f, "rev"), _stamp_field(f, "newGen")
-            if through is not None:
-                pair = (new_gen if new_gen is not None else g, through)
-            elif rev is not None:
-                pair = (g, rev)
+            through, new_gen = _stamp_field(f, "through"), _stamp_field(f, "newGen")
+            if through is None:
+                continue   # a stamped delta carrying no through is refused by the client and applies nothing: the pair stands
+            pair = (new_gen if new_gen is not None else g, through)
     return pair
 
 
@@ -397,17 +396,19 @@ class HeldPairRule(unittest.TestCase):
             self.assertIsNone(_stamp_field({"rev": bad}, "rev"), "a rev is a non-negative int: %r" % (bad,))
 
     def test_a_stamped_delta_advances_the_pair_and_a_gen_less_one_moves_nothing(self):
-        frames = [{"t": "feed", "gen": GEN}, {"t": "feedDelta", "gen": GEN, "base": 0, "rev": 1}]
+        frames = [{"t": "feed", "gen": GEN}, {"t": "feedDelta", "gen": GEN, "base": 0, "rev": 1, "through": 1}]
         self.assertEqual(held_pair(frames, "feed"), (GEN, 1), "a per-cycle stamped delta: (gen, rev)")
+        self.assertEqual(held_pair([{"t": "feed", "gen": GEN}, {"t": "feedDelta", "gen": GEN, "base": 0, "rev": 1}], "feed"), (GEN, 0),
+                         "a stamped delta carrying no through is refused by the client and moves nothing: every stamped delta carries through")
         frames.append({"t": "feedDelta", "gen": GEN, "newGen": GEN2, "base": 1, "rev": 4, "through": 4})
         self.assertEqual(held_pair(frames, "feed"), (GEN2, 4), "a composed frame: (newGen, through)")
         frames.append({"t": "feedDelta", "base": 4, "rev": 5})
         self.assertEqual(held_pair(frames, "feed"), (GEN2, 4), "a gen-less delta moves nothing")
-        self.assertIsNone(held_pair([{"t": "feedDelta", "gen": GEN, "base": 0, "rev": 1}], "feed"), "a delta before any full: nothing held")
+        self.assertIsNone(held_pair([{"t": "feedDelta", "gen": GEN, "base": 0, "rev": 1, "through": 1}], "feed"), "a delta before any full: nothing held")
 
     def test_a_per_cycle_stamped_delta_carrying_through_equal_to_its_rev_leaves_gen_rev(self):
         # the stamping kernel's per-cycle shape: every delta carries gen, base, rev AND through, through equal to rev and no
-        # newGen; through's presence does not make it a composed frame, and the pair is (gen, rev) as for a through-less one
+        # newGen; through's presence does not make it a composed frame, and the pair is (gen, through), through equal to rev
         frames = [{"t": "feed", "gen": GEN}, {"t": "feedDelta", "gen": GEN, "base": 0, "rev": 1, "through": 1}]
         self.assertEqual(held_pair(frames, "feed"), (GEN, 1))
         frames.append({"t": "feedDelta", "gen": GEN, "base": 1, "rev": 2, "through": 2})
@@ -416,8 +417,8 @@ class HeldPairRule(unittest.TestCase):
         self.assertEqual(held_pair(bars, "bars"), (GEN3, 1))
 
     def test_the_bars_slot_reads_bars_fulls_and_bars_patches_alone(self):
-        frames = [{"t": "bars", "gen": GEN3}, {"t": "delta", "slot": "bars", "gen": GEN3, "base": 0, "rev": 1},
-                  {"t": "delta", "slot": "lanes", "gen": GEN3, "base": 1, "rev": 2}, {"t": "feed", "gen": GEN}]
+        frames = [{"t": "bars", "gen": GEN3}, {"t": "delta", "slot": "bars", "gen": GEN3, "base": 0, "rev": 1, "through": 1},
+                  {"t": "delta", "slot": "lanes", "gen": GEN3, "base": 1, "rev": 2, "through": 2}, {"t": "feed", "gen": GEN}]
         self.assertEqual(held_pair(frames, "bars"), (GEN3, 1), "another slot's patch and the feed full do not move the bars pair")
         self.assertEqual(held_pair(frames, "feed"), (GEN, 0))
 
@@ -450,7 +451,7 @@ class HeldPairRule(unittest.TestCase):
     def test_expected_relay_caps_is_the_decoder_word_plus_each_held_member_and_fails_on_an_empty_drive(self):
         self.assertEqual(expected_relay_caps(None), "feedDelta", "a first dial: no socket before it")
         self.assertEqual(expected_relay_caps([{"t": "feed"}, {"t": "caps"}]), "feedDelta", "a redial after gen-less frames: undeclared")
-        self.assertEqual(expected_relay_caps([{"t": "feed", "gen": GEN}, {"t": "feedDelta", "gen": GEN, "base": 0, "rev": 2}]), "feedDelta,held:feed:%s.2" % GEN)
+        self.assertEqual(expected_relay_caps([{"t": "feed", "gen": GEN}, {"t": "feedDelta", "gen": GEN, "base": 0, "rev": 2, "through": 2}]), "feedDelta,held:feed:%s.2" % GEN)
         self.assertEqual(expected_relay_caps([{"t": "bars", "gen": GEN3}]), "feedDelta,held:bars:%s.0" % GEN3)
         self.assertEqual(expected_relay_caps([{"t": "feed", "gen": GEN}, {"t": "bars", "gen": GEN3}]), "feedDelta,held:feed:%s.0,held:bars:%s.0" % (GEN, GEN3), "both, feed first")
         with self.assertRaises(AssertionError):

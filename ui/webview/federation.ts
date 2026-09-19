@@ -1485,11 +1485,12 @@ export class FederationManager {
    *  goes now.
    *
    *  The gen gate (2026-09-19): a delta carrying `gen` (a kernel that stamps its frames) applies only when its gen is
-   *  the held pair's, its base at or below the held rev and its `through`, when carried, at or above the held rev; else
-   *  the pair is stale for this stream and the ask carries the held pair (kernel.py reads it at the compose), nothing
-   *  applied. The gate is keyed on gen alone and never on the frame carrying through: the kernel that stamps its frames
-   *  stamps through on EVERY delta (equal to the rev on a per-cycle delta, R on a composed frame), so through's presence
-   *  tells nothing about the frame's shape, and the through test stands for every gen-carrying frame. A delta carrying
+   *  the held pair's, its base at or below the held rev and its `through` at or above the held rev; else the pair is
+   *  stale for this stream and the ask carries the held pair (kernel.py reads it at the compose), nothing applied. The
+   *  gate is keyed on gen alone and never on the frame carrying through: the kernel that stamps its frames stamps
+   *  through on EVERY delta (equal to the rev on a per-cycle delta, R on a composed frame), so through's presence tells
+   *  nothing about the frame's shape, the through test stands for every gen-carrying frame, and a stamped delta carrying
+   *  none is refused (why "through"), never applied onto a rev it does not state. A delta carrying
    *  NO gen (a kernel before the stamp) applies on the base's presence alone, as before, and moves no pair (the vintage
    *  guard, which revision 11 of the reconnect design states as its clause (2)), so nothing this side keeps depends on
    *  the kernel's vintage. */
@@ -1504,13 +1505,12 @@ export class FederationManager {
     const gen = genOf(d.gen);
     const held = c.feedHeld;
     if (gen !== undefined) {
-      const through = d.through === undefined ? undefined : d.through;
       const inGate = !!held && gen === held.gen && Number.isSafeInteger(d.base) && d.base <= held.rev && Number.isSafeInteger(d.rev)
-                     && (through === undefined || (Number.isSafeInteger(through) && through >= held.rev));
+                     && Number.isSafeInteger(d.through) && d.through >= held.rev;
       if (!inGate) {
         // one why per cause, so a reader can tell a generation change from a base past the held rev: gen (the held pair's
-        // gen differs, or none is held for a stamped stream), base (above the held rev), through (below it), or rev (no
-        // safe rev to advance to)
+        // gen differs, or none is held for a stamped stream), base (above the held rev), through (below the held rev, or not
+        // carried: every stamped delta carries it), or rev (no safe rev to advance to)
         const why = !held || gen !== held.gen ? "gen" : !Number.isSafeInteger(d.base) || d.base > held.rev ? "base"
                     : !Number.isSafeInteger(d.rev) ? "rev" : "through";
         this.diag("feedDelta-stale", { host, buildId: d.buildId, why });
@@ -1521,11 +1521,10 @@ export class FederationManager {
     const next = applyFeedDelta(raw, d);
     c.feedRaw = next;
     if (gen !== undefined) {
-      // the pair after the frame: (newGen, through) after a composed frame, (gen, rev) after a per-cycle delta. Every
-      // stamped delta carries through, equal to its rev on a per-cycle delta, so through is the rev either way and the
-      // newGen alone tells the composed frame; a per-cycle delta carrying through and no newGen leaves (gen, rev).
+      // the pair after the frame: (newGen, through) after a composed frame, (gen, through) after a per-cycle delta, whose
+      // through equals its rev
       const newGen = genOf(d.newGen);
-      c.feedHeld = d.through !== undefined ? { gen: newGen !== undefined ? newGen : gen, rev: d.through } : { gen, rev: d.rev };
+      c.feedHeld = { gen: newGen !== undefined ? newGen : gen, rev: d.through };
     }
     this.perHostFeed[host] = prefixInbound(host, next);
     this.perHostFeedAt[host] = Date.now();   // the delta's arrival, as on the local path: the merge's clock anchor when no local frame anchors it

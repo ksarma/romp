@@ -606,9 +606,9 @@ test("late timers on a conn whose own replacement socket is CONNECTING, then OPE
 const GEN_STAMP = "0123456789abcdef";
 const G = GEN_STAMP + "-7", G2 = GEN_STAMP + "-9", G3 = GEN_STAMP + "-11";
 const stamped = (over: Record<string, unknown> = {}) => ({ ...remoteFull(), gen: G, ...over });
-/** a per-cycle stamped delta from rev `base` to `base + 1`: card n set. Carries no `through`; the kernel that stamps its
- *  frames sends through equal to rev on every delta (the per-cycle-through test below), and the pair is the same either way. */
-const cycle = (gen: string, base: number, n: number) => ({ type: "feedDelta", gen, base, rev: base + 1, now: 510 + n, buildId: 10 + n, asks: [card(SID_A, n)] });
+/** a per-cycle stamped delta from rev `base` to `base + 1`: card n set, in the stamping kernel's per-cycle shape, through
+ *  equal to rev (every stamped delta carries through; one carrying none is refused: the no-through case below) */
+const cycle = (gen: string, base: number, n: number) => ({ type: "feedDelta", gen, base, rev: base + 1, through: base + 1, now: 510 + n, buildId: 10 + n, asks: [card(SID_A, n)] });
 /** the page's terms carrying its LOCAL kernel's held pair and its hold words: none of it is a remote dial's */
 const pageTerms = () => ({ ...terms(), proto: 2, caps: "feedDelta,readyGate,held:feed:1.1" });
 const heldOf = (fm: any) => fm.conns.get(HOST).feedHeld;
@@ -679,7 +679,7 @@ test("the watchdog's abandon-and-dial declares the same pair, without reconnect 
   }, { terms: pageTerms });
 });
 
-test("a stamped delta whose gen differs, or whose base is above the held rev, or whose through is below it, posts needFullFeed carrying the held pair on the arriving conn and applies nothing; the feedDelta-stale row names the cause; the full the ask earns re-seeds the pair", async () => {
+test("a stamped delta whose gen differs, or whose base is above the held rev, or whose through is below it or carrying no through, posts needFullFeed carrying the held pair on the arriving conn and applies nothing; the feedDelta-stale row names the cause; the full the ask earns re-seeds the pair", async () => {
   await withManager(({ fm, emitted, sent }) => {
     const ws = attached(fm);   // a gen-less full first: the pair is absent
     assert.equal(heldOf(fm), undefined);
@@ -694,7 +694,9 @@ test("a stamped delta whose gen differs, or whose base is above the held rev, or
     assert.deepEqual(last(ws.sent), { type: "needFullFeed", gen: G, rev: 1 });
     ws.frame({ type: "feedDelta", gen: G, base: 0, rev: 1, through: 0, now: 522, buildId: 32, asks: [card(SID_A, 9)] });
     assert.equal(ws.sent.length, 3, "a composed frame reaching below the held rev: asked again");
-    assert.deepEqual(diagRows(sent, "feedDelta-stale"), [{ host: HOST, buildId: 30, why: "gen" }, { host: HOST, buildId: 31, why: "base" }, { host: HOST, buildId: 32, why: "through" }], "one why per cause");
+    ws.frame({ type: "feedDelta", gen: G, base: 1, rev: 2, now: 523, buildId: 33, asks: [card(SID_A, 9)] });   // no through: every stamped delta carries it
+    assert.equal(ws.sent.length, 4, "a stamped delta carrying no through: asked again");
+    assert.deepEqual(diagRows(sent, "feedDelta-stale"), [{ host: HOST, buildId: 30, why: "gen" }, { host: HOST, buildId: 31, why: "base" }, { host: HOST, buildId: 32, why: "through" }, { host: HOST, buildId: 33, why: "through" }], "one why per cause");
     assert.equal(feeds(emitted).length, before, "nothing applied, nothing emitted");
     assert.equal(fm.conns.get(HOST).feedRaw, raw, "the base stands");
     assert.deepEqual(heldOf(fm), { gen: G, rev: 1 }, "…and the pair with it");
@@ -705,7 +707,7 @@ test("a stamped delta whose gen differs, or whose base is above the held rev, or
     assert.deepEqual(heldOf(fm), { gen: G3, rev: 0 });
     ws.frame(cycle(G3, 0, 4));
     assert.deepEqual(heldOf(fm), { gen: G3, rev: 1 });
-    assert.equal(ws.sent.length, 3, "no further ask");
+    assert.equal(ws.sent.length, 4, "no further ask");
     fm.conns.get(HOST).closed = true;
   });
 });
@@ -782,7 +784,7 @@ test("the both-gen shape check: a conn whose raw feed base and receiver bars bas
 // Every delta a stamping kernel sends carries `through` (equal to its rev on a per-cycle delta, R on a composed frame), so
 // through's presence does not tell a per-cycle delta from a composed one and the gate never keys on it: a per-cycle
 // delta stamped base r, rev r+1, through r+1 and no newGen passes the gate (through at or above the held rev) and leaves
-// (gen, r+1), the pair a through-less one leaves. The redial then declares what the whole stream left.
+// (gen, r+1), the pair (gen, through). The redial then declares what the whole stream left.
 test("a per-cycle stamped delta carrying through equal to its rev applies under the gate and leaves (gen, rev), through's presence making it no composed frame; a composed frame after it leaves (newGen, through) and the redial declares that pair in the kernel's string form", async () => {
   await withManager(({ fm, emitted }) => {
     fm.outbound({ type: "ready", proto: 2 });
@@ -794,7 +796,7 @@ test("a per-cycle stamped delta carrying through equal to its rev applies under 
     const before = feeds(emitted).length;
     ws.frame({ ...cycle(G, 0, 2), through: 1 });   // the stamping kernel's per-cycle shape: gen, base, rev and through, through equal to rev, no newGen
     assert.equal(feeds(emitted).length, before + 1, "applied: through at or above the held rev, the gate passed");
-    assert.deepEqual(heldOf(fm), { gen: G, rev: 1 }, "(gen, rev): the same pair a through-less per-cycle delta leaves");
+    assert.deepEqual(heldOf(fm), { gen: G, rev: 1 }, "(gen, rev): the pair (gen, through), through equal to rev");
     ws.frame({ ...cycle(G, 1, 3), through: 2 });
     assert.deepEqual(heldOf(fm), { gen: G, rev: 2 });
     assert.deepEqual(ws.sent.filter((x: any) => x.type !== "ready"), [], "nothing asked (the first dial's own ready aside)");
