@@ -64,9 +64,13 @@ node deps, so CI's served job skips the class as optional). ROMP_CORNER_REPORT_D
 everything recorded.
 
 What the old hub showed (2026-09-19, the bundle at 01d4fbe43): the old bundle dials no caps and decodes no patch, so
-its Outline files one delta-unapplied row per remote feed patch, and across the drive those rows ran 3 / 0 / 3 / 3:
-three in phase A with the link up, ZERO while the link was down, three after the link's return and three after the
-local restart. The storm is gated on remote patches arriving, which is gated on the link: with phase D due while the
+its Outline files one delta-unapplied row per remote feed patch. That correspondence is what the class pins: in each
+window and over the whole drive, the rows equal, by rev, the feed slot patches the Outline's own relay sockets
+received (the hook records a delta frame's rev; the row files the same rev). The count is one drive's, not a
+property of the bundle: 3 / 0 / 3 / 3 across phase A, the link down, phase B and phase C in the recorded drive
+(ROMP_LINKDROP_LAB=1 ROMP_LINKDROP_OLD_HUB_BUILD=1 pytest tests/test_federated_linkdrop_served.py), and 3 / 0 / 1 / 3
+in one of eight drives at round 1's head, when two relay sockets churned inside phase B and absorbed two notices into
+whole frames (no patch, so no row; the equality held at 7 / 7). ZERO while the link was down in every drive. The storm is gated on remote patches arriving, which is gated on the link: with phase D due while the
 link was down, no row filed until the link returned, the return's whole frame carried D and filed no row for it, and
 the next patch (phase B's) filed a row again. A relay redial does not end the storm but restarts it: each redial's one
 whole frame catches the old page up once and the next patch freezes it again, so on a hub whose link comes and goes
@@ -369,7 +373,7 @@ const hook = (o) => {
         if (!relay) { rec.local++; return; }
         const f = { t: String(m.type), slot: m.slot ? String(m.slot) : "", len: String(ev.data).length, at: Date.now() };
         if (m.type === "feed" || m.type === "feedDelta") { f.asks = Array.isArray(m.asks) ? m.asks.length : null; f.buildId = m.buildId; }
-        if (m.type === "delta") { f.coll = Object.keys(m.coll || {}); f.restAll = !!m.restAll; }
+        if (m.type === "delta") { f.coll = Object.keys(m.coll || {}); f.restAll = !!m.restAll; f.rev = m.rev; }
         rec.frames.push(f);
       } catch (e) {}
     });
@@ -881,6 +885,42 @@ class _LinkDrop(unittest.TestCase):
         rows = self.hub_diag_rows if rows is None else rows
         return [r.get("data") for r in rows if (r.get("surface"), r.get("what")) == ("outline", "delta-unapplied")]
 
+    def _outline_feed_patches(self, k0=None, k1=None, slack_s=1.5):
+        """The feed slot patches ({type: delta, slot: feed}) the OUTLINE page's own relay sockets received, stamped by the
+        hook at receipt (the browser's clock), inside the marks' window padded as _rows_in pads rows; the whole drive
+        without marks. The Outline is the page that files outline/delta-unapplied on the old bundle, one row per such
+        patch carrying the patch's rev, so these are the rows' other side."""
+        frames = [f for s in self._page("fleet")["socks"] if s["relay"] for f in s["frames"] if f["t"] == "delta" and f["slot"] == "feed"]
+        if k0 or k1:
+            m = self._marks()
+            t0 = m[k0] - slack_s * 1000 if k0 else float("-inf")
+            t1 = m[k1] + slack_s * 1000 if k1 else float("inf")
+            frames = [f for f in frames if t0 <= f["at"] <= t1]
+        return frames
+
+    def _assert_one_row_per_outline_feed_patch(self, k0=None, k1=None, patches_due=True):
+        """The old bundle's storm as an invariant, not a count: in the window (padded on both sides as _rows_in pads,
+        the whole drive without marks) the outline/delta-unapplied rows correspond one to one, by rev, with the feed
+        slot patches the Outline's own relay sockets received there, and every such row names the feed slot. With
+        patches_due the window must hold at least one patch (a churned socket absorbs notices into whole frames and
+        files no row, so a count is one drive's; an empty window is not the storm); without, both sides are empty.
+        Returns the row count, for the record."""
+        rows = self._outline_unapplied(self._rows_in(k0, k1) if k0 and k1 else None)
+        patches = self._outline_feed_patches(k0, k1)
+        where = "[%s, %s)" % (k0, k1) if k0 and k1 else "the whole drive"
+        self.assertTrue(all("rev" in f for f in patches), "every recorded feed patch carries its rev (the hook records m.rev on a delta frame): %r" % (patches,))
+        self.assertTrue(all(isinstance(d, dict) and "rev" in d for d in rows), "every outline/delta-unapplied row carries the patch's rev: %r" % (rows,))
+        feed_rows = [d for d in rows if d.get("slot") == "feed"]
+        self.assertEqual(len(feed_rows), len(rows), "every outline/delta-unapplied row in %s names the feed slot: %r" % (where, rows))
+        self.assertEqual(sorted(int(d["rev"]) for d in feed_rows), sorted(int(f["rev"]) for f in patches),
+                         "one outline/delta-unapplied row per feed slot patch the Outline received in %s, by rev (rows %r; patches %r)"
+                         % (where, [(d.get("slot"), d.get("rev")) for d in rows], [(f.get("rev"), f["at"]) for f in patches]))
+        if patches_due:
+            self.assertTrue(patches, "the Outline received a feed slot patch in %s (the storm has a patch to file a row for)" % where)
+        else:
+            self.assertEqual(patches, [], "no feed slot patch reached the Outline in %s: %r" % (where, patches))
+        return len(rows)
+
     def _control(self):
         self._driver_ran()
         control = [r for r in self.hub_diag_rows if _corners.is_page_federation_row(r)]
@@ -1100,8 +1140,11 @@ class LinkDropOldLocal(_LinkDrop):
     row PER remote feed patch, it STOPS while the link is down (no patch arrives, so no row: the storm is gated on the
     link, established by phase D, a change due while the link was down that reached no page, crossed as no frame and
     filed no row until the return's whole frame carried it), and it RESUMES after each redial's whole frame (the whole
-    frame catches the page up once; the next patch freezes again). Recorded on the bundle at 01d4fbe43 (2026-09-19): 3 / 0 / 3 / 3 rows across phase A, the link
-    down, phase B and phase C, one per remote feed patch, ZERO while the link was down. A relay redial does not end the
+    frame catches the page up once; the next patch freezes again). The class pins the correspondence, not a count: per
+    window and over the whole drive, the rows equal the Outline's own feed slot patches by rev, non-empty in every
+    phase and empty while the link was down. One drive's count on the bundle at 01d4fbe43 (2026-09-19): 3 / 0 / 3 / 3
+    across phase A, the link down, phase B and phase C; another drive at the same head gave 3 / 0 / 1 / 3 when socket
+    churn inside phase B absorbed two notices into whole frames. A relay redial does not end the
     storm but restarts it, so with a link that comes and goes the storm looks intermittent and self-healing when it is
     neither; this class keeps that evidence beside the new bundle's zero. Card visibility is NOT asserted here: the old bundle's socket churns and each redial delivers a
     whole frame that eventually shows the cards, so the visible freeze is the corners lab's steady-state job; the storm
@@ -1144,22 +1187,21 @@ class LinkDropOldLocal(_LinkDrop):
         self.assertTrue(self._sends("fleet", "local", "needSlot"), "…and posted its needSlot to the LOCAL kernel")
 
     def test_the_storm_resumes_after_each_redial_and_is_gated_on_the_link(self):
-        """The experiment's verdict: the delta-unapplied storm is one row per remote feed patch; it STOPS while the link
+        """The experiment's verdict: the delta-unapplied storm is one row per remote feed patch, pinned as the rows' rev
+        multiset equalling the Outline's received feed slot patches per window and over the drive; it STOPS while the link
         is down (no patch arrives, so no row; phase D, due while the link was down, is the gate's own leg in
         test_a_change_due_while_the_link_was_down_crossed_nothing_and_the_return_carried_it_whole) and RESUMES after
         each redial's whole frame (the whole frame catches the page up once; the next patch freezes again). So a pause
         in the storm says no patch arrived, not that the page recovered. The new bundle files ZERO such rows across the
         same drive."""
         self._driver_ran()
-        perA = len(self._outline_unapplied(self._rows_in("A0", "A1")))
-        down = len(self._outline_unapplied(self._rows_in("drop", "resume")))
-        perB = len(self._outline_unapplied(self._rows_in("B0", "B1")))
-        self.assertGreaterEqual(perA, 1, "phase A (link up) filed delta-unapplied rows: %r" % (self._rows_by_kind(self._rows_in("A0", "A1")),))
+        perA = self._assert_one_row_per_outline_feed_patch("A0", "A1", patches_due=True)     # the link up: a patch per notice, a row per patch
+        down = self._assert_one_row_per_outline_feed_patch("drop", "resume", patches_due=False)   # the link down, phase D due: no patch, no row
         self.assertEqual(down, 0, "no delta-unapplied row while the link was down: no patch arrived, so no row (the storm is gated on the link); rows in the down window: %r" % (self._rows_by_kind(self._rows_in("drop", "resume")),))
-        self.assertGreaterEqual(perB, 1, "the storm RESUMED after the link's return redial (phase B): the whole frame caught the page up once, the next patch froze again; rows by kind: %r" % (self._rows_by_kind(self._rows_in("B0", "B1")),))
-        if self.local_drop:
-            perC = len(self._outline_unapplied(self._rows_in("C0", "C1")))
-            self.assertGreaterEqual(perC, 1, "…and again after the local restart (phase C): %r" % (self._rows_by_kind(self._rows_in("C0", "C1")),))
+        perB = self._assert_one_row_per_outline_feed_patch("B0", "B1", patches_due=True)     # the storm RESUMED on the return's socket
+        perC = self._assert_one_row_per_outline_feed_patch("C0", "C1", patches_due=True) if self.local_drop else None   # …and after the local restart
+        total = self._assert_one_row_per_outline_feed_patch()                                  # and over the whole drive, by rev
+        self.assertGreaterEqual(total, perA + perB + (perC or 0), "the windows' rows are among the drive's: %r" % ((perA, down, perB, perC, total),))
 
     def test_nothing_was_asked_of_the_remote(self):
         for app in self.apps:
