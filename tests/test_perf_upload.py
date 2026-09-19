@@ -1310,8 +1310,9 @@ class Cli(unittest.TestCase):
         """The floor by the upload child (2026-09-19, the comment at pp.NUMERIC_PROBE_MIN_DIGITS). With a list of a comment, a
         word, a blank and a six-digit run (line 4) under the child's HOME, an export edited to carry the run as a NUMBER in
         five spellings (whole, inside a byte total, a float, a negative, an exponent form) is sent, exit 0, the number on
-        the wire, and stderr is exactly the one line saying 1 of 2 entries are spelled like a number but carry fewer than 7
-        digits and so are checked in keys and string values and not in numbers, and what does and does not protect a number
+        the wire, and stderr is exactly the one line saying 1 of 2 entries (list line 4: the entry by the line it is on, never
+        its text or the list's path) are spelled like a number but carry fewer than 7 digits and so are checked in keys and
+        string values and not in numbers, and what does and does not protect a number
         (the text is perf_public.LIST_UNDER_NUMERIC_FLOOR, pasted here whole: the closing check of 2026-09-19 found the old
         line's remedy, list more of the digits, a trap, since a listed eight-digit run protected the number 1234.5678 in no
         spelling while it silenced the line; the count is by number_shaped entries under the floor, so the word entry is
@@ -1331,12 +1332,14 @@ class Cli(unittest.TestCase):
         listed = os.path.join(self.home, ".config", "romp", "private-strings.txt")
         with open(listed, "w", encoding="utf-8") as fh:
             fh.write("# strings that must never be published\nzzcoinedzz\n\n424242\n")
-        loud = ("romp: 1 of 2 private-strings entries are spelled like a number but carry fewer than 7 digits, so they are checked in keys "
-                "and string values and not in numbers; a number is checked against a listed entry only when the entry, or the plain decimal "
-                "spelling of an entry written with an exponent, carries 7 or more digits, and the match is against the number's own spelling: "
-                "a listed 1234.5678 protects the number 1234.5678, a listed 12345678 does not, and a listed entry of fewer digits protects no "
-                "number\n")
-        self.assertEqual(loud, pp.LIST_UNDER_NUMERIC_FLOOR % (1, 2, 7, 7) + "\n", "the literal here is the module's line with its four numbers")
+        loud = ("romp: 1 of 2 private-strings entries (list line 4) are spelled like a number but carry fewer than 7 digits, so they are checked "
+                "in keys and string values and not in numbers; a number is checked against a listed entry only when the entry, or the plain "
+                "decimal spelling of an entry written with an exponent, carries 7 or more digits, and the match is against the number's own "
+                "spelling: a listed 1234.5678 protects the number 1234.5678, a listed 12345678 does not, and a listed entry of fewer digits "
+                "protects no number\n")
+        self.assertEqual(loud, pp.LIST_UNDER_NUMERIC_FLOOR % (1, 2, pp.list_lines_phrase([4]), 7, 7) + "\n",
+                         "the literal here is the module's line with its four numbers and the counted entry's list line")
+        self.assertNotIn(listed, loud, "the list's path is not in the line")
         for literal in ("424242", "9424242", "424242.0", "-424242", "4.24242e5"):
             with open(edited, "w", encoding="utf-8") as fh:
                 fh.write(text.replace(anchor, anchor + ', "zzratio": ' + literal))

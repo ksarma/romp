@@ -74,7 +74,8 @@ vocabulary; the remedy, which the refusal states, is editing that line or the va
 listed entry to a number only through a spelling of it, the entry as written or the plain decimal spelling of an entry
 written with an exponent, that carries at least perf_public.NUMERIC_PROBE_MIN_DIGITS digits (seven; the comment there
 has the measured collision chances); an entry spelled like a number whose every spelling has fewer is checked in keys
-and string values and not in numbers, said once on stderr, and a listed entry of fewer digits protects no number.
+and string values and not in numbers, said once on stderr naming such entries by their list lines (never their text,
+never the list's path), and a listed entry of fewer digits protects no number.
 
 Before sending, the verb prints the path, the byte size of the body it will send (the file's own size for a file as
 the export wrote it) and the URL it will dial (the address as configured

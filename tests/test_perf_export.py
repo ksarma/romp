@@ -1612,10 +1612,11 @@ class Cli(unittest.TestCase):
         self.assertEqual(_hits({"a": {"n": 911111111}}, [("session id", "11111111")]), [("session id", "the value at a/n")],
                          "an eight-digit id prefix is above the floor")
 
-    def test_the_stderr_line_counts_the_listed_entries_under_the_numeric_floor_once_and_names_none(self):
+    def test_the_stderr_line_counts_the_listed_entries_under_the_numeric_floor_once_by_their_list_lines_and_names_no_text(self):
         """machine_probes says once on stderr how many listed entries are spelled like a number but carry fewer digits than the
-        floor in every spelling (pp.LIST_UNDER_NUMERIC_FLOOR): those are checked in keys and string values and not in numbers,
-        and the line says what does protect a number (an entry of seven or more digits, as written or as the plain decimal
+        floor in every spelling (pp.LIST_UNDER_NUMERIC_FLOOR), WHICH by the line of the list each is on (list lines 3 and 6 here,
+        pp.list_lines_phrase; never an entry's text and never the list's path, the review of 2026-09-19): those are checked in
+        keys and string values and not in numbers, and the line says what does protect a number (an entry of seven or more digits, as written or as the plain decimal
         spelling of an entry written with an exponent, matched against the number's own spelling: a listed 1234.5678 protects the
         number 1234.5678, a listed 12345678 does not, and a listed entry of fewer digits protects no number), so that a reader
         whose private value is a short number knows the numeric arm does not protect it and that listing a longer bare run
@@ -1625,13 +1626,18 @@ class Cli(unittest.TestCase):
         written and seven as its expansion 0.000015, which is the spelling armed, so it is NOT counted, where the delta's first
         cut counted it and told the operator a value it protected was unprotected; abc12 carries letters, so no number can
         carry it and it is not counted, where the first trigger counted it; 4242424 and 1234.5678 are armed), the line's exact
-        text, and each probe carries its file line, the comment counting. The line names no entry: the two values it spells,
-        1234.5678 and 12345678, are the template's own worked example, there for every list. The silent lists are the next
+        text, and each probe carries its file line, the comment counting. The line names no entry's TEXT: the two values it
+        spells, 1234.5678 and 12345678, are the template's own worked example, there for every list; it points at the counted
+        entries by list line, 3 and 6, with uncounted entries on lines 2, 4 and 5 around and between them, so a phrase built
+        from the entries' positions in the count (1 and 2) or from every listed line reds here; and it names no path, the
+        list's own (ROMP_PRIVATE_STRINGS here) least of all. The silent lists are the next
         test's, on their own so that a trigger change that keeps this count and fires for one of them reds by name. Removing
         the line turns this red; so does a floor of eight (four of seven: 4242424 and 0.000015 fall under it), a floor of six
         (the line silent: 424242 and 1234.56 reach it), the longest-run trigger (five of seven: abc12 and 1234.5678 counted,
         1.5e-05 by its run of two), an any-digit trigger (four of seven, abc12 counted), a length gate (one of seven: 1234.56
-        and 1.5e-05 are seven characters), or the floor decided on the entry's text alone (three of seven, 1.5e-05 counted)."""
+        and 1.5e-05 are seven characters), or the floor decided on the entry's text alone (three of seven, 1.5e-05 counted);
+        naming the counted entries by their position in the count (list lines 1 and 2), spelling an entry's text in the line or
+        adding the list's path reds the exact text and the named pin for each."""
         listed = os.path.join(self.state, "list.txt")
         with open(listed, "w", encoding="utf-8") as fh:
             fh.write("# a comment on line 1\nzzcoinedzz\n424242\nabc12\n4242424\n1234.56\n1.5e-05\n1234.5678\n")
@@ -1639,14 +1645,18 @@ class Cli(unittest.TestCase):
         err = io.StringIO()
         with mock.patch.object(pp.socket, "gethostname", return_value="TESTHOST.example"), contextlib.redirect_stderr(err):
             probes = pp.machine_probes(None, env=env)
-        self.assertEqual(err.getvalue(), ("romp: 2 of 7 private-strings entries are spelled like a number but carry fewer than 7 digits, so they are checked "
-                                          "in keys and string values and not in numbers; a number is checked against a listed entry only when the entry, "
-                                          "or the plain decimal spelling of an entry written with an exponent, carries 7 or more digits, and the match is "
-                                          "against the number's own spelling: a listed 1234.5678 protects the number 1234.5678, a listed 12345678 does "
-                                          "not, and a listed entry of fewer digits protects no number\n"))
+        self.assertEqual(err.getvalue(), ("romp: 2 of 7 private-strings entries (list lines 3 and 6) are spelled like a number but carry fewer than 7 digits, "
+                                          "so they are checked in keys and string values and not in numbers; a number is checked against a listed entry only "
+                                          "when the entry, or the plain decimal spelling of an entry written with an exponent, carries 7 or more digits, and "
+                                          "the match is against the number's own spelling: a listed 1234.5678 protects the number 1234.5678, a listed "
+                                          "12345678 does not, and a listed entry of fewer digits protects no number\n"))
         self.assertEqual(err.getvalue().count("romp:"), 1, "said once")
         for entry in ("zzcoinedzz", "424242", "abc12", "4242424", "1.5e-05", "0.000015"):
             self.assertNotIn(entry, err.getvalue(), "the line names no entry")
+        self.assertIn("(list lines 3 and 6)", err.getvalue(), "the counted entries by their list lines, in file order")
+        self.assertNotIn("(list lines 1 and 2)", err.getvalue(), "not their positions in the count")
+        self.assertNotIn(listed, err.getvalue(), "the line does not name the list's path")
+        self.assertNotIn(self.state, err.getvalue(), "nor any part of it")
         self.assertIn("a listed 1234.5678 protects the number 1234.5678, a listed 12345678 does not", pp.LIST_UNDER_NUMERIC_FLOOR,
                       "the two values the line spells are the template's worked example, not the list's entries")
         self.assertEqual([(p.text, p.line) for p in probes if p.kind == pp.PRIVATE_KIND],
@@ -1678,7 +1688,56 @@ class Cli(unittest.TestCase):
         err = io.StringIO()
         with mock.patch.object(pp.socket, "gethostname", return_value="TESTHOST.example"), contextlib.redirect_stderr(err):
             pp.machine_probes(None, env=env)
-        self.assertEqual(err.getvalue(), pp.LIST_UNDER_NUMERIC_FLOOR % (1, 2, 7, 7) + "\n", "an IP-shaped entry is inside the alphabet and is counted")
+        self.assertEqual(err.getvalue(), pp.LIST_UNDER_NUMERIC_FLOOR % (1, 2, "list line 1", 7, 7) + "\n",
+                         "an IP-shaped entry is inside the alphabet and is counted, by its list line")
+
+    def test_the_stderr_line_names_the_counted_entries_by_list_line_in_file_order_and_never_their_text_or_the_path(self):
+        """The review of 2026-09-19: the line points at each entry it counts by the ONE-BASED LINE of the list it is on
+        (pp.list_lines_phrase: `list line 4`, `list lines 3 and 6`, `list lines 2, 5 and 9`), the number an editor shows and the
+        number a refusal names, so the operator can find the entry without the line spelling its text (the list exists to keep
+        those off every output, stderr included) and without the list's path (there is one location, the docs name it, and a
+        home path on stderr every run is noise). Over a list of a comment, 4242 (line 2), a word, a blank, 98.76 (line 5),
+        4242424 (armed, seven digits), abc12 (a letter, in no number), 1e+16 (armed through its expansion), -42.5 (line 9) and
+        zz4242424 (a letter): eight entries, three counted, and the line is exactly the template with 3, 8, `list lines 2, 5 and
+        9` and the floor twice, the uncounted entries on lines 3, 6, 7, 8 and 10 around and between the counted ones, so a
+        phrase built from the entries' positions in the count (1, 2 and 3) or from every listed line reds here; no entry's text
+        is in the line, and the list's path is not. A repeated entry is counted once per line (1234.56, 1234.56, 424242: 3 of 3,
+        list lines 1, 2 and 3), machine_probes' docstring's own example. The phrase alone: one line, two, three and four, the
+        last two joined by `and` and the rest by commas, one phrase inside the one line. Removing the lines from the template,
+        rendering them from the count's positions, spelling an entry's text in the line or adding the path each reds a pin here
+        by name."""
+        self.assertEqual(pp.list_lines_phrase([4]), "list line 4")
+        self.assertEqual(pp.list_lines_phrase([3, 6]), "list lines 3 and 6")
+        self.assertEqual(pp.list_lines_phrase([2, 5, 9]), "list lines 2, 5 and 9")
+        self.assertEqual(pp.list_lines_phrase([2, 5, 9, 12]), "list lines 2, 5, 9 and 12")
+        listed = os.path.join(self.state, "list.txt")
+        entries = ["# strings that must never be published", "4242", "zzcoinedzz", "", "98.76", "4242424", "abc12", "1e+16", "-42.5", "zz4242424"]
+        with open(listed, "w", encoding="utf-8") as fh:
+            fh.write("\n".join(entries) + "\n")
+        env = {"HOME": HOME, "USER": "tester", "ROMP_PRIVATE_STRINGS": listed}
+        err = io.StringIO()
+        with mock.patch.object(pp.socket, "gethostname", return_value="TESTHOST.example"), contextlib.redirect_stderr(err):
+            probes = pp.machine_probes(None, env=env)
+        line = err.getvalue()
+        self.assertEqual(line, pp.LIST_UNDER_NUMERIC_FLOOR % (3, 8, "list lines 2, 5 and 9", 7, 7) + "\n")
+        self.assertEqual(line.count("romp:"), 1, "said once")
+        self.assertIn("romp: 3 of 8 private-strings entries (list lines 2, 5 and 9) are spelled like a number", line,
+                      "the counted entries by the list lines they are on, in file order")
+        for wrong in ("(list lines 1, 2 and 3)", "(list lines 2, 3, 5, 6, 7, 8, 9 and 10)"):
+            self.assertNotIn(wrong, line, "not the positions in the count, not every listed line")
+        for entry in entries[1:]:
+            if entry:
+                self.assertNotIn(entry, line, "no entry's text is in the line: %s" % entry)
+        self.assertNotIn(listed, line, "the list's path is not in the line")
+        self.assertNotIn(self.state, line, "nor any part of it")
+        self.assertEqual([p.line for p in probes if p.kind == pp.PRIVATE_KIND], [2, 3, 5, 6, 7, 8, 9, 10], "every entry is a probe carrying its line")
+        with open(listed, "w", encoding="utf-8") as fh:
+            fh.write("1234.56\n1234.56\n424242\n")
+        err = io.StringIO()
+        with mock.patch.object(pp.socket, "gethostname", return_value="TESTHOST.example"), contextlib.redirect_stderr(err):
+            pp.machine_probes(None, env=env)
+        self.assertEqual(err.getvalue(), pp.LIST_UNDER_NUMERIC_FLOOR % (3, 3, "list lines 1, 2 and 3", 7, 7) + "\n",
+                         "a repeated entry is counted once per line and named by each")
 
     def test_the_private_strings_list_feeds_the_probes_when_present_and_is_a_no_op_absent(self):
         """The machine-local list the repository's pre-push hook reads (~/.config/romp/private-strings.txt: one string per
@@ -1972,8 +2031,9 @@ class Cli(unittest.TestCase):
     def test_a_listed_six_digit_run_inside_a_byte_total_exports_with_the_stderr_line_and_a_seven_digit_run_refuses_naming_the_list_line(self):
         """The floor by the export child (2026-09-19). With a list of a comment, a word, a blank and a six-digit run (line 4), a
         snapshot whose rss_kb carries the run inside a byte total (9424242) exports, exit 0, the file written with the number
-        in it, and stderr is exactly the one line saying 1 of 2 entries are spelled like a number but carry fewer than 7 digits,
-        so they are checked in keys and string values and not in numbers, and what does protect a number (the closing delta's
+        in it, and stderr is exactly the one line saying 1 of 2 entries (list line 4: the entry by the line it is on, never its text
+        or the list's path) are spelled like a number but carry fewer than 7 digits, so they are checked in keys and string values
+        and not in numbers, and what does protect a number (the closing delta's
         text, 2026-09-19: the first line advised listing more digits, which for a pointed value silenced the line and protected
         nothing); the same holds for the pointed 1234.56 (seven characters, six digits) listed on line 4 with pusher.cycle_ms_p50
         carrying it, the case the floor lets through by design, pinned green on purpose: the value travels and the line says so
@@ -1984,12 +2044,13 @@ class Cli(unittest.TestCase):
         the floor. The boundary is by execution with literals: 424242 passes, 4242424 refuses. Fails before: the six-digit run
         refused the export, exit 1, and no refusal named a line."""
         listed = os.path.join(self.xdg, "private-strings.txt")
-        loud = ("romp: 1 of 2 private-strings entries are spelled like a number but carry fewer than 7 digits, so they are checked in keys "
-                "and string values and not in numbers; a number is checked against a listed entry only when the entry, or the plain decimal "
-                "spelling of an entry written with an exponent, carries 7 or more digits, and the match is against the number's own spelling: "
-                "a listed 1234.5678 protects the number 1234.5678, a listed 12345678 does not, and a listed entry of fewer digits protects no "
-                "number\n")
-        self.assertEqual(loud, pp.LIST_UNDER_NUMERIC_FLOOR % (1, 2, 7, 7) + "\n", "the literal here is the module's line with its four numbers")
+        loud = ("romp: 1 of 2 private-strings entries (list line 4) are spelled like a number but carry fewer than 7 digits, so they are checked "
+                "in keys and string values and not in numbers; a number is checked against a listed entry only when the entry, or the plain "
+                "decimal spelling of an entry written with an exponent, carries 7 or more digits, and the match is against the number's own "
+                "spelling: a listed 1234.5678 protects the number 1234.5678, a listed 12345678 does not, and a listed entry of fewer digits "
+                "protects no number\n")
+        self.assertEqual(loud, pp.LIST_UNDER_NUMERIC_FLOOR % (1, 2, pp.list_lines_phrase([4]), 7, 7) + "\n",
+                         "the literal here is the module's line with its four numbers and the counted entry's list line")
         for entry, block, leaf, value, spelled in (("424242", "process", "rss_kb", 9424242, '"rss_kb": 9424242'),
                                                    ("1234.56", "pusher", "cycle_ms_p50", 1234.56, '"cycle_ms_p50": 1234.56')):
             with open(listed, "w", encoding="utf-8") as fh:

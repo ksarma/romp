@@ -3816,8 +3816,9 @@ has eight and a listed 1.5e-05 reaches the floor as 0.000015: such an entry
 matching a number, as a substring of the number's spelling or as its run of
 whole digit groups, refuses the export and the upload, an entry spelled like
 a number with fewer digits in every spelling is checked in keys and string
-values and not in numbers, and one stderr line says how many entries that is
-and what does and does not protect a number; the floor comes from a real
+values and not in numbers, and one stderr line says how many entries that is,
+which by the line of the list each is on (never the entry's text, never the
+list's path), and what does and does not protect a number; the floor comes from a real
 export, where a listed run of four digits matched some number by coincidence
 about one time in four and a run of seven digits about one time in 7,000, so
 below seven a match said nothing about the private value; an entry carrying a

@@ -110,7 +110,8 @@ length, and never the alphabet: an entry carrying other characters is applied to
 by its token run and dropping that sent three refused documents), the floor the comment at that constant derives from
 measured collision chances, since 2026-09-19, and a listed entry spelled like a number (number_shaped) whose every
 spelling has fewer digits is checked in every key and string value and in no number, which machine_probes says once on
-stderr, LIST_UNDER_NUMERIC_FLOOR, naming what does protect a number; an entry carrying a character outside NUMBER_CHARS
+stderr, LIST_UNDER_NUMERIC_FLOOR, naming the counted entries by their list lines (never their text, never the list's path)
+and what does protect a number; an entry carrying a character outside NUMBER_CHARS
 is not counted by that line, since it is a substring of no number and the line's remedy is written for a value), and a
 hit refuses the write naming
 the key path and the kind of string, never the value; for a listed string the refusal also names the LINE of the list
@@ -753,9 +754,10 @@ NUMBER_CHARS = frozenset("+-.0123456789e")
 # at least NUMERIC_PROBE_MIN_DIGITS digits counted across the whole spelling (numeric_probe: 1234.5678 has eight, 1234.56 six,
 # 4242424 seven, 1.5e-05 four as listed and seven as its plain expansion 0.000015, which is the spelling armed); a listed entry
 # spelled like a number (number_shaped) whose every spelling has fewer digits is checked in every key and string value as
-# before and in no number, and machine_probes says so once on stderr (LIST_UNDER_NUMERIC_FLOOR, which also says what does
-# protect a number). The floor is by DIGIT COUNT and by nothing else: an entry carrying characters outside NUMBER_CHARS
-# ((12345678), _12345678, 12345678/, 1234 5678, zz4242424) is armed by the same count and is applied by its token run
+# before and in no number, and machine_probes says so once on stderr (LIST_UNDER_NUMERIC_FLOOR, naming those entries by their
+# list lines, list_lines_phrase, and saying what does protect a number). The floor is by DIGIT COUNT and by nothing else: an
+# entry carrying characters outside NUMBER_CHARS ((12345678), _12345678, 12345678/, 1234 5678, zz4242424) is armed by the
+# same count and is applied by its token run
 # (probe_in), which matches a number whose digit groups split the same way, as the base at 5d1de45dc did; the closing delta's
 # first cut gated the arm on the alphabet and turned three refusals into sends ((12345678), _12345678 and 12345678/ against
 # the leaf 12345678, refused at the base and at cd3b4cfab, exported and POSTed under that cut), so the alphabet decides only
@@ -839,11 +841,15 @@ PRIVATE_STRINGS_FILE = os.path.join("romp", "private-strings.txt")
 PRIVATE_STRINGS_MAX = 64 * 1024
 LIST_OVER_BOUND = "romp: the private-strings list is over %d bytes; entries past the bound are not checked" % PRIVATE_STRINGS_MAX
 LIST_NOT_IN_FORCE = "romp: %d of %d private-strings entries did not become probes and are not checked; the list is not fully in force"
-LIST_UNDER_NUMERIC_FLOOR = ("romp: %d of %d private-strings entries are spelled like a number but carry fewer than %d digits, so they are checked "
-                            "in keys and string values and not in numbers; a number is checked against a listed entry only when the entry, or the "
-                            "plain decimal spelling of an entry written with an exponent, carries %d or more digits, and the match is against the "
-                            "number's own spelling: a listed 1234.5678 protects the number 1234.5678, a listed 12345678 does not, and a listed entry "
-                            "of fewer digits protects no number")
+# The count, the list's length, the counted entries' LIST LINES (list_lines_phrase), the floor twice. The line names the
+# entries it counts by the line of the list each is on and never by its text (the text is what the list exists to keep off
+# every output, stderr included; a refusal names its entry the same way, Hit.line), and it does not name the list's path:
+# there is one list location, the docs name it, and a home path on stderr every run is noise (the review of 2026-09-19).
+LIST_UNDER_NUMERIC_FLOOR = ("romp: %d of %d private-strings entries (%s) are spelled like a number but carry fewer than %d digits, so they are "
+                            "checked in keys and string values and not in numbers; a number is checked against a listed entry only when the entry, "
+                            "or the plain decimal spelling of an entry written with an exponent, carries %d or more digits, and the match is against "
+                            "the number's own spelling: a listed 1234.5678 protects the number 1234.5678, a listed 12345678 does not, and a listed "
+                            "entry of fewer digits protects no number")
 LIST_UNREADABLE = "romp: no private-strings list was read from %s (%s); no listed string is checked"   # the path and the reason
 LIST_NOT_UTF8 = "romp: %d line(s) of the private-strings list at %s are not UTF-8 and are not checked"
 
@@ -999,6 +1005,19 @@ def numeric_probe(s):
     return digit_count(s) >= NUMERIC_PROBE_MIN_DIGITS
 
 
+def list_lines_phrase(lines):
+    """`list line 4`, `list lines 3 and 6`, `list lines 3, 6 and 9`: the ONE-BASED LINES of the private list (private_entries,
+    the number an editor shows) that LIST_UNDER_NUMERIC_FLOOR names for the entries it counts, in file order, one phrase
+    inside the one line. The line points at each counted entry this way so that it spells no entry's text (the list exists
+    to keep those off every output, stderr included; a refusal names its entry by line for the same reason, Hit.line) and
+    names no path (there is one list location, the docs name it, and a home path on stderr every run is noise; the review
+    of 2026-09-19). `lines` is never empty: the line is written only when something is counted."""
+    lines = [str(n) for n in lines]
+    if len(lines) == 1:
+        return "list line " + lines[0]
+    return "list lines %s and %s" % (", ".join(lines[:-1]), lines[-1])
+
+
 def _number_value(text):
     """The int or finite float `text` parses to as a JSON number, else None: what number_spellings expands a listed
     entry through. A fragment (`.5678`, `1234567.`), an overflow (`1e400`, which parses to infinity), a plus sign or a
@@ -1073,7 +1092,10 @@ def machine_probes(state_dir=None, env=None):
     spelled like a number (number_shaped, on its stripped lower-cased text) and NO spelling of it (number_spellings:
     the text, and the plain decimal expansion of an entry written with an exponent) carries NUMERIC_PROBE_MIN_DIGITS
     digits (numeric_probe, the arm's own test, so the two sides partition the number-shaped entries),
-    LIST_UNDER_NUMERIC_FLOOR says once how many of how many are checked in keys and string values and not in numbers
+    LIST_UNDER_NUMERIC_FLOOR says once how many of how many are checked in keys and string values and not in numbers,
+    WHICH by the list line each is on (list_lines_phrase, in file order: never an entry's text, which the list exists to
+    keep off every output, and never the list's path, which the docs name and which would put a home path on stderr
+    every run; the review of 2026-09-19)
     (the comment at the floor: below it a match in a number is coincidence, so identifier_hits does not apply such an
     entry to a number) and what does protect a number: a listed entry of seven or more digits, in its own spelling or
     its plain expansion, matched against the number's own spelling, since a listed bare run protects only a number
@@ -1086,8 +1108,8 @@ def machine_probes(state_dir=None, env=None):
     entries carrying a letter); an entry of seven or more digits with such a character (zz4242424, (12345678)) is
     applied to numbers by its token run and is not what the line is about. Both numbers in the line run over listed
     LINES, so a repeated entry is counted once per line while the probes dedupe it to one (a list of 1234.56, 1234.56
-    and 424242 says 3 of 3). See the module docstring for why session names are not probes, and why a listed string
-    that is also romp vocabulary refuses on purpose."""
+    and 424242 says 3 of 3, list lines 1, 2 and 3). See the module docstring for why session names are not probes, and
+    why a listed string that is also romp vocabulary refuses on purpose."""
     env = os.environ if env is None else env
     out = []
 
@@ -1112,11 +1134,12 @@ def machine_probes(state_dir=None, env=None):
     dropped = sum(1 for _, s in listed if (PRIVATE_KIND, str(s).strip().lower()) not in out)
     if dropped:
         sys.stderr.write(LIST_NOT_IN_FORCE % (dropped, len(listed)) + "\n")
-    texts = [str(s or "").strip().lower() for _, s in listed]
-    under = sum(1 for t in texts                                            # spelled like a number, and armed by no spelling: the arm's other side
-                if number_shaped(t) and not any(numeric_probe(s) for s in number_spellings(t, _number_value(t))))
-    if under:
-        sys.stderr.write(LIST_UNDER_NUMERIC_FLOOR % (under, len(listed), NUMERIC_PROBE_MIN_DIGITS, NUMERIC_PROBE_MIN_DIGITS) + "\n")
+    texts = [(line, str(s or "").strip().lower()) for line, s in listed]
+    under = [line for line, t in texts                                      # spelled like a number, and armed by no spelling: the arm's other side
+             if number_shaped(t) and not any(numeric_probe(s) for s in number_spellings(t, _number_value(t)))]
+    if under:                                                               # the counted entries by their list lines, never their text or the path
+        sys.stderr.write(LIST_UNDER_NUMERIC_FLOOR % (len(under), len(listed), list_lines_phrase(under), NUMERIC_PROBE_MIN_DIGITS,
+                                                     NUMERIC_PROBE_MIN_DIGITS) + "\n")
     if state_dir:
         for p in sorted(glob.glob(os.path.join(str(state_dir), "sdk", "*.json"))):
             try:
