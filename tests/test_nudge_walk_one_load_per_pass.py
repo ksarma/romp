@@ -574,11 +574,12 @@ class _WalkHarness(unittest.TestCase):
         self.assertEqual(others, [], "a shared load from a caller that is neither the walk, the placement gate nor the wake sweep, "
                                      "by function, file and line: %s" % "; ".join(others))
         for sid, n in sorted(d["sweep"].items()):
+            recs = "; ".join("%s (%s:%d)" % (c, f, ln) for s, c, f, ln in self.calls if s == sid and c in SWEEP)
             self.assertLessEqual(n, self.owned_records.get(sid, 0),
                                  "sid ..%s: the sweep takes at most one shared load per wake record it owns per pass (a record that is "
                                  "wake-set, not failed, moot or answered, not muted, and whose sid the walk did not visit or visited "
                                  "under a wedge gate), none for a sid with no owned record; it runs after the per-session loop in the "
-                                 "same pass and memos.nudgeWalk.loads does not count it" % sid[-4:])
+                                 "same pass and memos.nudgeWalk.loads does not count it; its records for this sid: %s" % (sid[-4:], recs))
         foreign = ["%s (%s:%d, sid ..%s)" % (c, f, ln, s[-4:]) for s, c, f, ln in self.calls if c in WALK + GATE and s not in SIDS]
         self.assertEqual(foreign, [], "a shared load by the look or the placement gate for a session that is not one of this pass's two, by "
                                       "function, file, line and sid (a read of the other pass session lands in its count and is the ceilings' "
