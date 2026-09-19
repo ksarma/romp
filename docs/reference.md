@@ -3812,34 +3812,69 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   against turns scanned, so a build of a working session with one moved turn
   is one miss, plus the gauge `entries` (sessions held).
   `chatSig` is the chat signature pass's own table (stage 1 of the
-  chat-signature design), one integer per key: `pre` and `post`, the
+  chat-signature design), one integer per key. `pre` and `post` count the
   pre-build signatures the push loop took (one per tab past the cold gate, a
-  raising one included) and the post-build ones (over a window `pre` equals
-  `builds.chat` `cached` plus `built` less the targeted push's builds, which
-  take no signature, and `post` equals `built` less `nosig`); `thread`, the
-  comment-thread signatures (one per non-promoted thread of every session
-  with a comments store, per push and per comments frame, a raising one
-  included: the third taker of the signature, so a per-signature figure for
-  the read counts below divides by `pre` plus `post` plus `thread`); `nosig`,
-  signatures that raised or found no transcript path (the tab built, never
-  cached); `waited`, tabs served after waiting for another thread's build of
-  the same tab; `compares`, cache checks that met a cached entry and a
-  signature, and `compareIdentity`, the components of those compares equal
-  by object identity; `stats`, the `os.stat` calls inside a signature at the
-  transcript, the states files and the kernel's own identity helpers (the
-  store identity, the registry, the task store, the todo and pin
-  fingerprints and the cwd memos stat through their own helpers and are not
-  counted); `namesReads`, raw names-registry reads inside a signature;
-  `switchReads`, reads of the user-todos switch file; `regReads`, registry
-  file reads by the SDK backend's reader; and the warm-tab census:
-  `warmEligible`, a tab with a cached build that no connected chat client
-  watches, every connected chat client holds as a skeleton, with a
-  transcript and no plain Sessions pane connected (the cold gate's predicate
-  less its not-yet-built clause, so what a warm-tab gate would skip);
-  `warmBlockedByOutline`, the same tab with a plain Sessions pane connected;
-  and `heldBody`, a tab some connected chat client holds as a body, the
-  watched tab included. Every push counts, a connecting page's included, so
-  a per-cycle figure is a delta over `pusher.cycles`.
+  raising one included) and the post-build ones; `failedBuilds` counts the
+  chat builds that raised past a pre-build signature, which count under
+  neither `builds.chat` `cached` nor `built`; `targetedBuilds` counts the
+  targeted push's builds (the backend's one-session push at a connect
+  handshake), which take no signature and which `builds.chat` labels
+  `targeted` under `bg_miss` only when the tab is unwatched. Two identities
+  follow. Over any window `pre` equals `builds.chat` `cached` plus `built`
+  less `targetedBuilds` plus `failedBuilds`. Over a window with
+  `failedBuilds` zero `post` equals `built` less `targetedBuilds` less
+  `nosig`, and otherwise exceeds it by the failed builds whose signature was
+  also None (`nosig` counts them, `built` does not), by at most
+  `failedBuilds`. The `nosig` in that identity is this table's, which counts
+  every tab; the same-named `builds.chat` `bg_miss` `nosig` counts background
+  builds only. `thread` counts the comment-thread signatures (one per
+  non-promoted thread of every session with a comments store, per push and
+  per comments frame, a raising one included: the third taker of the
+  signature, so a per-signature figure for the read counts below divides by
+  `pre` plus `post` plus `thread`); `nosig`, signatures that raised or found
+  no transcript path (the tab built, never cached); `waited`, tabs served
+  after waiting for another thread's build of the same tab. `compares`
+  counts one per cache read that returned an entry with a signature in
+  hand: the pre-flight read, the re-read after a single-flight wait and the
+  re-read under a claim, and not the final compare, which re-evaluates the
+  last read's operands; so a rebuild counts two (every ordinary rebuild
+  takes the claim road), a waiter three, and `compares` can exceed `pre`.
+  `compareIdenticalComponents` counts the components of those reads'
+  operands equal by object identity, at every one of the 40 positions
+  whether or not the tuple compare reached it (a miss stops at the first
+  unequal position), so it is exact for a hit and an upper bound on the
+  pointer answers a miss took. The share stage 3's identity memos would
+  widen is `compareIdenticalComponents` divided by `compares` times the
+  label count (the components `bg_miss` lists, `len(_CHAT_SIG_LABELS)`, 40
+  today; both operands are always full-length), never by `compares` alone.
+  `stats` counts the `os.stat`, `os.lstat` and `DirEntry.stat` calls made on
+  the thread while a signature is open, whichever function or module makes
+  them: `os.stat` and `os.lstat` in the wrappers the kernel installs around
+  them on the `os` and `posix` modules at import (and on pathlib's accessor
+  on Python 3.10), which every `os.path`, `pathlib` and `importlib` caller
+  reaches; `DirEntry.stat` in the one helper every scandir entry's stat in
+  `kernel/` goes through, because a `DirEntry` stats in C and reaches no
+  wrapper. Not in the count, and not countable from Python: the fstat
+  inside `open()` (C, part of a read, counted by the read counters and the
+  bytes column) and a `DirEntry.is_dir` on a filesystem that reports no
+  d_type. A test intercepts `os.stat`, `os.lstat` and `DirEntry.stat`
+  in-process around real signatures over a real state root and asserts the
+  counter equals the interception count; at the previous head the counter
+  saw about 7 of 23 stats per signature. `namesReads` counts raw
+  names-registry reads inside a signature; `switchReads`, reads of the
+  user-todos switch file; `regReads`, registry file reads by the SDK
+  backend's reader. The warm-tab census: `warmEligible`, a tab with a cached
+  build that no connected chat client watches, every connected chat client
+  holds as a skeleton, with a transcript and no plain Sessions pane
+  connected (the cold gate's predicate less two of its clauses, the
+  not-yet-built one and the live-row one, so an upper bound on what a
+  warm-tab gate shaped like the cold gate would skip); `warmBlockedByOutline`,
+  the same tab with a plain Sessions pane connected; and `heldBody`, a tab
+  some connected chat client holds as a body, the watched tab included.
+  `pushes` counts the pushes that ran the chat tab loop, a connecting page's
+  included, so a per-push figure for every key here is a delta over
+  `pushes`; the `push.chat.sig` rows of `stages_ms` and `stages_cpu_ms`
+  exclude connect pushes, while this table includes them.
 - `judge`: `passes`, `ms_sum`, `ms_last`, `ms_mean` (wall time; a pass waits
   on model calls), `cpu_ms_sum` (CPU time of the judge tier threads and every
   per-session worker they run; the in-process pools' share is
