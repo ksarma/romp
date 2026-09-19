@@ -2628,13 +2628,17 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   than by a served counter (`memos.nudgeWalk.loads` counts the walk's loads,
   `nudgeGate.derived` the derives that bound the gate's checks, and
   `tests/test_nudge_walk_one_load_per_pass.py` counts each mechanism by
-  execution against whether the look ran, skipped or derived). Other readers
-  of the same store run on the same pass under their own rules and outside
-  both bounds: the dead-man's fresh re-read inside the look (`_wake_goal`,
-  the writer's loader, under `goals.loads`) and the wake sweep after the
-  per-session loop (`_awaiting_wake_outcomes`, called outside the toggle
-  guard, one shared load per wake record it owns that `memos.nudgeWalk.loads`
-  does not count), which runs after the walk in the same pass, not on it.
+  execution against whether the look ran, skipped or derived). Other readers of
+  the same store run on the same pass under their own rules and outside both
+  bounds, among them the dead-man's fresh re-read inside the look (`_wake_goal`,
+  the writer's loader, under `goals.loads`, at most one per stamped top whose
+  dead-man is due, per look), the writers' own loads at their write moments
+  (`_mark_nudge_failed`, `_file_wake_answer` and `_dead_wait_block`, each a
+  `load_goals` under `goals.loads`, reached from the look's wake legs and from
+  the sweep) and the wake sweep after the per-session loop
+  (`_awaiting_wake_outcomes`, called outside the toggle guard, one shared load
+  per wake record it owns that `memos.nudgeWalk.loads` does not count), which
+  runs after the walk in the same pass, not on it.
 - `caches`: one block per cache the kernel, the judge and the event model keep,
   each an exact occupancy (a `len()` or a sum of `len()`s under the cache's
   lock; nothing estimated): `jsonl` with `entries`, `file_bytes` and `records`
@@ -3387,14 +3391,17 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   the condition bounds two loaders, this one and the placement gate's
   post-derivation currency check, a second loader with a bound of its own,
   at most one load per derived session, counted by the test and by no served
-  counter, `nudgeGate.derived` counting the derives that bound it; other
-  readers of the same store run on the same pass under their own rules and
-  outside both bounds, the dead-man's fresh re-read inside the look
-  (`_wake_goal`, the writer's loader, under `goals.loads`) and the wake sweep
-  after the per-session loop (`_awaiting_wake_outcomes`, one shared load per
-  wake record it owns, not counted here), which runs after the walk in the
-  same pass, not on it); a memo row
-  is the ten files' stat, the look's mode tag
+  counter, `nudgeGate.derived` counting the derives that bound it; other readers
+  of the same store run on the same pass under their own rules and outside both
+  bounds, among them the dead-man's fresh re-read inside the look (`_wake_goal`,
+  the writer's loader, under `goals.loads`, at most one per stamped top whose
+  dead-man is due, per look), the writers' own loads at their write moments
+  (`_mark_nudge_failed`, `_file_wake_answer` and `_dead_wait_block`, each a
+  `load_goals` under `goals.loads`, reached from the look's wake legs and from
+  the sweep) and the wake sweep after the per-session loop
+  (`_awaiting_wake_outcomes`, one shared load per wake record it owns, not
+  counted here), which runs after the walk in the same pass, not on it); a memo
+  row is the ten files' stat, the look's mode tag
   (`full`, `wake`, or `wake+reminders` for tracking off with nudges on), the
   earliest flip and the verdict, and a row serves a look of the same mode
   only (a row of another mode counts a miss under

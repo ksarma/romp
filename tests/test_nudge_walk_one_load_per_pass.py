@@ -5,10 +5,14 @@ gate's currency check, each on its own. The WALK takes at most one shared goal-s
 exactly one when its look reaches the store, zero when the look is skipped or ends at a state gate before the store read.
 The PLACEMENT GATE's post-derivation currency check is a SEPARATE load, at most one per DERIVED session, counted apart. Two
 bounds, each attributable to its caller. Other readers of the same store run on the same pass under their own rules and
-outside both bounds: the dead-man's fresh re-read inside the look (`_wake_goal`, the writer's loader, under `goals.loads`)
-and the wake sweep after the per-session loop (`_awaiting_wake_outcomes`, called outside the toggle guard, one shared load
-per wake record it owns that `memos.nudgeWalk.loads` does not count), which runs after the walk in the same pass, not on
-it. The rule was first written as one call count; a total is falsified by any new legitimate reader of the store, where a
+outside both bounds, among them the dead-man's fresh re-read inside the look (`_wake_goal`, the writer's loader, under
+`goals.loads`, at most one per stamped top whose dead-man is due, per look), the writers' own loads at their write moments
+(`_mark_nudge_failed`, `_file_wake_answer` and `_dead_wait_block`, each a `load_goals` under `goals.loads`, reached from
+the look's wake legs and from the sweep) and the wake sweep after the per-session loop (`_awaiting_wake_outcomes`, called
+outside the toggle guard, one shared load per wake record it owns that `memos.nudgeWalk.loads` does not count), which runs
+after the walk in the same pass, not on it (review round 2 executed the writers' loads: two per failure stamp, one per
+answered wake, one per due dead-man; the dormant branch's block by code). The rule was first written as one call count;
+a total is falsified by any new legitimate reader of the store, where a
 named mechanism adds a clause, so the counts below never sum the two. Stage 1 made the wake-only look record a memo row and skip on the
 ten-file key, and the first wording of its amendment kept the walk's ceiling (at most one) and dropped the floor; the ruling
 restored the floor, so this pin holds both.
@@ -532,7 +536,8 @@ class OneSharedLoadPerAliveSessionPerPass(_WalkHarness):
         self.assertEqual(p5["walk"], {SID_A: 1, SID_B: 0},
                          "the walk, per session: one load for the look that reached the store, none for the one that skipped (condition 7, the walk's bound)")
         self.assertEqual((p5["gate"], p5["memo"]), ({SID_A: 1, SID_B: 0}, (0, 1)),
-                         "the placement gate, per session: the moved parse derives once and checks once, the skipped session not at all (condition 7, the gate's bound)")
+                         "the placement gate, per session: the moved parse derives once and checks once, the skipped session not at all "
+                         "(condition 7, the gate's bound: at most one check per derive; equal here because the harness caches every parse)")
         self.assertEqual((p5["loads"], p5["writer"], p5["shared"]), (1, 0, {"hit": 2}), "the walk's one and the gate's one, both hits")
         for name, p in (("p1", p1), ("p2", p2), ("p3", p3), ("p4", p4), ("p5", p5)):
             for sid in SIDS:
@@ -619,7 +624,8 @@ class TheSweepIsItsOwnBoundedReader(_WalkHarness):
         p1 = self._pass(NOW)
         self.assertEqual((p1["walk"], p1["gate"], p1["memo"], p1["loads"]), ({SID_A: 1, SID_B: 1}, {SID_A: 1, SID_B: 1}, (0, 2), 2),
                          "the walk and the gate as on any first pass: the record is SID_C's, a sid neither look is about, and the "
-                         "counter counts the walk alone")
+                         "counter counts the walk alone (the gate's rule is at most one check per derive; equal here because the harness "
+                         "caches every parse)")
         self._one_sweep_load(p1, "p1")
         self.assertEqual(p1["shared"], {"hit": 2, "miss": 3}, "the walk's two fills and the sweep's one, the gate's two hits")
         p2 = self._pass(NOW + 5)
@@ -728,19 +734,27 @@ class Docs(unittest.TestCase):
                       "the placement gate's post-derivation currency check is a second load", "not an exception to the walk's bound",
                       "at most one per derived session, counted apart by the test rather than by a served counter",
                       "`memos.nudgeWalk.loads`", "tests/test_nudge_walk_one_load_per_pass.py",
-                      "readers of the same store run on the same pass under their own rules and outside both bounds",
-                      "`_wake_goal`", "`_awaiting_wake_outcomes`", "runs after the walk in the same pass, not on it"):
+                      "readers of the same store run on the same pass under their own rules and outside both bounds, among them",
+                      "`_wake_goal`", "at most one per stamped top whose dead-man is due, per look",
+                      "the writers' own loads at their write moments", "`_mark_nudge_failed`", "`_file_wake_answer`", "`_dead_wait_block`",
+                      "reached from the look's wake legs and from the sweep",
+                      "`_awaiting_wake_outcomes`", "runs after the walk in the same pass, not on it"):
             self.assertIn(words, jobs, "the jobs paragraph states condition 7 per mechanism, scoped to the two loaders it bounds, names "
-                                       "the store's other readers on the pass, the counter and this test: %r" % words)
+                                       "the store's other readers on the pass as a class with its members and their bounds, the counter "
+                                       "and this test: %r" % words)
         walk = " ".join(doc[doc.index("`nudgeWalk` is the auto-nudge walk's"):].split())   # wrapped: normalise before slicing
         walk = walk[:walk.index("a memo row is the ten files' stat")]
         self.assertIn("`loads`", walk, "memos.nudgeWalk.loads is named in the walk's entry")
         self.assertIn("bounds two loaders", walk, "and the entry scopes the condition to the two loaders it bounds")
         self.assertIn("a second loader with a bound of its own", walk, "and the entry names the gate's check as the second loader")
         self.assertIn("counted by the test and by no served counter", walk, "and says what counts it")
-        for words in ("readers of the same store run on the same pass under their own rules and outside both bounds",
-                      "`_wake_goal`", "`_awaiting_wake_outcomes`", "runs after the walk in the same pass, not on it"):
-            self.assertIn(words, walk, "and the entry names the store's other readers on the pass, the sweep after the walk: %r" % words)
+        for words in ("readers of the same store run on the same pass under their own rules and outside both bounds, among them",
+                      "`_wake_goal`", "at most one per stamped top whose dead-man is due, per look",
+                      "the writers' own loads at their write moments", "`_mark_nudge_failed`", "`_file_wake_answer`", "`_dead_wait_block`",
+                      "reached from the look's wake legs and from the sweep",
+                      "`_awaiting_wake_outcomes`", "runs after the walk in the same pass, not on it"):
+            self.assertIn(words, walk, "and the entry names the store's other readers on the pass as a class with its members and their "
+                                       "bounds, the sweep after the walk: %r" % words)
         gloss = km._PerfStats.__doc__
         field = gloss[gloss.index("nudgeWalk (the auto-nudge walk's"):]
         field = " ".join(field[:field.index("nudgeGate")].split())   # wrapped too
