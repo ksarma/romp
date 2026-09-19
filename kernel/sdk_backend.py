@@ -12632,13 +12632,24 @@ class SdkBackend:
                     # specification and no host.log exists for it. The string says what happened, then where to look, and
                     # nothing else (round 5 of the same review, 2026-09-19: it reaches the operator twice, as the error
                     # centre's row and as the launch error, and through round 4 it carried this comment's citation and its
-                    # explanation; the why lives here, once). host.log stays the tail so the reason, when a row says one,
-                    # follows it: main's pins in tests/test_session_host_sdk_pin.py hold "see hosts/<sid>/host.log" as the
-                    # no-reason ending and "host.log: <reason>" as the other, and PreludeRefusalRead in
-                    # tests/test_session_host.py holds the code and host.stderr; so host.stderr, the file of the class that
-                    # has no host.log, is named before the tail.
-                    said = ("exited before serving its socket (code %s); see hosts/%s/host.stderr when it wrote no host.log, else see "
-                            "hosts/%s/host.log%s" % (proc.returncode, sess.sid, sess.sid, (": " + reason) if reason else ""))
+                    # explanation; the why lives here, once). Composed per arm (round 5's addendum, 2026-09-19): a reason
+                    # is the error of a failing row THIS host wrote past the mark, so in that arm host.log exists and holds
+                    # it, and the message names that file alone with the reason as its tail ("host.log: <reason>", main's
+                    # pin in tests/test_session_host_sdk_pin.py); round 5's one string carried a clause about a missing
+                    # host.log into this arm, a conditional the kernel had already resolved. No reason is three shapes to
+                    # the operator: no host.log at all (the constructor refusal above; the traceback is on host.stderr), a
+                    # host.log a previous host left with nothing from this launch (a stale kernel-held lease keeps the
+                    # directory and the file across launches; host.stderr again), or this launch's rows with no failing
+                    # one among them. So that arm names host.stderr under the condition the operator can read off the
+                    # file, missing or without a row from this launch (round 5's "when it wrote no host.log" was false
+                    # over the surviving file), and ends with the host.log tail main's pins hold ("see
+                    # hosts/<sid>/host.log"); PreludeRefusalRead in tests/test_session_host.py holds the code and
+                    # host.stderr, and SpawnWaitMessageArms there reads each arm's whole message.
+                    if reason:
+                        said = "exited before serving its socket (code %s); see hosts/%s/host.log: %s" % (proc.returncode, sess.sid, reason)
+                    else:
+                        said = ("exited before serving its socket (code %s); see hosts/%s/host.stderr when host.log is missing or has no "
+                                "row from this launch, else see hosts/%s/host.log" % (proc.returncode, sess.sid, sess.sid))
                     # The drift fact first, on its own row (fresh-1 as the closing check ruled it, 2026-09-18): a
                     # host that imported an untested SDK wrote so before it failed, and that fact is filed whatever
                     # the failure was, with the remedy, once per kernel life per version pair. The failure's row below

@@ -2041,11 +2041,19 @@ class StateRootByHostsDir(unittest.TestCase):
     for the queue and not fixed in this change (hosts_dir's docstring says which roads can reach it: only a caller over
     a root no romp tool has made); the queued fix, 0700 on the root's own mkdir read back, re-points this pin."""
 
-    def _made_under(self, umask):
-        """hosts_dir over a root not yet on disk, under `umask` (restored); the root's and hosts/'s modes as read back."""
-        base = tempfile.mkdtemp(prefix="sr-")
-        self.addCleanup(shutil.rmtree, base, True)
-        root = Path(base) / "state"
+    def _made_under(self, umask, root=None):
+        """hosts_dir over a root not yet on disk, under `umask` (restored); the root's and hosts/'s modes as read back.
+        The restore is try/finally around the one call and not addCleanup: the case below sets three umasks in one test
+        and each must be back before the next is set and before the read-back, where addCleanup runs once, at the test's
+        end (the lens's note on round 5, 2026-09-19; the raising road is pinned by the case after it). `root` names a
+        root whose parent a case has planted; by default a fresh one under a fresh parent."""
+        if root is None:
+            base = tempfile.mkdtemp(prefix="sr-")
+            self.addCleanup(shutil.rmtree, base, True)
+            root = Path(base) / "state"
+        # load-bearing (the lens's mutation M5 on round 5): a root already on disk at 0755 reads back 0755 under 022 too,
+        # so without this line the 022 subtest cannot tell a root this call made from one that was there; the pin is
+        # about creation, and this is what says the call created it (bypassed, the 022 subtest is blind; M4 shows it fires)
         self.assertFalse(root.exists())
         old = os.umask(umask)
         try:
@@ -2053,6 +2061,21 @@ class StateRootByHostsDir(unittest.TestCase):
         finally:
             os.umask(old)
         return stat.S_IMODE(os.lstat(root).st_mode), stat.S_IMODE(os.lstat(root / "hosts").st_mode)
+
+    def test_the_umask_is_put_back_when_hosts_dir_raises(self):
+        """The restore on the raising road, by execution (round 5's addendum, 2026-09-19): a parent that is a regular
+        file makes owner_only_dir's mkdir raise (NotADirectoryError, an OSError) before any mode exists to read back,
+        and the umask the case found is the one it has afterwards. Refusable: the finally replaced by a restore on the
+        line after the call leaves 077 in place, and this reds."""
+        base = tempfile.mkdtemp(prefix="sr-")
+        self.addCleanup(shutil.rmtree, base, True)
+        blocker = Path(base) / "blocker"
+        blocker.write_text("")
+        current = os.umask(0)
+        os.umask(current)
+        with self.assertRaises(OSError):
+            self._made_under(0o077, root=blocker / "state")
+        self.assertEqual(os.umask(current), current, "the umask is the one the case found, after the raise")
 
     def test_the_root_hosts_dir_makes_on_the_way_lands_at_the_umasks_mode_and_hosts_below_it_is_0700(self):
         current = os.umask(0)                           # the runner's own umask, read and put back
@@ -2600,6 +2623,11 @@ class PreludeRefusalRead(unittest.TestCase):
         self.assertEqual(self.hosts[0].wait(10), 1, open(self.stderr_path).read()[-800:])
         rows = [json.loads(l) for l in (Path(self.state) / "hosts" / SID / "host.log").read_text().splitlines()]
         self.assertEqual([r["kind"] for r in rows], ["host-started", "socket-bind-failed", "host-crashed"], rows)
+        # the reason arm on a real host (round 5's addendum, 2026-09-19): this refusal wrote its rows, so the kernel read
+        # the host-crashed row's error past its mark and the message names host.log alone, that error its tail; host.stderr,
+        # the file of the class that wrote no row, is not named in this arm (SpawnWaitMessageArms reads every arm whole)
+        self.assertTrue(msg.endswith("; see hosts/%s/host.log: %s" % (SID, rows[2]["error"])), msg)
+        self.assertNotIn("host.stderr", msg, "a host that wrote a failing row wrote host.log: the other file is not named")
         row = rows[1]
         self.assertEqual((row["step"], row["error"], row["errno"], row["pathLen"], row["limit"]),
                          ("budget", "OSError", errno.ENAMETOOLONG, sh.SOCK_PATH_MAX + 1, sh.SOCK_PATH_MAX), row)
@@ -2610,6 +2638,87 @@ class PreludeRefusalRead(unittest.TestCase):
         hosts = Path(self.state) / "hosts"
         self.assertFalse((hosts / (SID[:8] + ".sock")).exists(), "nothing published")
         self.assertEqual(sorted(p.name for p in hosts.glob("*.tmp")), [], "no temp left")
+
+
+class SpawnWaitMessageArms(unittest.TestCase):
+    """The spawn wait's message, composed per arm (round 5's addendum, 2026-09-19, closing the lens's two notes on round
+    5's one string: with a reason in hand the kernel had already resolved "when it wrote no host.log", and over a
+    host.log a previous host left that clause was false). The real backend's exited road (_host_transport_for, the
+    proc.poll() is not None arm) over a fake _spawn_host whose host has exited, the harness tests/test_session_host_sdk_pin.py
+    HostProcess uses; the WHOLE message is read on each arm, the launch error and the error centre's row alike, never a
+    substring alone. Three shapes: a host that wrote a failing row (what happened, then the one file that holds the
+    reason, the reason as its tail, and host.stderr not named); a host that wrote nothing and left no host.log (what
+    happened, then host.stderr under the condition the operator can read off the file, then the host.log tail main's
+    pins hold); and a host that wrote nothing over a host.log a previous host left, which a stale kernel-held lease keeps
+    across launches: the same message as the second, read against a file that exists on disk with a stale row only and
+    a previous reason the message does not carry. Each root declares the host road (`on` in session-hosts)."""
+
+    _STALE_LEASE = {"pid": 2 ** 22 - 1, "start": "gone", "t": 0, "holder": {"kind": "kernel", "pid": 2 ** 22 - 2, "start": "gone"}}
+    _HAPPENED = "the session host exited before serving its socket (code 1)"
+    _NO_REASON = _HAPPENED + ("; see hosts/%s/host.stderr when host.log is missing or has no row from this launch, else see "
+                              "hosts/%s/host.log" % (SID, SID))
+
+    def _root(self):
+        d = tempfile.mkdtemp(prefix="swm-")
+        self.addCleanup(shutil.rmtree, d, True)
+        Path(d, "session-hosts").write_text("on")
+        sb.write_reg(Path(d), SID, {"sid": SID, "name": "web", "alive": True, "lastSid": SID, "cwd": d})
+        return d
+
+    def _launch(self, d, rows, code=1):
+        """One connect through a host that appended `rows` to host.log (opening the file only when there is a row to
+        write, so a host that wrote nothing leaves no file) and exited `code`; the launch error's text and the error
+        centre's rows."""
+        be = sb.SdkBackend(d, "/bin/true", lambda *a, **k: None, log=lambda m, *a, **k: None)
+        sess = types.SimpleNamespace(sid=SID, name="web", _host_intent=True, _host=None, _host_is_attach=False,
+                                     _options_login="", _seed_for_dead_cli=lambda cli: None)
+
+        def spawn(s, spec_path, secret_env=None):
+            if rows:
+                with open(Path(spec_path).parent / "host.log", "a") as f:
+                    for row in rows:
+                        f.write(json.dumps(row) + "\n")
+            return types.SimpleNamespace(poll=lambda: code, returncode=code, pid=4242, terminate=lambda: None)
+        with mock.patch.object(be, "_spawn_host", spawn):
+            with self.assertRaises(sb.CLIConnectionErrorLike) as cm:
+                asyncio.run(be._host_transport_for(sess, types.SimpleNamespace(), (None, None, None)))
+        p = Path(d) / sb.SESSION_EVENTS_FILE
+        return str(cm.exception), [json.loads(l) for l in p.read_text().splitlines()] if p.exists() else []
+
+    def test_a_host_that_wrote_a_failing_row_is_sent_to_host_log_alone_with_the_reason_as_the_tail(self):
+        d = self._root()
+        msg, events = self._launch(d, [{"t": 1, "kind": "host-started"}, {"t": 2, "kind": "cli-spawn-failed", "error": "TypeError"}])
+        self.assertEqual(msg, self._HAPPENED + "; see hosts/%s/host.log: TypeError" % SID)
+        self.assertEqual([(r["kind"], r["code"], r["text"]) for r in events],
+                         [("host.exited-before-socket", 1, "the session host for web " + msg[len("the session host "):])],
+                         "the error centre's row carries the same sentence")
+
+    def test_a_host_that_left_no_host_log_is_sent_to_host_stderr_under_the_condition_the_operator_can_read(self):
+        d = self._root()
+        msg, events = self._launch(d, [])
+        self.assertFalse((sb._ht().host_dir(d, SID) / "host.log").exists(), "the shape: no host.log exists for this launch")
+        self.assertEqual(msg, self._NO_REASON)
+        self.assertEqual([(r["kind"], r["code"], r["text"]) for r in events],
+                         [("host.exited-before-socket", 1, "the session host for web " + msg[len("the session host "):])])
+
+    def test_a_host_that_wrote_nothing_over_a_previous_hosts_log_gets_the_same_message_and_none_of_that_hosts_reason(self):
+        """The shape round 5's clause was false for: host.log exists on disk, left by a previous host and kept by a stale
+        kernel-held lease, and this launch's host added nothing to it. The message's condition, missing or without a row
+        from this launch, is the one that holds; the previous host's reason is not this launch's."""
+        d = self._root()
+        hd = sb._ht().host_dir(d, SID)
+        hd.mkdir(parents=True)
+        stale = [{"t": 1, "kind": "host-started"}, {"t": 2, "kind": "host-crashed", "error": "OSError: a previous launch's reason"}]
+        (hd / "host.log").write_text("".join(json.dumps(r) + "\n" for r in stale))
+        sb.write_lease(d, dict(self._STALE_LEASE, sid=SID))
+        self.assertEqual(sb.lease_state(sb.read_lease(d, SID), time.time()), "no-live-process", "the precondition: a stale kernel-held lease")
+        msg, events = self._launch(d, [])
+        self.assertTrue((hd / "host.log").exists(), "the shape: a host.log exists, and it is the previous host's")
+        self.assertEqual([json.loads(l)["t"] for l in (hd / "host.log").read_text().splitlines()], [1, 2], "this launch's host added no row")
+        self.assertEqual(msg, self._NO_REASON)
+        self.assertNotIn("previous launch", msg, "the previous host's reason is not this launch's")
+        self.assertEqual([(r["kind"], r["code"]) for r in events], [("host.exited-before-socket", 1)])
+        self.assertNotIn("previous launch", events[0]["text"])
 
 
 class SocketFchmod(unittest.TestCase):
