@@ -30,7 +30,7 @@ import { headVerdict, mtimeMoved, ABSENT, figurePath } from "./file-comments-mod
 import { kernelUrl } from "./media";
 import { quoteSrcLabel } from "./docreview";
 import { fileCommentsAction, panelMark } from "./file-comments";
-import { pictureDest } from "./file-comments";       // the authored source a failed figure's label names (armFigureLabels): the panel's own rule, not a second reading of data-fv-src
+import { pictureDest } from "./file-comments";       // the authored source of a figure's own src (chosenSource, read by the failed figure's label and by the figure's open when the browser chose the src): the panel's own rule, not a second reading of data-fv-src
 import { readPlace, seatPlaceOutcome, followPlace, blockHolding, blockIndexAt, type Place } from "./reader-place";   // the reader's place across a paint (Slice 2 of plans/markdown-viewer.md); blockHolding: the block an open's `{ offset }` names, blockIndexAt: the block a remembered place's span starts, followPlace: the last measured place into the text a reload landed under a boxless body (Slice 6)
 import { sourceBlockSpans, renderedBlockElements } from "./anchor-map";   // the block table and its elements, for an open's `{ offset }` in the Rendered view (Slice 6 of plans/markdown-viewer.md)
 import { rawRowForOffset } from "./anchor-map";   // the verified Raw row map, for scrollToOffset (Slice 7 of plans/markdown-viewer.md, item 7): the row whose source span holds an offset, following whatever split the rows were built on
@@ -4641,18 +4641,27 @@ function figureControlAfter(anchor: Element): HTMLElement | null {
 function absUrl(u: string): string {
   try { return new URL(u, document.baseURI).href; } catch { return u; }
 }
-/** The source the browser asked for and could not load, as the author wrote it. The browser picks ONE candidate for an img (the
- *  first `<source>` of an enclosing `<picture>` whose media and type match, else the img's own srcset by density, else its
- *  src), fetches that one and fires the img's `error` when it fails, with no fall back to another candidate or to the src; so
- *  a label naming `src` for a picture or a srcset img named a file the browser never asked for, one that may well be there
- *  (the review's round 1). `img.currentSrc` is the browser's answer: when it is set and is not the img's own src, the
+/** The source the browser asked for and could not load, as the author wrote it: the candidate it chose for the figure
+ *  (chosenSource). The browser picks ONE candidate for an img (the first `<source>` of an enclosing `<picture>` whose media
+ *  and type match, else the img's own srcset by density, else its src), fetches that one and fires the img's `error` when it
+ *  fails, with no fall back to another candidate or to the src; so a label naming `src` for a picture or a srcset img named a
+ *  file the browser never asked for, one that may well be there (the Slice 7 review's round 1). */
+function failedSource(img: Element): string | null {
+  return chosenSource(img);
+}
+/** The candidate the browser chose for a figure, as the author wrote it: the source the picture shows once it has loaded,
+ *  the one that failed when it has not (failedSource), and the file "Open the picture" opens (figureTarget), so the picture
+ *  opened is the one shown and its request is the one the paint made, never the fallback src a `<picture>` or a srcset
+ *  figure skipped (the link-navigation follow-on's review, round 2: read from the src alone, the control opened the fallback
+ *  for every such shape). `img.currentSrc` is the browser's answer: when it is set and is not the img's own src, the
  *  candidate it names is matched against the srcset carriers (the picture's sources, then the img) and named by the authored
  *  spelling rewriteFigureSrcs kept beside the rewritten candidates (FV_SRCSET), or as written when the candidates were left as
  *  written (a remote host's absolute ones; a URL document's relative candidates are rewritten to absolute URLs by
  *  resolveFigureRefs with no data-fv-src and no FV_SRCSET stamp, so its label names the resolved URL). The img's own src, or an
- *  img with no currentSrc to read (the node stand-in), keeps pictureDest's rule: `data-fv-src` when the viewer rewrote the src,
- *  else `src`; a figure with neither names nothing. */
-function failedSource(img: Element): string | null {
+ *  img with no currentSrc to read (the node stand-in; a figure read at paint time, before the browser has picked, whose
+ *  control's existence is decided from the src then and whose target is read again at the click), keeps pictureDest's rule:
+ *  `data-fv-src` when the viewer rewrote the src, else `src`; a figure with neither names nothing. */
+function chosenSource(img: Element): string | null {
   const cur = (img as HTMLImageElement).currentSrc || "";
   if (!cur || cur === absUrl(img.getAttribute("src") || "")) return pictureDest(img);
   const picture = img.closest("picture");
@@ -4777,15 +4786,20 @@ function resolveFigureRefs(root: ParentNode, base: string): void {
 // sideways, so the control floats with it (the -left and -right classes). It has no text of its own and the text walks skip
 // it as a control (anchor-map.ts and reader-place.ts CONTROL_CLASSES). A URL document (openUrlView) gets none: its figures
 // are the web's, and it is no file of a session.
-// What the control opens (figureTarget): for a remote picture (an http or https source, a protocol-relative one), the address
-// in a tab, never the viewer, read FIRST; else the file the authored source names on the session's disk (the model's
-// figurePath, the join rewriteFigureSrcs fetched through, so the picture opened is the one shown). A figure with nothing to
-// open gets no control: no source, a `data:` URL (inline bytes, which a tab will not show), any other scheme. A gated
-// placeholder (figure-gate.ts) gets none until its figure is loaded: armFigureControls hears the load on the body.
+// What the control opens (figureTarget): the candidate the browser chose for the figure, as the author wrote it
+// (chosenSource: the `<source>` or srcset candidate `currentSrc` names, else the src by pictureDest's rule), so a `<picture>`
+// or a srcset figure opens the picture shown and not the fallback src the browser never asked for (the review's round 2:
+// read from the src alone, the control opened a file the paint never requested, and a remote picture's tab was an address
+// the page never fetched). For a remote candidate (an http or https source, a protocol-relative one), the address in a tab,
+// never the viewer, read FIRST; else the file the candidate names on the session's disk (the model's figurePath, the join
+// rewriteFigureSrcs fetched through, so the open's request is the paint's). A figure with nothing to open gets no control:
+// no source, a `data:` URL (inline bytes, which a tab will not show), any other scheme; read at paint time, before the
+// browser has picked, that is the src's verdict, and the target is read again at the click. A gated placeholder
+// (figure-gate.ts) gets none until its figure is loaded: armFigureControls hears the load on the body.
 /** What "Open the picture" opens for a figure, or null when there is nothing to open. `filePath` is the shown file's. */
 type FigureTarget = { kind: "file"; path: string } | { kind: "web"; href: string };
 function figureTarget(img: Element, filePath: string): FigureTarget | null {
-  const dest = pictureDest(img);                       // the authored source: data-fv-src when the viewer rewrote the src, else src as written
+  const dest = chosenSource(img);                      // the candidate the browser chose, as the author wrote it: the picture's source or the srcset candidate in currentSrc, else the src by pictureDest's rule
   if (dest === null) return null;
   // The web address FIRST, before the model's join: figurePath reads a protocol-relative source (`//host/pic.svg`) as an
   // absolute path of the disk (its one test is for a scheme, and `//` has none), where rewriteFigureSrcs left it alone as a

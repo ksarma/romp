@@ -531,18 +531,25 @@ holds one, work as before, and a drag that starts or ends on a link selects
 rather than opens. The viewer keeps a trail of the files you reach through the links
 inside a file, with two arrow buttons at the left of its title bar: **Back** returns you to
 the file you followed a link from, and **Forward** to the file you came back from, each at
-the place and in the view you left it (Alt+Left and Alt+Right, or Cmd+[ and Cmd+] on a Mac,
-do the same while no text box holds the keyboard); a file opened from the chat, from a
-listing or from the Files pane's **Recent** list starts the trail over, and closing the
-viewer ends it. Every picture in a rendered file that comes from a file or a web address has
-an **Open the picture** button at its top-right corner (top-left for a picture floated to
-the right), shown while the pointer is over the picture or the button holds the keyboard
-focus, that opens the picture on its own in the viewer, with Back returning you to the file
-at that place; a plain click on the picture does the same while the Comments panel is
-closed (with the panel open, a click offers a comment as before), a Cmd-click (Ctrl on
-Windows and Linux) opens the picture in a browser tab, a picture from the web opens in a tab
-(a figure waiting behind its host's box gets its button once it has loaded), and a `data:`
-picture, whose bytes are written into the file itself, has no button and does not open.
+the place and in the view you left it (while you are not editing the file and no text box
+holds the keyboard, Cmd+[ and Cmd+] on a Mac do the same, and so do Alt+Left and Alt+Right
+on a Files or chat page open in a browser tab of its own; in the dashboard those two keys
+move the keyboard between the panes); a file opened from the chat, from a listing or from
+the Files pane's **Recent** list starts the trail over, and closing the viewer ends it. A
+picture in a rendered file that comes from a file or a web address has an
+**Open the picture** button at its top-right corner (top-left for a picture floated to the
+right), shown while the pointer is over the picture or the button holds the keyboard focus, that
+opens the picture on its own in the viewer, with Back returning you to the file at that
+place; a plain click on the picture does the same while the Comments panel is closed (with
+the panel open, a click offers a comment as before), a Cmd-click (Ctrl on Windows and
+Linux) opens the picture in a browser tab, and a picture from the web opens in a tab; a
+figure waiting behind its host's box gets its button once it has loaded, and three kinds of
+picture have none: a `data:` picture, whose bytes are written into the file itself and
+which does not open; a picture smaller than 48 pixels on either side (a badge, an inline
+icon), which the button would cover, and which a plain click still opens when no link holds
+it; and a picture inside a link that holds more than the picture (a caption beside it),
+where a click follows the link, while a picture that is all its link holds keeps its button
+beside the link.
 
 **Text size and width.** The **A−** and **A+** buttons in the viewer's title bar make
 the text of any text file smaller or larger in fixed steps from 70% to 200%: a markdown
