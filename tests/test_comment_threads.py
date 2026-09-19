@@ -1418,8 +1418,23 @@ def _views_reads_fault():
 
 
 class CommentOps(CommentBase):
+    """The comment operations over a FakeBackend, every kernel name they stub restored in tearDown (_stub). The class that
+    can leak a stub onto the shared kernel module also checks for the leak, in its own process (2026-09-19 review, fresh-1):
+    setUp registers, as its FIRST cleanup, a check that km._sdk is the kernel's own def by qualified name. Cleanups run
+    LIFO after tearDown, so the first registered runs last, after CommentBase.tearDown put _sdk back and after every other
+    cleanup; a leak from this class fires on the leaking test, and on the test after it too, because CommentBase.setUp saves
+    the leaked stub as the value tearDown restores. The last-in-file class keeps guarding a leak from any other class: under
+    pytest-xdist the two need not share a worker, so that pin alone told nothing about this class on most runs (the three
+    _stub hunks reverted: CommentOps alone 27 of 34 red serially, the whole module red under -n 4, the last-in-file pin
+    green seven times in eight)."""
+
+    def _assert_sdk_is_the_kernels_own(self):
+        self.assertEqual(getattr(km._sdk, "__qualname__", None), "_sdk",
+                         "a stub leaked onto the shared kernel module's _sdk: %r" % (km._sdk,))
+
     def setUp(self):
         super().setUp()
+        self.addCleanup(self._assert_sdk_is_the_kernels_own)   # FIRST, so LIFO runs it LAST (the class docstring says why)
         self._stubs = []               # (name, the value before): _stub's record, undone first thing in tearDown
         self.be = FakeBackend()
         self._saved_backend_for = km.Sessions.backend_for
