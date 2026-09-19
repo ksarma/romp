@@ -80,6 +80,16 @@ async function withManager(fn: (rig: Rig) => void | Promise<void>): Promise<void
 const qOf = (url: string) => new URLSearchParams(url.split("?")[1] || "");
 const feeds = (emitted: any[]) => emitted.filter((m) => m && m.type === "feed");
 const last = (xs: any[]) => xs[xs.length - 1];
+const diagRows = (sent: any[], what: string) => sent.filter((x) => x && x.type === "clientDiag" && x.what === what).map((x) => x.data);
+// the 2 s retry timers connect() and ws.onclose arm (real setTimeout calls under node), held for the test to fire when it
+// chooses, through a setTimeout stub scoped to the call
+function heldTimers(fn: () => void): Array<() => void> {
+  const timers: Array<() => void> = [];
+  const real = globalThis.setTimeout;
+  (globalThis as any).setTimeout = (cb: () => void) => { timers.push(cb); return 0; };
+  try { fn(); } finally { (globalThis as any).setTimeout = real; }
+  return timers;
+}
 
 const card = (sid: string, n: number, over: Record<string, unknown> = {}) =>
   ({ itemId: sid + ":g" + n, sid, name: sid === SID_L ? "web" : sid === SID_A ? "api" : "worker", text: "goal " + n, t: 1000 - n, column: "working", ...over });
@@ -206,10 +216,8 @@ test("a redial on the same conn forgets the host's raw base with the dead socket
     ws.frame({ type: "feedDelta", now: 510, buildId: 2, asks: [card(SID_A, 2)], removeAsks: [SID_A + ":g1"] });
     assert.deepEqual(last(feeds(emitted)).asks.map((a: any) => a.itemId), [SID_A + ":g2"]);
     const before = feeds(emitted).length, conn = fm.conns.get(HOST);
-    const timers: Array<() => void> = [];
-    const realTimeout = globalThis.setTimeout;
-    (globalThis as any).setTimeout = (cb: () => void) => { timers.push(cb); return 0; };
-    try { ws.readyState = 3; ws.onclose!({ code: 1006, wasClean: false }); } finally { (globalThis as any).setTimeout = realTimeout; }
+    ws.readyState = 3;
+    const timers = heldTimers(() => ws.onclose!({ code: 1006, wasClean: false }));
     assert.equal(timers.length, 1, "the close armed one redial");
     timers[0]();
     const ws2 = last(FakeWS.made);
@@ -222,7 +230,7 @@ test("a redial on the same conn forgets the host's raw base with the dead socket
     assert.equal(feeds(emitted).length, before, "nothing emitted");
     assert.deepEqual(last(feeds(emitted)).asks.map((a: any) => a.itemId), [SID_A + ":g2"], "the merge stands where the dead socket left it");
     assert.deepEqual(ws.sent, [], "nothing on the dead socket");
-    assert.equal(fm.perHostFeedRaw[HOST], undefined, "the mechanism: the raw base went with the dead socket, and the ask's full frame will seed a new one");
+    assert.equal(conn.feedRaw, undefined, "the mechanism: the raw base went with the dead socket, and the ask's full frame will seed a new one");
     fm.conns.get(HOST).closed = true;
   });
 });
@@ -280,9 +288,9 @@ test("a needFullFeed the remote socket cannot carry is held like its twins: no t
 // ── two hosts, overlapping names (2026-09-19) ─────────────────────────────────────────────────────────────────────────
 // Session names and sids are not unique across hosts: a hub federating two boxes that both run a session called `api`
 // (here even the same bare sid, the hardest case) must apply each host's delta onto THAT host's raw frame and nothing
-// else. These pin the per-host keying of perHostFeedRaw, not the feature: they are green at this head and red under
-// the mutation that keys the raw base by a constant at its four sites (the store, the two reads in applyRemoteFeedDelta,
-// the detach), which the single-host tests above cannot see (a review round found that a "host B untouched after host
+// else. These pin that the raw base is each conn's own (Conn.feedRaw), not the feature: they are green at this head and
+// red under the mutation that reads and writes the base through one slot shared by every conn (the store site and
+// applyRemoteFeedDelta's read and write), which the single-host tests above cannot see (a review round found that a "host B untouched after host
 // A's delta" case stays green under it: only DIFFERENT content per host, and a no-base leg with one host holding a base
 // and the other none, make the collapse visible). Asserted by prefixed sid, never by position: mergeHostFeeds
 // concatenates per host in hostSeq order.
@@ -317,8 +325,8 @@ test("two hosts with the same session name and sid: each host's rows move only o
     assert.deepEqual([topsOf(m, HOST_A), topsOf(m, HOST_B)], [[["tA2"]], [["tB"]]], "A's ledger moved, B's stands");
     assert.deepEqual(m.working, [HOST_A + ":" + SID_S], "the non-keyed fields came from A's own raw base");
     assert.deepEqual([wsA.sent, wsB.sent], [[], []], "nothing asked of either kernel");
-    assert.deepEqual(fm.perHostFeedRaw[HOST_A].asks.map((a: any) => a.itemId), [SID_S + ":g2"], "A's raw base advanced (bare ids: the key is the host alone)");
-    assert.deepEqual(fm.perHostFeedRaw[HOST_B].asks.map((a: any) => a.itemId), [SID_S + ":g3"], "B's raw base is untouched");
+    assert.deepEqual(fm.conns.get(HOST_A).feedRaw.asks.map((a: any) => a.itemId), [SID_S + ":g2"], "A's conn's raw base advanced (bare ids: the base is the conn's, so the host's)");
+    assert.deepEqual(fm.conns.get(HOST_B).feedRaw.asks.map((a: any) => a.itemId), [SID_S + ":g3"], "B's is untouched");
     // B's turn: ledgers: [] beside removeLedgers, since applyFeedDelta applies ledger removals only when `ledgers` is an array
     wsB.frame({ type: "feedDelta", now: 520, buildId: 2, removeAsks: [SID_S + ":g3"], ledgers: [], removeLedgers: [SID_S] });
     m = last(feeds(emitted));
@@ -346,7 +354,7 @@ test("two hosts, one base: a delta from the host with no full frame held asks TH
     assert.equal(feeds(emitted).length, before, "nothing emitted: B's delta was not applied onto A's base");
     const m = last(feeds(emitted));
     assert.deepEqual([asksOf(m, HOST_A), asksOf(m, HOST_B)], [[SID_S + ":g1"], []], "the merge carries A's rows only");
-    assert.deepEqual(fm.perHostFeedRaw[HOST_A].asks.map((a: any) => a.itemId), [SID_S + ":g1"], "A's raw base is as A's full left it");
+    assert.deepEqual(fm.conns.get(HOST_A).feedRaw.asks.map((a: any) => a.itemId), [SID_S + ":g1"], "A's raw base is as A's full left it");
     fm.conns.get(HOST_A).closed = true; fm.conns.get(HOST_B).closed = true;
   });
 });
@@ -355,9 +363,11 @@ test("two hosts: detaching one drops its raw base and leaves the other's; the re
   await withManager(({ fm, emitted }) => {
     const wsA = attachedAs(fm, HOST_A, fullA());
     const wsB = attachedAs(fm, HOST_B, fullB());
+    const connB = fm.conns.get(HOST_B);
     fm.closeRemote(HOST_B);
-    assert.equal(fm.perHostFeedRaw[HOST_B], undefined, "B's raw base went with B");
-    assert.deepEqual(fm.perHostFeedRaw[HOST_A].asks.map((a: any) => a.itemId), [SID_S + ":g1"], "A's raw base survived B's detach");
+    assert.equal(fm.conns.has(HOST_B), false, "B's conn went with B");
+    assert.equal(connB.feedRaw, undefined, "…and its raw base with it");
+    assert.deepEqual(fm.conns.get(HOST_A).feedRaw.asks.map((a: any) => a.itemId), [SID_S + ":g1"], "A's raw base survived B's detach");
     wsA.frame({ type: "feedDelta", now: 530, buildId: 3, asks: [cardOn(1, "goal 1 on A, edited")] });
     assert.deepEqual(wsA.sent, [], "A's next delta applied onto A's base: nothing asked");
     let m = last(feeds(emitted));
@@ -372,5 +382,148 @@ test("two hosts: detaching one drops its raw base and leaves the other's; the re
     m = last(feeds(emitted));
     assert.deepEqual(asksOf(m, HOST_A), [SID_S + ":g1"], "A's rows stand throughout");
     fm.conns.get(HOST_A).closed = true; fm.conns.get(HOST_B).closed = true;
+  });
+});
+
+// ── the late retry timers against the feed base (2026-09-19, review round 5) ────────────────────────────────────────
+// A 2 s retry timer (the onclose redial a dead socket armed, or the constructor-throw retry) calls connect() without
+// looking first, so it can land on a conn that is detached, marked down by the poll, or already holding a live
+// replacement socket: connect() returns at its guards, and the per-dial reset sits below them. The raw feed base is the
+// CONN's (Conn.feedRaw), so such a call can only ever reach the conn it was called for. These legs pin both for the feed
+// half, as federation-remote-view-delta.test.ts 18 and 19 pin the bars half at the connecting/open guard. The one road
+// that crosses conns: closeRemote cancels no timer, so a DETACHED conn's redial fires after the host was re-attached on a
+// NEW Conn whose socket has seeded a base by then. While the base was keyed by host (before round 5), a reset above the
+// guards would have deleted the live conn's base through the dead conn's call, and no per-conn assertion could see it:
+// the first two legs are red under a mutant that keys the base by host again and moves the reset to the top of connect(),
+// and green under the top placement alone, which states the design (a dead conn's call reaches a dead conn's field). The
+// last two are red under the top placement alone: there the call is the live conn's own.
+test("a detached conn's late onclose redial cannot touch the re-attached conn's raw feed base: nothing dialed for the dead conn, and the new conn's next delta applies with nothing asked", async () => {
+  await withManager(({ fm, emitted, sent }) => {
+    const ws = attached(fm);
+    const connA = fm.conns.get(HOST);
+    ws.readyState = 3;
+    const timers = heldTimers(() => ws.onclose!({ code: 1006, wasClean: false }));   // the socket dropped: its 2 s redial, held
+    assert.equal(timers.length, 1, "the drop armed one redial on conn A");
+    fm.closeRemote(HOST);   // /tunnels stopped listing the host: the conn is detached, its timer still armed
+    assert.equal(connA.closed, true);
+    assert.equal(fm.conns.has(HOST), false, "the detach dropped the conn");
+    assert.equal(connA.feedRaw, undefined, "…and its raw base with it");
+    fm.openRemote(HOST, true);   // the next poll lists the host again: a NEW conn
+    const ws2 = last(FakeWS.made), connB = fm.conns.get(HOST);
+    assert.notEqual(connB, connA, "a fresh conn");
+    assert.notEqual(ws2, ws, "and a fresh socket");
+    ws2.open();
+    ws2.frame(remoteFull());
+    assert.ok(connB.feedRaw, "the new socket's full frame seeded the new conn's base (the value the leg turns on)");
+    const vdB = connB.viewDeltas, made = FakeWS.made.length, before = feeds(emitted).length;
+    timers[0]();   // the dead conn's redial lands: connect() on a conn that is closed
+    assert.equal(FakeWS.made.length, made, "nothing dialed for the dead conn");
+    assert.equal(connB.ws, ws2, "the live conn's socket stands");
+    assert.ok(connB.feedRaw, "the live conn's base stands");
+    ws2.frame({ type: "feedDelta", now: 620, buildId: 5, asks: [card(SID_A, 4)] });
+    assert.deepEqual(ws2.sent, [], "nothing asked: the delta applied onto the live conn's base");
+    assert.deepEqual(diagRows(sent, "feedDelta-nobase"), [], "no no-base row");
+    assert.equal(feeds(emitted).length, before + 1, "the merge moved once");
+    assert.deepEqual(last(feeds(emitted)).asks.map((a: any) => a.itemId).sort(), [SID_A + ":g1", SID_A + ":g4"].sort());
+    assert.equal(connB.viewDeltas, vdB, "the mechanism: the dead conn's call minted nothing on the live conn");
+    assert.deepEqual(ws.sent, [], "nothing on the dead socket");
+    fm.conns.get(HOST).closed = true;
+  });
+});
+
+test("the constructor-throw retry of a detached conn: the same, on the other timer", async () => {
+  await withManager(({ fm, emitted, sent }) => {
+    // the first dial's constructor throws once (a browser refusing the URL), so connect() arms its 2 s retry on conn A,
+    // which holds no socket at all
+    const g: any = globalThis;
+    const Fake = g.WebSocket;
+    g.WebSocket = function () { g.WebSocket = Fake; throw new Error("refused"); };
+    const retries = heldTimers(() => fm.openRemote(HOST, true));
+    const connA = fm.conns.get(HOST);
+    assert.equal(retries.length, 1, "the constructor-throw retry, held");
+    assert.equal(connA.ws, null, "no socket on conn A");
+    fm.closeRemote(HOST);
+    assert.equal(fm.conns.has(HOST), false);
+    fm.openRemote(HOST, true);   // re-attached: the constructor answers now
+    const ws2 = last(FakeWS.made), connB = fm.conns.get(HOST);
+    assert.notEqual(connB, connA, "a fresh conn");
+    ws2.open();
+    ws2.frame(remoteFull());
+    assert.ok(connB.feedRaw, "seeded");
+    const vdB = connB.viewDeltas, made = FakeWS.made.length, before = feeds(emitted).length;
+    retries[0]();   // the dead conn's retry lands
+    assert.equal(FakeWS.made.length, made, "nothing dialed for the dead conn");
+    assert.equal(connB.ws, ws2);
+    ws2.frame({ type: "feedDelta", now: 620, buildId: 5, asks: [card(SID_A, 4)] });
+    assert.deepEqual(ws2.sent, [], "nothing asked: the live conn's base stood");
+    assert.deepEqual(diagRows(sent, "feedDelta-nobase"), []);
+    assert.equal(feeds(emitted).length, before + 1);
+    assert.equal(connB.viewDeltas, vdB);
+    fm.conns.get(HOST).closed = true;
+  });
+});
+
+test("a late redial on a conn whose /tunnels row went down keeps the open socket's base: poll() marks the conn down without closing its socket, frames still arrive, and the call returns at the first guard", async () => {
+  await withManager(({ fm, emitted, sent }) => {
+    const ws = attached(fm);
+    const conn = fm.conns.get(HOST);
+    ws.readyState = 3;
+    const timers = heldTimers(() => ws.onclose!({ code: 1006, wasClean: false }));
+    clock += REMOTE_REDIAL_MS + 1000;
+    fm.watchdog(clock);   // the redial verdict on the CLOSED socket dials the conn a fresh socket before the timer lands
+    const ws2 = last(FakeWS.made);
+    assert.notEqual(ws2, ws, "the watchdog redialed");
+    ws2.open();
+    ws2.frame(remoteFull());
+    ws2.frame({ type: "feedDelta", now: 610, buildId: 2, asks: [card(SID_A, 2)] });
+    assert.deepEqual(ws2.sent, [], "the new socket's base took a delta");
+    conn.live = false;   // what poll() does on a row that reads down: the socket is left as it is
+    const before = feeds(emitted).length, vd = conn.viewDeltas;
+    timers[0]();   // the late timer: connect() on a conn that is not live, its socket OPEN
+    assert.equal(conn.ws, ws2, "no new socket: the guard returned");
+    ws2.frame({ type: "feedDelta", now: 620, buildId: 3, asks: [card(SID_A, 3)] });
+    assert.deepEqual(ws2.sent, [], "nothing asked: the open socket's base stood through the late call");
+    assert.deepEqual(diagRows(sent, "feedDelta-nobase"), []);
+    assert.equal(feeds(emitted).length, before + 1, "the delta re-emitted the merge");
+    assert.equal(conn.viewDeltas, vd, "the mechanism: a call that dialed nothing minted nothing");
+    conn.closed = true;
+  });
+});
+
+test("late timers on a conn whose own replacement socket is CONNECTING, then OPEN: the call returns at the connecting/open guard, and the open socket's base stands", async () => {
+  await withManager(({ fm, emitted, sent }) => {
+    const ws = attached(fm);
+    const conn = fm.conns.get(HOST);
+    ws.readyState = 3;
+    const t1 = heldTimers(() => ws.onclose!({ code: 1006, wasClean: false }));   // the onclose redial, held
+    clock += REMOTE_REDIAL_MS + 1000;
+    const g: any = globalThis;
+    const Fake = g.WebSocket;
+    g.WebSocket = function () { g.WebSocket = Fake; throw new Error("refused"); };
+    const t2 = heldTimers(() => fm.watchdog(clock));   // the redial verdict dials and the constructor throws once: the retry, held
+    assert.equal(t2.length, 1, "the constructor-throw retry, held");
+    assert.equal(conn.ws, ws, "the dead socket still on the conn");
+    clock += REMOTE_REDIAL_MS + 1000;
+    fm.watchdog(clock);   // the next verdict: the constructor answers
+    const ws2 = last(FakeWS.made);
+    assert.notEqual(ws2, ws, "a fresh socket");
+    assert.equal(ws2.readyState, 0, "CONNECTING");
+    const made = FakeWS.made.length;
+    t1[0]();   // the onclose redial lands while the replacement is CONNECTING: nothing to wipe yet, and no second dial
+    assert.equal(FakeWS.made.length, made, "no second dial");
+    assert.equal(conn.ws, ws2);
+    ws2.open();
+    ws2.frame(remoteFull());
+    ws2.frame({ type: "feedDelta", now: 610, buildId: 2, asks: [card(SID_A, 2)] });
+    assert.deepEqual(ws2.sent, [], "the new socket's base took a delta");
+    const before = feeds(emitted).length, vd = conn.viewDeltas;
+    t2[0]();   // the constructor-throw retry lands with the socket OPEN
+    assert.equal(conn.ws, ws2, "no new socket");
+    ws2.frame({ type: "feedDelta", now: 620, buildId: 3, asks: [card(SID_A, 3)] });
+    assert.deepEqual(ws2.sent, [], "nothing asked: the live socket's base stood through the late call");
+    assert.deepEqual(diagRows(sent, "feedDelta-nobase"), []);
+    assert.equal(feeds(emitted).length, before + 1);
+    assert.equal(conn.viewDeltas, vd);
+    conn.closed = true;
   });
 });

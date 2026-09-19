@@ -945,6 +945,16 @@ interface Conn {
   // kernel that sent it for the whole slot on this conn (sendRemote), never the local kernel, which holds nothing for
   // this host.
   viewDeltas: ViewDeltas;
+  // The remote's last FEED frame as its kernel sent it, ids unprefixed: the base its feedDelta frames apply onto
+  // (applyRemoteFeedDelta); the prefixed copy the merge reads is perHostFeed. The CONN's, not a per-host map's (2026-09-19,
+  // review round 5): closeRemote cancels no retry timer, so a DETACHED conn's 2 s redial can call connect() after the host
+  // was re-attached on a new Conn, and a base keyed by host was one shared slot that the dead conn's call could have
+  // cleared from under the live one had the reset sat above connect()'s guards; on the conn, a reset reaches only the
+  // conn it was called for, whatever its place. Written by the host's CURRENT conn at the store site, the one whose OPEN
+  // socket the frame arrived on (closeRemote closes a socket before it deletes its conn, and the watchdog's abandon nulls
+  // a dead socket's handlers before it dials, so a dead socket writes no live conn's base); cleared per dial in connect()
+  // beside the receiver, and with the conn in closeRemote.
+  feedRaw?: any;
 }
 
 /** The TYPES held on a conn's queue, for the hostconn rows (flush-halt's `held`, detach's `pendingDropped`):
@@ -980,7 +990,6 @@ export class FederationManager {
   private perHostSids: Record<string, Set<string>> = {};
   private perHostFeed: Record<string, any> = {}; // last feed snapshot per host — merged so they don't clobber
   private perHostFeedAt: Record<string, number> = {}; // host -> local ms its snapshot ARRIVED (feed or the delta that updated it): the merged frame's clock anchor (mergeHostFeeds `nowAt`), so a re-emit anchors exactly as the arrival did
-  private perHostFeedRaw: Record<string, any> = {}; // a REMOTE host's last feed frame as its kernel sent it, ids unprefixed: the base its feedDelta frames apply onto (applyRemoteFeedDelta); the prefixed copy above is what the merge reads
   private perHostTl: Record<string, any> = {}; //   last timeline lanes payload ({type:"data"}.data) per host
   private perHostTlBars: Record<string, any> = {}; // last timeline {type:"bars"} detail per host
   private tlBarsHeld = false; // a bars emission waited for the LOCAL lanes skeleton: their arrival emits it (emitMergedTimeline)
@@ -1336,7 +1345,10 @@ export class FederationManager {
       return;
     }
     if (m && m.type === "feed") {
-      if (host !== LOCAL) this.perHostFeedRaw[host] = msg;   // the frame as sent, the base for that host's deltas (applyRemoteFeedDelta)
+      if (host !== LOCAL) {
+        const c = this.conns.get(host);   // the host's current conn, whose OPEN socket this frame arrived on (Conn.feedRaw)
+        if (c) c.feedRaw = msg;   // the frame as sent, the base for that conn's deltas (applyRemoteFeedDelta)
+      }
       this.perHostFeed[host] = m;
       this.perHostFeedAt[host] = Date.now();   // the wire arrival: the one moment the frame's `now` was current
       this.ensureHost(host);
@@ -1396,24 +1408,25 @@ export class FederationManager {
   }
 
   /** A REMOTE host's {type:"feedDelta"}, as its kernel sent it (`d` is the raw frame, before prefixInbound). It
-   *  applies onto the raw full frame held for that host (perHostFeedRaw), and the whole result is prefixed the way
+   *  applies onto the raw full frame the host's conn holds (Conn.feedRaw), and the whole result is prefixed the way
    *  a full frame from the host is, so the merge reads exactly what a full frame would have given it. Applying onto
    *  the PREFIXED frame instead would miss every removal (removeLedgers names bare sids, the held ledgers carry
    *  "host:sid") and append every upserted ledger beside its prefixed twin. No raw base (a delta before any full
-   *  frame on this socket, or after a detach dropped the host's state): the local kernel holds nothing for this
+   *  frame on this socket, or after a detach dropped the host's conn): the local kernel holds nothing for this
    *  host, so the ask goes to the kernel that sent the delta, on its own conn (needFullFeed: it forgets what it
    *  believes this socket holds and serves a full frame at once, kernel.py's handler), and the merge is left as it
    *  was, never emitted from a half-applied state. The socket is open (the frame just arrived on it), so the send
    *  goes now. */
   private applyRemoteFeedDelta(host: string, d: any): void {
-    const raw = this.perHostFeedRaw[host];
-    if (!raw) {
+    const c = this.conns.get(host);
+    const raw = c ? c.feedRaw : undefined;
+    if (!c || !raw) {
       this.diag("feedDelta-nobase", { host, buildId: d.buildId });
       this.sendRemote(host, { type: "needFullFeed" });
       return;
     }
     const next = applyFeedDelta(raw, d);
-    this.perHostFeedRaw[host] = next;
+    c.feedRaw = next;
     this.perHostFeed[host] = prefixInbound(host, next);
     this.perHostFeedAt[host] = Date.now();   // the delta's arrival, as on the local path: the merge's clock anchor when no local frame anchors it
     this.emitMergedFeed();
@@ -2013,16 +2026,24 @@ export class FederationManager {
     // socket, as the extension's pipe mints one per dial), so a replacement socket's first patch cannot apply onto the
     // dead socket's half-assembled slot (2026-09-19). Latent against every kernel in this repo, whose dstate is per
     // connection and whose first frame on a fresh socket is whole; the reset costs nothing there and holds the
-    // contract for a peer that resumes a stream across a reconnect. HERE, below the already-connecting/open guard, and
-    // not at the top: the poll, localUp and the watchdog dial only a conn whose socket is null or CLOSED, but a 2 s
-    // retry timer does not look first, and one can land on a conn whose socket is already CONNECTING or OPEN: the
+    // contract for a peer that resumes a stream across a reconnect. Both fields are the CONN's (Conn.viewDeltas,
+    // Conn.feedRaw), so this reset reaches only the conn it was called for wherever it sits: a DETACHED conn's late
+    // retry (closeRemote cancels no timer, and a re-attach mints a new Conn) touches the dead conn's fields and never
+    // the re-attached conn's base. Until review round 5 the raw base was keyed by host, one slot for every conn the
+    // host ever had, and that same call above the guards would have deleted the live conn's base.
+    // HERE, below the guards, and not at the top: the poll, localUp and the watchdog dial only a conn whose socket is
+    // null or CLOSED, but a 2 s retry timer does not look first, and one can land on a conn whose socket is LIVE: the
     // onclose redial armed by a dead socket whose conn the watchdog's "redial" verdict or a poll dialed again in the
-    // meantime, or the constructor-throw retry below after the same. Those calls return at the guard, and a reset
-    // above it would wipe the LIVE socket's base under the patches applying onto it. Not in ws.onclose alone either:
-    // the watchdog's abandon nulls the dead socket's handlers before dialing, so an onclose reset never runs on that
-    // road. The conn's own latches (deferred, saidDelta) are the conn's and stand across the dial.
+    // meantime, or the constructor-throw retry below after the same. Such a call returns at the connecting/open guard
+    // (the conn's own replacement socket is CONNECTING or OPEN), or at the first guard when the conn is detached
+    // (closed) or its /tunnels row went down (live false: poll() marks the conn down without closing its socket, so
+    // frames still arrive on it). Above either guard the reset would wipe the LIVE socket's base under the patches
+    // applying onto it, and the next patch would ask that kernel for the whole slot for nothing. Not in ws.onclose
+    // alone either: the watchdog's abandon nulls the dead socket's handlers before dialing, so an onclose reset never
+    // runs on that road. The conn's latches stand across the dial (saidDelta, everOpened, readyAcked, pending);
+    // `deferred` does not, cleared above by the dial that ends the down spell.
     conn.viewDeltas = this.mintReceiver(conn.host);
-    delete this.perHostFeedRaw[conn.host];
+    conn.feedRaw = undefined;
     // a REDIAL only when the remote served this page whole before (everOpened && readyAcked) and the page has a
     // proto to name, mirroring the shim's everConnected && bundleReady && readyAcked gate; then reconnect=1 rides
     // the URL and this socket's open posts NO ready (the redial's dial term IS the handshake, see onopen)
@@ -2146,6 +2167,7 @@ export class FederationManager {
     this.diag("hostconn", c.pending.size ? { host, ev: "detach", pendingDropped: pendingTypes(c) }
                                          : { host, ev: "detach" });
     c.closed = true;
+    c.feedRaw = undefined;   // the raw feed base goes with the conn (a late retry's closure holds the conn for 2 s; the frame need not ride along)
     try {
       c.ws && c.ws.close();
     } catch (e) {}
@@ -2172,8 +2194,8 @@ export class FederationManager {
     delete this.perHostSids[host];
     delete this.perHostFeed[host];
     delete this.perHostFeedAt[host];
-    delete this.perHostFeedRaw[host];   // with them: a re-attach's first delta must find no stale base to apply onto
-    // (the conn's view-delta receiver, the bars and feed slot bases it held, went with the conn: this.conns.delete above)
+    // (the conn's view-delta receiver, the bars and feed slot bases it held, and its raw feed base went with the conn:
+    // this.conns.delete above, so a re-attach's first delta finds no stale base to apply onto)
     const hadTl = host in this.perHostTl || host in this.perHostTlBars;
     delete this.perHostTl[host];
     delete this.perHostTlBars[host];

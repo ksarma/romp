@@ -272,7 +272,7 @@ test("the feed slot takes the same path: a remote host serving {type:\"delta\", 
       [[SID_L + ":g1", SID_L, "web"], [SID_A + ":g2", HOST + ":" + SID_A, HOST + ":api"]],
       "the removed card left by its bare itemId, the new one arrived with its sid and name prefixed, the local card stands");
     assert.deepEqual(m.working, [HOST + ":" + SID_A], "a field the patch did not carry came over from the held base, prefixed");
-    assert.deepEqual(fm.perHostFeedRaw[HOST].asks.map((a: any) => a.itemId), [SID_A + ":g2"], "the reassembled frame is the host's raw base too (a later feedDelta applies onto it)");
+    assert.deepEqual(fm.conns.get(HOST).feedRaw.asks.map((a: any) => a.itemId), [SID_A + ":g2"], "the reassembled frame is the conn's raw feed base too (a later feedDelta applies onto it)");
     assert.deepEqual(ws.sent, [], "nothing asked of the remote");
     assert.deepEqual(localAsks(sent), []);
     assert.equal(sent.filter((x) => x && x.type === "clientDiag" && x.what === "feedDelta-nobase").length, 0);
@@ -690,7 +690,8 @@ test("the unknown-slot breadcrumb shares the rule: the same slot from the same b
 // open guard, and the per-dial receiver reset sits BELOW that guard: at the top it would wipe the LIVE socket's base under
 // the patches applying onto it, and the next patch would ask that kernel for the whole slot for nothing (the placement
 // probe of round 4). The behavioural assertion comes first (the base kept: the patch applies, nothing asked); the
-// receiver's identity is the mechanism, checked after.
+// receiver's identity is the mechanism, checked after. The feed half, the first guard (a detached conn's timer, a conn
+// whose row went down) and the CONNECTING state are in federation-remote-feed-delta.test.ts (review round 5).
 test("the onclose retry timer landing after the watchdog already redialed the conn: connect() returns at its open guard and the live socket's base stands (the next patch applies, nothing asked)", async () => {
   await withManager("timeline", ({ fm, emitted }) => {
     seedLocalTimeline(fm);
