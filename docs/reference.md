@@ -3109,7 +3109,12 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   tail, and `push.chat.sig.deps`, the tail evaluated over the cached
   build's record, the task-output stats, the path-token re-resolves and
   the postal values, recorded only when the tail ran, so a post-build check
-  lists static alone),
+  lists static alone; the signature's bytes in the split land on the static
+  row, the tail's included, because static is the first of the two rows
+  closed since the last byte mark, and the same last-mark rule puts
+  anything read between the previous close and the seam's open there too;
+  the deps row records wall and CPU only, its bytes and hydrated columns
+  zero),
   `push.chat.build` (the session build alone, a rebuild only) and
   `push.chat.send` (the events diff and the per-client chat sends); inside
   `push.send`, `push.send.feedParts` (the feed's per-card pass and its
@@ -3174,10 +3179,17 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
 - `stages_cpu_ms`: the calling thread's CPU over a stage, beside its wall:
   `{stage: {user, sys}}` in milliseconds, from `getrusage(RUSAGE_THREAD)`
   read at the stage's open and close, for the containers `push`, `jobs` and
-  `jobsPass` and the chat loop's seams `push.chat`, `push.chat.sig`,
+  `jobsPass` and the chat loop's rows `push.chat`, `push.chat.sig`,
   `push.chat.sig.static`, `push.chat.sig.deps`, `push.chat.build` and
   `push.chat.send`, each listed at zero from the start and cumulative like
-  the flat rows of `stages_ms`. A row takes the CPU of a mark whose wall
+  the flat rows of `stages_ms`. Two of those are containers of the rows
+  listed after them, as in `stages_ms`: `push.chat.sig` is the sum of
+  `push.chat.sig.static` and `push.chat.sig.deps` by construction (the
+  seam's close records the two sub-rows and then their total), and
+  `push.chat` covers its three seams `push.chat.sig`, `push.chat.build` and
+  `push.chat.send` plus its glue, which has no CPU row of its own, so
+  `push.chat` is at least the sum of the three, the difference the glue's
+  CPU. A row takes the CPU of a mark whose wall
   went to the flat `stages_ms` row of its name: a connect push's `push.*`
   stage, the pusher's `jobs.<job>` and a foreign writer's stage (a
   push-marked write from a thread owning no cycle included, under the
