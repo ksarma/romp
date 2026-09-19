@@ -57,6 +57,7 @@ door tests deliberately plant credential-shaped NAMES, since refusing them is wh
 """
 import ast
 import collections
+import copy
 import errno
 import glob
 import inspect
@@ -1145,6 +1146,50 @@ class EnvRowsPopulation(unittest.TestCase):
         for k, v in sites.items():
             self.assertEqual(_lock_withs_above(v[0], parents), [], "%s (line %d) sits inside a with over a lock" % (k, v[0].lineno))
 
+    def test_each_existence_row_filed_as_a_problem_says_why_it_is_declared_and_not_bounded(self):
+        """Ruling 1 of review round 6 (2026-09-19): the three pick-tainted rows filed problem=True, _do_set_mode's failure
+        reports about the mode landing, are accepted as existence rows and the PR is not widened to bound them, on the
+        condition that each says WHY it is unbounded where it is declared: it carries no ring_text, so the ring shows the
+        whole line, unbounded by a module-level format, and it reports on the mode landing, a mechanism outside what the
+        env-pick door bounds. A declared residual with no reason reads later as an oversight, so the comment block above
+        each call is read here for the reason's parts, and the census docstring and the ENV ROWS paragraph for the reason
+        class, stated once each. Red with any one comment removed, or the reason class dropped from either paragraph."""
+        c = self.c
+        lines = Path(SDK_BACKEND).read_text(encoding="utf-8").splitlines()
+        filed = sorted((dc for dc in c.existence_rows if dc.problem_decl == ("const", True)), key=lambda d: d.lineno)
+        self.assertEqual([dc.owner for dc in filed], ["_do_set_mode"] * 3)
+        for dc in filed:
+            self.assertIsNone(dc.ring_text, "line %d: the reason's first half is that the row carries no ring_text" % dc.lineno)
+            i, block = dc.lineno - 2, []
+            while i >= 0 and lines[i].strip().startswith("#"):
+                block.insert(0, lines[i].strip().lstrip("#").strip())
+                i -= 1
+            text = " ".join(block)
+            for part in ("an EXISTENCE row", "carries no ring_text", "unbounded by a module-level format",
+                         "a failure report about the mode landing", "outside what the env-pick door bounds"):
+                self.assertIn(part, text, "line %d's comment lacks the reason's part %r: %r" % (dc.lineno, part, text[:120]))
+        norm = lambda t: " ".join(t.split())
+        census_doc = norm(Path(os.path.join(HERE, "env_ring_census.py")).read_text(encoding="utf-8"))
+        self.assertIn("a declared residual with no reason reads later as an oversight", census_doc)
+        self.assertIn("each declared and not bounded for a stated reason", norm(Path(SDK_BACKEND).read_text(encoding="utf-8")))
+
+    def test_the_pick_tags_dict_bound_is_stated_as_the_censuss_reach_and_not_as_the_kernels(self):
+        """Ruling 3 of review round 6 (2026-09-19): that the pick tag does not cross a dict return is a bound on the
+        CENSUS'S reach, not a property of the code. "The census found no violations" and "the census cannot see this
+        class" are different claims, so the census docstring, the ENV ROWS paragraph and the PR body all state it in the
+        second sense: the census does not follow the pick tag across a dict return, a pick that crosses one is OUTSIDE the
+        census, and the existence population is the direct readers of the surface set by construction. The earlier
+        wording, which stated it as a fact about the picks, is asserted gone from both."""
+        norm = lambda t: " ".join(t.split())
+        census_doc = norm(Path(os.path.join(HERE, "env_ring_census.py")).read_text(encoding="utf-8"))
+        module = norm(Path(SDK_BACKEND).read_text(encoding="utf-8"))
+        for text, where in ((census_doc, "the census docstring"), (module, "the ENV ROWS paragraph")):
+            self.assertIn("a pick that crosses one is OUTSIDE the census", text, where)
+            self.assertIn("direct readers of the surface set by construction", text, where)
+            self.assertNotIn("does not cross a dict at all", text, "%s states it as a property of the kernel" % where)
+        self.assertIn("a bound on the census's reach, not a property of the kernel", census_doc)
+        self.assertIn("a bound on the census's reach and not a property # of this module", module)
+
 
 
 class EnvRowsCensusBlindSpots(unittest.TestCase):
@@ -1162,6 +1207,7 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
     METHOD_ANCHOR = "    def problem_seq(self) -> int:"
     SESSION_ANCHOR = "    def _log_quietly(self, line: str) -> None:"
     CRASH_ANCHOR = '_log(f"sdk session {self.name} crashed: '
+    API_ANCHOR = "    def _push(self, ev: AhEvent):"       # ApiHealth's method appending to its own self._ring deque
     TENTH = 'TENTH_RING = "env (%s): tenth %s"\n'
     MSG = '"env (%s): tenth %s" % (sess.name, ", ".join(sorted(sess.env_vars)))'
     RING = 'ring_text=TENTH_RING % (sess.name[:20], len(sess.env_vars))'
@@ -1170,7 +1216,7 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.src = Path(SDK_BACKEND).read_text(encoding="utf-8")
-        for needle in (cls.FMT_ANCHOR, cls.METHOD_ANCHOR, cls.SESSION_ANCHOR, cls.CRASH_ANCHOR):
+        for needle in (cls.FMT_ANCHOR, cls.METHOD_ANCHOR, cls.SESSION_ANCHOR, cls.CRASH_ANCHOR, cls.API_ANCHOR):
             assert cls.src.count(needle) == 1, "the copies' anchors are in the module once each: %r" % needle
 
     def _copy(self, edit, name="sdk_backend.py"):
@@ -1229,8 +1275,10 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
         """Family A, the class scope: a class-body `_ring_door = _log` (the writer's bare name resolves in its own class
         body) called as `self._ring_door(...)`, and a method default `log=_log` called as `log(self, ...)`; both quiet
         at aa1037c8f. Found as kinds "alias" and "param", the message read after the explicit self. The lens's own
-        spelling, `_ring`, is also ApiHealth's deque attribute, so a call on an untyped receiver could not be resolved:
-        the alias is found AND its name is a failure naming both owners, so it gets renamed rather than half-followed."""
+        spelling, `_ring`, is also ApiHealth's deque attribute: two bindings the census tells apart by the receiver's
+        scope since ruling 4 of review round 6 (the next test walks every arm), so with the alias called through self in
+        the writer's class the row is found, the collision is recorded and nothing fails; the failure is reserved for an
+        untyped receiver of the twice-bound name."""
         with self.subTest(alias="class-body _ring_door = _log"):
             c = self._census(self._copy(lambda s: self._with_format(s).replace(self.METHOD_ANCHOR,
                 "    _ring_door = _log\n\n    def _tenth(self, sess):\n        self._ring_door(%s, problem=True, %s)\n\n" % (self.MSG, self.RING) + self.METHOD_ANCHOR)))
@@ -1244,11 +1292,10 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
         with self.subTest(alias="the lens's _ring, ApiHealth's deque"):
             c = self._census(self._copy(lambda s: self._with_format(s).replace(self.METHOD_ANCHOR,
                 "    _ring = _log\n\n    def _tenth(self, sess):\n        self._ring(%s, problem=True, %s)\n\n" % (self.MSG, self.RING) + self.METHOD_ANCHOR)))
-            self.assertEqual([(k, b) for k, b, _ln, _t in c.failures], [("door-alias-ambiguous", "sdk_backend.py")])
-            self.assertIn("ApiHealth._ring", c.failures[0][3])
-            self.assertIn(self.TENTH_ID, c.content_identities(), "found all the same through self in the owner class")
-            self.assertEqual([dc.kind for dc in c.door_calls if dc.base == "sdk_backend.py" and dc.owner in ("_record", "_prune", "counts", "snapshot") and dc.kind == "alias"], [],
-                             "ApiHealth's own self._ring calls are not door calls")
+            self._assert_tenth_found(c, "alias")
+            self.assertEqual(c.alias_collisions, {"_ring": ["ApiHealth._ring (an attribute bound in __init__)"]}, "the collision is recorded, not failed")
+            self.assertEqual([dc.lineno for dc in c.door_calls if dc.kind == "alias" and dc.fn.cls is not None and dc.fn.cls.name == "ApiHealth"], [],
+                             "ApiHealth's own self._ring uses are not door calls")
 
     def test_an_unbound_call_through_the_class_reads_the_message_after_self(self):
         """`SdkBackend._log(self, <env message>, problem=True, ring_text=...)` was caught at aa1037c8f by the unreduced
@@ -1403,6 +1450,168 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
         self.assertEqual(len(line), 1)
         self.assertIn(line[0], [dc.lineno for dc in c3.unreduced if dc.base == "sdk_backend.py"], "the crash line's reduction rests on its leading text")
         self.assertEqual(len([dc for dc in c3.unreduced if dc.base == "sdk_backend.py"]), 2, "the head's one plus the crash line")
+
+    # Ruling 2 of review round 6: a dict-returning SOURCE whose env value reaches a different key than the one it entered
+    # at. Each variant is the body of `_tenth_shape(<param>)` after `e = <origin>` (`%(P)s` a second read of the
+    # parameter), with the reader's expression over the returned `shape`; (f) and (j) below need a second function.
+    REKEYS = {
+        "a: a copy under a second key": ('    d = {"env": e}\n    d["opts"] = d["env"]\n    return d\n', 'shape["opts"]'),
+        "b: a non-source key from the start": ('    return {"opts": e}\n', 'shape["opts"]'),
+        "c: a pop into a new literal": ('    d = {"env": e, "mode": %(P)s}\n    return {"mode": d["mode"], "opts": d.pop("env")}\n', 'shape["opts"]'),
+        "d: an update with a keyword": ('    d = {"env": e}\n    d.update(opts=d["env"])\n    return d\n', 'shape["opts"]'),
+        "e: a splat beside a re-key": ('    d = {"env": e}\n    return {**d, "opts": d["env"]}\n', 'shape["opts"]'),
+        "g: nested under another key": ('    return {"inner": {"env": e}}\n', 'shape["inner"]["env"]'),
+        "h: a local alias of the key's read": ('    d = {"env": e}\n    x = d["env"]\n    return {"opts": x}\n', 'shape["opts"]'),
+        "i: a comprehension renaming the keys": ('    d = {"env": e}\n    return {("opts" if k == "env" else k): v for k, v in d.items()}\n', 'shape["opts"]'),
+    }
+    CHAIN = "f: a chain, the re-key by pop in a helper"
+    HELD = "j: the value held on an attribute, re-keyed by another method"
+    # the two forms: the function DECLARED a source (DEFAULT_SOURCES' func entry) whose origin is a parameter's key, no
+    # source read, so only the declaration can taint it; and an undeclared helper whose origin is a source read
+    FORMS = {"declared": ("raw", 'raw["vars"]', 'raw["mode"]'), "helper": ("sess", "sess.env_vars", "sess.mode")}
+    # quiet before this commit (the census at the round-6 addendum, run over these same plants): the declaration was
+    # dropped for a dict returner, so an origin that was no source read reached another key clean, and a pop of the
+    # key was no read of it
+    QUIET_BEFORE = {("b: a non-source key from the start", "declared"), ("c: a pop into a new literal", "declared"),
+                    ("i: a comprehension renaming the keys", "declared"), (CHAIN, "declared"), (CHAIN, "helper"), (HELD, "declared")}
+
+    def _reader(self, arg, expr):
+        """The SdkBackend method reading the moved key and writing the tenth row from it; its ring text derives from the
+        moved value alone, so the taint that makes it a content row is the road's."""
+        return ('    def _tenth(self, sess, raw):\n        shape = %s\n        self._log("env (%%s): tenth %%s" %% (sess.name, ", ".join(%s)), '
+                'problem=True, ring_text=TENTH_RING %% (sess.name[:20], len(%s)))\n\n' % (arg, expr, expr))
+
+    def _declared(self):
+        declared = copy.deepcopy(DEFAULT_SOURCES)
+        declared["func"][("sdk_backend.py", "_tenth_shape")] = "env"
+        declared["func"][("sdk_backend.py", "SdkBackend._tenth_shape")] = "env"
+        return declared
+
+    def test_a_dict_returning_source_that_moves_the_env_to_another_key_is_caught_by_the_value_not_the_key(self):
+        """Ruling 2 of review round 6 (2026-09-19): the source-function-dict rule (a source whose returns are dicts is a
+        source at its env key, not whole) moves the census off the over-approximating side, so it is run against the
+        case it admits: dict-returning sources where the env value reaches a DIFFERENT key than the one it entered at,
+        by a copy or a re-key inside the function, with a reader taking the moved key and writing a ring row from it.
+        Ten variants in two forms each (the function declared a source with a parameter for its origin, and an
+        undeclared helper reading a source), twenty plants: every one is a tenth content row now (the identity pin
+        reds), and the six QUIET_BEFORE names were quiet on the census before this commit. The rule as it now is: the
+        value a declared dict source stores under the source key is the env BY DECLARATION, so the Name or attribute
+        it is stored from and the dict holding it carry the tag whole while the dict's boundary still excludes the key;
+        a return in which the census cannot locate the key (no source key in the literal, a comprehension, a local
+        nothing stored the key into) is tainted whole; and `.pop("env")` reads the key like `.get`. The refusal side:
+        the head's two dict-returning sources are located at their env key, their returns carry no env whole (so
+        `shape["mode"]` stays clean and the 96 content rows and 267 violations of the addendum's first census stay
+        gone), and the head reads content rows 9, violations 0."""
+        declared = self._declared()
+        loud = set()
+        for label, (body, expr) in self.REKEYS.items():
+            for form, (param, origin, mode) in self.FORMS.items():
+                with self.subTest(variant=label, form=form):
+                    fn = "\ndef _tenth_shape(%s):\n    e = %s\n%s" % (param, origin, body % {"P": mode})
+                    c = Census((self._copy(lambda s: self._with_format(s).replace(
+                        self.METHOD_ANCHOR, self._reader("_tenth_shape(%s)" % param, expr) + self.METHOD_ANCHOR) + fn), CREDENTIALS_PY),
+                               declared if form == "declared" else DEFAULT_SOURCES)
+                    self._assert_tenth_found(c, "self")
+                    loud.add((label, form))
+        chain = 'def _tenth_rekey(d):\n    x = d.pop("env")\n    return {"opts": x}\n'
+        for form, (param, origin, _mode) in self.FORMS.items():
+            sources = declared if form == "declared" else DEFAULT_SOURCES
+            with self.subTest(variant=self.CHAIN, form=form):
+                fn = '\ndef _tenth_shape(%s):\n    e = %s\n    d = {"env": e}\n    return d\n' % (param, origin) + chain
+                c = Census((self._copy(lambda s: self._with_format(s).replace(
+                    self.METHOD_ANCHOR, self._reader("_tenth_rekey(_tenth_shape(%s))" % param, 'shape["opts"]') + self.METHOD_ANCHOR) + fn), CREDENTIALS_PY), sources)
+                self._assert_tenth_found(c, "self")
+                loud.add((self.CHAIN, form))
+            with self.subTest(variant=self.HELD, form=form):
+                methods = ('    def _tenth_shape(self, %s):\n        self._tenth_held = %s\n        return {"env": self._tenth_held}\n\n'
+                           '    def _tenth_other(self):\n        return {"opts": self._tenth_held}\n\n' % (param, origin))
+                c = Census((self._copy(lambda s: self._with_format(s).replace(
+                    self.METHOD_ANCHOR, methods + self._reader("self._tenth_other()", 'shape["opts"]') + self.METHOD_ANCHOR)), CREDENTIALS_PY), sources)
+                self._assert_tenth_found(c, "self")
+                loud.add((self.HELD, form))
+        self.assertEqual(len(loud), 20)
+        self.assertTrue(self.QUIET_BEFORE <= loud, "every variant quiet before this commit is loud now")
+        head = census(CENSUS_FILES)
+        for q in ("SdkBackend._launch_shape", "SdkSession._launched_shape"):
+            f = [x for x in head.all_fns if x.qual == q][0]
+            self.assertEqual(head._declared_dict_source(f), "env", q)
+            self.assertTrue(f.returns and all(head._locates_source_key(r, f) for r in f.returns), "%s is located at its env key" % q)
+            self.assertFalse(any("env" in v for v in head.ret_taint.get(f, {}).values()), "%s's return carries no env whole" % q)
+        self.assertEqual(len(head.content_rows), 9)
+        self.assertEqual(head.explicit_violations, [])
+
+    def test_a_twice_bound_alias_name_is_resolved_by_the_receivers_scope_and_fails_only_untyped(self):
+        """Ruling 4 of review round 6 (2026-09-19): a class alias of the door whose name another class also binds (the
+        lens's `_ring = _log` in SdkBackend beside ApiHealth's `self._ring` deque) is two bindings the AST tells apart by
+        scope, so the census disambiguates before any product rename. Every arm: `self.<name>` in the alias's class or a
+        subclass through the MRO is the alias (a content row, kind alias; the identity pin reds); `self.<name>` in
+        ApiHealth is its own deque (no door); a receiver typed by an annotation (`be: SdkBackend`, the string form), by a
+        constructor call (`h = ApiHealth(...)`) or by a `self.<attr>` bound in __init__ from one (`self.backend` in a
+        session) resolves by its class; an untyped receiver where both bindings could apply is the loud
+        door-alias-ambiguous failure whose remedy names both bindings, and the call is not counted as a door. In every
+        arm ApiHealth's own uses stay no door, and where the call resolves to the other binding the alias is called
+        nowhere, which is its own failure. Which it is at this head: product code binds no alias of the door at class or
+        module scope in the three files (the census's tables and a line scan agree), so no rename was needed, and the
+        census can tell the two bindings apart by scope."""
+        alias = "    _ring = _log\n\n"
+        call = lambda recv, indent: "%s%s._ring(%s, problem=True, %s)\n" % (indent, recv, self.MSG, self.RING)
+
+        def plant(backend="", session="", api="", tail=""):
+            return self._copy(lambda s: self._with_format(s).replace(self.METHOD_ANCHOR, alias + backend + self.METHOD_ANCHOR)
+                              .replace(self.SESSION_ANCHOR, session + self.SESSION_ANCHOR).replace(self.API_ANCHOR, api + self.API_ANCHOR) + tail)
+
+        def api_doors(c):
+            return [dc.lineno for dc in c.door_calls if dc.kind == "alias" and dc.fn.cls is not None and dc.fn.cls.name == "ApiHealth"]
+
+        doors = {
+            "self in the alias's class": dict(backend="    def _tenth(self, sess):\n" + call("self", " " * 8) + "\n"),
+            "self in a subclass through the MRO": dict(tail="\nclass _TenthBackend(SdkBackend):\n    def _tenth(self, sess):\n" + call("self", " " * 8)),
+            "a parameter annotated with the class": dict(tail="\ndef _tenth(be: SdkBackend, sess):\n" + call("be", " " * 4)),
+            "a string annotation": dict(tail='\ndef _tenth(be: "SdkBackend", sess):\n' + call("be", " " * 4)),
+            "self.backend in a session, typed by its __init__": dict(session="    def _tenth(self, sess):\n" + call("self.backend", " " * 8) + "\n"),
+        }
+        for label, kw in doors.items():
+            with self.subTest(arm=label):
+                c = self._census(plant(**kw))
+                self._assert_tenth_found(c, "alias")
+                self.assertEqual(c.alias_collisions, {"_ring": ["ApiHealth._ring (an attribute bound in __init__)"]})
+                self.assertEqual(api_doors(c), [], "ApiHealth's own self._ring uses are no door")
+        uncalled = ("door-escapes", "sdk_backend.py", "class alias _ring of SdkBackend is never called")
+        others = {
+            "self in ApiHealth, its own deque": dict(api="    def _tenth(self, sess):\n" + call("self", " " * 8) + "\n"),
+            "a parameter annotated with ApiHealth": dict(tail="\ndef _tenth(h: ApiHealth, sess):\n" + call("h", " " * 4)),
+            "a local assigned from ApiHealth's constructor": dict(tail="\ndef _tenth(state_dir, sess):\n    h = ApiHealth(state_dir)\n" + call("h", " " * 4)),
+        }
+        for label, kw in others.items():
+            with self.subTest(arm=label):
+                c = self._census(plant(**kw))
+                self.assertEqual([(k, b, t) for k, b, _ln, t in c.failures], [uncalled], "the call is the other binding's, so the alias is called nowhere")
+                self.assertEqual([dc.lineno for dc in c.door_calls if dc.owner == "_tenth"], [])
+                self.assertEqual(api_doors(c), [])
+                self.assertEqual(len(c.content_rows), 9)
+        for label, tail in (("an untyped receiver calling the name", "\ndef _tenth(x, sess):\n" + call("x", " " * 4)),
+                            ("an untyped receiver using the deque", "\ndef _tenth(x, ev):\n    x._ring.append(ev)\n")):
+            with self.subTest(arm=label):
+                c = self._census(plant(tail=tail))
+                self.assertEqual([(k, b) for k, b, _ln, _t in c.failures], [("door-alias-ambiguous", "sdk_backend.py"), ("door-escapes", "sdk_backend.py")])
+                text = c.failures[0][3]
+                self.assertIn("x._ring in _tenth: the receiver is untyped", text)
+                self.assertIn("SdkBackend._ring (a class-body alias of the door, line", text)
+                self.assertIn("ApiHealth._ring (an attribute bound in __init__)", text)
+                self.assertIn("type the receiver", text)
+                self.assertEqual([dc.lineno for dc in c.door_calls if dc.owner == "_tenth"], [], "not counted as a door: named as a failure instead")
+                self.assertEqual(len(c.content_rows), 9)
+        with self.subTest(arm="an untyped receiver of a name bound once resolves to the alias, as before"):
+            c = self._census(self._copy(lambda s: self._with_format(s).replace(self.METHOD_ANCHOR, "    _ring_door = _log\n\n" + self.METHOD_ANCHOR)
+                                        + "\ndef _tenth(x, sess):\n    x._ring_door(%s, problem=True, %s)\n" % (self.MSG, self.RING)))
+            self._assert_tenth_found(c, "alias")
+        head = census(CENSUS_FILES)
+        self.assertEqual((head.class_alias_doors, head.module_alias_doors, head.alias_collisions), ({}, {}, {}),
+                         "product code binds no alias of the door at class or module scope: no rename is needed at this head")
+        pat = re.compile(r"^\s*[A-Za-z_][A-Za-z0-9_]*\s*(:[^=]+)?=\s*(_log|SdkBackend\._log|getattr\(SdkBackend,\s*['\"]_log['\"]\))\s*(#.*)?$")
+        for path in CENSUS_FILES:
+            hits = [i + 1 for i, ln in enumerate(Path(path).read_text(encoding="utf-8").splitlines()) if pat.match(ln)]
+            self.assertEqual(hits, [], "%s binds an alias of the door at line(s) %r" % (os.path.basename(path), hits))
 
 
 class LogQuietlyAtRuntime(_Backend):

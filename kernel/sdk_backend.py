@@ -5133,8 +5133,12 @@ ERROR_CENTER_TEXT_CAP = 240
 # derives the rows whose message or ring text carries a value of the pick, its file or its rule (the sources: the
 # session's env attributes, the 'env' key of a registry row or launch shape, the flag-settings constants and helpers,
 # the reserved and credential name sets and the functions judging them; the taint follows assignments, calls and
-# returns, adds in place, augmented assignment, attribute stores and module-level names, and a dict by key) and that
-# are filed problem=True, and
+# returns, adds in place, augmented assignment, attribute stores and module-level names, and a dict by key; a source
+# function whose every return is a dict, the launch shape, is a source at its env key, the value under that key followed
+# by declaration across the function and the whole return tainted where the census cannot locate the key; and the census
+# does not follow the pick tag across a dict return, so a pick that crosses one is OUTSIDE the census and the existence
+# population is the direct readers of the surface set by construction, a bound on the census's reach and not a property
+# of this module) and that are filed problem=True, and
 # holds them to the ENV ROWS line below the ring formats: each has a ring_text whose length is a function of its FORMAT,
 # never of what a pick or a stored env carries, and tests/test_session_env.py computes a worst case for every format on
 # the line (a keyed row's with _log's repeat suffix at a four-digit count, the one piece of a row this module does not
@@ -5195,7 +5199,11 @@ FORK_RESERVED_RING = ("env (%s): dropping reserved %s from the inherited env: ro
 #   the two differ. Beside these, EXISTENCE-ONLY lines exist: the reconnect heading's lines (SdkSession._log_quietly's
 #   callers) and the mode landing's, whose text can name the env pick's existence through the pending-pick surface set,
 #   a fixed vocabulary plus the session name and never a value; they are not in this population, and the routine ones
-#   are closed by problem=False. kernel.py and credentials.py write no such row: the kernel's problem rows are this
+#   are closed by problem=False. The three filed problem=True are _do_set_mode's failure reports about the mode landing,
+#   each declared and not bounded for a stated reason: no ring_text, so the whole line rings, unbounded by a format, and
+#   a mechanism outside what this door bounds (the comment at each line says so; review round 6, ruling 1). A pick that
+#   crosses a dict return is outside the census (a bound on its reach, stated above), so this population is the direct
+#   readers of the surface set by construction. kernel.py and credentials.py write no such row: the kernel's problem rows are this
 #   module's ring and its two feeders (_sdk_problem, _note_ws_drop), and the census finds those doors before it asserts
 #   that none carries env taint.
 
@@ -8313,6 +8321,10 @@ class SdkSession:
                     if pending:
                         self._mode_switching = mode
             if not pending:
+                # an EXISTENCE row to tests/env_ring_census.py, declared and not bounded, and this is why: its text names the
+                # pending pick's surface and the session, never a value of the env pick; it carries no ring_text, so the ring
+                # shows the whole line, unbounded by a module-level format; and it is a failure report about the mode landing,
+                # a mechanism outside what the env-pick door bounds (review round 6 of that door, 2026-09-19, ruling 1)
                 self.backend._log("mode (%s): the landed process runs %s and the reg carries %s with no mode pick "
                                   "pending; no switch is applied, and the contract says this cannot happen"
                                   % (self.name, prev, mode), problem=True)
@@ -8347,6 +8359,11 @@ class SdkSession:
                     # spawn window cleared it, and the standing or re-armed reconnect carries the pick from
                     # here (pickHeld names it while held; snapshot's modePending through the reload; round 7)
                     self._reconnect_surfaces.add("mode")
+                # an EXISTENCE row to tests/env_ring_census.py, declared and not bounded, and this is why: its text names the
+                # pending pick's surface, the session and the SDK's refusal (an exception's class and text), never a value of
+                # the env pick; it carries no ring_text, so the ring shows the whole line, unbounded by a module-level format;
+                # and it is a failure report about the mode landing, a mechanism outside what the env-pick door bounds (review
+                # round 6 of that door, 2026-09-19, ruling 1)
                 self.backend._log("mode (%s): the landed process runs %s and refused the live switch to the "
                                   "pending %s pick (%s: %s); the reconnect applies it, and the queued turns "
                                   "wait for the new client" % (self.name, prev, mode, type(e).__name__, e),
@@ -8380,6 +8397,11 @@ class SdkSession:
                 self.perm_mode = prev
                 self.mode = prev
                 self.backend._update_reg(self.sid, mode=prev)
+                # an EXISTENCE row to tests/env_ring_census.py, declared and not bounded, and this is why: its text names the
+                # refused pick's surface, the session and the SDK's refusal (an exception's class and text), never a value of
+                # the env pick; it carries no ring_text, so the ring shows the whole line, unbounded by a module-level format;
+                # and it is a failure report about the mode landing, a mechanism outside what the env-pick door bounds (review
+                # round 6 of that door, 2026-09-19, ruling 1)
                 self.backend._log("set_permission_mode (%s -> %s) refused by the SDK: %s: %s; the switch "
                                   "did NOT apply; the mode reverted to %s"
                                   % (self.name, mode, type(e).__name__, e, prev), problem=True)
