@@ -490,6 +490,21 @@ def restore_env(name, prior):
 # module alone passes, and a kernel load between cause and victim hides it, since re-executing kernel.py
 # resets the singleton.
 #
+# THE POPULATION, measured at this branch's base (2026-09-19): six classes in five modules leaked the
+# singleton. ViewBuilder (tests/test_kernel.py), CostWeighting (tests/test_token_usage.py),
+# BuildSessionDiffRows (tests/test_kernel_patch_rows.py), FeedWarmResolveBumpsTheLedgerRevision
+# (tests/test_ledger_anchors.py), and SharedViewInBuilds and PushSurvivesOneFailedChatBuild
+# (tests/test_kernel_goal_cache_wiring.py), each fixed in the commits before this fixture with one shape:
+# save km._sdk_backend beside the saved jd.STATE and put it back where jd.STATE is restored, before the
+# directory goes. The count comes from running every module ALONE with this fixture on: 316 modules (the
+# 247 a census plugin saw touch jd.STATE, the rebind or the build, united with the 94 that load the kernel
+# under its shared name), 311 green, these 4 modules red, and 1 unrelated pre-existing red
+# (tests/test_sdk_rate_limit_usage.py: an unrestored ROMP_SERVE_TOKEN setdefault that
+# _shared_state_restored's environment check names, identical with this fixture off and byte-identical at
+# the base). The full-suite census saw none of the five: an earlier first builder in every worker made
+# their builds cache hits. A green suite run is therefore no evidence a module is clean; the module-alone
+# sweep is the measurement, and the review round that found the four ran the modules that way.
+#
 # THE TRANSITION MODEL. The fixtures below read the singleton at fixed moments and judge what changed
 # between two reads, never the after value on its own: an absolute read of the after value (the first form
 # of this fixture) failed every test that merely INHERITED a singleton over a removed directory, each with

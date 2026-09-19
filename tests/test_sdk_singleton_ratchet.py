@@ -13,6 +13,16 @@ singleton; a later module's chat signature consulted that backend, whose fork_ch
 registry, answered {} on the OSError and scanned no registry, so a derivation counting registry stats read 0
 against 39 in a test that did nothing wrong, and only under an order that ran ViewBuilder first.
 
+The population, measured at this branch's base: six classes in five modules leaked the singleton (ViewBuilder,
+CostWeighting, BuildSessionDiffRows, FeedWarmResolveBumpsTheLedgerRevision, SharedViewInBuilds and
+PushSurvivesOneFailedChatBuild), each fixed in the commits before the ratchet with ViewBuilder's shape. The count
+comes from running every module ALONE with the ratchet on: 316 modules (the 247 a census plugin saw touch jd.STATE,
+the rebind or the build, united with the 94 that load the kernel under its shared name), 311 green, 4 red on these
+leaks, 1 unrelated pre-existing red (tests/test_sdk_rate_limit_usage.py, an unrestored ROMP_SERVE_TOKEN setdefault
+the judge fixture's environment check names; identical with the ratchet off). The full-suite census saw none of the
+five, because an earlier first builder in every worker made their builds cache hits: a green suite run is no
+evidence a module is clean, and the module-alone sweep is the measurement.
+
 The ratchet judges TRANSITIONS, at three windows. The test: the singleton read before the test and after its own
 teardown, and the test whose own transition made the bad state fails (a different object left, or the directory
 removed under the object it found). The class and module boundaries: a read at the scope's start and at its end,
