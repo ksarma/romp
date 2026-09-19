@@ -1326,7 +1326,7 @@ class LazyPanes(unittest.TestCase):
         self.assertFalse(b["bodyLoading"], "the shown tab (the chat) is not loading: no loader over it")
         self.assertEqual(sorted(b["hidden"]), ["chat", "feed", "files", "fleet", "timeline", "waiting"], "the six panes (the read's keys, before a comprehension over them stands in for an expectation)")
         self.assertEqual(b["hidden"], {k: False for k in b["hidden"]}, "every tab is a place to go")
-        self.assertEqual(b["promote"], "function", "window.__rompPanePromote is the one road")
+        self.assertEqual(b["promote"], "undefined", "no export: the three promotion roads call promote() directly (round 3, fresh-3); a re-add would be an unused seam")
 
     def test_the_first_tap_sets_the_src_once_before_the_re_tell_and_paints_the_loader_until_the_load(self):
         t = self.out["tap"]

@@ -68433,7 +68433,6 @@ f.addEventListener('load',function(){if(TOK[k]!==tok)return;try{if(f.contentDocu
 setTimeout(function(){if(TOK[k]!==tok)return;var dd=paneDiv(f);if(!dd||!dd.classList.contains('loading'))return;if(committed(f))loaded(k);else failed(k,'backstop');},LOAD_MS);}   // still loading at the backstop: a pane document is slow (the loader clears, as before); none, or one without the shim, is a failure (WebKit's road)
 f.setAttribute('src',u);paintLoading();return true;}
 try{var pl=document.getElementById('pane-load');if(pl)pl.addEventListener('click',function(){try{var k=document.body.getAttribute('data-tab');if(k&&paneDiv(F[k])&&paneDiv(F[k]).classList.contains('failed'))show(k);}catch(e){}});}catch(e){}   // the failed state's tap: retry the shown tab's pane (show() promotes a re-parked pane again)
-window.__rompPanePromote=promote;   // the one road a pane's src is set by on the phone (the tests drive it; a relay that must post into a lazy pane would promote first)
 function show(p){if(p==='files'&&!filesCtlM())p='chat';   // the Files tab is hidden while its control is off: the chat shows instead
 if(!F[p])return;for(var i=0;i<B.length;i++)if(B[i].getAttribute('data-pane')===p&&B[i].hidden)return;   // a tab the controller hid (its pane is off in the gear's Panes section) is not a place to go
 document.body.setAttribute('data-tab',p);for(var k in F)if(F[k])F[k].classList.toggle('m-on',k===p);   // a pane this shell lacks is skipped, never a TypeError

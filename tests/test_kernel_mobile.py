@@ -216,7 +216,7 @@ class LandingShell(unittest.TestCase):
         # the boot: the parking of data-src runs before the boot show, whose line is upstream's text
         self.assertLess(js.index("lf.setAttribute(LAZY,lu);lf.removeAttribute('data-src');"), js.index("var last='chat';try{var s=localStorage.getItem(KT);if(s&&F[s])last=s;}catch(e){}show(last);"))
         self.assertIn("var LAZY='data-lazy-src',LOAD_MS=30000,URLS={},FAILS={},TOK={};", js)   # + the promoted urls, the failure counts and the promotion tokens (HIGH 2, review round 1)
-        self.assertIn("window.__rompPanePromote=promote;", js)
+        self.assertNotIn("__rompPanePromote", js, "no window export of promote() (review round 3, fresh-3): no production code called it; the three promotion roads (show(), the boot block, the lazyFlip listener) call the local promote() directly, and a re-add would be an unused seam commented as a road")
         self.assertIn("if(en){if(f&&!f.getAttribute('src')&&f.getAttribute('data-src'))f.setAttribute('src',f.getAttribute('data-src'));", km._LANDING_COLLAPSE_JS, "the controller's promotion line is untouched")
 
     def test_shell_reveal_listener_wired(self):
