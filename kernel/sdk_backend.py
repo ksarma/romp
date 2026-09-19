@@ -13538,28 +13538,31 @@ class SdkBackend:
                   "manager's environment (its service.env or service unit)." % ", ".join(names), problem=False)
 
     def _note_seed_skipped(self, side: str = "key", login_id: str = "") -> None:
-        """Said ONCE per process and side, as a problem row: the remembered Billing default names a side this
-        box cannot bill (the API key with no apiKeyHelper in Claude Code's settings; the login with none
-        signed in, or under a managed helper), so new sessions are left unpicked (spawn) and bill the side
-        that exists: the picker greys that choice on this box, and a pick the user made is being set aside
-        without a word otherwise."""
+        """Said ONCE per process and side, as a problem row: the machine's EXPLICIT default billing (set_auth_default,
+        the Set default billing submenu; since 2026-09-18 the only value a spawn seeds from) names a side this box
+        cannot bill (the API key with no apiKeyHelper in Claude Code's settings; the login with none signed in, or
+        under a managed helper), so new sessions are left unpicked (spawn) and bill the side that exists: the picker
+        greys that choice on this box, and a default the user set is being set aside without a word otherwise. The
+        rows name the machine default and a remedy that works (round 1 of the review, 2026-09-18): they said "the
+        remembered Billing pick" and told the user to pick on a session, which no longer seeds anything."""
         said = _logins.pick_value(side, login_id)
         if said in self._seed_skip_said:
             return
         self._seed_skip_said.add(said)
         if login_id:
-            # the remembered pick names a STORED login (T346) that is refused, expired, tokenless or gone
-            self._log("the remembered Billing pick is the %s login but %s, so new sessions start unpicked and bill "
-                      "whatever the CLI resolves; pick a login again to apply one"
+            # the default names a STORED login (T346) that is refused, expired, tokenless or gone
+            self._log("the machine's default billing is the %s login but %s, so new sessions start unpicked and bill "
+                      "whatever the CLI resolves; set the default billing again (the Set default billing submenu) to apply one"
                       % (self.login_display(login_id), self.auth_unavailable_why("login", login_id)), problem=True)
         elif side == "key":
-            self._log("the remembered Billing pick is the API key but Claude Code's settings carry no apiKeyHelper, so "
-                      "new sessions start unpicked and bill whatever the CLI resolves; configure apiKeyHelper in %s to "
-                      "apply the pick" % os.path.join(_cred.claude_config_dir(), "settings.json"), problem=True)
+            self._log("the machine's default billing is the API key but Claude Code's settings carry no apiKeyHelper, so "
+                      "new sessions start unpicked and bill whatever the CLI resolves; configure apiKeyHelper in %s, or set "
+                      "the default billing again (the Set default billing submenu), to apply it"
+                      % os.path.join(_cred.claude_config_dir(), "settings.json"), problem=True)
         else:
-            self._log("the remembered Billing pick is the login but %s, so new sessions start unpicked and bill "
-                      "the API key; sign in (claude /login) to apply the pick"
-                      % self.auth_unavailable_why("login"), problem=True)
+            self._log("the machine's default billing is the login but %s, so new sessions start unpicked and bill "
+                      "the API key; sign in (claude /login), or set the default billing again (the Set default billing "
+                      "submenu), to apply it" % self.auth_unavailable_why("login"), problem=True)
 
     def _heal_stale_awaiting(self, sid: str) -> None:
         """Clear a stale awaiting:true overlay for a NOT-running session. A dormant SDK session can't have live
@@ -16427,17 +16430,22 @@ class SdkBackend:
                "effort": eff, "lastSid": "", "alive": True}
         if d.get("model") and d["model"] != "default":
             reg["model"] = d["model"]
-        # Auth: the picker's explicit pick wins; else the remembered default (a gear /auth pick on any
-        # session, or the machine's explicit default); unset stays unset (effective_auth's fallback IS the
-        # pre-selector behavior). What the seed MAKES: a session spawned while a value stands carries it as a pick of
-        # its OWN (reg.auth below), so a later move of the machine default does not reach it; only a session spawned
-        # while none stood follows the default wherever it moves. Whether the flag-less value should seed at all is a
-        # change of which account new sessions bill, split out of the follower fix into its own PR (the reviewer's
-        # round 2, 2026-09-19; its fresh-5), so this reads as it did before that fix
+        # Auth: the picker's explicit pick wins; else the machine's EXPLICIT default (set_auth_default, the Set default
+        # billing submenu); unset stays unset (effective_auth's fallback IS the pre-selector behavior). A per-session
+        # pick's flag-less write seeds nothing (round 2 of the review, 2026-09-18, matching the block below).
         a, lid = _logins.parse_pick(auth)       # "login:<id>" names a stored login (T346); junk reads as no pick
         seeded = not a
         if seeded:
-            a = d.get("auth") if d.get("auth") in ("login", "key") else ""
+            # the file's auth seeds a new session ONLY as the machine's EXPLICIT default (the user 2026-09-18; until then
+            # a per-session pick's write, which carries no authExplicit, seeded every pick-less spawn with a pick of its
+            # own): the launch (_explicit_default) and the init check (_declared_auth) read the file that way, so the
+            # spawn does too; the new-session picker preselects the same default (_auth_avail, round 1 of the review).
+            # What the seed MAKES (round 1 of the reviewer's review, 2026-09-18; its fresh-1): a session spawned while an
+            # explicit default stands carries that default as a pick of its OWN (reg.auth below), so it is a picked
+            # session from then on and a later move of the default does not reach it; only a session spawned while no
+            # billable explicit default stood follows the default wherever it moves. Whether a seeded session should
+            # follow instead is the user's question, not this branch's (the ledger entry names it)
+            a = d.get("auth") if (d.get("authExplicit") and d.get("auth") in ("login", "key")) else ""
             lid = SdkBackend.reg_login(d) if a == "login" else ""
         if a and seeded and self.pick_unavailable(a, lid):
             # A REMEMBERED default the box cannot bill seeds nothing: a key default with no helper (review
@@ -19156,16 +19164,16 @@ class SdkBackend:
             return False
         s = self.sessions.get(sid)
         value = self.login_display(login_id) if login_id else side   # the stored login's display label (T346), else the side word; `value` is spent
-        # the seed for the NEXT new session, like model/effort: every pick, the unchanged ones below included (review
-        # round 1); the guards decide only whether THIS session reconnects. Until the user sets the machine's default
-        # EXPLICITLY (set_auth_default, the Billing flyout's Default group, T380): from then on a per-session pick is
-        # about that session and moves no default. This write carries no authExplicit: the launch (_explicit_default)
-        # and the init check (_declared_auth) follow the file's auth only beside the flag, while the spawn's seed and
-        # the new-session picker's preselection (_auth_avail) read the flag-less value as the remembered pick, as
-        # before (whether they should is a change of which account new sessions bill, split out of the follower fix
-        # into its own PR: the reviewer's round 2, 2026-09-19, its fresh-5). authLogin rides beside it: the stored
-        # login a login pick names, "" for the machine's own (written as "" so a plain pick clears an earlier stored
-        # one).
+        # the remembered pick, like model/effort: every pick, the unchanged ones below included (review round 1); the
+        # guards decide only whether THIS session reconnects. Until the user sets the machine's default EXPLICITLY
+        # (set_auth_default, the Billing flyout's Default group, T380): from then on a per-session pick is about that
+        # session and moves no default. This write carries no authExplicit, and since 2026-09-18 every reader follows the
+        # file's auth only beside the flag: a spawn with no pick of its own (the seed), the launch (_explicit_default),
+        # the init check (_declared_auth) and, since round 1 of the review, the new-session picker's preselection
+        # (_auth_avail's default; read there, a pick made every picker-created session a picked one). The flag-less
+        # value is the record of the last pick and nothing reads it; hand-editing the file stays the escape hatch.
+        # authLogin rides beside it: the stored login a login pick names, "" for the machine's own (written as "" so a
+        # plain pick clears an earlier stored one).
         if not read_sdk_defaults(self.state_dir).get("authExplicit"):
             write_sdk_default(self.state_dir, auth=side, authLogin=login_id)
         # the pick, the side the connect in progress launches, the side the running process launched and the side a
@@ -19297,8 +19305,8 @@ class SdkBackend:
         judged on its own record as a pick of it would be; the machine's own login and the key write authLogin empty."""
         if value == "auto":
             # back to the helper rule (the key when an apiKeyHelper is configured, else the login): the flag clears and
-            # the seed empties, so a per-session pick seeds the default again as it did before, while the launch and the
-            # init check read only the next explicit default.
+            # the file's auth empties, and the next explicit default is the only thing a pick-less spawn, the launch or
+            # the init check will read (since 2026-09-18 a per-session pick's flag-less write seeds nothing).
             # authLogin cleared too: a per-session stored-login pick writes it while the default is automatic, and a stale
             # id here would ride the next explicit Login default into every new session (the merge read, 2026-09-12)
             write_sdk_default(self.state_dir, auth="", authExplicit=False, authLogin="")
