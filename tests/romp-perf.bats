@@ -184,9 +184,13 @@ teardown() { rm -rf "$TEST_DIR"; }
 }
 
 @test "romp perf: a judge block with no cpu_ms_workers prints its CPU as not the workers' share, never 0.0 as fact" {
-    # the kernel opens judge.cpu_ms_workers when it arms judge.py's worker-CPU sink at load, so a block without the key
-    # is from a collector nothing armed and its cpu_ms_sum has no pool workers' share in it (the review ruling on the
-    # write-time fold, 2026-09-18): the process line's judge share and the judge line's cpu/pass both say so
+    # the kernel opens judge.cpu_ms_workers when it arms judge.py's worker-CPU sink at load and serves it exactly while
+    # its collector holds the sink, so a block without the key is from a collector that is not the sink now (nothing
+    # armed it, or a later kernel load displaced it; a test process) and no workers' share lands in it from then on; the
+    # figure beside the note may still carry a share that landed while armed (a window that straddles the displacement),
+    # so the process line's judge share and the judge line's cpu/pass both say the share is not reported rather than
+    # print the figure as measured whole (the review ruling on the write-time fold, 2026-09-18; review round 2,
+    # 2026-09-19, aligned this copy with bin/romp's, kernel.py's and docs/reference.md's)
     python3 - "$SNAP_A" "$SNAP_B" <<'PY'
 import json, sys
 for p in sys.argv[1:]:

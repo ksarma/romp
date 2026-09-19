@@ -2087,7 +2087,8 @@ class JudgeCpu(unittest.TestCase):
     tiers submit to judge.py's pools (_TimedPool, bound to the module's ThreadPoolExecutor name). The workers'
     share reaches the kernel's LIVE counters as each future ends, through the sink the kernel installs at load
     (jd.set_worker_cpu_sink(_PERF_STATS.judge_worker_cpu)), so a live read of the stats dict and a snapshot()
-    read agree and a delta may take either; judge.py's own counter (judge_worker_cpu_ms) stays for the serve
+    read agree and a delta may take either, on the collector that holds the sink (a served block carries
+    cpu_ms_workers exactly then, review round 1, 2026-09-19); judge.py's own counter (judge_worker_cpu_ms) stays for the serve
     child, whose module object no kernel ever loads. Until 2026-09-18 snapshot() added that module counter to
     its COPY at read time and the live dict never carried it: two readings of one key disagreed by the whole
     total, and a delta from one of each was wrong (tests/test_judges_process.py paid, f5ba16832)."""
@@ -2181,8 +2182,11 @@ class JudgeCpu(unittest.TestCase):
         genuine zero. A collector nothing armed has no cpu_ms_workers in its live dict or its snapshot (red before: the
         constructor opened the key at 0.0, the reading a process that never armed the sink would have served as fact);
         arm_judge_worker_sink opens it at 0.0 with no pool future yet run, a genuine zero, and installs this collector's
-        writer; pool work then moves it; and a write through judge_worker_cpu on a collector no arming touched opens the
-        key too, the write being the evidence. cpu_ms_sum stands in every case: the tier threads' and the child's CPU."""
+        writer; pool work then moves it; and a write through judge_worker_cpu on a collector that does not hold the sink
+        is a record, not a report: the live dict takes the key and the served block, what the user reads, drops it while
+        its cpu_ms_sum carries the write (review round 2, 2026-09-19: this cell had asserted the live dict alone and
+        called the write the evidence of reporting). cpu_ms_sum is served in every case: the tier threads' and the child's
+        CPU."""
         jd = km.jd
         st = km._PerfStats()
         self.assertNotIn("cpu_ms_workers", self._live(st), "unarmed: no key in the live dict")
@@ -2203,8 +2207,11 @@ class JudgeCpu(unittest.TestCase):
         self.assertEqual(snap["cpu_ms_sum"], snap["cpu_ms_workers"], "no tier ran: the sum is the workers' share")
         bare = km._PerfStats()
         bare.judge_worker_cpu(2.5)
-        self.assertEqual((self._live(bare)["cpu_ms_workers"], self._live(bare)["cpu_ms_sum"]), (2.5, 2.5),
-                         "a write opens the key on a collector no arming touched: the write is the evidence")
+        served = bare.snapshot()["judge"]
+        self.assertNotIn("cpu_ms_workers", served, "a write on a collector that does not hold the sink is a record, not a "
+                         "report: the served block drops the key (review round 2, 2026-09-19)")
+        self.assertEqual(served["cpu_ms_sum"], 2.5, "while cpu_ms_sum carries the write")
+        self.assertEqual(self._live(bare).get("cpu_ms_workers"), 2.5, "the live dict holds the record")
 
     def test_the_reference_and_the_docstring_say_the_key_is_absent_until_the_sink_is_armed(self):
         """(e) The two places PR 788 wrote its interim one-source sentence, the _PerfStats docstring's judge entry and
@@ -2214,7 +2221,11 @@ class JudgeCpu(unittest.TestCase):
         doc = km._PerfStats.__doc__ or ""
         ref = Path(HERE).parent.joinpath("docs", "reference.md").read_text(encoding="utf-8")
         for name, text in (("the _PerfStats docstring", doc), ("docs/reference.md", ref)):
+            text = re.sub(r"\s+", " ", text)      # a re-wrap is not a change of meaning (review round 2, 2026-09-19: the gap
+            #                                         bound below counted the docstring's indentation, 56 of its 60)
             self.assertRegex(text, r"the arming is what creates\s+`?cpu_ms_workers`?", name)
+            self.assertRegex(text, r"straddles the displacement", "%s carries the hedge: a keyless block cannot say how much of a "
+                             "window's figure is the workers' (review round 2, 2026-09-19)" % name)
             self.assertRegex(text, r"collector nothing armed", name)
             self.assertRegex(text, r"workers' share not\s+reported", "%s names the CLI's wording for the absent key" % name)
             self.assertNotRegex(text, r"one source,\s+never\s+one\s+of\s+each", "%s: PR 788's interim sentence is gone" % name)
@@ -2222,6 +2233,94 @@ class JudgeCpu(unittest.TestCase):
                              "(review round 1, 2026-09-19: it was listed as one and served the key frozen)" % name)
             self.assertNotRegex(text, r"earlier kernel load\s+in a test process after a later load re-armed",
                                 "%s: the sentence round 1 found false is gone" % name)
+        # the two CLI copies of the same predicate, bin/romp's comment over the "not reported" note and the bats test's,
+        # read with their comment markers stripped and whitespace normalised: each names the displaced collector and
+        # carries the hedge, and neither says the share is absent from the figure (review round 2, 2026-09-19: bin/romp's
+        # copy had dropped the hedge its siblings carry, and the bats copy still stated the closed rule from before round 1)
+        top = Path(HERE).parent
+        for name, path in (("bin/romp", top / "bin" / "romp"), ("tests/romp-perf.bats", top / "tests" / "romp-perf.bats")):
+            text = re.sub(r"\s+", " ", re.sub(r"(?m)^[ \t]*#", " ", path.read_text(encoding="utf-8")))
+            self.assertRegex(text, r"later kernel load[\s\S]{0,60}displaced", "%s names the displaced collector" % name)
+            self.assertRegex(text, r"not reported", name)
+            self.assertRegex(text, r"straddles", "%s carries the hedge: a window that straddles the displacement carries the share" % name)
+            self.assertNotRegex(text, r"share is not in the window's figure", "%s: the share may be in the figure; the note says the "
+                                "block cannot split it" % name)
+            self.assertNotRegex(text, r"has no pool workers' share in it", "%s: the closed rule from before round 1 is gone" % name)
+
+    def test_judge_worker_cpus_docstring_states_a_write_as_a_record_and_presence_by_who_holds_the_sink(self):
+        """The writer's own docstring follows the serving rule round 1 installed (review round 2, 2026-09-19: it still said a
+        write was itself the evidence that the share is reported, while snapshot() pops the key from any collector that
+        does not hold the sink, so a wrapper installed beside the method records and reports nothing, the opposite of the
+        promise). Whitespace is normalised first, so a re-wrap cannot red it. Kept apart from the class-docstring pin above
+        on purpose: this method's docstring carries none of that text."""
+        doc = re.sub(r"\s+", " ", km._PerfStats.judge_worker_cpu.__doc__ or "")
+        self.assertNotRegex(doc, r"write is itself the evidence", "the retired rule is gone")
+        self.assertRegex(doc, r"a served block carries the key only while this collector is the sink judge\.py holds",
+                         "the serving rule, in the writer's own words")
+        self.assertRegex(doc, r"holds_judge_worker_sink", "and it names the question snapshot() asks")
+        self.assertRegex(doc, r"RECORD, not a report", "a write is a record")
+
+    def test_judge_pys_pool_site_line_is_the_ast_walks_enumeration(self):
+        """kernel/judge.py carries ONE machine-readable line under the _TimedPool rebind, `# POOL SITES: run_pass -> ... |
+        main only -> ...`, and this test derives that line from the file and compares (review round 2, 2026-09-19: PR
+        792's rationale had enumerated the sites by hand, ten where the file has eleven, in place of a parenthetical
+        that claimed a check and was false; a written list is the same artifact with more words, so the list is derived
+        here and a new site reds this test until the line names it). THE PREDICATE. A pool site is an ast.Call whose
+        callee is the bare name ThreadPoolExecutor or _TimedPool: after the rebind every such construction builds
+        _TimedPool, whose submit wrapper feeds the sink. An attribute-form construction (concurrent.futures.
+        ThreadPoolExecutor(...)) would bypass the rebind and is asserted absent. A site is named by the module-level def
+        whose span holds it, in source order, one name per construction. run_pass REACHES a site when a walk from run_pass
+        over the Name loads of module-level functions inside each function's body reaches its owner: an over-approximation
+        of calls (a function passed as a value counts as reached), so "main only" is what the walk proves: no name road
+        from run_pass at all, and main the one module-level function that reaches the owner. Every owner is reached from
+        main (its subcommand dispatch)."""
+        import ast
+        path = Path(HERE).parent / "kernel" / "judge.py"
+        src = path.read_text(encoding="utf-8")
+        tree = ast.parse(src)
+        top = {n.name: n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.ClassDef))}
+
+        def owner_of(lineno):
+            for name, node in top.items():
+                if node.lineno <= lineno <= node.end_lineno:
+                    return name
+            return "<module>"
+        sites, bypass = [], []
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            f = node.func
+            if isinstance(f, ast.Name) and f.id in ("ThreadPoolExecutor", "_TimedPool"):
+                sites.append((node.lineno, owner_of(node.lineno)))
+            elif isinstance(f, ast.Attribute) and f.attr in ("ThreadPoolExecutor", "_TimedPool"):
+                bypass.append((node.lineno, owner_of(node.lineno)))
+        sites.sort()
+        self.assertEqual(bypass, [], "a pool built past the rebind would feed no sink: %r" % (bypass,))
+        self.assertNotIn("<module>", [o for _, o in sites], "every pool site sits inside a module-level def: %r" % (sites,))
+        refs = {}
+        for name, node in top.items():
+            refs[name] = {n.id for n in ast.walk(node) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load) and n.id in top}
+
+        def reach(start):
+            seen, stack = set(), [start]
+            while stack:
+                x = stack.pop()
+                if x not in seen:
+                    seen.add(x); stack.extend(refs.get(x, ()))
+            return seen
+        from_pass, from_main = reach("run_pass"), reach("main")
+        owners = [o for _, o in sites]
+        self.assertEqual([o for o in owners if o not in from_main], [], "every pool site is reached from main")
+        for owner in sorted({o for o in owners if o not in from_pass}):
+            who = sorted(f for f in top if f != owner and owner in reach(f))
+            self.assertEqual(who, ["main"], "%s is reached from main alone, which is what the line's 'main only' claims" % owner)
+        derived = "# POOL SITES: run_pass -> %s | main only -> %s" % (" ".join(o for o in owners if o in from_pass),
+                                                                      " ".join(o for o in owners if o not in from_pass))
+        written = [ln for ln in src.splitlines() if ln.startswith("# POOL SITES: ")]
+        self.assertEqual(len(written), 1, "exactly one POOL SITES line in kernel/judge.py: %r" % (written,))
+        self.assertEqual(written[0], derived, "kernel/judge.py's POOL SITES line is the AST walk's enumeration; the walk found %d "
+                         "constructions at lines %s. Update the line to the derived text, and if a site moved between the two "
+                         "groups, read what the kernel's arming rests on (the rebind's comment)" % (len(sites), [ln for ln, _ in sites]))
 
     def test_the_kernel_arms_the_sink_at_load(self):
         """A kernel load installs its collector's judge_worker_cpu as judge.py's sink and opens judge.cpu_ms_workers at

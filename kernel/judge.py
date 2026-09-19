@@ -44,7 +44,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 # thread_time is CPU, not wall.
 # The same delta goes to the SINK when one is set: the kernel installs its perf collector's writer at
 # load (set_worker_cpu_sink), so the workers' share stands in the kernel's live counters as each
-# future ends and a live read of those counters agrees with a snapshot (until 2026-09-18 the kernel
+# future ends and a live read of those counters agrees with a snapshot while that collector holds
+# the sink, its served block carrying cpu_ms_workers exactly then (until 2026-09-18 the kernel
 # added this module counter to its snapshot COPY at read time, so two readings of one counter
 # disagreed by the whole total). With no sink armed only the module counter moves, and a kernel
 # collector nothing armed serves no cpu_ms_workers key at all rather than a zero (the setter's
@@ -142,6 +143,14 @@ class _TimedPool(ThreadPoolExecutor):
 
 
 ThreadPoolExecutor = _TimedPool      # every pool below is a timed one (see above)
+# POOL SITES: run_pass -> _run_index _run_index run_plan run_group run_consolidate run_close run_unblock run_distill | main only -> _ab_close _ab_classify _test
+# ^ every ThreadPoolExecutor(...) construction in this file, named by its enclosing top-level function in source order
+#   (one name per construction) and split by whether run_pass reaches its owner (a name walk from run_pass over this
+#   module's functions) or only main's subcommand dispatch does. DERIVED, not written: tests/test_perf_stats.py
+#   (JudgeCpu) walks this file's AST on every run and reds when the line and the walk differ, so a new pool site is
+#   named here or fails the suite, and the fact the kernel's arming rests on (every pool the kernel process can reach
+#   sits under run_pass, so the sink armed at load precedes every future) is re-derived rather than remembered
+#   (review round 2, 2026-09-19: a hand enumeration of these sites in PR 792's rationale ran one short of the file).
 
 HERE = Path(__file__).resolve().parent
 _ls_spec = importlib.util.spec_from_file_location("romp_loadsource", str(HERE / "loadsource.py"))

@@ -1004,13 +1004,20 @@ class _PerfStats:
                                    cpu_ms_workers, and the key rides a served block EXACTLY
                                    while this collector is the sink judge.py holds
                                    (holds_judge_worker_sink, asked at snapshot time and at
-                                   reset): a judge block WITHOUT that key is from a
-                                   collector nothing armed, or from one a later kernel load in
-                                   the same process displaced (the load re-executes judge.py,
-                                   which clears the hook; only a test process loads twice), and its
-                                   cpu_ms_sum takes no workers' share from then on, so `romp
-                                   perf` says "workers' share not reported" over such a pair
-                                   rather than reading a frozen figure as a measurement; the
+                                   reset): a judge block WITHOUT that key is from a collector
+                                   that is not that sink now, whatever made it so (the rule,
+                                   review round 2, 2026-09-19, in place of a list of shapes
+                                   that ran two short): a collector nothing armed, or one the
+                                   sink has since left, as when a later kernel load in the
+                                   same process displaced it (the load re-executes judge.py,
+                                   which clears the hook; only a test process moves the sink
+                                   once armed), and no workers' share lands in its cpu_ms_sum
+                                   from then on, so `romp perf` says "workers' share not
+                                   reported" over such a pair rather than reading a frozen
+                                   figure as a measurement (the note says this block cannot
+                                   tell how much of a window's figure is the workers'; a
+                                   window that straddles the displacement still carries what
+                                   landed while armed, one that begins after it none); the
                                    displaced collector's live dict keeps the key at what it
                                    took while armed, a record, not a report, and reset() keeps
                                    the key on a collector that holds the sink (the review
@@ -1774,10 +1781,17 @@ class _PerfStats:
     def judge_worker_cpu(self, ms):
         """One pool worker's CPU milliseconds for one future, from judge.py's _TimedPool through the sink this kernel
         installs at load (arm_judge_worker_sink, right after the collector is built): into cpu_ms_sum and
-        cpu_ms_workers at write time, so the live dict carries the published figure and a snapshot copies it. Called on
-        the worker's thread with no judge.py lock held; this lock is the only one taken here. A write creates the key
-        when the arming did not (a test's recording wrapper around this method): the write is itself the evidence that
-        the share is reported, and the sink must not raise (judge.py runs it in the future's finally)."""
+        cpu_ms_workers in the live dict, at write time. Called on the worker's thread with no judge.py lock held; this
+        lock is the only one taken here, and the method must not raise (judge.py runs it in the future's finally).
+        A write is a RECORD, not a report. It opens cpu_ms_workers in the live dict when the arming did not, but a
+        served block carries the key only while this collector is the sink judge.py holds (holds_judge_worker_sink,
+        asked by snapshot()): a write on a collector that does not hold the sink lands in its live dict and its served
+        block drops the key, so `romp perf` reads the share as not reported however much landed. That is why a test's
+        recording wrapper is laid over this method ON THE INSTANCE before the arming (tests/test_perf_stats.py _arm):
+        the arming then installs the wrapper and the collector holds the sink, while a closure installed beside the
+        method records and reports nothing (review round 2, 2026-09-19: this docstring had said a write was by itself
+        the proof that the share is reported, the rule from before round 1's serving rule, and a served block from
+        such a collector says the opposite)."""
         with self.lock:
             j = self.judge
             j["cpu_ms_sum"] += ms

@@ -1,7 +1,7 @@
 ---
 title: Child-road perf test: the cpu_ms_sum baseline reads the snapshot it is compared against
 status: candidate
-where: tests/test_judges_process.py (plus one sentence each in kernel/kernel.py's _PerfStats docstring and docs/reference.md)
+where: tests/test_judges_process.py (the two doc sentences fork PR 788 landed beside it, one each in kernel/kernel.py's _PerfStats docstring and docs/reference.md, are gone from the fork tree since PR 792 and live in fork history, see the 2026-09-19 line below; an offer writes them fresh only if upstream still folds at read time)
 added: 2026-09-18
 pr:
 tier: docs
