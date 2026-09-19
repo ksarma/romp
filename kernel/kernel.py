@@ -54831,9 +54831,10 @@ _FEED_BY_NAMES = frozenset(FEED_FRAME_FIELDS) | frozenset(_FEED_FRAME_LISTS)
 # round before withheld it on the ground that on a one-card board it is that card's field lengths, which was no
 # ground, since the Outline's row minus `other` and `off` gave the same number on every board, so a row disclosed
 # nothing new and a universal invariant is testable in one assertion. The row passes the fold question the way
-# `cards` does: an aggregate over the cards, whose count is withheld and recoverable nowhere on /perf (the
-# paragraph below), so whether it stands is the same question FEED_COMPOSITION_RESIDUALS leaves to the user for
-# `cards`. The over-count against the fields an app reads is bounded by
+# `cards` does: an aggregate over the cards, whose count is withheld, published nowhere else on /perf (the paragraph
+# below) and not recoverable in general (exact on cards with no tree, from wire.bytes minus frame: the second residual
+# states the measured terms), so whether it stands is the same question FEED_COMPOSITION_RESIDUALS leaves to the user
+# for `cards`. The over-count against the fields an app reads is bounded by
 # `other` (the ledgers and the remainder minus the flag rows): the rows measure the saving of a per-pane frame, and
 # that saving is in the cards. A pinned list, never a byte floor: a floor would make which rows appear a signal.
 # FEED_BY_FOLDED is classified by what a field CAN carry, never by a fixture's value: ledgers (the pusher's
@@ -54853,8 +54854,12 @@ _FEED_BY_NAMES = frozenset(FEED_FRAME_FIELDS) | frozenset(_FEED_FRAME_LISTS)
 # beside the sums; report() withholds both from the published tables, last and lifetime alike, because a count
 # published beside a sum discloses the single-object case: a sum over one object is that object's measurement, and
 # the count says when, so a sum is an aggregate only while its N is unpublished, here or anywhere else in the
-# export. The card count is published nowhere else on /perf, so `cards` stands as an aggregate; until this round
-# it was recoverable from memos.wire: the feed's view-delta split, the path a ?delta=1 client without the feed
+# export. The card count is published nowhere else on /perf and not recoverable in general, so `cards` stands as an
+# aggregate; it is exact under one condition, on cards with no tree, where wire.bytes minus frame is a constant plus a
+# per-card term, measured on the test fixture's board (one ledger, a one-digit buildId, cards within two minutes of the
+# clock) as 82, 109, 136 and 190 bytes for one, two, three and five cards, 55 plus 27 per card (the second residual
+# states the terms and a test holds the formula on those boards), a residual there, not a defeat of the fold. Until
+# this round it was recoverable from memos.wire: the feed's view-delta split, the path a ?delta=1 client without the feed
 # delta capability takes (the VS Code extension's pipes, federation's remote sockets), counted one entry per card
 # per build under entries_walked and entries_encoded, so entries_walked over split_miss was the card count while
 # such a client and no timeline delta client was connected, and on a one-card board `cards` was that card's whole
@@ -54912,10 +54917,17 @@ FEED_COMPOSITION_RESIDUALS = (
     "is told from every other step, and a session's name rides in each of its cards and in the folded fields, so two "
     "blocks served across a one-character rename move `cards` by that session's card count and `other` by the number "
     "of folded fields carrying the name. A reader bounds the count from the size of `cards` (a card's fixed keys are "
-    "several hundred bytes), from the `phoneFace` row's group rows (61 bytes per session holding fewer than ten "
-    "cards, so the number of sessions with a card is exact when no card is active) and, while `wire.exact` is 1, from "
-    "`wire.bytes` minus `frame` (the key names, the separators and one tint per card and per tree node, about twenty "
-    "bytes each), so a board whose one card has no tree shows as one card.",
+    "several hundred bytes) and from the `phoneFace` row's group rows (61 bytes per session holding fewer than ten "
+    "cards, so the number of sessions with a card is exact when no card is active); the count is not recoverable in "
+    "general, and exact under one condition: while `wire.exact` is 1, `wire.bytes` minus `frame` is the frame's "
+    "`asks`, `buildId`, `ledgers` and `type` keys, brackets and separators plus each card's tint and separator and "
+    "each tree node's tint, so on cards with no tree it is a constant plus a per-card term, measured on the test "
+    "fixture's board (one ledger, a one-digit `buildId`, cards within two minutes of the clock) as 82, 109, 136 and "
+    "190 bytes for one, two, three and five cards, 55 plus 27 per card (a 25-byte tint and a 2-byte separator; two "
+    "more bytes per further ledger, one more per further digit of `buildId`), and a tint is 22 to 25 bytes by the "
+    "card's age (three channels of the colour ramp, at three digits within two minutes of the clock and two digits at "
+    "the darker stops), so the count is exact from the difference on a board of fewer than eight tree-less cards "
+    "whatever their ages, and at any count when the ages fall in one band.",
 )
 # The block's invariant, universal since the review's third round (the Outline's card-field estimate is published as
 # its row's `cardFields`, so the exception the round before carried is gone). Stated in these words in
@@ -55142,10 +55154,15 @@ class _FeedComposition:
         every other key (last's ledgersAttached, apps) copied through. cardCount and ledgerCount are withheld
         deliberately: a count published beside a sum discloses the single-object case (a sum over one object is that
         object's measurement, and the count says when), so the sums stay aggregates only while their counts are
-        unpublished; both counts remain in the stored tables, beside the sums the projections read, so a test holds a
-        pass to them. `ledgers` is withheld too, folded into `rest` and `other`, because its count is the chat tab
-        count and /perf publishes that whatever this block does (the FEED_BY_FOLDED comment names the gauges), so a
-        published ledgers sum was that one row on a one-session board."""
+        unpublished. The card count is not recoverable in general and exact under one condition: on cards with no
+        tree, `wire.bytes` minus `frame` is a constant plus a per-card term, measured on the test fixture's board (one
+        ledger, a one-digit buildId, cards within two minutes of the clock) as 82, 109, 136 and 190 bytes for one,
+        two, three and five cards, 55 plus 27 per card (FEED_COMPOSITION_RESIDUALS states the terms; a test holds the
+        formula on those boards), so there the withholding is a residual, not a defeat of the fold. Both counts
+        remain in the stored tables, beside the sums the projections read, so a test holds a pass to them. `ledgers`
+        is withheld too, folded into `rest` and `other`, because its count is the chat tab count and /perf publishes
+        that whatever this block does (the FEED_BY_FOLDED comment names the gauges), so a published ledgers sum was
+        that one row on a one-session board."""
         out = {"frame": t["frame"], "cards": t["cards"], "rest": t["rest"] + t["ledgers"]}
         out.update((k, v) for k, v in t.items() if k not in _FeedComposition.SUMS and k not in ("by", "apps"))
         out["by"] = _FeedComposition.public_by(t["by"], t["ledgers"])

@@ -3745,7 +3745,13 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   beside a sum discloses the single-object case, because a sum over one
   object is that object's measurement and the count says when, so the sums
   are aggregates only while their counts are unpublished, here or anywhere
-  else in the export. The ledgers have no row of their own for the same
+  else in the export. The card count is not recoverable in general and exact
+  under one condition: on cards with no tree, `wire.bytes` minus `frame` is
+  a constant plus a per-card term, measured on the test fixture's board (one
+  ledger, a one-digit `buildId`, cards within two minutes of the clock) as
+  82, 109, 136 and 190 bytes for one, two, three and five cards, 55 plus 27
+  per card; the second residual below states the terms, and a test holds the
+  formula on those boards. The ledgers have no row of their own for the same
   reason: their count is the chat tab count, which `/perf` publishes whatever
   this block does (`heap.builtChat.tabs`, `caches.built_chat.entries`,
   `memos.chatLedger.entries` and the length of `builds.chat.bySession` are
@@ -3862,12 +3868,22 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   one-character rename move `cards` by that session's card count and `other`
   by the number of folded fields carrying the name. A reader bounds the
   count from the size of `cards` (a card's fixed keys are several hundred
-  bytes), from the `phoneFace` row's group rows (61 bytes per session
+  bytes) and from the `phoneFace` row's group rows (61 bytes per session
   holding fewer than ten cards, so the number of sessions with a card is
-  exact when no card is active) and, while `wire.exact` is 1, from
-  `wire.bytes` minus `frame` (the key names, the separators and one tint per
-  card and per tree node, about twenty bytes each), so a board whose one
-  card has no tree shows as one card.
+  exact when no card is active); the count is not recoverable in general,
+  and exact under one condition: while `wire.exact` is 1, `wire.bytes` minus
+  `frame` is the frame's `asks`, `buildId`, `ledgers` and `type` keys,
+  brackets and separators plus each card's tint and separator and each tree
+  node's tint, so on cards with no tree it is a constant plus a per-card
+  term, measured on the test fixture's board (one ledger, a one-digit
+  `buildId`, cards within two minutes of the clock) as 82, 109, 136 and 190
+  bytes for one, two, three and five cards, 55 plus 27 per card (a 25-byte
+  tint and a 2-byte separator; two more bytes per further ledger, one more
+  per further digit of `buildId`), and a tint is 22 to 25 bytes by the
+  card's age (three channels of the colour ramp, at three digits within two
+  minutes of the clock and two digits at the darker stops), so the count is
+  exact from the difference on a board of fewer than eight tree-less cards
+  whatever their ages, and at any count when the ages fall in one band.
   `wire` is the served body as the kernel holds it now: `bytes`, its length,
   and `exact`, 1 once a whole frame has gone out and the body's text is
   held, 0 while the length is the size estimate. A delta client never needs

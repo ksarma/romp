@@ -91,8 +91,9 @@ SID = "11111111-2222-3333-4444-555555555555"
 SID_B = "11111111-2222-3333-4444-666666666666"
 NOW = 1781100000
 # The frame's size estimate counts the per-card strings minus their tints, the per-ledger strings and the remainder;
-# the served body adds the frame's key names and separators and a tint per card and per tree node (about 20 bytes
-# each). The fixture card below is about 2 KB with seven tints, so the estimate sits 7 to 9 percent under the body;
+# the served body adds the frame's key names and separators and a tint per card and per tree node (25 bytes on this
+# fixture's cards, whose channels are three digits; 22 to 25 by a card's age). The fixture card below is about 2 KB
+# with seven tints, so the estimate sits 7 to 9 percent under the body;
 # the live board's cards are larger and the gap smaller. The tolerance is the stated bound on that gap.
 FRAME_TOLERANCE = 0.15
 VOLATILE = {"type", "now", "buildId"}
@@ -1744,6 +1745,47 @@ class PublishedTable(unittest.TestCase):
         self.assertEqual(rep["last"]["apps"]["feed"]["projected"] - rep2["last"]["apps"]["feed"]["projected"], leds)
         self.assertEqual(rep["last"]["apps"]["phoneFace"]["projected"], rep2["last"]["apps"]["phoneFace"]["projected"])
 
+    def test_on_tree_less_cards_the_count_is_exact_from_wire_bytes_minus_frame(self):
+        """The condition under which the withheld card count is derivable, stated in the second residual and where the
+        withholding is explained (the closing check of 2026-09-19: the documents said "about twenty bytes each", an
+        estimate, where the difference is a formula). `wire.bytes` minus `frame` is the frame's `asks`, `buildId`,
+        `ledgers` and `type` keys, brackets and separators plus each card's tint and separator and each tree node's
+        tint, so on tree-less cards it is a constant plus a per-card term: on the fixture's board (one ledger, a
+        one-digit buildId, cards within two minutes of the clock) 82, 109, 136 and 190 bytes for one, two, three and
+        five cards, 55 plus 27 per card; a second ledger adds its two-byte separator, a three-digit buildId two more
+        bytes, and a tree node its 25-byte tint. A tint's channels are the colour ramp's, three digits within two
+        minutes of the clock and two at the darker stops: 25 bytes at the clock, 24 from ten minutes to a day, 23 at
+        two days and 22 at four; the residual's "fewer than eight" follows from those widths (27N is below 24(N + 1)
+        while N is under eight). The sentence's figures are held to these measurements."""
+        def gap(frame):
+            comp = _fresh_pass(frame)
+            parts = km._feed_parts(frame)
+            lazy = km._LazyWire(lambda: km._feed_body(frame), km._feed_est(parts), "feed_body")
+            lazy.text()
+            with mock.patch.object(km, "_feed_wire", (frame, frame["ledgers"], frame, lazy, km._feed_sig(parts), parts)):
+                rep = comp.report()
+            self.assertEqual(rep["wire"]["exact"], 1)
+            return rep["wire"]["bytes"] - rep["last"]["frame"]
+        measured = {}
+        for n in (1, 2, 3, 5):
+            cards = [_card(i, tree=[]) for i in range(n)]
+            measured[n] = gap(_feed(asks=cards, ledgers=[_ledger(tops=1)]))
+            self.assertEqual([len(', "trgb": ' + json.dumps(c["trgb"])) for c in cards], [25] * n, "the fixture's tints")
+            self.assertEqual(gap(_feed(asks=cards)), 55 + 27 * n + 2, "a second ledger: its separator")
+            self.assertEqual(gap(_feed(asks=cards, ledgers=[_ledger(tops=1)], build_id=100)), 55 + 27 * n + 2,
+                             "a three-digit buildId: two more bytes")
+        self.assertEqual(measured, {1: 82, 2: 109, 3: 136, 5: 190}, "55 plus 27 per card")
+        one = _card(0)
+        for nodes in (1, 6):
+            self.assertEqual(gap(_feed(asks=[dict(one, tree=one["tree"][:nodes])], ledgers=[_ledger(tops=1)])),
+                             82 + 25 * nodes, "a tree node's tint")
+        widths = {age: len(', "trgb": ' + json.dumps(list(km.cm.age_rgb(age)))) for age in (0, 120, 600, 86400, 172800, 345600)}
+        self.assertEqual(widths, {0: 25, 120: 25, 600: 24, 86400: 24, 172800: 23, 345600: 22})
+        self.assertTrue(all(27 * n < 24 * (n + 1) for n in range(1, 8)) and 27 * 8 == 24 * 9, "fewer than eight")
+        for figure in ("82, 109, 136 and 190", "55 plus 27 per card", "a 25-byte tint and a 2-byte separator",
+                       "22 to 25 bytes", "fewer than eight tree-less cards", "not recoverable in general"):
+            self.assertIn(figure, km.FEED_COMPOSITION_RESIDUALS[1], figure)
+
     def test_the_invariant_is_stated_in_its_universal_form_everywhere_and_holds_in_one_assertion(self):
         """The invariant the block's safety is read from (fresh-1 of the second round, ruled again in the third). The
         round before scoped it to every published number but the Outline's row, on the ground that the Outline's
@@ -1817,13 +1859,15 @@ class PublishedTable(unittest.TestCase):
                            "difference of published numbers", "hostname", "`phoneFace`", "title",
                            "withheld", "single-object case", "chat tab count", "builtChat.tabs", "Two residuals remain",
                            "lifetime", "sharing a build", "`cardFields`", "blockSummary", "`wire.exact`",
-                           "judge-limit latch", "memos.wire", "four kinds", "its tree plus a constant", "129 bytes"):
+                           "judge-limit latch", "memos.wire", "four kinds", "its tree plus a constant", "129 bytes",
+                           "not recoverable in general", "55 plus 27 per card", "82, 109, 136 and 190"):
                 self.assertIn(needle, flat, "%s: %r" % (text, needle))
             for stale in ("tells the reader nothing", "forty percent under", "`cardCount`", "`ledgerCount`",
                           "three parts", "Two residuals.", "Three residuals", "minus `ledgers`",
                           "`lifetime` sums every counted pass", "in `last` and in `lifetime`", "as lifetime sums and the last pass",
                           "title, name, summary and background lengths", "no tag and no notice `other`",
-                          "for none of the other texts a person writes"):
+                          "for none of the other texts a person writes", "about twenty bytes each", "shows as one card",
+                          "recoverable nowhere"):
                 self.assertNotIn(stale, flat, "%s: %r" % (text, stale))
             self.assertNotIn("\u2014", phrase, text)
             self.assertNotIn("\u2013", phrase, text)
@@ -2013,8 +2057,9 @@ class PublishedTable(unittest.TestCase):
         self.assertEqual(flat.count("Two residuals remain"), 1)
         for stale in ("Three residuals", "except the Outline's row", "lifetime sums and the last pass",
                       "in `last` and in `lifetime`", "title, name, summary and background lengths", "scoped rather than",
-                      "for none of the other texts a person writes"):
+                      "for none of the other texts a person writes", "about twenty bytes each", "shows as one card"):
             self.assertNotIn(stale, flat, stale)
+        self.assertIn("not recoverable in general", flat, "the body states the condition where it explains the withholding")
         self.assertNotIn("\u2014", body)
         self.assertNotIn("\u2013", body)
         self.assertTrue(body.startswith("Tier: feature\n"), "the tier line first")
