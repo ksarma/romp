@@ -1151,10 +1151,13 @@ class LinkDropOldLocal(_LinkDrop):
     across phase A, the link down, phase B and phase C; another drive at the same head gave 3 / 0 / 1 / 3 when socket
     churn inside phase B absorbed two notices into whole frames. A relay redial does not end the
     storm but restarts it, so with a link that comes and goes the storm looks intermittent and self-healing when it is
-    neither; this class keeps that evidence beside the new bundle's zero. Card visibility is NOT asserted here: the old bundle's socket churns and each redial delivers a
-    whole frame that eventually shows the cards, so the visible freeze is the corners lab's steady-state job; the storm
-    (the rows) is this lab's observable, and the new bundle (LinkDropBothNew) files ZERO of them across the same drive.
-    The redial helper runs with exactly=False for that churn."""
+    neither; this class keeps that evidence beside the new bundle's zero. The catch-up half IS asserted on the old feed
+    page: phase B's cards show after the link's return redial and still show after the local restart's, phase C's show
+    after that redial, and phase D's (posted while the link was down) show after the return, so a redial's whole frame
+    catches the old page up and the next patch freezes it again. The steady-state freeze itself (a card that never
+    shows while one socket holds) is the corners lab's job; the storm (the rows) is this lab's observable, and the new
+    bundle (LinkDropBothNew) files ZERO of them across the same drive. The redial helper runs with exactly=False for
+    the old bundle's socket churn."""
     changes = ("notice",)
     caps = False               # the old bundle dials no caps (read from the dial URL)
 
@@ -1225,6 +1228,17 @@ class LinkDropOldLocal(_LinkDrop):
         for app in self.apps:
             self.assertEqual(self._sends(app, "relay", "needSlot"), [], "the old bundle has no host to route a needSlot by: nothing asked of the remote on the %s socket" % app)
             self.assertEqual(self._sends(app, "relay", "needFullFeed"), [])
+
+    def test_each_redials_whole_frame_caught_the_old_page_up(self):
+        """The catch-up half of the headline, asserted (round 1, extra7-3): the whole frame each redial is served shows the
+        old feed page the cards, so the old page freezes on patches and is caught up by whole frames, not frozen for
+        good. Phase B's own cards after the link's return redial, still there after the local restart's redial, and
+        phase C's after that one (phase A's would have rendered before the drop, so they say nothing about a redial)."""
+        self._assert_seen(self._phase("B")["seen"], True, what="phase B's cards on the old feed page after the link's return redial")
+        if self.local_drop:
+            C = self._phase("C")
+            self._assert_seen(C["seenB"], True, what="phase B's cards still shown after the local restart's redial")
+            self._assert_seen(C["seen"], True, what="phase C's cards after the local restart's redial")
 
     def test_a_change_due_while_the_link_was_down_crossed_nothing_and_the_return_carried_it_whole(self):
         """The gate's own leg on the old bundle: phase D's cards, posted with the row down, reach no page and file no row
