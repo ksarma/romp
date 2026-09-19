@@ -433,7 +433,7 @@ test("the idle prefetch's START GATE (stage 0, 2026-09-18): upsert reads the sho
   // the frame half sits right before upsert's arm, so the arm runs the chain the moment the gate opens
   assert.match(up, /\n\s*gateOnFrame\(skeletonTabs, msg\.id, \[gateWant, activeId\]\);\s*\n\s*schedulePrebuild\(\); \/\/ startup \+ new content/,
     "the visible tab's frame (the want read above, or the active tab this very frame adopted) opens the gate, then the arm; anchored at a line start, so a commented-out call cannot satisfy it (review round 1, 2026-09-19)");
-  assert.equal((RENDER.match(/^\s*gateOnFrame\(/gm) || []).length, 1, "one frame site: upsert (a line-start count: a commented call is not a site)");
+  assert.equal((RENDER.match(/^\s*(?:if \()?gateOnFrame\(/gm) || []).length, 1, "one frame site: upsert (a line-start count, a bare call or an `if (` guard: a commented call is not a site, a second guarded site is; review round 2)");
   // the strip half: the LOCAL kernel's strip alone (a re-emission is empty on a fresh page), keyed on the same want
   const ato = RENDER.slice(RENDER.indexOf("\nfunction applyTabOrder("), RENDER.indexOf("\nfunction syncTabKeysWithStrip("));
   assert.match(ato, /else if \(!activeId\) showActive\(\);[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*if \(localStrip\(report\) && gateOnStrip\(skeletonTabs, kernelOrder, activeId \|\| wantActive\)\) schedulePrebuild\(\);\n(?:\s*\/\/[^\n]*\n)*\s*const stripFrom = stripHost\(report\);/,

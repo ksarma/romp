@@ -1139,6 +1139,18 @@ STORE['romp:settings'] = JSON.stringify({ showFilesControl: true, panes: {} }); 
 out.enabled = { src: src(), lazy: lazy(), sets: Object.assign({}, SETS), cls: BODY_CLS.has('po-fleet'), hidden: hidden() };
 console.log(JSON.stringify(out));
 """
+_LAZY_FLIP_BACK_DRIVER = _LAZY_TOOLS + r"""
+out.boot = { src: src(), lazy: lazy(), dataSrc: dataSrc() };
+MATCHES = false; MQL.forEach((f) => f({}));   // the rotation to the desktop layout: the gear-off Outline is handed back to data-src and not promoted
+out.flipped = { src: src(), lazy: lazy(), dataSrc: dataSrc() };
+MATCHES = true; MQL.forEach((f) => f({}));    // …and back to the phone layout (review round 2): every unloaded pane but the chat and the feed is parked again
+out.back = { src: src(), lazy: lazy(), dataSrc: dataSrc(), sets: Object.assign({}, SETS) };
+STORE['romp:settings'] = JSON.stringify({ showFilesControl: true, panes: {} }); STORAGE.forEach((f) => f({ key: 'romp:settings' }));   // the gear turns the Outline on, on the phone
+out.enabled = { src: src(), lazy: lazy(), dataSrc: dataSrc(), sets: Object.assign({}, SETS), hidden: hidden() };
+window.__rompMobileTab('fleet');
+out.tapped = { tab: TAB, src: src(), lazy: lazy(), sets: Object.assign({}, SETS) };
+console.log(JSON.stringify(out));
+"""
 _LAZY_STORED_DISABLED_DRIVER = _LAZY_TOOLS + r"""
 out.boot = { tab: TAB, src: src(), lazy: lazy(), dataSrc: dataSrc(), hidden: hidden(), sets: Object.assign({}, SETS) };
 STORE['romp:settings'] = JSON.stringify({ showFilesControl: true, panes: {} }); STORAGE.forEach((f) => f({ key: 'romp:settings' }));   // the gear turns the Sessions band on again
@@ -1259,6 +1271,20 @@ class LazyPanes(unittest.TestCase):
         self.assertFalse(f["cls"])
         e = o["enabled"]
         self.assertEqual((e["src"]["fleet"], e["sets"].get("fleet"), e["cls"], e["hidden"]["fleet"]), ("/fleet", 1, True, False), "the gear enable on the desktop loads the pane through the controller's line and shows the column")
+
+    def test_a_flip_to_the_desktop_and_back_parks_the_unloaded_panes_again_so_a_gear_enable_on_the_phone_loads_nothing_off_screen(self):
+        # review round 2 (2026-09-19): the flip to the desktop hands parked panes back to data-src (F3); without the flip back
+        # re-parking them, a gear-off pane sat on data-src on the phone and the controller's enable loaded it hidden (F9's outcome)
+        o = _lazy("STORE['romp:settings'] = JSON.stringify({ showFilesControl: true, panes: { fleet: false } }); STORE['romp-mobile-tab'] = 'chat';", _LAZY_FLIP_BACK_DRIVER)
+        self.assertEqual((o["boot"]["lazy"]["fleet"], o["boot"]["dataSrc"]["fleet"]), ("/fleet", None), "parked at the phone boot")
+        self.assertEqual((o["flipped"]["lazy"]["fleet"], o["flipped"]["dataSrc"]["fleet"], o["flipped"]["src"]["fleet"]), (None, "/fleet", None), "handed back on the desktop, not promoted (the gear)")
+        b = o["back"]
+        self.assertEqual((b["lazy"]["fleet"], b["dataSrc"]["fleet"], b["src"]["fleet"]), ("/fleet", None, None), "parked again on the flip back to the phone")
+        self.assertEqual((b["lazy"]["chat"], b["lazy"]["feed"], b["src"]["feed"]), (None, None, "/feed"), "the chat and the feed are never parked; a loaded pane keeps its src")
+        e = o["enabled"]
+        self.assertEqual((e["src"]["fleet"], e["lazy"]["fleet"], e["hidden"]["fleet"], e["sets"].get("fleet")), (None, "/fleet", False, None), "the gear enable on the phone unhides the tab and loads nothing off screen")
+        t = o["tapped"]
+        self.assertEqual((t["tab"], t["src"]["fleet"], t["lazy"]["fleet"], t["sets"].get("fleet")), ("fleet", "/fleet", None, 1), "its first tap loads it, once")
 
     def test_a_stored_tab_the_gear_has_off_stays_parked_so_a_later_enable_does_not_load_it_off_screen(self):
         # F9 (review round 1, 2026-09-19): the parking no longer skips the stored tab; promote() refuses a disabled pane, so it stays

@@ -3,7 +3,7 @@
 // ordering run executably; feed-hidden-paint.test.ts and outline-visibility.test.ts pin the wiring.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
-import { paintHeld, paintReleased, publishPaneHidden, firstPaintHeld, viewportHiddenSinceLoad, type PaneHiddenHost } from "./paint-gate";
+import { paintHeld, paintReleased, publishPaneHidden, firstPaintHeld, viewportHiddenSinceLoad, revealDecision, type PaneHiddenHost } from "./paint-gate";
 import { hideEdges } from "../test-dom-shim";   // the fake-DOM rule (ui/test-dom-shim.test.ts): a window stand-in with a parent edge enumerates its primitives alone
 
 test("the first content always paints through, whatever the visibility (the pane loader retires on it)", () => {
@@ -110,4 +110,16 @@ test("the zero-viewport probe off a window: a framed pane at 0 by 0 has been hid
   assert.equal(viewportHiddenSinceLoad(framed(390, 0)), true, "either dimension");
   assert.equal(viewportHiddenSinceLoad(framed(390, 700)), false, "a shown frame has its size");
   assert.equal(viewportHiddenSinceLoad(top(0, 0)), false, "a top-level page is its own parent: the probe never applies");
+});
+
+test("a reveal's decision (review round 1 F2, executed since round 2): a found card is jumped to; a card the model holds under an owed paint is parked, never opened; a gone card opens its session when one is named", () => {
+  assert.equal(revealDecision(true, false, true, true), "jump", "the painted board has the card");
+  assert.equal(revealDecision(true, true, true, true), "jump", "found wins whatever else is true");
+  assert.equal(revealDecision(false, true, true, true), "park", "the phone's first-paint hold: unpainted, in the model");
+  assert.equal(revealDecision(false, true, true, false), "park", "…with or without a session named");
+  assert.equal(revealDecision(false, true, false, true), "open", "unpainted but absent from the model: gone, open its session");
+  assert.equal(revealDecision(false, false, true, true), "open", "painted, not found, though the model lists it (a folded group): the base's fallback");
+  assert.equal(revealDecision(false, false, false, true), "open", "gone from a painted board");
+  assert.equal(revealDecision(false, false, false, false), "none", "gone and no session named: nothing");
+  assert.equal(revealDecision(false, true, false, false), "none");
 });

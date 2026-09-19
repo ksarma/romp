@@ -15,7 +15,7 @@ import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
-import { paintHeld, paintReleased, publishPaneHidden, firstPaintHeld, viewportHiddenSinceLoad, type PaneHiddenHost } from "./paint-gate";
+import { paintHeld, paintReleased, publishPaneHidden, firstPaintHeld, viewportHiddenSinceLoad, revealDecision, type PaneHiddenHost } from "./paint-gate";
 import { sameKeySeq } from "./feed-card-gate";
 import { hideEdges } from "../test-dom-shim";   // the fake-DOM rule (ui/test-dom-shim.test.ts): a window stand-in with a parent edge enumerates its primitives alone
 
@@ -142,7 +142,7 @@ const SRC = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "
 const body = (name: string) => new RegExp("^function " + name + "\\([\\s\\S]*?\\n\\}", "m").exec(SRC)![0];
 
 test("render() is gated first, on the shared pure decision, and nothing else in feed.ts is", () => {
-  assert.match(SRC, /import \{ paintHeld, paintReleased, publishPaneHidden \} from "\.\/paint-gate";\nimport \{ firstPaintHeld, viewportHiddenSinceLoad \} from "\.\/paint-gate";/, "the merged import is upstream's line (federation-hidden-hold.test.ts pins it); the first-paint hold's import is the fork's own line");
+  assert.match(SRC, /import \{ paintHeld, paintReleased, publishPaneHidden \} from "\.\/paint-gate";\nimport \{ firstPaintHeld, viewportHiddenSinceLoad, revealDecision \} from "\.\/paint-gate";/, "the merged import is upstream's line (federation-hidden-hold.test.ts pins it); the first-paint hold's import, with the reveal's decision, is the fork's own line");
   assert.match(SRC, /function render\(\) \{\n  const list = document\.getElementById\("feed-list"\)!;\n  if \(!feedWatching\) \{ feedWatching = true; watchFeedVisibility\(list\); \}\n  if \(paintHeld\(document\.hidden, feedIntersecting, list\.childElementCount > 0\) \|\| firstPaintHeld\(list\.childElementCount > 0, parentMobile\(\), feedShellOn, viewportHiddenSinceLoad\(window\), feedIntersecting\)\) \{ paintDirty = true; return; \}\n  pruneTip\(\);/,
     "the gate precedes every paint-side step (pruneTip, applyFollowMove, the footer, the columns); the phone's first-paint hold rides the same line (stage 0, 2026-09-18)");
   // two gates, both PAINTS: render(), and the 15 s age pass (feed-age.ts liveRefresher) that rewrites the stamped
@@ -302,14 +302,15 @@ function phoneFeed(opts: { phone?: boolean | undefined; probeHidden?: boolean } 
     st.paintDirty = false; render();
     if (st.pendingRevealKey !== null && !st.paintDirty) { const k = st.pendingRevealKey; st.pendingRevealKey = null; if (st.dom.includes(k)) st.jumped.push(k); }   // feed.ts releasePaint's tail
   }
-  /** the revealCard handler's decision, line for line (the pins below hold feed.ts to it) */
+  /** the revealCard handler's wiring over paint-gate.ts's real revealDecision (the pins below hold feed.ts to the same call) */
   function revealCard(itemId: string, sid: string) {
     if (st.paintDirty) { st.intersecting = true; releasePaint(); }
     const key = "a:" + itemId;
     const target = st.dom.includes(key) ? key : null;
-    if (target) st.jumped.push(target);
-    else if (st.paintDirty && st.model.some((a) => a.itemId === itemId)) st.pendingRevealKey = key;
-    else if (sid) st.opened.push(sid);
+    const decision = revealDecision(!!target, st.paintDirty, st.model.some((a) => a.itemId === itemId), !!sid);
+    if (decision === "jump" && target) st.jumped.push(target);
+    else if (decision === "park") st.pendingRevealKey = key;
+    else if (decision === "open") st.opened.push(sid);
   }
   function applyFeedPayload(m: Payload) { st.model = m.asks; mirrorBadges(m.asks); render(); }
   /** the shell's panes word, as feed.ts's handler takes it */
@@ -379,8 +380,9 @@ test("F2 (review round 1, 2026-09-19): a bell jump into a held, never-painted ph
   assert.deepEqual(g.st.opened, ["11111111-2222-3333-4444-000000000107"]);
   assert.equal(g.st.pendingRevealKey, null);
   // the wiring: the handler's branch, the parked key, the release's tail, the shared helpers
-  assert.match(SRC, /if \(m\.romp === "revealCard"\) \{[\s\S]*?if \(paintDirty\) \{ feedIntersecting = true; releasePaint\(\); \}\n\s*const key = "a:" \+ String\(m\.itemId \|\| ""\);\n\s*unfoldThreadsFor\(new Set\(\[key\]\)\);\n\s*const target = cardByKey\(key\);[^\n]*\n\s*if \(target\) \{\n\s*jumpToCard\(target\);\n\s*\} else if \(paintDirty && asks\.some\(\(a\) => a\.itemId === String\(m\.itemId \|\| ""\)\)\) \{\n(?:\s*\/\/[^\n]*\n)*\s*pendingRevealKey = key;\n\s*\} else if \(m\.sid\) \{/,
-    "the handler: the release attempt, the structural lookup, the jump, the model-decided park under the hold, then the fallback");
+  assert.match(SRC, /if \(m\.romp === "revealCard"\) \{[\s\S]*?if \(paintDirty\) \{ feedIntersecting = true; releasePaint\(\); \}\n\s*const key = "a:" \+ String\(m\.itemId \|\| ""\);\n\s*unfoldThreadsFor\(new Set\(\[key\]\)\);\n\s*const target = cardByKey\(key\);[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*const decision = revealDecision\(!!target, paintDirty, asks\.some\(\(a\) => a\.itemId === String\(m\.itemId \|\| ""\)\), !!m\.sid\);\n\s*if \(decision === "jump" && target\) \{\n\s*jumpToCard\(target\);\n\s*\} else if \(decision === "park"\) \{\n\s*pendingRevealKey = key;\n\s*\} else if \(decision === "open"\) \{/,
+    "the handler: the release attempt, the structural lookup, then paint-gate.ts's revealDecision over (found, paintDirty, in the model, a session named) and its three arms; the decision itself is executed above and in paint-gate.test.ts");
+  assert.match(SRC, /import \{ firstPaintHeld, viewportHiddenSinceLoad, revealDecision \} from "\.\/paint-gate";/);
   assert.match(SRC, /^let pendingRevealKey: string \| null = null;/m);
   assert.match(body("releasePaint"), /render\(\);\n\s*\/\/[^\n]*\n\s*if \(pendingRevealKey !== null && !paintDirty\) \{ const k = pendingRevealKey; pendingRevealKey = null; const t = cardByKey\(k\); if \(t\) jumpToCard\(t\); \}\n\}/,
     "the release's tail reveals the parked card on the paint it waited for");

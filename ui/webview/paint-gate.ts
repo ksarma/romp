@@ -37,6 +37,19 @@ export function firstPaintHeld(hasContent: boolean, phone: boolean | undefined, 
   return probeHidden || intersecting === false;
 }
 
+// A REVEAL into the board (a bell-row tap, a notification tap; feed.ts's revealCard handler), decided after the handler's
+// release attempt. The card's element found: jump to it. Not found while a paint is still owed (the hold above re-held, so
+// the board is applied but unpainted) and the model holds the card: park the jump for the paint that lands; never the
+// card-gone fallback for a card that exists (review round 1, 2026-09-19: the lookup over the empty DOM took the fallback
+// and posted openSession for an existing card). Otherwise the card is gone: open its session when one is named, else
+// nothing. Pure, so the test's world and feed.ts decide by the same function.
+export type RevealDecision = "jump" | "park" | "open" | "none";
+export function revealDecision(targetFound: boolean, paintDirty: boolean, inModel: boolean, hasSid: boolean): RevealDecision {
+  if (targetFound) return "jump";
+  if (paintDirty && inModel) return "park";
+  return hasSid ? "open" : "none";
+}
+
 // The shim's zero-viewport probe, read off a window: a framed pane whose viewport is 0 by 0 has been hidden since load (every
 // browser lays a shown frame out, so a shown pane never reads 0). The first-paint hold's fallback above, before the shell's
 // word or the observer has spoken, and nothing else's: a pane hidden AFTER a first show keeps its size in Chromium, which is

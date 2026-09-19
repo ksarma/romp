@@ -13,7 +13,7 @@ import { distillText, distillInputs, applyDistillLine, distillPending, distillSt
 import { openContextMenu, CtxItem } from "./ctx-menu";   // the one menu builder (the v0.16.0 tidy): the card menu's card, dismissal and keys
 import { delegate } from "./actions";
 import { paintHeld, paintReleased, publishPaneHidden } from "./paint-gate";
-import { firstPaintHeld, viewportHiddenSinceLoad } from "./paint-gate";   // the phone's first-paint hold (stage 0, 2026-09-18); its own line, so the merged line above stays upstream's text
+import { firstPaintHeld, viewportHiddenSinceLoad, revealDecision } from "./paint-gate";   // the phone's first-paint hold (stage 0, 2026-09-18) and the reveal's decision under it; its own line, so the merged line above stays upstream's text
 import { linkifyPrRefs, setLinkedText, senderPrRepo, installPrLinkOpener } from "./pr-links";
 import { cardInputsKey, cardNeedsUpdate, sameKeySeq, type GateEnv } from "./feed-card-gate";
 import { spinFor, awaitWord, groupRows, waitsNote, GROUP_TITLE, ROW_KIND_OF_LEGACY, type AwaitRow } from "./spin-caption";
@@ -6578,15 +6578,16 @@ listenForFrames(perfFrameHandler("feed", (m) => vscodeApi?.postMessage(m), (e: M
     const key = "a:" + String(m.itemId || "");
     unfoldThreadsFor(new Set([key]));
     const target = cardByKey(key);   // the structural match (cardByKey): a crafted key never reaches querySelector's parser
-    if (target) {
+    // the decision is paint-gate.ts's (revealDecision, pure, executed by the tests): jump to a found card; under the phone's
+    // first-paint hold (the release above re-held, so the board is applied but unpainted) park a card the model holds for the
+    // paint that lands (the pane's show word, the panes handler above), never the card-gone fallback for it; else the fallback.
+    // The shell's own tab switch, or none, is unchanged: this pane decides only what it says about the card.
+    const decision = revealDecision(!!target, paintDirty, asks.some((a) => a.itemId === String(m.itemId || "")), !!m.sid);
+    if (decision === "jump" && target) {
       jumpToCard(target);
-    } else if (paintDirty && asks.some((a) => a.itemId === String(m.itemId || ""))) {
-      // the phone's first-paint hold (paint-gate.ts firstPaintHeld): the release above re-held, so the board is applied but
-      // unpainted and the DOM has no card to find while the model has it. Decided from the model, never from the DOM: no
-      // openSession for a card that exists; the paint that lands (the pane's show word, the panes handler above) reveals it.
-      // The shell's own tab switch, or none, is unchanged: this pane decides only what it says about the card.
+    } else if (decision === "park") {
       pendingRevealKey = key;
-    } else if (m.sid) {
+    } else if (decision === "open") {
       frameGesture = !!m.gesture;   // the bell click or the notification tap behind this frame is the reader's gesture (round three)
       try { vscodeApi?.postMessage({ type: "openSession", id: String(m.sid) }); } finally { frameGesture = false; }
     }

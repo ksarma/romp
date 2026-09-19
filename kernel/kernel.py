@@ -68405,10 +68405,13 @@ if(MQ){if(MQ.addEventListener)MQ.addEventListener('change',retell);else if(MQ.ad
 // [fork] stage 0: the desktop grid shows every pane the rail has on without a tap, so a flip TO the desktop layout hands
 // every parked pane back to the controller's attribute (data-src) and promotes the ones the gear shows; a pane the gear has
 // off keeps its data-src for the controller's later enable (review round 1, 2026-09-19: parked with no data-src, a pane
-// turned on in the gear after a rotation showed an empty column until a reload). Its own listener on the same media query,
-// beside the re-tell's.
-var lazyFlip=function(){try{if(!mobileOn())for(var lk in F){var lf2=F[lk],lz=null;try{lz=lf2&&lf2.getAttribute(LAZY);}catch(e){}
-if(lz){try{lf2.setAttribute('data-src',lz);lf2.removeAttribute(LAZY);}catch(e){}}promote(lk);}}catch(e){}};
+// turned on in the gear after a rotation showed an empty column until a reload). A flip BACK to the phone layout parks
+// every pane still unloaded (no src) but the chat and the feed again, as the boot does, so a later gear enable on the phone
+// loads nothing off screen (review round 2: after a rotation there and back a gear-off pane sat on data-src and the
+// controller's enable loaded it hidden). Its own listener on the same media query, beside the re-tell's.
+var lazyFlip=function(){try{if(!mobileOn()){for(var lk in F){var lf2=F[lk],lz=null;try{lz=lf2&&lf2.getAttribute(LAZY);}catch(e){}
+if(lz){try{lf2.setAttribute('data-src',lz);lf2.removeAttribute(LAZY);}catch(e){}}promote(lk);}}
+else{for(var lk3 in F){var lf3=F[lk3];if(!lf3||lk3==='chat'||lk3==='feed')continue;var lu3=null;try{lu3=lf3.getAttribute('data-src');if(lu3&&!lf3.getAttribute('src')){lf3.setAttribute(LAZY,lu3);lf3.removeAttribute('data-src');}}catch(e){}}}}catch(e){}};
 if(MQ){if(MQ.addEventListener)MQ.addEventListener('change',lazyFlip);else if(MQ.addListener)MQ.addListener(lazyFlip);}
 // A REVEAL un-hides a desktop-toggled-off pane before the mobile tab switch (the user 2026-08-13: a feed
 // click that jumps into a CLOSED chat used to land invisibly — the hidden iframe's WS stays live, so the
