@@ -614,7 +614,8 @@ class Collector(unittest.TestCase):
         self.assertEqual(snap["stages_cpu_ms"]["push.chat.send"], {"user": 0.0, "sys": 0.0}, "and no CPU row for a wall routed to stagesForeign")
         self.assertAlmostEqual(snap["pusher"]["cycleJobsMs"]["persistCheckpoints"], 3.0, msg="the cycle job's wall, apart")
         self.assertEqual(set(snap["stages_cpu_ms"]), set(km._PerfStats.CPU_STAGES),
-                         "no CPU row appeared for the four routed marks, jobs.persistCheckpoints included")
+                         "no CPU row appeared for the five routed marks: the cycle job (jobs.persistCheckpoints), the connect push, the "
+                         "unmarked thread, the push-marked thread owning no cycle, and the jobs owner's push.chat.send")
 
     def test_the_chat_signature_counters_are_a_flat_integer_table(self):
         """Stage 1 of the chat-signature design (2026-09-18): memos.chatSig is the pass's own table, one integer per
@@ -2476,8 +2477,8 @@ class GoalIoCounters(unittest.TestCase):
                 ("extra5-1: the pre identity's two terms", r"less `?targetedBuilds`? plus `?failedBuilds`?"),
                 ("extra5-1: the bound when builds raised", r"at most `?failedBuilds`?"),
                 ("regression-4: the census drops the gate's live-row clause", r"without the gate's live-row clause"),
-                ("extra5-3: push.chat.sig's CPU row is exactly its two sub-seams", r"(exactly|the sum of) `?push\.chat\.sig\.static`? (plus|and) `?push\.chat\.sig\.deps`?"),
-                ("extra5-3: push.chat's row covers its seams plus the glue", r"plus (the loop's|its) glue"),
+                ("extra5-3: push.chat.sig's CPU row is exactly its two sub-seams", r"exactly `?push\.chat\.sig\.static`? plus `?push\.chat\.sig\.deps`?"),
+                ("extra5-3: push.chat's row covers its seams plus the glue, a superset", r"plus the loop's glue \(a superset, not a sum"),
                 ("fresh-2: every key is a delta over pushes", r"delta over `?pushes`?"),
                 ("fresh-2: a pusher.cycles denominator runs high by the connect pushes", r"runs high by those connect pushes"),
                 ("fresh-2: the seam rows exclude connect pushes while the table includes them", r"(exclude|EXCLUDE) connect pushes"),
@@ -2485,6 +2486,25 @@ class GoalIoCounters(unittest.TestCase):
                 ("fresh-3: the deps row records wall and CPU only", r"deps`? row records wall and CPU only"),
                 ("fresh-4: the wrappers' cost per stat", r"wrappers?[^.]{0,240}per stat|per stat[^.]{0,240}wrappers?")):
             self.assertTrue(re.search(pattern, doc), "%s: no match for %r in docs/reference.md" % (why, pattern))   # not assertRegex: its message would print the whole doc
+
+    def test_the_stages_cpu_ms_container_sentence_is_carried_whole_by_the_docstring_row_and_the_reference(self):
+        """The CPU containers gloss (2026-09-19 review, extra5-3): one sentence in the _PerfStats docstring's stages_cpu_ms row
+        and in docs/reference.md, checked phrase by phrase in BOTH copies (the first pin read the reference alone and
+        accepted "the sum of", which "at least the sum of" also matched, so a copy that weakened the relation stayed green
+        and the docstring's sentence could be deleted outright): push.chat.sig's row is EXACTLY its two sub-rows; push.chat
+        covers its three seams plus the loop's glue and is a superset, not a sum; push covers the whole of _push_all; and a
+        reader summing the nine rows counts the signature a fourth time. The arithmetic behind the words is pinned by
+        execution in tests/test_kernel_delta_send.py's rusage test (static plus deps equals the seam exactly; push.chat 54
+        against its seams' 30 under the fake clock)."""
+        row = " ".join(_doc_row(km._PerfStats.__doc__, "stages_cpu_ms").split())
+        doc = " ".join(Path(HERE).parent.joinpath("docs", "reference.md").read_text().split())
+        for why, pattern in (
+                ("push.chat.sig's CPU row is exactly its two sub-seams", r"exactly `?push\.chat\.sig\.static`? plus `?push\.chat\.sig\.deps`?"),
+                ("push.chat's row covers its seams plus the loop's glue, a superset", r"plus the loop's glue \(a superset, not a sum"),
+                ("push covers the whole of _push_all", r"`?push`? covers the whole of `?_push_all`?"),
+                ("the nine-row sum counts the signature a fourth time", r"counts the signature a fourth time")):
+            for where, text in (("the _PerfStats docstring's stages_cpu_ms row", row), ("docs/reference.md", doc)):
+                self.assertTrue(re.search(pattern, text), "%s: no match for %r in %s" % (why, pattern, where))
 
     def test_the_reference_doc_names_the_shared_memos_by_their_camelcase_keys(self):
         # the memo keys upstream also reports are spelled one way in GET /perf and in the doc (bgTops, liftGate,

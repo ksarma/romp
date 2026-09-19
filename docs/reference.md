@@ -3182,14 +3182,16 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   `jobsPass` and the chat loop's rows `push.chat`, `push.chat.sig`,
   `push.chat.sig.static`, `push.chat.sig.deps`, `push.chat.build` and
   `push.chat.send`, each listed at zero from the start and cumulative like
-  the flat rows of `stages_ms`. Two of those are containers of the rows
-  listed after them, as in `stages_ms`: `push.chat.sig` is the sum of
-  `push.chat.sig.static` and `push.chat.sig.deps` by construction (the
-  seam's close records the two sub-rows and then their total), and
-  `push.chat` covers its three seams `push.chat.sig`, `push.chat.build` and
-  `push.chat.send` plus its glue, which has no CPU row of its own, so
-  `push.chat` is at least the sum of the three, the difference the glue's
-  CPU. A row takes the CPU of a mark whose wall
+  the flat rows of `stages_ms`. Three of those are containers of the rows
+  listed after them, as in `stages_ms`: `push.chat.sig`'s CPU row is
+  exactly `push.chat.sig.static` plus `push.chat.sig.deps` by construction
+  (the seam's close records the two sub-rows and then their total);
+  `push.chat`'s row covers its three seams `push.chat.sig`,
+  `push.chat.build` and `push.chat.send` plus the loop's glue (a superset,
+  not a sum: the glue has no CPU row of its own); and `push` covers the
+  whole of `_push_all` (the pusher's `push` stage wraps the call), so a
+  reader summing the nine rows counts the signature a fourth time. A row
+  takes the CPU of a mark whose wall
   went to the flat `stages_ms` row of its name: a connect push's `push.*`
   stage, the pusher's `jobs.<job>` and a foreign writer's stage (a
   push-marked write from a thread owning no cycle included, under the
