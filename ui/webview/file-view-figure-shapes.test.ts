@@ -39,7 +39,7 @@ const inOrder = (src: string, lines: string[], what: string): void => {
 test("figureTarget reads the web address before the model's join, so a protocol-relative source is a tab (figurePath would read it as an absolute path of the disk)", () => {
   const fn = between(VIEW, "function figureTarget(img: Element, filePath: string): FigureTarget | null {", "\n}\n");
   inOrder(fn, [
-    "const dest = pictureDest(img);",
+    "const dest = chosenSource(img);",
     "if (dest === null) return null;",
     'if (/^https?:/i.test(dest) || dest.startsWith("//")) return { kind: "web", href: absUrl(dest) };',
     "const p = figurePath(filePath, dest);",
