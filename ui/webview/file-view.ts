@@ -20,6 +20,7 @@ import { marked, type Tokens } from "marked";
 import { sanitizeMd, revealFragmentTarget } from "./md-sanitize";
 import { applyMdConfig } from "./md-config";   // the one markdown configuration (md-config.ts)
 import { gateRemoteFigures, gateOf, loadGatedHost, figureRefs, parseSrcset, serializeSrcset, GATE_ACT } from "./figure-gate";   // decision 8: a figure on an unlisted host loads on a click (figure-gate.ts)
+import { installFilePrint } from "./file-print";   // Print, with the pictures loaded: the bar's button and Ctrl/Cmd+P (file-print.ts; the print follow-on to plans/markdown-viewer.md Slice 3, item 12)
 import { hostOf, bareId, hostNameNodes } from "./host-prefix";
 import { fileUrl } from "./preview";
 import { ICON_DOWNLOAD, ICON_COPY, ICON_EDIT, ICON_ZOOM, ICON_CHECK, ICON_CROSS } from "./icons";   // the bar's glyphs (T367)
@@ -589,6 +590,11 @@ function isTypingTarget(a: Element): boolean {
   if (a.localName === "textarea" || a.localName === "select") return true;   // type-ahead in a dropdown is typing too (render.ts's isTypingTarget reads the same; the review's round 3)
   if (a.localName === "input") return !NON_TEXT_INPUTS.has((a.getAttribute("type") || "text").toLowerCase());
   return (a as HTMLElement).isContentEditable === true;
+}
+/** A text field in THIS document holds the keyboard: the print chord is the browser's then (file-print.ts reads it at every Ctrl/Cmd+P). */
+function typingHere(): boolean {
+  const a = document.activeElement;
+  return a !== null && a !== document.body && isTypingTarget(a);
 }
 function typingInPeerFrame(): boolean {
   try {
@@ -2248,6 +2254,14 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   dl.title = "Download"; dl.setAttribute("aria-label", "Download");
   dl.addEventListener("click", () => startDownload(dlUrl, dl));
   fileGroup.appendChild(dl);
+  // ── print (the print follow-on to plans/markdown-viewer.md Slice 3, item 12; file-print.ts) ── a word button beside
+  // Download, a direct listener like its neighbours (the bar is built once per open). The flow: over a gated placeholder
+  // (figure-gate.ts) the press arms a line right under this bar, in the notice bar's dress, with "Print with them" and
+  // "Print without them" (Escape or a second press disarms); then the pictures are awaited, 8 s at most; then
+  // window.print(). Ctrl/Cmd+P with a file open runs the same flow through the one document keydown listener the driver
+  // installs, which leaves with the viewer through the close hooks both exits drain (runCloseHooks). A text field holding
+  // the keyboard leaves the chord to the browser (typingHere).
+  fileGroup.appendChild(installFilePrint({ card: box, bar, body, typing: typingHere, onClose: (cb) => { closeHooks.push(cb); } }));
 
   // ── copy path (a glyph since T367) ── the acknowledgement is a glyph swap with the words in the tooltip and
   // aria-label: the press dims the button in the same tick (click-safe: every press acknowledges), then a check
@@ -3695,6 +3709,9 @@ export function openUrlView(href: string): void {
   const body = el("div", "fileview-body");
   const stampBodyWidth = watchBodyWidth(body);        // the body's content width, for a top-level table's cap (the sheets read --fv-body-w)
   textSize.bindWheel(body);                            // Ctrl/Cmd + wheel over the text steps the size
+  // Print, before Copy URL (the local viewer's button stands beside Download): the same flow over this viewer's body, the
+  // line under this bar, the chord through the driver's one keydown listener, dropped by the close hooks (file-print.ts)
+  acts.insertBefore(installFilePrint({ card: box, bar, body, typing: typingHere, onClose: (cb) => { closeHooks.push(cb); } }), copy);
   // In-document links land on their heading (mdBlock's fv-anchor stamp): one delegated listener, the
   // local viewer's pattern. No fv-open here — a URL document's sibling links are made absolute and
   // the chat's own anchor delegate routes them.
