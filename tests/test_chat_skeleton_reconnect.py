@@ -25,6 +25,7 @@ import os
 import re
 import tempfile
 import unittest
+from unittest import mock
 from romp_load import load_source
 from pathlib import Path
 
@@ -85,6 +86,25 @@ def _fake_self(path):
         def end_headers(self): pass
     FakeSelf.path = path
     return FakeSelf()
+
+
+class _DepthLock:
+    """Stands in for a client's slot RLock (`dlock`, what _client_lock returns) and records what a lock pin needs by
+    execution: `holds`, how many times it was taken, and `depth`, how deep it is held right now, so a spy inside the
+    hold can read whether the lock came first (test_11f)."""
+
+    def __init__(self):
+        self.holds = 0
+        self.depth = 0
+
+    def __enter__(self):
+        self.holds += 1
+        self.depth += 1
+        return self
+
+    def __exit__(self, *exc):
+        self.depth -= 1
+        return False
 
 
 class SkeletonReconnect(unittest.TestCase):
@@ -513,18 +533,73 @@ class SkeletonReconnect(unittest.TestCase):
             s = inspect.getsource(getattr(km, name))
             self.assertLess(s.index("with _client_lock("), s.index("_release_skeleton_locked(" if name != "_send_tab_order" else "_tab_order_frame("), name)
         # the per-client skeleton predicate reads the set lock-free; its two callers, the cold gate's walk and the warm-tab
-        # census, each take the client's slot lock first (2026-09-19 review, correctness-4: the predicate had no caller check)
+        # census, each take the client's slot lock first (2026-09-19 review, correctness-4: the predicate had no caller check).
+        # That the two callers DO take the lock, and take it before the read, is pinned by execution in test_11f below: the
+        # text pin that stood here (`with _client_lock(` in each caller's inspect.getsource, and its index before the
+        # predicate's) was satisfied by a comment carrying the literal with the real lock gone (round two, 2026-09-19, tests-3)
         self.assertEqual(owners("_skeleton_held_here("), {"_held_as_skeleton_by_all", "_skeleton_census"},
-                         "a new caller of the lock-free predicate must join this set AND take the lock")
-        for name in ("_held_as_skeleton_by_all", "_skeleton_census"):
-            s = inspect.getsource(getattr(km, name))
-            self.assertIn("with _client_lock(", s, name + ": takes the slot lock")
-            self.assertLess(s.index("with _client_lock("), s.index("_skeleton_held_here("), name + ": the lock comes first")
+                         "a new caller of the lock-free predicate must join this set AND pass test_11f's hold count")
         self.assertEqual(owners("_send_chat_locked("), {"_send_chat", "_send_chat_or_status"},
                          "_send_chat_locked has no lock-free caller")
         for name in ("_send_chat", "_send_chat_or_status"):
             s = inspect.getsource(getattr(km, name))
             self.assertLess(s.index("with _client_lock("), s.index("_send_chat_locked("), name)
+
+    def test_11f_the_lock_free_predicates_two_callers_take_each_clients_slot_lock_first_by_execution(self):
+        """_skeleton_held_here reads a client's skeleton set lock-free, so its two callers, the cold gate's walk
+        (_held_as_skeleton_by_all) and the warm-tab census (_skeleton_census), must hold the client's slot lock across
+        the call. Pinned by EXECUTION: every client's `dlock` is a _DepthLock (one hold counted per `with`, the nesting
+        depth kept live) and a spy on the predicate records the depth of that client's lock at call time. The 2026-09-19
+        round-2 review (tests-3) found the pin that stood in test_11, `with _client_lock(` in the caller's
+        inspect.getsource text and its index before the predicate's, satisfied by a COMMENT carrying the literal with the
+        real lock gone, the fifth source pin met by a comment; this test reds on that mutation (holds 0) and on the lock
+        taken after the read (depth 0 at the call). test_11's owners() set-equality stays the gate a third caller must
+        join; this is what it must then pass. Three clients in the shapes the census reads: a set holder, a reconnecting
+        page whose set is not resolved yet (a watched tab and a tail believed held), and a relay diet page with no
+        watched tab; S3 is the one tab all three hold."""
+        clients = [self._client(skeleton={S1, S2, S3}, dlock=_DepthLock()),
+                   self._client(reconnect=True, active=S1, echat={S2: 1}, dlock=_DepthLock()),
+                   self._client(reconnect=True, dietSkeleton=True, kind="relay", dlock=_DepthLock())]
+        calls = []
+        real = km._skeleton_held_here
+
+        def spy(c, sid):
+            calls.append((clients.index(c), sid, c["dlock"].depth))
+            return real(c, sid)
+
+        def reset():
+            for c in clients:
+                c["dlock"].holds = c["dlock"].depth = 0
+            del calls[:]
+
+        def check(where):
+            self.assertTrue(calls, where + ": the predicate ran")
+            self.assertEqual([d for _i, _s, d in calls], [1] * len(calls),
+                             where + ": every predicate call ran at depth 1 of its client's slot lock (the lock comes first)")
+            for i, c in enumerate(clients):
+                asked = sum(1 for j, _s, _d in calls if j == i)
+                self.assertEqual(c["dlock"].holds, 1 if asked else 0,
+                                 "%s: client %d held exactly once when asked (%d asks), never otherwise" % (where, i, asked))
+        with mock.patch.object(km, "_skeleton_held_here", spy):
+            # the gate's walk over the tab every client holds: one hold per client, the predicate under each
+            self.assertTrue(km._held_as_skeleton_by_all(S3, clients))
+            self.assertEqual([c["dlock"].holds for c in clients], [1, 1, 1], "_held_as_skeleton_by_all: one hold per client")
+            check("_held_as_skeleton_by_all(S3)")
+            reset()
+            # over a tab the second client does not hold: the walk stops there, each client it reached held once and the
+            # third never asked (a walk that asks every client and folds the answers reds here: the round-3 review)
+            self.assertFalse(km._held_as_skeleton_by_all(S1, clients))
+            check("_held_as_skeleton_by_all(S1)")
+            self.assertEqual([c["dlock"].holds for c in clients], [1, 1, 0], "_held_as_skeleton_by_all(S1): the walk stopped at the second client")
+            self.assertNotIn(2, [i for i, _s, _d in calls], "_held_as_skeleton_by_all(S1): the third client was never asked")
+            reset()
+            # the census over any number of tabs: one hold per client per call, every question under that hold
+            for sids in ([S3], [S1, S2, S3], ["%08d-1111-2222-3333-444444444444" % i for i in range(38)] + [S3]):
+                self.assertEqual(km._skeleton_census(sids, clients), {S3})
+                self.assertEqual([c["dlock"].holds for c in clients], [1, 1, 1],
+                                 "_skeleton_census over %d tabs: one hold per client per call, whatever the tab count" % len(sids))
+                check("_skeleton_census over %d tabs" % len(sids))
+                reset()
 
     # ── a later chat column: a skeleton client from its FIRST dial (the split, 2026-09-11) ──
     def test_11_a_skeleton_dial_survives_the_ready_reset(self):

@@ -63,7 +63,27 @@ def _sess(sid, n, state):
             "status": {"state": state, "sinceEpoch": None}, "ledger": None}
 
 
-class ColdTabGate(unittest.TestCase):
+class _HoldCountingLock:
+    """Stands in for a client's slot RLock (`dlock`, what _client_lock returns) and counts its holds, so the gate's lock
+    is pinned by execution and not by its source text (round two, 2026-09-19, tests-3)."""
+
+    def __init__(self):
+        self.holds = 0
+
+    def __enter__(self):
+        self.holds += 1
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+class _ColdTabFixture(unittest.TestCase):
+    """The gate's world, with no test of its own (regression-2, 2026-09-19 round-2 review): four tabs with transcripts of
+    distinct sizes, fake clients, build_session stubbed and counted, a private state root. ColdTabGate and
+    CensusOncePerPush both inherit it; the census class inherited ColdTabGate before and so collected and ran that class's
+    tests a second time. FixtureShape below holds the shape and states the counts."""
+
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
         self.paths = {}
@@ -326,8 +346,14 @@ class ColdTabGate(unittest.TestCase):
         self.assertEqual(sorted(self.built), sorted(TAB_ORDER), "a connected Sessions pane disables the gate for every push")
 
     def test_08_the_gate_reads_each_set_under_the_clients_lock_and_the_docs_name_the_counter(self):
-        src = inspect.getsource(km._held_as_skeleton_by_all)
-        self.assertIn("with _client_lock(c):", src)
+        # the lock by EXECUTION (round two, 2026-09-19, tests-3): the text pin that stood here, `with _client_lock(c):` in
+        # the gate's inspect.getsource, was met by a comment carrying the literal with the lock gone; a client whose slot
+        # lock counts its holds reads one hold per gate read (the ordering half, the predicate under the hold, is pinned in
+        # tests/test_chat_skeleton_reconnect.py test_11f)
+        lock = _HoldCountingLock()
+        c = self._client(skeleton={S2}, dlock=lock)
+        self.assertTrue(km._held_as_skeleton_by_all(S2, [c]), "premise: the one client holds S2 as a skeleton")
+        self.assertEqual(lock.holds, 1, "the gate reads the client's set under exactly one hold of its slot lock")
         self.assertFalse(km._held_as_skeleton_by_all(S2, []), "no client, no gate")
         for fn in (km._push, km._push_session_now):
             self.assertIn("_held_as_skeleton_by_all(", inspect.getsource(fn), fn.__name__)
