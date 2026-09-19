@@ -357,7 +357,7 @@ let browser;
 try { browser = await chromium.launch(cfg.launch || {}); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
 const context = await browser.newContext({ viewport: { width: 1200, height: 700 } });
-const out = { pages: {}, marks: {}, phases: {}, tunnels: [], ctl: {}, timeouts: [], console: [], provBefore: null, died: null };
+const out = { pages: {}, marks: {}, phases: {}, tunnels: [], ctl: {}, timeouts: [], quietGaveUp: [], console: [], provBefore: null, died: null };
 const hook = (o) => {
   window.__socks = []; window.__sends = []; const W = window.WebSocket;
   const strip = (u) => o.stripCaps && u.indexOf("/remote/") !== -1 ? u.replace(/([?&])caps=[^&]*&?/, (m, sep) => sep).replace(/[?&]$/, "") : u;
@@ -409,7 +409,9 @@ const waitFor = async (fn, timeout, what) => {
   out.timeouts.push(what); return false;
 };
 const relayFramesTotal = async () => { let n = 0; for (const app of APPS) { const s = await snap(pages[app]); for (const k of s.socks) if (k.relay) n += k.frames.length; } return n; };
-const quiet = async () => { for (let i = 0; i < 7; i++) { const a = await relayFramesTotal(); await pages[APPS[0]].waitForTimeout(2000); if (await relayFramesTotal() === a) return; } };
+// two seconds with no new relay frame on any page, up to seven tries; a give-up is recorded (out.quietGaveUp), not fatal:
+// the old bundle's socket churn can keep frames coming, and the phase still runs
+const quiet = async (what) => { for (let i = 0; i < 7; i++) { const a = await relayFramesTotal(); await pages[APPS[0]].waitForTimeout(2000); if (await relayFramesTotal() === a) return; } out.quietGaveUp.push(what); };
 const provText = () => pages.fleet ? pages.fleet.evaluate((sel) => { const e = document.querySelector(sel); return e ? e.textContent : null; }, cfg.provSel) : Promise.resolve(null);
 const cardSel = (ch, n) => '[data-key="a:notice:' + cfg.sid + ':' + ch.noticeKeys[n] + ':' + ch.noticeRevs[n] + '"]';
 const visible = async (ch) => {
@@ -429,7 +431,7 @@ const waitVisible = async (ch, ms) => {
 };
 const freshRelayWithFeed = async (sinceKey) => { for (const app of APPS) { const s = await snap(pages[app]); if (!s.socks.some((k) => k.relay && k.dialedAt >= out.marks[sinceKey] && k.frames.some((f) => f.t === "feed"))) return false; } return true; };
 const phase = async (name) => {
-  await quiet();
+  await quiet("before phase " + name);
   mark(name + "0");
   const ch = await ctl("change", { phase: name });
   const rec = { change: ch, seen: await waitVisible(ch, cfg.waitMs) };
@@ -1020,6 +1022,16 @@ class _LinkDrop(unittest.TestCase):
             self.assertEqual(bad, [], "every relay socket the %s page opened was served a WHOLE keyed feed first (%d opened, %d received a frame; a patch "
                                       "or feedDelta first is a patch onto a base the socket never held): %r" % (app, len(opened), len(with_frame), bad))
 
+    def _assert_every_wait_was_met(self):
+        """Every wait the driver placed (waitFor: the held sockets closing, the row leaving and returning to up, a fresh
+        relay socket per page holding a whole frame, the local sockets reopening) was met inside its timeout. An
+        expired wait means a phase ran on an unmet precondition and the record shows a partial drive that every other
+        assertion may still pass (round 1, fresh-3: a forced timeout gave 3 / 0 / 3 / 2 and five green tests). The
+        driver records quiet()'s give-ups separately and they are not fatal."""
+        self._driver_ran()
+        self.assertEqual(self.result.get("timeouts"), [], "every wait the driver placed was met; the expired ones: %r (quiet gave up: %r)"
+                         % (self.result.get("timeouts"), self.result.get("quietGaveUp")))
+
     def _assert_seen(self, seen, want_cards, todo=None, prompt=None, what=""):
         self.assertEqual(seen.get("cards"), [want_cards] * len(seen.get("cards") or []), "%s: the notice cards on the hub's feed page (per card, in posting order): %r" % (what, seen))
         self.assertTrue(seen.get("cards"), "%s: cards were posted" % what)
@@ -1122,6 +1134,9 @@ class LinkDropBothNew(_LinkDrop):
     def test_every_relay_socket_that_opened_was_served_whole_first(self):
         self._assert_every_opened_relay_socket_was_served_whole_first()
 
+    def test_every_wait_the_driver_placed_was_met(self):
+        self._assert_every_wait_was_met()
+
     def test_a_change_due_while_the_link_was_down_crossed_nothing_and_the_return_carried_it_whole(self):
         """Phase D (cards, a todo, an appended pair) posted with the row down: absent from every page while down, no row,
         then the return's whole frame carries all of it (card, todo text, the provisional row's prompt) with no patch of
@@ -1213,6 +1228,13 @@ class LinkDropOldLocal(_LinkDrop):
         # the old bundle churns its remote socket, so the return's redial is one of several sockets in the window; the
         # FIRST that opened was served a whole keyed feed (the whole-frame road the old page depends on)
         self._assert_redialed_once_and_served_whole("resume", "restart" if self.local_drop else "end", caps=False, exactly=False)
+        if self.local_drop:
+            # …and the local restart's redial the same: the first socket that opened between the restart and phase C's
+            # first change was served whole (round 1, fresh-3: a partial return in that window went unread)
+            self._assert_redialed_once_and_served_whole("restart", "C0", caps=False, exactly=False)
+
+    def test_every_wait_the_driver_placed_was_met(self):
+        self._assert_every_wait_was_met()
 
     def test_the_old_bundle_drops_every_remote_patch_and_asks_the_local_kernel(self):
         """The freeze signature the corners lab pins, read here in phase A (steady, link up): one outline/delta-unapplied
