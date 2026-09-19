@@ -40173,7 +40173,14 @@ def _drop_parked_auth(sid, why):
     _inflight_slot is with the backend already and cannot be unsaid (the drain's `took` False path tolerates a removal,
     but the call has run), so it stays and fires after this pick, the one race left. Locked as every queue mutation
     is: the removal and the mirror write under _pending_ops_lock, the pusher wake after the release; an emptied queue
-    leaves no hold behind (the ✕ path's rule). Only auth ops go: a parked send, model or compact keeps its press order."""
+    leaves no hold behind (the ✕ path's rule). Only auth ops go: a parked send, model or compact keeps its press order.
+
+    NOT A RETIREMENT ON AN INFERENCE (the verb's rebase onto the reviewer's round 2, 2026-09-19, whose standing rule
+    forbids a teardown, a death notice or a mirror wipe on the inference that work ended): what goes here is a PARKED
+    PICK, a queued op the user asked for and has now superseded with a newer gesture on the same session. Dropping it is
+    that user action applied to the queue, decided by the newer request itself, never a guess about the state of the
+    session's CLI or its work; the CLI, its turn and its background tasks are not touched, and the newer pick reaches
+    them through set_auth's own arm rule."""
     sid = str(sid)
     with _pending_ops_lock:
         ops = _pending_ops.get(sid) or []
