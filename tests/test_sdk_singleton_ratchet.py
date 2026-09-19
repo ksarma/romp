@@ -28,7 +28,8 @@ reads and gets the silent empty-registry answer this fixture exists to stop, liv
 tests/test_kernel_interrupt_machine_cut.py leaves dangling and two of the three files that load it read, that one and
 tests/test_kernel_msgcaption.py; the loop cannot land here because the private-kernel harnesses carry 90 or more
 pre-existing teardown leaks, so their save-and-restore product code lands first, then the ratchet's private-kernel
-arm), and the 316 the first sweep ran; 364 modules in all. The first sweep, over its 316 at the base, found
+arm; Y pins the limit as behaviour, a private-name leak over a removed root with the ratchet silent and the run green,
+red the day that arm lands), and the 316 the first sweep ran; 364 modules in all. The first sweep, over its 316 at the base, found
 the 4 red on these leaks and 1 red for an unrelated pre-existing reason (tests/test_sdk_rate_limit_usage.py, an
 unrestored ROMP_SERVE_TOKEN setdefault the judge fixture's environment check names; identical with the ratchet off);
 at this head every one of the 364 is green alone except that one. The full-suite census saw none of the five, because
@@ -187,6 +188,10 @@ alphabetically, and each case's `before` is what the previous case left):
     One.c repoints and puts the state_dir back (quiet); Two's tearDownClass repoints the object its test left (the
     class boundary, named before its quiet rules); Three's tearDownClass puts back the object it found with its
     state_dir repointed (the put-back branch); the module end is quiet on the named object.
+  Y, the stated limit as behaviour: the scratch loads the kernel a second time under a private name; a builds that
+    kernel's singleton over a sandbox and removes it, b asserts inside the child that the leak stands and the shared
+    slot is None; the ratchet says nothing and the run exits 0 (the control is B.a, the same leak under the shared
+    name, named).
   M, class teardowns that install a value: One.a builds first; Two's tearDownClass builds over a kept sandbox (the
     class boundary names the change from the run root's backend to the sandbox's, sandbox remedy); Three's
     tearDownClass resets the slot to None (object remedy, no sandbox sentence); Four does nothing under the None and
@@ -935,6 +940,25 @@ SCRATCH_X = SCRATCH_HEAD + textwrap.dedent("""\
             assert km._sdk().state_dir == Three.root
 """)
 
+SCRATCH_Y = SCRATCH_HEAD + textwrap.dedent("""\
+    kp = load_source("romp_kernel_scratchp", KERNEL)  # the kernel under a PRIVATE name: its own _sdk_backend slot, the shared jd
+    assert kp is not km and kp.jd is jd and kp._sdk_locked is not km._sdk_locked
+
+    class Cases(unittest.TestCase):
+        def test_a_leaks_the_private_kernels_singleton_over_a_removed_sandbox(self):
+            saved = jd.STATE
+            root = sandbox()
+            jd.STATE = root
+            kp._sdk_backend = None
+            assert kp._sdk().state_dir == root        # the private kernel's build, over the sandbox
+            jd.STATE = saved
+            shutil.rmtree(root)                       # left dangling: the defect class, on a private name
+
+        def test_b_the_leak_stands_and_the_shared_slot_is_untouched(self):
+            assert kp._sdk_backend is not None and not kp._sdk_backend.state_dir.exists()
+            assert km._sdk_backend is None
+""")
+
 SCRATCH_M = SCRATCH_HEAD + textwrap.dedent("""\
 
     class One(unittest.TestCase):
@@ -1452,6 +1476,31 @@ class LazyFirstBuildOnTheImportableRoad(_NestedRun, unittest.TestCase):
     def test_the_child_took_the_importable_road(self):
         self.assertNotIn(SDK_NOT_FOUND, self.out, "the boot log's not-found line is the missing road's: %s" % self.out)
         self.assertNotIn(SDK_NOT_IMPORTABLE, self.out, "the construction notice is the missing road's: %s" % self.out)
+
+
+class APrivateNameKernelsLeakIsOutsideTheFixture(_NestedRun, unittest.TestCase):
+    """Y, the stated limit pinned as behaviour: the scratch loads the kernel a second time under a private name (its own
+    _sdk_backend slot, the shared jd), a builds that kernel's singleton over a sandbox and removes the sandbox, and b
+    asserts inside the child that the leak stands (the private slot's state_dir no longer exists) and the shared slot
+    is untouched (None): this fixture's own defect class, on a private name. The ratchet reads the shared name alone,
+    so it says nothing and the run exits 0. The limit is worded in the conftest comment and the module docstring
+    (TheStatedLimitIsWorded, with the blocker and the order: the private-kernel harnesses' save-and-restore first, then
+    the arm) and pinned here as what the fixture does: red the day the private-kernel arm lands. The control is the
+    same leak under the shared name, B.a, which is named."""
+    SCRATCH = SCRATCH_Y
+    ERRORS = 0
+
+    def test_the_run_exits_zero_and_the_ratchet_says_nothing(self):
+        self.assertEqual(self.rc, 0, self.out)
+        for method in ("test_a_leaks_the_private_kernels_singleton_over_a_removed_sandbox",
+                       "test_b_the_leak_stands_and_the_shared_slot_is_untouched"):
+            self.assertRatchetPassed("Cases", method)
+            self.assertIsNone(inherited(self.out, "Cases", method, head=INHERITED_KEPT), self.out)
+        self.assertNotIn(RATCHET, self.out, "the private kernel's slot is outside the fixture: %s" % self.out)
+        self.assertNotIn(REEXEC, self.out, self.out)
+        self.assertEqual(boundary_scopes(self.out), set(), self.out)
+        self.assertIsNone(boundary(self.out, "::Cases"), self.out)
+        self.assertIsNone(boundary(self.out, ""), self.out)
 
 
 class NestedSummaryMatcher(unittest.TestCase):
