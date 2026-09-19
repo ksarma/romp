@@ -1015,12 +1015,14 @@ receiver you configure yourself (none ships, so nothing can be sent until you
 set one); see
 [Kernel performance counters](reference.md#kernel-performance-counters). Other
 parts of Romp make requests of their own: the agents' and the judge pipeline's
-model calls go through `claude`, and the kernel fetches and posts for some of
-its features. That list is derived from the code, not kept by hand:
-`tests/test_outbound_requests_census.py` enumerates every request site under
-`kernel/`, `cli/`, `bin/` and `postal/` and fails on one it does not name, and
-[Requests Romp makes on its own](reference.md#requests-romp-makes-on-its-own)
-in the reference lists what it finds today.
+model calls go through `claude` or `codex` (each agent's backend, and the engine
+the judges are set to), and the kernel fetches and posts for some of its
+features. That list is derived from the code, not kept by hand:
+`tests/test_outbound_requests_census.py` reads every request site under
+`kernel/`, `cli/`, `bin/` and `postal/`, sorts each as a call to `127.0.0.1` or
+names it, and fails on a site that leaves the machine unnamed, and
+[Requests Romp makes on its own](reference.md#requests-romp-makes-on-its-own) in
+the reference lists what it finds today.
 
 The kernel runs as a login service, so it is up whenever you are logged in. To
 stop it on purpose, run `romp down`: it gives the agents a few seconds to

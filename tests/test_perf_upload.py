@@ -2804,14 +2804,19 @@ class Docs(unittest.TestCase):
         same way, so the paragraph now states a RULE in two parts and points at a derivation: the counters leave by one
         road, the upload, only when the user runs and confirms it, with what it sends (the public export, naming no
         session, path, host or user) and that no receiver ships; other parts of Romp make requests of their own, the
-        model calls through `claude` and the kernel's own fetches and posts, and the list of those is derived by
-        tests/test_outbound_requests_census.py (which fails on a request site it does not name) and written out in the
-        reference's "Requests Romp makes on its own" (which that census holds equal to its allowlist). Both sentences
-        are pinned flattened, so a rewrap survives, by boolean, so a failure names the words and never dumps the page;
-        the receiver needle in Cli reads two spans of the first one. Fails on: the only-traffic claim back in the guide;
-        the two-sentence shape back (the judge pipeline sentence closing and the upload opening a sentence of its own);
-        the exhaustive head back ("The traffic that leaves your machine is `claude` itself"); either sentence reworded
-        by a word."""
+        model calls through `claude` or `codex` and the kernel's own fetches and posts, and the list of those is derived
+        by tests/test_outbound_requests_census.py and written out in the reference's "Requests Romp makes on its own"
+        (which that census holds equal to its allowlist). The consolidation of the neighbours closed two more exhaustive
+        claims a verifier found in the rule sentences: the model calls went "through `claude`" alone, false for the Codex
+        backend and for judges switched to Codex (kernel/codex_backend.py, kernel/judge.py's engine setting), and the
+        census "fails on one it does not name", which it does not for a `127.0.0.1` site (classed loopback, never named);
+        the sentence now names both engines and says the census sorts a site as a `127.0.0.1` call or names it and fails
+        on one that leaves the machine unnamed. Both sentences are pinned flattened, so a rewrap survives, by boolean, so
+        a failure names the words and never dumps the page; the receiver needle in Cli reads two spans of the first one.
+        Fails on: the only-traffic claim back in the guide; the two-sentence shape back (the judge pipeline sentence
+        closing and the upload opening a sentence of its own); the exhaustive head back ("The traffic that leaves your
+        machine is `claude` itself"); the claude-alone road or the fails-on-one-it-does-not-name description back; either
+        sentence reworded by a word."""
         text = self._flat("docs", "guide.md")
         one = ("Everything Romp stores stays local, and the performance counters leave your machine by one road: only when "
                "you run it and confirm it, `romp perf upload` sends a paste-safe copy of them (the file "
@@ -2819,11 +2824,12 @@ class Docs(unittest.TestCase):
                "yourself (none ships, so nothing can be sent until you set one); see "
                "[Kernel performance counters](reference.md#kernel-performance-counters).")
         rule = ("Other parts of Romp make requests of their own: the agents' and the judge pipeline's model calls go through "
-                "`claude`, and the kernel fetches and posts for some of its features. That list is derived from the code, not "
-                "kept by hand: `tests/test_outbound_requests_census.py` enumerates every request site under `kernel/`, `cli/`, "
-                "`bin/` and `postal/` and fails on one it does not name, and "
-                "[Requests Romp makes on its own](reference.md#requests-romp-makes-on-its-own) in the reference lists what it "
-                "finds today.")
+                "`claude` or `codex` (each agent's backend, and the engine the judges are set to), and the kernel fetches and "
+                "posts for some of its features. That list is derived from the code, not kept by hand: "
+                "`tests/test_outbound_requests_census.py` reads every request site under `kernel/`, `cli/`, `bin/` and "
+                "`postal/`, sorts each as a call to `127.0.0.1` or names it, and fails on a site that leaves the machine "
+                "unnamed, and [Requests Romp makes on its own](reference.md#requests-romp-makes-on-its-own) in the reference "
+                "lists what it finds today.")
         # the absences first, so a restored claim is named as such rather than as the sentence missing
         self.assertFalse("the only traffic that leaves your machine is `claude` itself" in text,
                          "the only-traffic claim is back in the guide, a sentence before the upload is named as leaving too")
@@ -2831,6 +2837,10 @@ class Docs(unittest.TestCase):
                          "the two-sentence shape is back: the upload named in a sentence of its own after the only-traffic claim")
         self.assertFalse("The traffic that leaves your machine is `claude` itself" in text,
                          "the exhaustive head is back: a closed list of what leaves, which the kernel's own fetches falsify")
+        self.assertFalse("model calls go through `claude`, and the kernel" in text,
+                         "the claude-alone road is back: Codex sessions and judges switched to Codex go through `codex`")
+        self.assertFalse("and fails on one it does not name" in text,
+                         "the census is described as failing on any unnamed site again; a `127.0.0.1` site is classed, not named")
         self.assertTrue(one in text, "the guide's kernel paragraph no longer carries the sentence naming the upload's one road")
         self.assertTrue(rule in text, "the guide's kernel paragraph no longer carries the rule sentences pointing at the census")
         self.assertLess(text.index(one), text.index(rule), "the road sentence precedes the rule")
