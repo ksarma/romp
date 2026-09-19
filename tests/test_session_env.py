@@ -631,6 +631,38 @@ class SetEnv(_Backend):
         self.assertEqual(self._reg(sid)["env"], ENV, "a refused payload must not half-apply")
         self.assertFalse(self.be.set_env(CHILD, ENV), "no reg, no session — refuse, don't mint")
 
+    def test_an_unreadable_registry_is_refused_with_one_row_saying_why(self):
+        """Closing review of the env-pick door (2026-09-19): every False from set_env is answered by the kernel's
+        _env_refusal, whose sentence tells the caller the backend's log line says why, and the registry road (no
+        file for the sid, or a body read_reg returns None for) logged nothing, so on that road the sentence pointed
+        at no line. One problem row per refusal: the whole sid and the reason on the kernel log line, the ring text
+        bounded by construction (the sid cut to RING_SESSION_BUDGET ahead of fixed text), and nothing of the pick
+        on either. Both unreadable registries take the same road."""
+        logged = []
+        self.be._log = lambda msg, problem=False, **kw: logged.append((msg, problem, kw))
+        val = "synthetic-flag-" + uuid.uuid4().hex                          # built at run time; must appear nowhere
+        sid = self.be.spawn("web", "/tmp", env=ENV)
+        sb._reg_path(self.be.state_dir, sid).write_text("[]")               # a non-object body: read_reg answers None
+        for case, target in (("no file", CHILD), ("non-object body", sid)):
+            with self.subTest(case=case):
+                logged.clear()
+                self.assertFalse(self.be.set_env(target, {"FEATURE_FLAG": val}))
+                rows = [(m, kw) for m, problem, kw in logged if problem]
+                self.assertEqual(len(rows), 1, "one row says why: %r" % (logged,))
+                line, kw = rows[0]
+                self.assertEqual(line, "env (%s): pick refused: %s" % (target, sb.REFUSAL_NO_REG),
+                                 "the whole sid and the reason on the kernel log line")
+                self.assertIn("registry could not be read", line)
+                self.assertEqual(kw.get("ring_text"),
+                                 (sb.REFUSAL_RING_HEAD % sb._cred.cut_to(target, sb.RING_SESSION_BUDGET)) + sb.REFUSAL_NO_REG)
+                self.assertTrue(kw["ring_text"].startswith("env (%s%s): pick refused: " % (target[:sb.RING_SESSION_BUDGET - 1], sb._cred.CUT_MARK)),
+                                 "the 36-character sid is cut to the session budget in the ring: %s" % kw["ring_text"])
+                self.assertLessEqual(len(kw["ring_text"]), sb.ERROR_CENTER_TEXT_CAP)
+                self.assertNotIn(val, line); self.assertNotIn(val, kw["ring_text"]); self.assertNotIn("FEATURE_FLAG", line)
+        self.assertIsNone(sb.read_reg(self.be.state_dir, sid), "the registry stays as it was: the refusal writes nothing")
+        worst = (sb.REFUSAL_RING_HEAD % ("x" * sb.RING_SESSION_BUDGET)) + sb.REFUSAL_NO_REG
+        self.assertLessEqual(len(worst), sb.ERROR_CENTER_TEXT_CAP, "fixed text behind a budgeted head: the format's worst case fits")
+
     def test_refuses_a_nul_value(self):
         sid = self.be.spawn("web", "/tmp", env=ENV)
         self.assertFalse(self.be.set_env(sid, {"FEATURE_FLAG": "1\x00x"}),

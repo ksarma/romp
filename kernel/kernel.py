@@ -40051,8 +40051,9 @@ def _env_refusal():
     """The sentence a refused per-session env pick is answered with, POST /new's echo and the parked-op
     drain's alike (review round 2 of the env-pick door, 2026-09-19; the drain's since round 1): generic on
     purpose, and NAMES nothing of the pick, because the pick's dict carries values and a credential-shaped one
-    is what the door refuses; the backend's own problem row says why (a refused name; a registry it could not
-    read has no row, and `romp sessions` shows whether the session is listed)."""
+    is what the door refuses; the backend's own problem row says why on every road it refuses (a refused name, or a
+    registry it could not read: that road logged nothing until the closing review of 2026-09-19, so the sentence
+    pointed at no line there; `romp sessions` shows whether the session is listed)."""
     return "Couldn't set the per-session env: the session's backend refused it (its log line says why)."
 
 

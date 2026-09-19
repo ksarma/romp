@@ -5140,6 +5140,9 @@ FLAG_SETTINGS_KEYS = ("apiKeyHelper", "env", "fastMode", "ultracode")   # every 
 STORED_OFFENDER_RING = ("env (%s): credential-shaped %s stored before the door refused it; launches with it; value in "
                         "registry and flag-settings file")
 REFUSAL_RING_HEAD = "env (%s): pick refused: "            # set_env's head; credentials.credential_env_ring_text follows
+# set_env's registry road (closing review of the env-pick door, 2026-09-19): fixed text behind the head, so the row is
+# bounded by the head's budget alone; it names the sid and the reason, never a value
+REFUSAL_NO_REG = "the session's registry could not be read (no session by this id, or a registry file that will not read); nothing was saved"
 FORK_DROP_RING = "env (%s): fork copies no credential-shaped %s from the parent's stored env; the parent's registry keeps it"
 FLAG_SID_RING = "flag settings: %s (%s); no per-session settings file is written for it; launching WITHOUT %s"
 FLAG_LINK_RING = ("flag settings (%s): the per-session settings file is a symbolic link and is not written through: nothing "
@@ -17850,6 +17853,14 @@ class SdkBackend:
             self._log(line, problem=True, ring_text=ring)
             return False
         if not reg:
+            # said, on this road too (closing review of the env-pick door, 2026-09-19): every False from here is
+            # answered by kernel._env_refusal, which tells the caller the backend's log line says why, and this road
+            # logged nothing, so a pick for a session whose registry would not read (no file, a torn or non-object
+            # body) vanished with a sentence pointing at no line. The row carries the whole sid on the kernel log
+            # line and the reason, and nothing of the pick; the ring text is bounded by construction like the
+            # door's, the sid cut to RING_SESSION_BUDGET ahead of fixed text.
+            self._log("env (%s): pick refused: %s" % (sid, REFUSAL_NO_REG), problem=True,
+                      ring_text=(REFUSAL_RING_HEAD % _cred.cut_to(sid, RING_SESSION_BUDGET)) + REFUSAL_NO_REG)
             return False
         env = dict(env)
         if (reg.get("env") or {}) == env:

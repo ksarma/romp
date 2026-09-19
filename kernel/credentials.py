@@ -211,8 +211,10 @@ def _env_roads(names) -> str:
     op = any(is_op_env_name(str(n).upper()) for n in names)
     suffix = any(not is_op_env_name(str(n).upper()) for n in names)
     if op and suffix:
+        # both halves named, so the fold clause rides here too (closing review of the env-pick door, 2026-09-19: this
+        # was the one statement of the rule naming both halves without it)
         return ("A _API_KEY or _TOKEN value goes in romp's process environment; a 1Password name is refused there at "
-                "boot and a helper reads it from its own file, or a shell loads it")
+                "boot and a helper reads it from its own file, or a shell loads it; either shape is matched in any letter case")
     if op:
         return ("romp refuses a 1Password name in its process environment at boot (it no longer runs op): a helper "
                 "reads the value from its own file, or the session's shells load it from a secret manager")
