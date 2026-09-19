@@ -1393,9 +1393,12 @@ class StoreDirectoriesThatCannotBeListedAreLoud(_LoudBus):
     re-arms the episode."""
 
     def setUp(self):
-        super().setUp()
         if hasattr(os, "geteuid") and os.geteuid() == 0:
+            # before super().setUp(): unittest runs no tearDown when setUp raises, SkipTest included, so a skip after the
+            # fixture had patched the module would leave its patches and the peers flag standing for every later test
+            # (review round 2, 2026-09-19; ARootRunSkipsBeforeTheFixturePatches pins it by execution)
             self.skipTest("root lists a mode-000 directory; the fault cannot be staged")
+        super().setUp()
         getattr(pm, "_UNLISTABLE_SAID", {}).clear()   # getattr: absent before the fix, where the run must reach the assertions
         self._locked = []
 
@@ -1455,6 +1458,67 @@ class StoreDirectoriesThatCannotBeListedAreLoud(_LoudBus):
         req = pm.build_exchange_request("srv", wait=False)      # never raised out of over a store it cannot read
         self.assertEqual((req["relays"], req["reads"]), ([], []))
         self.assertEqual(sorted(n.split(":")[0] for n in self._notices()), ["outbox srv", "readbox srv"], "each store once")
+
+
+class ARootRunSkipsBeforeTheFixturePatches(unittest.TestCase):
+    """Review round 2 (2026-09-19): StoreDirectoriesThatCannotBeListedAreLoud's setUp called super().setUp() first, which
+    patches pm._log, pm._kernel_post, pm.local_agents and pm.local_agents_checked and sets ROMP_POSTAL_PEERS, and skipped
+    as root only after; unittest runs no tearDown when setUp raises (SkipTest included), so on a root run the four patches
+    and the flag outlived the class for every test collected after it. The root check now comes first. Pinned by execution
+    rather than by reading the source: the class's cases run under a geteuid that answers 0, and the module's four names
+    and the environment flag must be what they were before; the same run over a planted subclass that patches first and
+    skips after shows the leak, so the pin is known to be able to fail. Fails before the reorder over a git archive of
+    4383cc9af (the four names left bound to _LoudBus.setUp's lambdas, the flag left at '1'); green after."""
+
+    NAMES = ("_log", "_kernel_post", "local_agents", "local_agents_checked")
+
+    def _run_as_root(self, cls):
+        """Every case of `cls` run under a geteuid that answers 0, with a plain unittest result; returns it."""
+        saved = os.geteuid
+        os.geteuid = lambda: 0
+        try:
+            suite = unittest.TestLoader().loadTestsFromTestCase(cls)
+            result = unittest.TestResult()
+            suite.run(result)
+        finally:
+            os.geteuid = saved
+        self.assertEqual(len(result.skipped), suite.countTestCases(), "every case skipped as root: %r" % (result.skipped,))
+        self.assertEqual((result.errors, result.failures), ([], []))
+        return result
+
+    def test_the_class_skipped_as_root_leaves_the_module_and_the_environment_as_they_were(self):
+        before = tuple(getattr(pm, n) for n in self.NAMES)
+        flag_before = os.environ.get("ROMP_POSTAL_PEERS")
+
+        def restore():
+            for n, v in zip(self.NAMES, before):
+                setattr(pm, n, v)
+            if flag_before is None:
+                os.environ.pop("ROMP_POSTAL_PEERS", None)
+            else:
+                os.environ["ROMP_POSTAL_PEERS"] = flag_before
+        self.addCleanup(restore)      # the pin's own red must not leak what it found into the tests after it
+
+        self._run_as_root(StoreDirectoriesThatCannotBeListedAreLoud)
+        for n, b in zip(self.NAMES, before):
+            self.assertIs(getattr(pm, n), b, "pm.%s was left patched by a setUp that skipped after it had patched" % n)
+        self.assertEqual(os.environ.get("ROMP_POSTAL_PEERS"), flag_before, "the peers flag is what it was before the skip")
+
+        class PatchesThenSkips(_LoudBus):
+            """The shape the reorder retired, planted: the fixture patches first, the root check comes after."""
+            def setUp(self):
+                super().setUp()
+                if hasattr(os, "geteuid") and os.geteuid() == 0:
+                    self.skipTest("planted: skips after the patch")
+
+            def test_never_runs(self):
+                raise AssertionError("a case skipped in setUp never reaches its body")
+        self._run_as_root(PatchesThenSkips)
+        leaked = [n for n, b in zip(self.NAMES, before) if getattr(pm, n) is not b]
+        self.assertEqual(leaked, list(self.NAMES), "the pin sees the leak the retired shape makes: %r" % (leaked,))
+        self.assertEqual(os.environ.get("ROMP_POSTAL_PEERS"), "1", "and the flag it leaves standing")
+        restore()
+        self.assertEqual(tuple(getattr(pm, n) for n in self.NAMES), before)
 
 
 class BusStartSweepsUnfinishedWrites(_LoudBus):

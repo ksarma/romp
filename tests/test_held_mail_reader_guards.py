@@ -159,6 +159,10 @@ class _Case(unittest.TestCase):
     def setUp(self):
         self.r = _Root()
         self.now = int(time.time())
+        with contextlib.redirect_stderr(io.StringIO()):
+            km._sdk()   # the SDK backend's once-per-process import notice (claude_agent_sdk is absent in the test venv and
+            #             on CI) lands on the first build_feed of a process: absorbed here so no case's captured stderr
+            #             depends on which case built first (review round 2: NonFiniteNumbers' hold case was red under -n 4)
 
     def tearDown(self):
         self.r.close()
@@ -255,7 +259,9 @@ class HoldIdsNeverJournaled(_Case):
     restored nothing (after a hold-only Clear-all the first Undo did nothing and the second brought back an earlier
     clear), and the id's pseudo-sid 'quarantine' read a goal store that is no session's. _clear_all declines the id at the
     one write every door reaches: no door is named, the reader's rule stands, and the ledger holds only what Undo can
-    restore."""
+    restore. The pseudo-sid read is gone from the ledger write and the Clear-all door; askClear and askClearMany still
+    read jd.load_goals("quarantine") through _subtree_item_ids before _clear_all declines the id, a harmless read of an
+    absent store that creates nothing (review round 2 record correction)."""
 
     def setUp(self):
         super().setUp()
@@ -386,7 +392,8 @@ class UnreadableHoldRingsTheBell(_Case):
         self.assertEqual(len(rows), 2, "...and the bell says so, one row per file")
         self.assertTrue(all("could not be moved aside" in r and "Permission denied" in r for r in rows))
         self.assertTrue(all(len(r) <= km.SYNC_NOTICE_FIT for r in rows))
-        self.assertNotIn("the other held messages are on the board", "".join(rows), "no false reassurance: none is")
+        self.assertTrue(all("the held messages that could be read are on the board" in r for r in rows),
+                        "the tail is true when none could be read: no false reassurance in other words")
         cards, log = self._cards()
         self.assertEqual((cards, log, len(_refused())), ([], "", 2))
         self.r.chmod(self.r.qdir, 0o700)

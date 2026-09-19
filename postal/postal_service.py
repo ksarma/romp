@@ -904,6 +904,21 @@ def _say_unlistable_once(d, exc, where, bell):
 def _listable_again(d):
     _UNLISTABLE_SAID.pop(str(d), None)
 
+_HOLD_SKIPPED_SAID = {}   # held file -> the reason its skip was said with (a listing that reads it, or no longer lists it, ends it)
+
+def _say_hold_skipped_once(f, why, where):
+    """One _log line per (file, reason) per fault episode for a held record the bus's own readers of the directory
+    (_held_records_bus, behind quarantine_list and _hold_rows) have to skip: unreadable, not JSON, not an object, or a
+    link with nothing behind it. Never a bell row and never a move aside: the kernel's own reader of this directory
+    (_held_records) moves such a file aside and files the bell row, so the bus names the file and the fault's kind in
+    its log, never the record's text, and leaves the file where it is. The episode ends when a listing no longer has to
+    skip the file (it read, was moved aside by the kernel, or is gone: _held_records_bus prunes the registry), so a
+    fault that returns is said again (review round 2, 2026-09-19)."""
+    if _HOLD_SKIPPED_SAID.get(str(f)) == why:
+        return
+    _HOLD_SKIPPED_SAID[str(f)] = why
+    _log("%s: %s is %s: skipped and left in place; the rest is served" % (where, f.name, why))
+
 def _mail_unreadable(f, sid, exc):
     """One inbox file in new/ that cannot be read (EACCES, EIO): moved ASIDE, once, to
     `<mailbox>/<name>.corrupt-<utc stamp>`, beside new/, so no listing (read_box, the sweeps,
@@ -2046,7 +2061,17 @@ def _recall(from_id, to, mid, kept=None):
         for hostdir in OUTBOX.iterdir():
             if not hostdir.is_dir():
                 continue
-            for f in list(hostdir.glob("*.json")):
+            try:
+                files = _json_files(hostdir)         # os.listdir, never Path.glob, which on Python 3.12 swallows a
+            except OSError as e:                     # PermissionError and yields nothing: the recall then answered
+                # "nothing to recall" for a parked record it could not see, with nothing said anywhere. Said once per
+                # fault episode, the same key and text as the exchange's listing of this store (_list_json_records),
+                # so one fault is one bell row across every reader of the one store; the record stands, unrecalled, for
+                # the listing that can read it (review round 2, 2026-09-19).
+                _say_unlistable_once(hostdir, e, "outbox %s" % hostdir.name, bell=True)
+                continue
+            _listable_again(hostdir)
+            for f in files:
                 if mid and f.stem != mid:
                     continue
                 with _outbox_lock:                   # the listing, the mark and this unlink share it: no
@@ -3813,18 +3838,13 @@ def _hold_rows():
     Bounded — past 20 the COUNT is the story and the holder's own dashboard has the rest."""
     out = []
     try:
-        files = _json_files(QUARANTINE)
-    except OSError as e:
-        # said in the log once per episode; the bell row is the kernel's, whose own reader of this directory files
-        # one (_note_hold_dir_fault). A summary never ends the exchange it rides in, so no raise and no rows.
-        _say_unlistable_once(QUARANTINE, e, "held mail", bell=False)
+        recs = _held_records_bus()
+    except OSError:
+        # said in the log once per episode by the walk; the bell row is the kernel's, whose own reader of this
+        # directory files one (_note_hold_dir_fault). A summary never ends the exchange it rides in, so no raise and
+        # no rows.
         return out
-    _listable_again(QUARANTINE)
-    for f in files:
-        try:
-            m = json.loads(f.read_text())
-        except Exception:
-            continue
+    for m in recs:                                   # every one a JSON object: the walk skipped and said the rest
         out.append({"mid": m.get("mid"), "frm": m.get("frm") or "?", "to": m.get("to") or "?",
                     "origin": m.get("origin") or "", "at": m.get("at") or 0,
                     "gist": " ".join(str(m.get("body") or "").split())[:90]})
@@ -4591,25 +4611,81 @@ class QuarantineUnreadable(Exception):
     directory files one (_note_hold_dir_fault), so one fault is one row on the board (2026-09-19)."""
 
 
+def _held_records_bus():
+    """Every hold under QUARANTINE that reads as a JSON object, in file-name order: the one per-file walk behind
+    quarantine_list and _hold_rows. A directory that exists and cannot be listed is said once per episode in the log
+    (_say_unlistable_once, no bell row: the kernel's own reader of the directory files that one) and the listing's
+    OSError is raised to the caller, which answers it its own way; an absent directory is nothing held.
+
+    A record the walk cannot read (EACCES, EIO), cannot parse (not JSON, not UTF-8, nested past the parser's depth),
+    that is not an object, or that is a link with nothing behind it is SKIPPED and said once per (file, reason) per
+    episode (_say_hold_skipped_once), the file left in place: the kernel's reader of this directory (_held_records)
+    moves such a file aside and files the bell row, and two movers of one file would leave the bus to say a fault the
+    kernel never saw. A file gone between the listing and the read was decided meanwhile (the bus removes it on
+    Approve or Deny): the ordinary race, skipped in silence. Before review round 2 (2026-09-19) quarantine_list's try
+    wrapped json.loads alone with `except (OSError, ValueError)`: a hold holding a JSON list or null raised
+    AttributeError out of its sort and out of GET /quarantine (and out of _hold_rows, whose .get ran after its own
+    except, so out of every exchange payload the summary rides in), deeply nested JSON raised RecursionError the same
+    way, and every other skip was silent on every pass with the file left in place."""
+    try:
+        files = _json_files(QUARANTINE)
+    except OSError as e:
+        _say_unlistable_once(QUARANTINE, e, "held mail", bell=False)
+        raise
+    _listable_again(QUARANTINE)
+    out, skipped = [], set()
+    for f in files:
+        try:
+            rec = json.loads(f.read_text())
+        except FileNotFoundError:
+            if not f.is_symlink():                   # lstat: the name is gone too, decided between the listing and the read
+                continue
+            why = "a link with nothing behind it"
+        except OSError as e:
+            why = "unreadable (errno %s: %s)" % (e.errno, e.strerror or e)
+        except (ValueError, RecursionError) as e:    # UnicodeDecodeError and JSONDecodeError are ValueErrors; RecursionError
+            why = "not JSON (%s)" % type(e).__name__  # is nesting past the parser's depth, and is not one
+        else:
+            if isinstance(rec, dict):
+                out.append(rec)
+                continue
+            why = "not a JSON object (%s)" % type(rec).__name__
+        skipped.add(str(f))
+        _say_hold_skipped_once(f, why, "held mail")
+    # the episode end: a file under this directory the listing did not have to skip (it read, was moved aside, or is
+    # gone) is forgotten, so a fault that returns on it is said again. The registry is read through a snapshot
+    # (list(...), one step under the GIL), never iterated live: this walk runs on the exchange thread and on a GET
+    # /quarantine handler thread, and a live iteration met the other walk's pop mid-way and raised RuntimeError
+    # (`dictionary changed size during iteration`) out of holds_payload, outside the exchange's guards (review round 2
+    # consolidation, the kernel's _end_hold_unreadable_episodes mirrored)
+    root = str(QUARANTINE) + os.sep
+    for k in [k for k in list(_HOLD_SKIPPED_SAID) if k.startswith(root) and k not in skipped]:
+        _HOLD_SKIPPED_SAID.pop(k, None)
+    return out
+
+def _hold_sort_at(rec):
+    """A hold's `at` as the integer quarantine_list sorts by, 0 for one that is not a number (the bus stamps an int at
+    hold time, so only a hand-edited or type-wrong record lands here): such a hold sorts as the oldest and stays listed
+    and decidable instead of raising TypeError out of the sort beside an int `at`, and out of GET /quarantine with it.
+    The kernel's `at` guard's except tuple: OverflowError is int()'s answer to a float infinity (json's 1e400)."""
+    try:
+        return int(rec.get("at") or 0)
+    except (TypeError, ValueError, OverflowError):
+        return 0
+
 def quarantine_list():
     """All held messages, newest first: the approve/deny UI's and the tests' list (the kernel reads the directory itself
     for its cards). Raises QuarantineUnreadable when the directory exists and cannot be listed, said once per episode
     in the log; an absent directory is nothing held. The listing is os.listdir through _json_files, never Path.glob,
     which on Python 3.12 swallowed the PermissionError before the old `except OSError` could see it, so an unlistable
-    directory read as nothing held with nothing said (2026-09-19)."""
+    directory read as nothing held with nothing said (2026-09-19). A record that cannot be read or parsed, or is not
+    an object, is skipped and said once (_held_records_bus), and a type-wrong `at` sorts as the oldest (_hold_sort_at):
+    neither raises out of the list or the route any more (review round 2)."""
     try:
-        files = _json_files(QUARANTINE)
+        out = _held_records_bus()
     except OSError as e:
-        _say_unlistable_once(QUARANTINE, e, "held mail", bell=False)
         raise QuarantineUnreadable("held mail cannot be listed (%s: %s)" % (type(e).__name__, str(e)[:120])) from None
-    _listable_again(QUARANTINE)
-    out = []
-    for f in files:
-        try:
-            out.append(json.loads(f.read_text()))
-        except (OSError, ValueError):
-            continue
-    out.sort(key=lambda r: r.get("at") or 0, reverse=True)
+    out.sort(key=_hold_sort_at, reverse=True)
     return out
 
 def quarantine_get(mid):
@@ -4617,7 +4693,7 @@ def quarantine_get(mid):
         return None
     try:
         return json.loads((QUARANTINE / (mid + ".json")).read_text())
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError):    # RecursionError: nesting past the parser's depth (review round 2)
         return None
 
 def quarantine_del(mid):
@@ -4642,6 +4718,12 @@ def quarantine_decide(mid, action, text=None, feedback=None):
     rec = quarantine_get(mid)
     if rec is None:
         return False, "no held message '%s'" % mid
+    if not isinstance(rec, dict):
+        # a held file that parses but is not an object (review round 2, 2026-09-19): approve, and deny with a note, read
+        # its fields and raised AttributeError out of the route; a bare deny dropped it unread. Refused in plain words
+        # and left in place: the kernel's own reader of the directory moves such a file aside and says so.
+        return False, ("held message '%s' cannot be read as a record (JSON %s, not an object); nothing was done"
+                       % (mid, type(rec).__name__))
     if action == "deny":
         note = " ".join(str(feedback or "").split())
         if note and rec.get("origin") and rec.get("frm"):
