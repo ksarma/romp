@@ -406,23 +406,29 @@ try {
                    msg: (msgEl || {}).textContent || "", src: f.getAttribute("src"), lazy: f.getAttribute("data-lazy-src"),
                    loading: document.body.classList.contains("pane-loading"),
                    // ui-1 (review round 3): the retry button in the failed state: painted, named, in the tab order; the message announced
-                   retry: btn ? { display: getComputedStyle(btn).display, tabIndex: btn.tabIndex, hidden: btn.hidden, text: btn.textContent, role: msgEl ? msgEl.getAttribute("role") : null } : null };
+                   retry: btn ? { display: getComputedStyle(btn).display, tabIndex: btn.tabIndex, hidden: btn.hidden, text: btn.textContent, role: msgEl ? msgEl.getAttribute("role") : null,
+                                  focusable: (function () { try { btn.focus(); return document.activeElement === btn; } catch (e) { return false; } })() } : null };   // focusable: the element takes keyboard focus (focus() lands it), the witness every engine gives
         }, cfg.abortPane);
         if (failedSeen) break;
         await sleep(200);
       }
       // the keyboard road (ui-1): from the body, Tab until the retry button is the active element (the overlay precedes the pane iframes in the
-      // document, and the rail is display:none on the phone); recorded as the presses it took, -1 when twelve did not reach it
-      let tabsToReach = -1;
+      // document, and the rail is display:none on the phone); recorded as the presses it took, -1 when twenty did not reach it, with the trail
+      // of what each press focused (tag#id). Chromium and WebKit wrap through the document and reach it (10 presses in Chromium); playwright's
+      // Firefox leaves the document for the browser chrome at the last focusable element and never wraps (probed on a synthetic page with the
+      // overlay's CSS: Chromium's walk reads BODY then the overlay button, Firefox's stays on the bar's last button), so the served test asserts
+      // the walk on the two engines that walk and the focus() witness above on all three
+      let tabsToReach = -1; const tabTrail = [];
       if (failedSeen) {
         await page.evaluate(() => { try { document.activeElement && document.activeElement.blur && document.activeElement.blur(); } catch (e) { /* nothing focused */ } });
-        for (let i = 1; i <= 12; i++) {
+        for (let i = 1; i <= 20; i++) {
           await page.keyboard.press("Tab");
-          const id = await page.evaluate(() => (document.activeElement && document.activeElement.id) || "");
-          if (id === "pane-load-retry") { tabsToReach = i; break; }
+          const at = await page.evaluate(() => { const a = document.activeElement; return a ? a.tagName + "#" + (a.id || "") : "none"; });
+          tabTrail.push(at);
+          if (at === "BUTTON#pane-load-retry") { tabsToReach = i; break; }
         }
       }
-      out.abort = { ms: failedSeen ? now() - out.t.tap : -1, mode: "abort", tabsToReach, ...(failedSeen || {}) };
+      out.abort = { ms: failedSeen ? now() - out.t.tap : -1, mode: "abort", tabsToReach, tabTrail, ...(failedSeen || {}) };
       await page.unroute(isAbortUrl, aborter);
       out.t.retap = now();
       await page.click("#mtabs button[data-pane=" + cfg.tapPane + "]");   // the re-tap: the shell promotes the re-parked pane again, as a first tap would
