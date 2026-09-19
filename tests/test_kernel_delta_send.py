@@ -10,6 +10,7 @@ which a fixed window would mishandle. A fresh connect / fork / behind-the-change
 import ast
 import hashlib
 import importlib
+import inspect
 import io
 import json
 import os
@@ -856,13 +857,21 @@ class ByteIdenticalFrames(unittest.TestCase):
         removed if still empty. Premise 3, after the run and before any count: the furnished channels ran (the files
         stand until cleanup, the cwd resolved to the worktree, the worktree top, the task store and the postal store
         were read inside a signature, the names and registry reads landed), since a thinner world keeps the equality.
-        Premise 4, before the run, in two halves: the kernel's counting wrappers stand on os.stat, os.lstat, posix.stat
-        and posix.lstat (each carries this kernel's thread-local), and each COUNTS (one call on an existing str path
-        inside a forced-open signature moves the accumulator by exactly 1: one call shape, a sample). The second half is
-        there because functools.wraps copies the marker with __dict__, so a marker proves only that a wrapper rides on
-        the kernel's, not that it counts: a marker-carrying wrapper that delegates to the builtin, or one that counts
-        twice, passes the marker half and would red the equality with two numbers and no reason (the closing check,
-        2026-09-19). A peer module that displaced one and never restored it, or restored the builtin, leaves the kernel
+        Premise 4, before the run: the kernel's counting wrappers stand on os.stat, os.lstat, posix.stat and posix.lstat
+        (each carries this kernel's thread-local), and each is put to two checks: it COUNTS ONCE (one call on an existing
+        str path inside a forced-open signature moves the accumulator by exactly 1: one call shape, a sample), and it
+        UNWRAPS to the builtin of its name (inspect.unwrap follows the __wrapped__ chain to its end, and that object's
+        __name__ is stat or lstat as the wrapper's own place says). The first check is there because functools.wraps
+        copies the marker with __dict__, so a marker proves only that a wrapper rides on the kernel's, not that it
+        counts: a marker-carrying wrapper that delegates to the builtin, or one that counts twice, passes the marker
+        check and would red the equality with two numbers and no reason (the closing check, 2026-09-19). The second is
+        there because the marker and the counted call together pass a wrapper that counts once and delegates to the
+        OTHER builtin (os.stat calling the builtin lstat), and for that one the equality says nothing at all: the
+        interceptor's wrapper counts the same calls the planted one does, so the exactness test stays green with its
+        live line reading counted equal to intercepted (run with this check deleted and such a wrapper planted around
+        the exactness test, on each of the four; the ruling on the case the closing check queued, 2026-09-19: assert
+        the unwrapped name). The same check refuses a marker-carrying counter with no __wrapped__ chain, which unwraps
+        to itself. A peer module that displaced one and never restored it, or restored the builtin, leaves the kernel
         counting a subset of what the interceptor sees: with os.stat, os.lstat or posix.stat displaced by its builtin
         the equality would be the first to say so, reading the kernel's count short of the interceptor's, two numbers
         and no reason; with posix.lstat displaced the count does not move (shown by deleting this premise loop in a
@@ -993,7 +1002,7 @@ class ByteIdenticalFrames(unittest.TestCase):
                           "the equality would be the first to say so, with two numbers and no reason, and for posix.lstat nothing "
                           "would, since the count does not move when it is displaced, so this premise is its only detector): %r"
                           % (name, fn))
-            # the second half: the marker rides any functools.wraps copy, so one counted call is the proof that it counts
+            # the first check: the marker rides any functools.wraps copy, so one counted call is the proof that it counts
             was_active, was_stats = tl.active, tl.stats
             tl.active = True
             try:
@@ -1006,6 +1015,16 @@ class ByteIdenticalFrames(unittest.TestCase):
                              "accumulator by %d, not 1 (a marker-carrying wrapper that delegates without counting, since "
                              "functools.wraps copies the marker with __dict__, or one that counts twice, passes the marker check "
                              "above and would red the equality with two numbers and no reason)" % (name, moved))
+            # the second check, beside the counted call: the __wrapped__ chain ends at the builtin of the wrapper's name. The
+            # marker and the counted call pass a wrapper that counts once and delegates to the OTHER builtin, and so does
+            # the equality (the interceptor counts the same calls it does), so the end of the chain is the only detector
+            end, builtin_name = inspect.unwrap(fn), name.rpartition(".")[2]
+            self.assertEqual(getattr(end, "__name__", None), builtin_name,
+                             "premise: the kernel's counting wrapper on %s unwraps to the builtin %s: inspect.unwrap reached %r, "
+                             "named %r (a marker-carrying wrapper that counts once and delegates to the other builtin passes the "
+                             "marker check and the counted call above and keeps the equality green, since the interceptor counts "
+                             "the same calls it does; one with no __wrapped__ chain unwraps to itself)"
+                             % (name, builtin_name, end, getattr(end, "__name__", None)))
         sbmod = sys.modules["romp_sdk_backend"]
         real_list_regs = sbmod.list_regs
         scans = []                                        # (the root scanned, a signature open on this thread) per list_regs call
@@ -1193,31 +1212,31 @@ class ByteIdenticalFrames(unittest.TestCase):
                 self.assertNotIn("equals every stat intercepted", msg, "not the equality")
 
     def test_a_marker_carrying_wrapper_that_does_not_count_once_fails_the_premise_not_a_count(self):
-        """Constructed case 4, for the fourth premise's second half (the closing check on the exactness world, 2026-09-19).
-        The marker half alone has a blind family: functools.wraps copies __dict__, so any wraps copy of the kernel's
-        wrapper carries _romp_sig_counting and passes the marker check whether or not it counts, and a class attribute
-        holding the thread-local passes it on a callable that is no function at all. Three such worlds on each of the
-        four wrappers: a wraps spy delegating to the builtin (the marker rides, the count does not move), a wraps copy
-        that counts once itself and then calls the kernel's wrapper (the count moves by 2), and a callable instance
-        whose class holds the marker and whose call delegates to the builtin (the count does not move). Each is refused
-        by the counted-call half before any signature runs, with the wrapper's name and the count that moved, and not
-        by the equality, which with the marker half alone read two numbers and no reason for the first two kinds on
+        """Constructed case 4, for the fourth premise's first check, the counted call (the closing check on the exactness
+        world, 2026-09-19). The marker alone has a blind family: functools.wraps copies __dict__, so any wraps copy of
+        the kernel's wrapper carries _romp_sig_counting and passes the marker check whether or not it counts, and a
+        class attribute holding the thread-local passes it on a callable that is no function at all. Three such worlds
+        on each of the four wrappers: a wraps spy delegating to the builtin (the marker rides, the count does not move),
+        a wraps copy that counts once itself and then calls the kernel's wrapper (the count moves by 2), and a callable
+        instance whose class holds the marker and whose call delegates to the builtin (the count does not move). Each is
+        refused by the counted call before any signature runs, with the wrapper's name and the count that moved, and
+        not by the equality, which with the marker alone read two numbers and no reason for the first two kinds on
         os.stat at the closing check. Closed on all four wrappers, posix.lstat included, where the equality alone would
         detect nothing (its count does not move when it is displaced). The accept case beside them: an equivalent
         wrapper, a wraps copy that delegates to the kernel's wrapper itself, the shape a _StatInterceptor wrapper left
         behind would have, moves the accumulator by exactly 1 and the world runs to its end (the exactness equality is
-        the exactness test's and is not asserted here). Three neighbours are separate premises this test does not build.
-        A wrapper that counts once but stands on the WRONG builtin (os.stat delegating to lstat; a world built for it
-        must pass follow_symlinks through or drop it, since pathlib hands os.stat that keyword and the builtin lstat
-        refuses it, so the naive world errors inside the run instead of showing the gap). A wrapper that counts
-        CONDITIONALLY, on str paths only or on its first call only: the counted-call half proves one str call and no
-        more, so such a wrapper can pass both halves and red the equality with two numbers and no reason, short by the
-        calls it skipped (os.stat counting str paths alone did, at the follow-up verification of the closing check,
-        2026-09-19; whether the first-call kind reaches the equality depends on which calls the world makes before the
-        probe). And the DirEntry doors (_entry_stat and its twins). Deleting the counted-call assertion from
-        _stats_world reds the twelve refuse legs here with no AssertionError raised (the world runs to its end and
-        returns, since the equality lives in the exactness test) while the four displaced legs and the accept leg stay
-        green."""
+        the exactness test's and is not asserted here). The wrong-builtin case, a wrapper that counts once but stands on
+        the OTHER builtin (os.stat delegating to the builtin lstat), passes the marker and the counted call, and the
+        equality too; queued at the closing check, it is closed by the premise's second check, the unwrapped name, and
+        constructed case 5 below. Two neighbours are separate premises this test does not build. A wrapper that counts
+        CONDITIONALLY, on str paths only or on its first call only: the counted call proves one str call and no more,
+        so such a wrapper can pass the marker and both checks and red the equality with two numbers and no reason,
+        short by the calls it skipped (os.stat counting str paths alone did, at the follow-up verification of the
+        closing check, 2026-09-19; whether the first-call kind reaches the equality depends on which calls the world
+        makes before the probe). And the DirEntry doors (_entry_stat and its twins). Deleting the counted-call
+        assertion from _stats_world reds the twelve refuse legs here with no AssertionError raised (the world runs to
+        its end and returns, since the equality lives in the exactness test) while the four displaced legs, the accept
+        leg and the eight legs of case 5 stay green."""
         import functools
         tl = km._CHAT_SIG_TL
 
@@ -1267,7 +1286,66 @@ class ByteIdenticalFrames(unittest.TestCase):
                     self.assertNotIn("equals every stat intercepted", msg, "not the equality")
         with self.subTest(wrapper="os.stat", kind="an equivalent wrapper, accepted"):
             with mock.patch.object(os, "stat", equivalent_of(os.stat)):
-                self._stats_world()                        # returns: both halves of premise 4 hold, and the world runs
+                self._stats_world()                        # returns: the marker and both checks of premise 4 hold, and the world runs
+
+    def test_a_counting_wrapper_on_the_wrong_builtin_fails_the_premise_not_a_count(self):
+        """Constructed case 5, for the fourth premise's second check (the ruling on the case the closing check queued,
+        2026-09-19: assert the unwrapped name). The marker and the counted call together pass a wrapper that counts once
+        and delegates to the OTHER builtin: a functools.wraps copy of the kernel's lstat wrapper installed at os.stat
+        carries the marker (wraps copies it with __dict__), moves the accumulator by exactly one, and calls the builtin
+        lstat, dropping the follow_symlinks keyword pathlib hands os.stat, which the builtin lstat refuses (the naive
+        shape errors inside the run instead of showing the gap). The equality passes it too: with the check deleted from
+        _stats_world and this wrapper planted around the exactness test, on each of the four, the test stays green with
+        its live line reading counted equal to intercepted, since the interceptor's wrapper counts the same calls the
+        planted one does; which builtin answered is invisible to a count. The check reads the end of the __wrapped__
+        chain: inspect.unwrap(os.stat).__name__ is stat for the kernel's wrapper and lstat for this one. Two shapes on
+        each of the four wrappers, each refused before any signature runs by an AssertionError naming the wrapper and
+        what it unwrapped to, and not by the equality: the wrong builtin (os.stat over the builtin lstat, os.lstat over
+        the builtin stat, the posix twins likewise), and a bare function with the marker set by hand, counting once and
+        calling the right builtin, with no __wrapped__ chain at all (no functools.wraps), where inspect.unwrap returns
+        the function itself, named after itself. The check reads a name: a chainless function carrying the builtin's
+        own __name__ passes it, a neighbour this test does not build. Deleting the check from _stats_world reds the
+        eight legs here with no AssertionError raised (the world runs to its end and returns) while case 4's twelve
+        refuse legs, the displaced legs and the accept leg stay green."""
+        import functools
+        tl = km._CHAT_SIG_TL
+
+        def wrong_of(other):                               # a wraps copy of the kernel's OTHER wrapper: the marker rides, the
+            other_builtin = other.__wrapped__              #  count moves by one, and the chain ends at the other builtin
+
+            @functools.wraps(other)
+            def wrong(path, *a, **kw):
+                if tl.active:
+                    tl.stats += 1
+                kw.pop("follow_symlinks", None)            # pathlib hands os.stat this keyword; the builtin lstat refuses it
+                return other_builtin(path, *a, **kw)
+            return wrong
+
+        def bare_of(fn):                                   # the marker by hand and no __wrapped__: unwrap returns the function
+            builtin = fn.__wrapped__
+
+            def bare(path, *a, **kw):
+                if tl.active:
+                    tl.stats += 1
+                return builtin(path, *a, **kw)
+            bare._romp_sig_counting = tl
+            return bare
+        for mod, name, other in ((os, "stat", "lstat"), (os, "lstat", "stat"), (posix, "stat", "lstat"), (posix, "lstat", "stat")):
+            fn = getattr(mod, name)
+            self.assertIs(getattr(fn, "_romp_sig_counting", None), tl, "premise: the kernel's wrapper is in place before the plant")
+            for kind, planted, reached in (("the wrong builtin", wrong_of(getattr(mod, other)), other),
+                                           ("no __wrapped__ chain", bare_of(fn), "bare")):
+                with self.subTest(wrapper="%s.%s" % (mod.__name__, name), kind=kind):
+                    self.assertIs(getattr(planted, "_romp_sig_counting", None), tl, "premise: the plant carries the marker")
+                    self.assertEqual(getattr(inspect.unwrap(planted), "__name__", None), reached, "premise: the plant unwraps to %s" % reached)
+                    with mock.patch.object(mod, name, planted):
+                        with self.assertRaises(AssertionError) as cm:
+                            self._stats_world()
+                    msg = str(cm.exception)
+                    self.assertIn("premise: the kernel's counting wrapper on %s.%s unwraps to the builtin %s" % (mod.__name__, name, name), msg,
+                                  "the failure names the wrapper and the builtin of its name: %s" % msg)
+                    self.assertIn("named %r" % reached, msg, "the failure names what the wrapper unwrapped to: %s" % msg)
+                    self.assertNotIn("equals every stat intercepted", msg, "not the equality")
 
     REG_PEERS = ["11111111-2222-4333-8444-0000000009%02d" % i for i in range(20, 30)]   # the stats world's registry peers
 
