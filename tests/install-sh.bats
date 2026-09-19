@@ -395,7 +395,7 @@ SH
     [ "$status" -ne 0 ]
 }
 
-@test "install.sh: a running manager with no unit at the path (status: not installed, then running) does not fail the deploy and does not fall through to install; the route is named, with the restart it costs" {
+@test "install.sh: a running manager with no unit at the path (status: not installed, then running) does not fail the deploy and does not fall through to install; the route is named, with what the install does to the running manager on each platform" {
     # Round 2 of the review (correctness-3): a unit deleted while systemd still reports the service active gives this
     # status; the rewrite exits 3, and the filed version failed the whole deploy with a retry line that could never
     # succeed, where the base finished. Falling through to `install` is the bootout the gate exists to prevent, and
@@ -408,12 +408,19 @@ SH
     [[ "$output" == *"no login service unit is at the path romp-service writes"* ]]
     [[ "$output" == *"romp is serving"* ]]
     [[ "$output" == *"$TEST_DIR/romp-service install"* ]]
-    [[ "$output" == *"restarts the manager"* ]]
+    # what the route does on each platform (the round-5 preface's fourth commit of fork PR #778: the line said the install
+    # restarts the manager, and this pin held that clause, which is false of the Linux install: daemon-reload, enable --now,
+    # no restart, by the logged stub in the running-manager case below). The whole clause, and the old one absent
+    [[ "$output" == *"On Linux that writes the unit afresh, reloads systemd and runs enable --now, which starts an inactive unit and leaves a running one as it is, so the running manager keeps its old unit until its next restart:  systemctl --user restart romp-manager. On macOS the install's bootout and bootstrap restart it."* ]]
+    [[ "$output" != *"restarts the manager"* ]]
     [[ "$output" != *"Retry by hand"* ]]
     [[ "$output" != *"rewrite FAILED"* ]]
     [[ "$output" == *"ROMPHOME"* ]]                          # the run goes on to the closing report
     grep -qx rewrite "$TEST_DIR/svc.log"
     run grep -x install "$TEST_DIR/svc.log"
+    [ "$status" -ne 0 ]
+    # the stub's log on this route holds status and rewrite and no other verb: no install, no start, no restart
+    run grep -v -x -E 'status|rewrite' "$TEST_DIR/svc.log"
     [ "$status" -ne 0 ]
 }
 
@@ -422,7 +429,7 @@ SH
 # change a release carried (the MALLOC_ARENA_MAX=2 line the memory fix needs) never reached a box that installed
 # while its manager ran, and the administrator added a drop-in by hand. Here the REAL bin/romp-service runs, with
 # systemctl stubbed (ROMP_SYSTEMCTL; never the box's own): the unit on disk is this release's afterwards, systemd was
-# asked to reload and nothing else, and the one line names the command that restarts the manager.
+# asked to reload and nothing else, and the one line names the restart command the user runs (systemctl --user restart romp-manager).
 _systemctl_active_stub() {   # a systemctl whose is-active says the manager runs; every call's argv lands in systemctl-calls
     cat > "$TEST_DIR/systemctl" <<EOF
 #!/bin/sh
