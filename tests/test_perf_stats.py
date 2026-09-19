@@ -5060,6 +5060,93 @@ class Disclosed(unittest.TestCase):
                       r"\bif\b", r"\bunless\b", r"\bexcept\b", r"\botherwise\b", r"\belsewhere\b", r"\bwherever\b", r"\bwhenever\b",
                       r"\buntil\b")
     NAME_GROUP_HEADS = tuple("every leaf under `%s`" % b for b in BLOCKS)   # the four name pins' clauses, held by _check's name walk
+    # THE SENTENCE LAYER (the reviewer's re-check of the second closing check, 2026-09-19, its stated next lens): the grammar
+    # above re-derives the clause population by a list of conditioning words, itself a list, so a clause phrased outside it
+    # goes unnoticed. This table inverts the check onto the closed set, the paragraph's own text. _sentences splits the
+    # paragraph the way a reader counts sentences, and the test named for the one-sentence fact records that the whole
+    # paragraph, from "What does travel" to the end mark, is ONE sentence (executed: 4575 characters on 2026-09-19 with no
+    # sentence end at depth zero outside backticks), so a per-sentence table would have one row and classify nothing; the
+    # unit is therefore the SPAN, and every character of the paragraph belongs to exactly one row here, in paragraph order.
+    # A conditional row names a CONDITIONAL_CLAIMS entry by the opening words of its clause (an identity join: the clause's
+    # text lives once, in that list, so the two tables cannot drift); a head row names one of the four name groups
+    # (NAME_GROUP_HEADS); a names row is one of the two leaf-name lists the usage clause spells, derived from the register
+    # the name walk holds them to (alphabetical for the action routes, the register's own order for the pane routes), so
+    # the list is never typed here and a route added moves the paragraph and this table together; an unconditional row is
+    # the literal text of a stretch with a one-line reason why it conditions nothing. The test walks the rows with a
+    # cursor, each row's text starting where the last ended, so a clause planted anywhere, a word changed anywhere, a row
+    # dropped and a clause dropped each red, whatever the wording, naming the stretch or the row. The grammar
+    # (CLAUSE_MARKERS) stays as the SECOND layer: this table takes an unconditional row on the author's reason, and the
+    # grammar is the mechanical check that no unconditional or names row carries a listed conditioning word.
+    COVERAGE = (
+        ("unconditional", "What does travel is the file's content, and that is paste-safe, not unlinkable: the per-process and "
+         "per-machine measurements the export keeps go with it, ",
+         "the lead: names what travels and conditions nothing; the request sentence before it is pinned over a recording receiver in tests/test_perf_upload.py"),
+        ("head", "process"),
+        ("unconditional", " (`rss_kb`, `rss_anon_kb`, `hwm_kb`, `cpu_s`, `threads`, `gc_gen2`, `allocated_blocks`, ",
+         "leaf names of the process block, held to the live fold both ways by _check's name walk"),
+        ("conditional", "the `malloc` block's"),
+        ("unconditional", ", glibc before 2.33, musl and macOS among them, and the fixed string `source`) ",
+         "a platform list no single-box execution holds (the grammar's stated residue: before is not a marker) and the last process leaf, held by the name walk"),
+        ("conditional", "plus, on macOS alone"),
+        ("unconditional", " (the peak resident size), ", "a gloss on the leaf's meaning, no condition"),
+        ("head", "heap"),
+        ("unconditional", " (`allocatedBlocks`, `assemblyEntries`, `judgeUsageRows`, `lazyIndexes`, `materializedLruSlots`, `parseSlots`, "
+         "`tracing`, the `builtChat` block's `events`, `serializedBytes` and `tabs`, the `hydrated` block's `bytes`, `entries` and "
+         "`capBytes`, the `imgCache` block's `bytes` and `entries`, and the `gc` block's `enabled`, `counts`, `thresholds` and, ",
+         "leaf names of the heap block, held by the name walk"),
+        ("conditional", "per generation under `stats`"),
+        ("unconditional", "), ", "connective"),
+        ("head", "gc"),
+        ("unconditional", " (`hooked`, `frozen`, `errors`, `counts`, `thresholds` and, ", "leaf names of the gc block, held by the name walk"),
+        ("conditional", "per generation under `gen`"),
+        ("unconditional", "), the ten ", "connective and the count the bounds sentence spells, recomputed by _check from the fold's fraction bounds"),
+        ("conditional", "memory-fraction bounds coarsened"),
+        ("unconditional", ", ", "connective"),
+        ("conditional", "the uptime rounded down"),
+        ("unconditional", ", ", "connective"),
+        ("conditional", "the `http` table in every export"),
+        ("unconditional", " (`METHOD /path` over the kernel's route register; ",
+         "the row key's form, held by the http table test here and the register copy in tests/test_perf_export.py"),
+        ("conditional", "the bundle, media and glossary families"),
+        ("unconditional", "; ", "connective"),
+        ("conditional", "the remote family collapsed by host alone"),
+        ("unconditional", "; ", "connective"),
+        ("conditional", "and one `other` row"),
+        ("unconditional", "), ", "connective"),
+        ("conditional", "each row that route's request"),
+        ("unconditional", ", ", "connective"),
+        ("conditional", "whoever made the requests"),
+        ("unconditional", ", and, ", "connective"),
+        ("conditional", "only when `--usage` was given"),
+        ("unconditional", ", ", "connective"),
+        ("conditional", "which adds no number"),
+        ("unconditional", ": ", "connective"),
+        ("head", "usage"),
+        ("unconditional", " (the uptime's bucket `kernelUptime`, ", "the usage block's first leaf, held by the name walk; the bucket's rule is the export's, pinned in tests/test_perf_export.py"),
+        ("conditional", "the `sessions` block's `parsed`"),
+        ("unconditional", ", ", "connective"),
+        ("conditional", "or, where the snapshot gives no parsed count"),
+        ("unconditional", " ", "connective"),
+        ("conditional", "and perSession.sessions-not-a-number"),
+        ("unconditional", ", so a count the export could not read is told from a kernel that parsed nothing, and an old snapshot from a malformed one, ",
+         "a consequence of the two reasons around it, not a property of a document; the reasons' own pins are the two entries around it"),
+        ("conditional", "and where the snapshot's count is a number no double can hold"),
+        ("unconditional", ", ", "connective"),
+        ("conditional", "the `actions` block's"),
+        ("unconditional", ", ", "connective"),
+        ("names", "actions"),
+        ("unconditional", ", and ", "connective"),
+        ("conditional", "the `views` block's"),
+        ("unconditional", ", ", "connective"),
+        ("names", "views"),
+        ("unconditional", "; ", "connective"),
+        ("conditional", "a count is present only"),
+        ("unconditional", "), ", "connective"),
+        ("conditional", "and the kernel commit"),
+        ("unconditional", " (", "connective"),
+        ("conditional", "the list is every leaf"),
+        ("unconditional", "), ", "the tail before the end mark, which is a consequence (two uploads from one kernel remain linkable by design) outside _paragraph's window"),
+    )
 
     @classmethod
     def _check_exists(cls, check):
@@ -5111,6 +5198,50 @@ class Disclosed(unittest.TestCase):
                     start = m.end()
         pieces.append(text[start:])
         return pieces
+
+    @staticmethod
+    def _names_span(which):
+        """The leaf names the usage clause spells for one of its two counted blocks, as the paragraph spells them, derived from
+        the register the name walk holds the clause to: the action routes, every POST route of the register less the kernel's
+        housekeeping posts, in alphabetical order; the pane routes in the register's own order. Backticked, comma-separated,
+        the last joined by "and", the way the paragraph writes a list."""
+        if which == "actions":
+            names = sorted(pe._feature_name(r) for r in pp.HTTP_ROUTES["POST"] if r not in pe.ACTION_SKIP)
+        elif which == "views":
+            names = [pe._feature_name(r) for r in pe.VIEW_ROUTES]
+        else:
+            raise AssertionError("a names row is actions or views, not %r" % (which,))
+        ticked = ["`%s`" % n for n in names]
+        return ", ".join(ticked[:-1]) + " and " + ticked[-1]
+
+    @classmethod
+    def _coverage_span(cls, row):
+        """One COVERAGE row resolved to (text, why, key): the text the row claims at the cursor; the reason an unconditional
+        row gives, None for the joined kinds, whose reason is the entry or the walk they name; and the key the exactly-once
+        checks count, ("conditional", index), ("head", index) or ("names", which), None for an unconditional row. Raises
+        AssertionError, which the tests report as a failure, on a row of an unknown kind or the wrong arity, opening words
+        that name no entry or more than one, a head that is no block, or a names row that is neither list."""
+        kind, ref = row[0], row[1]
+        if kind == "conditional":
+            if len(row) != 2:
+                raise AssertionError("a conditional row is (kind, opening words), not %r" % (row,))
+            hits = [i for i, entry in enumerate(cls.CONDITIONAL_CLAIMS) if entry[0].startswith(ref)]
+            if len(hits) != 1:
+                raise AssertionError("a conditional row's opening words name %d entries, not one: %r" % (len(hits), ref))
+            return cls.CONDITIONAL_CLAIMS[hits[0]][0], None, ("conditional", hits[0])
+        if kind == "head":
+            if len(row) != 2 or ref not in cls.BLOCKS:
+                raise AssertionError("a head row is (kind, block), the block one of %s, not %r" % (cls.BLOCKS, row))
+            return cls.NAME_GROUP_HEADS[cls.BLOCKS.index(ref)], None, ("head", cls.BLOCKS.index(ref))
+        if kind == "names":
+            if len(row) != 2:
+                raise AssertionError("a names row is (kind, which), not %r" % (row,))
+            return cls._names_span(ref), None, ("names", ref)
+        if kind == "unconditional":
+            if len(row) != 3:
+                raise AssertionError("an unconditional row is (kind, text, why), not %r" % (row,))
+            return ref, row[2], None
+        raise AssertionError("a row of an unknown kind: %r" % (kind,))
 
     @staticmethod
     def _served_collector():
@@ -5742,6 +5873,70 @@ class Disclosed(unittest.TestCase):
         self.assertEqual(len(split("ends here. `usage` starts the next.")), 2, "a backtick after the whitespace is a cut")
         self.assertEqual(split("A. B. C."), ["A. ", "B. ", "C."], "each piece keeps the whitespace after its mark")
         self.assertEqual(split(""), [""], "no text is one empty piece, so a join is always the input")
+
+    def test_every_span_of_the_disclosure_paragraph_is_classified_and_every_classification_has_its_span(self):
+        """Every character of the disclosure paragraph is classified and every classification has its text (the reviewer's
+        re-check of the second closing check, 2026-09-19, its stated next lens: the grammar's list of conditioning words is
+        itself a list, and a clause phrased outside it goes unnoticed; this inverts the check onto the closed set, the
+        text). COVERAGE is walked in order with a cursor: each row's text must begin where the last ended. The reds, in the
+        order that names the right thing: a row whose text does not begin at the cursor but appears later reds "text with
+        no classification before", quoting the row and the stretch, which is what was planted or reworded; a row whose text
+        appears nowhere from the cursor on reds "a classification with no sentence", quoting the row and what the paragraph
+        reads there, a clause dropped or reworded; text after the last row reds "text with no classification". Then every
+        CONDITIONAL_CLAIMS entry, every name-group head and both derived name lists are named by exactly one row and no row
+        names anything outside those three tables, so a row relabelled or dropped is named too, and every unconditional row
+        carries a reason. Each sentence _sentences finds is a run of whole rows, so the per-sentence classification the lens
+        asked for is read off the table (one sentence today; the count is the splitter's, never typed here). The resolver's
+        refusals are exercised on rows of every wrong shape. The grammar test is the SECOND layer: this table takes an
+        unconditional row on the author's reason, and the grammar checks that no such row carries a listed conditioning
+        word. Fails on: a clause planted anywhere in the paragraph, with or without a conditioning word (the case the lens
+        named: a clause phrased outside the grammar reds here, the grammar green); a second sentence planted; a word changed
+        inside an unconditional stretch; a row deleted; a clause dropped while its row stays; a conditional row relabelled
+        unconditional with its literal text (the exactly-once count)."""
+        para = self._paragraph()
+        cursor, keys, ends = 0, [], []
+        for row in self.COVERAGE:
+            text, why, key = self._coverage_span(row)
+            self.assertTrue(text, "an empty row classifies nothing: %r" % (row,))
+            if key is None:
+                self.assertTrue(isinstance(why, str) and why.strip(), "an unconditional row with no reason: %r" % text)
+            else:
+                keys.append(key)
+            if not para.startswith(text, cursor):
+                at = para.find(text, cursor)
+                if at >= 0:
+                    self.fail("text with no classification before the row %r: %r" % (text[:80], para[cursor:at]))
+                self.fail("a classification with no sentence: the row %r; the paragraph at that point reads %r"
+                          % (text[:120], para[cursor:cursor + 120]))
+            cursor += len(text)
+            ends.append(cursor)
+        self.assertEqual(cursor, len(para), "text with no classification: %r" % para[cursor:cursor + 120])
+        counts = collections.Counter(keys)
+        for i, (words, _, _) in enumerate(self.CONDITIONAL_CLAIMS):
+            self.assertEqual(counts[("conditional", i)], 1, "a CONDITIONAL_CLAIMS entry named by %d rows, not one: %r"
+                             % (counts[("conditional", i)], words))
+        for i, head in enumerate(self.NAME_GROUP_HEADS):
+            self.assertEqual(counts[("head", i)], 1, "a name-group head named by %d rows, not one: %r" % (counts[("head", i)], head))
+        for which in ("actions", "views"):
+            self.assertEqual(counts[("names", which)], 1, "the %s names named by %d rows, not one" % (which, counts[("names", which)]))
+        self.assertEqual(sum(counts.values()), len(self.CONDITIONAL_CLAIMS) + len(self.NAME_GROUP_HEADS) + 2,
+                         "a row names something outside the three tables: %s" % sorted(set(keys) - set(counts), key=repr))
+        n_uncond = sum(1 for row in self.COVERAGE if row[0] == "unconditional")
+        self.assertGreater(n_uncond, 0, "the remainder between the claims is classified too")
+        self.assertGreater(len(self.COVERAGE) - n_uncond, 0, "and the claims are")
+        sentences, offset = self._sentences(para), 0
+        for k, sentence in enumerate(sentences, 1):
+            offset += len(sentence)
+            self.assertIn(offset, ends, "sentence %d of %d ends inside a row, after %r" % (k, len(sentences), para[max(0, offset - 60):offset]))
+        for bad in (("conditional", "no such clause"), ("conditional", "the"), ("conditional", "plus, on macOS alone", "a reason"),
+                    ("head", "wire"), ("head", "process", "a reason"), ("names", "colors"), ("names", "actions", "a reason"),
+                    ("unconditional", ", "), ("glue", ", ", "connective")):
+            with self.assertRaises(AssertionError, msg="the resolver accepted %r" % (bad,)):
+                self._coverage_span(bad)
+        self.assertEqual(self._coverage_span(("head", "gc")), ("every leaf under `gc`", None, ("head", 2)), "a head row resolves to its clause")
+        self.assertEqual(self._coverage_span(("unconditional", "x", "y")), ("x", "y", None), "an unconditional row is its own text")
+        self.assertTrue(self._names_span("views").startswith("`chat`, `feed`"), "the pane names in the register's order")
+        self.assertTrue(self._names_span("actions").startswith("`color`, `compact`"), "the action names in alphabetical order")
 
 if __name__ == "__main__":
     unittest.main()
