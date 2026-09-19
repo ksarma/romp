@@ -254,8 +254,12 @@ test('a prefix with options still leads to the command: sudo -u, sudo -n, env -u
   ]) {
     assert.deepEqual(targets(cmd), [report], cmd);
   }
-  assert.deepEqual(targets('env -C base cp report.md ../docs/report.md'), [], 'env -C runs the command elsewhere: its relative paths are not the cwd\'s');
-  assert.deepEqual(targets('sudo -D base cp report.md ../docs/report.md'), []);
+  // round 4 (2026-09-19): env -C / sudo -D run the command in DIR, so its relative operands resolve there, not the
+  // cwd. Before, commandOf returned null and the whole segment was dropped, and the copy onto the tracked file passed.
+  assert.deepEqual(targets('env -C base cp report.md ../docs/report.md'), [report], 'env -C base: ../docs/report.md is relative to base = proj/docs/report.md');
+  assert.deepEqual(targets('sudo -D base cp report.md ../docs/report.md'), [report]);
+  assert.deepEqual(targets('env --chdir=base cp report.md ../docs/report.md'), [report], 'env --chdir=DIR, glued');
+  assert.deepEqual(targets('env -C base cp report.md ../docs/other.md'), [path.join(proj, 'docs', 'other.md')], 'the target resolves under base too, here to an untracked file');
 });
 
 test('pushd moves the cwd like cd; popd leaves it unknown', () => {

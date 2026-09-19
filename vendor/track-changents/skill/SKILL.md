@@ -77,6 +77,21 @@ then takes its change through `track-edit`, a file outside the project an ordina
 write), name a temp file with `$$`, give a folder a literal name of your own, or
 write outside the tracked project.
 
+The guard also reads the common wrappers `setsid`, `flock`, `taskset`, `chrt` and
+`numactl` to the write inside them, runs `env -C DIR` and `sudo -D DIR` in DIR,
+refuses a `cp`/`mv`/`install`/`ln` option it does not know, treats `$HOME` and `~`
+as unreadable once the command reassigns HOME, and refuses a variable or
+substitution whose literal head is above or under a tracked project. But it is
+best-effort against known write forms: it refuses the shell writes it models and,
+by design, allows anything it does not recognise, so it never blocks ordinary work
+it cannot read; it is a backstop, not a complete boundary. These write forms are
+not modelled and still reach a tracked file: rsync; awk with a redirect inside its
+program; ed; ex; make; find with -delete or -exec; a git subcommand that writes the
+working tree (checkout, stash, apply, reset, rm, clean, mv); a computed path inside
+an interpreter (python3 -c, node -e); and a leading opaque expansion from a cwd
+outside every project. Whichever way you write a tracked file, use `track-edit`, so
+your change comes back to be accepted or rejected.
+
 For ANY change to the file, use the CLI, NOT the Edit/Write/MultiEdit tools:
 
 - **Make or replace text** — applies the change AND records it as your tracked

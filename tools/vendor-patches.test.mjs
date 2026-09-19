@@ -252,6 +252,12 @@ test('P9 the skill says a shell write whose target is not a literal path is refu
   assert.ok(!section.includes('at an absolute path outside the project, is allowed') && !section.includes('`$$`, `$RANDOM` or `$SECONDS`') && !section.includes('$BASHPID'), 'the round-2 promise is gone');
   assert.ok(section.includes('a relative path after a `cd` the guard cannot follow'), 'the round-3 refusal class');
   assert.ok(section.includes('Spell the path out') && section.includes('name a temp file with `$$`') && section.includes('give a folder a literal name of your own, or write outside the tracked project'), 'what to do');
+  // round 4 (2026-09-19): the skill states the wrapper set, env -C, the unknown-option refusal, the HOME
+  // reassignment and the parent/under-root rule, and the best-effort contract with the unmodelled-writer list
+  assert.ok(section.includes('`setsid`, `flock`, `taskset`, `chrt` and') && section.includes('`numactl`'), 'the wrapper set');
+  assert.ok(section.includes('runs `env -C DIR` and `sudo -D DIR` in DIR') && section.includes('reassigns HOME'), 'env -C and the HOME reassignment');
+  assert.ok(section.includes('best-effort against known write forms') && section.includes('allows anything it does not recognise'), 'the contract, stated');
+  assert.ok(section.includes('These write forms are not modelled and still reach a tracked file: rsync;'), 'the unmodelled-writer list');
 });
 
 // ── P8: one writer per sidecar: the CLIs take store-io's lock around their load-to-rename ──

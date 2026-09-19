@@ -16,13 +16,19 @@
 # lets a command assign it) and kept the other two under bash and zsh, and round 3 measured `unset RANDOM`,
 # `local RANDOM=` and `typeset -h RANDOM` carrying a path onto a tracked file in both, so the set is the process
 # id alone, in every shell, and the paragraph says why. It also names the relative path after a `cd` the guard
-# cannot follow (round 3), and each remedy a session can take. Other hosts have no Bash-side guard, so this
-# stays romp's. Prose only; pinned by the host's tools/vendor-patches.test.mjs (P9) and the drift test.
+# cannot follow (round 3), and each remedy a session can take. Round 4 (2026-09-19, the walk-around lens) added
+# a second paragraph: the guard reads the common wrappers (setsid, flock, taskset, chrt, numactl), runs env -C /
+# sudo -D in DIR, refuses an unknown cp/mv/install/ln option, treats $HOME and ~ as unreadable once the command
+# reassigns HOME, and refuses a variable whose literal head parents or sits under a tracked project; and it
+# states the contract plainly (best-effort against known write forms, allow by default) with the current list of
+# unmodelled writers that pass, the same paragraph the hook header, hooks/README.md and docs/install.md carry.
+# Other hosts have no Bash-side guard, so this stays romp's. Prose only; pinned by the host's
+# tools/vendor-patches.test.mjs (P9) and the drift test.
 diff --git a/skill/SKILL.md b/skill/SKILL.md
-index f7d8bc9..654cc54 100644
+index f7d8bc9..8a4b0b2 100644
 --- a/skill/SKILL.md
 +++ b/skill/SKILL.md
-@@ -59,6 +59,24 @@ heredoc included), no `sed -i` or `perl -i`, no python `open(..., 'w')` or node
+@@ -59,6 +59,39 @@ heredoc included), no `sed -i` or `perl -i`, no python `open(..., 'w')` or node
  the write: its status is 0 when tracking is ON, so `track-config ... && cp ...` runs
  the copy on exactly the file it must not touch.
  
@@ -43,6 +49,21 @@ index f7d8bc9..654cc54 100644
 +then takes its change through `track-edit`, a file outside the project an ordinary
 +write), name a temp file with `$$`, give a folder a literal name of your own, or
 +write outside the tracked project.
++
++The guard also reads the common wrappers `setsid`, `flock`, `taskset`, `chrt` and
++`numactl` to the write inside them, runs `env -C DIR` and `sudo -D DIR` in DIR,
++refuses a `cp`/`mv`/`install`/`ln` option it does not know, treats `$HOME` and `~`
++as unreadable once the command reassigns HOME, and refuses a variable or
++substitution whose literal head is above or under a tracked project. But it is
++best-effort against known write forms: it refuses the shell writes it models and,
++by design, allows anything it does not recognise, so it never blocks ordinary work
++it cannot read; it is a backstop, not a complete boundary. These write forms are
++not modelled and still reach a tracked file: rsync; awk with a redirect inside its
++program; ed; ex; make; find with -delete or -exec; a git subcommand that writes the
++working tree (checkout, stash, apply, reset, rm, clean, mv); a computed path inside
++an interpreter (python3 -c, node -e); and a leading opaque expansion from a cwd
++outside every project. Whichever way you write a tracked file, use `track-edit`, so
++your change comes back to be accepted or rejected.
 +
  For ANY change to the file, use the CLI, NOT the Edit/Write/MultiEdit tools:
  

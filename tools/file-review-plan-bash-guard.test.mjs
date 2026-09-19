@@ -110,7 +110,7 @@ test('decision 47 states what passes, and the hook agrees: reads, opaque command
   // the target's own project, asked first for every target the hook can place (round 2 for a numeric one, round 3 for
   // every unreadable word and for a relative spelling), and the fold judged as the kernel opens the path
   assert.ok(d47.includes('the project the target\'s own literal directory part sits in is asked first, from any cwd, for every target the hook cannot read that it can place, absolute or relative to a write-time directory it knows'));
-  assert.ok(hook.includes('function ownProjectFor(u, memo)') && hook.includes('const own = trackingRootAt(v.dir, memo);') && hook.includes('return own && landingInPlay(own, memo) ? own : null;'));
+  assert.ok(hook.includes('function ownProjectFor(u, memo)') && hook.includes('const own = trackingRootAt(v.dir, memo);') && hook.includes('if (own && landingInPlay(own, memo)) return v.folder'));
   assert.ok(d47.includes('a fold that leaves no expansion handed to the literal rule') && hook.includes('function foldSegments(segs)') && hook.includes('if (v.literal != null && isGuardedPath(v.literal, memo.closures)) return { literal: v.literal };'));
   assert.ok(d47.includes('a `..` after a directory that exists climbs from that directory\'s real path, as the kernel does') && hook.includes('function resolveLiteral(text, dir)'));
   assert.ok(d47.includes('each entry of that directory that exists now and whose name the process id could spell') && hook.includes('function spelledCandidates(segs, idx, dir, memo, budget)') && hook.includes('function couldSpell(seg, name)'));
@@ -220,4 +220,41 @@ test('the install guide, the hook\'s README row and the ledger entry say a name 
   assert.ok(ledger.includes('a target whose only expansions are `$$` or `${$}`, the shell\'s process id, at an absolute path outside every project in play is allowed, and nothing else is'), 'the ledger entry: the exception');
   assert.ok(ledger.includes('so a `log.$RANDOM` inside a tracked project is refused in every shell, a deliberate false refusal recoverable in one step'), 'the ledger entry: the refused names');
   assert.ok(hook.includes("const NUMERIC_EXPANSIONS = ['$$', '${$}'];"), 'the set every clause describes');
+});
+
+// Round 4's contract paragraph (2026-09-19): the guard is best-effort against known write forms, its default on an
+// unrecognised form is allow, and the unmodelled writers that pass are listed. The same paragraph and the SAME
+// writer list sit on all four surfaces a user meets, so a user who knows the boundary can work with it; this test
+// reads each file whitespace-normalised and fails if any lacks it or if the lists differ.
+test('decision 47 records round 4 and each class is tied to the hook function that implements it', () => {
+  assert.ok(d47.includes('Round 4 (2026-09-19, a walk-around lens) closed eight more in-model roads'));
+  assert.ok(d47.includes('read a per-writer option table (`COPY_OPT`)') && hook.includes('const COPY_OPT = {') && hook.includes('function parseCopyOptions(args, verb)'));
+  assert.ok(d47.includes('`commandOf` returns its `chdir`') && hook.includes('return { name, args: words.slice(k + 1), chdir, chdirFlag };'));
+  assert.ok(d47.includes('the `PREFIXES` set gained `setsid`, `flock`, `taskset`, `chrt` and `numactl`') && hook.includes("'setsid', 'flock', 'taskset', 'chrt', 'numactl'") && hook.includes('const PREFIX_LEAD_OPERANDS = { flock: 1, taskset: 1, chrt: 1 };'));
+  assert.ok(d47.includes('the lexer marks a home expansion \'h\' and `extract` computes `homeAssigned`'));
+  assert.ok(hook.includes("const home = (t) => { buf += t; marks += 'h'.repeat(t.length); };") && hook.includes('const homeAssigned = ctx.homeAssigned'));
+  assert.ok(d47.includes('`parentTrackedRoots`') && hook.includes('function parentTrackedRoots(dir, segPrefix, memo)'));
+  assert.ok(d47.includes('`foldSegments` catches the stat error') && hook.includes('try { st = lstatOrNull(prefix); } catch { return { unresolvable: prefix }; }'));
+  assert.ok(d47.includes('`recordSymlink`, `applyInCommandLinks`') && hook.includes('function applyInCommandLinks(abs, links)') && hook.includes('const recordSymlink = (args, cwd) => {'));
+  assert.ok(d47.includes('best-effort against known write forms, its default on an unrecognised form is allow'));
+});
+
+test('the best-effort contract and its unmodelled-writer list are stated identically on the hook header, the vendored SKILL.md, hooks/README.md and docs/install.md', () => {
+  // strip the source's line-comment markers (`//` in the hook) so the paragraph reads the same whether it is a
+  // comment, a markdown paragraph or a table cell, then collapse whitespace and case
+  const norm = (s) => s.replace(/\/\//g, ' ').replace(/\s+/g, ' ').toLowerCase();
+  const LIST = 'these write forms are not modelled and still reach a tracked file: rsync; awk with a redirect inside its program; ed; ex; make; find with -delete or -exec; a git subcommand that writes the working tree (checkout, stash, apply, reset, rm, clean, mv); a computed path inside an interpreter (python3 -c, node -e); and a leading opaque expansion from a cwd outside every project.';
+  const CONTRACT = 'best-effort against known write forms';
+  const surfaces = {
+    'hook header': read('hooks', 'romp-track-bash-guard.mjs'),
+    'the vendored SKILL.md': read('vendor', 'track-changents', 'skill', 'SKILL.md'),
+    'hooks/README.md': read('hooks', 'README.md'),
+    'docs/install.md': read('docs', 'install.md'),
+  };
+  for (const [name, text] of Object.entries(surfaces)) {
+    const n = norm(text);
+    assert.ok(n.includes(CONTRACT), `${name} states the check is best-effort against known forms`);
+    assert.ok(n.includes(LIST), `${name} carries the identical unmodelled-writer list (a differing list fails here)`);
+    assert.ok(n.includes('allows anything it does not recognise') || n.includes('allow') , `${name} says the default is allow`);
+  }
 });

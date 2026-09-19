@@ -3656,7 +3656,20 @@ document stands on its own, each with the reasoning it was given.
     the operands are read, a here-string is scanned like a heredoc and a process substitution's command is read
     like a `$(...)`; a tracked image or PDF passes by name as in the vendored guard; a source copied out of a tracked
     file is a read. Not read: rm, a mv of the tracked file elsewhere (a rename the store heals by content hash),
-    find -exec, rsync and patch. Without ROMP_SID it exits 0 before reading stdin (decision 24). Cost: about 60 ms
+    find -exec, rsync and patch. Round 4 (2026-09-19, a walk-around lens) closed eight more in-model roads: cp,
+    mv, install and ln read a per-writer option table (`COPY_OPT`), so a no-argument flag (`-Z`, a bare
+    `--context`) no longer eats an operand and an option the table does not know refuses the command; `env -C DIR`,
+    `env --chdir=DIR` and `sudo -D DIR` run the inner command in DIR (`commandOf` returns its `chdir`); the
+    `PREFIXES` set gained `setsid`, `flock`, `taskset`, `chrt` and `numactl`, each peeling its operand (`flock … -c`
+    read like `sh -c`); a same-command assignment to HOME makes `$HOME` and `~` unreadable (the lexer marks a home
+    expansion 'h' and `extract` computes `homeAssigned`); a word whose literal head parents a tracked root
+    (`parentTrackedRoots`) or sits under one (`ownProjectFor` returns the root without the landing gate) is refused
+    unless every expansion is numeric; a directory the hook cannot search before a `..` is unresolvable, not folded
+    (`foldSegments` catches the stat error); and a symlink an `ln -s` makes earlier in the command redirects a later
+    literal target (`recordSymlink`, `applyInCommandLinks`). The guard states its contract on the hook header, the
+    vendored skill, hooks/README.md and docs/install.md: it is best-effort against known write forms, its default on
+    an unrecognised form is allow, and the unmodelled writers that still reach a tracked file are listed.
+    Without ROMP_SID it exits 0 before reading stdin (decision 24). Cost: about 60 ms
     per Bash call when no target needs the link closure (a read, a literal target outside any project, an explicit
     hit on the project's tracked list, an empty list); a write to a file inside a tracking project that the list
     does not name (the common write in a project that tracks anything) adds one walk of the project's markdown

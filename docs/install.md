@@ -149,7 +149,19 @@ the clone updates it:
   tracked file could land (outside the project you are working in, and not in a folder of another
   project where a tracked file could land), still runs; a name built from `$RANDOM` or `$SECONDS`
   is refused, since a script can reassign those, and the same `$$` name written as a relative path,
-  from a session in such a project, is refused. If you had installed track-changents yourself, the installer re-points
+  from a session in such a project, is refused. It also reads the common command wrappers `setsid`,
+  `flock`, `taskset`, `chrt` and `numactl` to the write inside them, runs `env -C DIR`, `env
+  --chdir=DIR` and `sudo -D DIR` in DIR, refuses a `cp`/`mv`/`install`/`ln` option it does not know
+  (spell the command without it), treats `$HOME` and `~` as unreadable once the command reassigns
+  HOME, and refuses a variable or substitution whose literal head is above or under a tracked
+  project (its value could name or climb into one). This guard is best-effort against known write
+  forms: it refuses the shell writes it models and, by design, allows anything it does not
+  recognise, so it never blocks ordinary work it cannot read; it is a backstop, not a complete
+  boundary. These write forms are not modelled and still reach a tracked file: rsync; awk with a
+  redirect inside its program; ed; ex; make; find with -delete or -exec; a git subcommand that
+  writes the working tree (checkout, stash, apply, reset, rm, clean, mv); a computed path inside an
+  interpreter (python3 -c, node -e); and a leading opaque expansion from a cwd outside every
+  project. If you had installed track-changents yourself, the installer re-points
   those links at the bundled copy, which carries fixes the checkout lacks, and says so.
 
 ### Manual and custom installs
