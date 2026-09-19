@@ -50213,8 +50213,8 @@ def _held_records(qdir, now):
 
 def _quarantine_cards(now):
     """Inbound mail from a DIRECTED federated host (per-host trust model), HELD for a human decision:
-    approve (deliver, optionally after editing), or deny (drop). Never auto-injects the peer's content
-    — that IS the point of directed trust. Reads the bus's quarantine dir directly (plain JSON files,
+    approve (deliver, optionally after editing), or deny (drop). Never auto-injects the peer's content;
+    that IS the point of directed trust. Reads the bus's quarantine dir directly (plain JSON files,
     so it works even if the bus is momentarily down). A hold is DECIDED, never dismissed (2026-09-19):
     the card stands until the bus removes the held file on Approve or Deny, and the cleared ledger is
     not consulted for it, whichever door wrote its id there. The card's own Clear and the session

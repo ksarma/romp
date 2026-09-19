@@ -4934,6 +4934,9 @@ function childKeys(listEl: HTMLElement): string[] {
 // and not a QUARANTINE hold (a held peer message is approved or denied, never cleared — clearing would
 // hide its only surface while the held file stayed undelivered). The card-level Clear hides itself for
 // both; the session Clear must not reach around that (the review of the session Clear, 2026-09-08).
+// Since 2026-09-19 the kernel holds the same line for a hold on its side: _quarantine_cards reads no cleared
+// ledger, so a server-side door such as the footer's Clear-all cannot hide one either. This check stays so
+// the pane never offers a click the kernel would ignore.
 function clearable(it: AskItem): boolean {
   return !it.provisional && it.blocked?.state !== "quarantine";
 }
