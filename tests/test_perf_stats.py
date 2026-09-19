@@ -1522,8 +1522,10 @@ def _git_bytes(root, *args, env=None):
     (the shape of tests/test_entrypoints_executable.py's _index, whose docstring says why: a skip there would disarm
     the check while the run stays green). stdout stays bytes because a -z listing is split on NUL; stderr alone is
     decoded, with errors replaced, so git's words reach the message whatever their encoding. `env`, when given, is the
-    whole environment for the call: a scratch repo passes the scrubbed one _scratch_repo built, since git obeys a
-    hook's GIT_DIR and GIT_INDEX_FILE over `-C`; the live tree is listed under the ambient one."""
+    whole environment for the call, and None is this process's. Every call that must read the repository AT A PATH
+    passes one _git_env_scrubbed built, since git obeys a hook's GIT_DIR and GIT_INDEX_FILE over `-C`: the scratch
+    repos' every call, the live tree's two listings (the scan's and the healer's) and the lock path's rev-parse. The
+    ambient calls are the tests' own premise reads, which show the exported repository winning over `-C`."""
     try:
         proc = subprocess.run(["git", "-C", str(root), *args], capture_output=True, timeout=60, env=env)
     except FileNotFoundError:
@@ -1537,12 +1539,24 @@ def _git_bytes(root, *args, env=None):
     return proc.stdout
 
 
-def _git_env_scrubbed():
+def _git_env_scrubbed(global_config=False):
     """A copy of this process's environment with every GIT_* variable removed and GIT_TEST_* kept (the ScratchCheckout
     shape in tests/test_entrypoints_executable.py). git obeys a hook's GIT_DIR and GIT_INDEX_FILE over `-C`, so a call
     that must read the repository AT A PATH, not the one the caller's hook is running in, scrubs first: the scratch
-    repos' every git call, and the lock path's rev-parse (round 2's fresh-4)."""
-    return {name: value for name, value in os.environ.items() if not name.startswith("GIT_") or name.startswith("GIT_TEST_")}
+    repos' every git call, the lock path's rev-parse (round 2's fresh-4), and the live tree's two listings, the scan's
+    and the healer's (round 3: the same rule grepped across the module's other git calls found the healer listing the
+    tracked set under the ambient environment, so under a hook's foreign GIT_DIR that set was the hook's index and a
+    plant-named file this checkout TRACKS was judged untracked and unlinked, with every test green). The scrub removes
+    the two overrides tests/conftest.py exports, GIT_CONFIG_GLOBAL and GIT_CONFIG_NOSYSTEM, with the rest; by default
+    they are put back, so the call reads no global or system config, conftest's rule for every test's git, and a
+    developer's global excludes cannot thin a listing. The lock path alone passes global_config=True and reads the
+    developer's global config on purpose: a global safe.directory must resolve a dubious-ownership checkout, and
+    core.worktree is the only other key that could move rev-parse's answer (a listing over such a checkout fails with
+    git's safe.directory hint, never a skip, so nothing is disarmed)."""
+    env = {name: value for name, value in os.environ.items() if not name.startswith("GIT_") or name.startswith("GIT_TEST_")}
+    if not global_config:
+        env.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
+    return env
 
 
 def _scratch_repo(test):
@@ -1559,7 +1573,6 @@ def _scratch_repo(test):
     d = Path(tempfile.mkdtemp())
     test.addCleanup(shutil.rmtree, d, ignore_errors=True)
     env = _git_env_scrubbed()
-    env.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
     subprocess.run(["git", "init", "-q", str(d)], env=env, check=True, capture_output=True, timeout=60)
     return d, env
 
@@ -1683,10 +1696,15 @@ class RoutingStatements(unittest.TestCase):
     @classmethod
     def _remove_stale_plants(cls, root, env=None):
         """Unlink every UNTRACKED REGULAR FILE in plans/ named like a plant, and nothing else; `env` is the environment
-        for the git call (a scratch repo's scrubbed one; None for the live tree). A match git tracks is content,
-        whoever wrote it. A directory or a symlink is not this test's plant (the plant test writes a regular file), and
-        unlinking a directory raised IsADirectoryError out of setUpClass and errored the class on every run until a
-        human deleted it, the shape the healer exists to end (round 2's Cluster B)."""
+        for the git call (a scratch repo's; None for the live tree, which is listed under _git_env_scrubbed() as well,
+        because the tracked set decides what is deleted: under a hook's foreign GIT_DIR the ambient listing was the
+        hook's index, empty of this checkout's plans/, so a plant-named file this checkout TRACKS was judged untracked
+        and unlinked from the working tree with every test green, round 2's fresh-4 road on the one destructive call).
+        A match git tracks is content, whoever wrote it. A directory or a symlink is not this test's plant (the plant
+        test writes a regular file), and unlinking a directory raised IsADirectoryError out of setUpClass and errored
+        the class on every run until a human deleted it, the shape the healer exists to end (round 2's Cluster B)."""
+        if env is None:
+            env = _git_env_scrubbed()
         tracked = {entry for entry in _git_bytes(root, "ls-files", "-z", "--cached", "--", "plans", env=env).split(b"\0") if entry}
         for old in (root / "plans").glob("routing-sweep-plant-*.md"):
             if os.fsencode(str(old.relative_to(root))) in tracked or old.is_symlink() or not old.is_file():
@@ -1705,9 +1723,12 @@ class RoutingStatements(unittest.TestCase):
         # the scratch repos' config overrides: a hook's GIT_DIR moves rev-parse to the hook's repository, and did move
         # the lock there, so two processes over one checkout stopped sharing an inode (round 2's fresh-4); a
         # machine-wide config does not move the git dir, and a global safe.directory must still resolve a
-        # dubious-ownership checkout. The residual: a checkout reachable ONLY through an exported GIT_DIR resolves
-        # nothing here, and its tests that read the live tree skip with rev-parse's reason.
-        return Path(os.fsdecode(_git_bytes(root, "rev-parse", "--absolute-git-dir", env=_git_env_scrubbed()).strip())) / "romp-routing-sweep.lock"
+        # dubious-ownership checkout: this is the one git call in a test run that reads the developer's global config,
+        # since the scrub drops conftest's GIT_CONFIG_GLOBAL and GIT_CONFIG_NOSYSTEM overrides with the rest and
+        # global_config=True leaves them out (every other call here puts them back; _git_env_scrubbed says which keys
+        # can matter). The residual: a checkout reachable ONLY through an exported GIT_DIR resolves nothing here, and
+        # its tests that read the live tree skip with rev-parse's reason.
+        return Path(os.fsdecode(_git_bytes(root, "rev-parse", "--absolute-git-dir", env=_git_env_scrubbed(global_config=True)).strip())) / "romp-routing-sweep.lock"
 
     @classmethod
     @contextlib.contextmanager
@@ -1754,10 +1775,14 @@ class RoutingStatements(unittest.TestCase):
 
     def _scan(self, root, env=None):
         """{relative path: text} for every text file under `root` that git tracks or would track and that names a block;
-        `env` is the environment for the git call (a scratch repo's scrubbed one; None for the live tree)."""
+        `env` is the environment for the git call (a scratch repo's; None for the live tree, which is listed under
+        _git_env_scrubbed() as well: under a hook's foreign GIT_DIR the ambient listing was the hook's repository, and
+        every PLACES entry was reported gone)."""
         # A skip only where the precedent skips (no git, no repository); a dubious-ownership 128 fails with git's
         # safe.directory hint instead of a bare exit code, because a skip there would disarm the sweep while the run
         # stays green.
+        if env is None:
+            env = _git_env_scrubbed()
         listing = _git_bytes(root, "ls-files", "-z", "--cached", "--others", "--exclude-standard", env=env)
         found = {}
         # A name git lists is bytes. fsdecode keeps an undecodable byte as a surrogate (surrogateescape on POSIX), so the
@@ -2232,6 +2257,83 @@ class RoutingStatements(unittest.TestCase):
         self.assertEqual(listed, [b"note.md"], "the scratch repo's listing is its own: not this checkout's index, and not "
                                                "thinned by the caller's excludes")
         self.assertEqual(sorted(found), ["note.md"], "and the scan over it reads that listing")
+
+    def test_the_live_tree_listings_ignore_an_exported_git_dir_and_a_global_config(self):
+        """The healer's and the scan's listings with no env, the live tree's road, resolve under the scrubbed environment
+        as the lock path does (round 3: round 2's fresh-4 rule grepped across the module's other git calls). In a
+        scratch repo standing for the checkout, with a second scratch repo's .git exported as GIT_DIR (a hook's) and
+        HOME moved to a directory whose .gitconfig excludes every .md (the developer's global config; it has to come
+        through HOME, since GIT_CONFIG_GLOBAL is itself a GIT_* variable the scrub drops): a plant-named file the first
+        repo TRACKS and its own .gitignore also names is listed by its own index and, read from the exported index, is
+        an ignored other, so the ambient `ls-files --cached -- plans` is empty (the premise, executed) and the healer
+        under it unlinked a tracked file while the scan under it found nothing; and an untracked note the global
+        excludes name is listed only with conftest's config overrides back in the environment, which the scrub puts
+        there. The scrubbed healer keeps the tracked plant, and the scrubbed scan reads both files."""
+        d, env = _scratch_repo(self)
+        other, _ = _scratch_repo(self)
+        home = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, home, ignore_errors=True)
+        (home / "excludes").write_text("*.md\n")
+        (home / ".gitconfig").write_text("[core]\n\texcludesFile = %s\n" % (home / "excludes"))
+        (d / ".gitignore").write_text("plans/\n")
+        (d / "plans").mkdir()
+        rel = "plans/routing-sweep-plant-1-tracked00.md"
+        tracked = d / rel
+        tracked.write_text("a tracked plan named like a plant, naming stagesForeign\n")
+        _git_bytes(d, "add", "-f", "--", rel, env=env)                                         # -f: its .gitignore names plans/
+        (d / "note.md").write_text("an untracked note naming stagesForeign\n")
+        with mock.patch.dict(os.environ, {"GIT_DIR": str(other / ".git"), "HOME": str(home), "XDG_CONFIG_HOME": str(home / "xdg")}):
+            self.assertEqual(_git_bytes(d, "ls-files", "-z", "--cached", "--", "plans"), b"",
+                             "the premise: under the ambient environment the exported GIT_DIR's index answers, and it holds nothing")
+            RoutingStatements._remove_stale_plants(d)                                          # env=None: the live tree's road
+            self.assertTrue(tracked.exists(), "a plant git tracks survives the healer under an exported foreign GIT_DIR")
+            self.assertEqual(sorted(self._scan(d)), ["note.md", rel],
+                             "the scan with no env lists this repo's index, not the exported repository's, and the "
+                             "developer's global excludes do not thin it")
+
+    def test_the_scrub_drops_git_variables_keeps_git_test_ones_and_puts_the_config_overrides_back(self):
+        """_git_env_scrubbed's three clauses, each pinned by nothing before round 3: a GIT_* variable is dropped, a
+        GIT_TEST_* one and any other name are kept, conftest's two config overrides are back unless global_config is
+        asked for, and then they are absent whatever the caller exported. Membership is asserted as a bool, never with
+        assertIn over the mapping: a failure would otherwise print the whole environment, keys a report must not carry."""
+        with mock.patch.dict(os.environ, {"GIT_PROBE_DROPPED": "1", "GIT_TEST_PROBE_KEPT": "1", "PROBE_KEPT": "1",
+                                          "GIT_CONFIG_GLOBAL": "/nonexistent/gitconfig", "GIT_CONFIG_NOSYSTEM": "0"}):
+            scrubbed = _git_env_scrubbed()
+            with_global = _git_env_scrubbed(global_config=True)
+        self.assertFalse("GIT_PROBE_DROPPED" in scrubbed, "a GIT_* variable is dropped")
+        self.assertEqual(scrubbed.get("GIT_TEST_PROBE_KEPT"), "1", "a GIT_TEST_* variable is kept")
+        self.assertEqual(scrubbed.get("PROBE_KEPT"), "1", "and so is every other name")
+        self.assertEqual((scrubbed.get("GIT_CONFIG_GLOBAL"), scrubbed.get("GIT_CONFIG_NOSYSTEM")), (os.devnull, "1"),
+                         "the config overrides are conftest's, not the caller's")
+        self.assertFalse("GIT_PROBE_DROPPED" in with_global, "a GIT_* variable is dropped with global_config too")
+        self.assertEqual(with_global.get("GIT_TEST_PROBE_KEPT"), "1", "and a GIT_TEST_* one kept")
+        self.assertEqual((with_global.get("GIT_CONFIG_GLOBAL"), with_global.get("GIT_CONFIG_NOSYSTEM")), (None, None),
+                         "with global_config the overrides are out, the caller's included")
+
+    def test_the_lock_path_alone_reads_the_global_config_and_the_two_listings_do_not(self):
+        """The composition the scrub pin above cannot see: which of the three live-tree git calls asks for which
+        environment. The mock records the env each call hands subprocess.run; the lock path's rev-parse runs without
+        conftest's config overrides (a global safe.directory must resolve a dubious-ownership checkout), the scan's and
+        the healer's listings run with them, and none of the three carries a GIT_DIR the caller exported. The root is
+        an empty temp directory, so the healer's glob finds nothing and nothing live is touched under the mock."""
+        root = Path(tempfile.mkdtemp())                                                        # under the run's root, swept with it
+        seen = []
+
+        def record(argv, **kwargs):
+            seen.append((argv[3], kwargs["env"]))                                              # argv: git -C <root> <subcommand> ...
+            return subprocess.CompletedProcess(args=argv, returncode=0, stdout=b"", stderr=b"")
+        with mock.patch.dict(os.environ, {"GIT_DIR": "/a/hooks/repository/.git"}):
+            with mock.patch.object(subprocess, "run", side_effect=record):
+                RoutingStatements._lock_path(root)
+                self._scan(root)
+                RoutingStatements._remove_stale_plants(root)
+        self.assertEqual([subcommand for subcommand, env in seen], ["rev-parse", "ls-files", "ls-files"],
+                         "one git call each: the lock path's rev-parse, the scan's listing, the healer's listing")
+        for i, (subcommand, env) in enumerate(seen):
+            self.assertFalse("GIT_DIR" in env, "call %d (%s) runs without the caller's GIT_DIR" % (i, subcommand))
+        self.assertFalse("GIT_CONFIG_GLOBAL" in seen[0][1], "the lock path's rev-parse reads the global config")
+        for i in (1, 2):
+            self.assertEqual(seen[i][1].get("GIT_CONFIG_GLOBAL"), os.devnull, "listing %d does not" % i)
 
     def test_the_scan_honours_ignores_and_reads_a_nul_only_past_the_probe(self):
         """The text rule's other edges, each stated in the class docstring and, before round 2, pinned by nothing: an
