@@ -195,6 +195,38 @@ test("a detach forgets the host's raw base: the re-attached host's first delta f
   });
 });
 
+// A redial on the SAME conn (the onclose retry; the watchdog's abandon-and-dial takes the same connect() road) forgets the
+// raw base with the dead socket, as connect() re-mints the slot receiver: the base is the socket's, and a new socket's
+// first feed frame from every kernel in this repo is whole (a fresh client dict holds no last build), so this is pinned
+// for the contract (federation-remote-view-delta.test.ts, the redial legs). FakeWS.close() fires no onclose, so the
+// handler is called as a browser would and the redial it arms (a real 2 s timer under node) is run at once.
+test("a redial on the same conn forgets the host's raw base with the dead socket: the replacement socket's first delta finds none and asks its kernel", async () => {
+  await withManager(({ fm, emitted, sent }) => {
+    const ws = attached(fm);
+    ws.frame({ type: "feedDelta", now: 510, buildId: 2, asks: [card(SID_A, 2)], removeAsks: [SID_A + ":g1"] });
+    assert.deepEqual(last(feeds(emitted)).asks.map((a: any) => a.itemId), [SID_A + ":g2"]);
+    const before = feeds(emitted).length, conn = fm.conns.get(HOST);
+    const timers: Array<() => void> = [];
+    const realTimeout = globalThis.setTimeout;
+    (globalThis as any).setTimeout = (cb: () => void) => { timers.push(cb); return 0; };
+    try { ws.readyState = 3; ws.onclose!({ code: 1006, wasClean: false }); } finally { (globalThis as any).setTimeout = realTimeout; }
+    assert.equal(timers.length, 1, "the close armed one redial");
+    timers[0]();
+    const ws2 = last(FakeWS.made);
+    assert.notEqual(ws2, ws, "a fresh socket");
+    assert.equal(fm.conns.get(HOST), conn, "…on the same conn");
+    ws2.open();
+    ws2.frame({ type: "feedDelta", now: 520, buildId: 3, asks: [card(SID_A, 3)] });   // continues the dead socket's stream
+    assert.deepEqual(ws2.sent, [{ type: "needFullFeed" }], "no base on the new socket: that kernel is asked for a full frame on it");
+    assert.deepEqual(sent.filter((x) => x && x.type === "clientDiag" && x.what === "feedDelta-nobase").map((x) => x.data), [{ host: HOST, buildId: 3 }], "one no-base row");
+    assert.equal(feeds(emitted).length, before, "nothing emitted");
+    assert.deepEqual(last(feeds(emitted)).asks.map((a: any) => a.itemId), [SID_A + ":g2"], "the merge stands where the dead socket left it");
+    assert.deepEqual(ws.sent, [], "nothing on the dead socket");
+    assert.equal(fm.perHostFeedRaw[HOST], undefined, "the mechanism: the raw base went with the dead socket, and the ask's full frame will seed a new one");
+    fm.conns.get(HOST).closed = true;
+  });
+});
+
 test("the local host's path is unchanged: a local delta applies onto the merge's frame, and a local no-base asks the local kernel, never a remote socket", async () => {
   await withManager(({ fm, emitted, sent }) => {
     const ws = attached(fm);

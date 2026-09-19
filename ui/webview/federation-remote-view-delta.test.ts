@@ -13,7 +13,7 @@
 // sessions `api` on the remote and `web` locally).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { FederationManager } from "./federation";
+import { FederationManager, REMOTE_STALE_MS } from "./federation";
 
 const HOST = "TESTHOST";
 const SID_A = "11111111-2222-4333-8444-000000000701";   // "api" on TESTHOST
@@ -179,6 +179,73 @@ test("a detach drops the host's receiver with its conn: the re-attached host's f
     ws2.frame(barsPatch(1, bar("seg-3", 1020, 1025, "third"), 515));   // continues the OLD socket's stream: no base here
     assert.deepEqual(ws2.sent, [{ type: "needSlot", slot: "bars" }], "the stale base did not survive the detach; the remote is asked for the whole slot");
     assert.deepEqual(ws.sent, [], "…on the new socket, not the dead one");
+    fm.conns.get(HOST).closed = true;
+  });
+});
+
+// ── a redial on the same conn (2026-09-19) ──────────────────────────────────────────────────────────────────────────
+// The receiver belongs to one SOCKET (view-deltas.ts; the extension's pipe mints one per dial), and the conn outlives the
+// socket: the onclose retry and the watchdog's abandon-and-dial both keep the Conn and make a new socket on it. connect()
+// re-mints the receiver per dial, beside the socket's other per-dial resets, so a replacement socket's first patch finds no
+// base and asks its kernel for the whole slot instead of applying onto the dead socket's half-assembled slot. LATENT
+// against every kernel in this repo (dstate is per connection and a redial opens a fresh upstream socket, so a new
+// socket's first frame is whole); pinned for the module's contract. FakeWS.close() fires no onclose, so road A calls the
+// handler as a browser would and runs the redial it arms (a real 2 s timer under node) at once, through a setTimeout
+// stub scoped to the call.
+function armedRedials(fn: () => void): Array<() => void> {
+  const timers: Array<() => void> = [];
+  const real = globalThis.setTimeout;
+  (globalThis as any).setTimeout = (cb: () => void) => { timers.push(cb); return 0; };
+  try { fn(); } finally { (globalThis as any).setTimeout = real; }
+  return timers;
+}
+
+test("an onclose redial mints a fresh receiver: the replacement socket's first patch cannot apply onto the dead socket's slot and asks its kernel", async () => {
+  await withManager("timeline", ({ fm, emitted, sent }) => {
+    seedLocalTimeline(fm);
+    const ws = attached(fm);
+    ws.frame(barsPatch(0, bar("seg-2", 1010, 1015, "second"), 505));
+    assert.deepEqual(ids(last(barsOf(emitted)).turns[HOST + ":" + SID_A]), ["seg-1", "seg-2"]);
+    const conn = fm.conns.get(HOST), vd = conn.viewDeltas, before = barsOf(emitted).length;
+    ws.readyState = 3;
+    const redials = armedRedials(() => ws.onclose!({ code: 1006, wasClean: false }));   // the socket dropped: the handler arms the redial
+    assert.equal(redials.length, 1, "one redial armed");
+    redials[0]();   // it fires: connect() on the same conn
+    const ws2 = last(FakeWS.made);
+    assert.notEqual(ws2, ws, "a fresh socket");
+    assert.equal(fm.conns.get(HOST), conn, "…on the same conn (the page's identity for the host)");
+    ws2.open();
+    ws2.frame(barsPatch(1, bar("seg-3", 1020, 1025, "third"), 515));   // continues the DEAD socket's stream (base 1): no base here
+    assert.deepEqual(ws2.sent, [{ type: "needSlot", slot: "bars" }], "the new socket's first patch finds no base: that kernel is asked for the whole slot on the new socket");
+    assert.equal(barsOf(emitted).length, before, "nothing emitted: the patch did not apply onto the dead socket's slot");
+    assert.deepEqual(ids(last(barsOf(emitted)).turns[HOST + ":" + SID_A]), ["seg-1", "seg-2"], "the merge stands where the dead socket left it");
+    assert.deepEqual(ws.sent, [], "nothing on the dead socket");
+    assert.deepEqual(localAsks(sent), []);
+    assert.notEqual(conn.viewDeltas, vd, "the mechanism: a fresh receiver per dial, the dead socket's slot bases gone with it");
+    fm.conns.get(HOST).closed = true;
+  });
+});
+
+test("the watchdog's abandon-and-dial mints a fresh receiver too: it nulls the dead socket's handlers before dialing, so no onclose runs on that road", async () => {
+  await withManager("timeline", ({ fm, emitted, sent }) => {
+    seedLocalTimeline(fm);
+    const ws = attached(fm);
+    ws.frame(barsPatch(0, bar("seg-2", 1010, 1015, "second"), 505));
+    const conn = fm.conns.get(HOST), vd = conn.viewDeltas, before = barsOf(emitted).length;
+    clock += REMOTE_STALE_MS + 1000;   // an OPEN socket quiet past the stale bound
+    fm.watchdog(clock);
+    assert.equal(ws.onclose, null, "the watchdog abandoned the quiet socket: its handlers are detached");
+    const ws2 = last(FakeWS.made);
+    assert.notEqual(ws2, ws, "…and dialed a fresh one");
+    assert.equal(fm.conns.get(HOST), conn, "on the same conn");
+    ws2.open();
+    ws2.frame(barsPatch(1, bar("seg-3", 1020, 1025, "third"), 515));
+    assert.deepEqual(ws2.sent, [{ type: "needSlot", slot: "bars" }], "the dead socket's base is not the new socket's: asked for whole");
+    assert.equal(barsOf(emitted).length, before, "nothing emitted");
+    assert.deepEqual(ids(last(barsOf(emitted)).turns[HOST + ":" + SID_A]), ["seg-1", "seg-2"]);
+    assert.deepEqual(ws.sent, []);
+    assert.deepEqual(localAsks(sent), []);
+    assert.notEqual(conn.viewDeltas, vd, "the mechanism: a fresh receiver per dial");
     fm.conns.get(HOST).closed = true;
   });
 });

@@ -931,14 +931,17 @@ interface Conn {
   // key. Lives on the CONN, not the socket, so it survives every re-dial — the onclose retry, the
   // poll's, and the liveness watchdog's abandon-and-dial (watchdog()).
   pending: Map<string, any>;
-  // The view-delta receiver for THIS conn's socket (ui/webview/view-deltas.ts, the class VS Code's pipe uses). The relay
-  // dial carries the page's delta=1 (remoteDialUrl), so after the first full frame the remote kernel serves its
+  // The view-delta receiver for THIS conn's CURRENT socket (ui/webview/view-deltas.ts, the class VS Code's pipe uses). The
+  // relay dial carries the page's delta=1 (remoteDialUrl), so after the first full frame the remote kernel serves its
   // _DELTA_SLOTS as {type:"delta", slot} patches: the timeline's bars, and the feed on a kernel too old to read the caps
   // term. The kernel's inline shim reassembles only its own LOCAL socket's frames, so a remote patch reached the pane
   // raw and the timeline dropped it without a row: a remote host's bars froze on the phone where its first full frame
-  // put them (2026-09-18). One instance per conn, minted with it (openRemote) and gone with it (closeRemote), so a
-  // re-attached host's first patch finds no stale base; a patch it cannot apply asks the kernel that sent it for the
-  // whole slot on this conn (sendRemote), never the local kernel, which holds nothing for this host.
+  // put them (2026-09-18). One instance per SOCKET, the module's contract and the extension pipe's practice: minted with
+  // the conn (openRemote), re-minted on every dial in connect() beside the socket's other per-dial resets, and gone with
+  // the conn (closeRemote), so neither a re-attached host's nor a redialed socket's first patch finds a stale base
+  // (2026-09-19; the conn is the page's identity for the host and outlives its sockets). A patch it cannot apply asks the
+  // kernel that sent it for the whole slot on this conn (sendRemote), never the local kernel, which holds nothing for
+  // this host.
   viewDeltas: ViewDeltas;
 }
 
@@ -1846,11 +1849,16 @@ export class FederationManager {
     // built fresh on every dial (remoteDialUrl, called from connect) so a redial reflects the page's
     // current terms, exactly as the pane's own local socket rebuilds its ?active=/reconnect on each open.
     const conn: Conn = { host, ws: null, url: "", closed: false, live, lastRecv: 0, resumeProvisional: 0, connT: 0, pending: new Map(),
-                         // a patch this socket's receiver cannot apply asks THIS host's kernel for the whole slot, on this conn
-                         viewDeltas: new ViewDeltas((slot) => this.sendRemote(host, { type: "needSlot", slot })) };
+                         viewDeltas: this.mintReceiver(host) };   // for the type; connect() below mints the first socket's own
     this.conns.set(host, conn);
     this.ensureHost(host);
     this.connect(conn);
+  }
+
+  /** The view-delta receiver for one of `host`'s sockets (Conn.viewDeltas): a patch it cannot apply asks THIS host's
+   *  kernel for the whole slot, routed by host through sendRemote so the ask rides the conn's CURRENT socket. */
+  private mintReceiver(host: string): ViewDeltas {
+    return new ViewDeltas((slot) => this.sendRemote(host, { type: "needSlot", slot }));
   }
 
   // The remote socket's URL, carrying THIS page's own dial terms for its app so a federated pane is served
@@ -1941,6 +1949,17 @@ export class FederationManager {
     conn.connT = Date.now();
     conn.lastRecv = 0;
     conn.resumeProvisional = 0;   // a fresh socket starts unmarked: the provisional rule was the resumed socket's
+    // …and with no base: the slot receiver and the raw feed base belong to the SOCKET (view-deltas.ts, one instance per
+    // socket, as the extension's pipe mints one per dial), so a replacement socket's first patch cannot apply onto the
+    // dead socket's half-assembled slot (2026-09-19). Latent against every kernel in this repo, whose dstate is per
+    // connection and whose first frame on a fresh socket is whole; the reset costs nothing there and holds the
+    // contract for a peer that resumes a stream across a reconnect. HERE, after both returns above, and not at the
+    // top: connect() is also called for a conn whose socket is CONNECTING or OPEN (the poll) and for a dial the
+    // local-down rule defers, and a reset before those returns would wipe a LIVE socket's base on a poll tick. Not in
+    // ws.onclose alone either: the watchdog's abandon nulls the dead socket's handlers before dialing, so an onclose
+    // reset never runs on that road. The conn's own latches (deferred) are the conn's and stand across the dial.
+    conn.viewDeltas = this.mintReceiver(conn.host);
+    delete this.perHostFeedRaw[conn.host];
     // a REDIAL only when the remote served this page whole before (everOpened && readyAcked) and the page has a
     // proto to name, mirroring the shim's everConnected && bundleReady && readyAcked gate; then reconnect=1 rides
     // the URL and this socket's open posts NO ready (the redial's dial term IS the handshake, see onopen)
