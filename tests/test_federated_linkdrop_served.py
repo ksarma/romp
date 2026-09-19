@@ -52,16 +52,20 @@ DO make this lab red are recorded in its report: the redial term stripped from r
 write dropped from the feed arm, the local-down gate dropped from connect(), and the old hub bundle in place of this
 one (ROMP_LINKDROP_HUB_ROOT, the base-hub lever).
 
-Knobs. ROMP_LINKDROP_LAB=1 runs the lab at all (about three minutes of supervisor waits and a kernel restart; skipped
-as optional without it, so CI's served job carries it only when asked). ROMP_LINKDROP_HUB_ROOT boots the hub from
-another checkout with its PREBUILT vscode-extension/dist (the fails-before lever for the new-hub class). The old-hub
-class, the storm's own witness (the pre-815 half), runs under either of two knobs: ROMP_CORNER_OLD_HUB_ROOT (the corners
-lab's knob: a checkout of a hub kernel and prebuilt bundle from before PR 815) boots the hub from that checkout as it
-is; ROMP_LINKDROP_OLD_HUB_BUILD=1 makes the class mint its own detached worktree of this repository at OLD_HUB_SHA (a
-main before PR 815) under its scratch directory, build the bundle there over this checkout's node_modules, boot the
-hub from it and remove the worktree at teardown (the mint needs that sha in the clone's history and the extension's
-node deps, so CI's served job skips the class as optional). ROMP_CORNER_REPORT_DIR gets one JSON per class with
-everything recorded.
+Knobs. LinkDropBothNew needs none: it runs wherever this checkout's served labs run, CI's served job included (about
+a minute: two supervisor waits and a hub restart). ROMP_LINKDROP_HUB_ROOT boots its hub from another checkout with its
+PREBUILT vscode-extension/dist (the fails-before lever for the new-hub class). The old-hub class, the storm's own
+witness (the pre-815 half), runs under ROMP_LINKDROP_LAB=1 (about three minutes more; skipped as optional without it,
+and the skip reason names what then goes unexecuted and where the mechanisms PR 815 fixed are pinned) with one of two
+hub knobs: ROMP_CORNER_OLD_HUB_ROOT (the corners lab's knob: a checkout of a hub kernel and prebuilt bundle from
+before PR 815) boots the hub from that checkout as it is; ROMP_LINKDROP_OLD_HUB_BUILD=1 makes the class mint its own
+detached worktree of this repository at OLD_HUB_SHA (a main before PR 815) under its scratch directory, build the
+bundle there over this checkout's node_modules, boot the hub from it and remove the worktree at teardown (the mint
+needs that sha in the clone's history and the extension's node deps, so CI's served job skips the class as optional).
+A runner who sets ROMP_LINKDROP_OLD_HUB_BUILD=1 sets ROMP_SERVED_TESTS_REQUIRE=1 too: lab_dist raises SkipTest when
+the minted bundle fails to build (every served lab's stance for an environment that cannot build), and that switch
+turns the skip into a failure carrying the build's own words instead of a green run with the class skipped.
+ROMP_CORNER_REPORT_DIR gets one JSON per class with everything recorded.
 
 What the old hub showed (2026-09-19, the bundle at 01d4fbe43): the old bundle dials no caps and decodes no patch, so
 its Outline files one delta-unapplied row per remote feed patch. That correspondence is what the class pins: in each
@@ -537,9 +541,10 @@ class _LinkDrop(unittest.TestCase):
 
     @classmethod
     def _knobs(cls):
-        if (os.environ.get("ROMP_LINKDROP_LAB") or "").strip() != "1":
-            raise unittest.SkipTest("optional: ROMP_LINKDROP_LAB unset: the link-drop lab waits out the hub's supervisor twice and restarts "
-                                    "its hub kernel (about three minutes); set it to 1 to run")
+        """Subclasses resolve their roots here; a missing knob skips the class. The base gates nothing: the new-bundle
+        class needs nothing this checkout's served labs lack, so it runs wherever they run, CI's served job included
+        (round 1: a lab gated whole was the one served lab of 94 with no executing test in CI, and it guards PR 815)."""
+        return None
 
     @classmethod
     def _boot(cls):
@@ -1152,9 +1157,21 @@ class LinkDropOldLocal(_LinkDrop):
     The redial helper runs with exactly=False for that churn."""
     changes = ("notice",)
 
+    # What a skip of this class leaves unexecuted, and what still runs in the same CI job: the skip reasons carry it, so a
+    # runner reading "skipped" knows which claim went untested (round 1, tests-4).
+    UNEXECUTED = ("the old bundle's storm evidence (one delta-unapplied row per feed slot patch the Outline received, none "
+                  "with a change due while the link was down, restarted by each redial's whole frame) goes unexecuted; the "
+                  "mechanisms PR 815 fixed are pinned in the same CI job by ui/webview/federation-remote-view-delta.test.ts, "
+                  "federation-remote-feed-delta.test.ts and federation-reconnect.test.ts (npm test), and LinkDropBothNew "
+                  "drives the link drop and the hub restart against this checkout")
+
     @classmethod
     def _knobs(cls):
         super()._knobs()
+        if (os.environ.get("ROMP_LINKDROP_LAB") or "").strip() != "1":
+            raise unittest.SkipTest("optional: ROMP_LINKDROP_LAB unset: the old-hub class waits out the hub's supervisor twice and restarts its "
+                                    "hub kernel against a pre-815 bundle (about three minutes), so %s; set it to 1 with one of the hub knobs to run"
+                                    % cls.UNEXECUTED)
         cls.hub_root = _root_knob("ROMP_CORNER_OLD_HUB_ROOT")
         if cls.hub_root:
             return
@@ -1162,8 +1179,8 @@ class LinkDropOldLocal(_LinkDrop):
             cls.old_hub_build = True    # _boot mints the checkout under the lab's scratch once that exists
             return
         raise unittest.SkipTest("optional: ROMP_CORNER_OLD_HUB_ROOT and ROMP_LINKDROP_OLD_HUB_BUILD both unset: the old-local half needs a hub "
-                                "from before PR 815, a built checkout named by the first knob or the worktree this class mints at %s under the second"
-                                % OLD_HUB_SHA[:9])
+                                "from before PR 815, a built checkout named by the first knob or the checkout this class mints at %s under the "
+                                "second, so %s" % (OLD_HUB_SHA[:9], cls.UNEXECUTED))
 
     def test_the_link_dropped_and_the_pages_stopped_dialing_while_the_row_was_down(self):
         self._assert_link_dropped_and_the_row_went_down()
