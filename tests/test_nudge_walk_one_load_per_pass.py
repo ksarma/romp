@@ -177,8 +177,9 @@ corrupt or unreadable_journal bump beside a goal_io loads bump with no call thro
 call key) balanced both reconciliations, and at that head red nothing on the pass it was planted, only the moved-transcript
 tuple two passes later or nothing at all. The round restored the writer door's counter and the store's counters to the first
 skip pass, the run pass and the state-gate case's first pass (the second skip pass's tuple stays on the walk's counter and its
-skipped count) and added the second-bump bound to _pass, where the pair reds on its own pass; the states re-run at this head
-are recorded below. The state-gate case: the working gate moved below the store
+skipped count) and added the second-bump bound to _pass, where the pair reds on its own pass; the pre-emption consolidation
+then gave the state-gate case's third pass, a skip pass, the same two elements, so every skip pass a pair can land on has both
+layers. The states re-run at this head are recorded below. The state-gate case: the working gate moved below the store
 read (1 failed, 11 passed); a served bump in the working branch (contrived; 1 failed, 11 passed); the loads bump moved
 above the working gate (2 failed, 10 passed, the census the other); the verdict renamed (1 failed, 11 passed);
 `_put_walk_gate` made a no-op, so the second pass skips (2 failed, 10 passed); a read conditioned on a memo row standing
@@ -211,18 +212,35 @@ mechanism and are in the commit messages.
 
 Review round 4 (2026-09-19). The record above is the fourth round's battery over the twelve cases of that head; this head has
 seventeen (the second-bump roster pin, the kernel-and-judge birth pin and the three enumeration cases are new), so a figure
-in this paragraph reads against 17. Three lenses ran before the round's rulings, and the states they named were re-run at
-this head, each plant landed on kernel/kernel.py, kernel/judge.py or this module and reverted, the module run single-process
-on 3.12; the figures are counts from those logs. The tuple-elements lens, the forged pair (a corrupt or unreadable_journal
+in this paragraph reads against 17. Three lenses ran before the round's rulings, three verifiers read the rulings' fixes, and
+the pre-emption consolidation closed what the verifiers found (the state-gate case's third-pass tuple carries the writer door's
+and the store's counters; the birth pin reads a subscript's slice and a dict read's arguments, with the string limit split into
+what it refuses and what stays outside it; three texts). Every state below was re-run at the head of those closures, each
+plant landed on kernel/kernel.py, kernel/judge.py or this module and reverted, the module run single-process on 3.12; the
+figures are counts from those logs. The tuple-elements lens, the forged pair (a corrupt or unreadable_journal
 bump beside a goal_io loads bump, no call through the door): in the kernel's skip branch it reds the second-bump bound in
 _pass at the first skip pass of the first case, of the two unwalked-sid sweep cases and of the state-gate case, its third
 (4 failed, 13 passed; at the head before the bound the moved-transcript tuple two passes later, 3 failed, 9 passed of 12);
 in _wait_for_graph before the first skip pass, and in _closer_settled before the run pass, the bound at that pass (1 failed,
 16 passed each; 12 passed before); in the kernel's working branch before the state-gate case's first pass, the bound at that
 pass (1 failed, 16 passed; 12 passed before); after the walk's read on a look whose gate is served, the bound at the run pass
-(1 failed, 16 passed; the moved-transcript tuple before). With the bound removed and the skip-branch pair landed, the restored
-first-skip-pass tuple is the line that reds, writerLoads 2 against 0 (3 failed, 14 passed): the restored elements stand
-behind the bound. The roster pin: refuse dropped from SHARED_SECOND_KEYS, and a poisoned bump added to the door's fallback
+(1 failed, 16 passed; the moved-transcript tuple before); a dup or a refuse bump in place of the corrupt bump reds the bound
+the same way (4 failed, 13 passed). The elements behind the bound, each shown with the bound disabled: the skip-branch pair reds
+the restored first-skip-pass tuple and the state-gate case's third-pass tuple, writerLoads 2 against 0 each, with the two
+unwalked-sid sweep cases' hand-off lines (4 failed, 13 passed; 3 failed, 14 passed before the third-pass tuple carried the
+elements), and with those two elements dropped again that pass is green under the same pair (3 failed, 14 passed) while the
+drop alone leaves the module green (17 passed); the pair in _closer_settled before the run pass, and the pair after the walk's
+read on a served look, each red the restored run-pass tuple, writerLoads 2 against 0 (1 failed, 16 passed each); the pair in the
+kernel's working branch reds the restored state-gate first-pass tuple, writerLoads 2 against 0 (1 failed, 16 passed); the pair
+in _wait_for_graph reds the first-skip-pass tuple, writerLoads 1 against 0 (1 failed, 16 passed). The shared elements of those
+tuples have no state of their own: a call key cannot move without a call, which the shared reconciliation reds first, and on
+the run pass a non-hit derives the gate, whose line fires first. The pair beside a fill: one corrupt bump and one loads bump
+after each miss the walk's read made leaves second equal to fills and passes the bound, and the first pass's writerLoads line
+reds it, 2 against 0, with the two unwalked-sid sweep cases' hand-off lines (3 failed, 14 passed); two pairs per miss red the
+bound, 4 against 2 (3 failed, 14 passed). The bound's own weakening: the comprehension with corrupt filtered out, and the
+assertion disabled, each leave the clean module green (17 passed each), since an assertion's own weakening is shown by the
+plants above and by nothing in the module; the roster pin reads the door's source and the constant, not the comprehension. The
+roster pin: refuse dropped from SHARED_SECOND_KEYS, and a poisoned bump added to the door's fallback
 branch, each red the roster (1 failed, 16 passed each); a refuse bump placed above every call-key bump reds the order (1
 failed, 16 passed). The replay lens, the re-arming: a memo row recorded only when none stood, and one re-recorded under the
 standing row's key, each red the first case's fourth pass (walk 1 against 0 per session) and the state-gate case's third
@@ -241,7 +259,16 @@ import and never called, `getattr` with the door's name at kernel module level, 
 each red the pin naming the line and the form (1 failed, 16 passed each; the first was 12 passed before the pin); in the
 judge, a module-level alias of the door below its definition, and the door passed to `map` rather than to `_or_fault`, each
 red it as a bare name outside a call (1 failed, 16 passed each). The battery's two import-time aliases, each called per
-session in the pass loop, red their reconciliation on every pass and the pin (6 failed, 11 passed each). The enumeration:
+session in the pass loop, red their reconciliation on every pass and the pin (6 failed, 11 passed each). The widened pin
+(the pre-emption verifier's finding: the first cut read a dynamic lookup's arguments alone): `vars(jd)[...]`, `jd.__dict__[...]`
+and `jd.__dict__.get(...)` spelled with the shared door, each at kernel module level and each as a real load inside
+`_closer_settled`, red the pin naming the line and the form (1 failed, 16 passed each; 17 passed before the widening); the
+name bound to a variable before the getattr, and a concatenation that splits the needle, leave the module green (17 passed
+each), the assembled limit stated as such. The enumeration's births check: the subscript branch dropped reds it at F30, and
+with the `vars(jd)[...]` plant landed beside that drop the pin stays green and the enumeration alone reds (1 failed, 16
+passed each); the dict-read roster emptied, and the call test over the dynamic lookups alone, each red it at F30d (1 failed,
+16 passed each); every loader-naming string constant read as a birth reds the kernel pin on its docstrings and the enumeration
+at F07d, the name bound first (2 failed, 15 passed). The enumeration:
 the census with its alias kind dropped reds the alias sample and the loader forms at F03, the from-import with as (2 failed,
 15 passed); with its Attribute kind dropped, the walk census, the sample case, the bump forms at B01 and the loader forms at
 F02 (4 failed, 13 passed); with its Name kind dropped, the loader forms at F01 (1 failed, 16 passed); reading string
