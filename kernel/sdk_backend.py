@@ -6377,7 +6377,7 @@ class SdkSession:
             except Exception as e:
                 self.backend._log("relaunch slot release (%s) failed: %s" % (self.name, e))
 
-    async def _take_relaunch_slot(self) -> bool:
+    async def _take_relaunch_slot(self, arm_time: bool = False) -> bool:
         """THE BOUNDED RELAUNCH (the user 2026-09-18, whose sessions all stayed on the key after the default changed):
         set_auth_default's walk asks every follower on the other side to reconnect at once, and the loop's relaunch
         drew no slot, so a box of followers would relaunch every CLI in one burst (_spawn_sem bounds boot, the drive
@@ -6411,7 +6411,19 @@ class SdkSession:
         meanwhile (a second default write during the connect), the retry drew a second slot and stored its release over
         the first, which was never called: one permit of the machine-wide bound gone for the kernel's life, per flip
         during a retry. No acquire while one is held, and the store pops any release found standing and fires it, so
-        two are never held."""
+        two are never held.
+
+        THE ARM-TIME ROAD AWAITS THE GRANT ALONE (the reviewer's round 2, 2026-09-19; its correctness-3): `arm_time` is
+        the wait _arm_after_relaunch_slot runs while the session is CONNECTED, and the reconnect Event (_wake) is then
+        the receive loop's signal, created and read by the loop. Racing it here consumed a wake set before the loop had
+        created its own waker (asyncio's rule: a waiter created before set() completes, one created after a clear() does
+        not), so an arm made during a connect (_arm_now: a pending rewind's request, a shutdown) left _reconnect True
+        with nothing to break the receive await, inputs() holding the queue, until some later wake. So that road never
+        touches _wake: it waits on the grant future alone, an end reaches it through the loop's exit, which cancels the
+        task (the CancelledError path below returns the slot), and the end is re-read at the grant as on the loop-top
+        road. The literal alternative, a waiter that re-reads `ended` without clearing, busy-spins (18143 wait calls in
+        0.30 s, measured), so the loop-top road keeps its two clears (a pick's wake left standing after the grant tore
+        the fresh client down at once, round 1) and only that road clears."""
         sem = getattr(self.backend, "_spawn_sem", None)
         if sem is None:
             return True
@@ -6463,16 +6475,19 @@ class SdkSession:
             return False
 
         try:
-            while not fut.done():
-                waker = asyncio.ensure_future(self._wake.wait())
-                await asyncio.wait({fut, waker}, return_when=asyncio.FIRST_COMPLETED)
-                if not waker.done():
-                    waker.cancel()
-                if self.ended:
-                    return give_up()           # read before the grant: an end and a grant can land in one batch
-                if fut.done():
-                    break
-                self._wake.clear()             # a pick's wake: the connect below reads the pick; the slot is still owed
+            if arm_time:
+                await fut                      # the grant alone: the loop's wake is the loop's to read (the docstring says why)
+            else:
+                while not fut.done():
+                    waker = asyncio.ensure_future(self._wake.wait())
+                    await asyncio.wait({fut, waker}, return_when=asyncio.FIRST_COMPLETED)
+                    if not waker.done():
+                        waker.cancel()
+                    if self.ended:
+                        return give_up()       # read before the grant: an end and a grant can land in one batch
+                    if fut.done():
+                        break
+                    self._wake.clear()         # a pick's wake: the connect below reads the pick; the slot is still owed
         except asyncio.CancelledError:
             # the arm-time wait runs as a task of the session's loop (_arm_after_relaunch_slot), and the loop's exit
             # cancels every task still pending (the CLI died and the drain ended; asyncio.run's exit): the slot goes back
@@ -6480,7 +6495,8 @@ class SdkSession:
             # first and never twice (round 1 of the reviewer's review, 2026-09-18)
             give_up()
             raise
-        self._wake.clear()                     # whatever woke the wait, the connect below starts with the flag down
+        if not arm_time:
+            self._wake.clear()                 # whatever woke the wait, the connect below starts with the flag down
         if self.ended:
             return give_up()
         if not fut.result():
@@ -7319,7 +7335,13 @@ class SdkSession:
         held branch); busy, or the ask withdrawn or served meanwhile, the slot goes straight back and the pick waits
         for the settle that finds the session quiet, which starts a fresh wait. Not drawn in the walk (the kernel
         thread, blocked up to the backstop per follower) and not as a blocking acquire at the arm. A pending rewind's
-        request arms through _arm_now directly and never waits here: its queue cannot start until the reconnect.
+        REQUEST arms through _arm_now directly and draws no slot at the arm (its queue cannot start until the reconnect;
+        on that road the loop top draws the slot, with the CLI already torn down); a rewind whose request DEFERRED (the
+        bare delete-while-busy rollback: its completion runs on the Stop hook while the interrupted turn is still
+        counted) comes back through this routine at the settle, and while a follower's arm-time wait is in flight its
+        arm is refused below and fires at the grant, said in the log (the reviewer's round 2, 2026-09-19; its
+        correctness-1 in the minimal form: two refuters found each proposed exemption a worse trade than the wait, which
+        costs no extra delay against the request road).
 
         THE ONE ARM RULE (review round 2, 2026-09-09). A held pick arms at a ResultMessage settle that
         finds the live sets empty, and nowhere else. No removal from the live sets arms at its own frame:
@@ -7371,7 +7393,21 @@ class SdkSession:
         if self._served_by_connect(reason, pick=pick):
             return False
         if self._slot_wait:
-            return False   # an arm-time wait for the relaunch slot is in flight: its grant runs this once more and arms
+            # an arm-time wait for the relaunch slot is in flight: its grant runs this once more and arms. A PENDING
+            # REWIND's deferred arm is refused here too (the reviewer's round 2, 2026-09-19; its correctness-1, taken in
+            # the minimal form, a line and the docstring, no behaviour change): the bare delete-while-busy rollback's
+            # request lands while the interrupted turn is still counted (its completion runs on the Stop hook, before the
+            # settle), so it defers and comes back through this routine at the settle, and with a follower's wait in
+            # flight it fires at the grant, bounded by BOOT_RESUME_SLOT_S, the CLI up and serving meanwhile. Two refuters
+            # found each proposed exemption a worse trade than the wait (a teardown with the permit still owed and a
+            # second taker for the same session; a false wedged-CLI row at the backstop) and measured no extra delay
+            # against the request road, which waits for the same permit at the loop top with the CLI already gone; so
+            # the wait stands and is SAID, since nothing named the rewind's wait before
+            if rewind:
+                self._log_quietly("reconnect (%s): the pending rewind's reconnect waits for the relaunch slot already being drawn "
+                                  "(the machine-wide spawn stagger); it fires at the grant, the CLI serving meanwhile (%s)"
+                                  % (self.name, reason))
+            return False
         if (not granted and not rewind and getattr(self, "_relaunch_bounded", False) and self._relaunch_slot is None
                 and self._wake is not None and getattr(self.backend, "_spawn_sem", None) is not None):
             # THE SLOT IS DRAWN BEFORE THE TEARDOWN (the docstring says why): the wait runs as a task of this loop, off
@@ -7417,7 +7453,7 @@ class SdkSession:
         out: a task of the loop that raised would be reported by nothing."""
         try:
             try:
-                ok = await self._take_relaunch_slot()
+                ok = await self._take_relaunch_slot(arm_time=True)
             finally:
                 self._slot_wait = False
             if not ok or self.ended:
@@ -7951,8 +7987,10 @@ class SdkSession:
         # its ask withdrawn; a CLI on the other side is asked, with the stamps truthful; an attach whose CLI has not
         # reported yet is cannot-tell, and the pending parks for the CLI's first init (_note_auth_source runs the step
         # then). Round 3 of the review ran it for an unserved ask only (the step makes no request for an object that
-        # never landed, so no arm rides after this landing, and it must run here; round 2 for an attach only)
-        self.backend._follow_default(self, landing="attach" if attach else "launch")
+        # never landed, so no arm rides after this landing, and it must run here; round 2 for an attach only). Through
+        # the one guarded entry point (the reviewer's round 2, 2026-09-19; its kernel-1): a raise inside the step used to
+        # escape this landing and kill the SDK thread after a successful handshake, ending a survivor's CLI under a host
+        self.backend._follow_default_guarded(self, landing="attach" if attach else "launch")
         return landing
 
     def _release_hold_at_exit(self):
@@ -8983,10 +9021,28 @@ class SdkSession:
                 with self._lock:
                     self._inflight_texts.append(u.get("item", u["text"]))
                     self.inflight = max(self.inflight, 1)
-            # the abandoned client's live subagents and background tasks died with it — retire them on
-            # the teardown event itself (and tell the session what it lost, as a CLI death does)
-            self._drop_live_work("reconnect")
-            # settle + recover anything the abandoned client stranded — see _reconcile_stranded
+            if not self._host_attach_retries:
+                # the abandoned client's live subagents and background tasks died with it: retire them on the teardown
+                # event itself (and tell the session what it lost, as a CLI death does). NOT ON THE HOST-ATTACH RETRY ROAD
+                # (the reviewer's round 2, 2026-09-19; its regression-1, and the standing rule that decides it: never a
+                # destructive action, a teardown, a death notice or a mirror wipe, on the INFERENCE that work ended; only
+                # on a positive report that it did, and when no report is available, hold and say so). A retry is the
+                # loop coming back here after an attach whose hello arrived and whose initialize then timed out (the
+                # except below sets the counter on exactly that road and nothing else resets it before this point): the
+                # host and its CLI live on, and the same CLI is about to be re-attached, so nothing died. A timed-out
+                # handshake is not a report that work ended. Before this guard the retry's pass here counted the rows the
+                # attach's hello had seeded from the reg's mirror (_seed_live_work_from_reg) as work that died with an
+                # abandoned CLI: it queued a false death notice ("cut off when the claude process ... ended") for a task
+                # still running, wiped the reg's bgTasks mirror, and left the retry's own seed with nothing to read, so a
+                # follower's carried ask armed unheld at the retry's landing; the notice was fed to the retry's client,
+                # the arm deferred to the end of the turn that delivered it, and that turn's settle tore the surviving
+                # CLI down (the host was sent `end`) with the task inside it, one turn after the session was told the
+                # task had already died. With the skip the rows stay seeded and the first turn's report or settle still
+                # bounds them; a CLI that does die after the retry decision is retired by _on_session_gone, so
+                # over-skipping costs a held ask, never a silent teardown
+                self._drop_live_work("reconnect")
+            # settle + recover anything the abandoned client stranded (see _reconcile_stranded): about the queue, it reads
+            # no CLI state, so it runs on every road, the attach retry's included, outside the skip above
             self._reconcile_stranded()
             if getattr(self, "_relaunch_bounded", False):
                 # a relaunch set_auth_default's walk asked for holds a spawn-stagger slot (_take_relaunch_slot says why
@@ -10866,7 +10922,9 @@ class SdkSession:
         the signal came from the CLI's DESIGNED task lifecycle stream instead — the live _bg_tasks set
         (see _on_task_event), terminal-status-cleared, no overlay records needed. So this hook still
         ignores inp['background_tasks'] and just clears any stale awaiting:true — keeping the overlay
-        channel available for signals that need durability across a backend restart."""
+        channel available for signals that need durability across a backend restart. The list itself is read
+        by two reconciles below, neither of which touches the overlay: the launch ledger's (2026-08-29) and the
+        seeded live work's (_reconcile_seeded_with_report, 2026-09-19)."""
         append_awaiting(self.backend.state_dir, self.sid, False)
         # Record the ARMED TIMER SET (the hook payload's session_crons: CronCreate crons, ScheduleWakeup
         # wakeups, /loop ticks). Session-scoped timers live ONLY in the CLI process's memory — the tool
@@ -10934,6 +10992,14 @@ class SdkSession:
                     self._cron_prompts_refresh()       # the armed set moved under the gate's cache
         except Exception as e:
             self.backend._log("stop hook (%s): session_crons record failed: %s" % (self.name, e))
+        # THE SEEDED LIVE WORK is reconciled against the same payload first (the reviewer's round 2, 2026-09-19; its
+        # correctness-2): the rows a survivor attach seeded from the reg's mirror are confirmed or retired by the CLI's own
+        # answer here, before the ResultMessage settle reads the live sets to arm a held pick
+        # (_reconcile_seeded_with_report says why the settle's silence test was the wrong event). Guarded inside; a missing
+        # or malformed list leaves the rows to the settle's no-report drop
+        bg_report = inp.get("background_tasks") if isinstance(inp, dict) else None
+        if isinstance(bg_report, list):
+            self._reconcile_seeded_with_report(bg_report)
         # Reconcile the LAUNCH LEDGER against the payload's background_tasks — the per-turn snapshot
         # this hook used to discard (2026-08-29). The ledger is launch-authoritative; the payload is
         # the CLI's own answer to "what is still running", so: a live-generation ledger entry absent
@@ -11486,7 +11552,10 @@ class SdkSession:
             self._wf_slots.clear()
             died = sorted((dict(v) for v in self._bg_tasks.values()), key=lambda d: d.get("since") or 0)
             self._bg_tasks.clear()
-            self._seeded_tasks.clear()   # a seeded row (the reg's mirror at an attach) died with the CLI like any other
+            self._seeded_tasks.clear()   # a seeded row (the reg's mirror at an attach) dies with the CLI like any other on
+            #   the roads that reach here: a reconnect's teardown of a landed client, a CLI death (_on_session_gone). The
+            #   host-attach retry road does not call this (the loop top skips it): its CLI lives on, and a row seeded from
+            #   the mirror is not work that ended (the reviewer's round 2, 2026-09-19; its regression-1)
         if died:
             note = task_death_notice(died, cause=self._RECONNECT_CAUSE)
             with self._lock:
@@ -11805,11 +11874,32 @@ class SdkSession:
         finds the set empty arms, and _drop_live_work names what died if the reconnect does happen. Never a permanent
         hold on the mirror itself: an end frame for an id the live set never held pops nothing and rewrites nothing, so
         counting the mirror at every settle latched the ask forever (both refuters). The rows seeded are remembered
-        (_seeded_tasks) and the first settle after the attach drops what nothing confirmed (_reconcile_seeded_work).
-        The host's hello carries no task ids, so no authoritative read exists at this point; the mirror is the best
-        record there is. Called from _fresh_cli_decision on the survivor branch (the hello's CLI identity equals the
-        reg's), inside the transport's connect and before the SDK handshake. Rows already live (a retry attaching to
-        the CLI a failed handshake left running) are left as they are. Returns how many rows it seeded."""
+        (_seeded_tasks); the CLI's own turn-end report at the first turn after the attach confirms or retires each
+        (the Stop hook's background_tasks list, _reconcile_seeded_with_report; the reviewer's round 2, 2026-09-19, its
+        correctness-2), and a turn that ends without one (an interrupted turn skips the hook) drops what nothing spoke
+        for at its settle, said as a drop without an authoritative read (_reconcile_seeded_work). The host's hello
+        carries no task ids, so no authoritative read exists at THIS point; the mirror is the best record there is, and
+        the report is the read. Called from _fresh_cli_decision on the survivor branch (the hello's CLI identity equals
+        the reg's), inside the transport's connect and before the SDK handshake; the decision's other two roads (a hello
+        with no CLI spawn time, one with no CLI identity) seed nothing and say so in their lines (its fresh-1). Rows
+        already live (a retry attaching to the CLI a failed handshake left running) are left as they are, and the loop
+        top's teardown bookkeeping skips the retry road, so the rows the first attach seeded survive into the retry
+        (its regression-1). Returns how many rows it seeded.
+
+        THE STANDING RULE FOR THIS MECHANISM (the reviewer's round 2, 2026-09-19): the mirror is a lossy reconstruction
+        of what the CLI is doing, and a retirement is never a destructive action (a teardown, a death notice, a mirror
+        wipe) on the INFERENCE that work ended; only on a positive report that it did, and when no report is available,
+        hold and say so. A held row costs a delayed relaunch; a wrong teardown kills running work and lies about why.
+
+        RESIDUALS, disclosed here, in docs/reference.md and in the ledger entry rather than closed (the reviewer's round
+        2; its kernel-2 and the owner's audit): (1) a seeded row whose closing record never replays (a mirror write
+        that failed, a journal gap, a task the CLI never ends) on a session that then takes no turn from any source
+        holds the ask, the pending dots and a stoppable-task row in the dashboard indefinitely; a replayed end frame
+        pops the row but releases no pick (no removal from the live sets arms), so only a turn's settle does. (2) A
+        subagent known only to the SubagentStart hook has no reg mirror and is never seeded, so a survivor whose only
+        live work is such a subagent can be re-armed at the attach. Both are one design question, what the
+        authoritative read of a CLI's live work is at attach time, for all four kinds (background tasks, Task agents,
+        Workflow runs, hook-only subagents); it is queued, and one answer retires both, so neither is patched here."""
         rows = [t for t in (reg.get("bgTasks") or []) if isinstance(t, dict) and t.get("taskId")]
         seeded = 0
         with self._sub_lock:
@@ -11829,13 +11919,68 @@ class SdkSession:
             self.backend._poke()
         return seeded
 
+    def _reconcile_seeded_with_report(self, bg: list) -> None:
+        """THE CLI'S OWN TURN-END REPORT DECIDES A SEEDED ROW (the reviewer's round 2, 2026-09-19; its correctness-2, and
+        the standing rule in _seed_live_work_from_reg's docstring). The Stop hook's `background_tasks` is the CLI's task
+        registry as it stands at the turn's end, in the id space the task_* lifecycle frames carry, delivered before the
+        ResultMessage settle that arms a held pick; a survivor attach sends its own initialize, which the CLI takes as a
+        replacement of its hook table, so the first turn after the attach brings the report to this kernel. A seeded row
+        the report lists as running is CONFIRMED: it leaves the seeded set and stays live, owned from here by the same
+        mechanisms as a row the stream started (an end frame pops it; _drop_live_work names it if a teardown then cuts
+        it, a death notice for work the CLI confirmed and this kernel then ended, never for a row nothing spoke for). A
+        seeded row the report does not list as running is retired on the CLI's own answer, with NO death notice (the CLI
+        reports no death, only no such task: it ended while no kernel heard, or the mirror row was stale), said in the
+        log and mirrored to the reg. Before round 2 the settle dropped every seeded row no FRAME had spoken for during
+        the turn, and a refuter showed that silence is the ordinary case, not a rare one: a backgrounded shell streams
+        task_started and then nothing until its terminal frame (read in the bundled CLI, 2.1.266), so every background
+        shell alive across a kernel restart plus one turn was retired on silence, the hold released and the surviving
+        CLI torn down with the shell inside it, the session told nothing; the same settle overrode a report that had
+        listed the task as running in that very turn. Never raises: the hook calls it. The sets under _sub_lock; the
+        line and the mirror write outside it."""
+        try:
+            running = {str(t.get("id")) for t in bg
+                       if isinstance(t, dict) and t.get("status") == "running" and t.get("id")}
+            with self._sub_lock:
+                if not self._seeded_tasks:
+                    return
+                confirmed = sorted(tid for tid in self._seeded_tasks if tid in running)
+                retired = sorted(tid for tid in self._seeded_tasks if tid not in running)
+                for tid in retired:
+                    self._bg_tasks.pop(tid, None)   # an end frame may have popped it already: nothing to pop twice
+                self._seeded_tasks.clear()
+            n_c, n_r = len(confirmed), len(retired)
+            parts = []
+            if n_c:
+                parts.append("confirms %d background task%s the reg named for the surviving CLI as still running"
+                             % (n_c, "" if n_c == 1 else "s"))
+            if n_r:
+                parts.append("lists %d background task%s the reg named for the surviving CLI as not running; no longer counted "
+                             "as live, and no notice, since the CLI reports no death" % (n_r, "" if n_r == 1 else "s"))
+            self._log_quietly("live work (%s): the CLI's turn-end report %s" % (self.name, "; ".join(parts)))
+            if retired:
+                try:
+                    self.backend._update_reg(self.sid, bgTasks=self._live_bg_tasks())
+                except Exception as e:
+                    self._log_quietly("live work (%s): bgTasks mirror write failed after the report's reconcile: %s" % (self.name, e))
+            try:
+                self.backend._poke()
+            except Exception:
+                pass
+        except Exception as e:
+            self._log_quietly("live work (%s): the seeded-work reconcile against the turn-end report failed: %s: %s"
+                              % (self.name, type(e).__name__, e))
+
     def _reconcile_seeded_work(self) -> None:
-        """The first ResultMessage settle after an attach that seeded rows (_seed_live_work_from_reg): a seeded row the
-        CLI's own stream has neither confirmed (a start or progress frame) nor ended by now is dropped, so a stale mirror
-        row (a write the previous kernel never got to, a task that ended while no kernel heard) cannot hold a pending
-        reconnect forever; the rows the stream spoke for stay, owned by the same mechanisms as any other. Said in the
-        log and mirrored to the reg; no death notice, since nothing says they died. Never raises: the settle's finally
-        calls it (round 1 of the reviewer's review, 2026-09-18)."""
+        """The first ResultMessage settle after an attach that seeded rows (_seed_live_work_from_reg), for the rows no
+        turn-end report decided: _reconcile_seeded_with_report empties the seeded set when the Stop hook's list arrives,
+        so this finds rows only when no report reached this kernel for the turn (an interrupted turn skips the hook). A
+        seeded row neither confirmed by a frame nor decided by a report is dropped, so a stale mirror row (a write the
+        previous kernel never got to, a task that ended while no kernel heard) cannot hold a pending reconnect forever;
+        the rows a frame spoke for stay, owned by the same mechanisms as any other. Said in the log AS a drop without an
+        authoritative read, never as the task being gone (the reviewer's round 2, 2026-09-19: the hold still releases
+        when no report arrived for the turn, and the line says which case this was), and mirrored to the reg; no death
+        notice, since nothing says they died. Never raises: the settle's finally calls it (round 1 of the reviewer's
+        review, 2026-09-18)."""
         try:
             with self._sub_lock:
                 if not self._seeded_tasks:
@@ -11844,9 +11989,10 @@ class SdkSession:
                 self._seeded_tasks.clear()
             if not dropped:
                 return
-            self._log_quietly("live work (%s): %d background task%s the reg named for the surviving CLI sent no frame through "
-                              "the first turn after the attach; no longer counted as live"
-                              % (self.name, len(dropped), "" if len(dropped) == 1 else "s"))
+            self._log_quietly("live work (%s): %d background task%s the reg named for the surviving CLI had no frame and no "
+                              "turn-end report through the first turn after the attach; no longer counted as live, dropped without "
+                              "an authoritative read (nothing says %s ended), and the hold releases"
+                              % (self.name, len(dropped), "" if len(dropped) == 1 else "s", "it" if len(dropped) == 1 else "they"))
             try:
                 self.backend._update_reg(self.sid, bgTasks=self._live_bg_tasks())
             except Exception as e:
@@ -12654,31 +12800,28 @@ class SdkBackend:
                   "environment (its service.env or service unit)." % ", ".join(names), problem=False)
 
     def _note_seed_skipped(self, side: str = "key", login_id: str = "") -> None:
-        """Said ONCE per process and side, as a problem row: the machine's EXPLICIT default billing (set_auth_default,
-        the Set default billing submenu; since 2026-09-18 the only value a spawn seeds from) names a side this box
-        cannot bill (the API key with no apiKeyHelper in Claude Code's settings; the login with none signed in, or
-        under a managed helper), so new sessions are left unpicked (spawn) and bill the side that exists: the picker
-        greys that choice on this box, and a default the user set is being set aside without a word otherwise. The
-        rows name the machine default and a remedy that works (round 1 of the review, 2026-09-18): they said "the
-        remembered Billing pick" and told the user to pick on a session, which no longer seeds anything."""
+        """Said ONCE per process and side, as a problem row: the remembered Billing default names a side this
+        box cannot bill (the API key with no apiKeyHelper in Claude Code's settings; the login with none
+        signed in, or under a managed helper), so new sessions are left unpicked (spawn) and bill the side
+        that exists: the picker greys that choice on this box, and a pick the user made is being set aside
+        without a word otherwise."""
         said = _logins.pick_value(side, login_id)
         if said in self._seed_skip_said:
             return
         self._seed_skip_said.add(said)
         if login_id:
-            # the default names a STORED login (T346) that is refused, expired, tokenless or gone
-            self._log("the machine's default billing is the %s login but %s, so new sessions start unpicked and bill "
-                      "whatever the CLI resolves; set the default billing again (the Set default billing submenu) to apply one"
+            # the remembered pick names a STORED login (T346) that is refused, expired, tokenless or gone
+            self._log("the remembered Billing pick is the %s login but %s, so new sessions start unpicked and bill "
+                      "whatever the CLI resolves; pick a login again to apply one"
                       % (self.login_display(login_id), self.auth_unavailable_why("login", login_id)), problem=True)
         elif side == "key":
-            self._log("the machine's default billing is the API key but Claude Code's settings carry no apiKeyHelper, so "
-                      "new sessions start unpicked and bill whatever the CLI resolves; configure apiKeyHelper in %s, or set "
-                      "the default billing again (the Set default billing submenu), to apply it"
-                      % os.path.join(_cred.claude_config_dir(), "settings.json"), problem=True)
+            self._log("the remembered Billing pick is the API key but Claude Code's settings carry no apiKeyHelper, so "
+                      "new sessions start unpicked and bill whatever the CLI resolves; configure apiKeyHelper in %s to "
+                      "apply the pick" % os.path.join(_cred.claude_config_dir(), "settings.json"), problem=True)
         else:
-            self._log("the machine's default billing is the login but %s, so new sessions start unpicked and bill "
-                      "the API key; sign in (claude /login), or set the default billing again (the Set default billing "
-                      "submenu), to apply it" % self.auth_unavailable_why("login"), problem=True)
+            self._log("the remembered Billing pick is the login but %s, so new sessions start unpicked and bill "
+                      "the API key; sign in (claude /login) to apply the pick"
+                      % self.auth_unavailable_why("login"), problem=True)
 
     def _heal_stale_awaiting(self, sid: str) -> None:
         """Clear a stale awaiting:true overlay for a NOT-running session. A dormant SDK session can't have live
@@ -13145,11 +13288,19 @@ class SdkBackend:
     def _fresh_cli_decision(self, sess, cli: dict) -> None:
         """The fresh-CLI decision at a host's hello (the rule in _on_host_hello's docstring), from the hello's `cli` dict."""
         pid, start = cli.get("pid"), cli.get("start")
+        reg = read_reg(self.state_dir, sess.sid) or {}
+        # the rows the reg's mirror names, for the two roads below that seed none of them (the reviewer's round 2,
+        # 2026-09-19; its fresh-1, disclosed in the lines rather than seeded: a mirror that may describe another CLI would
+        # count dead work as live, and a seed above the identity read would seed phantom rows into a fresh CLI's live set)
+        mirrored = sum(1 for t in (reg.get("bgTasks") or []) if isinstance(t, dict) and t.get("taskId"))
+        uncounted = ("; the %d background task%s the reg's mirror names %s not counted as live on this attach (the survivor seed "
+                     "runs only for the CLI whose identity the reg records)"
+                     % (mirrored, "" if mirrored == 1 else "s", "is" if mirrored == 1 else "are")) if mirrored else ""
         if pid is None or not start:
-            self._log("host (%s): the hello names no CLI identity; nothing stamped (a host older than the identity)" % sess.name)
+            self._log("host (%s): the hello names no CLI identity; nothing stamped (a host older than the identity)%s"
+                      % (sess.name, uncounted))
             return
         ident = "%s:%s" % (pid, start)
-        reg = read_reg(self.state_dir, sess.sid) or {}
         if ident == str(reg.get("spawnedAtCli") or ""):
             # the CLI the reg's epoch already belongs to: a survivor, or a retry. Its live work is counted from the reg's
             # mirror before the landing (round 1 of the reviewer's review, 2026-09-18; _seed_live_work_from_reg says why)
@@ -13163,8 +13314,10 @@ class SdkBackend:
             # a host running code older than the spawn-time field: its CLI predates this kernel (every host spawned by this
             # code carries the field), so the epoch, the awaiting, the held sends and the launch login all stand
             self._update_reg(sess.sid, spawnedAtCli=ident)
-            self._log("host (%s): the hello carries no CLI spawn time (older host code); CLI %s recorded, nothing stamped"
-                      % (sess.name, ident))
+            self._log("host (%s): the hello carries no CLI spawn time (older host code); CLI %s recorded, nothing stamped%s%s"
+                      % (sess.name, ident, uncounted,
+                         "; the identity just recorded makes the next attach to this CLI a survivor attach, which counts them"
+                         if mirrored else ""))
             return
         login = cli.get("login")
         # the reading (the follow-up's read, 2026-09-14): an EMPTY string is an identifier, the machine's own login, and is
@@ -14564,14 +14717,12 @@ class SdkBackend:
         # parked ask withdrawn, one on the other side is asked. Guarded, as every step off the init handler is
         if (sess.auth not in ("login", "key") and getattr(sess, "_launched_auth", None) is None
                 and getattr(sess, "_launched_effort", None) is not None):
-            try:
-                with sess._hold_write():
-                    if sess._launched_auth is None:
-                        sess._launched_auth = sess.auth_live
-                self._follow_default(sess, landing="init")
-            except Exception as e:
-                self._log("auth (%s): the follower's step at the CLI's first init failed: %s: %s" % (sess.name, type(e).__name__, e),
-                          problem=True)
+            with sess._hold_write():
+                if sess._launched_auth is None:
+                    sess._launched_auth = sess.auth_live
+            # through the one guarded entry point (the reviewer's round 2, 2026-09-19; its kernel-1): this road's own
+            # handler filed a line and left a half-written ask standing; the shared guard leaves the session as it found it
+            self._follow_default_guarded(sess, landing="init")
         if keyed == sess.api_key_auth and not first:
             return
         sess.api_key_auth = keyed
@@ -15371,22 +15522,17 @@ class SdkBackend:
                "effort": eff, "lastSid": "", "alive": True}
         if d.get("model") and d["model"] != "default":
             reg["model"] = d["model"]
-        # Auth: the picker's explicit pick wins; else the machine's EXPLICIT default (set_auth_default, the Set default
-        # billing submenu); unset stays unset (effective_auth's fallback IS the pre-selector behavior). A per-session
-        # pick's flag-less write seeds nothing (round 2 of the review, 2026-09-18, matching the block below).
+        # Auth: the picker's explicit pick wins; else the remembered default (a gear /auth pick on any
+        # session, or the machine's explicit default); unset stays unset (effective_auth's fallback IS the
+        # pre-selector behavior). What the seed MAKES: a session spawned while a value stands carries it as a pick of
+        # its OWN (reg.auth below), so a later move of the machine default does not reach it; only a session spawned
+        # while none stood follows the default wherever it moves. Whether the flag-less value should seed at all is a
+        # change of which account new sessions bill, split out of the follower fix into its own PR (the reviewer's
+        # round 2, 2026-09-19; its fresh-5), so this reads as it did before that fix
         a, lid = _logins.parse_pick(auth)       # "login:<id>" names a stored login (T346); junk reads as no pick
         seeded = not a
         if seeded:
-            # the file's auth seeds a new session ONLY as the machine's EXPLICIT default (the user 2026-09-18; until then
-            # a per-session pick's write, which carries no authExplicit, seeded every pick-less spawn with a pick of its
-            # own): the launch (_explicit_default) and the init check (_declared_auth) read the file that way, so the
-            # spawn does too; the new-session picker preselects the same default (_auth_avail, round 1 of the review).
-            # What the seed MAKES (round 1 of the reviewer's review, 2026-09-18; its fresh-1): a session spawned while an
-            # explicit default stands carries that default as a pick of its OWN (reg.auth below), so it is a picked
-            # session from then on and a later move of the default does not reach it; only a session spawned while no
-            # billable explicit default stood follows the default wherever it moves. Whether a seeded session should
-            # follow instead is the user's question, not this branch's (the ledger entry names it)
-            a = d.get("auth") if (d.get("authExplicit") and d.get("auth") in ("login", "key")) else ""
+            a = d.get("auth") if d.get("auth") in ("login", "key") else ""
             lid = SdkBackend.reg_login(d) if a == "login" else ""
         if a and seeded and self.pick_unavailable(a, lid):
             # A REMEMBERED default the box cannot bill seeds nothing: a key default with no helper (review
@@ -18105,16 +18251,16 @@ class SdkBackend:
             return False
         s = self.sessions.get(sid)
         value = self.login_display(login_id) if login_id else side   # the stored login's display label (T346), else the side word; `value` is spent
-        # the remembered pick, like model/effort: every pick, the unchanged ones below included (review round 1); the
-        # guards decide only whether THIS session reconnects. Until the user sets the machine's default EXPLICITLY
-        # (set_auth_default, the Billing flyout's Default group, T380): from then on a per-session pick is about that
-        # session and moves no default. This write carries no authExplicit, and since 2026-09-18 every reader follows the
-        # file's auth only beside the flag: a spawn with no pick of its own (the seed), the launch (_explicit_default),
-        # the init check (_declared_auth) and, since round 1 of the review, the new-session picker's preselection
-        # (_auth_avail's default; read there, a pick made every picker-created session a picked one). The flag-less
-        # value is the record of the last pick and nothing reads it; hand-editing the file stays the escape hatch.
-        # authLogin rides beside it: the stored login a login pick names, "" for the machine's own (written as "" so a
-        # plain pick clears an earlier stored one).
+        # the seed for the NEXT new session, like model/effort: every pick, the unchanged ones below included (review
+        # round 1); the guards decide only whether THIS session reconnects. Until the user sets the machine's default
+        # EXPLICITLY (set_auth_default, the Billing flyout's Default group, T380): from then on a per-session pick is
+        # about that session and moves no default. This write carries no authExplicit: the launch (_explicit_default)
+        # and the init check (_declared_auth) follow the file's auth only beside the flag, while the spawn's seed and
+        # the new-session picker's preselection (_auth_avail) read the flag-less value as the remembered pick, as
+        # before (whether they should is a change of which account new sessions bill, split out of the follower fix
+        # into its own PR: the reviewer's round 2, 2026-09-19, its fresh-5). authLogin rides beside it: the stored
+        # login a login pick names, "" for the machine's own (written as "" so a plain pick clears an earlier stored
+        # one).
         if not read_sdk_defaults(self.state_dir).get("authExplicit"):
             write_sdk_default(self.state_dir, auth=side, authLogin=login_id)
         # the pick, the side the connect in progress launches, the side the running process launched and the side a
@@ -18246,8 +18392,8 @@ class SdkBackend:
         judged on its own record as a pick of it would be; the machine's own login and the key write authLogin empty."""
         if value == "auto":
             # back to the helper rule (the key when an apiKeyHelper is configured, else the login): the flag clears and
-            # the file's auth empties, and the next explicit default is the only thing a pick-less spawn, the launch or
-            # the init check will read (since 2026-09-18 a per-session pick's flag-less write seeds nothing).
+            # the seed empties, so a per-session pick seeds the default again as it did before, while the launch and the
+            # init check read only the next explicit default.
             # authLogin cleared too: a per-session stored-login pick writes it while the default is automatic, and a stale
             # id here would ride the next explicit Login default into every new session (the merge read, 2026-09-12)
             write_sdk_default(self.state_dir, auth="", authExplicit=False, authLogin="")
@@ -18286,34 +18432,75 @@ class SdkBackend:
         for s in sessions:
             if s.ended or s.auth in ("login", "key"):
                 continue
+            # ONE FOLLOWER'S FAULT NEVER ABORTS THE WALK (round 1 of the reviewer's review, 2026-09-18; its regression-4 and
+            # kernel-2; the boot sweep's per-session precedent): a reg write refused mid-step (a read-only or full state
+            # directory) raised out of set_auth_default after the default was written, so every follower after it was never
+            # asked, the dashboard's dispatch read the raise as a socket failure and tore the connection down, and the user
+            # was told nothing. The guard is the one every caller of the step shares (_follow_default_guarded; the
+            # reviewer's round 2, 2026-09-19): it leaves the failed session clean, retries the mirror once and files one
+            # problem row, and the walk goes on to the next follower
+            self._follow_default_guarded(s, label)
+
+    def _follow_default_guarded(self, s, label=None, landing=None) -> bool:
+        """THE ONE GUARDED ENTRY POINT for a follower's step (the reviewer's round 2, 2026-09-19; its kernel-1): every caller
+        (set_auth_default's walk, the attach and launch landings in _connect_landed, the CLI's first init in
+        _note_auth_source) runs the step through this, so a raise inside it (the reg mirror write on a full or read-only
+        state directory, a shape or settings read) is contained the same way on every road. Until round 2 the walk and the
+        init road each carried a hand-written copy of the handler and the landing carried none: the raise escaped
+        _connect_landed and killed the session's SDK thread just after a successful handshake, with a "crashed" line for
+        its only trace and no problem row. Under a host that is not a dormant session but an ENDED CLI: the transport's
+        close after a completed handshake sends `end` (the host is detached only for a kernel leaving or a connect that
+        never completed), so the surviving CLI and every background task inside it were ended, the loss regression-1
+        exists to prevent, and the crash heal then revived the session on a fresh CLI. Three hand-written copies of one
+        guard is how the fourth caller ends up unguarded, so there is one.
+
+        On a raise the session is left as the step FOUND it, never half-asked: the raise can land between the hold that
+        wrote a pending and the reg mirror, and a pending with no arm behind it keeps the dots on and makes a later pick
+        read as already applying (the walk's round-1 handler). The pending pair and the slot flag are restored under the
+        hold to what stood when the step began, COMPARED before the write (the landing's discipline,
+        _clear_served_auth_pending): a pair the step did not change is not this step's to wipe, so an ask carried across
+        a restart, or standing from the walk, stands for its next deciding event as it did, and the row says so. The
+        mirror is then retried once from the live pending, guarded, since the I/O that may have just failed is the same
+        I/O; one problem row names the session, the side it stays on and whether an ask stands; the caller goes on (the
+        walk to the next follower, the landing to its return, the connect up and the CLI running). The window between
+        the snapshot and the restore is shared with every other writer of the pending: a default write landing inside a
+        failing step's own milliseconds is undone with it, the same window the walk's handler had. Returns whether the
+        step completed."""
+        with s._hold_lock:
+            before = (s._auth_pending_target(), bool(getattr(s, "_relaunch_bounded", False)))
+        try:
+            self._follow_default(s, label, landing)
+            return True
+        except Exception as e:
+            standing = ""
             try:
-                self._follow_default(s, label)
-            except Exception as e:
-                # ONE FOLLOWER'S FAULT NEVER ABORTS THE WALK (round 1 of the reviewer's review, 2026-09-18; its regression-4
-                # and kernel-2; the boot sweep's per-session precedent): a reg write refused mid-step (a read-only or full
-                # state directory) raised out of set_auth_default after the default was written, so every follower after
-                # it was never asked, the dashboard's dispatch read the raise as a socket failure and tore the connection
-                # down, and the user was told nothing. The failed session is left CLEAN, not half-asked: the raise can
-                # land between the hold that wrote its pending and the reg mirror, and a pending with no arm behind it
-                # kept the dots on and refused the user's own later pick as already applying. Its pending and slot flag
-                # are cleared under the hold, the mirror retried once (the I/O that may have just failed, so guarded),
-                # and one problem row names the session and the side it stays on
+                with s._hold_write():
+                    if (s._auth_pending_target(), bool(s._relaunch_bounded)) != before:
+                        s._auth_pending, s._auth_pending_login = before[0]
+                        s._relaunch_bounded = before[1]
+                    standing = s._auth_pending
                 try:
-                    with s._hold_write():
-                        s._auth_pending = ""
-                        s._auth_pending_login = ""
-                        s._relaunch_bounded = False
-                    try:
-                        s._mirror_auth_pending()
-                    except Exception:
-                        pass
+                    s._mirror_auth_pending()
                 except Exception:
                     pass
-                stays = s.auth_live or s._launched_auth or "the side it is on"
-                self._log("auth (%s): the machine default is now %s, but this session's step failed (%s: %s); it stays on %s "
-                          "until its next connect or the next default write, with no ask standing"
-                          % (s.name, label, type(e).__name__, _mask_ids(e), ("the %s" % stays) if stays in ("login", "key") else stays),
-                          problem=True)
+            except Exception:
+                pass
+            stays = s.auth_live or getattr(s, "_launched_auth", None) or ""
+            if landing is None:
+                head = "auth (%s): the machine default is now %s, but this session's step failed" % (s.name, label)
+                goes_on = ""
+            else:
+                head = "auth (%s): %s, but the follower's step failed" % (
+                    s.name, "attached to this session's surviving CLI" if landing == "attach"
+                    else "this session's CLI reported its billing" if landing == "init"
+                    else "this session's connect landed")
+                goes_on = "the connect goes on with the CLI it has, and "
+            self._log("%s (%s: %s); %sit stays on %s until its next connect or the next default write, with %s"
+                      % (head, type(e).__name__, _mask_ids(e), goes_on,
+                         ("the %s" % stays) if stays in ("login", "key") else "the side it is on",
+                         ("the %s ask it already carried standing for that event" % standing) if standing else "no ask standing"),
+                      problem=True)
+            return False
 
     def _follow_default(self, s, label=None, landing=None) -> None:
         """ONE follower's step (a session with no pick of its own, not ended): exactly set_auth's schedule arm MINUS the

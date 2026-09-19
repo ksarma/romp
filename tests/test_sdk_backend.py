@@ -5714,11 +5714,18 @@ class LiveSubagentsRetire(unittest.TestCase):
         self.assertEqual(len([q for q in s.pending() if "background task" in q]), 1, s.pending())
 
     def test_g_the_reconnect_loop_top_calls_the_drop_before_reconciling(self):
-        """Pin the wiring: the drop runs at the loop top, before _reconcile_stranded, every iteration."""
+        """Pin the wiring: the drop runs at the loop top, before _reconcile_stranded, on every iteration but the host-attach
+        retry's, where the CLI lives on and a timed-out handshake is no report that its work ended (the reviewer's round 2,
+        2026-09-19; its regression-1): the drop sits under `if not self._host_attach_retries:` and the reconcile, which reads
+        no CLI state, runs outside that skip."""
         src = open(os.path.join(BIN, "romp_sdk_backend.py"), encoding="utf-8").read()
         i = src.index('self._drop_live_work("reconnect")')
         j = src.index("self._reconcile_stranded()")
         self.assertLess(i, j, "the drop precedes the stranded-turn reconcile at the loop top")
+        g = src.rfind("if not self._host_attach_retries:", 0, i)
+        self.assertGreater(g, 0, "the drop is guarded on the retry road")
+        self.assertNotIn("\n\n", src[g:i].replace("\n                #", ""), "the guard is the drop's own: comment lines only between them")
+        self.assertNotIn("self._reconcile_stranded()", src[g:i], "the reconcile is outside the skip")
         k = src.rfind("while not self.ended:", 0, i)
         self.assertGreater(k, 0)
         self.assertNotIn("async with ClaudeSDKClient", src[k:i], "…inside the reconnect loop, before the connect")
@@ -10491,6 +10498,37 @@ class DefaultBillingMovesItsFollowers(unittest.TestCase):
                          ["auth (web): this session's CLI reported its billing on the key while the machine default is login; this session "
                           "follows the default, so the reconnect it was asked for is asked again; reconnecting to apply" + self.STAGGER])
 
+    def test_a_parked_ask_moves_between_two_stored_logins_and_the_landing_that_composed_the_first_asks_for_the_second(self):
+        # the reviewer's tests-1 (round 2, 2026-09-19): the never-landed branch compares the parked ask against the target as
+        # the (side, login) PAIR; by the side word alone (the pre-fix compare, which every module left green) a default moved
+        # from stored login Alpha to Beta while the object had not landed left the Alpha ask standing, and the landing that
+        # composed Alpha then served it as done, so the follower kept billing Alpha with no dots, no arm and no line
+        a, b = self._record("Alpha"), self._record("Beta")
+        s = self._sess(landed=False)                                 # a restart's restored object: no landing of this kernel has stamped it
+        s.auth_live = "key"                                          # the report the reg restored: the surviving CLI bills the key
+        self.assertTrue(self.be.set_auth_default("login:" + a["id"]))
+        self.assertEqual(s._auth_pending_target(), ("login", a["id"]), "the ask parks for the landing, carrying its login")
+        self.assertFalse(s._reconnect); self.assertFalse(s._reconnect_when_idle, "no request: the landing decides")
+        # the boot connect composes Alpha and is in progress when the default moves on to Beta
+        s._launching = self.be._launch_shape(s); s._connecting = True
+        self.assertEqual(s._launching["login"], a["id"])
+        del self.logs[:]
+        self.assertTrue(self.be.set_auth_default("login:" + b["id"]))
+        self.assertEqual(s._auth_pending_target(), ("login", b["id"]), "the parked ask is retargeted to the newer default")
+        self.assertEqual(len(self._walk_lines()), 1, self.logs)
+        self.assertIn("its landing decides", self._walk_lines()[0])
+        # the Alpha connect lands: the landing reads the Beta ask as unserved and runs the step, which asks with the stamps
+        # truthful (request_reconnect is the real one: the _Now loop arms at once)
+        del self.logs[:]
+        self.be._stamp_launch_login(s, a["id"]); s._connect_landed()
+        self.assertEqual((s._launched_auth, s._launched_login), ("login", a["id"]))
+        self.assertEqual(s._auth_pending_target(), ("login", b["id"]), "the newer ask stands past the landing")
+        self.assertTrue(s._reconnect, "the landing's step asked, and the quiet arm scheduled the reconnect")
+        self.assertTrue(self._reg(s).get("authPending"))
+        landing = [str(m) for m in self.logs if "this session's connect landed" in str(m)]
+        self.assertEqual(len(landing), 1, self.logs)
+        self.assertIn("while the machine default is %s" % self.be.login_display(b["id"]), landing[0])
+
     def test_a_parked_ask_is_withdrawn_at_the_first_init_of_a_survivor_already_on_the_default(self):
         # the other half of the init as the deciding event: the survivor reports the default's side, so the parked ask ends
         sb.write_sdk_default(self.be.state_dir, auth="login", authExplicit=True)
@@ -10499,6 +10537,12 @@ class DefaultBillingMovesItsFollowers(unittest.TestCase):
         s._launching = self.be._launch_shape(s); s._connecting = True; s._host_is_attach = True
         s._connect_landed()
         self.assertIsNone(s._launched_auth); self.assertEqual(s._auth_pending, "login", "cannot tell yet: the ask stands")
+        # the reviewer's tests-3 (round 2, 2026-09-19): this landing has no report and no live host lease (the class runs hosts
+        # off), so the attach itself is what keys the cannot-tell class here, and this whole sentence is the discriminator
+        # (the walk's and the launch-landing's lines share its tail); dropping that key left every module green
+        self.assertTrue(any("auth (web): attached to this session's surviving CLI; this session follows the default, and the surviving "
+                            "CLI it attached has not reported which side it bills: its first init decides" in str(m) for m in self.logs),
+                        self.logs)
         asked = []
         s.request_reconnect = lambda *a, **k: asked.append(1)
         self.be._note_auth_source(s, "none")                         # the first init: the login
@@ -10712,27 +10756,43 @@ class DefaultBillingMovesItsFollowers(unittest.TestCase):
                       "changing the machine default reconnects every session following it that runs on the other side, "
                       "at its next quiet moment (the same pending dots a per-session pick shows), and those sessions "
                       "keep following the default (no pick is written for them).", doc)
-        self.assertIn("the new-session picker preselects the machine default (the explicit one, else the rule that holds), "
-                      "and a session created with no pick of its own follows the machine default, not the last pick.", doc)
-        # round 2 of the review: the older sentence in the same section said the opposite (the last pick made anywhere)
-        self.assertNotIn("defaults to the last pick made anywhere", doc)
-        self.assertNotIn("A remembered key pick on a box", doc)
-        self.assertIn("A new session is preselected on the machine's explicit default when the box can bill it, else on the rule "
-                      "that holds without one: the key when a helper is configured, else the login.", doc)
+        # the seed and the picker's preselection read the remembered pick as before this change: making them read only the
+        # explicit default changes which account new sessions bill, and is split out into its own PR (the reviewer's round
+        # 2, 2026-09-19; its fresh-5), so the reference says what this branch does
+        self.assertIn("Until the default is set here, the last per-session pick seeds it (as a model or effort pick does); once "
+                      "set here, a per-session pick is about that session alone and moves no default.", doc)
+        self.assertIn("A new session defaults to the last pick made anywhere, and before any pick to the key when a helper is "
+                      "configured.", doc)
+        self.assertNotIn("preselects the machine default", doc)
+        self.assertNotIn("seeds no new session", doc)
         # round 1 of the reviewer's review (2026-09-18): the stagger and what a follower keeps through it (correctness-2,
         # kernel-3), the survivor's work at a re-attach (regression-1), the credential romp cannot move (regression-6), the
         # absent chat record (tests-6), and the new-session billing transition plus the seed's semantics (tests-2, fresh-1)
         self.assertIn("The relaunches are staggered on the bounded budget boot resumes use (three at a time): a follower keeps its "
                       "CLI, and keeps serving, until its slot is granted", doc)
         self.assertIn("holds it for the background work its surviving CLI still runs", doc)
+        # the reviewer's round 2 (2026-09-19): the CLI's turn-end report decides a seeded row (correctness-2), the standing
+        # rule and the retry road (regression-1), the two residuals disclosed together (kernel-2 and the subagent gap), and
+        # the line's cadence bounded to the write event (fresh-4)
+        self.assertIn("the CLI's own turn-end report at the first turn after it, the task list its Stop hook carries, confirms each "
+                      "task still running and retires the rest, and a turn that ends without that report drops what nothing spoke "
+                      "for, said in the log as a drop without an authoritative read", doc)
+        self.assertIn("Nothing here ends work on an inference that it ended: a task is torn down, or reported to the session as cut "
+                      "off, only on the CLI's own report, and a retry after a handshake that timed out against a surviving CLI "
+                      "retires nothing.", doc)
+        self.assertIn("Two gaps are disclosed, not closed: a recorded task whose closing record never reaches the kernel, on a "
+                      "session that then takes no turn from any source, holds the ask, the pending dots and a stoppable-task row "
+                      "until a turn ends; and a subagent known only to the SubagentStart hook has no registry record and is not "
+                      "counted, so a survivor whose only live work is such a subagent can be reconnected over it.", doc)
+        self.assertIn("what the authoritative read of a surviving CLI's live work is at the re-attach, for background tasks, Task "
+                      "agents, Workflow runs and hook-only subagents alike", doc)
         self.assertIn("A follower whose CLI bills a credential in the CLI's own environment that romp's per-session settings layer "
-                      "cannot suppress (Claude Code's settings carry no apiKeyHelper) is left where it is, said once in the kernel log.", doc)
+                      "cannot suppress (Claude Code's settings carry no apiKeyHelper) is left where it is, said in one line at each "
+                      "write of the default.", doc)
         self.assertIn("A follower's move leaves no record in its chat: the pending dots are the only session-side signal and they "
                       "clear at the landing; the kernel log's per-session line is the durable record.", doc)
-        self.assertIn("a box whose last per-session pick was the login and whose settings carry an apiKeyHelper bills new sessions "
-                      "on the key from this kernel on", doc)
-        self.assertIn("A session created while an explicit default stands is seeded with it as a pick of its own and is not moved "
-                      "by a later change of the default", doc)
+        self.assertIn("A session created while a default stands, the explicit one or the last pick's remembered value, is seeded with "
+                      "it as a pick of its own and is not moved by a later change of the default", doc)
 
 
 class RelaunchSlotWait(unittest.TestCase):
@@ -10796,6 +10856,79 @@ class RelaunchSlotWait(unittest.TestCase):
         self.assertTrue(self.sem.acquire(blocking=False), "...which frees it, once")
         s._fire_relaunch_slot()
         self.assertFalse(self.sem.acquire(blocking=False), "a second fire releases nothing")
+
+    def test_the_arm_time_wait_leaves_the_loops_wake_for_the_loops_own_waker(self):
+        # the reviewer's correctness-3 (round 2, 2026-09-19): the arm-time wait runs while the session is connected, and it
+        # raced the loop's reconnect Event, clearing it after each wake; a wake set before the receive loop created its waker
+        # was consumed here, so that waker never fired and the arm stood with nothing to break the receive await. The
+        # arm-time road awaits the grant alone and never touches _wake; the loop-top road keeps its clears (the test above)
+        s = self.s
+        s._reconnect_when_idle = False                   # the grant's re-arm has nothing to arm: the slot goes straight back
+        fired = []
+
+        async def main():
+            s.loop = asyncio.get_running_loop()
+            s._wake = asyncio.Event()
+            s._slot_wait = True
+            task = asyncio.ensure_future(s._arm_after_relaunch_slot("request", False, "auth"))
+            await asyncio.sleep(0.05)                    # the taker blocks in its acquire; the session is connected meanwhile
+            s._reconnect = True; s._wake.set()           # an arm made during the connect (a pending rewind's request, a shutdown)
+            waker = asyncio.ensure_future(s._wake.wait())   # the receive loop's own waker, created after the set
+            await asyncio.wait({waker}, timeout=0.3)
+            fired.append(waker.done())
+            if not waker.done():
+                waker.cancel()
+            self.sem.release()                           # the grant
+            await asyncio.wait_for(task, 5)
+            return s._wake.is_set()
+        still_set = asyncio.run(main())
+        self.assertEqual(fired, [True], "the loop's waker created after the wake fires: the arm-time wait consumed nothing")
+        self.assertTrue(still_set, "the wake is the loop's to clear, at its top")
+        self.assertFalse(s._slot_wait)
+        self.assertTrue(self.sem.acquire(blocking=False), "nothing to arm at the grant: the slot went back")
+        self.assertIsNone(s._relaunch_slot)
+
+    def test_a_thread_that_dies_before_its_handshake_returns_the_slot_it_holds(self):
+        # the reviewer's tests-2 (round 2, 2026-09-19): the slot's second release, _fire_boot_settled's call at the thread's
+        # death, had no test; a `pass` there left every auth module green and leaked one machine-wide permit for the
+        # kernel's life. End to end: a real permit of a real semaphore held as the relaunch slot, the real thread body with
+        # an _amain that raises before any handshake, and the permit count back where it started
+        s = self.s
+        self.be._spawn_sem = sem = threading.Semaphore(3)
+        self.assertTrue(sem.acquire(blocking=False))     # the relaunch drew its slot (the walk's arm-time wait)
+        with s._lock:
+            s._relaunch_slot = sem.release
+        self.assertEqual(sem._value, 2)
+
+        async def dies():
+            raise RuntimeError("the CLI never came up")
+        s._amain = dies
+        s.start()
+        s.thread.join(10)
+        self.assertFalse(s.thread.is_alive())
+        self.assertEqual(sem._value, 3, "the dead thread gave the machine-wide permit back")
+        self.assertIsNone(s._relaunch_slot, "...once: the release was popped")
+        self.assertTrue(any("crashed: RuntimeError" in str(m) for m in self.logs), self.logs)
+
+    def test_a_pending_rewinds_arm_refused_behind_an_arm_time_wait_is_said_in_the_log(self):
+        # the reviewer's correctness-1 (round 2, 2026-09-19), taken in its minimal form: the settle's arm of a pending
+        # rewind is refused while a follower's arm-time slot wait is in flight and fires at the grant, which two refuters
+        # measured costs no extra delay (the request road waits for the same permit with the CLI already gone); what was
+        # missing was the line, since the non-rewind road announces its wait at its start and this refusal said nothing
+        s = self.s
+        s._reconnect_when_idle = True
+        s._slot_wait = True                              # a follower's arm-time wait in flight
+        s._rewind_to, s._rewind_armed = "11111111-2222-3333-4444-555555555555", False
+        s.inflight = 0
+        del self.logs[:]
+        self.assertFalse(s._arm_reconnect_if_quiet("turn end", queued_ok=True), "refused: the grant arms it")
+        lines = [str(m) for m in self.logs if "the pending rewind's reconnect waits for the relaunch slot" in str(m)]
+        self.assertEqual(len(lines), 1, self.logs)
+        self.assertIn("it fires at the grant, the CLI serving meanwhile (turn end)", lines[0])
+        del self.logs[:]
+        s._rewind_to = ""                                # no rewind pending: the refusal is quiet, as before (the wait's own line said it)
+        self.assertFalse(s._arm_reconnect_if_quiet("turn end", queued_ok=True))
+        self.assertEqual([m for m in self.logs if "rewind" in str(m)], [])
 
     def test_a_slot_acquired_after_the_waiter_left_is_returned_without_the_loop(self):
         # finding 13: the taker returned the slot through the loop (resolve, or a RuntimeError from a closed loop); a
@@ -12631,6 +12764,15 @@ class SettingsPickThroughTheLoopUnderAHost(SettingsPickThroughTheLoop):
             # HostTransport.close's rule: a kernel leaving, or a connect that never completed, detaches; else `end`
             self.sent.append("detach" if (self.detach_mode or self._init_pending) else "end")
 
+    class _TimedOutAttach(_Transport):
+        """An attach whose hello arrived and whose initialize then timed out: HostTransport.connect delivered the hello to the
+        kernel's handler, the SDK's handshake raised, and _init_pending stayed True (the loop's bounded retry road)."""
+
+        async def connect(self):
+            self.hello = self._hello
+            self._on_hello(self.hello)
+            raise TimeoutError("initialize timed out")
+
     def setUp(self):
         super().setUp()
         open(os.path.join(self.state, "session-hosts"), "w").write("on")   # the parent wrote off; this class runs the default
@@ -12687,10 +12829,12 @@ class SettingsPickThroughTheLoopUnderAHost(SettingsPickThroughTheLoop):
         self.assertIsNone(s.snapshot()["pickHeld"])
         self.assertEqual(s.snapshot()["effort"], "low")
 
-    def _survivor_with_a_carried_ask(self):
+    def _survivor_with_a_carried_ask(self, first_handshake_times_out=False):
         """The reg a kernel restart leaves for a follower asked to move (authPending), whose hosted CLI survived on the key
         with one background task the previous kernel mirrored (bgTasks), the CLI's identity named (spawnedAtCli); the first
-        connect is the boot re-attach to that CLI (the hello names the same identity), later connects spawn as the class does."""
+        connect is the boot re-attach to that CLI (the hello names the same identity), later connects spawn as the class does.
+        `first_handshake_times_out`: the first attach's initialize times out after its hello (the loop's retry road), and the
+        retry attaches to the SAME surviving CLI; connects after that spawn."""
         sb.write_sdk_default(self.be.state_dir, auth="login", authExplicit=True)
         reg = sb.read_reg(self.be.state_dir, self.SID)
         reg.update(authPending=True, apiKeyAuth=True, spawnedAtCli="4301:c1",
@@ -12702,12 +12846,13 @@ class SettingsPickThroughTheLoopUnderAHost(SettingsPickThroughTheLoop):
         be, spawn_for = self.be, self.be._host_transport_for
 
         async def attach_first(sess, opts, msg_classes):
-            if self.hosted:
+            if len(self.hosted) >= (2 if first_handshake_times_out else 1):
                 return await spawn_for(sess, opts, msg_classes)     # every later connect spawns a fresh host and CLI
             hello = {"host": {"pid": 7001, "start": "h1", "version": "test"},
                      "cli": {"pid": 4301, "start": "c1", "fsid": self.FSID, "spawnedAt": 1700000001, "login": ""},
                      "journal": {"next": 0}, "parked": [], "inflight": 0}
-            t = self._Transport(hello, lambda h, sess=sess: be._on_host_hello(sess, h))
+            cls = self._TimedOutAttach if (first_handshake_times_out and not self.hosted) else self._Transport
+            t = cls(hello, lambda h, sess=sess: be._on_host_hello(sess, h))
             sess._host_is_attach = True
             sess._host = t
             self.hosted.append(t)
@@ -12757,26 +12902,191 @@ class SettingsPickThroughTheLoopUnderAHost(SettingsPickThroughTheLoop):
         self._wait(lambda: s._auth_pending == "" and not (sb.read_reg(self.be.state_dir, self.SID) or {}).get("authPending"),
                    "the landing served the carried ask")
 
-    def test_a_seeded_row_the_clis_stream_never_confirms_is_dropped_at_the_first_settle_and_the_hold_releases(self):
-        """The reconcile half of the reviewer's regression-1: a mirror row nothing ever ends (a stale write, a task that
-        ended while no kernel heard) cannot hold the ask forever. Unconfirmed through the first turn after the attach, the
-        row is dropped at that settle, said in the log, the reg mirror rewritten, and the settle arms."""
+    def test_a_seeded_row_no_frame_and_no_turn_end_report_spoke_for_is_dropped_at_the_first_settle_and_the_hold_releases(self):
+        """The reconcile half of the reviewer's regression-1, narrowed by the reviewer's round 2 (2026-09-19; its correctness-2)
+        to the turn NO Stop-hook report reached the kernel for (an interrupted turn skips the hook; the harness fires no hook
+        here): a mirror row nothing ever ends (a stale write, a task that ended while no kernel heard) cannot hold the ask
+        forever, so unconfirmed through the first turn after the attach the row is dropped at that settle, said in the log AS
+        a drop without an authoritative read, the reg mirror rewritten, and the settle arms. No death notice, since nothing
+        says the task died (the PR's own negative assertion, re-pinned: with a report the row is decided at the hook, the
+        two tests below)."""
         self._helper()
         s = self._survivor_with_a_carried_ask()
         c1 = self._connect()
         t1 = self.hosted[0]
         self.assertEqual(s._live_work_counts(), (0, 1)); self.assertFalse(s._reconnect); self.assertEqual(t1.sent, [])
-        self._turn(c1, apiKeySource="apiKeyHelper")               # the first turn after the attach: no frame spoke for t-1
+        self._turn(c1, apiKeySource="apiKeyHelper")               # the first turn after the attach: no frame and no report spoke for t-1
         self._wait(lambda: len(self._Client.instances) == 2 and self._Client.instances[1] is s.client and s._launching is None,
-                   "the settle dropped the unconfirmed row, armed, and the relaunch landed")
+                   "the settle dropped the undecided row, armed, and the relaunch landed")
         self._settled("the landing")
-        self.assertTrue(any("sent no frame through the first turn after the attach; no longer counted as live" in l for l in self.lines),
+        self.assertTrue(any("had no frame and no turn-end report through the first turn after the attach; no longer counted as live, "
+                            "dropped without an authoritative read (nothing says it ended), and the hold releases" in l for l in self.lines),
                         self.lines[-10:])
+        self.assertFalse(any("the CLI's turn-end report" in l for l in self.lines), "no report arrived: the settle's drop, said as such")
         self.assertEqual(t1.sent, ["end"])
         self.assertEqual(s._live_work_counts(), (0, 0))
         self.assertEqual((sb.read_reg(self.be.state_dir, self.SID) or {}).get("bgTasks"), [], "the mirror is rewritten at the reconcile")
         self.assertFalse(any("cut off when the claude process" in str(p) for p in s.pending()), "no death notice: nothing says the task died")
+        self.assertFalse(any("cut off when the claude process" in w for c in self._Client.instances for w in c.writes))
         self.assertEqual(s._launched_auth, "login")
+
+    def test_the_first_turns_report_confirms_a_seeded_shell_no_frame_spoke_for_and_the_hold_stands(self):
+        # the reviewer's correctness-2 (round 2, 2026-09-19), against the case a refuter showed is the ordinary one: a
+        # backgrounded shell streams task_started and then nothing until its terminal frame (read in the bundled CLI), so
+        # the seeded row for a shell alive across the restart had no frame through the first turn after the attach, and
+        # the settle dropped it on that silence, released the hold and tore the surviving CLI down with the shell inside
+        # it, overriding the CLI's own Stop-hook report that had listed the task as running in that very turn. The report
+        # is the CLI's answer: a seeded row it lists as running is confirmed and stays live, and the hold stands
+        self._helper()
+        s = self._survivor_with_a_carried_ask()
+        c1 = self._connect()
+        t1 = self.hosted[0]
+        self.assertEqual(s._live_work_counts(), (0, 1)); self.assertEqual(s._seeded_tasks, {"t-1"})
+        # the first turn after the attach: no frame for t-1, and the turn's Stop hook carries the CLI's task list, in the shape
+        # probe-verified for a backgrounded shell (tests/test_bg_ledger.py: id, type, status, description, command)
+        asyncio.run(s._stop_hook({"background_tasks": [{"id": "t-1", "type": "shell", "status": "running",
+                                                        "description": "a long sweep", "command": "sleep 600"}]}, None, None))
+        self.assertEqual(s._seeded_tasks, set(), "confirmed by the report: an ordinary live row from here")
+        self.assertEqual(s._live_work_counts(), (0, 1))
+        self.assertTrue(any("the CLI's turn-end report confirms 1 background task the reg named for the surviving CLI as still running"
+                            in l for l in self.lines), self.lines[-6:])
+        self._turn(c1, apiKeySource="apiKeyHelper")
+        self._wait(lambda: s.inflight == 0 and getattr(s, "_settled_msg", None) is not None, "the first turn after the attach settled")
+        self._settled("the first settle")
+        self.assertEqual(s._live_work_counts(), (0, 1), "the settle drops nothing: the report decided")
+        self.assertTrue(s._reconnect_held_for_work); self.assertFalse(s._reconnect)
+        self.assertEqual(t1.sent, [], "the host is not asked to end its CLI"); self.assertEqual(len(self._Client.instances), 1)
+        self.assertEqual([t.get("taskId") for t in (sb.read_reg(self.be.state_dir, self.SID) or {}).get("bgTasks") or []], ["t-1"])
+        self.assertFalse(any("no frame" in l or "without an authoritative read" in l for l in self.lines), self.lines)
+        # a death notice names a confirmed row only when a teardown then cuts it: the CLI confirmed the task, this kernel ends it
+        s._drop_live_work("reconnect")
+        self._wait(lambda: any("cut off when the claude process" in str(p) and "a long sweep" in str(p) for p in s.pending())
+                   or any("cut off when the claude process" in w and "a long sweep" in w for w in c1.writes), "the notice names the confirmed task")
+        self.assertEqual(s._live_work_counts(), (0, 0))
+
+    def test_the_first_turns_report_that_lists_no_seeded_row_retires_it_on_the_clis_own_answer_with_no_notice(self):
+        # the other half of correctness-2: a seeded row the CLI's report does not list as running is retired on that
+        # answer (it ended while no kernel heard, or the mirror row was stale), at the hook and not at the settle, with no
+        # death notice (the CLI reports no death, only no such task), the mirror rewritten, and the hold released at the
+        # settle that follows
+        self._helper()
+        s = self._survivor_with_a_carried_ask()
+        c1 = self._connect()
+        t1 = self.hosted[0]
+        self.assertEqual(s._live_work_counts(), (0, 1))
+        asyncio.run(s._stop_hook({"background_tasks": [{"id": "t-9", "type": "shell", "status": "running",
+                                                        "description": "another task", "command": "sleep 5"}]}, None, None))
+        self.assertEqual(s._live_work_counts(), (0, 0), "retired at the hook, on the CLI's own answer")
+        self.assertEqual(s._seeded_tasks, set())
+        self.assertEqual((sb.read_reg(self.be.state_dir, self.SID) or {}).get("bgTasks"), [], "the mirror is rewritten at the hook")
+        self.assertTrue(any("the CLI's turn-end report lists 1 background task the reg named for the surviving CLI as not running; "
+                            "no longer counted as live, and no notice, since the CLI reports no death" in l for l in self.lines),
+                        self.lines[-6:])
+        self._turn(c1, apiKeySource="apiKeyHelper")
+        self._wait(lambda: len(self._Client.instances) == 2 and self._Client.instances[1] is s.client and s._launching is None,
+                   "the settle found the sets empty, armed, and the relaunch landed")
+        self._settled("the landing")
+        self.assertEqual(t1.sent, ["end"])
+        self.assertFalse(any("cut off when the claude process" in str(p) for p in s.pending()), "no death notice: the CLI reported no death")
+        self.assertFalse(any("cut off when the claude process" in w for c in self._Client.instances for w in c.writes))
+        self.assertFalse(any("without an authoritative read" in l for l in self.lines), "the settle found nothing seeded to drop")
+        self.assertEqual(s._launched_auth, "login")
+
+    def test_a_handshake_that_times_out_against_the_surviving_cli_retires_none_of_its_work_at_the_retry(self):
+        # the reviewer's regression-1 (round 2, 2026-09-19; high), and the standing rule it is an instance of: never a
+        # teardown, a death notice or a mirror wipe on the INFERENCE that work ended. The boot attach's hello seeded the
+        # survivor's task from the reg, the initialize then timed out (the host and its CLI live on), and the loop's retry
+        # came back to the loop top, whose teardown bookkeeping counted the seeded row as work that died with an abandoned
+        # CLI: a false death notice was fed to the retry's client, the reg's bgTasks mirror was wiped, the retry's own seed
+        # had nothing to read, and the carried ask armed unheld and tore the surviving CLI down one turn later. A timed-out
+        # handshake is not a report that work ended: the loop top skips the retirement on the retry road
+        self._helper()
+        s = self._survivor_with_a_carried_ask(first_handshake_times_out=True)
+        s.start()
+        self._wait(lambda: len(self.hosted) == 2 and s.client is not None and s._launched_effort is not None, "the retry's attach landed")
+        self._settled("the retry's landing")
+        c2 = self._Client.instances[-1]
+        self.assertEqual(len(self._Client.instances), 2, "the failed attach's client and the retry's")
+        self.assertTrue(any("attach did not complete (TimeoutError); retry 1" in l for l in self.lines), self.lines[-8:])
+        self.assertEqual(s._host_attach_retries, 0, "the retry landed")
+        self.assertEqual(s._live_work_counts(), (0, 1), "the survivor's task is still counted: nothing said it ended")
+        self.assertEqual(s._seeded_tasks, {"t-1"}, "the row the first attach seeded survives into the retry, still the reconcile's")
+        self.assertEqual([t.get("taskId") for t in (sb.read_reg(self.be.state_dir, self.SID) or {}).get("bgTasks") or []], ["t-1"],
+                         "the reg's mirror is not wiped")
+        self.assertFalse(any("dropped 0 subagents and 1 background task on reconnect" in l for l in self.lines), self.lines)
+        self.assertFalse(any("cut off when the claude process" in w for w in c2.writes), "no death notice fed to the retry's client")
+        self.assertFalse(any("cut off when the claude process" in str(p) for p in s.pending()))
+        self.assertEqual(sum(1 for l in self.lines if "counted as live from the attach" in l), 1,
+                         "seeded once, at the first hello; the retry's seed found the row live and left it")
+        self.assertEqual(s._launched_auth, "key", "the retry's attach stamped the CLI's report")
+        self.assertEqual(s._auth_pending, "login")
+        self.assertTrue(s._reconnect_when_idle and s._reconnect_held_for_work, "the carried ask is held for the survivor's work")
+        self.assertFalse(s._reconnect)
+        self.assertEqual([t.sent for t in self.hosted], [[], []], "neither attach asked the host to end its CLI")
+        # the CLI's own report at the first turn's end confirms the task, so the settle that follows holds too
+        asyncio.run(s._stop_hook({"background_tasks": [{"id": "t-1", "type": "shell", "status": "running",
+                                                        "description": "a long sweep", "command": "sleep 600"}]}, None, None))
+        self._turn(c2, apiKeySource="apiKeyHelper")
+        self._wait(lambda: s.inflight == 0 and getattr(s, "_settled_msg", None) is not None, "the first turn after the retry settled")
+        self._settled("the first settle")
+        self.assertEqual(s._live_work_counts(), (0, 1)); self.assertTrue(s._reconnect_held_for_work); self.assertFalse(s._reconnect)
+        self.assertEqual([t.sent for t in self.hosted], [[], []]); self.assertEqual(len(self._Client.instances), 2)
+
+    def test_a_follower_step_that_fails_at_the_attach_landing_leaves_the_connect_up_and_files_one_row(self):
+        # the reviewer's kernel-1 (round 2, 2026-09-19): the landing was the one caller of the follower's step with no guard,
+        # so a reg write refused inside it (a full state directory: the mirror of the ask the step writes) raised out of
+        # _connect_landed and killed the SDK thread just after the handshake, with a "crashed" line for its only trace and
+        # no problem row; under a host the transport's close then sent `end`, so the surviving CLI and its background work
+        # were ended, not left dormant. One guarded entry point for every caller: the step's raise is contained, the
+        # session is left as the step found it, the mirror retried, one row names the session and the side it stays on,
+        # and the connect goes on with the CLI it has
+        self._helper()
+        sb.write_sdk_default(self.be.state_dir, auth="login", authExplicit=True)
+        reg = sb.read_reg(self.be.state_dir, self.SID)
+        reg.update(apiKeyAuth=True, spawnedAtCli="4301:c1")          # a keyed survivor with no ask standing: the landing asks
+        sb.write_reg(self.be.state_dir, self.SID, reg)
+        self.s = s = sb.SdkSession(self.be, dict(reg))
+        self.be.sessions[self.SID] = s
+        be, spawn_for = self.be, self.be._host_transport_for
+
+        async def attach_first(sess, opts, msg_classes):
+            if self.hosted:
+                return await spawn_for(sess, opts, msg_classes)
+            hello = {"host": {"pid": 7001, "start": "h1", "version": "test"},
+                     "cli": {"pid": 4301, "start": "c1", "fsid": self.FSID, "spawnedAt": 1700000001, "login": ""},
+                     "journal": {"next": 0}, "parked": [], "inflight": 0}
+            t = self._Transport(hello, lambda h, sess=sess: be._on_host_hello(sess, h))
+            sess._host_is_attach = True; sess._host = t
+            self.hosted.append(t)
+            return t
+        be._host_transport_for = attach_first
+        real_update = be._update_reg
+
+        def refused(sid, live_fields=None, **fields):
+            if live_fields is not None:                              # the ask's mirror (_mirror_auth_pending): the state directory is full
+                raise OSError(28, "No space left on device")
+            return real_update(sid, live_fields=live_fields, **fields)
+        be._update_reg = refused
+        s.start()
+        self._wait(lambda: any("follower's step failed" in l for l in self.lines) or not s.thread.is_alive(), "the landing ran the step")
+        self.assertTrue(s.thread.is_alive(), "the SDK thread survives the step's raise")
+        self._settled("the landing")
+        self.assertIs(s.client, self._Client.instances[0]); self.assertEqual(len(self._Client.instances), 1)
+        self.assertFalse(any("crashed" in l for l in self.lines), self.lines)
+        rows = [l for l in self.lines if "follower's step failed" in l]
+        self.assertEqual(len(rows), 1, self.lines)
+        self.assertIn("auth (web): attached to this session's surviving CLI, but the follower's step failed (OSError: [Errno 28] No space "
+                      "left on device); the connect goes on with the CLI it has, and it stays on the key until its next connect or the "
+                      "next default write, with no ask standing", rows[0])
+        self.assertEqual(self.hosted[0].sent, [], "the surviving CLI is not ended")
+        self.assertEqual(s._auth_pending, "", "left as the step found it: no half-written ask"); self.assertFalse(s._relaunch_bounded)
+        self.assertFalse(s._reconnect); self.assertFalse(s._reconnect_when_idle)
+        self.assertEqual(s._launched_auth, "key")
+        be._update_reg = real_update
+        # the session serves on: a turn on the surviving CLI settles as any other
+        self._turn(self._Client.instances[0], apiKeySource="apiKeyHelper")
+        self._wait(lambda: s.inflight == 0 and getattr(s, "_settled_msg", None) is not None, "a turn settled on the surviving CLI")
+        self.assertTrue(s.thread.is_alive())
 
 
 class WorkflowProgressShapeIsLoud(unittest.TestCase):
