@@ -662,10 +662,12 @@ turn after it, the task list its Stop hook carries, confirms each task it lists
 as running, retires a shell it omits (the one task type the report is known to
 enumerate completely: a probe on 2026-08-28, and a read of the bundled CLI's
 producer on 2026-09-19 that found the list type-agnostic on that build; one
-probe per type widens it), keeps a monitor, an agent or a workflow run it
-omits until the CLI's own stream ends it, and counts a running task it names
-that the kernel never saw; a turn that ends without that report holds what
-nothing spoke for, said in the log). A task counted from the report alone
+probe per type widens it), keeps a monitor (a `monitor_mcp` or `monitor_ws`
+task; the ordinary Monitor over a shell command registers as a shell and is
+retired like one), an agent or a workflow run it omits until the CLI's own
+stream ends it, and counts a running task it names that the kernel never saw;
+a turn that ends without that report holds what nothing spoke for, said in the
+log). A task counted from the report alone
 starts, for the elapsed time shown, at the report's moment (the report carries
 no start time) and has no tool-use id until the CLI's stream supplies one, so
 such a shell, which streams nothing until its end, is absent from the chat's
@@ -687,7 +689,11 @@ SubagentStart hook has no registry record and is not counted, so a survivor
 whose only live work is such a subagent can be reconnected over it. Both wait
 on one design question, what
 the authoritative read of a surviving CLI's live work is at the re-attach, for
-background tasks, Task agents, Workflow runs and hook-only subagents alike. A
+background tasks, Task agents, Workflow runs and hook-only subagents alike. The
+bundled CLI also pushes a snapshot of its background tasks
+(`background_tasks_changed`) behind a repeated initialize; it arrives after
+the handshake, covers running non-foreground tasks only, and is not applied
+(settled by execution against 2.1.266, 2026-09-19). A
 follower whose CLI bills a credential in the CLI's own environment that romp's
 per-session settings layer cannot suppress (Claude Code's settings carry no
 apiKeyHelper) is left where it is, said in one line at each write of the

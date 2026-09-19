@@ -8950,10 +8950,13 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
                                  "_arm_rewind": [None], "_complete_rewind_wait": [None],
                                  "_note_auth_source": [None],    # upstream's wrong-landing reconnect onto the fallback side
                                  #                                 (T346, the 2026-09-15 pull-in): a mechanism's reconnect, no pick
-                                 "_follow_default": ["auth"]})   # the machine default's per-follower step (2026-09-18: the walk,
-        #                                                          and since round 1 of the review the attach landing) asks as
-        #                                                          set_auth asks, its pick named, so a request that raced the
-        #                                                          landing is served by the landed process the same way
+                                 "_follow_default": ["auth"],    # the machine default's per-follower step (2026-09-18: the walk,
+                                 #                                 and since round 1 of the review the attach landing) asks as
+                                 #                                 set_auth asks, its pick named, so a request that raced the
+                                 #                                 landing is served by the landed process the same way
+                                 "_ask_parked_pick": ["auth"]})  # the picked closer's ask at the CLI's first init (round 5 of the
+        #                                                          reviewer's review, 2026-09-19): a pick the init finds unserved with
+        #                                                          no arm standing is asked as set_auth asks, its pick named
 
     def test_y6_a_pick_the_composed_connect_serves_rides_it_and_keeps_its_flag_until_the_landing(self):
         # the served check's in-progress branch moves the names it discards into the riding set, so a pick that landed
@@ -9920,10 +9923,15 @@ class DefaultBillingMovesItsFollowers(unittest.TestCase):
         self.assertEqual(s._auth_pending, "key", "the pending stands: the cannot-tell attach did not serve it (the guard)")
         self.assertTrue(self._reg(s).get("authPending"))
         # the CLI's own init reports the key it bills: the closing event serves the latched pending
+        del self.logs[:]
         self.be._note_auth_source(s, "apiKeyHelper")
         self.assertEqual(s._launched_auth, "key", "the init stamped the side the CLI bills")
         self.assertEqual(s._auth_pending, "", "the init closed the pending the attach could not decide")
         self.assertFalse(self._reg(s).get("authPending"), "the dots clear")
+        self.assertFalse(s._reconnect, "served: no relaunch")
+        self.assertEqual([str(m) for m in self.logs if "reported its billing" in str(m)],
+                         ["auth (web): this session's surviving CLI reported its billing, the key, which its pick names: the pick is served, "
+                          "no reconnect"])   # said since round 5 (2026-09-19), the served half of the closer
 
     def test_a_picked_landing_that_stamped_no_auth_serves_the_ask_off_the_attach_road_alone(self):
         # the mutation pass over round 4 (2026-09-19; m36): the picked branch's `_launched_auth is None and not attach`
@@ -9959,10 +9967,15 @@ class DefaultBillingMovesItsFollowers(unittest.TestCase):
         with s._hold_write():
             s._auth_pending = "login"; s._auth_pending_login = ""
         self.be._update_reg(s.sid, auth="login", authPending=True); s._reconnect = True
+        del self.logs[:]
         self.be._note_auth_source(s, "apiKeyHelper")                 # the CLI's init: it bills the key
         self.assertEqual(s._launched_auth, "key", "the init stamped the side the CLI bills")
         self.assertEqual(s._auth_pending, "login", "the pending stands: the CLI does not bill the picked side yet")
         self.assertTrue(self._reg(s).get("authPending")); self.assertTrue(s._reconnect, "its own reconnect serves it")
+        # round 5 (2026-09-19; correctness-1): this is the ONE branch on which "it stands for its own reconnect" is true, an arm
+        # standing; the ask leg leaves it alone (nothing asked twice). Characterisation for this assertion: the base logged no
+        # ask either; it discriminates by mutation (an ask leg without the armed guard asks here)
+        self.assertEqual([str(m) for m in self.logs if "asked now" in str(m)], [], "an arm stands: nothing is asked twice")
 
     def test_the_init_closer_compares_the_stored_login_too(self):
         # the mutation pass over round 4 (2026-09-19; m39): the closer compares the pending as the (side, login) pair
@@ -10013,6 +10026,147 @@ class DefaultBillingMovesItsFollowers(unittest.TestCase):
             self.be._note_auth_source(s, "apiKeyHelper")
         self.assertEqual(closer.call_count, 0, "no pending, no closer")
         self.assertEqual((s.auth_live, s._auth_pending), ("key", ""))
+
+    def _same_side_re_pick_in_an_attach_window(self, n=0, pick="key"):
+        """A picked session whose boot re-attach composes its own pick, re-picked inside the attach window (set_auth's
+        already-applying branch: no request, the pending set), the cannot-tell attach landed: the road round 4's closer
+        exists for, at the moment before the CLI's first init."""
+        s = self._sess(n, auth=pick)
+        s._launched_keyed = pick == "key"; s.auth_live = ""; s._launched_auth = None
+        s._launching = self.be._launch_shape(s); s._connecting = True; s._host_is_attach = True
+        self.assertTrue(self.be.set_auth(s.sid, pick))
+        self.assertEqual(s._auth_pending, pick); self.assertFalse(s._reconnect, "already applying: no request")
+        s._connect_landed()                                          # the cannot-tell attach lands
+        self.assertIsNone(s._launched_auth); self.assertEqual(s._auth_pending, pick)
+        return s
+
+    def _asks(self):
+        return [str(m) for m in self.logs if "asked now" in str(m)]
+
+    def test_a_same_side_re_pick_inside_an_attach_window_whose_init_reports_the_other_side_is_asked_at_the_init(self):
+        # round 5 of the reviewer's review (2026-09-19; its correctness-1 and kernel-1, the round's headline, a live billing
+        # defect): round 4's closer served a picked pending after a cannot-tell attach only when the CLI's init reported the
+        # PICKED side. On the other half of the same road the pending latched with no arm: set_auth's already-applying
+        # branch inside the attach window (the attach's composed shape read as a connect launching the pick) arms no
+        # reconnect, the init reported the OTHER side, and nothing asked. The user's pick was never applied, the retry
+        # gesture was swallowed as "already applying", the dots latched for the kernel's life and the session kept billing
+        # the old account; the closer's docstring claimed a fallback arm that did not exist on this branch. The init now
+        # ASKS the pick when the CLI bills something else and nothing is armed (_ask_parked_pick), through the ordinary arm
+        # rules, so the relaunch composes the pick and its landing serves it; "already applying" is true from then on
+        s = self._same_side_re_pick_in_an_attach_window()
+        del self.logs[:]
+        self.be._note_auth_source(s, "none")                         # the CLI's init: the survivor bills the LOGIN
+        self.assertEqual(s._launched_auth, "login", "the init stamped the side the CLI bills")
+        self.assertEqual(s._auth_pending_target(), ("key", ""), "the pending stands: the CLI does not bill the pick")
+        self.assertTrue(s._reconnect, "ASKED: the relaunch that applies the pick is armed (before round 5 nothing was)")
+        self.assertTrue(self._reg(s).get("authPending"), "the dots stand for a relaunch that is coming")
+        self.assertEqual(self._asks(), ["auth (web): this session's surviving CLI reported its billing, the login, while its pick is the "
+                                        "key; the pick was left to this report and nothing was armed for it, so it is asked now; "
+                                        "reconnecting to apply"])
+        # the retry gesture reads "already applying" as before, and it is TRUE now: an arm stands behind it
+        del self.logs[:]
+        self.assertTrue(self.be.set_auth(s.sid, "key"))
+        self.assertEqual([str(m) for m in self.logs if str(m).startswith("auth (")], ["auth (web): set to key; already applying, no new request"])
+        self.assertTrue(s._reconnect); self.assertEqual(s._auth_pending, "key")
+
+    def test_the_init_closer_asks_when_the_cli_reports_a_stored_login_the_pick_does_not_name(self):
+        # round 5 (2026-09-19; correctness-1's stored-login face): the pending and the report compare as the (side, login)
+        # PAIR, so a pick of the machine's own login standing on a survivor whose token carries stored login A is the other
+        # side by that compare, and is asked, not served (by the side word alone it would have been served as "login")
+        a = self._record("Alpha")
+        s = self._sess(1, auth="login", launchedLogin=a["id"])       # the pick is the machine's own login; the survivor carried A
+        s.auth_live = ""; s._launched_auth = None
+        s._launching = self.be._launch_shape(s); s._connecting = True; s._host_is_attach = True
+        self.assertTrue(self.be.set_auth(s.sid, "login"))            # the same-side re-pick inside the window
+        s._connect_landed()
+        self.assertEqual(s._auth_pending_target(), ("login", "")); self.assertFalse(s._reconnect)
+        del self.logs[:]
+        self.be._note_auth_source(s, "none")                         # the init: the bearer token answered, A's
+        self.assertEqual((s._launched_auth, s._launched_login), ("login", a["id"]))
+        self.assertEqual(s._auth_pending_target(), ("login", ""), "stands: A is not the machine's own login")
+        self.assertTrue(s._reconnect, "asked: a stored login the pick does not name is the other side of the pair")
+        self.assertEqual(len(self._asks()), 1, self.logs)
+        self.assertIn("reported its billing, the %s login, while its pick is the login; the pick was left to this report"
+                      % self.be.login_display(a["id"]), self._asks()[0])
+
+    def test_the_init_closers_ask_is_held_for_live_work_and_arms_at_the_settle_that_finds_none(self):
+        # round 5 (correctness-1): the ask goes through the one arm rule as set_auth's own would. With a background task
+        # registered the request is held for the work (the surface recorded, the deferred flag set, no arm), and the settle
+        # that finds none arms it; a relaunch over the survivor's work is the loss this PR's standing rule forbids
+        s = self._same_side_re_pick_in_an_attach_window(2)
+        s._on_task_event("task_started", {"task_id": "t-1", "task_type": "local_bash", "description": "a sweep"})
+        del self.logs[:]
+        self.be._note_auth_source(s, "none")
+        self.assertEqual(s._auth_pending, "key"); self.assertFalse(s._reconnect, "not armed over live work")
+        self.assertTrue(s._reconnect_when_idle, "the request waits for the settle that finds no work")
+        self.assertIn("auth", s._reconnect_surfaces, "the surface is recorded for that arm")
+        self.assertEqual(len(self._asks()), 1, self.logs)
+        self.assertIn("so it is asked now; reconnect held for 0 subagents and 1 background task", self._asks()[0])
+
+    def test_the_init_closers_ask_is_deferred_behind_an_open_turn(self):
+        # round 5 (correctness-1): the same rule for a turn in flight when the init lands (a --resume connect streams its
+        # first init at the session's first turn, so this is the ordinary ordering): deferred to the turn's end, said so
+        s = self._same_side_re_pick_in_an_attach_window(3)
+        s.inflight = 1
+        del self.logs[:]
+        self.be._note_auth_source(s, "none")
+        self.assertEqual(s._auth_pending, "key"); self.assertFalse(s._reconnect, "not armed under an open turn")
+        self.assertTrue(s._reconnect_when_idle); self.assertIn("auth", s._reconnect_surfaces)
+        self.assertEqual(len(self._asks()), 1, self.logs)
+        self.assertIn("so it is asked now; reconnect deferred to the end of the open turn", self._asks()[0])
+
+    def test_two_clicks_inside_one_attach_window_end_with_the_pick_asked_at_the_init(self):
+        # round 5 (kernel-1, the refuter's widened road): a pick of the other side inside the window arms its own request,
+        # and a click back to the attach's side takes the already-applying branch, whose withdrawal of the first pick ends
+        # that arm (the surface set is empty), so the landing finds a pending with NO arm; the init reporting the other side
+        # asks it, and the relaunch composes the pick
+        s = self._sess(4, auth="key")
+        s._launched_keyed = True; s.auth_live = ""; s._launched_auth = None
+        s._launching = self.be._launch_shape(s); s._connecting = True; s._host_is_attach = True
+        self.assertTrue(self.be.set_auth(s.sid, "login")); self.assertTrue(s._reconnect, "the other side's own request armed")
+        self.assertTrue(self.be.set_auth(s.sid, "key"))              # ...and back: already applying, the first pick withdrawn
+        self.assertEqual(s._auth_pending, "key"); self.assertFalse(s._reconnect, "the withdrawal ended the first pick's arm")
+        s._connect_landed()
+        self.assertIsNone(s._launched_auth); self.assertEqual(s._auth_pending, "key")
+        del self.logs[:]
+        self.be._note_auth_source(s, "none")                         # the survivor bills the login
+        self.assertEqual(s._auth_pending, "key"); self.assertTrue(s._reconnect, "asked at the init: an arm stands for the pick")
+        self.assertEqual(len(self._asks()), 1, self.logs)
+
+    def test_a_reg_write_that_raises_inside_the_init_closer_is_contained_and_the_init_still_persists_its_report(self):
+        # round 5 of the reviewer's review (2026-09-19; its correctness-2 and kernel-2): the closer was called BARE on the init
+        # road, six lines from the follower step that runs through _follow_default_guarded, whose docstring says three
+        # hand-written copies of one guard is how the fourth caller ends up unguarded. It did: a reg mirror that raised inside
+        # the served branch escaped _note_auth_source (the stream handler contained it and filed one row), with the live
+        # pending cleared, the reg flag standing and the init's apiKeyAuth persist skipped. Through the guard now: the pair is
+        # restored as found (so the live pending and the reg flag agree), the mirror retried once, one row names the pick's
+        # step and the next event, and the init handler's tail runs. Red on be19f7445 by the raise itself
+        s = self._same_side_re_pick_in_an_attach_window(5)
+        real_update = self.be._update_reg
+
+        def refused(sid, live_fields=None, **fields):
+            if live_fields is not None:                              # the ask's mirror (_mirror_auth_pending): the state directory is full
+                raise OSError(28, "No space left on device")
+            return real_update(sid, live_fields=live_fields, **fields)
+        self.be._update_reg = refused
+        try:
+            self.be._note_auth_source(s, "apiKeyHelper")             # the CLI bills the key it picked: served, and the mirror fails
+        finally:
+            self.be._update_reg = real_update
+        self.assertEqual(s._launched_auth, "key", "the report is the stamp"); self.assertEqual(s.auth_live, "key")
+        self.assertEqual(s._auth_pending_target(), ("key", ""), "restored as found: the served clear is undone with the mirror that failed")
+        self.assertTrue(self._reg(s).get("authPending"), "the reg flag and the live pending agree")
+        self.assertTrue(s.api_key_auth, "the init's tail ran"); self.assertTrue(self._reg(s).get("apiKeyAuth"), "the per-init persist ran")
+        rows = [p["text"] for p in self.be.problems(10) if "step failed" in p["text"]]
+        self.assertEqual(len(rows), 1, self.be.problems(10))
+        self.assertIn("auth (s5): this session's CLI reported its billing, but the pick's step failed (OSError: [Errno 28] No space left "
+                      "on device); the connect goes on with the CLI it has, and it stays on the key until its next connect or the next "
+                      "pick, with the key ask it already carried standing for that event", rows[0])
+        # the next pick decides it, as the row says: a re-pick of the side the CLI bills clears the ask (set_auth's unchanged branch)
+        del self.logs[:]
+        self.assertTrue(self.be.set_auth(s.sid, "key"))
+        self.assertEqual(s._auth_pending, ""); self.assertFalse(self._reg(s).get("authPending"))
+        self.assertEqual([str(m) for m in self.logs if str(m).startswith("auth (")], ["auth (s5): set to key; unchanged, no reconnect"])
 
     def test_a_moot_pending_to_a_stored_login_is_withdrawn_when_the_default_returns_to_it(self):
         # finding 1 (round 1 of the review): the withdraw compared the pending SIDE WORD against the target's, so a
@@ -11005,9 +11159,13 @@ class DefaultBillingMovesItsFollowers(unittest.TestCase):
         self.assertIn("the CLI's own turn-end report at the first turn after it, the task list its Stop hook carries, confirms each "
                       "task it lists as running, retires a shell it omits (the one task type the report is known to enumerate "
                       "completely: a probe on 2026-08-28, and a read of the bundled CLI's producer on 2026-09-19 that found the list "
-                      "type-agnostic on that build; one probe per type widens it), keeps a monitor, an agent or a workflow run it "
-                      "omits until the CLI's own stream ends it, and counts a running task it names that the kernel never saw; a "
-                      "turn that ends without that report holds what nothing spoke for, said in the log", doc)
+                      "type-agnostic on that build; one probe per type widens it), keeps a monitor (a `monitor_mcp` or `monitor_ws` "
+                      "task; the ordinary Monitor over a shell command registers as a shell and is retired like one), an agent or a "
+                      "workflow run it omits until the CLI's own stream ends it, and counts a running task it names that the kernel "
+                      "never saw; a turn that ends without that report holds what nothing spoke for, said in the log", doc)
+        # round 5 of the reviewer's review (2026-09-19): the background_tasks_changed snapshot, settled by execution, disclosed
+        self.assertIn("The bundled CLI also pushes a snapshot of its background tasks (`background_tasks_changed`) behind a repeated "
+                      "initialize", doc)
         self.assertNotIn("drops what nothing spoke for", doc)
         # the round 4 addendum (2026-09-19; the adoption lens): what a task counted from the report alone lacks, disclosed
         self.assertIn("A task counted from the report alone starts, for the elapsed time shown, at the report's moment (the report "
@@ -13357,7 +13515,9 @@ class SettingsPickThroughTheLoopUnderAHost(SettingsPickThroughTheLoop):
                                                         "description": "a long sweep", "command": "sleep 600"}]}, None, None))
         self.assertEqual(s._seeded_tasks, set(), "confirmed by the report: an ordinary live row from here")
         self.assertEqual(s._live_work_counts(), (0, 1))
-        self.assertTrue(any("the CLI's turn-end report confirms 1 background task the reg named for the surviving CLI as still running"
+        # the clause says "counted live", not "the reg named" (round 5 of the reviewer's review, 2026-09-19; its kernel-3): the
+        # re-arm walks the reported rows too, and an adopted row the reg never held is confirmed by the same clause
+        self.assertTrue(any("the CLI's turn-end report confirms 1 background task counted live for the surviving CLI as still running"
                             in l for l in self.lines), self.lines[-6:])
         self._turn(c1, apiKeySource="apiKeyHelper")
         self._wait(lambda: s.inflight == 0 and getattr(s, "_settled_msg", None) is not None, "the first turn after the attach settled")
@@ -13399,9 +13559,12 @@ class SettingsPickThroughTheLoopUnderAHost(SettingsPickThroughTheLoop):
                          "the report's label 'shell' normalises to the registry discriminant at the adoption (round 4)")
         self.assertEqual([t.get("taskId") for t in (sb.read_reg(self.be.state_dir, self.SID) or {}).get("bgTasks") or []], ["t-9"],
                          "the mirror is rewritten at the hook: the retired row gone, the adopted one in")
-        self.assertTrue(any("the CLI's turn-end report lists 1 background task the reg named for the surviving CLI as not running; "
-                            "no longer counted as live, and no notice, since the CLI reports no death; names 1 running background task "
-                            "the live set never held; counted as live from the report" in l for l in self.lines), self.lines[-6:])
+        # t-1 was left OFF the list, so the omitted-shell clause names it (round 5; its extra8-2: the listed-terminal and the
+        # omitted roads read alike before, "lists N ... as not running" for both), and "counted live" not "the reg named" (kernel-3)
+        self.assertTrue(any("the CLI's turn-end report leaves 1 shell counted live for the surviving CLI off its list, the one type it "
+                            "enumerates completely; no longer counted as live, and no notice, since the CLI reports no such task; names 1 "
+                            "running background task the live set never held; counted as live from the report" in l for l in self.lines),
+                        self.lines[-6:])
         self._turn(c1, apiKeySource="apiKeyHelper")
         self._wait(lambda: s.inflight == 0 and getattr(s, "_settled_msg", None) is not None, "the first turn after the attach settled")
         self._settled("the first settle")
@@ -13519,29 +13682,39 @@ class SettingsPickThroughTheLoopUnderAHost(SettingsPickThroughTheLoop):
         # predicate now decides both (report_absence_decides, shells alone, with the evidence and the unknowns recorded
         # there): the omitted shell is retired on the CLI's own answer; the omitted monitor, Task agent and Workflow run
         # are held as ordinary live rows, counted until the CLI's own stream ends them, and the settle holds the carried
-        # ask for them
+        # ask for them. The predicate answers one question for both reconciles, which TYPES an omission may retire; the
+        # launch ledger's cross-generation entries are tombstoned by its procGen branch before it runs (round 4's extra9-2).
+        # The held family is named by REGISTRY TYPE (round 5 of the reviewer's review, 2026-09-19; its extra8-1, with round
+        # 4's extra6-1 and extra7-1): t-5 is the CLI's ordinary Monitor tool, a Monitor over a shell command, which registers
+        # as local_bash and is retired on the omission like any shell (executed against 2.1.266 by the round 4 refuters);
+        # the monitor held is the monitor_mcp row. Characterisation for t-5: a local_bash row was retired on the base too
         self._helper()
         since = int(time.time()) - 600
         rows = [{"taskId": "t-1", "type": "local_bash", "desc": "a long sweep", "since": since, "toolUseId": "tu-1", "lastTool": ""},
                 {"taskId": "t-2", "type": "monitor_mcp", "desc": "watch the queue", "since": since, "toolUseId": "tu-2", "lastTool": ""},
                 {"taskId": "t-3", "type": "local_agent", "desc": "a reviewer agent", "since": since, "toolUseId": "tu-3", "lastTool": ""},
-                {"taskId": "t-4", "type": "local_workflow", "desc": "a fan-out run", "since": since, "toolUseId": "tu-4", "lastTool": ""}]
+                {"taskId": "t-4", "type": "local_workflow", "desc": "a fan-out run", "since": since, "toolUseId": "tu-4", "lastTool": ""},
+                {"taskId": "t-5", "type": "local_bash", "desc": "a Monitor over a shell command", "since": since, "toolUseId": "tu-5",
+                 "lastTool": "Monitor"}]
         s = self._survivor_with_a_carried_ask(bg_tasks=rows)
         c1 = self._connect()
         t1 = self.hosted[0]
-        self.assertEqual(s._live_work_counts(), (0, 4)); self.assertEqual(s._seeded_tasks, {"t-1", "t-2", "t-3", "t-4"})
+        self.assertEqual(s._live_work_counts(), (0, 5)); self.assertEqual(s._seeded_tasks, {"t-1", "t-2", "t-3", "t-4", "t-5"})
         asyncio.run(s._stop_hook({"background_tasks": []}, None, None))    # the CLI's report names none of them
         self.assertEqual(s._seeded_tasks, set(), "the report is the seed's one question, answered per type")
-        self.assertEqual(sorted(s._bg_tasks), ["t-2", "t-3", "t-4"], "the shell is retired on the omission; the rest are held")
+        self.assertEqual(sorted(s._bg_tasks), ["t-2", "t-3", "t-4"],
+                         "the two shells are retired on the omission, the Monitor over a shell command among them; the rest are held")
         self.assertEqual(s._live_work_counts(), (0, 3))
         self.assertEqual([t.get("taskId") for t in (sb.read_reg(self.be.state_dir, self.SID) or {}).get("bgTasks") or []],
                          ["t-2", "t-3", "t-4"], "the mirror keeps the held rows")
-        line = [l for l in self.lines if "the CLI's turn-end report lists 1 background task" in l]
+        line = [l for l in self.lines if "the CLI's turn-end report leaves 2 shells" in l]
         self.assertEqual(len(line), 1, self.lines[-6:])
-        self.assertIn("lists 1 background task the reg named for the surviving CLI as not running; no longer counted as live, and no "
-                      "notice, since the CLI reports no death; omits 3 background tasks the reg named for the surviving CLI of a type the "
-                      "report is not known to enumerate completely (local_agent, local_workflow, monitor_mcp); still counted as live and "
-                      "held until the CLI's own stream ends them, since the omission is no report about them", line[0])
+        # the omitted-shell clause and the held clause, source-neutral (round 5; its extra8-2 and kernel-3)
+        self.assertIn("leaves 2 shells counted live for the surviving CLI off its list, the one type it enumerates completely; no longer "
+                      "counted as live, and no notice, since the CLI reports no such task; omits 3 background tasks counted live for the "
+                      "surviving CLI of a type the report is not known to enumerate completely (local_agent, local_workflow, monitor_mcp); "
+                      "still counted as live and held until the CLI's own stream ends them, since the omission is no report about them",
+                      line[0])
         self._turn(c1, apiKeySource="apiKeyHelper")
         self._wait(lambda: s.inflight == 0 and getattr(s, "_settled_msg", None) is not None, "the first turn after the attach settled")
         self._settled("the first settle")
@@ -13697,9 +13870,9 @@ class SettingsPickThroughTheLoopUnderAHost(SettingsPickThroughTheLoop):
         self.assertEqual(sorted(s._bg_tasks), [], "both shells are retired on the omission, the report-spelled one too")
         self.assertEqual(s._live_work_counts(), (0, 0))
         self.assertEqual([t.get("taskId") for t in (sb.read_reg(self.be.state_dir, self.SID) or {}).get("bgTasks") or []], [])
-        line = [l for l in self.lines if "the CLI's turn-end report lists 2 background tasks the reg named for the surviving CLI as not running" in l]
-        self.assertEqual(len(line), 1, self.lines[-6:])
-        self.assertNotIn("omits", line[0])
+        line = [l for l in self.lines if "the CLI's turn-end report leaves 2 shells counted live for the surviving CLI off its list" in l]
+        self.assertEqual(len(line), 1, self.lines[-6:])   # the omitted-shell clause (round 5; extra8-2), not the listed-terminal one
+        self.assertNotIn("omits", line[0]); self.assertNotIn("as not running", line[0])
 
     def test_a_seeded_row_whose_type_was_never_learned_is_held_on_the_omission_and_the_line_says_so(self):
         # the mutation pass (2026-09-19): the predicate's answer for an empty kind was pinned by nothing, so deciding an
@@ -13747,9 +13920,9 @@ class SettingsPickThroughTheLoopUnderAHost(SettingsPickThroughTheLoop):
         self.assertEqual([t.get("taskId") for t in (sb.read_reg(self.be.state_dir, self.SID) or {}).get("bgTasks") or []], ["t-4"])
         line = [l for l in self.lines if "the CLI's turn-end report confirms 1 background task" in l]
         self.assertEqual(len(line), 1, self.lines[-6:])
-        self.assertIn("lists 2 background tasks the reg named for the surviving CLI as not running; no longer counted as live, and no "
-                      "notice, since the CLI reports no death", line[0])
-        self.assertNotIn("omits", line[0])
+        self.assertIn("lists 2 background tasks counted live for the surviving CLI as not running; no longer counted as live, and no "
+                      "notice, since the CLI reports no death", line[0])   # the listed-terminal clause (round 5; extra8-2)
+        self.assertNotIn("omits", line[0]); self.assertNotIn("off its list", line[0])
         self.assertFalse(any("cut off when the claude process" in str(p) for p in s.pending()), "no death notice: the CLI reported the ends")
         self._turn(c1, apiKeySource="apiKeyHelper")
         self._wait(lambda: s.inflight == 0 and getattr(s, "_settled_msg", None) is not None, "the first turn after the attach settled")
@@ -14162,7 +14335,9 @@ class SettingsPickThroughTheLoopUnderAHost(SettingsPickThroughTheLoop):
             {"id": "ghost-1", "type": "shell", "status": "completed", "description": "a finished one"}]}, None, None))
         self.assertEqual(s._reported_tasks, set(), "retired on the terminal listing; nothing to pop twice")
         self.assertFalse(any("the seeded-work reconcile against the turn-end report failed" in l for l in self.lines), self.lines[-4:])
-        self.assertTrue(any("lists 1 background task the reg named for the surviving CLI as not running" in l for l in self.lines), self.lines[-4:])
+        # "counted live", not "the reg named" (round 5; its kernel-3): this row was never in the reg, and the old clause pinned
+        # the false evidence for exactly such a row
+        self.assertTrue(any("lists 1 background task counted live for the surviving CLI as not running" in l for l in self.lines), self.lines[-4:])
 
     def test_a_stream_started_row_a_later_report_lists_as_terminal_is_the_streams_and_stays(self):
         # the round 4 addendum (2026-09-19; the adoption lens, its fourth item, noted and not a defect): the retire loop
@@ -14183,6 +14358,154 @@ class SettingsPickThroughTheLoopUnderAHost(SettingsPickThroughTheLoop):
         self.assertEqual([l for l in self.lines[n:] if "the CLI's turn-end report" in l], [], "no verdict line: the report ruled nothing")
         s._on_task_event("task_notification", {"task_id": "t-5", "status": "completed"})    # the designed signal
         self.assertEqual(s._live_work_counts(), (0, 0))
+
+    def _unreadable_rows(self):
+        return [p for p in self.be.problems(20) if "list this kernel could not read" in p["text"]]
+
+    def test_an_unreadable_stop_list_is_said_where_it_is_detected_on_every_road_and_keyed_by_its_shape(self):
+        # round 5 of the reviewer's review (2026-09-19; its kernel-4): the unreadable-list guard had ONE output, the settle's
+        # shape phrase, behind the settle's early return for no row still awaiting its first report; so after the first report
+        # moved the rows to _reported_tasks (the normal state since round 4) a Stop payload this kernel could not key was
+        # discarded with no line and no row. The hook now files a problem row where it detects the list, naming its SHAPE
+        # (counts and key names, never content), keyed by that shape so a list the CLI sends the same way every turn counts
+        # on one ring row; the settle's phrase still names the shape for the rows it holds. Both roads driven
+        self._helper()
+        s = self._survivor_with_a_carried_ask()
+        self._connect()
+        asyncio.run(s._stop_hook({"background_tasks": [{"id": "t-1", "type": "shell", "status": "running",
+                                                        "description": "a long sweep"}]}, None, None))   # the first report confirms t-1
+        self.assertEqual((s._seeded_tasks, s._reported_tasks), (set(), {"t-1"}), "the normal state since round 4: nothing seeded")
+        n = len(self.lines)
+        bad = [{"id": "t-9", "type": "shell", "status": "running", "description": "a readable entry"}, "not an entry"]
+        asyncio.run(s._stop_hook({"background_tasks": bad}, None, None))
+        rows = self._unreadable_rows()
+        self.assertEqual(len(rows), 1, self.be.problems(20))
+        self.assertEqual(rows[0]["text"],
+                         "live work (web): the turn's Stop hook carried a background_tasks list this kernel could not read (2 entries, 1 "
+                         "this kernel cannot key (not an object, or no id); keys seen: description, id, status, type); it is no report: "
+                         "the rows counted live stand, nothing is adopted from it, and a held pick waits for the CLI's own stream or a "
+                         "report this kernel can read")
+        self.assertEqual(sorted(s._bg_tasks), ["t-1"], "nothing adopted from a list that is no report; the confirmed row stands")
+        s._reconcile_seeded_work()                                           # the settle: nothing seeded, so no hold phrase here
+        self.assertEqual([l for l in self.lines[n:] if "had no frame and no turn-end report" in l], [], "the row above is this road's output")
+        self.assertFalse(s._stop_hook_bad_list, "spent by the settle")
+        # the same shape again counts on the one ring row; a different shape is a new row
+        asyncio.run(s._stop_hook({"background_tasks": bad}, None, None))
+        rows = self._unreadable_rows()
+        self.assertEqual(len(rows), 1); self.assertEqual(rows[0]["count"], 2, "keyed by the shape")
+        asyncio.run(s._stop_hook({"background_tasks": [{"type": "shell", "status": "running", "description": "no id here"}]}, None, None))
+        rows = self._unreadable_rows()
+        self.assertEqual(len(rows), 2)
+        self.assertIn("(1 entry, 1 this kernel cannot key (not an object, or no id); keys seen: description, status, type)", rows[1]["text"])
+        # the SEEDED road keeps both outputs: the row where it is detected, and the settle's phrase for the rows it holds
+        self.assertEqual(s._seed_live_work_from_reg({"bgTasks": [{"taskId": "t-2", "type": "local_bash", "desc": "a second sweep"}]}), 1)
+        asyncio.run(s._stop_hook({"background_tasks": ["junk"]}, None, None))
+        rows = self._unreadable_rows()
+        self.assertEqual(len(rows), 3); self.assertIn("(1 entry, 1 this kernel cannot key (not an object, or no id); keys seen: none)", rows[2]["text"])
+        s._reconcile_seeded_work()
+        holds = [l for l in self.lines if "had no frame and no turn-end report through this turn" in l]
+        self.assertEqual(len(holds), 1, self.lines[-4:])
+        self.assertIn("(the turn's Stop hook carried a background_tasks list this kernel could not read)", holds[0])
+        self.assertEqual(s._seeded_tasks, {"t-2"}); self.assertEqual(sorted(s._bg_tasks), ["t-1", "t-2"])
+
+    def test_a_report_that_lists_one_row_as_ended_and_leaves_a_shell_off_its_list_says_which_evidence_closed_each(self):
+        # round 5 of the reviewer's review (2026-09-19; its extra8-2, with round 4's extra6-3; and its kernel-3): the one
+        # retirement clause read "lists N ... as not running" for a row the report LISTED as ended and for a shell it OMITTED
+        # alike, so the durable log could not tell which evidence closed a row; and every clause said "the reg named", true
+        # while the retire loop walked the seeded rows alone and false once it walked the reported rows too. Two clauses now,
+        # both source-neutral, in one line
+        self._helper()
+        since = int(time.time()) - 600
+        rows = [{"taskId": "t-1", "type": "local_bash", "desc": "a long sweep", "since": since, "toolUseId": "tu-1", "lastTool": ""},
+                {"taskId": "t-2", "type": "local_bash", "desc": "a second sweep", "since": since, "toolUseId": "tu-2", "lastTool": ""}]
+        s = self._survivor_with_a_carried_ask(bg_tasks=rows)
+        self._connect()
+        asyncio.run(s._stop_hook({"background_tasks": [{"id": "t-1", "type": "shell", "status": "completed",
+                                                        "description": "a long sweep"}]}, None, None))   # t-1 listed as ended; t-2 left off
+        self.assertEqual(sorted(s._bg_tasks), []); self.assertEqual(s._live_work_counts(), (0, 0))
+        line = [l for l in self.lines if "the CLI's turn-end report lists 1 background task" in l]
+        self.assertEqual(len(line), 1, self.lines[-6:])
+        self.assertIn("the CLI's turn-end report lists 1 background task counted live for the surviving CLI as not running; no longer "
+                      "counted as live, and no notice, since the CLI reports no death; leaves 1 shell counted live for the surviving CLI "
+                      "off its list, the one type it enumerates completely; no longer counted as live, and no notice, since the CLI "
+                      "reports no such task", line[0])
+        self.assertNotIn("omits", line[0]); self.assertNotIn("the reg named", line[0])
+
+    def test_a_report_that_decides_nothing_this_kernel_tracks_logs_no_line_and_pokes_nothing(self):
+        # round 5 of the reviewer's review (2026-09-19; its extra8-3, round 4's extra9-4): the reconcile's early return, which
+        # keeps a report about nothing this kernel tracks quiet (no verdict line, no poke), survived mutation unpinned; only
+        # the log half was covered, incidentally, by a test about a different property. Characterisation pin: the return is
+        # unchanged this round and holds on the base too; it discriminates by mutation (removing the return, or a poke ahead
+        # of it). Two reports that decide nothing: one listing a stream-started row (the stream's, not this reconcile's), and
+        # an empty one with nothing seeded or reported
+        self._helper()
+        s = self._survivor_with_a_carried_ask(bg_tasks=[])
+        self._connect()
+        s._on_task_event("task_started", {"task_id": "t-5", "task_type": "local_bash", "description": "a stream-started sweep",
+                                           "tool_use_id": "tu-5"})
+        n = len(self.lines)
+        with mock.patch.object(self.be, "_poke", wraps=self.be._poke) as poke:
+            s._reconcile_seeded_with_report([{"id": "t-5", "type": "shell", "status": "running", "description": "a stream-started sweep"}])
+            s._reconcile_seeded_with_report([])
+        self.assertEqual(poke.call_count, 0, "a report that decides nothing pokes nothing")
+        self.assertEqual([l for l in self.lines[n:] if "the CLI's turn-end report" in l], [], "and logs no verdict line")
+        self.assertEqual(sorted(s._bg_tasks), ["t-5"]); self.assertEqual(s._reported_tasks, set())
+
+    def test_an_adopted_rows_description_is_cut_to_300_characters_in_the_live_set_and_the_mirror(self):
+        # round 5 of the reviewer's review (2026-09-19; its extra8-3, round 4's extra9-4): the 300-character cut on an adopted
+        # row's description survived mutation unpinned. It is a BOUND of the adoption road (the docstring says so): a
+        # description over it loses its tail in _bg_tasks and the reg mirror, and the launch ledger's adoption in the same
+        # hook applies the same bound; a stream-started row's description is not bounded here. Characterisation pin: the cut
+        # predates this round and holds on the base too; it discriminates by mutation (dropping the cut). The fixture stays
+        # under the CLI's own 1000-character cap, so the payload is one the producer can emit
+        self._helper()
+        s = self._survivor_with_a_carried_ask(bg_tasks=[])
+        self._connect()
+        desc = ("a long description of a sweep over the notes-api fixtures, " * 20)[:700]
+        self.assertEqual(len(desc), 700)
+        asyncio.run(s._stop_hook({"background_tasks": [{"id": "t-7", "type": "shell", "status": "running", "description": desc}]}, None, None))
+        self.assertEqual(s._bg_tasks["t-7"]["desc"], desc[:300], "cut to its first 300 characters in the live set")
+        reg = sb.read_reg(self.be.state_dir, self.SID) or {}
+        self.assertEqual([(t["taskId"], len(t["desc"])) for t in reg.get("bgTasks") or []], [("t-7", 300)], "and in the mirror")
+        live, _ended = s._ledger_read()
+        self.assertEqual([len(e["desc"]) for e in live if e.get("tid") == "t-7"], [300], "the launch ledger's adoption applies the same bound")
+
+    def test_a_label_this_builds_record_does_not_know_is_adopted_as_itself_and_said_once_per_label(self):
+        # round 5 of the reviewer's review (2026-09-19; its correctness-3 and extra5-2): the inverse label table was a
+        # hand-written snapshot beside a count pin, and a label neither knew mapped to itself with no log and no test that
+        # could notice, so the next CLI build's new label could re-open round 4's correctness-1 silently. The inverse is now
+        # derived from the producer's recorded table, and a label beyond the record is LOUD: still adopted as itself (a task
+        # the CLI says is running is never discarded) and held on an omission, with one problem row naming the label, keyed by
+        # it. The known labels, `monitor` and "MCP task" among them, file no row
+        self._helper()
+        s = self._survivor_with_a_carried_ask(bg_tasks=[])
+        self._connect()
+        asyncio.run(s._stop_hook({"background_tasks": [
+            {"id": "k-1", "type": "kite", "status": "running", "description": "a task of a type this build has never seen"},
+            {"id": "m-1", "type": "monitor", "status": "running", "description": "an MCP monitor"},
+            {"id": "x-1", "type": "MCP task", "status": "running", "description": "an MCP task"}]}, None, None))
+        self.assertEqual((s._bg_tasks["k-1"]["type"], s._bg_tasks["m-1"]["type"], s._bg_tasks["x-1"]["type"]),
+                         ("kite", "monitor", "mcp_task"), "adopted as itself; the known labels normalise")
+        rows = [p for p in self.be.problems(20) if "label this build's record does not know" in p["text"]]
+        self.assertEqual(len(rows), 1, self.be.problems(20))
+        self.assertEqual(rows[0]["text"],
+                         "live work (web): the CLI's turn-end report typed a task with a label this build's record does not know, 'kite'; "
+                         "counted as live under that label, held on an omission (a type not known to be enumerated completely) and "
+                         "mirrored as it arrived; the producer's record (_REPORT_PRODUCER_LABELS, read from CLI 2.1.266) needs the entry")
+        self.assertEqual([t["type"] for t in (sb.read_reg(self.be.state_dir, self.SID) or {}).get("bgTasks") or [] if t["taskId"] == "k-1"],
+                         ["kite"], "mirrored as it arrived")
+        asyncio.run(s._stop_hook({"background_tasks": []}, None, None))
+        self.assertIn("k-1", s._bg_tasks, "held on the omission: an unknown label is never decidable by absence")
+        # the same label again counts on the one ring row (keyed by the label); the seed road says it too, from the mirror
+        asyncio.run(s._stop_hook({"background_tasks": [{"id": "k-2", "type": "kite", "status": "running", "description": "another"}]}, None, None))
+        rows = [p for p in self.be.problems(20) if "label this build's record does not know" in p["text"]]
+        self.assertEqual(len(rows), 1); self.assertEqual(rows[0]["count"], 2)
+        self.assertEqual(s._seed_live_work_from_reg({"bgTasks": [{"taskId": "k-3", "type": "kite", "desc": "from an earlier build's mirror"}]}), 1)
+        rows = [p for p in self.be.problems(20) if "label this build's record does not know" in p["text"]]
+        self.assertEqual(len(rows), 1); self.assertEqual(rows[0]["count"], 3)
+        self.assertTrue(any("the reg's mirror at the attach typed a task with a label this build's record does not know, 'kite'" in l
+                            for l in self.lines), self.lines[-4:])
+        self.assertEqual(s._bg_tasks["k-3"]["type"], "kite")
 
 
 class ReportAbsencePredicate(unittest.TestCase):
@@ -14236,8 +14559,26 @@ class ReportLabelNormalisation(unittest.TestCase):
         self.assertEqual(sb._bg_type_discriminant("MCP task"), "mcp_task")
         self.assertEqual(sb._bg_type_discriminant("teammate"), "in_process_teammate")
         self.assertEqual(sb._bg_type_discriminant("auto-mode scan"), "auto_mode_scan")
-        self.assertEqual(len(sb._REPORT_LABEL_TO_DISCRIMINANT), 7,
-                         "the producer's ten labels, less the two that label to monitor and dream, which is its own discriminant")
+
+    def test_the_inverse_is_derived_from_the_producers_record_and_a_label_beyond_it_is_unknown(self):
+        # round 5 of the reviewer's review (2026-09-19; its correctness-3): `len(table) == 7` was a COUNT PIN, which passes
+        # exactly when the next author adds an entry. The inverse is derived at import from the producer's recorded table
+        # (_REPORT_PRODUCER_LABELS, ten entries read from CLI 2.1.266), by one rule: a label that differs from its
+        # discriminant and that one discriminant carries; `monitor` (two carriers) and `dream` (its own discriminant) are
+        # not keys. A spelling beyond the record is UNKNOWN (_bg_type_unknown), which the adoption and the seed say aloud;
+        # every spelling the record knows, and an absent type, is not
+        self.assertEqual(len(sb._REPORT_PRODUCER_LABELS), 10, "the producer's ten entries, as read from the binary")
+        self.assertEqual(sb._REPORT_LABEL_TO_DISCRIMINANT,
+                         {"shell": "local_bash", "subagent": "local_agent", "workflow": "local_workflow", "cloud session": "remote_agent",
+                          "MCP task": "mcp_task", "teammate": "in_process_teammate", "auto-mode scan": "auto_mode_scan"},
+                         "derived: every label one discriminant carries and that differs from it")
+        self.assertNotIn("monitor", sb._REPORT_LABEL_TO_DISCRIMINANT, "carried by monitor_mcp and monitor_ws: no injective inverse")
+        self.assertNotIn("dream", sb._REPORT_LABEL_TO_DISCRIMINANT, "its own discriminant")
+        for known in list(sb._REPORT_PRODUCER_LABELS) + list(sb._REPORT_PRODUCER_LABELS.values()) + ["", None]:
+            self.assertFalse(sb._bg_type_unknown(known), repr(known))
+        for beyond in ("kite", "a label no build emits", "local_bash2", "Shell"):
+            self.assertTrue(sb._bg_type_unknown(beyond), repr(beyond))
+            self.assertEqual(sb._bg_type_discriminant(beyond), beyond, "still normalised to itself: adopted, and said by the caller")
 
     def test_bg_row_normalises_absent_fields_to_empty_strings(self):
         # the mutation pass over round 4 (2026-09-19; m09 and m10): a None tool_use_id from a stream frame, or a mirror row
