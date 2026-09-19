@@ -33,7 +33,8 @@ through `load_goals_or_fault` is named for its kernel caller, never for the judg
 a reader below those loaders (the judge's own file reader and parser) is outside the recorders and outside the claim. The
 road: the execution witness covers every caller the fixture actually executes; the helpers in REPLACED_KM and REPLACED_JD
 and Sessions.backend_for run as stubs, so a loader inside their real bodies is outside the recorders and is caught by the
-source census in TheCountersOneSite instead, one level deep (the helper's own source). The window: each pass, the
+source census in TheCountersOneSite instead, one level deep (the helper's own source); setUp checks that it rebinds
+exactly the listed names, so the census reads the fixture's list and not a hand-kept copy of it. The window: each pass, the
 `_auto_nudge_tick` call (the records are cleared before it and read after it), so a load elsewhere in the process (a
 builder, a handler, the perf snapshot the test reads after its last pass) is outside the window and is not this test's
 claim. By the store's own counters, a witness keyed on the store rather than on a list of doors, one per door. The shared
@@ -168,6 +169,7 @@ REPLACED_KM = ("_alive_sessions", "_wait_for_graph", "_session_flag", "_compacti
 REPLACED_DATA = ("_pending_ops", "_PREV_ALIVE")
 REPLACED_JD = ("parsed_session", "_segs", "plan_units")
 JUDGE_FILE = os.path.basename(os.path.realpath(jd.__file__))
+_UNSET = object()
 
 
 def _pass_through_lines(fn, callee):
@@ -240,6 +242,7 @@ class _WalkHarness(unittest.TestCase):
         for k, v in list(km._NUDGE_WALK_STATS.items()):
             km._NUDGE_WALK_STATS[k] = {} if isinstance(v, dict) else 0
         km._NUDGE_WALK_FIRST_OPEN[0] = False
+        before_km, before_jd = dict(vars(km)), dict(vars(jd))   # for the agreement check below: what this setUp rebinds
         self.fb = _FakeBackend()
         km.Sessions.backend_for = lambda sid: self.fb
         km._wait_for_graph = lambda now, sids: {}
@@ -322,6 +325,17 @@ class _WalkHarness(unittest.TestCase):
             return real_writer(sid)                                              #  journal, corrupt bytes) is one logical read: the shared
         jd.load_goals_shared = _shared                                           #  recorder recorded its caller, so nothing is recorded here
         jd.load_goals = _load
+        # The road limit's list is checked against the fixture, not kept by hand: this setUp rebinds exactly the names REPLACED_KM
+        # and REPLACED_JD list plus the two recorded doors, and Sessions.backend_for beside them. A stub added here without a
+        # list entry would hide a loader from the execution witness AND from the census that reads the list (review round 2,
+        # shown by re-adding the _session_working stub with a shared load in its real body: 7 passed)
+        rebound_km = {k for k, v in vars(km).items() if before_km.get(k, _UNSET) is not v}
+        self.assertEqual(rebound_km, set(REPLACED_KM), "setUp replaces exactly the kernel names REPLACED_KM lists, the census's targets: a "
+                                                        "stub without a list entry hides a loader from the execution witness and the census")
+        rebound_jd = {k for k, v in vars(jd).items() if before_jd.get(k, _UNSET) is not v}
+        self.assertEqual(rebound_jd, set(REPLACED_JD) | {"load_goals", "load_goals_shared"},
+                         "and exactly the judge names REPLACED_JD lists plus the two recorded doors")
+        self.assertIsNot(km.Sessions.backend_for, self.saved_backend, "and Sessions.backend_for, replaced beside them")
         self._toggle(False)
         self._seed(SID_A, stamped=False)
         self._seed(SID_B, stamped=True, age=5 * H)
