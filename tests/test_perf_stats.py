@@ -1704,8 +1704,9 @@ class RoutingStatements(unittest.TestCase):
         if extra:
             parts.append("names a routed block and is not in PLACES: %r. The scan reads every text file git tracks or would "
                          "track, so an untracked, unignored file counts: your own scratch (a note, a saved diff, an editor "
-                         "backup, a .orig or .rej) is removed from the tree or ignored (.git/info/exclude), a new source or "
-                         "doc is read against the measured cells and then added to PLACES" % extra)
+                         "backup, a .orig or .rej) is removed from the tree or ignored (git's local exclude file, `git rev-parse "
+                         "--git-path info/exclude`), a new source or doc is read against the measured cells and then added to "
+                         "PLACES" % extra)
         if gone:
             parts.append("in PLACES and no longer names a routed block, or gone from the tree: %r. Remove it from PLACES (or "
                          "restore the file)" % gone)
@@ -1720,8 +1721,12 @@ class RoutingStatements(unittest.TestCase):
         patterns = {key: re.compile(r"\s+".join(re.escape(word) for word in phrase.split())) for key, phrase in RETIRED_WORDINGS.items()}
         for rel, text in sorted(found.items()):
             for key, phrase in sorted(RETIRED_WORDINGS.items()):
-                self.assertIsNone(patterns[key].search(text), "%r carries a wording a review round retired (%s): %r" % (rel, key, phrase))
-                #                                                 not assertNotIn: its failure message would print the whole file
+                if patterns[key].search(text):
+                    # self.fail with the path, not assertNotIn or assertIsNone: the first would print the whole file, the
+                    # second the match object ahead of the words that matter; the scope clause, as in the swept-set pin
+                    self.fail("%r carries a wording a review round retired (%s): %r; the scan reads every text file git tracks "
+                              "or would track, so an untracked, unignored file counts and is removed or ignored rather than "
+                              "swept" % (rel, key, phrase))
 
     def test_the_files_that_name_a_routed_block_are_the_swept_set(self):
         self._pin_swept_set(self._places())
@@ -1756,11 +1761,13 @@ class RoutingStatements(unittest.TestCase):
                     self._pin_swept_set(planted)
                 self.assertIn(rel, str(swept.exception), "the swept-set pin names the plant")
                 self.assertIn("tracks or would track", str(swept.exception), "and says the scan reads untracked files")
+                self.assertIn("removed from the tree or ignored", str(swept.exception), "and sends scratch out of the tree, not into PLACES")
                 self.assertNotIn("Remove it from PLACES", str(swept.exception), "the plant is an extra, so only that clause prints")
                 with self.assertRaises(AssertionError) as worded:
                     self._pin_no_retired_wording(planted)
                 self.assertIn(rel, str(worded.exception), "the wording pin names the plant")
                 self.assertIn("push-inside-cycle", str(worded.exception), "and the wording it carries")
+                self.assertIn("tracks or would track", str(worded.exception), "and says the scan reads untracked files")
             finally:
                 plant.unlink(missing_ok=True)
             after = self._scan(root)
