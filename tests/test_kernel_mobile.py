@@ -591,6 +591,19 @@ visualViewport.height = 422; visualViewport.offsetTop = 200; fire(VV, 'resize');
 out.kbDownZoomed = { appTop: appTop(), appH: appH(), barH: barH() };
 visualViewport.scale = 1; visualViewport.height = 844; visualViewport.offsetTop = 0; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
 out.zoomBack = { appTop: appTop(), appH: appH(), barH: barH() };
+// round 2 (2026-09-19): the writer's other population. fit() publishes a pan only off a coarse pointer; a FINE pointer writes
+// 0px whatever the visual viewport says (no soft keyboard to pan for), so a fine-pointer window the mobile query still
+// matches by width alone (at or under 820 px) takes the fixed body at top 0. From a panned state, the pointer turns fine
+// (the stub answers the coarse probe; the layout query object was captured at parse and is not re-read). LAST in the driver:
+// the stub is a module-scope global, restored after. --mtabs-h is not read here: its value on a fine pointer under a fake pan
+// is an open question of the review (the rebound kbOpen carries no coarse guard), not settled by this change.
+visualViewport.height = 460; visualViewport.offsetTop = 83; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+const savedMatchMedia = global.matchMedia; global.matchMedia = () => ({ matches: false });
+fire(WIN, 'resize'); flush();
+out.finePointer = { appTop: appTop(), appH: appH() };
+global.matchMedia = savedMatchMedia;
+visualViewport.height = 844; visualViewport.offsetTop = 0; fire(VV, 'resize'); flush();
+out.finePointerBack = { appTop: appTop(), appH: appH(), barH: barH() };
 console.log(JSON.stringify(out));
 """
 
@@ -695,6 +708,14 @@ class MobileFitExecutes(unittest.TestCase):
         self.assertEqual(self.out["pinchPanned"], {"appTop": "83px", "appH": "460px", "barH": "0px"}, "the hold, from a pan")
         self.assertEqual(self.out["kbDownZoomed"], {"appTop": "0px", "appH": "844px", "barH": "44px"}, "the clamp")
         self.assertEqual(self.out["zoomBack"], {"appTop": "0px", "appH": "844px", "barH": "44px"})
+
+    def test_a_fine_pointer_writes_no_pan_whatever_the_visual_viewport_says(self):
+        # round 2 (2026-09-19): the writer is gated on the pointer and the fixed body on the layout query, two populations. A
+        # fine-pointer window at or under 820 px takes the fixed body and gets the 0px this branch writes (from a panned state,
+        # so a held or stale value would show), with the height read from innerHeight; the served populations leg drives the
+        # real query at 800 px. The base tree's only pin on this branch was its source text.
+        self.assertEqual(self.out["finePointer"], {"appTop": "0px", "appH": "844px"})
+        self.assertEqual(self.out["finePointerBack"], {"appTop": "0px", "appH": "844px", "barH": "44px"})
 
 
 # A node stand-in for the installed phone app with a REAL class list: the shell's mobile script and

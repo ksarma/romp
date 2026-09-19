@@ -69845,7 +69845,13 @@ if(h)document.documentElement.style.setProperty('--app-h',h+'px');
 // and the bottom offsetTop pixels of the screen showed bare page background under the composer (the user 2026-09-18 and
 // 2026-09-19, iPhone, installed app: an empty band about 80 CSS px tall between the composer and the keyboard's accessory
 // bar). Publish the pan as --app-top; the mobile body rule (position:fixed;top:var(--app-top)) moves the shell down into the
-// visible band. Coarse-guarded like --app-h (a desktop writes 0; its body is never fixed). A PINCH (scale above 1.01) pans
+// visible band. Written on every run, 0px off a coarse pointer whatever the visual viewport says (a fine-pointer browser has
+// no soft keyboard to pan for). Two gates on two axes (round 2, 2026-09-19): this writer is gated on the POINTER, so any
+// coarse document publishes its pan at any width; the consumer, the fixed body rule inside the _MOBILE_MQ block, is gated
+// on the LAYOUT query, which a window at or under 820 px matches at any pointer and a coarse one up to 1024 px. So a
+// fine-pointer window at or under 820 px takes the fixed body at top 0 and lays out as before, and a coarse document wider
+// than 1024 px publishes a pan no rule consumes and keeps its body in flow (tests/test_keyboard_gap_served.py drives
+// both; test_kernel_mobile's harness turns the pointer fine from a panned state). A PINCH (scale above 1.01) pans
 // the visual viewport too, with no keyboard behind it, so its offsetTop is never published and the last pan holds (a zoom
 // never re-lays the shell, the pinch-aware note above), CLAMPED to innerHeight - h (round 2, 2026-09-19): the same run
 // recomputes --app-h from the zoomed viewport, so a pan measured under a keyboard that has since gone would otherwise
@@ -72366,7 +72372,9 @@ def _landing():
             # the body covers exactly the visible band. The height chain of the rule above; no transform, filter or contain
             # on any html or body rule (tests/test_shell_viewport_fit.py scans the served CSS for them), so the shell's
             # fixed panels keep the viewport as their containing block and stay glued to the true bottom. This block only:
-            # the desktop body stays in flow, its viewport never pans.
+            # outside _MOBILE_MQ (a fine pointer above 820 px, a coarse one above 1024 px) the body stays in flow at layout
+            # y 0; a coarse document there still publishes its pan, and nothing consumes it (the two gates, and the two
+            # populations they cover, are in the fit() comment; the served populations leg drives both).
             "body{position:fixed;left:0;right:0;top:var(--app-top,0px);height:var(--app-h,100dvh)}"
             # [fork] D1 round 2 (2026-09-19): the other fixed box sized by --app-h is the new-session picker's lift
             # (body.picker-open iframe.lifted, upstream's base rule above the media blocks: position:fixed;top:0). At layout

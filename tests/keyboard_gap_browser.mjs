@@ -44,10 +44,12 @@ const result = async (extra) => {
 };
 
 // the phone: the iPhone 14 descriptor at the viewport the design names (under _MOBILE_MQ's 820 px; a coarse pointer, which
-// fit()'s visual-viewport branch is gated on), the pattern of tests/return_from_background_browser.mjs
-const dev = { ...(playwright.devices["iPhone 14"] || {}) };
+// fit()'s visual-viewport branch is gated on), the pattern of tests/return_from_background_browser.mjs. cfg.context names
+// another population (round 2): a device descriptor or null for a plain desktop context (a fine pointer), and a viewport.
+const ctxCfg = cfg.context || {};
+const dev = ctxCfg.device === null ? {} : { ...(playwright.devices[ctxCfg.device || "iPhone 14"] || {}) };
 delete dev.defaultBrowserType;
-const context = await browser.newContext({ ...dev, viewport: { width: 390, height: 844 } });
+const context = await browser.newContext({ ...dev, viewport: ctxCfg.viewport || { width: 390, height: 844 } });
 const page = await context.newPage();
 page.on("pageerror", (e) => { if (out.errors.length < 40) out.errors.push(String(e).slice(0, 300)); });
 
@@ -79,7 +81,8 @@ const geo = () => page.evaluate(() => {
   const lp = lf && lf.parentElement ? lf.parentElement.getBoundingClientRect() : null;
   const round = (x) => Math.round(x * 100) / 100;
   return {
-    innerHeight: window.innerHeight, scrollY: window.scrollY,
+    innerHeight: window.innerHeight, innerWidth: window.innerWidth, scrollY: window.scrollY,
+    coarse: matchMedia("(pointer: coarse)").matches, mobile: window.__rompMobileOn ? window.__rompMobileOn() : null,   // the two gates, as the page answers them
     vv: { height: window.visualViewport.height, offsetTop: window.visualViewport.offsetTop, scale: window.visualViewport.scale, fake: window.visualViewport === window.__labVV },
     appH: st.getPropertyValue("--app-h"), appTop: st.getPropertyValue("--app-top"), mtabsH: st.getPropertyValue("--mtabs-h"),
     bar: br ? { top: round(br.top), bottom: round(br.bottom), height: round(br.height), display: getComputedStyle(bar).display } : null,

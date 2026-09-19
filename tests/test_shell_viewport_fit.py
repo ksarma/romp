@@ -108,8 +108,11 @@ class OneHeightBasis(unittest.TestCase):
         self.assertLess(mobile_at, html.index(rule), "the fixed body is a mobile rule")
         self.assertLess(html.index("body{display:flex;flex-direction:column;height:100vh;height:var(--app-h,100dvh)}"), html.index(rule),
                         "after the flex body rule it extends")
-        # the desktop body stays in flow: the only position:fixed body rule is the one inside the mobile block, and the
-        # desktop html,body chain (test_the_shell_height_chain_applies_at_every_width) carries no top or position
+        # the only position:fixed body rule is the one inside the mobile block, so a document outside _MOBILE_MQ (a fine
+        # pointer above 820 px, a coarse one above 1024 px) keeps its body in flow, and the base html,body chain
+        # (test_the_shell_height_chain_applies_at_every_width) carries no top or position. Inside the block a fine pointer at
+        # or under 820 px takes this fixed body too, at the 0px fit() writes off a coarse pointer (round 2, 2026-09-19:
+        # test_kernel_mobile's finePointer scenario, and the populations legs in test_keyboard_gap_served)
         self.assertEqual(html.count("body{position:fixed"), 1)
         self.assertNotIn("--app-top", html[:mobile_at], "no --app-top consumer before the mobile block (the writer is the script after it)")
         for prop in ("transform", "filter", "contain:", "will-change", "perspective"):
@@ -157,7 +160,8 @@ class RefitsWhenTheVisibleHeightChanges(unittest.TestCase):
         # D1 (2026-09-19): the visual viewport's PAN rides beside the height. iOS reveals a focused input by moving the
         # visual viewport down the layout viewport (offsetTop > 0) with no document scroll to undo, so a body sized to
         # vv.height at layout y 0 left the bottom offsetTop pixels of the screen bare under the composer. fit() publishes
-        # the pan as --app-top under the same coarse guard (a desktop writes 0). Under a pinch (scale above 1.01) the last pan
+        # the pan as --app-top under the same coarse guard (a fine pointer writes 0px whatever the visual viewport says; the
+        # consumer is gated on the layout query, a different population, see the fit() comment). Under a pinch (scale above 1.01) the last pan
         # holds, a zoom pans too and never re-lays the shell, CLAMPED to the layout viewport less the height the same run
         # publishes, so a keyboard dismissed while zoomed cannot leave the body hanging below the viewport (round 2,
         # 2026-09-19). Behaviour: test_kernel_mobile.MobileFitExecutes.

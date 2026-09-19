@@ -117,14 +117,15 @@ class KeyboardGap(unittest.TestCase):
         if cls.lab:
             shutil.rmtree(cls.lab, ignore_errors=True)
 
-    def _drive(self, engine):
+    def _drive(self, engine, context=None, tag=""):
         declared = os.environ.get("ROMP_SERVED_TESTS_ENGINES", "")
         if engine != "chromium" and declared and engine not in [e.strip() for e in declared.split(",")]:
             self.skipTest("optional: this runner declares no %s (ROMP_SERVED_TESTS_ENGINES=%s)" % (engine, declared))
         cfg = {"engine": engine, "url": "http://127.0.0.1:%d/?token=%s" % (self.port, self.token),
                "healthz": "http://127.0.0.1:%d/healthz" % self.port, "bootTimeoutMs": 30000, "settleMs": 500,
-               "shots": os.path.join(self.lab, "kb-gap-" + engine) if os.environ.get("KB_GAP_SHOTS") else ""}
-        cfg_path = os.path.join(self.lab, "cfg-%s.json" % engine)
+               "context": context,   # None: the phone (the iPhone 14 descriptor at 390 by 844); else a device (or null) and a viewport
+               "shots": os.path.join(self.lab, "kb-gap-" + engine + tag) if os.environ.get("KB_GAP_SHOTS") else ""}
+        cfg_path = os.path.join(self.lab, "cfg-%s%s.json" % (engine, tag))
         Path(cfg_path).write_text(json.dumps(cfg))
         try:
             p = subprocess.run(["node", DRIVER], capture_output=True, text=True, timeout=120,
@@ -227,12 +228,45 @@ class KeyboardGap(unittest.TestCase):
         self.assertAlmostEqual(zb["composerBottom"], rest["composerBottom"], delta=0.5, msg=where + "%r" % (zb,))
         return r
 
+    def _populations(self, engine):
+        """The writer's and the consumer's populations, as the comments in fit() and over the fixed body rule state them (round
+        2, 2026-09-19). fit() publishes a non-zero pan only off a coarse pointer, at any width; the fixed body applies wherever
+        _MOBILE_MQ matches: at most 820 px wide at any pointer, or a coarse pointer at most 1024 px wide. The two differ in
+        both directions, and each side is driven here in a real engine under the same fake pan as the phone legs."""
+        where = engine + ": "
+        # a fine pointer at 800 px: inside the query by width alone. The body is fixed, at top 0: the non-coarse branch writes
+        # 0px (a pan is a soft-keyboard thing), the height is innerHeight, so this window lays out exactly as before the pan
+        fine = self._drive(engine, {"device": None, "viewport": {"width": 800, "height": 900}}, "-fine800")
+        up = fine["kbUp"]
+        self.assertEqual((up["innerWidth"], up["coarse"], up["mobile"]), (800, False, True), where + "the emulation held, a fine pointer inside the query: %r" % (up,))
+        self.assertEqual(up["body"]["position"], "fixed", where + "the fixed body applies by width alone: %r" % (up,))
+        self.assertEqual(_px(up["appTop"]), 0, where + "a fine pointer writes 0px whatever the visual viewport says: %r" % (up,))
+        self.assertEqual(_px(up["appH"]), 900, where + "the height is innerHeight off a coarse pointer: %r" % (up,))
+        self.assertAlmostEqual(up["body"]["top"], 0, delta=0.5, msg=where + "%r" % (up,))
+        self.assertAlmostEqual(up["body"]["bottom"], 900, delta=0.5, msg=where + "%r" % (up,))
+        self.assertEqual(up["bar"]["display"], "flex", where + "the phone layout, by width")
+        # a coarse pointer at 1200 px: outside the query (its coarse term stops at 1024 px). The pan IS published, the writer
+        # being pointer-gated, and no rule consumes it: the body stays in flow at layout y 0, sized by --app-h as on every layout
+        wide = self._drive(engine, {"device": "iPhone 14", "viewport": {"width": 1200, "height": 900}}, "-coarse1200")
+        up = wide["kbUp"]
+        self.assertEqual((up["innerWidth"], up["coarse"], up["mobile"]), (1200, True, False), where + "the emulation held, a coarse pointer outside the query: %r" % (up,))
+        self.assertEqual(up["body"]["position"], "static", where + "no fixed body outside the query: %r" % (up,))
+        self.assertEqual(_px(up["appTop"]), KB_PAN, where + "the pan is published off a coarse pointer at any width, consumed by nothing here: %r" % (up,))
+        self.assertAlmostEqual(up["body"]["top"], 0, delta=0.5, msg=where + "the body stays at layout y 0: %r" % (up,))
+        self.assertEqual(up["bar"]["display"], "none", where + "the desktop layout")
+
     def test_chromium_phone_keyboard_pan_leaves_no_band(self):
         self._leg("chromium")
 
     # WebKit is Safari's engine; an `optional:` skip where the browser is absent (CI installs Chromium alone)
     def test_webkit_phone_keyboard_pan_leaves_no_band(self):
         self._leg("webkit")
+
+    def test_chromium_the_pan_writer_and_the_fixed_body_cover_the_populations_the_comments_state(self):
+        self._populations("chromium")
+
+    def test_webkit_the_pan_writer_and_the_fixed_body_cover_the_populations_the_comments_state(self):
+        self._populations("webkit")
 
 
 if __name__ == "__main__":
