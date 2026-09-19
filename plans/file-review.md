@@ -3565,23 +3565,185 @@ document stands on its own, each with the reasoning it was given.
     by the project's `.trackchanges/config.json` through store-io's `findVaultRoot` and the three steps of its
     `isTrackedFile` (the veto list, the explicit list by name, then the link closure), which the hook runs itself
     as `trackedIn` so the closure is built once per call; a path is judged under the name given and under the real
-    path the kernel opens, so a symlink to a tracked file carries no write past it. The refusal is exit 2 with one
+    path the kernel opens, so a symlink to a tracked file carries no write past it (a `..` after a directory that
+    exists climbs from that directory's real path, as the kernel does, round 3, 2026-09-19; a link the same command
+    creates is resolved only when it is an `ln -s` with literal operands the hook can place and an untouched name,
+    class H; every other same-command link or mutation makes a later write through the name refuse, family 3 and
+    rule (c) of the third pass, below). The refusal is exit 2 with one
     line naming the file and the track-edit command, in the person's voice. What it lets through: a read (cat,
-    grep, diff, git, sed without -i) names no target; a path built from a variable, and a command behind eval,
-    xargs or a shell -c it cannot read, is unresolvable and passes, since a silent block of ordinary work would
-    cost more than a missed write; a glob is expanded against the filesystem as the shell expands it and passes
-    only when it matches nothing or names more than the hook will list, a brace list is expanded before the
-    operands are read, a here-string is scanned like a heredoc and a process substitution's command is read like
-    a `$(...)`; a tracked image or PDF passes by name as in the vendored guard; a source copied out of a tracked
+    grep, diff, git, sed without -i) names no target; a command behind eval, xargs or a shell -c it cannot read
+    is unresolvable and passes, since a silent block of ordinary work would cost more than a missed write, and
+    so does a python or node one-liner whose write path is computed (a name, an f-string, `sys.argv`,
+    `os.environ`), since the interpreter scan reads a literal path only (the round-1 review of 2026-09-18
+    rejected a scan of computed paths by execution: it would refuse ordinary scripting and still miss the
+    common forms); a write whose target the hook cannot read (a variable, a `$(...)` or a backtick, a `~user`, a
+    brace list past the cap, or a glob that matches nothing or names more than the hook will list) is refused
+    while a project that tracks anything is in play, that is when the session's cwd, the directory a `cd`
+    moved to, or the folder a copy lands in sits under a config whose tracked list holds an entry the literal
+    rule could refuse (a text name the veto list does not cover, or a note the link closure reaches from one),
+    the directory judged under its real path and its name, and the landing folder counting only when a tracked
+    file could land there (a refusable entry at or below it, an existing entry there that is guarded or links to
+    a tracked file, or a note the closure reaches below it) or when it holds more than 2000 entries, past which
+    the hook does not scan it and takes it as in play (`LANDING_SCAN_CAP`, a deliberate false refusal, pinned on
+    both sides of the boundary and escalated with the change; review round 2, 2026-09-18), and passes with no
+    such project in play (2026-09-18, after a research session's report through the box admin, 2026-09-17: a
+    `cp` built from shell variables landed raw on a tracked file beside a refused literal one; the round-1
+    review the same day bounded the rule so that a temp log or a copy into an untracked folder is not refused
+    across the box once one project tracks a file); a landing folder no project claims counts when an entry of it is
+    or leads to a tracked file whose name the copy could take (round 3, 2026-09-19: `cp "$SRC" <outside>/` over a link
+    there onto a tracked file overwrote it while the same copy spelled out was refused; past 2000 entries such a folder
+    is not scanned and the copy passes, a stated residual, since a folder no project claims carries no case for a
+    blanket refusal); the project the target's own literal directory part sits in is asked first, from any cwd, for
+    every target the hook cannot read that it can place, absolute or relative to a write-time directory it knows, when
+    a tracked file could land in that folder (round 2 for a numeric target; round 3 for every unreadable word and for a
+    relative spelling, after `cp x <project>/notes/$N.md` from a cwd in no project overwrote a tracked note while
+    `<project>/notes/`, the literal name and the numeric spelling were all refused); a literal relative target after a
+    `cd` the hook cannot follow (one to a name the shell fills in, `cd -`, `popd`, one inside an if, loop or case body,
+    or one to a directory the command cannot enter when the hook runs, which it may make first or which the cd fails
+    on, leaving the shell where it was) is refused while the cwd's project is in play, with the reason and the remedy
+    (an absolute target, or a `cd` to a literal directory that exists), where before it was dropped (round 3: one such
+    `cd` turned a refused write on a tracked file into an allowed one; the cost, a `mkdir -p build && cd build && cmd >
+    log.txt` from a tracked cwd, is a deliberate false refusal); one narrowing from the round-1 review, corrected by its
+    round 2 and again by round 3 (2026-09-19): a target whose only expansions are `$$` and `${$}`, the shell's process
+    id, and whose text is an absolute path outside every project in play is allowed, since such an expansion cannot
+    carry a `../` back in. The numeric set is those two spellings and nothing else, in every shell: every other
+    candidate can be unset or shadowed by the command and then hold a path (round 1 listed `$RANDOM`, `$SECONDS` and
+    `$BASHPID` as read-only integers; round 2 dropped BASHPID, which zsh leaves assignable, and kept the other two
+    under bash and zsh; round 3 measured `unset RANDOM; RANDOM=../x` and `local RANDOM=` in a function in bash,
+    `typeset -h RANDOM` in a function in zsh and a sourced file carrying the unset, each carrying a traversal onto a
+    tracked file while the hook read the word as numeric; `$$` resists every road in bash, zsh and dash), so a
+    `log.$RANDOM` inside a tracked project is refused, a deliberate false refusal recoverable in one step (`$$`, the
+    literal spelling, or a write outside the project), where an overwrite with no change recorded is not. A numeric
+    target is judged by where it lands: the project its own literal directory part sits in first (a numeric name
+    landing in a second tracked project is refused from any cwd, the refusal naming that project), that part resolved
+    through the filesystem (a link in it, a `..` after one), each entry of that directory that exists now and whose
+    name the process id could spell (`x-4242` for `x-$$`) followed as the write would follow it, and a fold that
+    leaves no expansion handed to the literal rule (round 3: a pre-existing link named by the number, a fold onto a
+    link to a tracked file, and a literal `..` after a link were each folded away before the resolve step and a write
+    landed on a tracked file); the landing gate on that literal directory part is folder-granular, so a numeric name
+    in any folder where a tracked file could land is refused from any cwd while its literal spelling may pass,
+    `<root>/x-$$/y.md` and `<root>/docs/build-$$.log` alike, a deliberate false refusal ruled correct in round 2's
+    addendum (2026-09-18) for the first segment (the folder's name does not exist at check time and is not derivable
+    from the text, so the hook cannot tell which folder of the project the write lands in, a person recovers in one
+    step, and the opposite error overwrites tracked content silently) and restated by round 3 as the gate rather than
+    the segment, since `<root>/docs/x-$$/y.md` is refused the same way when docs/ holds a tracked file; the refusal
+    names the unknown folder when the expansion names one, at any depth, and offers a literal folder name or a write
+    outside the project, never the name the shell would give it, which nobody can know before the command runs; a
+    folder of more than 2000 entries inside a tracked project refuses a numeric name unscanned, as it does a copy
+    (`LANDING_SCAN_CAP`, both sides pinned); a segment that is nothing but an expansion cancelled by a `..`
+    (`<out>/$$/../x.md`) is not narrowed. Two things the rule does not see, stated: a link the same command creates
+    under or after the numeric segment (the pid-candidate scan reads only entries that exist when the hook runs; the
+    class-H rewrite that follows a same-command `ln -s` with literal operands runs for a literal target, not for the
+    candidate scan), and an entry
+    named by the process id in a folder outside every project that holds more than 2000 entries, which is not listed
+    (a fail-closed cap there would refuse every temp log in a large `/tmp` from a tracked cwd; the box's `/tmp` held
+    2767 entries when measured). A relative numeric target stays refused even when the write-time directory is known
+    and outside every project in play, since the allowance needs an absolute path; a variable of unknown content, a
+    substitution (a `$(date)` in a log's name among them, a cost stated to the user rather than solved) and a bare
+    expansion stay refused; `$'...'` is ANSI-C quoting in bash and zsh, a literal word (round 3: it was a non-literal
+    word dropped from a cwd in no project, and bash wrote the tracked file), one the hook cannot read inside a script
+    handed to `sh`, `dash` or `ksh` (dash reads a literal dollar), and `$"..."` stays one the hook cannot read; a
+    bare, escaped or quoted `$` is a literal dollar, so a folder or a project whose name holds one is judged by that
+    name (round 3: every dollar in a word read as an expansion, with a false refusal one way and an allowed write
+    into a tracked folder the other); `bash -O extglob -c '...'` and an option cluster holding `o` or `O` take their
+    word, so the script is read (round 3; it was taken as the operand); a command nested past 64 substitutions or
+    brace lists is marked opaque rather than followed, so it cannot overflow the stack, which evaluate read as allow
+    (round 3); the hook reads no variable named in the command to
+    resolve the word, which would read names shaped like secrets and guess at the cwd (of the environment it
+    reads HOME, for `~` and a leading `$HOME` as the shell does, TRACKCHANGES_ROOT, which stands in for the root
+    search only for a directory under it, and ROMP_SID; of those only HOME's value can appear in a refusal, and
+    only as a path the hook resolved through it, the target a `~/` or a leading `$HOME` names or the project
+    root a bare `cd` lands in, while TRACKCHANGES_ROOT is named by the variable, never by its value, and
+    ROMP_SID is never printed); a glob is otherwise
+    expanded against the filesystem as the shell expands it (a redirection onto several matches or brace
+    alternatives names each, as zsh's multios writes them; bash writes none), a brace list is expanded before
+    the operands are read, a here-string is scanned like a heredoc and a process substitution's command is read
+    like a `$(...)`; a tracked image or PDF passes by name as in the vendored guard; a source copied out of a tracked
     file is a read. Not read: rm, a mv of the tracked file elsewhere (a rename the store heals by content hash),
-    find -exec, rsync and patch. Without ROMP_SID it exits 0 before reading stdin (decision 24). Cost: about 60 ms
-    per Bash call when no target needs the link closure (a read, a target outside any project, an explicit hit on
-    the project's tracked list, an empty list); a write to a file inside a tracking project that the list does not
-    name (the common write in a project that tracks anything) adds one walk of the project's markdown tree per
-    call, store-io's `trackedClosure`, a listing of every .md under the root and a read of every tracked note, the
-    same walk the vendored guard pays on every such Write, built once and shared by all the command's targets, so
-    a directory copy pays it once: measured at 80 to 100 ms on a 3000-note tree and 130 to 170 ms on a 12000-note
-    one, more under load, growing with the project's markdown count and well under the installer's 10 s timeout.
+    find -exec, rsync and patch. Round 4 (2026-09-19, a walk-around lens) closed eight more in-model roads: cp,
+    mv, install and ln read a per-writer option table (`COPY_OPT`), so a no-argument flag (`-Z`, a bare
+    `--context`) no longer eats an operand and an option the table does not know refuses the command; `env -C DIR`,
+    `env --chdir=DIR` and `sudo -D DIR` run the inner command in DIR (`commandOf` returns its `chdir`); the
+    `PREFIXES` set gained `setsid`, `flock`, `taskset`, `chrt` and `numactl`, each peeling its operand (`flock … -c`
+    read like `sh -c`); a same-command assignment to HOME makes `$HOME` and `~` unreadable (the lexer marks a home
+    expansion 'h' and `extract` computes `homeAssigned`); a word whose literal head parents a tracked root
+    (`parentTrackedRoots`) or sits under one (`ownProjectFor` returns the root without the landing gate) is refused
+    unless every expansion is numeric; a directory the hook cannot search before a `..` is refused, not folded
+    (`foldSegments` folds a `..` through the real path and lets a stat error there propagate); and a symlink an `ln
+    -s` makes earlier in the command redirects a later literal target (`recordSymlink`, `applyInCommandLinks`). The
+    walk-around lens second pass (2026-09-19) then closed six families of in-model write the hook read yet let through,
+    each stated as one rule. (1) OPTION TABLES: the per-writer tables and `sort`'s `-o` accept a glued short form
+    (`sort -oFILE`), and `env -S`/`--split-string` runs a shell string, read like `flock -c`, not skipped as an operand
+    (`commandOf`). (2) ANY ASSIGNMENT FORM: HOME, the one variable the guard expands, as an lvalue in any form the
+    shells offer (`HOME=`, `HOME+=`, `export`/`declare`/`typeset`/`local`/`readonly HOME`, `read HOME`, `printf -v
+    HOME`, `mapfile`/`readarray HOME`, `env HOME=… cmd`, `getopts … HOME`, `for HOME in`) makes `$HOME` and `~`
+    unreadable for the whole command (`assignsHome`). (3) IN-COMMAND PREFIX MUTATIONS: an earlier `rm`/`rmdir`/`mv`/hard
+    `ln`/`cp -l`/`cp -s` that removes, renames or aliases a path makes every later word under that prefix unreadable
+    (`mutated`, `recordMutations`); the `ln -s` class-H rewrite is kept only when nothing else in the command touched
+    the link name or its source, and a relative link source resolves against the LINK's directory. (4) STAT ERRORS
+    REFUSE: a stat, lstat, realpath, readdir or config-read error other than ENOENT anywhere on a judged path (a
+    mode-000 parent, a mode-000 tracked folder or `.trackchanges`, the whole project mode 000) is an answer the hook
+    does not have, so it refuses from any cwd, naming the error and the path (`UnknownPath`, the class-G flip applied to
+    every judged path, since a directory it cannot search may itself be a tracked project; the cost, a false refusal of
+    a write under a directory the session may not search, is recoverable in one step). (5) NESTED MARKERS: a `.git`,
+    `.obsidian` or `.trackchanges` between a tracked project's root and the target refuses, naming both markers
+    (`outerTrackingRoot`); store-io's nearest-marker rule stays for the untracked case. (6) A cd THE GUARD CANNOT KNOW
+    leaves the directory unknown from that point (as `cd -` already did), so a later literal relative target refuses
+    with the construct named: a cd after `&&`/`||`, a cd in a pipeline or backgrounded, a cd under a wrapper, `pushd
+    -n` or a rotate, a physical cd (`cd -P`, after `set -P`, or an option not modelled), and a call of a function whose
+    body ran a cd; `env -C DIR` resolves its operand physically, as chdir(2) does. The guard states its contract on the
+    hook header, the vendored skill, hooks/README.md and docs/install.md: it is best-effort against known write forms,
+    its default on an unrecognised form is allow (deliberately not flipped, since flipping it would refuse almost all
+    normal work), the one class flipped to refuse is a path it cannot check (family 4), and the unmodelled writers that
+    still reach a tracked file are listed.
+    The walk-around lens third pass (2026-09-19) re-keyed six rules on what the guard can see, after a third attack
+    walked around each enumeration with the next spelling (a nameref and `select HOME in`; a glued `env -Cdocs`, an
+    abbreviated `env --chd=`, a nested `env -C docs env -C ..`, an `env -S` string beginning with env's own option; a
+    non-literal `ln -s` source; zsh's `set -o chaselinks`; a two-segment expansion under a grandparent; `cp --targ`
+    from a cwd in no project). The reviewer's rule, paraphrased: a rule implemented as an enumeration of spellings is
+    a case list, and the next spelling walks around it; a rule is keyed on a token, an unparsed option, a non-literal
+    operand or the presence of a construct. (a) BARE IDENTIFIER: the identifier of a variable the guard expands (HOME,
+    `EXPANDED_NAMES`) anywhere in the command outside a `$`-expansion makes that expansion unreadable for the whole
+    command and a bare `cd` or `cd ~` unknown (`bareExpandedNames`). (b) FULLY PARSED OR REFUSED: every wrapper in
+    `PREFIXES` is parsed against its own option table (`WRAPPER_OPT`) or the command refuses naming the option (an
+    unknown, abbreviated, glued-unknown or non-literal one), the words after it judged by their own project; a nested
+    chdir composes (`commandOf` returns its `chdirs` in order); `env -S`/`--split-string` and sudo's -e, -i, -s, -R and
+    -h are opaque and refused outright, never recursed; `time -o FILE` is a write of FILE. (c) NON-LITERAL LINK SOURCE:
+    a symbolic link whose source the guard cannot read or place marks the link name as mutated, so a later write
+    through it refuses (`recordSymlink`). (d) SHELL OPTIONS, AN ALLOWLIST (the reviewer's recast, 2026-09-19): an option
+    on `set`, `shopt`, `setopt` or `unsetopt` not on the inert lists (`INERT_SET_LETTERS`, `INERT_SET_OPTIONS`,
+    `INERT_SHOPT`, built from the shells' own option lists: exit status, tracing, history, completion, prompts, job
+    control and syntax choices that move no path) leaves the directory unknown from that point (`shellOptionChange`);
+    every option about cd, pushd, physical paths, links, globbing, brace expansion, aliases, quoting, restricted or
+    POSIX mode is off the lists, so its gap is a false refusal. (e) ANY DEPTH: the parent-prefix rule finds every
+    tracked root under the literal head at any depth, breadth-first within `PARENT_SCAN_BUDGET` entries
+    (`parentTrackedRoots`). (f) UNKNOWN OPTION REFUSES EVERYWHERE: an option a writer's table does not know refuses on
+    every path the writer is reached through, each candidate operand judged by its own project from any cwd
+    (`optionCandidates`), and the mutation and symlink recorders mark every candidate. Also from that pass: `chdir`
+    (zsh's and dash's cd, no command in bash) leaves the directory unknown, and coreutils `link` is a hard-link maker.
+    The hook header audits every list that remains for the side its gap falls on. The cost is measured against
+    `tools/romp-track-bash-guard-corpus.json` (164 ordinary developer commands and the 22 recorded false refusals, run
+    at the head before the pass and at this one): no ordinary command newly refuses; the refusals added are a `~/`
+    write beside a mention of HOME, an `env -S` line, a relative write after `shopt -s globstar`, a write through a
+    link whose source is a variable, and a variable-named file in a folder with a tracked project anywhere beneath it,
+    each pinned with its remedy. The contract paragraph is identical on the four surfaces, its allow-by-default
+    sentence and its refused-class sentence included, and its writer list names the out-of-model roads the passes
+    found (a sourced or eval'd script, a wrapper outside the set, shuf -o, a cd through CDPATH).
+    Without ROMP_SID it exits 0 before reading stdin (decision 24). Cost: about 60 ms
+    per Bash call when no target needs the link closure (a read, a literal target outside any project, an explicit
+    hit on the project's tracked list, an empty list); a write to a file inside a tracking project that the list
+    does not name (the common write in a project that tracks anything) adds one walk of the project's markdown
+    tree per call, store-io's `trackedClosure`, a listing of every .md under the root and a read of every tracked
+    note, the same walk the vendored guard pays on every such Write, built once and shared by all the command's
+    targets, so a directory copy pays it once: measured at 80 to 100 ms on a 3000-note tree and 130 to 170 ms on
+    a 12000-note one, more under load, growing with the project's markdown count and well under the installer's
+    10 s timeout. A write whose target the hook cannot read pays the same walk only when the tracked list alone
+    does not settle whether its project is in play (a figures-only or fully vetoed list, or a copy whose literal
+    landing folder has no refusable entry at or below it, which also pays a listing of that folder and a guard
+    check of each of its entries first, up to the 2000-entry cap), a numeric target outside every project
+    included when the cwd's project lists nothing refusable; then one walk per call, shared with the literal
+    targets; none when a listed refusable entry settles it, and none when the list is empty (review round 2,
+    2026-09-18; `tools/file-review-plan-bash-guard-review.test.mjs` counts the walks).
     `tools/romp-track-bash-guard.test.mjs` drives the grammar and the process;
     `tools/romp-track-bash-guard-shapes.test.mjs`, from the review's first round (2026-09-10), the shapes that
     round found misread, each in both directions where it has two (a cd inside a subshell or a body, a heredoc

@@ -771,7 +771,9 @@ words. A comment an older session's edit answered wears **answered by a change**
 tools refuse to rewrite an image or a PDF as text, so a tracked folder may hold figures. A session
 that tries to write a tracked file any other way, with its editing tools or a shell command such
 as `cp`, `tee`, `sed -i` or a `>` redirection, is refused and pointed at its track-edit command,
-so its edits still come to you as changes.
+so its edits still come to you as changes. In a project that tracks files, a shell write whose
+target is not spelled out (a variable or a substitution standing for the path) is refused too,
+and the session is asked for the literal path.
 
 **Edit** works while changes are pending. The editor shows them inline, an insertion tinted
 and a deletion struck, and typing around them moves them with the text. Click a change to

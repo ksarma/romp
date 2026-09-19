@@ -139,9 +139,74 @@ the clone updates it:
   registered as a `PreToolUse` hook on `Write|Edit|MultiEdit`; it stops a session from writing a
   tracked file silently, and it does nothing in a Claude Code session Romp did not start. Romp's
   own `romp-track-bash-guard.mjs`, registered on `Bash`, does the same for a write made through a
-  shell command (a `cp` or `tee` onto the file, a `>` redirection, `sed -i`). If you
-  had installed track-changents yourself, the installer re-points those links at the bundled copy,
-  which carries fixes the checkout lacks, and says so.
+  shell command (a `cp` or `tee` onto the file, a `>` redirection, `sed -i`). In a project that
+  tracks files it also refuses a shell write whose target it cannot read (a variable, a
+  substitution, a glob or brace list it cannot expand) and asks for the path spelled out; a copy
+  whose name it cannot read into a folder where a tracked file could land is refused wherever the
+  command is run from, and so is a relative path after a `cd` the guard cannot follow (to a name
+  the shell fills in, inside an `if` or a loop, or to a folder that does not exist yet), with the
+  reason. A temp file named only by the shell's process id (`$$`), at an absolute path where no
+  tracked file could land (outside the project you are working in, and not in a folder of another
+  project where a tracked file could land), still runs; a name built from `$RANDOM` or `$SECONDS`
+  is refused, since a script can reassign those, and the same `$$` name written as a relative path,
+  from a session in such a project, is refused. It also reads the common command wrappers `setsid`,
+  `flock`, `taskset`, `chrt` and `numactl` to the write inside them, runs `env -C DIR`, `env
+  --chdir=DIR` and `sudo -D DIR` in DIR, refuses a `cp`/`mv`/`install`/`ln` option it does not know
+  (spell the command without it), treats `$HOME` and `~` as unreadable once the command reassigns
+  HOME, and refuses a variable or substitution whose literal head is above or under a tracked
+  project (its value could name or climb into one). A second pass (2026-09-19) added six more rules:
+  the option tables accept a glued short form (`sort -oFILE`), and `env -S` (read then as a shell
+  string) is refused outright since the third pass, below; an assignment to HOME in any form
+  (`HOME+=`, `read HOME`, `printf -v HOME`, `export`/`declare`/`local HOME`, `for HOME in`, and since
+  the third pass any mention of HOME outside an expansion) makes `$HOME` and `~` unreadable for the
+  whole command; an earlier `rm`, `mv`, hard `ln`, `cp -l` or `cp -s` that removes, renames or
+  aliases a path makes a later write under it unreadable; a stat or config-read error other than
+  not-found anywhere on a path it checks (a mode-000 folder, `.trackchanges` or project) refuses from
+  any working directory, naming the error; a `.git`, `.obsidian` or `.trackchanges` between a tracked
+  project and the file refuses, naming both markers; and a `cd` it cannot know ran in this shell
+  (after `&&`/`||`, in a pipeline, backgrounded, under a wrapper, `pushd -n`, a physical `cd -P` or
+  `set -P`, or a call of a function that cd's) leaves the directory unknown, so a later relative write
+  refuses. A third pass (2026-09-19) re-keyed six of those rules on what the guard can see, not on a
+  list of spellings: the bare identifier HOME anywhere in the command outside a `$`-expansion (a
+  nameref, `select HOME in`, a glued `printf -vHOME`, `unset HOME`, a mention in an argument) makes
+  `~` and `$HOME` unreadable and a bare `cd` or `cd ~` unknown; every wrapper it peels (`env`,
+  `sudo`, `nice`, `nohup`, `time`, `timeout`, `ionice`, `stdbuf`, `setsid`, `flock`, `taskset`,
+  `chrt`, `numactl`, `command`, `builtin`, `exec`) is parsed in full against its own option table or
+  the command is refused naming the option (an unknown, abbreviated or non-literal one: spell the
+  long form the guard knows, or drop the wrapper), a glued `env -Cdocs` is a chdir, a nested `env -C a
+  env -C b` enters a then b under a, `env -S` and sudo's `-e`, `-i`, `-s`, `-R` and `-h` are refused
+  outright, and `time -o FILE` is a write of FILE; an `ln -s` whose source is not literal makes the
+  link name unknown, so a later write through it refuses; a `set`, `shopt`, `setopt` or `unsetopt`
+  option not on the inert allowlist (`set -e`, `-u`, `-x`, `-v`, `-f`, `-n`, `-C`, `-o errexit`,
+  `nounset`, `pipefail`, `xtrace`, `verbose`, `noclobber`, `noglob`, and the options about history,
+  completion, prompts and job control pass; anything about cd, physical paths, links, globbing, brace
+  expansion, aliases, quoting or POSIX mode, `set -P`, `set -o chaselinks`, `shopt -s globstar`, does
+  not) leaves the directory unknown, so a later relative write refuses (spell the target absolutely);
+  the parent-prefix rule finds a tracked project at any depth under the literal head, so
+  `../../$x/docs/report.md` refuses when `$x` could spell the way down to one; an option a writer's
+  table does not know (`cp --targ`) refuses wherever the writer is reached, its operands judged by
+  their own project from any cwd; `chdir` (zsh's and dash's cd) leaves the directory unknown, and
+  coreutils `link` is a hard-link maker. The costs are measured against
+  `tools/romp-track-bash-guard-corpus.json` (164 ordinary developer commands stay allowed; the
+  refusals added are a `~/` write beside a mention of HOME, an `env -S` line, a relative write after
+  `shopt -s globstar`, a write through a link whose source is a variable, and a variable-named file in
+  a folder with a tracked project anywhere beneath it). This guard is best-effort against known write
+  forms: it refuses the shell writes it models and, by design, allows anything it does not recognise,
+  so it never blocks ordinary work it cannot read; it is a backstop, not a complete boundary. The
+  allow-by-default for an unmodelled writer is deliberately not flipped, since flipping it would
+  refuse almost all normal work. What it does refuse, while a tracked project is in play, is a write
+  it reads but cannot place: a target it cannot read, a path it cannot check (a stat error other than
+  not-found), an option on a modelled writer or wrapper it does not parse in full, an env -S string,
+  a shell option it does not know to be inert for paths, a link whose source it cannot read, and a
+  `~` or `$HOME` write beside a mention of HOME. These write forms are not modelled and still reach a
+  tracked file: rsync; awk with a redirect inside its program; ed; ex; make; find with -delete or
+  -exec; a git subcommand that writes the working tree (checkout, stash, apply, reset, rm, clean,
+  mv); a computed path inside an interpreter (python3 -c, node -e); a script the shell reads from
+  elsewhere (eval, xargs, a sourced file, trap, a command whose name is an expansion, a script held
+  in a variable); a wrapper outside the guard's set (unshare, nsenter, script, setarch, setpriv);
+  shuf -o; a cd through CDPATH; and a leading opaque expansion from a cwd outside every project. If
+  you had installed track-changents yourself, the installer re-points
+  those links at the bundled copy, which carries fixes the checkout lacks, and says so.
 
 ### Manual and custom installs
 

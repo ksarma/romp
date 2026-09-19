@@ -14,7 +14,10 @@
 // tree's modules are named, so the omission failed nothing. This module holds the cost sentence to the code it
 // describes (the closure's place in the verdict's order, the empty-list return before it, the once-per-call Map
 // the targets share) and to the hook's behavior on a scratch project (a read, an explicit hit and an empty list
-// walk nothing; a write the list does not name walks the root once, however many targets); the shapes module to
+// walk nothing; a write the list does not name walks the root once, however many targets; and, since the
+// non-literal rule's round 2 of 2026-09-18, a non-literal target pays the walk only when the tracked list alone
+// does not settle whether the project is in play: a figures-only or fully vetoed list, or a copy into a landing
+// folder with no refusable entry at or below it, one walk shared with the literal targets); the shapes module to
 // the pins the plan credits it with; and the inventory to the tree: every romp-track-bash-guard*.test.mjs under
 // tools/ is named in decision 47, in the Tests bullet and in the hook's row of hooks/README.md, and every
 // file-review-plan-bash-guard*.test.mjs in the bullet, so a later round's module fails here by name. Synthetic:
@@ -74,6 +77,15 @@ test('decision 47 states the cost with its condition: 60 ms without the closure,
   assert.ok(d47.includes('the same walk the vendored guard pays on every such Write'));
   assert.ok(d47.includes('built once and shared by all the command\'s targets, so a directory copy pays it once'));
   assert.ok(d47.includes('growing with the project\'s markdown count and well under the installer\'s 10 s timeout'));
+  // review round 2 (2026-09-18): the non-literal rule is a second trigger of the walk, stated with its condition,
+  // and the no-closure list names a LITERAL target outside any project, since a non-literal one from a cwd whose
+  // project lists nothing refusable pays the walk to learn so
+  assert.ok(d47.includes('(a read, a literal target outside any project, an explicit hit on the project\'s tracked list, an empty list)'), 'the no-closure list is qualified');
+  assert.ok(d47.includes('A write whose target the hook cannot read pays the same walk only when the tracked list alone does not settle whether its project is in play'), 'the second trigger, with its condition');
+  assert.ok(d47.includes('a figures-only or fully vetoed list, or a copy whose literal landing folder has no refusable entry at or below it'), 'the two cases');
+  assert.ok(d47.includes('a listing of that folder and a guard check of each of its entries first, up to the 2000-entry cap'), 'the landing scan\'s own cost');
+  assert.ok(d47.includes('one walk per call, shared with the literal targets; none when a listed refusable entry settles it, and none when the list is empty'), 'the corrected statement: not one walk whatever the verdict');
+  assert.ok(!d47.includes('whatever the verdict'), 'the rejected wording is absent');
   assert.ok(!/\u2014/.test(d47), 'no em dash');
 });
 
@@ -88,7 +100,7 @@ test('the hook agrees: the closure comes after the veto and the explicit list, n
   assert.ok(veto >= 0 && explicit > veto && empty > explicit && memo > empty && walk > memo, 'the veto, the explicit list, the empty list, the memo, then the walk');
   const evaluateSrc = hook.slice(hook.indexOf('export function evaluate(raw)'), hook.indexOf('const invokedDirectly'));
   assert.ok(evaluateSrc.includes('const closures = new Map();'), 'one Map per call');
-  assert.ok(evaluateSrc.includes('if (!isGuardedPath(t.path, closures)) continue;'), 'handed to every target');
+  assert.ok(evaluateSrc.includes('try { guarded = isGuardedPath(t.path, closures); }') && evaluateSrc.includes('if (!guarded) continue;'), 'handed to every target, its stat error a refusal (family 4)');
   assert.ok(hook.includes('ONE walk of the project\'s markdown tree per call'), 'the hook\'s header states the same cost');
   // the walk is what the plan says it is: store-io lists every .md under the root and reads every tracked note
   const closure = storeIo.slice(storeIo.indexOf('export function trackedClosure(vaultRoot)'), storeIo.indexOf('export function isTrackedFile'));
@@ -138,6 +150,31 @@ test('on a scratch project the condition holds: a read, an explicit hit and an e
     config([]);
     assert.equal(walks(() => { reason = evaluate(payload('echo x > other.md')); }), 0, 'an empty list walks nothing');
     assert.equal(reason, null);
+    // Review round 2 (2026-09-18): the non-literal rule's cost was never pinned, and the module passed 5/5 while
+    // decision 47's cost sentence was wrong for it. The walk is paid when the tracked list alone does not settle
+    // whether the project is in play: a figures-only or fully vetoed list (the closure is asked whether a note
+    // it reaches is refusable), or a copy whose literal landing folder has no refusable entry at or below it
+    // (the closure is asked whether a note below it is). Either way one walk per call, shared with the literal
+    // targets; none when a listed refusable entry settles it, none when the list is empty (above).
+    config(['figs/plot.png']);
+    assert.equal(walks(() => { reason = evaluate(payload('echo x > "$OUT"')); }), 1, 'a non-literal target in a figures-only project: one walk to learn no note is refusable');
+    assert.equal(reason, null, 'and allowed');
+    assert.equal(walks(() => { reason = evaluate(payload(`echo x > ${path.join(path.dirname(proj), 'elsewhere-$$.log')}`)); }), 1, 'a numeric target outside every project pays it from that cwd too: the hits are built before the drop');
+    assert.equal(reason, null);
+    const full = (tracked, untracked) => fs.writeFileSync(path.join(proj, '.trackchanges', 'config.json'), JSON.stringify({ v: 2, tracked, untracked }));
+    full(['docs/report.md'], ['docs/report.md']);   // a real veto: the exact vault-relative name (a glob would not veto, and the project would be refused with no walk)
+    assert.equal(walks(() => { reason = evaluate(payload('cp "$SRC" "$DST"')); }), 1, 'a non-literal target in a fully vetoed project: one walk');
+    assert.equal(reason, null, 'and allowed');
+    config(['docs/report.md']);
+    assert.equal(walks(() => { reason = evaluate(payload('echo x > "$OUT"')); }), 0, 'a listed refusable entry settles it: refused with no walk');
+    assert.ok(reason && /is not a literal path/.test(reason));
+    fs.mkdirSync(path.join(proj, 'scratch'));
+    assert.equal(walks(() => { reason = evaluate(payload('cp "$SRC" scratch/')); }), 1, 'a copy into a landing folder no tracked entry covers, in the ordinary project: one walk (after a listing of the folder) to learn no note below it is reachable');
+    assert.equal(reason, null, 'and allowed');
+    assert.equal(walks(() => { reason = evaluate(payload('echo x > other.md; cp "$SRC" scratch/')); }), 1, 'shared with the literal targets: one walk for both');
+    assert.equal(reason, null);
+    assert.equal(walks(() => { reason = evaluate(payload('cp "$SRC" docs/')); }), 0, 'a landing folder with a refusable entry below it: refused with no walk');
+    assert.ok(reason && /is not a literal path/.test(reason));
   } finally {
     if (saved === undefined) delete process.env.TRACKCHANGES_ROOT; else process.env.TRACKCHANGES_ROOT = saved;
     try { fs.rmSync(proj, { recursive: true, force: true }); } catch { /* ignore */ }

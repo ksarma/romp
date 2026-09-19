@@ -59,6 +59,81 @@ heredoc included), no `sed -i` or `perl -i`, no python `open(..., 'w')` or node
 the write: its status is 0 when tracking is ON, so `track-config ... && cp ...` runs
 the copy on exactly the file it must not touch.
 
+In a project that tracks files, a shell write whose target is not a literal path
+is refused as well: a variable such as `"$DST"`, a `$(...)`, a glob or brace list
+the guard cannot expand, and a relative path after a `cd` the guard cannot follow
+(one to a name the shell fills in, one inside an `if` or a loop, one to a folder
+that does not exist yet). The guard cannot tell which file such a word names and
+does not read your variables to find out (it reads `HOME` alone, so a leading
+`$HOME/` is read as `~/` is), so the refusal holds whatever the word would expand to.
+One exception: a target whose only expansions are `$$` or `${$}`, the shell's
+process id, at an absolute path where no tracked file could land (outside the
+project you are working in, and not in a folder of another project that tracks a
+file there), is allowed: `/tmp/build-$$.log` runs. Nothing else is: `$RANDOM`,
+`$SECONDS` and every other name can be unset or shadowed and then hold a path, so
+`log.$RANDOM` inside a tracked project is refused, in every shell, with the reason
+and a way forward. Each refusal says what to do. Spell the path out (a tracked file
+then takes its change through `track-edit`, a file outside the project an ordinary
+write), name a temp file with `$$`, give a folder a literal name of your own, or
+write outside the tracked project.
+
+The guard also reads the common wrappers `setsid`, `flock`, `taskset`, `chrt` and
+`numactl` to the write inside them, runs `env -C DIR` and `sudo -D DIR` in DIR,
+refuses a `cp`/`mv`/`install`/`ln` option it does not know, treats `$HOME` and `~`
+as unreadable once the command reassigns HOME, and refuses a variable or
+substitution whose literal head is above or under a tracked project. A second pass
+added six more: the tables accept a glued short form (`sort -oFILE`); an
+assignment to HOME in any form (`HOME+=`, `read HOME`, `printf -v HOME`,
+`export`/`declare`/`local HOME`, `for HOME in`, and the rest) makes `$HOME` and `~`
+unreadable for the whole command; an earlier `rm`, `mv`, hard `ln`, `cp -l` or `cp
+-s` that removes, renames or aliases a path makes a later write under it
+unreadable; a stat or config-read error other than not-found anywhere on a path it
+checks (a mode-000 folder, `.trackchanges` or project) refuses from any working
+directory; a `.git` or `.trackchanges` between a tracked project and the file
+refuses; and a `cd` it cannot know ran in this shell (after `&&`/`||`, in a
+pipeline, backgrounded, under a wrapper, `pushd -n`, a physical `cd -P`, or a call
+of a function that cd's) leaves the directory unknown, so a later relative write
+refuses. A third pass re-keyed six of those rules on what the guard can see, not
+on a list of spellings, so the refusal you meet is one of these: any mention of
+HOME outside an expansion (`declare -n r=HOME`, `select HOME in`, `printf -vHOME`,
+`unset HOME`, the word in an argument) makes `~` and `$HOME` unreadable and a bare
+`cd` or `cd ~` unknown; a wrapper (`env`, `sudo`, `nice`, `nohup`, `time`,
+`timeout`, `ionice`, `stdbuf`, `setsid`, `flock`, `taskset`, `chrt`, `numactl`,
+`command`, `builtin`, `exec`) carrying an option it does not parse in full (an
+unknown, abbreviated or non-literal one, `env --chd=docs`) is refused naming the
+option (spell the long form, or drop the wrapper), a glued `env -Cdocs` is a chdir,
+a nested `env -C a env -C b` enters a then b, `env -S` is refused outright and so
+are sudo's `-e`, `-i`, `-s`, `-R` and `-h`, and `time -o FILE` writes FILE; an `ln
+-s` with a link whose source is not literal makes the link name unknown, so a
+later write through it refuses; a `set`, `shopt`, `setopt` or `unsetopt` naming a
+shell option it does not know to be inert for paths (`set -e`, `-u`, `-x`, `-o
+pipefail` and the options about history, completion, prompts and job control pass;
+`set -P`, `set -o chaselinks`, `shopt -s globstar` and anything about cd, links,
+globbing, aliases or quoting do not) leaves the directory unknown, so a later
+relative write refuses (spell the target absolutely); a variable in a path whose
+literal head has a tracked project at any depth beneath it refuses, naming the
+projects; and an option a writer does not know (`cp --targ`) refuses wherever the
+writer is reached, from any working directory. This guard is best-effort against
+known write forms: it refuses the shell writes it models and, by design, allows
+anything it does not recognise, so it never blocks ordinary work it cannot read; it
+is a backstop, not a complete boundary. The allow-by-default for an unmodelled
+writer is deliberately not flipped, since flipping it would refuse almost all
+normal work. What it does refuse, while a tracked project is in play, is a write it
+reads but cannot place: a target it cannot read, a path it cannot check (a stat
+error other than not-found), an option on a modelled writer or wrapper it does not
+parse in full, an env -S string, a shell option it does not know to be inert for
+paths, a link whose source it cannot read, and a `~` or `$HOME` write beside a
+mention of HOME. These write forms are not modelled and still reach a tracked
+file: rsync; awk with a redirect inside its program; ed; ex; make; find with
+-delete or -exec; a git subcommand that writes the working tree (checkout, stash,
+apply, reset, rm, clean, mv); a computed path inside an interpreter (python3 -c,
+node -e); a script the shell reads from elsewhere (eval, xargs, a sourced file,
+trap, a command whose name is an expansion, a script held in a variable); a
+wrapper outside the guard's set (unshare, nsenter, script, setarch, setpriv); shuf
+-o; a cd through CDPATH; and a leading opaque expansion from a cwd outside every
+project. Whichever way you write a tracked file, use `track-edit`, so your change
+comes back to be accepted or rejected.
+
 For ANY change to the file, use the CLI, NOT the Edit/Write/MultiEdit tools:
 
 - **Make or replace text** — applies the change AND records it as your tracked
