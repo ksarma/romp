@@ -13,6 +13,7 @@ temp transcript files (the size is the kernel's ranking); synthetic only (the no
 import inspect
 import json
 import os
+import sys
 import tempfile
 import time
 from unittest import mock
@@ -139,6 +140,11 @@ class _ColdTabFixture(unittest.TestCase):
 
     def _skipped(self):
         return km._PERF_STATS.snapshot()["builds"]["chat"]["coldSkipped"]
+
+
+class ColdTabGate(_ColdTabFixture):
+    """The cold-tab gate over the real _push and _push_session_now (the module docstring): the sixteen tests of the
+    2026-09-14 change and its review rounds."""
 
     def test_01_a_skeleton_page_on_a_cold_kernel_gets_only_its_tab_built(self):
         c = self._client(reconnect=True, active=S1)          # the restart reload's dial: the diet, and the tab on screen
@@ -364,14 +370,17 @@ class _ColdTabFixture(unittest.TestCase):
         self.assertIn("`coldSkipped`", doc)
 
 
-class CensusOncePerPush(ColdTabGate):
+class CensusOncePerPush(_ColdTabFixture):
     """The skeleton question is asked ONCE per tab per push (2026-09-19 review, kernel-3 and correctness-1): the cold gate asks
     it live for the tabs it walks (a click landing mid-loop must still build its tab in the same push), and the warm-tab
     census (memos.chatSig) asks it once after the loop for the tabs the gate did not walk. Four tabs with transcripts and
     four chat pages each holding every tab as a skeleton, over the REAL km._push, with spies on the per-client leaf
     (_skeleton_held_here), the census helper and the gate's walk: a one-tab harness could not tell a census before the loop
     from one inside it, nor the gate's walk from the census's (the census once asked about every tab before the loop and
-    the gate asked again about the cold ones, 32 leaf calls per cold push here against 16)."""
+    the gate asked again about the cold ones, 32 leaf calls per cold push here against 16). Inherits the test-less
+    fixture, not ColdTabGate (regression-2, round two): as a subclass of ColdTabGate it collected and ran that class's
+    tests a second time for no coverage (FixtureShape states the counts). Subclassing a test-bearing class is a
+    suite-wide idiom on main, untouched by this branch; by the rulings this module alone changes, and no sweep is made."""
 
     def _four_transcripts(self):
         with open(self.paths[S4], "w") as f:              # the fixture's S4 has none: give every tab one
@@ -451,6 +460,32 @@ class CensusOncePerPush(ColdTabGate):
         km._push([c])
         self.assertEqual(self.built, [S4, S2], "S4 first (no transcript), then S2 in the same push: the gate reads the set live")
         self.assertEqual(self._skipped(), 2, "S1 and S3 stay skipped")
+
+
+class FixtureShape(unittest.TestCase):
+    def test_no_class_here_inherits_a_same_file_class_that_carries_tests(self):
+        """regression-2 (2026-09-19 round-2 review): CensusOncePerPush subclassed ColdTabGate and so collected and ran its
+        sixteen tests a second time: `pytest --collect-only tests/test_cold_tab_gate.py` at c610f89ab collected 41 tests
+        for 25 distinct, the sixteen twice (the refuters' AST sweep counted 29 same-file instances of the idiom on main,
+        untouched by this branch; by the rulings this module alone changes, so this pin reads this module and no other).
+        The fixture is the test-less _ColdTabFixture now and both classes inherit it. Pinned by introspection over the
+        classes this module defines, not over their source: for every TestCase here, no other same-module class that
+        defines a test_ method is in its MRO (an alias of a test-bearing class as the base is the same class object, so it
+        is caught, where an AST walk over base names was not: the round-3 review), the fixture defines no test, and
+        ColdTabGate defines the sixteen the docstrings here name, so a test added to the gate updates this count and them.
+        Re-inheriting ColdTabGate, or moving a test_ method into the fixture, reds it."""
+        mod = sys.modules[__name__]
+        classes = {c for c in vars(mod).values()
+                   if isinstance(c, type) and issubclass(c, unittest.TestCase) and c.__module__ == __name__}
+
+        def own_tests(c):
+            return sorted(k for k, v in vars(c).items() if k.startswith("test_") and callable(v))
+        carrying = {c for c in classes if own_tests(c)}
+        self.assertIn(ColdTabGate, carrying, "premise: the walk sees the test-bearing classes")
+        offenders = sorted((c.__name__, b.__name__) for c in classes for b in c.__mro__[1:] if b in carrying)
+        self.assertEqual(offenders, [], "a class inheriting a same-file test-bearing class collects its tests twice: %r" % (offenders,))
+        self.assertEqual(own_tests(_ColdTabFixture), [], "the fixture defines no test")
+        self.assertEqual(len(own_tests(ColdTabGate)), 16, "ColdTabGate defines the sixteen tests the docstrings here name")
 
 
 class ProvisionalLegsMatchBuilt(unittest.TestCase):
