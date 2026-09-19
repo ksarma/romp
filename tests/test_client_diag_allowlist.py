@@ -478,6 +478,20 @@ class ClientDiagAllowlistTest(unittest.TestCase):
             self.assertEqual(len(row["data"]["frames"]), 2 * (max_types + 1), "every frame type intact")
         self.assertEqual(self.rows()[-1]["data"]["wsBytesByHost"], by_host, "the per-host map lands whole: the admit filters top-level keys only, the scrub walks it")
 
+    def test_the_docs_positions_count_is_max_hosts(self):
+        # docs/reference.md states in a word how many positions a minute row names; this ties the word to MAX_HOSTS as
+        # perf-telemetry.ts declares it, so a later change to the constant cannot leave the doc stale silently (the
+        # worst-case row test above derives the row from the same constant and guards it at 4).
+        src = open(os.path.join(UI, "perf-telemetry.ts"), encoding="utf-8").read()
+        m = re.search(r"^export const MAX_HOSTS = (\d+);", src, re.M)
+        self.assertIsNotNone(m, "MAX_HOSTS")
+        words = ("zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine")
+        self.assertLess(int(m.group(1)), len(words), "a count this test can spell")
+        doc = open(os.path.join(os.path.dirname(HERE), "docs", "reference.md"), encoding="utf-8").read()
+        said = re.findall(r"at most (\w+) positions named", doc)
+        self.assertEqual(len(said), 1, "the reference doc states the count once, in the minute row's wsBytesByHost sentence")
+        self.assertEqual(said[0], words[int(m.group(1))], "the doc's word for the positions named is MAX_HOSTS")
+
     def test_one_fixture_row_per_poster_call_site_passes_whole_and_the_table_names_nothing_else(self):
         """The table against the posters: one synthetic row per clientDiag call site in the bundles (render.ts and
         scroll-write.ts, federation.ts, feed.ts, fleet.ts, waiting.ts, strip.ts) and the shell scripts in kernel.py, with the

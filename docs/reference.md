@@ -4849,9 +4849,11 @@ The two rows, as the kernel writes them (`t` its clock, `wid` the dashboard id):
   never reused: a host that detaches keeps its position and reads 0 from
   then on, a host that re-attaches counts on under its old position, and a
   reload starts over, so `h1` can mean a different host after a reload. The
-  row carries positions, never host names; the file's federation and shell
-  surfaces carry host names, so a reader holding both surfaces can map a
-  position to a name within one page life. The key is absent, not `null`,
+  perf minute row carries positions, never names; the file's shell and
+  federation surfaces and the kernel's own `wsopen` row (`kind` `hub`, above)
+  carry host names already under their `host` key, so a reader holding the
+  perf row and any of those three can map a position to a name within one
+  page life. The key is absent, not `null`,
   on a page that never attached a remote host and on the shell. `rafGap` is
   `{n, worst}`, the animation-frame gaps over 50 ms while the document was
   visible, from a loop that runs only while share is on and the document

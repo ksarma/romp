@@ -3518,10 +3518,11 @@ CLIENT_DIAG_KEYS = {
                        "wsBytesByHost")),   # the shared field the user approved on 2026-09-19 (the bytes each attached host sent, one number per host, no
                                             # content): {h1..h4: int, hmore?: int}, the text-frame characters each REMOTE host's sockets delivered in the
                                             # minute (wsBytes's unit; the two are disjoint), keyed by the host's POSITION on the page, h1 the first remote
-                                            # host the page attached, per page life. Positions, never names: this row carries no host name. The file's
-                                            # federation and shell surfaces carry host names already (their `host` key above and below, an earlier
-                                            # approval), so a reader holding both surfaces can map a position to a name within one page life; this
-                                            # entry says that and no more.
+                                            # host the page attached, per page life. The perf minute row carries positions, never names; the file's shell
+                                            # and federation surfaces and the kernel's own wsopen row carry host names already (the `host` key of the shell
+                                            # and federation entries below, an earlier approval, and of the kernel entry below, written by one of the kernel's four
+                                            # direct writers, _note_ws_open, as the host a hub's spliced upgrade was relayed to), so a reader holding the perf
+                                            # row and any of those three can map a position to a name within one page life; this entry says that and no more.
     "pane-shim": frozenset(("app", "why", "ready", "quietMs", "hidden",                                         # staleDiag rows
                             "decision", "resumed", "hiddenMs", "frozenMs", "quietAtResumeMs", "resent",         # return
                             "ms", "bytesSince", "redialed",                                                     # return-fresh
