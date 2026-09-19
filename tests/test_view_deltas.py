@@ -1359,8 +1359,9 @@ class CatchUpRoadsOfAWholeFrameClient(unittest.TestCase):
           about 72 percent on the kernel's recorded 660-card shape by its figures, 0.6 of 5.75 MB over 7.3 KB a card, derived
           and not measured), and a shrink whose del list reaches 0.6 of what remains, which needs a light remainder (30 to 2
           cards on ONE session crosses whole; 30 to 0 on the 8-session board is a patch, the ledgers and scalars that remain
-          outweighing the del list; on the recorded shape 660 dels are about 50 KB against a 0.95 MB remainder, so that road
-          is closed there). Every other change confined to the cards is never a road.
+          outweighing the del list; on the recorded shape 660 dels are about 50 KB against a 0.95 MB remainder, 0.05, derived
+          from its figures like the 72 percent, so that road is closed there). Every other change confined to the cards is
+          never a road.
       (c) the timeline bars: the remainder is three fields (type, now, warming), so a warming flip and an appended bar are
           deltas on the lab's board and on a lane of three bars; the guard is dead for the bars.
       (d) a fresh client (a relay redial opens a fresh upstream socket, a new client dict) is served whole once and deltas
@@ -1411,7 +1412,7 @@ class CatchUpRoadsOfAWholeFrameClient(unittest.TestCase):
         ratio = len(self._restall(p2)) / len(json.dumps(p2))
         if frames[0]["type"] == "delta":
             self.assertEqual(frames[0].get("restAll"), 1); self.assertEqual(frames[0]["coll"], {})
-            self.assertEqual(len(json.dumps(frames[0])), len(self._restall(p2)), "the constructed delta is the kernel's, byte for byte")
+            self.assertEqual(json.dumps(frames[0]), self._restall(p2), "the constructed delta is the kernel's, byte for byte")
             self.assertLess(ratio, km._DELTA_MAX_FRACTION, "a delta because it stays under the guard")
         else:
             self.assertEqual(frames[0]["type"], "feed")
@@ -1536,7 +1537,7 @@ class CatchUpRoadsOfAWholeFrameClient(unittest.TestCase):
         ratio = len(delta) / len(json.dumps(p2))
         if frames[0]["type"] == "delta":
             self.assertEqual(set(frames[0]["coll"]), {"asks"}); self.assertNotIn("restAll", frames[0])
-            self.assertEqual(len(json.dumps(frames[0])), len(delta), "the constructed delta is the kernel's, byte for byte")
+            self.assertEqual(json.dumps(frames[0]), delta, "the constructed delta is the kernel's, byte for byte")
             self.assertLess(ratio, km._DELTA_MAX_FRACTION, "a delta because it stays under the guard")
         else:
             self.assertEqual(frames[0]["type"], "feed")

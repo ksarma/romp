@@ -862,7 +862,9 @@ class CornerOldLocal(_Corner):
     only when the remote serves a change WHOLE. The rule is a ratio, never a category: an un-updated hub applies whole
     frames only, so it drops any change whose patch stays under 0.6 of the whole frame (the size guard, kernel.py
     _DELTA_MAX_FRACTION), and on the kernel's recorded shape (about 660 cards, asks 4.8 MB against 0.95 MB of everything
-    else) that is nearly every change: a needs-you flip is a 0.34 MB patch there. The roads to a whole frame, measured
+    else) that is nearly every change: a needs-you flip is a patch there (about 0.96 MB, 0.17 of the frame, derived from
+    its figures, the flipped card plus the whole 0.95 MB remainder; review round 4 measured the same flip at 0.34 MB on
+    its own synthetic 660-card board, whose remainder was 0.075 of a 4.45 MB frame). The roads to a whole frame, measured
     against the encoder (review round 4 of PR 815 driving km._send_slot on a synthetic 8-session board, 2026-09-19; pinned
     in tests/test_view_deltas.py CatchUpRoadsOfAWholeFrameClient), are a relay redial (a fresh upstream socket is served
     whole once); the size guard, when the PATCH reaches 0.6 of the frame: for a remainder move the patch is the changed
@@ -873,7 +875,8 @@ class CornerOldLocal(_Corner):
     changed cards alone, which reaches 0.6 for a change touching most cards (20 of 30 on the class's 8-session board;
     about 72 percent on the recorded shape, derived from its figures) or for a shrink whose del list reaches 0.6 of
     what remains, which needs a light remainder (30 to 2 cards on one session crosses; 30 to 0 on eight sessions is a
-    patch; on the recorded shape 660 dels against the 0.95 MB remainder are 0.05, so that road is closed there); and an
+    patch; on the recorded shape 660 dels against the 0.95 MB remainder are 0.05, derived from its figures like the 72
+    percent, so that road is closed there); and an
     encoder error. An unkeyable collection is never frozen at all (such a remote sends whole frames always). Every other
     change confined to the cards (a card appearing, leaving, moving column or changing text) is lost until reload on
     every board, and the busier the board, the less often an old page catches up. That is why the card is a completed
@@ -882,8 +885,9 @@ class CornerOldLocal(_Corner):
     guard (whole feed frames to a relay socket that announces no cap; the module docstring says why it is not taken
     here) would also cover the old hub's feed during a mixed-build window, not its timeline. A dashboard served by a
     box that has not taken PR 815 is in this corner; whether it catches up is its board's ratio, and on the measured
-    live board the guard never fires on a remainder move: the phone's 86 rows in 2.4 minutes, rev 1 to 86 monotone,
-    were such a board, one that caught up not once in the window."""
+    live board a remainder move alone never fires the guard (one coinciding with a change touching most cards would):
+    the phone's 86 rows in 2.4 minutes, rev 1 to 86 monotone, were such a board, one that caught up not once in the
+    window."""
 
     @classmethod
     def _knobs(cls):
