@@ -307,6 +307,67 @@ class SpawnSpec(unittest.TestCase):
                          "the overstatement is gone: the host's roads never named the directory in the launch error")
         self.assertIn("point the state root there, `ROMP_STATE_DIR` or `XDG_STATE_HOME`", para, "and the operator's remedy beside it")
 
+    def test_a_pre_existing_looser_spawn_json_is_tightened_before_the_overlay_lands_in_it(self):
+        # Until 2026-09-18 the writer opened spawn.json O_CREAT|O_TRUNC at 0600 and chmod'd it AFTER the write: a
+        # fresh file was born 0600, but a pre-existing looser one kept its mode through the truncating open, took
+        # the environment overlay at that mode, and tightened only afterwards. The mode now goes onto the descriptor
+        # before the write (PR 789, review round 1: the same write-then-tighten window the reg and the parked-ops
+        # mirror lost). The FILE's chmod is interposed and NOT performed, so the old order leaves it at 0644 and the
+        # case reads the descriptor's mode alone; the directory's 0700 chmod stays a real one.
+        d = tempfile.mkdtemp()
+        p = ht.host_dir(d, SID) / "spawn.json"
+        p.parent.mkdir(parents=True)
+        p.write_text("{}")
+        os.chmod(p, 0o644)
+        fchmods, chmods = [], []
+        real_fchmod, real_chmod = os.fchmod, os.chmod
+
+        def fchmod_probe(fd, mode):
+            fchmods.append((mode, os.fstat(fd).st_size))         # 0 bytes at that moment: before the first write
+            return real_fchmod(fd, mode)
+
+        def chmod_probe(path, mode, *a, **k):
+            if Path(path) == p:
+                chmods.append(mode)                              # the file's chmod: recorded, not performed
+                return None
+            return real_chmod(path, mode, *a, **k)
+        with mock.patch.object(os, "fchmod", fchmod_probe), mock.patch.object(os, "chmod", chmod_probe):
+            out = ht.write_spawn_spec(d, SID, {"env": {"FEATURE_FLAG": "1"}, "sid": SID})
+        self.assertEqual(out, p)
+        self.assertEqual(os.stat(p).st_mode & 0o777, 0o600, "tightened before the write, with no file chmod performed")
+        self.assertEqual(fchmods, [(0o600, 0)], "one fchmod on the descriptor while the file is still empty")
+        self.assertEqual(chmods, [], "no chmod on the file after the write")
+        self.assertEqual(os.stat(p.parent).st_mode & 0o777, 0o700, "the directory's chmod is unchanged")
+        self.assertEqual(json.loads(p.read_text())["env"]["FEATURE_FLAG"], "1", "and the overlay landed")
+
+    def test_a_raising_fchmod_closes_the_descriptor(self):
+        # Review round 2 of PR 789 (2026-09-19): round 1 put the fchmod between os.open and os.fdopen with nothing closing
+        # the descriptor when it raised; os.fdopen was the only close. The error propagates (this writer has no swallow
+        # road), the descriptor os.open returned reaches os.close (a real close, recorded), and the directory's chmod
+        # stays real.
+        import errno
+        d = tempfile.mkdtemp()
+        opened, closed = [], []
+        real_open, real_close = os.open, os.close
+
+        def open_probe(*a, **k):
+            fd = real_open(*a, **k)
+            opened.append(fd)
+            return fd
+
+        def fchmod_refused(fd, mode):
+            raise PermissionError(errno.EPERM, "fchmod refused (interposed)")
+
+        def close_probe(fd):
+            closed.append(fd)
+            return real_close(fd)
+        with mock.patch.object(os, "open", open_probe), mock.patch.object(os, "fchmod", fchmod_refused), \
+                mock.patch.object(os, "close", close_probe), self.assertRaises(PermissionError):
+            ht.write_spawn_spec(d, SID, {"env": {"FEATURE_FLAG": "1"}, "sid": SID})
+        self.assertEqual(len(opened), 1, "one descriptor, spawn.json's")
+        self.assertEqual(closed, opened, "closed on the failure road")
+        self.assertEqual(os.stat(ht.host_dir(d, SID)).st_mode & 0o777, 0o700, "the directory's chmod ran")
+
     @unittest.skipUnless(SDK, "the SDK is not importable here")
     def test_the_spec_fields_track_what_the_sdk_transport_reads(self):
         import claude_agent_sdk._internal.transport.subprocess_cli as scli
@@ -707,6 +768,36 @@ class BackendHostRules(unittest.TestCase):
         t.exit_info = {"t": "exit", "code": 0}
         be._write_host_ack(s, force=True)
         self.assertNotIn("hostAck", sb.read_reg(Path(d), SID) or {}, "no ack written for a host that reported its exit")
+
+    # The mutation pass after round 3 of the SDK pin review (2026-09-19): _record_refused_launch_position's docstring
+    # says every road that clears the host's directory drops hostLogPos with it, and the orphan road's drop has its
+    # case below (the setting-off replay); _host_ended's had none, so with hostLogPos left out of its drop the suite
+    # stayed green and a refused launch's line count outlived the file it counted. The three causes that clear the
+    # directory (end, end-forced, eof-grace) drop both keys; a death keeps the directory and the position for the
+    # orphan road to read.
+    def test_an_end_that_clears_the_hosts_directory_drops_host_log_pos_with_host_ack(self):
+        d, be = self._be()
+        hd = ht.host_dir(d, SID)
+
+        def seed():
+            hd.mkdir(parents=True, exist_ok=True)
+            (hd / "host.log").write_text(json.dumps({"t": 1, "kind": "host-started"}) + "\n")
+            sb.write_reg(Path(d), SID, {"sid": SID, "name": "web", "alive": True,
+                                         "hostAck": {"host": "7:h", "cli": "8:c", "offset": 3},
+                                         "hostLogPos": {"host": sb.HOST_LOG_POS_REFUSED, "pos": 1}})
+            t = types.SimpleNamespace(hello={"host": {"pid": 7, "start": "h"}, "cli": {"pid": 8, "start": "c"}}, ack_offset=3, exit_info=None)
+            return types.SimpleNamespace(sid=SID, name="web", _host=t, _host_ack_t=0.0)
+        for cause in ("end", "end-forced", "eof-grace"):
+            be._host_ended(seed(), {"t": "exit", "code": 0, "cause": cause})
+            reg = sb.read_reg(Path(d), SID) or {}
+            self.assertFalse(hd.exists(), cause)
+            self.assertNotIn("hostAck", reg, cause)
+            self.assertNotIn("hostLogPos", reg, cause)
+        be._host_ended(seed(), {"t": "exit", "code": 1, "cause": "died"})
+        reg = sb.read_reg(Path(d), SID) or {}
+        self.assertTrue(hd.exists(), "a death keeps the directory for the orphan road")
+        self.assertIn("hostAck", reg)
+        self.assertEqual(reg.get("hostLogPos"), {"host": sb.HOST_LOG_POS_REFUSED, "pos": 1}, "and the position with it")
 
     def test_with_the_setting_off_an_orphan_lease_is_recovered_and_no_host_is_spawned(self):
         d, be = self._be()

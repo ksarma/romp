@@ -72,12 +72,12 @@ test("the placement the rule dresses: the list layout stands the line under the 
 });
 
 // ── the rendered rows, in a real engine ──────────────────────────────────────────────────────────
-/** The panel's registry entry and marked, bundled as the webview build bundles them (in memory), as window.__romp. */
+/** The panel's registry entry and the viewer's parse (file-view.ts viewerHtml), bundled as the webview build bundles them (in memory), as window.__romp. */
 function bundle(): string {
   const esbuild = requireCjs("esbuild");
   const r = esbuild.buildSync({
     stdin: {
-      contents: 'import { fileCommentsAction } from "./file-comments";\nimport { marked } from "marked";\n(window as any).__romp = { fileCommentsAction, marked };\n',
+      contents: 'import { fileCommentsAction } from "./file-comments";\nimport { viewerHtml } from "./file-view";\n(window as any).__romp = { fileCommentsAction, viewerHtml };\n',
       resolveDir: UI, loader: "ts", sourcefile: "saved-dress-probe.ts",
     },
     bundle: true, write: false, format: "iife", platform: "browser", target: "es2020",
@@ -137,7 +137,7 @@ function mount(page: any, status: Record<string, unknown>): Promise<void> {
   return page.evaluate(async ([src, status, abs, sid]: [string, Record<string, unknown>, string, string]) => {
     const w = window as any;
     const body = document.getElementById("body")!, md = document.getElementById("md")!;
-    md.innerHTML = w.__romp.marked.parse(src);
+    md.innerHTML = w.__romp.viewerHtml(src);
     const posted: any[] = []; w.__posted = posted;
     const rendered: Array<() => void> = []; w.__rendered = rendered;
     const saved: Array<(info: unknown) => void> = []; w.__saved = saved;

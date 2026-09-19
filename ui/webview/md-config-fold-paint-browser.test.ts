@@ -34,12 +34,12 @@ const requireCjs = createRequire(path.join(EXT, "package.json"));
 const UI = path.resolve(EXT, "..", "ui", "webview");
 const FEED = fs.readFileSync(path.join(UI, "feed.css"), "utf8");
 
-/** The panel's registry entry and marked, with the viewer's grammar applied, bundled as the webview build bundles them. */
+/** The panel's registry entry and the viewer's parse (file-view.ts viewerHtml, marked with the viewer's grammar), bundled as the webview build bundles them. */
 function bundle(): string {
   const esbuild = requireCjs("esbuild");
   const r = esbuild.buildSync({
     stdin: {
-      contents: 'import { fileCommentsAction } from "./file-comments";\nimport { marked } from "marked";\nimport { applyMdConfig } from "./md-config";\napplyMdConfig();\n(window as any).__romp = { fileCommentsAction, marked };\n',
+      contents: 'import { fileCommentsAction } from "./file-comments";\nimport { viewerHtml } from "./file-view";\nimport { applyMdConfig } from "./md-config";\napplyMdConfig();\n(window as any).__romp = { fileCommentsAction, viewerHtml };\n',
       resolveDir: UI, loader: "ts", sourcefile: "fold-paint-probe.ts",
     },
     bundle: true, write: false, format: "iife", platform: "browser", target: "es2020",
@@ -122,7 +122,7 @@ function render(page: any): Promise<Layout> {
   return page.evaluate((src: string) => {
     const w = window as any;
     const md = document.getElementById("md")!;
-    md.innerHTML = w.__romp.marked.parse(src);
+    md.innerHTML = w.__romp.viewerHtml(src);
     return w.__readLayout();
   }, SRC);
 }

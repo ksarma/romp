@@ -25,6 +25,8 @@ import json
 import os
 import re
 import stat
+import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -32,7 +34,8 @@ from romp_load import load_source
 from pathlib import Path
 from unittest import mock
 
-BIN = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "bin")
+HERE = os.path.dirname(os.path.realpath(__file__))
+BIN = os.path.join(os.path.dirname(HERE), "bin")
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()   # hermetic BEFORE any romp code loads
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 jd = load_source("romp_judge_scratch", os.path.join(BIN, "romp-judge"))
@@ -308,6 +311,78 @@ class OwnerOnlyParity(unittest.TestCase):
         self.assertEqual(os.fspath(got), host_leaf)
         self.assertEqual(stat.S_IMODE(os.lstat(host_leaf).st_mode), 0o700, "asked for parents, it converges with the judge copy")
         self.assertEqual(stat.S_IMODE(os.lstat(os.path.dirname(host_leaf)).st_mode), 0o777)
+
+
+class TheStateRootModeIsChecked(unittest.TestCase):
+    """The state root's 0700 is the premise behind this repo's no-heal rule for credential files (a registry or a
+    parked-ops mirror this uid wrote at a looser mode is not exposed because the root is owner-only; PR 789, review
+    round 1). kernel/judge.py makes the root 0700 at import, best-effort: the mkdir and the chmod sit in
+    `except OSError: pass`, and until review round 2 of PR 789 (2026-09-19) nothing read the mode back, so the premise
+    could be false with no signal. Now the mode is read after the attempt and, when it is not 0700, said once on stderr,
+    naming the path and the mode read. Not a heal: nothing here changes a mode (the round-1 ruling stands: files tighten
+    on their next write). The import road runs in a child so the planted root and the refused chmod stay out of this
+    process."""
+
+    def test_a_0700_root_produces_no_line(self):
+        d = tempfile.mkdtemp()                                   # mkdtemp creates 0700
+        self.assertIsNone(jd._state_root_mode_line(Path(d)))
+        self.assertIsNone(jd._STATE_ROOT_MODE_LINE, "the suite's own root is 0700, so the import said nothing")
+
+    def test_a_root_the_chmod_left_looser_produces_one_line_naming_the_path_and_the_mode(self):
+        d = tempfile.mkdtemp()
+        os.chmod(d, 0o755)
+        line = jd._state_root_mode_line(Path(d))
+        self.assertIsNotNone(line)
+        self.assertIn(d, line, "names the path")
+        self.assertIn("0755", line, "names the mode read")
+        self.assertIn("0700", line, "and the mode expected")
+        self.assertNotIn("\n", line, "one line")
+        self.assertEqual(stat.S_IMODE(os.stat(d).st_mode), 0o755, "read, not healed")
+
+    def test_a_root_that_cannot_be_read_produces_a_line_naming_the_path(self):
+        d = Path(tempfile.mkdtemp()) / "never-made"
+        line = jd._state_root_mode_line(d)
+        self.assertIsNotNone(line)
+        self.assertIn(str(d), line)
+
+    def _import_in_a_child(self, plant_loose):
+        """Load kernel/judge.py in a child with ROMP_STATE_DIR at a fresh root. With `plant_loose` the root is planted
+        0755 first and os.chmod refuses to touch it, the shape a root this uid cannot tighten takes; without it the
+        import makes the root itself. Returns (root, the child's stderr)."""
+        root = os.path.join(tempfile.mkdtemp(), "romp")
+        env = dict(os.environ)
+        env["ROMP_STATE_DIR"] = root
+        code = ("import os, sys\n"
+                "sys.path.insert(0, %r)\n"                      # the tests dir, where romp_load lives
+                "from romp_load import load_source\n"
+                "root = %r\n"
+                "if %r:\n"
+                "    os.mkdir(root)\n"
+                "    os.chmod(root, 0o755)\n"
+                "    real = os.chmod\n"
+                "    def refuse(path, mode, *a, **k):\n"
+                "        if os.path.realpath(str(path)) == os.path.realpath(root):\n"
+                "            raise PermissionError(1, 'chmod refused (interposed)')\n"
+                "        return real(path, mode, *a, **k)\n"
+                "    os.chmod = refuse\n"
+                "load_source('romp_judge_child', %r)\n"
+                % (HERE, root, plant_loose, os.path.join(BIN, "romp-judge")))
+        r = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, timeout=180)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return root, r.stderr
+
+    def test_the_import_says_it_once_on_stderr_when_the_chmod_could_not_tighten_the_root(self):
+        root, err = self._import_in_a_child(plant_loose=True)
+        lines = [l for l in err.splitlines() if "state root" in l]
+        self.assertEqual(len(lines), 1, "exactly one line:\n" + err)
+        self.assertIn(root, lines[0], "names the path")
+        self.assertIn("0755", lines[0], "names the mode read")
+        self.assertEqual(stat.S_IMODE(os.stat(root).st_mode), 0o755, "read, not healed")
+
+    def test_the_import_says_nothing_for_a_root_it_made_0700(self):
+        root, err = self._import_in_a_child(plant_loose=False)
+        self.assertEqual([l for l in err.splitlines() if "state root" in l], [], err)
+        self.assertEqual(stat.S_IMODE(os.stat(root).st_mode), 0o700)
 
 
 if __name__ == "__main__":

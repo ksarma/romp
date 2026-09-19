@@ -13,7 +13,9 @@
 // blank the rule removed, and passed under the marks' whitespace-blind compare). So a sanitizer profile that kept
 // svg's foreignObject, or dropped a title, would go red here (the foreignObject and svg title shapes) while the text test,
 // reading the reader alone, stayed green: that gap is what this leg closes. The plan's one recorded divergence is pinned both
-// ways (RECORDED: the DOM's text and the reader's, so a change on either side is seen). The shapes of the findings round 5's
+// ways (RECORDED: the DOM's text and the reader's, so a change on either side is seen; since the closing check of PR 804, decision
+// 52, an entry may also pin the DOM's top-level tags and the map's verdict per passage, `shape` and `verdicts`, whether or not the
+// text agrees). The shapes of the findings round 5's
 // review seeded against the reader are here as plain shapes and were red over a git archive of 701728eae, the tree that
 // round reviewed: a named reference the browser decodes and the reader's HTML 4.01 table did not (`&check;`, `&ltimes;`,
 // `&notni;`, and `&toString;` read with `in`), a quote from a cell across a table's end into trailing text (three shapes:
@@ -57,8 +59,12 @@ type Quote = { from: string; to?: string; shown: string; cells?: (string | null)
  *  normalized one ("blanks": a minified raw table, compared with whitespace removed; "rows": a markdown table, its delimiter
  *  rows taken out of the reader's text). */
 type Shape = { name: string; src: string; quotes?: Quote[]; whole?: "blanks" | "rows" };
-/** A divergence between the DOM and the reader, pinned on both sides (normalized), with why. */
-type Divergence = { name: string; src: string; dom: string; reader: string; why: string };
+/** A divergence between the DOM and the reader, pinned on both sides (normalized), with why; since the closing check of PR 804 an
+ *  entry may also pin the DOM's top-level tags (`shape`: an element's tag, its element children in brackets, the top-level elements
+ *  joined by blanks) and each LATER passage's verdict from the map over a real Selection (`verdicts`, joined by blanks: `maps` at its
+ *  own source offsets, `mismatch` refused with the mismatch sentence, `unmatched` refused with the could-not-be-matched sentence,
+ *  `absent` not in the rendered text), whether or not the text agrees. */
+type Divergence = { name: string; src: string; dom: string; reader: string; why: string; shape?: string; verdicts?: string };
 
 const SHAPES: Shape[] = [
   // test 1: a raw html table's cell boundary
@@ -132,8 +138,9 @@ const SHAPES: Shape[] = [
   { name: "an svg title closed by its own end tag", src: "Intro.\n\n<div><svg><title>inner title</title><text>t</text></svg> beside</div>\n\npara.\n" },
   { name: "a textarea in HTML content reads an svg end tag as text", src: "<div><textarea>x</svg> y</textarea> z</div>\n" },
   { name: "a style inside an svg goes with its text", src: "<div><svg><style>.a{}</style><text>t</text></svg> z</div>\n" },
-  // round 5: inline too (red at 701728eae: the title's text ran to the svg's end tag, tags and all, `icon</svg> beside`)
-  { name: "an svg title inline, closed by the svg's end tag", src: "Intro <svg><title>icon</svg> beside end\n", quotes: [{ from: "icon</svg> beside", shown: "icon beside" }] },
+  // round 5: inline too (red at 701728eae: the title's text ran to the svg's end tag, tags and all, `icon</svg> beside`); since decision 52
+  // (md-literal-tags.ts) a `<title>` with no end tag of its own is literal text, svg text in the DOM, on both sides
+  { name: "an svg title start tag inline with no end tag of its own before the svg's end tag: literal text on both sides", src: "Intro <svg><title>icon</svg> beside end\n", quotes: [{ from: "icon</svg> beside", shown: "icon beside" }] },
   // the round 5 finder's shapes, whole text alone
   { name: "a hex numeric reference with no semicolon in an html block", src: "<div>a &#x1F600 b</div>\n" },
   { name: "legacy names with digits, no semicolon", src: "<div>&frac12 x &sup2 y &AElig z</div>\n" },
@@ -164,8 +171,10 @@ const SHAPES: Shape[] = [
     quotes: [{ from: "s1</td><style>td{}</style><td>s2", shown: "s1 s2", cells: ["TD0", "TD1"] }] },
   { name: "a br between two cells of a minified raw table, foster-parented before it", whole: "blanks", src: "<table><tr><td>a1</td><br><td>a2</td></tr></table>\n",
     quotes: [{ from: "a1</td><br><td>a2", shown: "a1 a2", cells: ["TD0", "TD1"] }] },
-  { name: "an HTML element left open inside a foreignObject at the svg's end tag, inline", src: "Intro <svg><foreignObject><b>x</svg> y\n",
-    quotes: [{ from: "Intro", to: " y", shown: "Intro" }] },
+  // since decision 52 (md-literal-tags.ts) the foreignObject and the b, with no end tags of their own in the block, are literal text: svg
+  // text in the DOM, the svg closed by its end tag, ` y` shown on both sides (before: `Intro` alone, the parser's element left open)
+  { name: "a foreignObject and a b with no end tags of their own before the svg's end tag, inline: literal text on both sides", src: "Intro <svg><foreignObject><b>x</svg> y\n",
+    quotes: [{ from: "Intro", to: " y", shown: "Intro <foreignObject><b>x y" }] },
   // round 7 (anchor-map-html-rules.test.ts tests 9 to 13, red over a git archive of 78c0806ce): a raw table written without its end tags,
   // whose implied ends leave the cells adjacent exactly as written end tags do (the blank was put at a part's END tag alone); a dropped
   // element WITH text between two cells, removed whole and leaving the cells adjacent (its text ended the look past it); a raw-text or
@@ -193,10 +202,18 @@ const SHAPES: Shape[] = [
     quotes: [{ from: "Intro", to: " y", shown: "Intro y" }, { from: " y", shown: "y" }] },
   { name: "an li closed by the next li inside a foreignObject", src: "Intro <svg><foreignObject><li>a<li>b</li></foreignObject></svg> y\n", quotes: [{ from: " y", shown: "y" }] },
   { name: "a p closed by a div inside a foreignObject in an html block", src: "Intro.\n\n<div><svg><foreignObject><p>a<div>b</div></foreignObject></svg> y</div>\n\npara\n", quotes: [{ from: " y", shown: "y" }] },
-  { name: "an HTML element left open inside an annotation-xml with the html encoding: the math's end tag is ignored", src: "ma2 <math><annotation-xml encoding=\"text/html\"><b>x</math> y2\n", quotes: [{ from: "ma2", shown: "ma2" }] },
-  { name: "an HTML element left open inside an mtext", src: "ma5 <math><mtext><b>x</math> y5\n", quotes: [{ from: "ma5", shown: "ma5" }] },
-  { name: "an HTML element closed inside an annotation-xml with the html encoding (a control)", src: "ma6 <math><annotation-xml encoding=\"text/html\"><b>x</b></math> y6\n", quotes: [{ from: "y6", shown: "y6" }] },
-  { name: "an HTML element left open inside an svg title keeps the svg's end tag ignored", src: "Intro <svg><title><b>x</svg> y\n", quotes: [{ from: "Intro", shown: "Intro" }] },
+  // since decision 52 (md-literal-tags.ts) an integration point or a b with no end tag of its own is literal text, so the math closes at its
+  // end tag and is dropped whole with the text inside it, and the tail shows on both sides (before: the parser's element left open kept
+  // `</math>` ignored, `ma2` alone)
+  { name: "an annotation-xml with the html encoding and a b, neither with an end tag of its own: literal text inside the dropped math, the tail shown", src: "ma2 <math><annotation-xml encoding=\"text/html\"><b>x</math> y2\n", quotes: [{ from: "ma2", to: "y2", shown: "ma2 y2" }] },
+  { name: "an mtext and a b with no end tags of their own: the same", src: "ma5 <math><mtext><b>x</math> y5\n", quotes: [{ from: "ma5", to: "y5", shown: "ma5 y5" }] },
+  { name: "a title and a b with no end tags of their own inside an svg: literal text, svg text in the DOM, the svg closed", src: "Intro <svg><title><b>x</svg> y\n", quotes: [{ from: "Intro", to: " y", shown: "Intro <title><b>x y" }] },
+  // decision 52's two agreements that were the plan's recorded divergences before it (RECORDED below kept the `/>` forms): a `<textarea>` with
+  // no end tag in its block is literal text and the tokens after it prose on both sides, where the parser used to read the block's rest as
+  // the textarea's text; an `<annotation-xml>` whose encoding value carries a blank and a `<b>` with no end tags are literal text inside the
+  // dropped math on both sides, where the parser used to break out of the math at the `<b>` and show `x`
+  { name: "an inline textarea start tag with no end tag in its block: literal text on both sides", src: "Lead <textarea>open *x* tail\n", quotes: [{ from: "Lead", to: "tail", shown: "Lead <textarea>open x tail" }] },
+  { name: "an annotation-xml whose encoding has a trailing blank and a b, neither closed: literal text inside the dropped math on both sides", src: "ma8 <math><annotation-xml encoding=\"text/html \"><b>x</math> y8\n", quotes: [{ from: "ma8", to: "y8", shown: "ma8 y8" }] },
   { name: "an HTML element closed inside an svg title is the sanitizer's to remove with its text; the svg closes", src: "Intro <svg><title>t<b>x</b>u</title></svg> y\n", quotes: [{ from: " y", shown: "y" }] },
   // round 8 (anchor-map-html-rules.test.ts tests 14 and 15, red over a git archive of 99e7e2d0c): a raw table marked splits into two html
   // blocks at a blank line, one table to the parser, whose second block continues the first's row and cells (the reader's table frames
@@ -207,22 +224,99 @@ const SHAPES: Shape[] = [
     quotes: [{ from: "b1<td>b2", shown: "b1 b2", cells: ["TD0", "TD1"] }, { from: "a1<td>a2", shown: "a1 a2", cells: ["TD0", "TD1"] }] },
   { name: "an mglyph self-closed inside an mi: foreign content, so the math closes and the text after it shows", src: "ma9 <math><mi><mglyph/></mi></math> y9\n", quotes: [{ from: "ma9", to: "y9", shown: "ma9 y9" }] },
   { name: "a malignmark start tag inside an mtext", src: "ma9 <math><mtext><malignmark></mtext></math> y9\n", quotes: [{ from: "ma9", to: "y9", shown: "ma9 y9" }] },
+  // decision 52's open-array sentence, executed, not pinned (the closing check of PR 804, 2026-09-19; the SHAPES loop asserts the text and
+  // the paints, not the tags or the verdicts): an `image` start tag with no end tag is
+  // the alias the rule leaves HTML (IMG_ALIAS), and inside an inline svg it is the svg's own element, closed by `</svg>` (the top-level
+  // tags `P[svg[image]] H2 P P`), so the text agrees and every block maps, the tag's paragraph included; the same tags and the map's
+  // verdict `maps` for each passage over the base tree c25a2b319
+  { name: "an image inside an inline svg left open: the svg's own element, closed by the svg's end tag, and every block maps", src: "Lead <svg><image href=\"a.png\"></svg> tail t1.\n\n## Second heading t2\n\nPara after the heading t3.\n\nClosing words t4.\n",
+    quotes: [{ from: "tail t1", shown: "tail t1" }, { from: "Second heading t2", shown: "Second heading t2" }, { from: "Para after the heading t3", shown: "Para after the heading t3" }, { from: "Closing words t4", shown: "Closing words t4" }] },
 ];
 
-/** The plan's recorded divergence (plans/markdown-viewer.md, the Slice 5 build note, item 4), pinned on both sides. */
+const MISMATCH = "This selection touches a block whose rendered text does not match the file; comment on it from the Raw view.";
+const UNMATCHED = "The selection could not be matched to the file text.";
+/** The passages of a recorded note (noteWith), in order: the tag's paragraph's tail, then a heading and two paragraphs after it. */
+const LATER = ["tail t1", "Second heading t2", "Para after the heading t3", "Closing words t4"];
+const noteWith = (tag: string): string => `Lead ${tag} tail t1.\n\n## Second heading t2\n\nPara after the heading t3.\n\nClosing words t4.\n`;
+const NOTE_TEXT = "Lead tail t1. Second heading t2 Para after the heading t3. Closing words t4.";
+const FO_TEXT = "Lead <foreignObject>x tail t1. Second heading t2 Para after the heading t3. Closing words t4.";
+const DESC_TEXT = "Lead <desc>x tail t1. Second heading t2 Para after the heading t3. Closing words t4.";
+
+/** The plan's recorded divergences (plans/markdown-viewer.md, the Slice 5 build note, item 4), pinned on both sides. The first of them, an
+ *  inline `<textarea>` left open, is an agreement since decision 52 (SHAPES above): a start tag with no end tag in its block is literal text
+ *  on both sides. The `/>` forms keep the divergence: the self-closing syntax stays HTML, which the parser opens. */
 const RECORDED: Divergence[] = [
-  { name: "an inline textarea left open is read to its block's end where the parser reads on", src: "Lead <textarea>open *x* tail\n", dom: "Lead open <em>x</em> tail</p>", reader: "Lead open <em>x</em> tail",
-    why: "the parser's textarea runs to the paragraph's end tag, which the DOM then shows as text" },
-  // round 7: the same class for the `/>` forms, which open (both sides read the block's rest as the element's; the parser reads on)
+  // round 7: the `/>` forms, which open (both sides read the block's rest as the element's; the parser reads on)
   { name: "a title written `/>` in a paragraph drops the block's rest, and the parser every later block", src: "Intro.\n\nPara sc1 <title/> after sc2.\n\nPara sc3 more sc4.\n\nend sc5.\n", dom: "Intro. Para sc1", reader: "Intro. Para sc1 Para sc3 more sc4. end sc5.",
     why: "the parser's title runs to the document's end and the sanitizer drops it whole; the reader drops the block's rest alone" },
   { name: "a textarea written `/>` in a paragraph shows the block's rest as marked's HTML, and the parser every later block's too", src: "Para se1 <textarea/> after *em* se2.\n\nPara se3.\n", dom: "Para se1 after <em>em</em> se2.</p> <p>Para se3.</p>", reader: "Para se1 after <em>em</em> se2. Para se3.",
     why: "the parser's textarea runs to the document's end, which the DOM then shows as text; the reader reads the block's rest so" },
-  // round 8: an annotation-xml whose encoding value carries a blank is no integration point (an exact match, as the parser compares it), so
-  // the `<b>` inside it breaks out of the math, the recorded breakout class; the reader closes the math at its end tag and reads on (at
-  // 99e7e2d0c it read the annotation as an integration point and dropped the block's rest, `ma8`)
-  { name: "an annotation-xml whose encoding has a trailing blank inside the quotes: no integration point, the b breaks out", src: "ma8 <math><annotation-xml encoding=\"text/html \"><b>x</math> y8\n", dom: "ma8 x y8", reader: "ma8 y8",
+  // round 8's breakout divergence (an annotation-xml whose encoding value carries a blank, the `<b>` inside it breaking out of the math) is
+  // an agreement since decision 52, in SHAPES above: with no end tags of their own, both tags are literal text inside the dropped math.
+  // The breakout class itself stands, and decision 52 moves one shape into it: an `<annotation-xml>` with no end tag of its own is text
+  // now, so the closed `<b>` after it stands in the math's foreign content with no integration point around it, and the parser breaks
+  // out of the math at the `<b>` and shows its text, where the reader reads the b as the root's content and drops it with the math
+  // (before decision 52 both sides read `ma6 y6`: the annotation-xml was the parser's integration point and the b HTML inside it)
+  { name: "an HTML element closed inside an annotation-xml with the html encoding, the annotation-xml itself not closed: the b breaks out", src: "ma6 <math><annotation-xml encoding=\"text/html\"><b>x</b></math> y6\n", dom: "ma6 x y6", reader: "ma6 y6",
     why: "the parser breaks out of foreign content at the `<b>` and shows its text; the reader drops the math whole and reads on, the recorded class" },
+  // the class that entry belongs to, since decision 52 (the review of PR 804, round 1; bounded again by its closing check, 2026-09-19):
+  // an integration point of an INLINE `<math>` left open (`<mtext>`, `<mi>`, `<mo>`, `<mn>` or `<ms>`, or an `<annotation-xml>` with
+  // the html or the xhtml encoding) is literal text now, so an HTML element after it whose start tag is on the parser's foreign-content
+  // breakout list (the 44 names the HTML standard lists there, and `font` when it carries `color`, `face` or `size`) stands in the
+  // math's foreign content with no integration point around it: the parser breaks out of the math at it, whether the tag is closed,
+  // self-closed or void, and shows its text, and the reader drops the math whole (executed in Chromium for `<b>`, `<i>`, `<em>`,
+  // `<strong>`, `<span>`, `<code>`, `<sub>`, `<sup>`, `<small>`, `<big>`, `<tt>`, `<u>`, `<s>`, `<strike>`, `<nobr>`, `<var>`,
+  // `<ruby>`, `<div>`, `<p>`, `<h2>`, `<pre>`, `<blockquote>`, `<center>`, `<menu>`, `<listing>`, a `<ul>`, an `<ol>`, a `<dl>` and a
+  // `<table>`, each with its end tag: the DOM `ma7 x y7`, the reader `ma7 y7`, no paint mark; for `<br>`, `<img>` and `<hr>` with no
+  // end tag, for `<b/>` written with the flag, and for `<font color="red">x</font>`, by the DOM's top-level tags in the entries below).
+  // Not in the class: a closed element whose start tag is not on that list (`<kbd>`, `<a>`, `<abbr>`, `<mark>`, `<q>`, `<cite>`,
+  // `<dfn>`, `<samp>`, `<ins>`, `<del>`, `<label>`, `<time>`, `<button>`, `<section>` and their kind, and a `<font>` with none of the
+  // three attributes) goes with the dropped math on both sides (the sanitized paragraph `ma7  y7`, two marks); and a `<math>` inside
+  // an html block, whose tags the rule does not read (the `<mtext>` stays the parser's integration point and the `<b>` HTML inside it,
+  // `ma7 y7` on both sides). Inside an inline `<svg>` the TEXT agrees for a member, since the sanitizer keeps svg text
+  // (`sv1 <svg><title><b>x</b></svg> y1` reads `sv1 <title>x y1` on both sides, the `b` broken out into the paragraph, `P[svg,B]`, and
+  // every block mapping), and the MAP does not for a block-level member: a closed `<div>` or `<p>` after a `<title>`, `<desc>` or
+  // `<foreignObject>` left open splits the paragraph (`P[svg] DIV P`, `P[svg] P P`) and every later block is refused, where at the base
+  // tree the element sat inside the integration point, a scope boundary, and every later block mapped; the same split after an
+  // `<mtext>`; and an out-of-class element there (`<kbd>`) stays in the drawing and the sanitizer removes it with its text, which the
+  // reader keeps, a text divergence. Those are the entries after the two text representatives, each with the DOM's top-level tags and
+  // the map's verdicts over LATER, since this suite compares text and text alone would not see a split. The `<title>` half of the svg split
+  // is prose here, executed and not pinned (`noteWith("<svg><title><div>x</div></svg>")` over 58bb100fc's code: `P[svg] DIV P H2 P P`, mismatch
+  // unmatched unmatched unmatched): tools/markdown-viewer-plan-decision52-pointers.test.mjs refuses a `<textarea>`, `<plaintext>`, `<title>` or
+  // `<noscript>` written without the self-closing syntax in a RECORDED src, since such a tag left open is literal text since decision 52 and
+  // cannot itself be a recorded divergence, and the svg-title shape's divergence is the div's breakout, which the guard cannot tell from a
+  // title left open, so the split is pinned through `<foreignObject>` and `<desc>`. Before decision 52 every member
+  // agreed: the integration point was the parser's element and the closed element HTML inside it, `ma5 y5` and `ma7 y7` on both sides
+  // with two paint marks over the PR's base tree (c25a2b319). A paragraph holding an inline `<math>` with text inside it is refused with
+  // the mismatch sentence on both trees whatever follows the integration point (`<math><mi>x</mi></math>` too; `<math></math>` maps);
+  // each entry's own `verdicts` say what its passages do, and the entries speak for themselves. anchor-map-html-rules.test.ts pins the
+  // reader's side of the first representative.
+  { name: "an mtext and a first p left open inside an inline math, then `<p>b</p>` closed: the closed p breaks out of the math", src: "ma5 <math><mtext><p>a<p>b</p></math> y5\n", dom: "ma5 b y5", reader: "ma5 y5",
+    why: "the mtext and the first p, with no end tags of their own, are literal text inside the math; the closed `<p>b</p>` stands in the math's foreign content with no integration point around it, so the parser breaks out at it and shows `b`, where the reader drops the math whole (before decision 52: `ma5 y5` on both sides)" },
+  { name: "an mtext left open inside an inline math, then a closed b: the b breaks out of the math", src: "ma7 <math><mtext><b>x</b></math> y7\n", dom: "ma7 x y7", reader: "ma7 y7",
+    why: "the same class: the closed `<b>` stands in the math's foreign content with no integration point around it, and the parser breaks out at it and shows `x`, where the reader drops the math whole (before decision 52: `ma7 y7` on both sides)" },
+  // the closing check's entries (2026-09-19), each RECORDED by the DOM's top-level tags and the map's verdicts over LATER, the text pinned
+  // too; the base tree's shape and verdicts in each `why` are from the same probe over a git archive of c25a2b319
+  { name: "a br inside an mtext left open, a void member of the class: breaks out with no closing into the paragraph, whose passage is refused, a refusal new at decision 52", src: noteWith("<math><mtext><br></math>"), dom: NOTE_TEXT, reader: NOTE_TEXT, shape: "P[BR] H2 P P", verdicts: "mismatch maps maps maps",
+    why: "the mtext is literal text, so the br stands in the math's foreign content with no integration point around it and the parser breaks out at it: a line break in the paragraph, the text unchanged, and the tag's paragraph refused with the mismatch sentence; at the base tree the br sat inside the mtext, `P H2 P P`, and every passage mapped" },
+  { name: "an img inside an mtext left open, a void member: the same, a picture in the paragraph, a refusal new at decision 52", src: noteWith('<math><mtext><img src="a.png"></math>'), dom: NOTE_TEXT, reader: NOTE_TEXT, shape: "P[IMG] H2 P P", verdicts: "mismatch maps maps maps",
+    why: "the img breaks out of the math into the paragraph, the text unchanged, and the tag's paragraph is refused with the mismatch sentence; at the base tree `P H2 P P`, every passage mapped" },
+  { name: "an hr inside an mtext left open, a void member that closes the paragraph: every later block refused, a refusal new at decision 52", src: noteWith("<math><mtext><hr></math>"), dom: NOTE_TEXT, reader: NOTE_TEXT, shape: "P HR P H2 P P", verdicts: "mismatch unmatched unmatched unmatched",
+    why: "the hr breaks out of the math and closes the open p, so the paragraph's tail stands in an extra top-level element: the tag's paragraph is refused with the mismatch sentence and every later block with the could-not-be-matched sentence; at the base tree `P H2 P P`, every passage mapped (the same after an mi or an xhtml annotation-xml in place of the mtext)" },
+  { name: "a b written `/>` inside an mtext left open, a self-closed member: breaks out and opens, a wrapper around every later block, every passage refused, a refusal new at decision 52", src: noteWith("<math><mtext><b/></math>"), dom: NOTE_TEXT, reader: NOTE_TEXT, shape: "P[B] B[H2,P,P]", verdicts: "mismatch mismatch mismatch mismatch",
+    why: "the parser ignores the flag on an HTML element, so the b breaks out of the math and stays open, reopened after the paragraph around every later block, and every passage is refused with the mismatch sentence; at the base tree the b stayed open inside the mtext and the page showed `Lead` alone, `P`, every passage absent" },
+  { name: "a font with a color attribute inside an mtext left open, the member the list bounds by attribute: breaks out, its text shown, where a bare font goes with the math, a text divergence new at decision 52", src: noteWith('<math><mtext><font color="red">x</font></math>'), dom: "Lead x tail t1. Second heading t2 Para after the heading t3. Closing words t4.", reader: NOTE_TEXT, shape: "P[FONT] H2 P P", verdicts: "mismatch maps maps maps",
+    why: "the breakout list holds `font` only when it carries `color`, `face` or `size`: with `color` the font breaks out of the math into the paragraph and shows `x`, where the reader drops the math whole; `<font>x</font>` with no attribute stays in the foreign content and goes with the math, `P H2 P P` and the text agreeing; at the base tree `P H2 P P`, the text agreeing, the tag's paragraph refused the same and every later block mapped" },
+  { name: "a closed div inside an mtext left open, a block-level member: splits the paragraph, every later block refused, a refusal new at decision 52", src: noteWith("<math><mtext><div>x</div></math>"), dom: "Lead x tail t1. Second heading t2 Para after the heading t3. Closing words t4.", reader: NOTE_TEXT, shape: "P DIV P H2 P P", verdicts: "mismatch unmatched unmatched unmatched",
+    why: "the closed div breaks out of the math and closes the open p, its text shown; the tag's paragraph is refused with the mismatch sentence and every later block with the could-not-be-matched sentence; at the base tree `P H2 P P`, the tag's paragraph refused the same and every later block mapped" },
+  { name: "a closed div inside an svg foreignObject left open, a block-level member: splits the paragraph, the text agreeing, every later block refused, a refusal new at decision 52", src: noteWith("<svg><foreignObject><div>x</div></svg>"), dom: FO_TEXT, reader: FO_TEXT, shape: "P[svg] DIV P H2 P P", verdicts: "mismatch unmatched unmatched unmatched",
+    why: "the foreignObject is literal svg text, so the closed div breaks out of the svg and closes the open p; the DOM and the reader read the same text, the tag's paragraph is refused with the mismatch sentence and every later block with the could-not-be-matched sentence; at the base tree the div sat inside the foreignObject, `P[svg] H2 P P`, the tag's paragraph refused the same and every later block mapped" },
+  { name: "a closed p inside an svg foreignObject left open: the same split, a refusal new at decision 52", src: noteWith("<svg><foreignObject><p>x</p></svg>"), dom: FO_TEXT, reader: FO_TEXT, shape: "P[svg] P P H2 P P", verdicts: "mismatch unmatched unmatched unmatched",
+    why: "the closed p breaks out of the svg and closes the open p, a paragraph of its own; at the base tree `P[svg] H2 P P`, the tag's paragraph refused the same and every later block mapped" },
+  { name: "a closed div inside an svg desc left open: the same split, a refusal new at decision 52", src: noteWith("<svg><desc><div>x</div></svg>"), dom: DESC_TEXT, reader: DESC_TEXT, shape: "P[svg] DIV P H2 P P", verdicts: "mismatch unmatched unmatched unmatched",
+    why: "the desc is literal svg text and the closed div breaks out of the svg; at the base tree the div sat inside the desc, `P[svg[desc]] H2 P P`, the tag's paragraph refused the same and every later block mapped" },
+  { name: "a closed kbd inside an svg foreignObject left open, out of the class: stays in the drawing and the sanitizer removes it with its text, which the reader keeps, a text divergence new at decision 52 (the tag's paragraph's refusal is on both trees)", src: noteWith("<svg><foreignObject><kbd>x</kbd></svg>"), dom: "Lead <foreignObject> tail t1. Second heading t2 Para after the heading t3. Closing words t4.", reader: FO_TEXT, shape: "P[svg] H2 P P", verdicts: "mismatch maps maps maps",
+    why: "no breakout: the kbd is an element of the svg's namespace, which the sanitizer's namespace check removes with its text, where the reader reads the text as the drawing's; the tag's paragraph is refused with the mismatch sentence (at the base tree too, `Lead tail t1.` on both sides there, `P[svg] H2 P P`) and every later block maps; an `<a>`, an svg name, is kept with its text and every passage maps" },
 ];
 
 /** marked with the viewer's configuration, the real md-sanitize.ts and the real anchor-map.ts, bundled for a page: __probe
@@ -230,15 +324,33 @@ const RECORDED: Divergence[] = [
 function bundleProbe(): string {
   const esbuild = requireCjs("esbuild");
   const contents = [
-    'import { marked } from "marked";',
     'import { applyMdConfig } from "./md-config";',
     'import { sanitizeMd } from "./md-sanitize";',
-    'import { stripMarkupMapped, renderedQuote, paintRendered } from "./anchor-map";',
+    'import { viewerHtml } from "./file-view";',
+    'import { stripMarkupMapped, renderedQuote, paintRendered, mapRenderedSelection } from "./anchor-map";',
+    'const MISMATCH = ' + JSON.stringify(MISMATCH) + ';',
+    'const UNMATCHED = ' + JSON.stringify(UNMATCHED) + ';',
     "applyMdConfig();",
-    "(window as any).__probe = (src: string, quotes: Array<{ from: string; to?: string }>) => {",
+    // mdBlock's parse (file-view.ts viewerHtml: marked's lexer, the literal-tags rule of md-literal-tags.ts, marked's parser), then the sanitizer
+    "(window as any).__probe = (src: string, quotes: Array<{ from: string; to?: string }>, needles: string[]) => {",
     "  const render = () => { const box = document.createElement('div'); box.className = 'fileview-md';",
-    "    box.replaceChildren(...Array.from(sanitizeMd(marked.parse(src) as string).childNodes)); document.body.append(box); return box; };",   // mdBlock, file-view.ts
-    "  const box = render(); const dom = box.textContent || ''; box.remove();",
+    "    box.replaceChildren(...Array.from(sanitizeMd(viewerHtml(src)).childNodes)); document.body.append(box); return box; };",
+    "  const box = render(); const dom = box.textContent || '';",
+    // the DOM's top-level tags, and each needle's verdict from the map over a real Selection on the first text node holding it
+    "  const shapeOf = (el: Element): string => { const kids = Array.from(el.children); return el.tagName + (kids.length ? '[' + kids.map(shapeOf).join(',') + ']' : ''); };",
+    "  const shape = Array.from(box.children).map(shapeOf).join(' ');",
+    "  const walker = document.createTreeWalker(box, NodeFilter.SHOW_TEXT); const texts: Text[] = [];",
+    "  for (let n = walker.nextNode(); n; n = walker.nextNode()) texts.push(n as Text);",
+    "  const verdicts = needles.map((needle) => {",
+    "    const t = texts.find((x) => x.data.includes(needle));",
+    "    if (!t) return 'absent';",
+    "    const range = document.createRange(); const i = t.data.indexOf(needle); range.setStart(t, i); range.setEnd(t, i + needle.length);",
+    "    const sel = window.getSelection() as Selection; sel.removeAllRanges(); sel.addRange(range);",
+    "    const r = mapRenderedSelection(sel, box, src); sel.removeAllRanges();",
+    "    if (r.ok) { const start = src.indexOf(needle); return r.range.start === start && r.range.end === start + needle.length ? 'maps' : 'maps elsewhere: ' + JSON.stringify(r.range); }",
+    "    return r.reason === MISMATCH ? 'mismatch' : r.reason === UNMATCHED ? 'unmatched' : 'refused: ' + r.reason;",
+    "  });",
+    "  box.remove();",
     "  const reader = stripMarkupMapped(src);",
     "  const paints = quotes.map((q) => {",
     "    const t = q.to === undefined ? q.from : q.to; const a = src.indexOf(q.from); const b = a < 0 ? -1 : src.indexOf(t, a);",
@@ -249,7 +361,7 @@ function bundleProbe(): string {
     "    const cells = marks.map((m) => { const td = m.closest('td,th'); return td ? td.tagName + Array.from((td.parentElement as Element).children).indexOf(td) : null; });",
     "    bx.remove(); return { needle: renderedQuote(src, range), marks: marks.length, text, cells };",
     "  });",
-    "  return { dom, reader: reader.text, mapLen: reader.map.length, paints };",
+    "  return { dom, reader: reader.text, mapLen: reader.map.length, paints, shape, verdicts };",
     "};",
   ].join("\n");
   const r = esbuild.buildSync({
@@ -271,7 +383,7 @@ function lessDelimiterRows(reader: string, src: string): string {
 }
 
 type Paint = { error?: string; needle: string; marks: number; text: string; cells: (string | null)[] };
-type Probe = { dom: string; reader: string; mapLen: number; paints: Paint[] };
+type Probe = { dom: string; reader: string; mapLen: number; paints: Paint[]; shape: string; verdicts: string[] };
 
 let pw: any = null;
 try { pw = requireCjs("playwright"); } catch { pw = null; }
@@ -295,8 +407,8 @@ test("in a browser, over the viewer's pipeline: the fallback reader's text for e
     });
     await page.goto("http://romp.test/");
     await page.waitForFunction(() => typeof (window as any).__probe === "function", null, { timeout: 10000 });
-    const probe = (src: string, quotes: Array<{ from: string; to?: string }>): Promise<Probe> =>
-      page.evaluate(([s, q]: [string, Array<{ from: string; to?: string }>]) => (window as any).__probe(s, q), [src, quotes] as [string, Array<{ from: string; to?: string }>]);
+    const probe = (src: string, quotes: Array<{ from: string; to?: string }>, needles: string[] = []): Promise<Probe> =>
+      page.evaluate(([s, q, n]: [string, Array<{ from: string; to?: string }>, string[]]) => (window as any).__probe(s, q, n), [src, quotes, needles] as [string, Array<{ from: string; to?: string }>, string[]]);
 
     for (const s of SHAPES) {
       await t.test(s.name, async () => {
@@ -317,9 +429,11 @@ test("in a browser, over the viewer's pipeline: the fallback reader's text for e
     }
     for (const d of RECORDED) {
       await t.test("recorded: " + d.name, async () => {
-        const r = await probe(d.src, []);
+        const r = await probe(d.src, [], d.verdicts === undefined ? [] : LATER);
         assert.equal(norm(r.dom), d.dom, "the DOM's text (" + d.why + ")");
         assert.equal(norm(r.reader), d.reader, "the reader's text (" + d.why + ")");
+        if (d.shape !== undefined) assert.equal(r.shape, d.shape, "the DOM's top-level tags (" + d.why + ")");
+        if (d.verdicts !== undefined) assert.equal(r.verdicts.join(" "), d.verdicts, "each passage's verdict, in order: " + LATER.join(", ") + " (" + d.why + ")");
       });
     }
     assert.deepEqual(errors, [], "no page errors");

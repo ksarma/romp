@@ -11,7 +11,8 @@
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import { inspect } from "node:util";
-import { marked, Lexer } from "marked";
+import { Lexer } from "marked";
+import { viewerHtml } from "./file-view";   // the viewer's parse (mdBlock's recipe: marked's lexer, the literal-tags rule of md-literal-tags.ts, the per-call walk, its parser), the stand-in's too
 import { sourceBlockSpans, renderedBlockIndex, renderedBlockElements, mapRenderedSelection, type SelLike } from "./anchor-map";
 import { hideEdges, sameNodes, staysEnumerable } from "../test-dom-shim";
 
@@ -90,7 +91,7 @@ const El = (n: FakeNode) => n as unknown as Element;
 function rendered(src: string): { md: FakeElement; blocks: FakeElement[] } {
   const doc = new FakeDocument();
   const md = doc.createElement("div"); md.setAttribute("class", "fileview-md");
-  for (const n of parseHTML(doc, marked.parse(src) as string)) md.appendChild(n);
+  for (const n of parseHTML(doc, viewerHtml(src))) md.appendChild(n);
   return { md, blocks: md.childNodes.filter((n): n is FakeElement => n instanceof FakeElement) };
 }
 const firstText = (el: FakeElement): FakeText => { const t = el.childNodes.find((c) => c instanceof FakeText); assert.ok(t, "a text node"); return t as FakeText; };

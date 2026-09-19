@@ -24,12 +24,12 @@
 // (those blanks named), and the file's browser leg,
 // md-config-paint-rendered-space-browser.test.ts, holds the trimmed result over the real bundle in Chromium: each such blank
 // measures 0 px and carries no mark there, and the rendered blanks of point 1 and 2 keep theirs. Every scene is driven through
-// paintRendered from the paragraph before the block to the paragraph after, over marked with the one configuration
+// paintRendered from the paragraph before the block to the paragraph after, over the viewer's parse (viewerHtml, file-view.ts) under the one configuration
 // (md-config.ts) and a DOM stand-in that keeps `&nbsp;` as U+00A0 (the sibling files' stand-ins decode it to a plain space and
 // cannot see the distinction). Synthetic prose, no paths.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { marked } from "marked";
+import { viewerHtml } from "./file-view";   // the viewer's parse (mdBlock's recipe: marked's lexer, the literal-tags rule of md-literal-tags.ts, the per-call walk, its parser), the stand-in's too
 import { applyMdConfig } from "./md-config";
 import { paintRendered } from "./anchor-map";
 import { hideEdges, defineHidden } from "../test-dom-shim";
@@ -130,7 +130,7 @@ function parseHTML(doc: FakeDocument, html: string): FakeNode[] {
 function buildRendered(text: string, pointers = true): FakeElement {
   const doc = new FakeDocument(pointers);
   const box = doc.createElement("div"); box.setAttribute("class", "fileview-md");
-  for (const n of parseHTML(doc, marked.parse(text) as string)) box.appendChild(n);
+  for (const n of parseHTML(doc, viewerHtml(text))) box.appendChild(n);
   return box;
 }
 const El = (n: FakeNode) => n as unknown as Element;

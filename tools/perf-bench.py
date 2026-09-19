@@ -214,11 +214,15 @@ SCHEMA = 3          # the JSON shape: writes.shadowed and refused_writes beside 
 DEFAULT_CLIENTS = "chat,feed,timeline"
 _TOOL_FILE = os.path.realpath(__file__)          # the tripwire's frame filter excludes this file, by path
 PROFILE_TOP = 25
-# What a mirror of the live directory (and the rsync recipe above) leaves out: the SDK venv, and every file the
-# kernel writes 0600 because it holds a credential: the serve token, the Web Push VAPID key, the Web Push
-# subscriptions (each carries a browser's auth secret) and the remote kernels' serve tokens. The bench reads
-# none of them (the notification functions are recorders; remotes are re-attached only at kernel boot); the
-# first form of this list copied the last two into every mirror (review find, 2026-09-08).
+# What a mirror of the live directory (and the rsync recipe above) leaves out: the SDK venv, and the files whose
+# CONTENT is a credential by design and that the bench never reads: the serve token, the Web Push VAPID key, the
+# Web Push subscriptions (each carries a browser's auth secret) and the remote kernels' serve tokens (the
+# notification functions are recorders; remotes are re-attached only at kernel boot). That is the criterion, not
+# "every 0600 file": other files the kernel writes 0600 (the session registry, the parked-ops mirror, the
+# per-session flag settings, the login records, the Codex registry, the push ledger, the notified-cards snapshot)
+# are required input and are copied mode-preserving (copytree) inside the 0700 mkdtemp root. The first form of
+# this list copied the last two exclusions into every mirror (review find, 2026-09-08); the comment's "every 0600
+# file" overstatement was corrected in PR 789's review round 1 (2026-09-18).
 MIRROR_IGNORE = ("sdkvenv", "serve-token", "push-vapid.json", "push-subscriptions.json", "remotes.json")
 # The kernel-side caches a freshly started kernel lacks and build_session reads (all plain dicts, no
 # lock). Missing names are skipped: older revisions lack some, and the assembly-counter check below

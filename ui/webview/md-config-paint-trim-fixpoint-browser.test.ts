@@ -1,5 +1,5 @@
 // The comments painter's layout-time trim (anchor-map.ts trimCollapsedMarks) after the Slice 4 review's round 13, over the REAL
-// bundle in headless Chromium: marked with the one configuration (md-config.ts), the sanitizer (md-sanitize.ts), paintRendered and
+// bundle in headless Chromium: the viewer's parse (viewerHtml, file-view.ts) under the one configuration (md-config.ts), the sanitizer (md-sanitize.ts), paintRendered and
 // the trim, the DOM built as the viewer's mdBlock builds it, laid out under the whole of feed.css at 14px sans-serif. Three legs, each
 // the browser half of md-config-paint-trim-fixpoint.test.ts:
 // 1. The fixpoint runs to convergence. A mark's 2 px side padding is in the layout, so each pass that unwraps the wrap points'
@@ -38,14 +38,14 @@ const requireCjs = createRequire(path.join(EXT, "package.json"));  // playwright
 const UI = path.resolve(EXT, "..", "ui", "webview");
 const FEED = fs.readFileSync(path.join(UI, "feed.css"), "utf8");
 
-/** marked with the viewer's grammar, the sanitizer, the paint and the trim with its record, bundled as the webview build bundles them. */
+/** The viewer's parse (file-view.ts viewerHtml, marked with the viewer's grammar), the sanitizer, the paint and the trim with its record, bundled as the webview build bundles them. */
 function bundle(): string {
   const esbuild = requireCjs("esbuild");
   const r = esbuild.buildSync({
     stdin: {
-      contents: 'import { marked } from "marked";\nimport { applyMdConfig } from "./md-config";\nimport { sanitizeMd } from "./md-sanitize";\n'
+      contents: 'import { viewerHtml } from "./file-view";\nimport { applyMdConfig } from "./md-config";\nimport { sanitizeMd } from "./md-sanitize";\n'
         + 'import { paintRendered, trimCollapsedMarks, TRIM_STATS, TRIM_PASSES_MAX } from "./anchor-map";\n'
-        + 'applyMdConfig();\n(window as any).__romp = { marked, sanitizeMd, paintRendered, trimCollapsedMarks, TRIM_STATS, TRIM_PASSES_MAX };\n',
+        + 'applyMdConfig();\n(window as any).__romp = { viewerHtml, sanitizeMd, paintRendered, trimCollapsedMarks, TRIM_STATS, TRIM_PASSES_MAX };\n',
       resolveDir: UI, loader: "ts", sourcefile: "paint-trim-fixpoint-probe.ts",
     },
     bundle: true, write: false, format: "iife", platform: "browser", target: "es2020",
@@ -74,7 +74,7 @@ const rectsW = (n) => { const r = document.createRange(); r.selectNodeContents(n
 const textW = (k) => { let w = 0; const walk = document.createTreeWalker(k, NodeFilter.SHOW_TEXT); for (let t = walk.nextNode(); t; t = walk.nextNode()) w += rectsW(t); return Math.round(w * 100) / 100; };
 const ownW = (k) => { let w = 0; for (const b of Array.from(k.getClientRects())) w += b.width; return Math.round(w * 100) / 100; };
 const range = (src) => ({ start: src.indexOf("Intro para."), end: src.indexOf("After para.") + "After para.".length });
-window.__render = (src, w) => { const m = md(); m.style.width = w + "px"; m.replaceChildren(...Array.from(window.__romp.sanitizeMd(window.__romp.marked.parse(src)).childNodes)); return m.innerHTML; };
+window.__render = (src, w) => { const m = md(); m.style.width = w + "px"; m.replaceChildren(...Array.from(window.__romp.sanitizeMd(window.__romp.viewerHtml(src)).childNodes)); return m.innerHTML; };
 window.__width = (w) => { md().style.width = w + "px"; return md().getBoundingClientRect().width; };
 window.__paint = (src, k) => {
   const t0 = performance.now(); const all = [];
