@@ -1687,10 +1687,13 @@ EOF
 # the rewrite dropped PATH, the instance block and the service.env path, moved the log paths and, on a binary plist from
 # a second clone, re-pointed the agent at the deploying clone, exit 0, and `rewrite --check` blessed both. macOS has
 # plutil; this Linux host has a stand-in (below) or none, and both readers are exercised.
-_plutil_stub() {   # a stand-in for macOS plutil at $TEST_DIR/plutil-bin/plutil, the one form romp-service calls: -extract <keypath> raw [-expect T] -o - <file>
+_plutil_stub() {   # a stand-in for macOS plutil at $TEST_DIR/plutil-bin/plutil, the one form romp-service calls: -extract <keypath> raw [-expect T] -o - <file>;
+                   # $1 = nonl: one that writes NO line end after the raw value, the line-end calibration's other branch (round 4's mutation
+                   # pass, 2026-09-19: the stand-in always wrote one, so that branch had never run)
+    local nonl=False; [ "${1:-}" != nonl ] || nonl=True
     mkdir -p "$TEST_DIR/plutil-bin"
-    cat > "$TEST_DIR/plutil-bin/plutil" <<'PY'
-#!/usr/bin/env python3
+    printf '#!/usr/bin/env python3\nNONL = %s   # True: no line end after the raw value\n' "$nonl" > "$TEST_DIR/plutil-bin/plutil"
+    cat >> "$TEST_DIR/plutil-bin/plutil" <<'PY'
 import plistlib, sys
 a = sys.argv[1:]
 if len(a) < 4 or a[0] != "-extract":
@@ -1713,12 +1716,13 @@ for part in kp.split("."):
         cur = cur[part]
     else:
         print("%s: Could not extract value, error: No value at that key path or invalid key path: %s" % (path, kp)); sys.exit(1)
+end = "" if NONL else "\n"
 if isinstance(cur, (list, dict)):
-    print(len(cur))
+    sys.stdout.write(str(len(cur)) + end)
 elif isinstance(cur, bool):
-    print("true" if cur else "false")
+    sys.stdout.write(("true" if cur else "false") + end)
 else:
-    print(cur)
+    sys.stdout.write(str(cur) + end)
 PY
     chmod +x "$TEST_DIR/plutil-bin/plutil"
 }
@@ -3602,6 +3606,319 @@ PY
     ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite
     [ "$status" -eq 0 ]
     [ "$(_sd_read "$unit" env CLAUDE_CONFIG_DIR)" = "/x/caf$e" ]
+}
+
+# Round 4's mutation pass (2026-09-19): the lens ran the suite under one mutation per claim below and it stayed green, so each got
+# its case here, red under exactly that mutation and green with the code restored, the refused form and the accepted neighbour in
+# the same test. The two oracle cases pin the oracle itself: its refusal to guess at a specifier it does not model, and its name rule.
+
+@test "rewrite (Linux): a UTF-8 byte order mark on the first line is skipped as systemd skips it: a unit beginning with the mark and [Service] reads whole on all three roads and is written back without it; the mark on a later line is text, so the header after it is no header and the ExecStart above it lies under the section before, refused" {
+    # the mutation pass (2026-09-19): every unit the suite fed the reader began with [Unit], whose lines the rewrite keeps nothing of,
+    # so the strip removed changed no verdict; a hand-written unit that opens with [Service] is the one the mark decides
+    local unit="$ROMP_SYSTEMD_DIR/romp-manager.service" mgr="$ROMP_MANAGER_BIN" bom=$'\xef\xbb\xbf'
+    _old_unit "$unit"; cp "$unit" "$unit.clean"
+    sed -n '/^\[Service\]/,$p' "$unit.clean" > "$unit.svc"                              # no [Unit] section: [Service] is the first line
+    { printf '%s' "$bom"; cat "$unit.svc"; } > "$unit"
+    [ "$(head -c 3 "$unit" | od -An -tx1 | tr -d ' \n')" = efbbbf ]
+    [ "$(_sd_read "$unit" exec0)" = "$mgr" ]                                              # systemd reads past the mark
+    [ "$(_sd_read "$unit" has ROMP_DIR)" = yes ]
+    ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite --check
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"agree"* ]]
+    _marked_install_ok
+    { printf '%s' "$bom"; cat "$unit.svc"; } > "$unit"
+    ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite
+    [ "$status" -eq 0 ]
+    [ "$(head -c 3 "$unit" | od -An -tx1 | tr -d ' \n')" != efbbbf ]                      # written whole in romp's form, the mark gone
+    [ "$(head -1 "$unit")" = '[Unit]' ]
+    grep -q '^Environment=MALLOC_ARENA_MAX=2$' "$unit"
+    [ "$(_sd_read "$unit" exec0)" = "$mgr" ]
+    # the mark before [Service] on a later line: to systemd (and the oracle) that line is no header and carries no =, so ExecStart
+    # stays under [Unit], where systemd ignores it and the unit has no command; the reader refuses the kept line under that section
+    python3 - "$unit.clean" "$unit" <<'PY'
+import sys
+d = open(sys.argv[1], "rb").read()
+open(sys.argv[2], "wb").write(d.replace(b"[Service]", b"\xef\xbb\xbf[Service]", 1))
+PY
+    [[ "$(_sd_read "$unit" exec0)" == "ERROR: Service has no ExecStart"* ]]
+    _three_roads_refuse "$unit" "ExecStart under [Unit], a section systemd does not read it in"
+}
+
+@test "rewrite (Linux): a shell value ending in a newline names no place the file names: CLAUDE_CONFIG_DIR and ROMP_MANAGER_BIN carrying the file's own path plus a newline are refused on rewrite, rewrite --check and the marked child's install as differing values, never compared equal through basename and pwd -P, which lose the newline; the same values without it agree" {
+    # the mutation pass (2026-09-19): the guard in _same_path had no case of its own, since the file side cannot carry a trailing
+    # newline past the scan; the environment side can, and without the guard the place compare ran through two command
+    # substitutions that strip it, so a shell value with the newline compared equal to the file's and a differing value went unsaid
+    local unit="$ROMP_SYSTEMD_DIR/romp-manager.service" mgr="$ROMP_MANAGER_BIN" nl=$'\n'
+    _old_unit "$unit"; mkdir -p "$TEST_DIR/cc"
+    _svc_line "$unit" "Environment=CLAUDE_CONFIG_DIR=$TEST_DIR/cc"
+    cp "$unit" "$unit.before"
+    CLAUDE_CONFIG_DIR="$TEST_DIR/cc" ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite --check
+    [ "$status" -eq 0 ]
+    CLAUDE_CONFIG_DIR="$TEST_DIR/cc$nl" ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite --check
+    [ "$status" -eq 5 ]
+    [[ "$output" == *"CLAUDE_CONFIG_DIR: the file carries $TEST_DIR/cc, this environment carries $TEST_DIR/cc"* ]]
+    [[ "$output" == *"disagree; nothing was rewritten"* ]]
+    CLAUDE_CONFIG_DIR="$TEST_DIR/cc$nl" ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite
+    [ "$status" -eq 5 ]
+    cmp -s "$unit" "$unit.before"
+    run env -i HOME="$HOME" PATH="$PATH" CLAUDE_CONFIG_DIR="$TEST_DIR/cc$nl" ROMP_UPDATE_CHILD=1 ROMP_OS_OVERRIDE=Linux ROMP_SERVICE_NO_LOAD=1 \
+        ROMP_SYSTEMD_DIR="$ROMP_SYSTEMD_DIR" ROMP_MANAGER_BIN="$ROMP_MANAGER_BIN" XDG_STATE_HOME="$XDG_STATE_HOME" "$SVC" install
+    [ "$status" -eq 5 ]
+    [[ "$output" == *"CLAUDE_CONFIG_DIR: the file carries $TEST_DIR/cc"* ]]
+    cmp -s "$unit" "$unit.before"
+    # the manager's path: the file's ExecStart against a ROMP_MANAGER_BIN ending in a newline is another clone, never the same file
+    ROMP_MANAGER_BIN="$mgr$nl" ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite --check
+    [ "$status" -eq 5 ]
+    [[ "$output" == *"ExecStart: the file runs $mgr, this clone would write $mgr"* ]]
+    [[ "$output" == *"ran from a clone that is not the installed one"* ]]
+    ROMP_MANAGER_BIN="$mgr$nl" ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite
+    [ "$status" -eq 5 ]
+    cmp -s "$unit" "$unit.before"
+    run env -i HOME="$HOME" PATH="$PATH" ROMP_UPDATE_CHILD=1 ROMP_OS_OVERRIDE=Linux ROMP_SERVICE_NO_LOAD=1 \
+        ROMP_SYSTEMD_DIR="$ROMP_SYSTEMD_DIR" ROMP_MANAGER_BIN="$mgr$nl" XDG_STATE_HOME="$XDG_STATE_HOME" "$SVC" install
+    [ "$status" -eq 5 ]
+    [[ "$output" == *"ExecStart: the file runs $mgr"* ]]
+    cmp -s "$unit" "$unit.before"
+    ROMP_MANAGER_BIN="$mgr" ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite --check
+    [ "$status" -eq 0 ]
+}
+
+@test "rewrite (Linux): on a rewrite that reloads systemd, the drop-in advisory also lists the loaded unit's DropInPaths as systemctl reports them: one beside the unit is named once, by its file name, one elsewhere is added by its path, and one systemctl alone knows is said with no directory beside the unit; rewrite --check and the marked child's install ask systemctl nothing and list the directory alone; nothing reported and no directory: nothing said" {
+    # the mutation pass (2026-09-19): the suite's setup exports ROMP_SERVICE_NO_LOAD for every case, so the branch that asks systemctl
+    # never ran and the suite stayed green with it unreachable; here the rewrite loads, through a stub that answers DropInPaths
+    local unit="$ROMP_SYSTEMD_DIR/romp-manager.service" d="$ROMP_SYSTEMD_DIR/romp-manager.service.d" far="$TEST_DIR/elsewhere/romp-manager.service.d/50-site.conf"
+    local stub="$TEST_DIR/systemctl-stub" calls="$TEST_DIR/systemctl-calls" answer="$TEST_DIR/dropinpaths"
+    unset ROMP_SERVICE_NO_LOAD
+    _old_unit "$unit"
+    cat > "$stub" <<EOF
+#!/bin/sh
+echo "\$*" >> "$calls"
+case "\$2" in
+  is-active) echo active ;;
+  show) case "\$*" in
+          *NeedDaemonReload*) echo no ;;
+          *FragmentPath*) echo "$unit" ;;
+          *DropInPaths*) cat "$answer" ;;
+        esac ;;
+  *) exit 0 ;;
+esac
+EOF
+    chmod +x "$stub"
+    printf '%s\n' "$far" > "$answer"                                                     # a drop-in at another search-path level, no directory beside the unit
+    ROMP_SYSTEMCTL="$stub" ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"drop-ins also define this service and were not read: $far (under $d, and systemd's other search paths)"* ]]
+    [[ "$output" == *"Rewrote the login service unit"* ]]
+    grep -qx -- '--user show -p DropInPaths --value romp-manager.service' "$calls"
+    mkdir -p "$d"; printf '[Service]\nMemorySwapMax=0\n' > "$d/10-local.conf"
+    printf '%s %s\n' "$d/10-local.conf" "$far" > "$answer"                               # systemctl names the directory's own too: once, by file name
+    ROMP_SYSTEMCTL="$stub" ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"were not read: 10-local.conf, $far (under $d"* ]]
+    [[ "$output" != *"$d/10-local.conf"* ]]
+    rm -f "$calls"
+    ROMP_SYSTEMCTL="$stub" ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite --check              # --check calls systemctl not at all: the directory alone
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"were not read: 10-local.conf (under $d"* ]]
+    [[ "$output" != *"50-site"* ]]
+    [ ! -e "$calls" ]
+    _marked_install_ok
+    [[ "$output" == *"were not read: 10-local.conf (under $d"* ]]
+    [[ "$output" != *"50-site"* ]]
+    [ ! -e "$calls" ]
+    printf '%s\n' "$d/10-local.conf" > "$answer"                                          # systemctl adds nothing the directory did not say
+    ROMP_SYSTEMCTL="$stub" ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"were not read: 10-local.conf (under $d, and systemd's other search paths)"* ]]
+    rm -rf "$d"; : > "$answer"
+    ROMP_SYSTEMCTL="$stub" ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"drop-ins"* ]]
+}
+
+@test "install and rewrite (macOS and Linux): a carriage return inside a value is written as &#13; in the plist and as \\r in the unit, so launchd and systemd read the return the shell carries (a raw return in XML character data reads as a line feed): the value agrees with the shell under both plist readers and with the oracle, goes back the same way on rewrite, and a value ending in a return is kept whole, not refused" {
+    # the mutation pass (2026-09-19): the newline case had its test and the return case none, so the plist writer's &#13; could go
+    # and every case stayed green; a raw return in an XML string is normalised to a line feed by the parser, plistlib's here,
+    # launchd's on a mac, so the manager would have read another value than the one installed
+    local plist="$ROMP_LAUNCHD_DIR/com.romp.manager.plist" unit="$ROMP_SYSTEMD_DIR/romp-manager.service" none="$TEST_DIR/no-plutil-here" cr=$'\r' reader
+    _plutil_stub
+    CLAUDE_CONFIG_DIR="/x/a${cr}b" ROMP_OS_OVERRIDE=Darwin run "$SVC" install
+    [ "$status" -eq 0 ]
+    grep -qF '<key>CLAUDE_CONFIG_DIR</key><string>/x/a&#13;b</string>' "$plist"
+    run grep -c $'\r' "$plist"
+    [ "$status" -ne 0 ]                                                                  # no raw return anywhere in the file
+    [ "$(_plist_get "$plist" EnvironmentVariables.CLAUDE_CONFIG_DIR | od -c | head -1 | tr -s ' ')" = "0000000 / x / a \r b \n" ]
+    cp "$plist" "$plist.mid"
+    for reader in "PATH=$TEST_DIR/plutil-bin:$PATH" "ROMP_PLUTIL=$none"; do
+        cp "$plist.mid" "$plist"
+        run env "$reader" CLAUDE_CONFIG_DIR="/x/a${cr}b" ROMP_OS_OVERRIDE=Darwin "$SVC" rewrite --check
+        [ "$status" -eq 0 ]
+        run env "$reader" CLAUDE_CONFIG_DIR="/x/a${cr}c" ROMP_OS_OVERRIDE=Darwin "$SVC" rewrite --check
+        [ "$status" -eq 5 ]                                                              # the return is read as itself: what follows it is compared
+        run env "$reader" ROMP_OS_OVERRIDE=Darwin "$SVC" rewrite
+        [ "$status" -eq 0 ]
+        grep -qF '<key>CLAUDE_CONFIG_DIR</key><string>/x/a&#13;b</string>' "$plist"
+        [ "$(_plist_get "$plist" EnvironmentVariables.CLAUDE_CONFIG_DIR | od -c | head -1 | tr -s ' ')" = "0000000 / x / a \r b \n" ]
+    done
+    rm -f "$plist"
+    CLAUDE_CONFIG_DIR="/x/a${cr}" ROMP_OS_OVERRIDE=Darwin run "$SVC" install              # ending in a return: a command substitution keeps it, so no refusal
+    [ "$status" -eq 0 ]
+    grep -qF '<key>CLAUDE_CONFIG_DIR</key><string>/x/a&#13;</string>' "$plist"
+    for reader in "PATH=$TEST_DIR/plutil-bin:$PATH" "ROMP_PLUTIL=$none"; do
+        run env "$reader" CLAUDE_CONFIG_DIR="/x/a${cr}" ROMP_OS_OVERRIDE=Darwin "$SVC" rewrite --check
+        [ "$status" -eq 0 ]
+        run env "$reader" CLAUDE_CONFIG_DIR="/x/a" ROMP_OS_OVERRIDE=Darwin "$SVC" rewrite --check
+        [ "$status" -eq 5 ]
+    done
+    # the unit: the writer's \r escape, which systemd decodes to the return (a raw return in the file would be a line end to it)
+    CLAUDE_CONFIG_DIR="/x/a${cr}b" ROMP_OS_OVERRIDE=Linux run "$SVC" install
+    [ "$status" -eq 0 ]
+    grep -qxF 'Environment="CLAUDE_CONFIG_DIR=/x/a\rb"' "$unit"
+    [ "$(_sd_read "$unit" env CLAUDE_CONFIG_DIR | od -c | head -1 | tr -s ' ')" = "0000000 / x / a \r b \n" ]
+    CLAUDE_CONFIG_DIR="/x/a${cr}b" ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite --check
+    [ "$status" -eq 0 ]
+    CLAUDE_CONFIG_DIR="/x/a${cr}c" ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite --check
+    [ "$status" -eq 5 ]
+    ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite
+    [ "$status" -eq 0 ]
+    grep -qxF 'Environment="CLAUDE_CONFIG_DIR=/x/a\rb"' "$unit"
+}
+
+@test "rewrite (macOS): the plutil line-end calibration's other branch: a plutil that writes no line end after a raw extract has nothing taken off, so the plist's values read whole through it and a value ending in a newline is still refused; a plutil that writes one has exactly that taken off, on the same two plists" {
+    # the mutation pass (2026-09-19): the stand-in plutil always printed a trailing newline, so the branch for one that does not was
+    # never run, and setting the flag unconditionally left every case green; with such a plutil the flag set wrongly takes a value's
+    # own trailing newline off, and the one refusal that newline exists for is skipped, the value silently shortened
+    local plist="$ROMP_LAUNCHD_DIR/com.romp.manager.plist" stubpath="$TEST_DIR/plutil-bin/plutil" nl=$'\n'
+    _plutil_stub nonl
+    CLAUDE_CONFIG_DIR=/x/cc ROMP_OS_OVERRIDE=Darwin "$SVC" install >/dev/null
+    [ "$("$stubpath" -extract Label raw -o - "$plist"; printf x)" = "com.romp.managerx" ]   # this plutil writes no line end
+    cp "$plist" "$plist.before"
+    PATH="$TEST_DIR/plutil-bin:$PATH" CLAUDE_CONFIG_DIR=/x/cc ROMP_OS_OVERRIDE=Darwin run "$SVC" rewrite --check
+    [ "$status" -eq 0 ]
+    PATH="$TEST_DIR/plutil-bin:$PATH" CLAUDE_CONFIG_DIR=/x/c ROMP_OS_OVERRIDE=Darwin run "$SVC" rewrite --check
+    [ "$status" -eq 5 ]                                                                  # nothing taken off the value: one character short disagrees
+    PATH="$TEST_DIR/plutil-bin:$PATH" ROMP_OS_OVERRIDE=Darwin run "$SVC" rewrite
+    [ "$status" -eq 0 ]
+    cmp -s "$plist" "$plist.before"                                                      # a clean-shell rewrite through it leaves the plist byte for byte
+    sed 's|<string>/x/cc</string>|<string>/x/cc\&#10;</string>|' "$plist.before" > "$plist"; cp "$plist" "$plist.nl"
+    [ "$("$stubpath" -extract EnvironmentVariables.CLAUDE_CONFIG_DIR raw -o - "$plist"; printf x)" = "/x/cc${nl}x" ]   # the value's own newline, no line end after it
+    PATH="$TEST_DIR/plutil-bin:$PATH" ROMP_OS_OVERRIDE=Darwin run "$SVC" rewrite
+    [ "$status" -eq 5 ]
+    [[ "$output" == *"has a CLAUDE_CONFIG_DIR entry whose value ends in a newline"* ]]
+    cmp -s "$plist" "$plist.nl"
+    PATH="$TEST_DIR/plutil-bin:$PATH" ROMP_OS_OVERRIDE=Darwin run "$SVC" rewrite --check
+    [ "$status" -eq 5 ]
+    cmp -s "$plist" "$plist.nl"
+    _plutil_stub                                                                          # the first branch: a plutil that writes a line end
+    [ "$("$stubpath" -extract Label raw -o - "$plist"; printf x)" = "com.romp.manager${nl}x" ]
+    PATH="$TEST_DIR/plutil-bin:$PATH" ROMP_OS_OVERRIDE=Darwin run "$SVC" rewrite
+    [ "$status" -eq 5 ]
+    [[ "$output" == *"has a CLAUDE_CONFIG_DIR entry whose value ends in a newline"* ]]
+    cmp -s "$plist" "$plist.nl"
+    cp "$plist.before" "$plist"
+    PATH="$TEST_DIR/plutil-bin:$PATH" CLAUDE_CONFIG_DIR=/x/cc ROMP_OS_OVERRIDE=Darwin run "$SVC" rewrite --check
+    [ "$status" -eq 0 ]
+    PATH="$TEST_DIR/plutil-bin:$PATH" ROMP_OS_OVERRIDE=Darwin run "$SVC" rewrite
+    [ "$status" -eq 0 ]
+    cmp -s "$plist" "$plist.before"
+}
+
+@test "install (Linux and macOS): a PATH, a service.env path or a manager path ending in a newline is refused before anything is written, the value named, no audit row; the same values without it install, and a PATH with a newline inside is written escaped and read back whole" {
+    # the mutation pass (2026-09-19): the instance-variable leg had its case and the three fixed values none, so each of those legs
+    # could go and the suite stayed green; on Linux a manager path with a newline is a control character systemd refuses in an
+    # executable name and that refusal fires first, so the leg's own text is the mac's to show
+    local unit="$ROMP_SYSTEMD_DIR/romp-manager.service" plist="$ROMP_LAUNCHD_DIR/com.romp.manager.plist" nl=$'\n'
+    run env PATH="$PATH:/x$nl" ROMP_OS_OVERRIDE=Linux "$SVC" install
+    [ "$status" -eq 5 ]
+    [[ "$output" == *"PATH in this environment ends in a newline"* ]]
+    [[ "$output" == *"nothing was written"* ]]
+    [ ! -e "$unit" ]
+    ROMP_SERVICE_ENV_FILE="$TEST_DIR/svc.env$nl" ROMP_OS_OVERRIDE=Linux run "$SVC" install
+    [ "$status" -eq 5 ]
+    [[ "$output" == *"the service.env path in this environment ends in a newline"* ]]
+    [ ! -e "$unit" ]
+    ROMP_MANAGER_BIN="$ROMP_MANAGER_BIN$nl" ROMP_OS_OVERRIDE=Linux run "$SVC" install
+    [ "$status" -eq 5 ]
+    [[ "$output" == *"the manager's path"* ]]
+    [[ "$output" == *"nothing was written"* ]]
+    [ ! -e "$unit" ]
+    ROMP_MANAGER_BIN="$ROMP_MANAGER_BIN$nl" ROMP_OS_OVERRIDE=Darwin run "$SVC" install
+    [ "$status" -eq 5 ]
+    [[ "$output" == *"the manager's path (ROMP_MANAGER_BIN) in this environment ends in a newline"* ]]
+    [ ! -e "$plist" ]
+    ROMP_SERVICE_ENV_FILE="$TEST_DIR/svc.env$nl" ROMP_OS_OVERRIDE=Darwin run "$SVC" install
+    [ "$status" -eq 5 ]
+    [[ "$output" == *"the service.env path in this environment ends in a newline"* ]]
+    [ ! -e "$plist" ]
+    [ ! -e "$XDG_STATE_HOME/romp/restart-audit.jsonl" ]                                   # a refused install journals nothing
+    ROMP_SERVICE_ENV_FILE="$TEST_DIR/svc.env" ROMP_OS_OVERRIDE=Linux run "$SVC" install
+    [ "$status" -eq 0 ]
+    grep -qxF "EnvironmentFile=-$TEST_DIR/svc.env" "$unit"
+    ROMP_OS_OVERRIDE=Darwin run "$SVC" install
+    [ "$status" -eq 0 ]
+    [ -f "$plist" ]
+    rm -f "$unit"
+    run env PATH="/usr/bin$nl:$PATH" ROMP_OS_OVERRIDE=Linux "$SVC" install                # a newline inside: the writer's escape, systemd's decode
+    [ "$status" -eq 0 ]
+    grep -qF 'Environment="PATH=/usr/bin\n:' "$unit"
+    [ "$(_sd_read "$unit" env PATH | head -c 10 | od -c | head -1 | tr -s ' ')" = "0000000 / u s r / b i n \n :" ]
+    ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite --check
+    [ "$status" -eq 0 ]
+}
+
+@test "rewrite (Linux): the oracle refuses to guess and drops what systemd drops: a specifier from systemd's table it does not model (%t) raises rather than expanding, while %h expands, %% is a percent and a letter outside the table drops the item; an assignment whose name systemd refuses (A-B, 1A, A.B) is no assignment to the oracle or to the reader, so a kept variable beside it is not beside another assignment, while a valid name (_A) beside it is" {
+    # the mutation pass (2026-09-19): no case fed the oracle a specifier from the table or an invalid name, so it could expand the one
+    # to a placeholder and accept the other and every case stayed green; a case leaning on the oracle where it is not modelled must
+    # fail loudly, and the reader's name rule needs its accept case (the invalid word is dropped, not counted) beside its refuse case
+    local unit="$ROMP_SYSTEMD_DIR/romp-manager.service" n
+    _old_unit "$unit"; cp "$unit" "$unit.clean"
+    _svc_line "$unit" 'Environment=CLAUDE_CONFIG_DIR=%t/romp'
+    run _sd_read "$unit" env CLAUDE_CONFIG_DIR
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"NotImplementedError"* && "$output" == *"the specifier %t is not modelled"* ]]
+    _three_roads_refuse "$unit" "the specifier %t in CLAUDE_CONFIG_DIR"
+    cp "$unit.clean" "$unit"; _svc_line "$unit" 'Environment=CLAUDE_CONFIG_DIR=%h/.cc'
+    [ "$(_sd_read "$unit" env CLAUDE_CONFIG_DIR)" = "$HOME/.cc" ]
+    cp "$unit.clean" "$unit"; _svc_line "$unit" 'Environment=CLAUDE_CONFIG_DIR=/x/100%%'
+    [ "$(_sd_read "$unit" env CLAUDE_CONFIG_DIR)" = "/x/100%" ]
+    CLAUDE_CONFIG_DIR=/x/100% ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite --check
+    [ "$status" -eq 0 ]
+    ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite
+    [ "$status" -eq 0 ]
+    grep -qxF 'Environment="CLAUDE_CONFIG_DIR=/x/100%%"' "$unit"
+    [ "$(_sd_read "$unit" env CLAUDE_CONFIG_DIR)" = "/x/100%" ]
+    cp "$unit.clean" "$unit"; _svc_line "$unit" 'Environment=CLAUDE_CONFIG_DIR=%z/cc'
+    [ "$(_sd_read "$unit" has CLAUDE_CONFIG_DIR)" = no ]                                  # a letter outside the table: the item fails to resolve and is dropped
+    _three_roads_refuse "$unit" "the specifier %z in CLAUDE_CONFIG_DIR"
+    cp "$unit.clean" "$unit"; _svc_line "$unit" 'Environment=A-B=/x/bad 1A=1 A.B=2 CLAUDE_CONFIG_DIR=/x/cc'
+    for n in A-B 1A A.B; do [ "$(_sd_read "$unit" has "$n")" = no ]; done
+    [ "$(_sd_read "$unit" env CLAUDE_CONFIG_DIR)" = /x/cc ]
+    CLAUDE_CONFIG_DIR=/x/cc ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite --check
+    [ "$status" -eq 0 ]
+    _marked_install_ok
+    cp "$unit.clean" "$unit"; _svc_line "$unit" 'Environment=A-B=/x/bad 1A=1 A.B=2 CLAUDE_CONFIG_DIR=/x/cc'
+    ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite
+    [ "$status" -eq 0 ]
+    grep -qxF 'Environment=CLAUDE_CONFIG_DIR=/x/cc' "$unit"
+    run grep -F 'A-B' "$unit"
+    [ "$status" -ne 0 ]                                                                  # dropped, as every hand word is
+    cp "$unit.clean" "$unit"; _svc_line "$unit" 'Environment=_A=1 CLAUDE_CONFIG_DIR=/x/cc'
+    [ "$(_sd_read "$unit" has _A)" = yes ]
+    _three_roads_refuse "$unit" "CLAUDE_CONFIG_DIR is assigned beside another assignment on one line"
+}
+
+@test "unit reader: the header's numbered list of refusals is one item per _unit_refuse call site in _unit_scan, 1 to N with no gap, every call site in the file inside that function, and N is 21" {
+    # the mutation pass (2026-09-19): the header states the list's definition (the call sites) and its count, and nothing held either;
+    # a refusal added without its item, or an item without its call site, turns this red until the header is brought level
+    local n_sites n_file items
+    n_sites="$(awk '/^_unit_scan\(\) \{/ { f = 1 } f && /_unit_refuse "/ { c++ } f && /^\}/ { print c + 0; exit }' "$SVC")"
+    n_file="$(grep -c '_unit_refuse "' "$SVC")"
+    [ -n "$n_sites" ]
+    [ "$n_sites" = "$n_file" ]
+    items="$(sed -n '/Refused, one item per _unit_refuse call site/,/^# A line systemd ignores that carries nothing/p' "$SVC" \
+        | grep -oE '(^|[^0-9.])[0-9]+\. [a-z]' | sed -E 's/^[^0-9]*//; s/\. .*//' | sort -n | uniq | tr '\n' ' ')"
+    [ "$items" = "$(seq 1 "$n_sites" | tr '\n' ' ')" ]
+    [ "$n_sites" -eq 21 ]
 }
 
 
