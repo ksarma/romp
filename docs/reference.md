@@ -718,8 +718,16 @@ pick. A session created while an explicit default stands is seeded with it as
 a pick of its own and is not moved by a later change of the default; a session
 created while none stood follows the default wherever it moves. Since a
 per-session pick's remembered value seeds no new session, a box whose last
-per-session pick was the login and whose settings carry an apiKeyHelper bills
-new sessions on the key from this kernel on, until a default is set here. A
+per-session pick was a login, the machine's own or a stored one, bills new
+sessions on the key from this kernel on when its settings carry an
+apiKeyHelper; with no helper, a remembered stored-login pick bills them on the
+machine's own login, or on whatever the CLI resolves by itself when no login is
+signed in either. A remembered key pick keeps the key and makes new sessions
+followers of the default. Where the account moves, or the remembered pick names
+a side this machine cannot bill, the spawn says so as a problem row on the new
+session, naming the pick, what the session bills and the Set default billing
+submenu; a repeat while the pick stands counts on the one ring entry. All of
+this holds until a default is set here. A
 remote session's flyout names its host, and the pick sets that host's default
 (the op routes to the session's owning kernel). The judges follow the same
 resolution: a judge on a session with no pick of its own bills the machine's

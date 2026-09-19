@@ -6496,7 +6496,7 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         reg = sb.read_reg(s.backend.state_dir, self.SID)
         self.assertEqual(reg.get("auth"), "login"); self.assertFalse(reg.get("authPending"))
         self.assertEqual(s._auth_pending, "")
-        self.assertEqual(self._seed(s).get("auth"), "login", "the seed follows the unchanged pick too")
+        self.assertEqual(self._seed(s).get("auth"), "login", "sdk-defaults' auth follows the unchanged pick too (the record of the last pick)")
         chips = [a for a in s.backend._live.get(self.SID, {}).values() if a.get("command") == "/auth"]
         self.assertEqual(len(chips), 1)
         self.assertTrue(any("auth (web): set to login; unchanged, no reconnect" in str(m) for m in self.logs), self.logs)
@@ -11398,10 +11398,31 @@ class DefaultBillingMovesItsFollowers(unittest.TestCase):
                       "write of the default.", doc)
         self.assertIn("A follower's move leaves no record in its chat: the pending dots are the only session-side signal and they "
                       "clear at the landing; the kernel log's per-session line is the durable record.", doc)
-        self.assertIn("a box whose last per-session pick was the login and whose settings carry an apiKeyHelper bills new sessions "
-                      "on the key from this kernel on", doc)
+        # round 1 of the review of fork PR #819 (2026-09-19; tests-1, correctness-1, kernel-2): the blast radius is stated for the
+        # class, with the helper as the discriminator and the stored-login shapes named, and the spawn's row for the moving cells
+        self.assertIn("a box whose last per-session pick was a login, the machine's own or a stored one, bills new sessions on the "
+                      "key from this kernel on when its settings carry an apiKeyHelper; with no helper, a remembered stored-login "
+                      "pick bills them on the machine's own login, or on whatever the CLI resolves by itself when no login is signed "
+                      "in either.", doc)
+        self.assertIn("A remembered key pick keeps the key and makes new sessions followers of the default.", doc)
+        self.assertIn("Where the account moves, or the remembered pick names a side this machine cannot bill, the spawn says so as a "
+                      "problem row on the new session, naming the pick, what the session bills and the Set default billing "
+                      "submenu; a repeat while the pick stands counts on the one ring entry.", doc)
+        self.assertNotIn("bills new sessions on the key from this kernel on, until a default is set here", doc)
         self.assertIn("A session created while an explicit default stands is seeded with it as a pick of its own and is not moved "
                       "by a later change of the default", doc)
+        # tests-8 of that round: the two rewritten paragraphs that carried no pin (the one-auth-box paragraph's set-aside
+        # sentence and the ROMP_EXPECTED_AUTH paragraph's), each beside the retired doctrine's absence, and the retired
+        # first-paragraph sentence's absence (its replacement alone was pinned, so the old sentence could return beside it)
+        self.assertIn("An explicit machine default that names the side this box cannot bill is set aside at spawn and the unpicked "
+                      "rule below decides instead, in both directions: an explicit login default on a machine with no login seeds "
+                      "new sessions on the API key when a helper is configured, exactly as an explicit key default on a helper-less "
+                      "machine falls to the login, and the fall is said once per process as a problem row.", doc)
+        self.assertNotIn("a remembered login pick on a machine with no login seeds", doc)
+        self.assertIn("An explicit API-key default on a box that no longer holds a key is set aside at spawn, so it seeds nothing "
+                      "(the per-init check still judges each landing against the default).", doc)
+        self.assertNotIn("An API-key value remembered from a box that no longer holds a key", doc)
+        self.assertNotIn("Until the default is set here, the last per-session pick seeds it", doc)
 
 
     def test_the_walk_touches_no_session_with_a_pick_of_its_own_even_one_whose_cli_runs_the_other_side(self):

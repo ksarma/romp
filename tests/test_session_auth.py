@@ -550,7 +550,8 @@ class TheFallIsCarriedInStatus(_OptionsHarness):
 def _picker_backend(key):
     """A backend stand-in for the kernel's picker tests (_auth_avail over stubbed probes): key_available from the
     stubbed world, and the REAL default rule over it. _auth_avail's default is upstream's (T346/T380, folded
-    2026-09-15): the remembered pick while this box can bill it, else the side that exists, decided through the
+    2026-09-15): the EXPLICIT default while this box can bill it (a per-session pick's flag-less write preselects
+    nothing since 2026-09-18), else the side that exists, decided through the
     backend's pick_unavailable both ways (upstream #1147's fall; the fork's one-rule readers new_session_auth and
     seeded_auth retired with the pull-in), so the stand-in borrows SdkBackend's own pick_unavailable and
     auth_unavailable_why and stubs only their three probes: login_ok as the kernel wires it, over the stubbed account state (None when the file
@@ -747,6 +748,154 @@ class FallbackBothWays(_Keyed):
         self.assertEqual(self.be.auth_avail(), {"login": False, "key": True, "loginWhy": sb._cred.WHY_MANAGED_HELPER})
 
 
+class PickNotSeededSaysSo(_OptionsHarness):
+    """Round 1 of the review of fork PR #819 (2026-09-19; correctness-3, regression-3, tests-4, and the reviewer's
+    fourth correction): a pick-less spawn that leaves a remembered per-session pick unseeded SAYS SO exactly where the
+    new session bills another account than that pick, as a problem row on the session (the ledger row, the kernel-log
+    line, the ring entry keyed by the pick), and stays silent where nothing moves. The pick is planted by the real
+    writer (set_auth on a picked session: sdk-defaults.json auth with no authExplicit), the new session by a pick-less
+    spawn (the POST /new and romp new road), and the account it bills is read from the LAUNCH PAYLOAD (_options: the
+    helper suppressed or not, the credential names in the CLI's environment), never from the status side word alone.
+    Before this round the control was five moving cells with nothing written (the ring unchanged across the spawn)."""
+
+    NEEDLE = "the last per-session Billing pick"
+
+    def _pick(self, value):
+        sid0 = self.be.spawn("picked", "/tmp")
+        self.assertTrue(self.be.set_auth(sid0, value))
+        d = sb.read_sdk_defaults(self.be.state_dir)
+        self.assertEqual((d.get("auth"), bool(d.get("authExplicit"))), (value.split(":")[0], False), "the flag-less write")
+        return sid0
+
+    def _rows(self):
+        return [p for p in self.be.problems(50) if self.NEEDLE in p["text"]]
+
+    def _events(self):
+        p = Path(self.be.state_dir) / sb.SESSION_EVENTS_FILE
+        return [json.loads(ln) for ln in p.read_text().splitlines()] if p.exists() else []
+
+    def _spawn_unpicked(self, name):
+        """A pick-less spawn: (sid, reg, the kernel-log lines it wrote, the ring entries it added). The ring delta is read
+        across the SPAWN alone: the launch's options build that follows in a test logs its own fast-mode org-check line on
+        every key-billed compose, moved bill or not, and that line is no signal (the reviewer, 2026-09-19)."""
+        lines = []
+        before = len(self.be.problems(50))
+        cb, self.be._log_cb = self.be._log_cb, lines.append
+        try:
+            sid = self.be.spawn(name, "/tmp")
+        finally:
+            self.be._log_cb = cb
+        reg = sb.read_reg(self.be.state_dir, sid)
+        self.assertNotIn("auth", reg, "a follower: the flag-less pick seeded nothing")
+        return sid, reg, lines, self.be.problems(50)[before:]
+
+    def test_a_plain_login_pick_with_a_helper_moves_the_bill_to_the_key_and_the_spawn_says_so(self):
+        self._pick("login")
+        sid, reg, lines, added = self._spawn_unpicked("n")
+        # the bill, from the payload: no overlay suppresses the helper, so the key bills (before this change the seeded
+        # login pick wrote {"apiKeyHelper": ""} and the session billed the login)
+        kw = self._options_kw(sb.SdkSession(self.be, reg))
+        self.assertNotIn("apiKeyHelper", self._settings_of(kw), "the helper runs: the key bills")
+        self.assertNotIn("CLAUDE_CODE_OAUTH_TOKEN", kw["env"])
+        rows = self._rows()
+        self.assertEqual(len(rows), 1, self.be.problems(50))
+        self.assertEqual(added, rows, "one ring entry across the spawn, and it is this row")
+        text = rows[0]["text"]
+        self.assertIn("auth (n): the last per-session Billing pick, the machine's own login, no longer seeds a new session", text)
+        self.assertIn("this session starts unpicked and bills the API key (the helper rule)", text)
+        self.assertIn("set it under Set default billing", text)
+        self.assertNotIn(sb.PROBLEM_ROW_MARK, text, "the ring gets the prose alone")
+        # the kernel log line carries the parseable tail, and the ledger row is ON the session
+        marked = [m for m in lines if sb.PROBLEM_ROW_MARK in m and self.NEEDLE in m]
+        self.assertEqual(len(marked), 1, lines)
+        row = sb.parse_problem_row(marked[0])
+        self.assertEqual((row["kind"], row["sid"], row["name"], row["pick"], row["bills"]),
+                         ("auth.pick-not-seeded", sid, "n", "login", "key"))
+        self.assertNotIn("why", row, "a billable pick: no reason field")
+        self.assertEqual([r for r in self._events() if r["kind"] == "auth.pick-not-seeded"], [row])
+        # a repeat while the file still remembers the pick counts on the one ring entry; the ledger gets every row
+        sid2, _reg2, _l, added2 = self._spawn_unpicked("m")
+        self.assertEqual(added2, [], "the repeat added no ring entry")
+        rows = self._rows()
+        self.assertEqual(len(rows), 1, "keyed by the pick: one ring entry")
+        self.assertIn("(1 repeat this kernel life", rows[0]["text"])
+        ev = [r for r in self._events() if r["kind"] == "auth.pick-not-seeded"]
+        self.assertEqual([r["sid"] for r in ev], [sid, sid2])
+        # the way out the row names: the pick set as the machine default seeds, and the row falls silent
+        self.assertTrue(self.be.set_auth_default("login"))
+        sid3 = self.be.spawn("o", "/tmp")
+        self.assertEqual(sb.read_reg(self.be.state_dir, sid3).get("auth"), "login", "the explicit default seeds")
+        self.assertIn("(1 repeat this kernel life", self._rows()[0]["text"], "no third row: nothing was left unseeded")
+        self.assertEqual(len([r for r in self._events() if r["kind"] == "auth.pick-not-seeded"]), 2)
+
+    def test_a_key_pick_with_a_helper_keeps_the_bill_and_is_silent(self):
+        self._pick("key")
+        sid, reg, lines, added = self._spawn_unpicked("n")
+        kw = self._options_kw(sb.SdkSession(self.be, reg))
+        self.assertNotIn("apiKeyHelper", self._settings_of(kw), "the key bills, as the pick did")
+        self.assertEqual(added, [], "the bill did not move: the spawn added nothing to the ring")
+        self.assertEqual(self._rows(), [])
+        self.assertEqual(self._events(), [])
+        self.assertFalse([m for m in lines if self.NEEDLE in m])
+
+    def test_a_key_pick_on_a_box_that_lost_its_helper_is_said_as_the_retired_seed_said_it(self):
+        # the reviewer's fourth correction (2026-09-19): before this change a flag-less key pick with no helper rang once per
+        # process ("the remembered Billing pick is the API key but Claude Code's settings carry no apiKeyHelper ..."); the
+        # seed change dropped that row, so a user who picked the key on a box that cannot bill it was no longer told
+        self._pick("key")
+        self._no_helper()
+        sid, reg, lines, added = self._spawn_unpicked("n")
+        kw = self._options_kw(sb.SdkSession(self.be, reg))
+        self.assertNotIn("apiKeyHelper", self._settings_of(kw))
+        self.assertFalse(kw.get("settings"), "plain launch: the machine's own login bills")
+        rows = self._rows()
+        self.assertEqual(len(rows), 1, self.be.problems(50))
+        self.assertEqual(added, rows)
+        text = rows[0]["text"]
+        self.assertIn("the last per-session Billing pick, the API key, cannot be billed on this box (%s)" % sb._cred.WHY_NO_HELPER, text)
+        self.assertIn("bills the machine's own login", text)
+        self.assertIn("after configuring apiKeyHelper in %s" % os.path.join(self.cfg, "settings.json"), text)
+        self.assertIn("Set default billing", text)
+        row = sb.parse_problem_row([m for m in lines if sb.PROBLEM_ROW_MARK in m and self.NEEDLE in m][0])
+        self.assertEqual((row["pick"], row["bills"], row["why"]), ("key", "login", sb._cred.WHY_NO_HELPER))
+
+    def test_a_plain_login_pick_on_a_helper_less_box_with_a_login_is_silent(self):
+        self._no_helper()
+        self._pick("login")
+        sid, reg, lines, added = self._spawn_unpicked("n")
+        kw = self._options_kw(sb.SdkSession(self.be, reg))
+        self.assertFalse(kw.get("settings"), "plain launch, no helper to suppress: the same machine login rides")
+        self.assertEqual(added, [], "the same account bills: nothing said")
+        self.assertEqual(self._rows(), [])
+        self.assertEqual(self._events(), [])
+
+    def test_a_plain_login_pick_with_no_login_and_no_helper_is_said_as_unbillable(self):
+        self._no_helper()
+        self._pick("login")
+        self.be.login_ok = lambda: False
+        sid, reg, lines, added = self._spawn_unpicked("n")
+        rows = self._rows()
+        self.assertEqual(len(rows), 1, self.be.problems(50))
+        self.assertEqual(added, rows)
+        text = rows[0]["text"]
+        self.assertIn("the machine's own login, cannot be billed on this box (%s)" % sb._cred.WHY_NO_LOGIN, text)
+        self.assertIn("bills whatever the CLI resolves on its own", text)
+        self.assertIn("which may be no credential at all", text)
+        self.assertIn("after signing in (claude /login)", text)
+
+    def test_no_pick_and_an_explicit_default_are_silent_on_this_road(self):
+        sid, reg, lines, added = self._spawn_unpicked("n")
+        self.assertEqual((self._rows(), added), ([], []), "a file remembering no pick")
+        self.assertTrue(self.be.set_auth_default("login"))
+        sid2 = self.be.spawn("m", "/tmp")
+        self.assertEqual(sb.read_reg(self.be.state_dir, sid2).get("auth"), "login", "the explicit default seeds")
+        self.assertEqual(self._rows(), [], "an explicit default is the seed, not a pick left behind")
+        self.assertTrue(self.be.set_auth_default("auto"))
+        self.be.spawn("o", "/tmp")
+        self.assertEqual(self._rows(), [], "automatic: auth is empty, no pick")
+        self.assertEqual(self._events(), [])
+
+
 class FastOrgPermissionFollowsBilling(_OptionsHarness):
     """Fast-mode permission follows BILLING (the user 2026-08-14): the CLI's availability probe asks
     the saved claude.ai login whenever one exists, even on a session whose inference bills the
@@ -872,7 +1021,8 @@ class SetAuth(_Keyed):
         reg = sb.read_reg(self.be.state_dir, sid)
         self.assertEqual(reg["auth"], "login")
         self.assertTrue(reg["authPending"], "the applying reconnect hasn't happened yet — badge dots")
-        self.assertEqual(sb.read_sdk_defaults(self.be.state_dir).get("auth"), "login", "remembered: the picker's preselected choice")
+        self.assertEqual(sb.read_sdk_defaults(self.be.state_dir).get("auth"), "login",
+                         "remembered: the record of the last pick, which nothing reads (hand-editing the file stays the escape hatch)")
         self.assertFalse(sb.read_sdk_defaults(self.be.state_dir).get("authExplicit"))
         # ...and the next spawn with no pick of its own is NOT seeded from it (2026-09-18): the launch and the init check
         # follow the file's auth only beside authExplicit, and so does the spawn now, so a session created while no

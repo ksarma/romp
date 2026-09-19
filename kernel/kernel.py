@@ -22465,9 +22465,12 @@ def _auth_avail():
     user 2026-09-08, who wanted the fall both ways: a login default on a box with no login falls to the key,
     exactly as a key default on a helper-less box falls to the login; the value read is the explicit default
     since round 1 of the review, 2026-09-18). A per-session pick's flag-less write preselects
-    nothing: read here, it made every session created from the picker carry that pick as its OWN while a
-    session created any other way followed the machine default, and the two creation roads billed different
-    sides. The reason sentences are credentials.py's, one vocabulary for every surface."""
+    nothing: read here and in the spawn's seed, one pick on one session preselected the picker and seeded every
+    later pick-less spawn with a pick of its own, and changing only one of the two readers would have left the
+    picker and the spawn disagreeing, so both read the explicit default. The picker's row sends its selection
+    as the create's `auth` (render.ts pickerAuthChoice), so a session created from the picker carries the
+    preselected default as a pick of its OWN, while one created with no pick follows the default. The reason
+    sentences are credentials.py's, one vocabulary for every surface."""
     key = _auth_key_present()
     d = {}
     try:
@@ -24759,9 +24762,10 @@ class Sessions:
                                 "authLogin": st.get("authLogin", ""),
                                 "authLabel": st.get("authLabel", ""),
                                 "authLoginLive": st.get("authLoginLive"),   # the init's evidence of which login answered
-                                # whether `auth` is an explicit pick (picker, gear, a remembered pick) rather
-                                # than the seeded default (the fork's wire field; no UI reader since the
-                                # billing label retired for T346's ladders, a later kernel cleanup)
+                                # whether `auth` is this session's own pick (picker, gear) or the machine's EXPLICIT
+                                # default seeded at its spawn, never another session's remembered pick (since
+                                # 2026-09-18), rather than the box's unpicked rule (the fork's wire field; no UI reader
+                                # since the billing label retired for T346's ladders, a later kernel cleanup)
                                 "authPicked": bool(st.get("authPicked")),
                                 # the explicit pick this box cannot bill ("login"|"key"|""): the launch
                                 # fell to the other side, the Billing menu says so (2026-09-08)
@@ -44379,8 +44383,9 @@ def build_session(sid, now, live_map=None, path_override=None, tail_cap_t=None, 
                   # renders it when it disagrees with the intent above (a key found via apiKeyHelper
                   # bills the key while `auth` still reads login; the user 2026-08-15)
                   "authLive": tm.get("authLive", ""),
-                  # whether `auth` above is an EXPLICIT pick (picker, gear, a remembered pick) rather than
-                  # the box default: the Billing row words a disagreement as "picked, but the CLI
+                  # whether `auth` above is this session's own pick (picker, gear) or the machine's EXPLICIT default
+                  # seeded at its spawn, never another session's remembered pick (since 2026-09-18), rather than
+                  # the box's unpicked rule: the Billing row words a disagreement as "picked, but the CLI
                   # reports" only for a pick; an unpicked session shows the CLI's side plainly
                   "authPicked": bool(tm.get("authPicked")),
                   # whether this machine offers BOTH choices. No longer a gate (the user 2026-09-08: the
@@ -48519,7 +48524,8 @@ def _claude_login_display():
 
 
 def _reg_login(d):
-    """The stored login a reg or the remembered defaults name under `authLogin`, "" when none or junk."""
+    """The stored login a reg or sdk-defaults.json (the explicit default's id beside `auth` login, or the last
+    pick's record) names under `authLogin`, "" when none or junk."""
     v = (d or {}).get("authLogin") if isinstance(d, dict) else None
     return v if isinstance(v, str) and lg.ID_RE.match(v) else ""
 
@@ -77073,8 +77079,10 @@ class Handler(BaseHTTPRequestHandler):
                     # missing, so the old check took it as a yes and created a session that could never
                     # run — silently, which is the whole failure (the user 2026-07-28).
                     if _sdk_ready():
-                        # auth ('login'|'key') is the picker's per-session billing pick; anything else
-                        # (older clients, no pick) means the remembered/ambient default (spawn's seed).
+                        # auth ('login'|'key'|'login:<id>') is the picker's per-session billing pick; anything else
+                        # (older clients, no pick) means the machine default: the explicit one, which spawn seeds,
+                        # else the helper rule the session follows (a remembered per-session pick seeds nothing
+                        # since 2026-09-18).
                         a = msg.get("auth")
                         # the picker's Tags row (prefilled from the active tab, editable) rides `tags`;
                         # `parent` is accepted for API symmetry with /new — applied before the first
