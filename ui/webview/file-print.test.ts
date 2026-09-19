@@ -546,9 +546,9 @@ test("bodyReady reads the element children through `children`, else through `chi
 });
 
 // ── the census of the body's roots (P7) ────────────────────────────────────────────────────────────
-// bodyReady classes a child it has never seen as content, on purpose (a false not-ready locks the button with no road out; a
-// false ready is a press that prints what stands), so a root the viewer gains would be classed silently unless something
-// reads the viewer. This census does: it reads file-view.ts, finds every site that seats an element in the body and resolves
+// bodyReady classes a child it has never seen as UNKNOWN, and an unknown child makes the body not in whatever stands beside
+// it (the safe side: a press that prints what stands is the dangerous one; the person can still close and reopen), so a
+// root the viewer gains would lock Print silently unless something reads the viewer. This census does: it reads file-view.ts, finds every site that seats an element in the body and resolves
 // each seated expression down to the root element's `el("<tag>", "<class>")`, then holds that set equal to the flow's three
 // lists (READY_ROOTS, NOT_READY_ROOTS, LINE_ROOTS) and executes bodyReady over each root as its list says. The sites, by
 // hand, are the lines this command prints:

@@ -26,8 +26,9 @@
 //     browser never renders (inside a ruby's <rp>, a <canvas>'s fallback content, a `popover` not shown, all kept by the
 //     sanitizer) or one whose figure it never renders (an <img hidden> inside the placeholder, an svg with display none,
 //     visibility hidden or opacity 0) was counted, named and, on "Print with them", fetched for a print that never shows
-//     it. Now the walk's answer is joined by the browser's own (checkVisibility and a client rect, on the placeholder and
-//     on the figure it wraps), so the unknown side falls to NOT printable. The census renders one gated picture per
+//     it. Now the walk's answer is joined by the browser's own (checkVisibility and a client rect) on the placeholder, and
+//     by an enumeration of the kept attributes that hide the figure it wraps (figureHidden: the sheet hides every gated
+//     figure, so the browser cannot be asked about it), so the unknown side falls to NOT printable. The census renders one gated picture per
 //     wrapper over every tag of DOMPurify's html profile the sanitizer keeps (the void elements aside), the svg
 //     containers inside an svg, and the kept attributes that hide (`popover`, `inert`, `hidden` in both spellings, `open`,
 //     an svg's `display`, `visibility` and `opacity`), presses Print, reads which hosts the title names, and holds that
@@ -445,7 +446,7 @@ test("(D) the census of the printable rule's unknown side: over every kept tag o
     await frames(page, 3);
     const hostsBefore = hostsAsked(requests);
     const askedAtRender = (h: string): number => requests.filter((u) => u.startsWith("https://" + h + "/")).length;
-    // every placeholder's host, wrapper, and the browser's own rendering of it and of the figure it wraps
+    // every placeholder's host, wrapper, and the browser's own rendering of it (the figure's hiding is read by attribute)
     const seen: Array<{ host: string; wrapper: string; rendered: boolean; figure: string }> = await page.evaluate((attrs: string[]) => {
       const renders = (e: Element): boolean => (e as any).checkVisibility({ visibilityProperty: true, opacityProperty: true }) && e.getClientRects().length > 0;
       const carries = (e: Element | null): string => e === null ? "-" : attrs.filter((k) => e.hasAttribute(k)).map((k) => k + "=" + e.getAttribute(k)).join(",");
