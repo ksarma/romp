@@ -37996,10 +37996,7 @@ def _chat_postal_relevant(ev):
 #                        d_type, and the stats made in another process by any git child a signature forks (the set
 #                        is pinned by execution in tests/test_chat_build_sig_inputs.py; a fork's wall lands on the
 #                        row of the part that forked it, its CPU on no row, since RUSAGE_THREAD excludes a child).
-#                        A strace over the harness's signatures (a review probe recorded in a review-round commit,
-#                        2026-09-19, with no command kept) found fd fstats from open(), scandir() and the pipes to git
-#                        children beside the counted path stats, every path stat in the count: a reading, not
-#                        recomputed by a test. Per signature:
+#                        Per signature:
 #                        stats / (pre + post + thread), and the same denominator for the three read counts
 #   namesReads           raw names-registry file reads inside a signature (_sdk_transcript_path, _names_parts
 #                        with no snapshot)
@@ -38059,22 +38056,35 @@ def _stat_counting_install():
     constant evaluated before this module loads (tempfile has no gate that runs: on 3.12 its copy sits in an import
     fallback that shutil's presence skips); 3.13's shutil asserts `func is os.lstat` against the current os.lstat (the
     wrapper on both sides); and 3.14's pathlib asks about utime, setxattr, chmod and chflags, not stat. What still
-    differs from the builtin, derived by running every observation a probe could name on the wrapper and on the builtin
-    captured before this module loaded (2026-09-19, on 3.12 and 3.13, which agree): the type (a Python function, not
-    builtin_function_or_method: inspect.isbuiltin False and isfunction True, repr and pydoc's header say function, dis
-    and inspect.getfile work, and the function attributes __code__, __globals__, __closure__, __defaults__,
-    __kwdefaults__, __dict__, __annotations__ and __get__ exist where __self__ and __text_signature__ do not); __get__
-    makes the wrapper a descriptor, so as a CLASS attribute it binds as a method and hands the instance in as `path`,
-    which is why the accessor and the globber above receive a staticmethod; inspect.signature with follow_wrapped=False
-    and inspect.getfullargspec read (path, *a, **kw) (signature's default follows __wrapped__ and reads the builtin's);
-    the TypeError text on a missing argument (a wrong keyword or an extra positional argument raises the builtin's own
-    text, since the wrapper passes both through); one more frame on a traceback through it, a Python call event to a
-    tracer or profiler, and one more level of recursion depth; mock's autospec builds a function-shaped mock where the
-    builtin's is a MagicMock; pickling by name resolves to posix.stat, the wrapper (the builtin kept in __wrapped__ no
-    longer pickles, since posix.stat names another object); the capability sets are one member larger wherever the
-    builtin was a member; and identity, since `is` against a reference taken before this module loaded is False.
-    functools.wraps carries __name__, __qualname__, __module__, __doc__ and sets __wrapped__ to the builtin, so those
-    five read the same."""
+    differs from the builtin, derived by running the same observations on the wrapper and on the builtin it holds in
+    __wrapped__, both in one process (the list is checked by tests/test_kernel_delta_send.py's WrapperDifferential test,
+    which runs the differential on the interpreter under test and reds on a difference this docstring does not name; the
+    set is not constant over the interpreters the suite runs, since 3.10 and 3.11 lack __type_params__ and __annotate__
+    arrives with 3.14): the type (a Python function, not builtin_function_or_method: inspect.isbuiltin False and
+    isfunction True, repr and pydoc's header say function, dis and inspect.getfile work, and the function attributes
+    __code__, __globals__, __closure__, __defaults__, __kwdefaults__, __dict__, __annotations__, __builtins__, __get__
+    and, from 3.12, __type_params__ and, from 3.14, __annotate__ exist where __self__ and __text_signature__ do not, so
+    vars() and dir() read more on the wrapper, vars() raising TypeError on the builtin); the wrapper is mutable (an
+    attribute can be set on it and __name__ reassigned, where the builtin
+    raises AttributeError); sys.getsizeof reads larger, and gc.get_referents reaches its code, its globals (this
+    module's namespace, so any holder of os.stat keeps this module reachable) and its closure, where the builtin's
+    referents are the posix module and its name; __get__ makes the wrapper a descriptor, so as a CLASS attribute it
+    binds as a method and hands the instance in as `path`, which is why the accessor and the globber above receive a
+    staticmethod; inspect.signature with follow_wrapped=False and inspect.getfullargspec read (path, *a, **kw), and
+    Signature.bind puts a keyword into kw (signature's default follows __wrapped__ and reads the builtin's); the
+    TypeError text on a missing argument and on a path given both by position and by name (the wrapper's own "got
+    multiple values for argument 'path'"; a wrong keyword or an extra positional argument raises the builtin's own text,
+    since the wrapper passes both through); one more frame on a traceback through it, a Python call event to a tracer or
+    profiler, and one more level of recursion depth; mock's autospec builds a function-shaped mock where the builtin's
+    is a MagicMock; pickling by name resolves to posix.stat, the wrapper (the builtin kept in __wrapped__ no longer
+    pickles, since posix.stat names another object), the same name unpickles in a process that never loaded this module
+    to the uncounted builtin, so a pickle handed to a spawn-method child names the builtin there unless that child
+    loaded this module first, and __reduce__ inverts the direction (the builtin's returns its name, the wrapper's raises
+    TypeError); each capability set holds the wrapper beside every builtin it held (one more member where one builtin
+    was a member, two where both were, supports_dir_fd from 3.13); and identity, since `is` against a reference taken
+    before this module loaded is False. functools.wraps carries __name__, __qualname__, __module__ and __doc__, so
+    those four read the same; __wrapped__, which wraps sets, and __annotations__, which the builtin lacks, are
+    differences, present on the wrapper alone."""
     tl = getattr(os.stat, "_romp_sig_counting", None)
     if tl is not None:
         return tl
