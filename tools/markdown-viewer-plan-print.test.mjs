@@ -8,7 +8,7 @@
 // flow module exists and both viewers call it where the section says; the words quoted in the section are the module's
 // literals; both sheets carry the two rules right after the `.fileview-body` line inside byte-equal print blocks; the
 // button starts disabled and both viewers report the body at the seatings and the panes the section names; the guide's
-// sentence is the one the section describes, carries the palette clause the first review added, agrees with the Python
+// sentence is the one the section describes, carries the palette clause the reviews settled on, agrees with the Python
 // pin of that clause (tests/test_guide_print_palette_chord.py, whose SENTENCE literal is read here, so the two pins cannot
 // pull the guide two ways again), and the old sentence is gone; and the module list is two-way (every
 // ui/webview/file-print*.test.ts the section's `ls` produces is named in the section and the count the section gives is
@@ -199,12 +199,14 @@ test('P5: the guide\'s printing sentence is the one the section describes, insid
   assert.ok(at >= 0, 'the paragraph the section names');
   const para = guide.slice(at, guide.indexOf('\n\n', at)).replace(/\s+/g, ' ');
   const withWords = literalAfter(flow, 'export const WITH_WORDS = ');
-  // The first sentence, with the clause the first review added (the chord is the dashboard's palette chord too); then the
-  // gate's sentence with the module's own words; then the PDF's.
-  const first = '**Print** in the file\'s bar, or **Cmd+P** on a Mac and **Ctrl+P** elsewhere while a file is open, prints the file alone, black on white, with its pictures loaded, across as many pages as it needs; in the dashboard that key also opens the command palette, which **Escape** closes.';
+  // The first sentence, with the palette clause as the second review reworded it (the first review's "also opens the
+  // command palette" read as if the key printed too; in the dashboard the key is the palette's and the bar's button prints);
+  // then the gate's sentence with the module's own words; then the PDF's.
+  const first = '**Print** in the file\'s bar, or **Cmd+P** on a Mac and **Ctrl+P** elsewhere while a file is open, prints the file alone, black on white, with its pictures loaded, across as many pages as it needs; in the dashboard that key opens the command palette instead (**Escape** closes it), so print from the bar there.';
   const rest = ' Pictures from other hosts are loaded for the print only when you choose **' + withWords + '**; a PDF prints itself, or opens in a new tab to print from when the browser cannot print it in place.';
   assert.ok(para.includes(first + rest), 'the guide\'s printing sentence, whole: ' + JSON.stringify(para));
   assert.ok(!para.includes('as many pages as it needs. Pictures'), 'the sentence before the palette clause is gone');
+  assert.ok(!para.includes('also opens the command palette'), 'and the first review\'s wording, which read as a print too, is gone');
   // The Python pin of the palette clause holds the same first sentence: read its SENTENCE literal (adjacent string
   // pieces inside one pair of parentheses) so a rewording of the guide fails both pins or neither.
   const py = read('tests', 'test_guide_print_palette_chord.py');
