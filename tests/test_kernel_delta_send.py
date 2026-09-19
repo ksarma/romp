@@ -8,6 +8,7 @@ which a fixed window would mishandle. A fresh connect / fork / behind-the-change
 {type:"session"} so it always renders from a correct base. Source-level + behavioural pins.
 """
 import ast
+import hashlib
 import importlib
 import io
 import json
@@ -890,8 +891,10 @@ class ByteIdenticalFrames(unittest.TestCase):
         # peers' regs are written before any push and one more before every cycle (no forkedFrom: the tab's own fork
         # component stays None, so no rebuild), and the regs present at each cycle are recorded for the derivation below.
         sdk = km.jd.STATE / "sdk"                         # the backend's registry directory (its state_dir is jd.STATE)
-        peers = ["11111111-2222-4333-8444-0000000009%02d" % i for i in range(20, 30)]
+        peers = self.REG_PEERS
         regs_present = []
+        if not sdk.exists():                              # made here: removed at cleanup if still empty (after the regs go)
+            self.addCleanup(lambda: sdk.is_dir() and not any(sdk.iterdir()) and sdk.rmdir())
         self.addCleanup(lambda: [os.unlink(sdk / (p + ".json")) for p in peers if (sdk / (p + ".json")).exists()])
 
         def write_reg(i):
@@ -934,20 +937,27 @@ class ByteIdenticalFrames(unittest.TestCase):
             jd = km.jd
             for i in range(3):
                 write_reg(i)
-            for d in (jd.STATESDIR, jd.GOALDIR, jd.GOALARCHDIR, jd._overrides_dir(), km.WORKING_DIR, km.NAMES, jd.STATE / "timeline"):
+            # seven files in the shared roots, every one restored at cleanup: five under the judge's root (jd.*) and two
+            # under the kernel's (km.WORKING_DIR and km.NAMES bind at kernel import, with no rebind hook), which is why the
+            # cleanup is by path and not a jd._rebind_state; a directory made here is removed at cleanup if still empty
+            for d in (jd.STATESDIR, jd.GOALDIR, jd.GOALARCHDIR, jd._overrides_dir(), km.WORKING_DIR, km.NAMES, jd.MESSAGES.parent):
+                if not d.exists():
+                    self.addCleanup(lambda d=d: d.is_dir() and not any(d.iterdir()) and d.rmdir())
                 d.mkdir(parents=True, exist_ok=True)
-            (jd.STATESDIR / (self.SID + ".jsonl")).write_text(json.dumps({"t": self.NOW - 30, "state": "idle"}) + "\n")
-            (jd.GOALDIR / (self.SID + ".json")).write_text(json.dumps({"rompUuid": self.SID, "nodes": {}, "status": {}}))
-            (jd._overrides_dir() / (self.SID + ".jsonl")).write_text("")
-            (jd.GOALARCHDIR / (self.SID + ".json")).write_text(json.dumps({"rompUuid": self.SID, "nodes": {}}))
-            (km.WORKING_DIR / self.SID).write_text("the notes-api web tier\n")
-            (jd.STATE / "timeline" / "messages.jsonl").write_text(json.dumps(
+            write_restoring(jd.STATESDIR / (self.SID + ".jsonl"), json.dumps({"t": self.NOW - 30, "state": "idle"}) + "\n")
+            write_restoring(jd.GOALDIR / (self.SID + ".json"), json.dumps({"rompUuid": self.SID, "nodes": {}, "status": {}}))
+            write_restoring(jd._overrides_dir() / (self.SID + ".jsonl"), "")     # the goal-store rule's journal cleanup
+            write_restoring(jd.GOALARCHDIR / (self.SID + ".json"), json.dumps({"rompUuid": self.SID, "nodes": {}}))
+            write_restoring(km.WORKING_DIR / self.SID, "the notes-api web tier\n")
+            # THROUGH jd.MESSAGES, the shared postal store the signature's postal readers stat, never a path rebuilt from
+            # jd.STATE: a plain write here once truncated the store a sibling module had seeded
+            write_restoring(jd.MESSAGES, json.dumps(
                 {"ev": "sent", "id": "m1", "from": "api", "from_id": self.SIDS_PEER, "to": "web", "to_id": self.SID,
                  "body": "hello", "kind": "coordinate", "t": self.NOW}) + "\n")
             main, wt = _plain_repo_and_worktree(td)
             with open(os.path.join(wt, "CLAUDE.md"), "w") as f:
                 f.write("# notes-api\n")
-            (km.NAMES / self.SID).write_text("web\t%s\t#abcdef\n" % wt)
+            write_restoring(km.NAMES / self.SID, "web\t%s\t#abcdef\n" % wt)
             tasks = os.path.join(cfg.name, "tasks", self.SID); os.makedirs(tasks)
             world["wt"], world["tasks"] = wt, tasks
             with open(os.path.join(tasks, "1.json"), "w") as f:
@@ -1119,6 +1129,104 @@ class ByteIdenticalFrames(unittest.TestCase):
         self.assertNotIn("!= 39", msg, "not a count mismatch")
         self.assertNotIn("equals every stat intercepted", msg, "not the equality")
 
+    REG_PEERS = ["11111111-2222-4333-8444-0000000009%02d" % i for i in range(20, 30)]   # the stats world's registry peers
+
+    def _world_files(self):
+        """The seven files furnish() writes into the shared state roots, by path (jd.MESSAGES last)."""
+        jd = km.jd
+        return (jd.STATESDIR / (self.SID + ".jsonl"), jd.GOALDIR / (self.SID + ".json"), jd._overrides_dir() / (self.SID + ".jsonl"),
+                jd.GOALARCHDIR / (self.SID + ".json"), km.WORKING_DIR / self.SID, km.NAMES / self.SID, jd.MESSAGES)
+
+    def _world_regs(self):
+        """The registry regs the world writes (three before any push, one more before each cycle), by path."""
+        return tuple(km.jd.STATE / "sdk" / (p + ".json") for p in self.REG_PEERS)
+
+    @staticmethod
+    def _root_files():
+        """Every file under the shared state roots (the judge's jd.STATE and the kernel's two, bound at its import), by path,
+        with a digest of its bytes: the outside picture a world must leave as it found it, whatever it writes."""
+        seen = {}
+        for root in (km.jd.STATE, km.WORKING_DIR.parent, km.NAMES.parent):
+            root = pathlib.Path(root)
+            if root.is_dir():
+                for p in root.rglob("*"):
+                    if p.is_file():
+                        seen[str(p)] = hashlib.sha256(p.read_bytes()).hexdigest()
+        return seen
+
+    def test_the_stats_world_leaves_no_artifact_in_the_shared_state_roots_and_restores_the_postal_store(self):
+        """The world's furnish() writes seven files into the shared state roots (five under the judge's: the states atom,
+        the goal store, its override journal, the goal archive, the postal store jd.MESSAGES; two under the kernel's, bound
+        at its import: the working note, the names row) and nine registry regs, which at run time are a SIBLING module's
+        roots, and it once left the seven behind and TRUNCATED the postal store (the round-2 review's tests-1). Every write
+        goes through write_restoring now: at cleanup the prior bytes come back, or the file is unlinked. Pinned from
+        OUTSIDE the world over a seeded postal store: every file under the three roots is listed with a digest before the
+        world and after its cleanups, and the two pictures are the same (nothing added, the regs included; nothing removed;
+        nothing changed), with the store holding the seed byte for byte. A premise refuses a leftover of the six other
+        files before the run, since a prior read from the live root would make an artifact its own prior (the round-3
+        review, 2026-09-19: the first version passed over a plain write of the working note whenever the exactness test
+        had run first in the process). The unlink edge is pinned here over files that were absent; the sibling test below
+        pins the prior-bytes edge over every file. Cleanup by path rather than jd._rebind_state, because km.WORKING_DIR and
+        km.NAMES bind at kernel import with no rebind hook, so the two families can sit in different roots."""
+        jd = km.jd
+        files = self._world_files()
+        leftovers = [str(p) for p in files[:-1] + self._world_regs() if p.exists()]
+        self.assertEqual(leftovers, [], "premise: no file the world writes is there before it runs, the regs included (a leftover of a "
+                                        "sibling, or of this world's earlier run in the process, would stand in for a missing unlink)")
+        orig = jd.MESSAGES.read_bytes() if jd.MESSAGES.exists() else None
+        seed = b"".join(json.dumps({"ev": "sent", "id": "seed%d" % i, "from": "api", "from_id": self.SIDS_PEER, "to": "web",
+                                    "to_id": self.SID, "body": "seed row %d" % i, "kind": "coordinate", "t": self.NOW - i}).encode() + b"\n"
+                        for i in (1, 2))
+        jd.MESSAGES.parent.mkdir(parents=True, exist_ok=True)
+        jd.MESSAGES.write_bytes(seed)
+        try:
+            before = self._root_files()
+            self._stats_world()
+            self.doCleanups()
+            after = self._root_files()
+            self.assertEqual(jd.MESSAGES.read_bytes(), seed, "the postal store holds the seed, byte for byte")
+            self.assertEqual(sorted(set(after) - set(before)), [], "files the world added to a shared root and left there")
+            self.assertEqual(sorted(set(before) - set(after)), [], "files of a shared root the world removed")
+            self.assertEqual(sorted(p for p in before if p in after and after[p] != before[p]), [],
+                             "files of a shared root the world changed")
+        finally:
+            if orig is None:
+                try:
+                    jd.MESSAGES.unlink()
+                except FileNotFoundError:
+                    pass
+            else:
+                jd.MESSAGES.write_bytes(orig)
+
+    def test_the_stats_world_puts_back_the_prior_bytes_of_every_file_it_overwrites(self):
+        """The prior-bytes edge of write_restoring, for every one of the seven files and not the postal store alone: each is
+        seeded with bytes of its own before the world runs, and after the world and its cleanups each holds its seed, so a
+        restore that unlinks, writes empty bytes or writes another path's bytes reds by name. The sibling test above pins
+        the unlink edge over files that were absent (the round-3 review, 2026-09-19: the first version read each path's
+        prior from the live root, so in the module's order an artifact the exactness test had left with the same bytes was
+        its own prior, and the edge held only when the test ran first in its process)."""
+        files = self._world_files()
+        leftovers = [str(p) for p in files[:-1] + self._world_regs() if p.exists()]
+        self.assertEqual(leftovers, [], "premise: no file the world writes is there before it runs, the regs included")
+        orig = {p: (p.read_bytes() if p.exists() else None) for p in files}
+        seeds = {p: ("seed %d for %s\n" % (i, p.name)).encode() for i, p in enumerate(files)}
+        for p, b in seeds.items():
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_bytes(b)
+        try:
+            self._stats_world()
+            self.doCleanups()
+            for p, b in seeds.items():
+                self.assertEqual(p.read_bytes() if p.exists() else None, b, "the prior bytes came back: %s" % p)
+        finally:
+            for p, b in orig.items():
+                if b is None:
+                    try:
+                        p.unlink()
+                    except FileNotFoundError:
+                        pass
+                else:
+                    p.write_bytes(b)
 
     SIDS_PEER = "11111111-2222-4333-8444-000000000919"
 
