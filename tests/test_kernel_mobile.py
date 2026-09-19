@@ -5,6 +5,7 @@ brings the chat forward. Pure-HTML + routing asserts; no real session data.
 """
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -30,6 +31,19 @@ def _mobile_js():
     placeholder left for an executor to fill and the harness runs the template as served. Kept as the ONE door every
     executor class reads the script through, so a future splice is a one-line adoption here and nowhere else."""
     return km._LANDING_MOBILE_JS
+
+
+_VIEWPORT_META = re.compile(r"<meta name=viewport content='([^']*)'>")
+
+
+def _viewport_meta_tokens(html):
+    """The viewport META's content attribute as its comma-separated tokens, read from the ONE static meta element (the
+    standalone flip rewrites the attribute from script and serves no second tag). A pin over these reads the element it
+    pins: the fit script's served comments spell the same tokens in prose, and a substring assertion over the whole page
+    was satisfied by a comment after the meta had lost the token it exists to pin (D1 round 1, 2026-09-19)."""
+    metas = _VIEWPORT_META.findall(html)
+    assert len(metas) == 1, "one static viewport meta, found %d" % len(metas)
+    return metas[0].split(",")
 
 
 class LandingShell(unittest.TestCase):
@@ -227,9 +241,11 @@ class LandingShell(unittest.TestCase):
     def test_landing_disables_browser_pinch_zoom(self):
         # the top document governs pinch-zoom for the whole visual viewport (incl. the timeline iframe), so
         # it must disable page zoom or iOS page-zooms on a timeline pinch instead of running the gesture.
-        html = km._landing()
-        self.assertIn("user-scalable=no", html)
-        self.assertIn("maximum-scale=1", html)
+        # read from the meta's own content attribute, never the page text (_viewport_meta_tokens: a served comment names
+        # these tokens too)
+        tokens = _viewport_meta_tokens(km._landing())
+        self.assertIn("user-scalable=no", tokens)
+        self.assertIn("maximum-scale=1", tokens)
 
     def test_landing_avoids_viewport_fit_cover(self):
         # regression (the user 2026-06-17): viewport-fit=cover made Android Chrome report a non-zero
@@ -250,7 +266,7 @@ class LandingShell(unittest.TestCase):
         self.assertIn("if(navigator.standalone)", html)               # …behind the iOS-standalone gate
         self.assertLess(html.index("if(navigator.standalone)"), html.index("viewport-fit=cover"))
         self.assertIn("100dvh", html)            # still address-bar-aware
-        self.assertIn("user-scalable=no", html)  # pinch-zoom governance preserved alongside the change
+        self.assertIn("user-scalable=no", _viewport_meta_tokens(html))  # pinch-zoom governance preserved alongside the change, read from the meta
 
     def test_keyboard_shrinks_content_and_never_strands_a_scroll(self):
         """The composer tap used to scroll the whole shell up behind the soft keyboard (the user
@@ -261,7 +277,7 @@ class LandingShell(unittest.TestCase):
         pinned: interactive-widget=resizes-content makes engines that honor it (Android Chrome)
         SHRINK the layout viewport instead of panning, and fit() undoes the stray page offset iOS
         still forces (a UA input-reveal scroll bypasses overflow:hidden)."""
-        self.assertIn("interactive-widget=resizes-content", km._landing())
+        self.assertIn("interactive-widget=resizes-content", _viewport_meta_tokens(km._landing()))   # the meta's token, not a comment's
         self.assertIn("if(window.scrollY||document.documentElement.scrollTop)window.scrollTo(0,0);",
                       km._LANDING_MOBILE_JS)
 
