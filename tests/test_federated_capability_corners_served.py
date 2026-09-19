@@ -26,10 +26,14 @@ never sees a patch) where the remote serves the route, a todo (POST /usertodo) w
 transcript append. The notice is a completed card, not a needs-you one, on purpose: a needs-you card also flips the
 session's needs-input state, which lands in the frame's remainder a cycle later as a whole frame, and that frame would
 catch an old bundle up and hide the freeze this lab is meant to show. The visible observable is the card on the hub's
-feed page ([data-key="a:notice:..."]) or, for a transcript append, the appended pair's bar on the remote lane of the
-hub's TIMELINE page (the Outline lists a session through its goal tree or a provisional card, which a lab session
-with no judge never has, and the Waiting page receives no frame from an old remote at all, so neither page draws
-anything for a closed pair): those corners open the timeline too and read the drawn bars off its SVG.
+feed page ([data-key="a:notice:..."]) or, for a transcript append, two: the appended pair's bar on the remote lane of
+the hub's TIMELINE page (those corners open the timeline too and read the drawn bars off its SVG), and the text of api's
+provisional row on the hub's Outline, which swaps from the seed's last prompt to the appended one. The Outline lists a
+session through its goal tree or a provisional card, and a lab session with no judge has the card PERMANENTLY, not
+never: the remote mints it for a live session whose latest held segment is a prompt the planner has not placed
+(kernel.py _provisional_card, at both old vintages), and with no judge the placement never comes (an earlier round's
+docstring had this inverted). The Waiting page receives no frame from an old remote at all and draws nothing for the
+pair.
 
 Two classes run with no knob (this checkout on both sides; the second strips the caps term from the dial in the page,
 which the kernel reads as the empty set an older kernel would hold, so it is the checked-in stand-in for a
@@ -82,8 +86,10 @@ NOTICE_TITLE = "the notes-api index rebuild finished on TESTHOST"
 TODO_TEXT = "check the notes-api ranking weights before the index rebuild"
 APPEND_PROMPT = "a later turn: did the notes-api index rebuild finish?"
 APPEND_REPLY = "It finished; the stemmer table is cached now."
+SEED_LAST_PROMPT = "turn %d: what changed in the notes-api search?" % (_dial.SEED_PAIRS - 1)   # the seed's last prompt (_dial._transcript): api's provisional row before the change
 LANE = HOST + ":" + SID_R0        # api's lane id on the hub's timeline (federation prefixes id AND name)
 LANE_LABEL = HOST + ":api"        # its label's text
+PROV_SEL = '#fleet-list .fl-prov[data-sid="%s"] .fl-prov-text' % LANE   # api's provisional row on the hub's Outline (fleet.ts makeProvRow, under the prefixed sid)
 TODOS_ON = json.dumps({"enabled": True, "gt": 1})
 BAD_ROWS = (("outline", "delta-unapplied"), ("outline", "feedDelta-unapplied"), ("waiting", "feedDelta-unapplied"),
             ("feed", "feedDelta-unapplied"), ("federation", "feedDelta-nobase"))
@@ -139,10 +145,10 @@ def read_hub_diag_rows(lab):
 # receives (window.__frames) and every needSlot / needFullFeed / ready the page sends on any socket, with the socket
 # it left on (window.__sends); optionally strip the caps term from the relay dial (cfg.stripCaps); open the hub's
 # pages (cfg.apps: Waiting, Outline, feed, and the timeline where the change is a transcript append, whose visible
-# side is a bar); wait for each relay socket to hold the remote's full frame (and the timeline to draw the seed's
-# bars); make the change; wait for its visible effect; optionally wait for a slot patch (cfg.waitDeltaMs, the 60 s
-# clock-only one on an idle old remote); report. The kernel-side observables (the hub's client-diag, the remote's
-# /perf) are read from Python.
+# sides are a bar there and the Outline's provisional row text); wait for each relay socket to hold the remote's full
+# frame (and the timeline to draw the seed's bars); make the change; wait for its visible effect; optionally wait for a
+# slot patch (cfg.waitDeltaMs, the 60 s clock-only one on an idle old remote); report. The kernel-side observables (the
+# hub's client-diag, the remote's /perf) are read from Python.
 DRIVER = r"""
 import { createRequire } from "node:module";
 import fs from "node:fs";
@@ -154,7 +160,8 @@ try { browser = await chromium.launch(cfg.launch || {}); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
 const context = await browser.newContext({ viewport: { width: 1200, height: 700 } });
 const out = { pages: {}, before: {}, changePosted: null, cardSeen: false, cardSeenMs: null, todoSeen: false, todoCardSeen: false, deltaSeenMs: null,
-              barsBefore: null, barSeenMs: null, barsAfter: null, panelBarsAfter: null, pane: null, died: null };
+              barsBefore: null, barSeenMs: null, barsAfter: null, panelBarsAfter: null, pane: null,
+              provBefore: null, provSeenMs: null, provAfter: null, died: null };
 const hook = (o) => {
   window.__dials = []; window.__frames = []; window.__sends = []; const W = window.WebSocket;
   const strip = (u) => o.stripCaps && u.indexOf("/remote/") !== -1 ? u.replace(/([?&])caps=[^&]*&?/, (m, sep) => sep) .replace(/[?&]$/, "") : u;
@@ -210,6 +217,8 @@ const hook = (o) => {
 };
 const pages = {};
 const barCount = () => pages.timeline.evaluate((l) => window.__barCount(l), cfg.laneLabel);
+// the Outline's provisional row for api (cfg.provSel): its text, or null when the page draws no such row
+const provText = () => pages.fleet.evaluate((sel) => { const e = document.querySelector(sel); return e ? e.textContent : null; }, cfg.provSel);
 const APPS = cfg.apps;   // the pages this corner opens: an old remote serves the feed payload to no app=waiting client (the pane is the fork's), so those corners open the Outline and the feed alone
 const snap = async (page) => page.evaluate(() => ({ dials: (window.__dials || []).slice(), frames: (window.__frames || []).slice(), sends: (window.__sends || []).slice() }));
 try {
@@ -258,18 +267,23 @@ try {
     try { await pages.feed.locator('[data-key="a:usertodo:' + cfg.sid + '"]').first().waitFor({ state: "attached", timeout: pages.waiting ? 3000 : cfg.waitMs }); out.todoCardSeen = true; } catch (e) {}
   } else if (cfg.change === "transcript") {
     const nFleet = (await snap(pages.fleet)).frames.length;
+    out.provBefore = await provText();   // the Outline's row for api before the change: the seed's last prompt
     fs.appendFileSync(cfg.transcript.path, cfg.transcript.text);
     out.changePosted = { ok: true, appended: cfg.transcript.text.length };
-    if (pages.timeline) {   // the visible side: the appended pair's bar on the remote lane of the hub's timeline
+    if (pages.timeline) {   // one visible side: the appended pair's bar on the remote lane of the hub's timeline
       await pages.timeline.bringToFront();
       try { await pages.timeline.waitForFunction(([l, n]) => window.__barCount(l) === n, [cfg.laneLabel, cfg.seedBars + 1], { timeout: cfg.waitMs }); out.barSeenMs = Date.now() - t0; } catch (e) {}
     }
+    // the other: the Outline's row text swaps to the appended prompt, waited on the text itself (never a fixed delay: the
+    // feed frame carrying the change lags the bars frame, and which frame carries it varies by vintage and run)
+    try { await pages.fleet.waitForFunction(([sel, t]) => { const e = document.querySelector(sel); return !!e && e.textContent === t; }, [cfg.provSel, cfg.appendPrompt], { timeout: cfg.waitMs }); out.provSeenMs = Date.now() - t0; } catch (e) {}
     try { await pages.fleet.waitForFunction((n) => (window.__frames || []).length > n, nFleet, { timeout: cfg.waitMs }); } catch (e) {}
   }
   if (cfg.waitDeltaMs) {
     try { await pages.fleet.waitForFunction((n) => (window.__frames || []).slice(n).some((f) => f.t === "delta"), out.before.fleet, { timeout: cfg.waitDeltaMs }); out.deltaSeenMs = Date.now() - t0; } catch (e) {}
   }
   await pages.fleet.waitForTimeout(1500);   // let the panes' rows land on the hub
+  if (cfg.change === "transcript") out.provAfter = await provText();
   if (pages.timeline) {
     out.barsAfter = await barCount();
     out.panelBarsAfter = await pages.timeline.evaluate((l) => window.__panelCount(l), cfg.lane);
@@ -398,7 +412,7 @@ class _Corner(unittest.TestCase):
                 "todoUrl": "http://127.0.0.1:%d/usertodo?token=%s" % (cls.rport, cls.rtoken),
                 "sid": SID_R0, "noticeKey": NOTICE_KEY, "noticeTitle": NOTICE_TITLE, "todoText": TODO_TEXT,
                 "change": cls.change, "stripCaps": cls.strip_caps, "waitMs": cls.wait_ms, "waitDeltaMs": cls.wait_delta_ms, "apps": list(cls.apps),
-                "lane": LANE, "laneLabel": LANE_LABEL, "seedBars": _dial.SEED_PAIRS}
+                "lane": LANE, "laneLabel": LANE_LABEL, "seedBars": _dial.SEED_PAIRS, "provSel": PROV_SEL, "appendPrompt": APPEND_PROMPT}
         if cls.change == "transcript":
             conf["transcript"] = cls._transcript_append()
         with open(cfg, "w") as f:
@@ -575,6 +589,26 @@ class _Corner(unittest.TestCase):
         self.assertEqual(self.result.get("barsAfter"), n + 1, "the lane shows %d bars after the change" % (n + 1))
         self.assertEqual(self.result.get("panelBarsAfter"), n + 1, "and the panel's held lane counts %d" % (n + 1))
 
+    def _assert_outline_row_swaps(self):
+        """The other visible side of a transcript append, on the hub's OUTLINE: the remote mints a provisional card for a
+        live session whose latest held segment is a prompt the planner has not placed (kernel.py _provisional_card, at
+        both old vintages), and with no judge in the lab the placement never comes, so the row is permanent and its text
+        is the session's latest prompt. The hub's Outline draws it as api's .fl-prov row under the prefixed sid (fleet.ts
+        makeProvRow); the append swaps its text from the seed's last prompt to the appended one, carried by whatever the
+        vintage sends for the change. At 2d that is a whole feed frame, which needs no decoder. At 2c the carrier varies
+        run to run: the append's asks patch alone (one drive), or a whole frame from the guard (the append moved the
+        remainder) and then a patch (another). Against a hub before the receiver (ROMP_CORNER_HUB_ROOT at 7a7b31ed2)
+        the patch is dropped and the row keeps the seed's text in the first case, and the whole frame swaps it in the
+        second, so this is an added observable of the feed half beside the frame assertions, asserted on the text after
+        the settle and never on the carrier; the frame assertions and the timeline bar are the fails-before pins."""
+        self._assert_change_posted()
+        self.assertEqual(self.result.get("provBefore"), SEED_LAST_PROMPT,
+                         "the hub's Outline drew api's provisional row with the seed's last prompt before the change (None: no such row under %r)" % (PROV_SEL,))
+        self.assertIsNotNone(self.result.get("provSeenMs"),
+                             "the row's text swapped to the appended prompt within %d ms (after the wait: %r; frames on the Outline relay after the change: %r)"
+                             % (self.wait_ms, self.result.get("provAfter"), self._after_change("fleet")))
+        self.assertEqual(self.result.get("provAfter"), APPEND_PROMPT, "and reads the appended prompt after the settle")
+
     def _assert_nothing_dropped(self):
         self._control()
         self.assertEqual(self._bad_rows(), [], "every frame the relay sockets received was applied by federation.ts; the panes never saw one raw")
@@ -672,9 +706,10 @@ class CornerNewLocalV1Remote(_Corner):
     """New local, an old remote with the slot path and neither /notice nor /usertodo (ROMP_CORNER_V1_REMOTE_ROOT, e.g.
     2b9db2bee). The change is a transcript append. On the FEED it crosses as a slot patch (the pair filed under asks,
     in the recorded drive) or, when it moves the remainder instead, as a whole frame (the guard) followed by the 60 s
-    clock-only patch an idle slot emits; either patch is reassembled without a row. The Outline and the feed page draw
-    nothing for a closed pair (no card the lab can name, no goal node), so those pages have no visible side to observe.
-    The visible side is the hub's TIMELINE: the remote lane gains a bar. That vintage keys the bars frame's
+    clock-only patch an idle slot emits; either patch is reassembled without a row, and its visible side is api's
+    provisional row on the hub's Outline, whose text swaps to the appended prompt (the row is permanent for a session
+    with no judge: the module docstring). The other visible side is the hub's TIMELINE: the remote lane gains a bar.
+    That vintage keys the bars frame's
     judging as a flat list the receiver cannot key (view-deltas.ts, its header), so the receiver seeds no base for it:
     each bars patch (the append's, then the idle slot's clock-only one a minute later) is answered by a needSlot on
     the relay socket, the receiver's own resync, and that kernel re-sends the whole bars frame, which is the repair;
@@ -709,6 +744,9 @@ class CornerNewLocalV1Remote(_Corner):
     def test_the_timeline_shows_the_appended_bar(self):
         self._assert_bar_drawn()
 
+    def test_the_outline_row_swaps_to_the_appended_prompt(self):
+        self._assert_outline_row_swaps()
+
     def test_the_bars_cross_whole_after_the_receivers_resync(self):
         # that vintage's whole bars frame seeds no base (its judging is a flat list): every bars patch asks THAT kernel
         # for the whole slot on the relay socket, exactly once per patch, and the whole frame that answers is what the
@@ -741,7 +779,9 @@ class CornerNewLocalV0Remote(_Corner):
     delta-unkeyable-seed), a refusal that costs nothing here since a pre-delta kernel sends no patch. The wire pays a
     whole frame per change and per minute, the pre-delta cost. The change is a transcript append (rounds 2 and 3 filed
     a todo, whose visible side that vintage has none of: it serves the feed payload to no Waiting client and minted no
-    rolled-up todo card on the feed page); its visible side is the bar on the hub's timeline, asserted."""
+    rolled-up todo card on the feed page); its visible sides are the bar on the hub's timeline and the swap of api's
+    provisional row on the Outline, both asserted (the frames are whole here, so the swap is an observable beside the
+    frame assertion, not a fails-before pin of the receiver)."""
     change = "transcript"
     apps = ("fleet", "feed", "timeline")
 
@@ -753,6 +793,9 @@ class CornerNewLocalV0Remote(_Corner):
 
     def test_dials(self):
         self._assert_dials(caps=True)
+
+    def test_the_outline_row_swaps_to_the_appended_prompt(self):
+        self._assert_outline_row_swaps()
 
     def test_whole_frames_only(self):
         self._assert_change_posted()
