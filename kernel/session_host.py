@@ -689,8 +689,8 @@ SOCK_PATH_MAX = 103 if sys.platform == "darwin" else 107
 # The floor: SOCK_PATH_MAX's minimum across the platforms the expression above names (darwin's 103), one number under
 # one name. It exists because a guard that reads SOCK_PATH_MAX is exactly as permissive as the platform it runs on: a
 # setUp guard on Linux lets a root through at 104 to 107 bytes that the same test then breaks on at darwin's 103, with
-# no run having said so. A guard that must hold everywhere reads this (asked by the session-host lab fix's setUp guard
-# after fork PR #851's round-2 ruling, 2026-09-19). tests/test_session_host.py SocketBudget pins it equal to the minimum
+# no run having said so. A guard that must hold everywhere reads this (asked for the queued session-host lab fix's setUp
+# guard, a queue item in the review notes with no PR of its own, 2026-09-19). tests/test_session_host.py SocketBudget pins it equal to the minimum
 # over the expression's two literal arms, read from this source, so a change to either arm that leaves this behind reds.
 SOCK_PATH_FLOOR = 103
 
@@ -789,21 +789,43 @@ def hosts_dir(state_dir) -> Path:
     HostProcess.test_a_real_host_leaves_hosts_owner_only (the host's road, in-process and as a real process). The
     parents=True is for the state root, which every install has (kernel/judge.py makes it 0700 at import: a mkdir, then
     a chmod read back); nothing is made below `hosts/` until this has returned.
-    THE ROOT'S MODE WHEN THIS CALL MAKES IT (kernel-7, round 5 of the review, 2026-09-19; read back, not assumed):
-    pathlib's Path.mkdir applies `mode` to the leaf alone and makes each missing parent with its default 0777, so a
-    state root that is not on disk when this runs lands at the process umask's mode, 0755 under 022, 0700 under 077,
-    0777 under 000, while `hosts/` below it is 0700 in all three (tests/test_session_host.py StateRootByHostsDir reads
-    every one of those modes back under each umask). Nothing here tightens the root, and the root matters: it is the
-    parent of `hosts/` (owner-only by this code) and of the registry and the parked-ops files (owner-only since fork
-    PR #789), and its traverse bit is what stands between a peer uid and any of them. A finding for the queue, not a
-    fix in this change. Where it reaches: kernel/judge.py's import is the road every install's root takes, and it is a
-    different creator; the kernel writes the spawn specification in a process that made that root at import, and the
-    host's two calls here (its constructor and _prepare_socket) run over the specification's state_dir, the root the
-    kernel wrote the specification under, so on the roads this code runs today the root is on disk before this call
-    and the mode above is never the root's. It is the creator's own shape, reachable by a caller over a root no romp
-    tool has made (a test's fresh root, a host run by hand over one). The fix, queued: the root's own mkdir carrying
-    0700 and read back, the leaf's shape."""
-    return owner_only_dir(Path(state_dir) / "hosts", "hosts directory", parents=True)
+    THE ROOT'S MODE WHEN THIS CALL MAKES IT (kernel-7, round 5 of the review, 2026-09-19; fixed at round 6): pathlib's
+    Path.mkdir applies `mode` to the leaf alone and makes each missing parent with its default 0777 masked by the process
+    umask, so a state root that is not on disk when this runs is born at the umask's mode (0775 under 002, 0755 under 022,
+    0700 under 077, 0777 under 000) while `hosts/` below it is 0700 in every case. The root matters: it is the parent of
+    `hosts/` (owner-only by this code) and of the registry and the parked-ops files (owner-only since fork PR #789), and
+    its traverse bit is what stands between a peer uid and any of them. THE FIX, the create road only: whether the root is
+    on disk is read BEFORE the mkdir, and when it was not, the root this call made is tightened to 0700 by a chmod the
+    line after `hosts/` is made, then READ BACK by lstat, and a read-back that is not 0700 is refused with the mode read
+    and the one-step remedy (the shape owner_only_dir uses, with its lstat, its not-a-directory and its foreign-uid
+    refusals, so a symlink swapped into the root's place is refused rather than tightened on behalf of its target). Only
+    the root is touched: the ancestors the parents mkdir made on the way (an XDG parent such as `~/.local/state`, which
+    romp does not own) keep the umask's mode, and a root already on disk, at whatever mode, is left as it is (its mode is
+    the creator's business, kernel/judge.py's for every install's root; this call never reads or repairs it). Between the
+    parents mkdir and the chmod the root holds `hosts/` alone, itself 0700 from its own mkdir, so nothing under the root is
+    readable by a peer uid during that stretch; what a 0777 root exposes for it is its one-entry listing. Where the create
+    road reaches: kernel/judge.py's import is the road every install's root takes, and it is a different creator; the kernel
+    writes the spawn specification in a process that made that root at import, and the host's two calls here (its
+    constructor and _prepare_socket) run over the specification's state_dir, so on the roads this code runs today the root
+    is on disk before this call and the create road is a caller's over a root no romp tool has made (a test's fresh root, a
+    host run by hand over one). tests/test_session_host.py StateRootByHostsDir pins the fix: the root reads 0700 under the
+    runner's umask, 002, 022, 077 and 000 when this call made it, with `hosts/` 0700 and the ancestor made on the way at
+    the umask's mode; a root pre-existing at 0755 stays 0755 with `hosts/` 0700 below it; and the refusal fires when the
+    read-back disagrees."""
+    root = Path(state_dir)
+    made_root = not root.exists()               # the create road, decided before the mkdir: a root already on disk is left as it is
+    d = owner_only_dir(root / "hosts", "hosts directory", parents=True)
+    if made_root:
+        st = os.lstat(root)                     # lstat, as owner_only_dir: a symlink swapped in would otherwise be tightened
+        if not stat.S_ISDIR(st.st_mode):        # on behalf of its target
+            raise OSError("state root %s is not a directory" % root)
+        if st.st_uid != os.geteuid():
+            raise OSError("state root %s belongs to uid %d, not to us (uid %d)" % (root, st.st_uid, os.geteuid()))
+        os.chmod(root, 0o700)                   # born at the umask's mode by the parents mkdir above; ours, so a repair
+        mode = stat.S_IMODE(os.lstat(root).st_mode)
+        if mode != 0o700:                       # read back, never assumed
+            raise OSError("state root %s reads mode %04o after its chmod to 0700: run chmod 700 on it, then start again" % (root, mode))
+    return d
 
 
 def sdk_importable() -> bool:

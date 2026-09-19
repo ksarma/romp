@@ -2055,7 +2055,7 @@ class SocketBudget(unittest.TestCase):
 
     def test_the_floor_is_the_minimum_over_the_platform_expressions_two_arms(self):
         """SOCK_PATH_FLOOR, one flat number for a guard that must hold on every platform (round 5 of the review, 2026-09-19;
-        asked by the session-host lab fix's setUp guard after fork PR #851's round-2 ruling): pinned to the minimum over
+        asked for the queued session-host lab fix's setUp guard, a queue item in the review notes with no PR of its own): pinned to the minimum over
         SOCK_PATH_MAX's two literal arms as the source holds them, and to the minimum of that expression evaluated under
         both platform names, never to a second hand-typed 103 alone. Refusable: SOCK_PATH_FLOOR = 104 reds both."""
         src = Path(sh.__file__).read_text()
@@ -2071,12 +2071,18 @@ class SocketBudget(unittest.TestCase):
 
 
 class StateRootByHostsDir(unittest.TestCase):
-    """kernel-7 (round 5 of the review, 2026-09-19): the state root's mode when hosts_dir's parents=True makes it, READ
-    BACK under four umasks (the runner's, 022, 077 and 000) and never assumed. pathlib's Path.mkdir applies `mode` to the leaf alone and makes a missing
-    parent with its default 0777, so the root lands at the umask's mode (0755 under 022, 0700 under 077, 0777 under 000)
-    while hosts/ below it is 0700 in every case. A characterisation of the mechanism as it stands, filed as a finding
-    for the queue and not fixed in this change (hosts_dir's docstring says which roads can reach it: only a caller over
-    a root no romp tool has made); the queued fix, 0700 on the root's own mkdir read back, re-points this pin."""
+    """kernel-7 (round 5 of the review, 2026-09-19; fixed at round 6): the state root's mode when hosts_dir's parents=True
+    makes it, READ BACK under five umasks (the runner's, 002, 022, 077 and 000) and never assumed. pathlib's Path.mkdir
+    applies `mode` to the leaf alone and makes a missing parent with its default 0777 masked by the umask, so before the
+    fix the root landed at the umask's mode (0775 under 002, 0755 under 022, 0700 under 077, 0777 under 000) while hosts/
+    below it was 0700 in every case; round 5 filed that as a finding and this class read the umask's mode back. The fix
+    (hosts_dir's docstring) tightens the root this call made to 0700 by a chmod read back, on the create road alone. Pinned
+    here: the root reads 0700 under every umask when hosts_dir made it, hosts/ 0700 below it, and the ancestor the parents
+    mkdir made on the way keeps the umask's mode (the rejected alternative, tightening every missing ancestor, would red
+    that read); a root pre-existing at 0755 stays 0755 with hosts/ 0700 below it, and no chmod names it (the create-only
+    scope); and a read-back that disagrees is refused with the mode read and the remedy. Refusable: the chmod removed on a
+    scratch copy reds the 002, 022 and 000 arms (077 stays green, the umask's mode being the code's there); a chmod that
+    does not take, or a stubbed lstat answering 0755 on the read-back, fires the refusal."""
 
     def _made_under(self, umask, root=None):
         """hosts_dir over a root not yet on disk, under `umask` (restored); the root's and hosts/'s modes as read back.
@@ -2114,17 +2120,110 @@ class StateRootByHostsDir(unittest.TestCase):
             self._made_under(0o077, root=blocker / "state")
         self.assertEqual(os.umask(current), current, "the umask is the one the case found, after the raise")
 
-    def test_the_root_hosts_dir_makes_on_the_way_lands_at_the_umasks_mode_and_hosts_below_it_is_0700(self):
+    def test_the_root_hosts_dir_makes_on_the_way_is_0700_under_every_umask_and_hosts_below_it_is_0700(self):
+        """The fix's pin (round 6): the root this call made reads 0700 under each umask, where round 5 read the umask's
+        mode; hosts/ 0700 as before. The 000 arm is the one the mkdir alone can never give (0777 there); 077 is the one
+        arm the mkdir gives 0700 by itself, so it is the arm the chmod's removal leaves green."""
         current = os.umask(0)                           # the runner's own umask, read and put back
         os.umask(current)
-        # the 000 arm (round 5's second addendum, 2026-09-19): hosts_dir's docstring names 0777 under 000 as a mode this
-        # pin reads back, and until this arm the pin ran the other three alone
-        for umask, expected in ((current, 0o777 & ~current), (0o022, 0o755), (0o077, 0o700), (0o000, 0o777)):
+        for umask in (current, 0o002, 0o022, 0o077, 0o000):
             with self.subTest(umask="%03o" % umask):
                 root_mode, hosts_mode = self._made_under(umask)
-                self.assertEqual(root_mode, expected, "the root's mode read back under umask %03o: the umask's, not the code's" % umask)
+                self.assertEqual(root_mode, 0o700, "the root's mode read back under umask %03o: the code's, not the umask's" % umask)
                 self.assertEqual(hosts_mode, 0o700, "hosts/ below it: the leaf carries the mode")
         self.assertEqual(os.umask(current), current, "the umask is the one the case found")
+
+    def test_only_the_root_is_tightened_and_the_ancestor_made_on_the_way_keeps_the_umasks_mode(self):
+        """The rejected alternative would tighten every directory the parents mkdir made; the fix touches the root alone.
+        A root two levels under a fresh base: the intermediate the mkdir made on the way reads the umask's mode (0755
+        under 022), the root 0700, hosts/ 0700, and the one chmod the call made names the root and nothing else."""
+        base = tempfile.mkdtemp(prefix="sr-")
+        self.addCleanup(shutil.rmtree, base, True)
+        between = Path(base) / "xdg"
+        root = between / "state"
+        self.assertFalse(between.exists())
+        chmods = []
+        real_chmod = os.chmod
+
+        def spy(path, mode, *a, **k):
+            chmods.append((os.fspath(path), mode))
+            return real_chmod(path, mode, *a, **k)
+        with mock.patch.object(os, "chmod", spy):
+            root_mode, hosts_mode = self._made_under(0o022, root=root)
+        self.assertEqual(stat.S_IMODE(os.lstat(between).st_mode), 0o755, "the ancestor made on the way: the umask's mode, untouched")
+        self.assertEqual((root_mode, hosts_mode), (0o700, 0o700))
+        self.assertEqual(chmods, [(os.fspath(root), 0o700)], "one chmod, the root's; the ancestor and hosts/ (born 0700) are not named")
+
+    def test_a_root_already_on_disk_is_left_as_it_is_and_hosts_below_it_is_0700(self):
+        """The create-only scope, by execution: a root planted at 0755 before the call stays 0755 (its mode is its
+        creator's business, kernel/judge.py's on every install), hosts/ under it is 0700, and no chmod names the root.
+        Under 022, the umask that would leave a made root at the same 0755, so the read cannot be the umask's doing."""
+        base = tempfile.mkdtemp(prefix="sr-")
+        self.addCleanup(shutil.rmtree, base, True)
+        root = Path(base) / "state"
+        root.mkdir(mode=0o755)
+        os.chmod(root, 0o755)
+        self.assertEqual(stat.S_IMODE(os.lstat(root).st_mode), 0o755, "planted")
+        chmods = []
+        real_chmod = os.chmod
+
+        def spy(path, mode, *a, **k):
+            chmods.append(os.fspath(path))
+            return real_chmod(path, mode, *a, **k)
+        old = os.umask(0o022)
+        try:
+            with mock.patch.object(os, "chmod", spy):
+                self.assertEqual(sh.hosts_dir(root), root / "hosts")
+        finally:
+            os.umask(old)
+        self.assertEqual(stat.S_IMODE(os.lstat(root).st_mode), 0o755, "a pre-existing root keeps its mode")
+        self.assertEqual(stat.S_IMODE(os.lstat(root / "hosts").st_mode), 0o700, "hosts/ below it is 0700")
+        self.assertNotIn(os.fspath(root), chmods, "no chmod named the pre-existing root")
+
+    def test_a_read_back_that_disagrees_is_refused_with_the_mode_and_the_remedy(self):
+        """The read-back's disagreement arm, driven by a stubbed lstat: after the real chmod, the lstat that reads the
+        root back answers 0755, and hosts_dir raises an OSError naming the root, the mode read (0755) and the remedy
+        (chmod 700). The stub answers for the root alone, and only on the read after the chmod, so owner_only_dir's
+        own reads of hosts/ and the pre-chmod read of the root are the real ones. The same arm fires for a chmod that
+        does not take (os.chmod stubbed to a no-op), the shape SpawnSpec pins for hosts/."""
+        base = tempfile.mkdtemp(prefix="sr-")
+        self.addCleanup(shutil.rmtree, base, True)
+        root = Path(base) / "state"
+        real_lstat, real_chmod = os.lstat, os.chmod
+        chmodded = []
+
+        def chmod(path, mode, *a, **k):
+            chmodded.append(os.fspath(path))
+            return real_chmod(path, mode, *a, **k)
+
+        def lstat(path, *a, **k):
+            st = real_lstat(path, *a, **k)
+            if os.fspath(path) == os.fspath(root) and chmodded:     # the read-back, after the chmod
+                return os.stat_result((stat.S_IFDIR | 0o755,) + tuple(st)[1:])
+            return st
+        old = os.umask(0o022)
+        try:
+            with mock.patch.object(os, "chmod", chmod), mock.patch.object(os, "lstat", lstat), \
+                    self.assertRaises(OSError) as cm:
+                sh.hosts_dir(root)
+        finally:
+            os.umask(old)
+        msg = str(cm.exception)
+        self.assertIn(os.fspath(root), msg)
+        self.assertIn("0755", msg, "the mode as read back")
+        self.assertIn("chmod 700", msg, "the one-step remedy")
+        self.assertEqual(chmodded, [os.fspath(root)], "the chmod ran once, on the root, before the read-back disagreed")
+        self.assertEqual(stat.S_IMODE(real_lstat(root).st_mode), 0o700, "the real mode: the stub, not the chmod, disagreed")
+        # the no-op chmod arm: the root stays at the umask's mode, the real read-back disagrees, the same refusal
+        other = Path(base) / "state2"
+        old = os.umask(0o022)
+        try:
+            with mock.patch.object(os, "chmod", lambda *a, **k: None), self.assertRaises(OSError) as cm2:
+                sh.hosts_dir(other)
+        finally:
+            os.umask(old)
+        self.assertIn("0755", str(cm2.exception))
+        self.assertEqual(stat.S_IMODE(os.lstat(other).st_mode), 0o755, "left at the umask's mode by the chmod that did not take")
 
 
 class HostsDir(unittest.TestCase):
