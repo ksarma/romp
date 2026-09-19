@@ -76,8 +76,15 @@ counters that the recorders do not wrap, or through a reference to a real door t
 even though it cannot be named. Outside both witnesses: a reader below the judge's loaders or beside its module, the
 kernel opening and parsing the store file itself, the kernel calling the judge's own file reader (`jd._read_store_json`,
 below the loaders) or a second judge module loaded under another name with a cache and counters of its own (three plants,
-each per session in the pass loop, re-taken at this head one at a time with the kernel, the judge and this module hashed
-before and after each run: every case green, no file changed across a run, and the alias control beside them red). The two
+each per session in the pass loop, re-taken at this head, the head of the round-3 fixes, over its 20 cases, one at a time with
+the kernel, the judge and this module hashed before and after each run: the first two leave every case green with no file changed
+across a run, so they stay outside every witness here; the third has been refused since the consolidation pass by the kernel-wide
+birth pin, whose called population names `_PJ.load_goals_shared` as a fifth loader spelling, so a second judge module is outside
+both execution witnesses and inside the static pin, which reds alone while every execution case stays green; and the alias
+control beside them reds the shared reconciliation on every harness case and the birth pin. Review round 3, correctness-2 and
+regression-2: this sentence had been written at the head of the build's verifier pass after the round-2 fixes, over eleven
+cases, said every case green of all three plants, and went stale as cases and the pin were added, so the count here is pinned by
+a Docs case against the loader's count of this module's cases, and the plants are re-taken whenever it moves). The two
 witnesses answer different questions: the recorders say
 who loaded, the delta says that something did. By the served counter: `memos.nudgeWalk.loads`, bumped at the walk's one call site, must
 move by the walk's count per pass. A skipped look repeats its verdict and writes nothing (the wake-only memo of PR 784),
@@ -314,7 +321,15 @@ at import reds the interpreter check naming Frobnicate (1 failed, 18 passed); _w
 reds the refusal case, AssertionError not raised (1 failed, 18 passed); a census walking a tree outside _walk reds the refusal
 case's source pin, 2 spellings against 1 (1 failed, 18 passed); on 3.14t, TemplateStr and Interpolation removed red the
 interpreter check naming both and the enumeration at F61, where _walk refuses the TemplateStr (2 failed, 17 passed). The clean
-module with the table: 19 passed single-process on 3.10, 3.11, 3.12, 3.13 and 3.14t, and with four workers on 3.12.
+module with the table: 19 passed single-process on 3.10, 3.11, 3.12, 3.13 and 3.14t, and with four workers on 3.12. The bypass
+plants (correctness-2, regression-2), re-taken at this head of 20 cases, each landed on the kernel alone, run single-process on
+3.12 and reverted with the kernel, the judge and this module hashed before and after: the kernel opening and parsing the store
+file itself, and the kernel calling jd._read_store_json, each per session in the pass loop, 20 passed each and no file changed
+across a run; a second judge module loaded under another name, rebound to the state and its shared door called per session,
+reds the kernel-wide birth pin alone, naming `_PJ.load_goals_shared` as a fifth loader spelling (1 failed, 19 passed; every case
+green at the heads before the pin, over eleven and over twelve cases); the alias control, the shared door bound at kernel import
+and called per session, 6 failed, 14 passed, the shared reconciliation on every harness case and the birth pin; and the count
+pin: the sentence's count set to a stale figure reds the Docs case naming both figures (1 failed, 19 passed).
 
 Drives the real pass (_auto_nudge_tick) over two alive sessions with real transcript files and real goal stores, on the
 suite's fake clock (the pass takes `now`). SYNTHETIC fixtures only; a PRIVATE synthetic sid pair (the goal-store fixture
@@ -325,6 +340,7 @@ import importlib.util
 import inspect
 import json
 import os
+import re
 import sys
 import tempfile
 import textwrap
@@ -1981,6 +1997,20 @@ class Docs(unittest.TestCase):
         field = gloss[gloss.index("nudgeWalk (the auto-nudge walk's"):]
         field = " ".join(field[:field.index("nudgeGate")].split())   # wrapped too
         self.assertIn("loads (the walk's shared goal-store reads", field, "the _PerfStats field docstring names the counter")
+
+    def test_the_bypass_retake_sentence_counts_this_heads_cases(self):
+        """The module docstring says the three bypass plants were re-taken at this head over its N cases (review round 3,
+        correctness-2 and regression-2: the sentence was true when written and went stale nine commits and one case later, its count
+        reading eleven against a module of twelve). N is read here against the loader's count of this module's cases, so a case
+        added without a re-take reds this line and names the two figures, instead of leaving a count that reads true and is not."""
+        doc = " ".join(sys.modules[__name__].__doc__.split())
+        m = re.search(r"re-taken at this head, the head of the round-3 fixes, over its (\d+) cases", doc)
+        self.assertIsNotNone(m, "the docstring's bypass sentence names the head by role and the count of cases it was re-taken over")
+        n = unittest.defaultTestLoader.loadTestsFromModule(sys.modules[__name__]).countTestCases()
+        self.assertEqual(int(m.group(1)), n, "the sentence's count of cases, %s, is this module's, %d: a case was added since the plants "
+                                             "were re-taken, so re-take them (the three bypass plants and the alias control, each landed "
+                                             "on the kernel, run and reverted with the three files hashed) and write the new count"
+                                             % (m.group(1), n))
 
 
 if __name__ == "__main__":
