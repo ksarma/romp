@@ -2109,7 +2109,7 @@ def _thread_kind(name):
     constant names the kernel gives its threads; _THREAD_KIND_PREFIXES, the kinds spelled "<kind>:<payload>"; and the fixed
     forms), or "other" for every name outside it. A registered constant name (pusher, jobs, index, ws-send, ...) is its own
     kind; a name with the convention's separator keeps the part before it when that part is a registered prefix (sdk,
-    sdk-intr, codex, end-host, port-up, peer, romp-refused-mark); Python's default "Thread-N" and "Thread-N (target)" are
+    sdk-intr, codex, end-host, sdk-slot, port-up, peer, romp-refused-mark); Python's default "Thread-N" and "Thread-N (target)" are
     "thread", except the HTTP server's "Thread-N (process_request_thread)", which is "handler" (the target function is the
     row's own fourth frame, so the word loses nothing the row does not carry); MainThread is "main"; a default
     "ThreadPoolExecutor-K_N" is "pool"; a judge pool's worker, "judge-<tier>_N" (judge.py's _TimedPool names its workers after
@@ -2323,6 +2323,7 @@ _THREAD_KIND_PREFIXES = frozenset((  # the kinds spelled "<kind>:<payload>" (_TH
     "sdk", "sdk-intr",               # a host) never reaches the sample; peer is the postal service's, a separate process the census
     "codex", "end-host",             # walks all the same
     "port-up", "romp-refused-mark", "peer",
+    "sdk-slot",                      # the relaunch slot's waiter (sdk_backend.py _take_relaunch_slot, 2026-09-18): one per session waiting for a boot slot
 ))
 _THREAD_KIND_FIXED = frozenset(("main", "handler", "thread", "pool"))   # the words _thread_kind's fixed rules make: MainThread,
 #                                                                        the HTTP server's request threads, Python's default names
@@ -22254,7 +22255,10 @@ def _auth_avail():
     (_claude_account_label), so 'Login' can say WHICH account it means. default = what a fresh session
     would use absent an explicit pick: the remembered pick when this box can bill it, else the side that
     exists, in BOTH directions (the user 2026-09-08: a remembered login pick on a box with no login falls
-    to the key, exactly as a remembered key pick on a helper-less box already fell to the login). The
+    to the key, exactly as a remembered key pick on a helper-less box already fell to the login). Whether the
+    remembered flag-less pick should preselect (or only the explicit default) is a change of which account
+    new sessions bill, split out of the follower fix into its own PR together with the spawn's seed (the
+    reviewer's round 2, 2026-09-19; its fresh-5), so this reads as it did before that fix. The
     reason sentences are credentials.py's, one vocabulary for every surface."""
     key = _auth_key_present()
     d = {}
@@ -22297,7 +22301,7 @@ def _auth_avail():
 
 def _auth_avail_status():
     """_auth_avail's availability half for the per-session status payload: {login, key, loginWhy?, keyWhy?,
-    default} — no acct (authAcct rides beside it); `default` is the machine's seed, carried since T380 so the
+    default}, with no acct (authAcct rides beside it); `default` is the machine's seed, carried since T380 so the
     tab menu's Billing flyout can mark it in its "Default for this machine" group (a live session has its own
     pick; the default is what a NEW one, or one with no pick, launches on). Computed ONCE per
     pusher cycle (the cycle's _live_scope memo, the same idiom as its liveness snapshot): build_session asks
@@ -23676,7 +23680,9 @@ def _drive(msg, client):
         # the machine's DEFAULT billing (T380, the user 2026-09-12): the seed every new session and every
         # session with no pick of its own launches on ("auto" = the helper rule again). Written on THIS kernel
         # (the op routes to the session's owning host, so a remote session's flyout sets that host's default);
-        # no session's own pick is touched, so nothing reconnects. LOUD on refusal, the same reason vocabulary as
+        # no session's own pick is written, and every session following the default whose CLI runs on the other
+        # side is asked to reconnect, as a per-session pick asks (the backend's _reconnect_default_followers, the
+        # user 2026-09-18). LOUD on refusal, the same reason vocabulary as
         # a per-session pick; a backend that keeps no machine default (Codex) is refused by name, never a raise
         # swallowed inside the drive (review). A STORED login ("login:<id>") is a machine default too since
         # 2026-09-14 (the user: the Set default billing submenu offers every billing the picks do); the backend's
