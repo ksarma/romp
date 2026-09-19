@@ -1375,25 +1375,40 @@ out.backA = snap();
 console.log(JSON.stringify(out));
 """
 # (B) the flip WHILE loading, the failure detected on the desktop: its own run, since (A)'s flip to the desktop promotes EVERY parked pane (the
-# grid shows them all), so no pane is left for a phone tap afterwards
+# grid shows them all), so no pane is left for a phone tap afterwards. Review round 4 (regression-1, correctness-1, extra6-1: one defect): the
+# desktop's re-promotion has its own detector now, its failure is bounded to one re-promotion per episode (EPI) with the src kept at the bound
+# and the failure recorded (DEAD), and the flip back parks the recorded pane with the failed state, so the phone's three retry roads recover it.
 _LAZY_FLIP_MIDLOAD_DRIVER = _LAZY_TOOLS + r"""
 SOCKS.forEach((s) => { s.readyState = 1; s.onopen && s.onopen(); });
 shimUp('feed'); (LOADS.feed || []).forEach((f) => f());
 window.__rompMobileTab('fleet');   // the phone tap: loading, the listener and backstop armed on the phone
 const setsAtTap = SETS.fleet;
+const snapF = () => ({ src: src().fleet, lazy: lazy().fleet, dataSrc: dataSrc().fleet, div: divCls('fleet'), sets: SETS.fleet - setsAtTap, rows: diagRows('pane-load-failed').filter((r) => r.pane === 'fleet'), bodyFailed: BODY_CLS.has('pane-failed'), bodyLoading: BODY_CLS.has('pane-loading'), msg: MSG.textContent, retryHidden: RETRY.hidden, mobile: window.__rompMobileOn(), listeners: (LOADS.fleet || []).length, backstops: TIMERS.filter((t) => t.ms === 30000).length });
 MATCHES = false; MQL.forEach((f) => f({}));   // the flip mid-load: lazyFlip refuses a pane with a src; the phone's listener stands
-out.flippedB = { src: src().fleet, div: divCls('fleet'), sets: SETS.fleet };
-frames['f-fleet'].contentDocument = null; (LOADS.fleet || []).forEach((f) => f());   // the abort lands after the flip: failed() reads the DESKTOP
-out.desktopFailedB = { src: src().fleet, lazy: lazy().fleet, dataSrc: dataSrc().fleet, div: divCls('fleet'), sets: SETS.fleet - setsAtTap, rows: diagRows('pane-load-failed').filter((r) => r.pane === 'fleet') };
-frames['f-fleet'].contentDocument = null; (LOADS.fleet || []).forEach((f) => f());   // a second null load over the desktop's re-promotion: the phone listener's token is stale, the desktop armed none: nothing fires
-out.secondNullB = { src: src().fleet, sets: SETS.fleet - setsAtTap, rows: diagRows('pane-load-failed').filter((r) => r.pane === 'fleet') };
-backstops();   // the phone's 30 s backstop fires over the desktop's re-promotion: inert on its token
-out.backstopB = { src: src().fleet, sets: SETS.fleet - setsAtTap, rows: diagRows('pane-load-failed').filter((r) => r.pane === 'fleet') };
-shimUp('fleet'); (LOADS.fleet || []).forEach((f) => f());
-out.desktopLoadedB = { src: src().fleet, div: divCls('fleet') };
-MATCHES = true; MQL.forEach((f) => f({}));
-window.__rompMobileTab('fleet');
-out.backB = { src: src().fleet, div: divCls('fleet'), bodyFailed: BODY_CLS.has('pane-failed'), bodyLoading: BODY_CLS.has('pane-loading'), sets: SETS.fleet - setsAtTap };
+out.flippedB = snapF();
+['timeline', 'waiting', 'files'].forEach((k) => { shimUp(k); (LOADS[k] || []).forEach((f) => f()); });   // the grid's other three panes, promoted by the flip, load (their own detectors, armed on the desktop since round 4, are satisfied; left unloaded, their backstops would judge a never-committed document and re-promote them once, which is right and not this case's subject)
+frames['f-fleet'].contentDocument = null; (LOADS.fleet || []).forEach((f) => f());   // the abort lands after the flip: failed() reads the DESKTOP and promotes again, arming its own listener and backstop (review round 4)
+out.desktopFailedB = snapF();
+frames['f-fleet'].contentDocument = { URL: 'about:blank' }; backstops();   // the desktop's re-promotion fails too, with NO load event (WebKit's road: the frame never commits): ITS OWN 30 s backstop judges it (the phone's is inert on its stale token; the desktop wears no loading class, so the guard is the pending verdict); the episode's bound: the src stays, nothing promotes a third time, the failure recorded
+out.secondFailB = snapF();
+backstops();   // every 30 s backstop again: the phone's (a stale token) and the desktop's (its verdict is in): inert
+out.backstopB = snapF();
+MATCHES = true; MQL.forEach((f) => f({}));   // the flip back to the phone: the recorded failure parks the pane under data-lazy-src with the failed state, painted (its tab is the shown one)
+out.backB = snapF();
+window.__rompMobileTab('fleet');   // road (i): the tab tap promotes it again
+out.tabTapB = snapF();
+frames['f-fleet'].contentDocument = null; (LOADS.fleet || []).forEach((f) => f());   // ...and it fails again on the phone: the failed state
+out.phoneFailB = snapF();
+CLICKS.forEach((f) => f());   // road (ii): the overlay tap (#pane-load)
+out.overlayTapB = snapF();
+frames['f-fleet'].contentDocument = null; (LOADS.fleet || []).forEach((f) => f());
+out.phoneFailB2 = snapF();
+RETRY.clicks.forEach((f) => f({ stopPropagation() {} }));   // road (iii): the Try again button (#pane-load-retry)
+out.buttonTapB = snapF();
+shimUp('fleet'); (LOADS.fleet || []).forEach((f) => f());   // the good load: recovered, the episode over
+out.recoveredB = snapF();
+MATCHES = false; MQL.forEach((f) => f({})); MATCHES = true; MQL.forEach((f) => f({}));   // the mirror: a flip there and back over the LOADED pane parks nothing (no failure recorded)
+out.mirrorB = snapF();
 console.log(JSON.stringify(out));
 """
 # correctness-1 and ui-1 (review round 3, 2026-09-19): the failed copy is chosen by the failures of THIS episode (EPI, reset by a load), not the
@@ -1710,11 +1725,13 @@ class LazyPanes(unittest.TestCase):
 
     def test_a_failure_judged_after_a_flip_to_the_desktop_re_promotes_there_and_the_phone_armed_detectors_are_inert(self):
         # Family one (review round 3): the layout is read when the failure is JUDGED, not when the promotion was armed, across an actual media-query
-        # flip (mobileOn() real over the MediaQueryList fake). (A) fail on the phone, flip: the flip hands the parked url to data-src and promotes
-        # (no listener: the grid shows the browser's own page for a second failure), the phone's failed class is cleared by the promotion, the
-        # phone's listener is inert on the desktop's load, and the flip back shows a loaded pane with no failed overlay. (B) flip while loading,
-        # the abort landing after it: failed() reads the desktop, parks under data-src and promotes once; the second null load and the phone's
-        # backstop fire nothing (the token); before this the pane was left with neither src nor data-src.
+        # flip (mobileOn() real over the MediaQueryList fake). (A) fail on the phone, flip: the flip hands the parked url to data-src and promotes,
+        # the phone's failed class is cleared by the promotion, the phone's listener is inert on the desktop's load, and the flip back shows a
+        # loaded pane with no failed overlay. (B) flip while loading, the abort landing after it: failed() reads the desktop, parks under data-src
+        # and promotes once, with its own detectors (review round 4, regression-1); when that fails too the bound holds (the src stays, nothing
+        # promotes a third time, the phone's backstop is inert on its token) and the flip back parks the recorded pane with the failed state, from
+        # which the tab tap, the overlay tap and the Try again button each promote it again; before round 3 the pane was left with neither src
+        # nor data-src, and at round 3's head with a src over a dead document and every road dead.
         o = _lazy(self.seed, _LAZY_FLIP_FAILED_DRIVER)
         pf = o["phoneFailed"]
         self.assertEqual((pf["mobile"], pf["src"], pf["lazy"], pf["div"], pf["bodyFailed"]), (True, None, "/waiting", ["failed"], True), "failed on the phone: re-parked under data-lazy-src, the failed state painted")
@@ -1728,20 +1745,41 @@ class LazyPanes(unittest.TestCase):
         self.assertEqual((ba["mobile"], ba["src"], ba["div"], ba["bodyFailed"], ba["bodyLoading"], ba["sets"]["waiting"]), (True, "/waiting", [], False, False, 2), "back on the phone the tab shows a loaded pane: no failed overlay, no loader, no third promotion")
         o = _lazy(self.seed, _LAZY_FLIP_MIDLOAD_DRIVER)   # (B), its own run: a desktop flip promotes every parked pane, so (A) leaves none to tap
         fb = o["flippedB"]
-        self.assertEqual((fb["src"], fb["div"], fb["sets"]), ("/fleet", ["loading"], 1), "the flip mid-load leaves the loading promotion standing (lazyFlip refuses a pane with a src)")
+        self.assertEqual((fb["mobile"], fb["src"], fb["div"], fb["sets"], fb["bodyLoading"]), (False, "/fleet", ["loading"], 0, True), "the flip mid-load leaves the loading promotion standing (lazyFlip refuses a pane with a src)")
         db = o["desktopFailedB"]
-        self.assertEqual((db["src"], db["lazy"], db["dataSrc"], db["div"]), ("/fleet", None, "/fleet", []), "the failure judged on the desktop: the url back under data-src (the attribute the desktop reads), promoted again at once, no failed class (before: neither src nor data-src, an empty column with no road)")
+        self.assertEqual((db["src"], db["lazy"], db["dataSrc"], db["div"]), ("/fleet", None, "/fleet", []), "the failure judged on the desktop: the url back under data-src (the attribute the desktop reads), promoted again at once, no failed class, no loading class (the grid paints none) (before round 3: neither src nor data-src, an empty column with no road)")
         self.assertEqual(db["sets"], 1, "one re-promotion")
         self.assertEqual(db["rows"], [{"pane": "fleet", "via": "load", "n": 1}], "the failure is counted and said")
-        self.assertEqual(o["secondNullB"], {"src": "/fleet", "sets": 1, "rows": db["rows"]}, "a second null load over the desktop's re-promotion fires nothing: the phone listener's token is stale and the desktop armed none (without the per-promotion mint this looped: promote, fail, promote)")
-        self.assertEqual(o["backstopB"], {"src": "/fleet", "sets": 1, "rows": db["rows"]}, "the phone's backstop is inert too")
-        self.assertEqual(o["desktopLoadedB"], {"src": "/fleet", "div": []})
-        self.assertEqual(o["backB"], {"src": "/fleet", "div": [], "bodyFailed": False, "bodyLoading": False, "sets": 1}, "the flip back: a loaded pane, no overlay")
+        self.assertEqual((db["listeners"], db["backstops"]), (fb["listeners"] + 1, fb["backstops"] + 1), "the desktop's re-promotion armed its own load listener and its own 30 s backstop (review round 4: round 3 armed none off the phone, so its failure went unjudged)")
+        sb = o["secondFailB"]
+        self.assertEqual((sb["src"], sb["lazy"], sb["dataSrc"], sb["div"], sb["sets"]), ("/fleet", None, "/fleet", [], 1), "the desktop's re-promotion fails too, never committing (no load event): judged by its own 30 s backstop (round 3 armed none off the phone, and a class-guarded backstop would return on the desktop's missing loading class), and the episode's bound holds: the src stays (the browser's own page, as a desktop failure always showed), no third promotion (without the bound: promote, fail, promote, without end)")
+        self.assertEqual(sb["rows"], [{"pane": "fleet", "via": "load", "n": 1}, {"pane": "fleet", "via": "backstop", "n": 2}], "the second failure is counted and said too, via the backstop (round 3 left it unsaid)")
+        self.assertEqual(o["backstopB"], sb, "every backstop fires again: the phone's is inert on its stale token, the desktop's on its verdict already given (PEND)")
+        bb = o["backB"]
+        self.assertEqual((bb["mobile"], bb["src"], bb["lazy"], bb["dataSrc"], bb["div"], bb["bodyFailed"], bb["bodyLoading"], bb["sets"]), (True, None, "/fleet", None, ["failed"], True, False, 1), "the flip back to the phone: the recorded failure parks the pane under data-lazy-src with the failed state painted over the shown tab (before: a src over a dead document, no state, and every road dead for the page's life)")
+        self.assertEqual((bb["msg"], bb["retryHidden"]), ("Still not loading. Try again, or reload the page.", False), "the episode's second failure and later: the copy offers the reload, the button is shown")
+        tb = o["tabTapB"]
+        self.assertEqual((tb["src"], tb["lazy"], tb["div"], tb["bodyFailed"], tb["bodyLoading"], tb["sets"]), ("/fleet", None, ["loading"], False, True, 2), "road (i), the tab tap: promoted again as a first tap would")
+        pf = o["phoneFailB"]
+        self.assertEqual((pf["src"], pf["div"], pf["bodyFailed"], pf["rows"][-1]), (None, ["failed"], True, {"pane": "fleet", "via": "load", "n": 3}), "...its failure on the phone paints the failed state")
+        ob = o["overlayTapB"]
+        self.assertEqual((ob["src"], ob["div"], ob["sets"]), ("/fleet", ["loading"], 3), "road (ii), the overlay tap: promoted again")
+        self.assertEqual(o["phoneFailB2"]["rows"][-1], {"pane": "fleet", "via": "load", "n": 4})
+        ub = o["buttonTapB"]
+        self.assertEqual((ub["src"], ub["div"], ub["retryHidden"], ub["sets"]), ("/fleet", ["loading"], True, 4), "road (iii), the Try again button: promoted again, the button hidden while it loads")
+        rb = o["recoveredB"]
+        self.assertEqual((rb["src"], rb["div"], rb["bodyFailed"], rb["bodyLoading"], rb["msg"], rb["sets"], rb["rows"]), ("/fleet", [], False, False, "", 4, o["phoneFailB2"]["rows"]), "the good load: recovered, no overlay, no new row")
+        self.assertEqual(o["mirrorB"], dict(rb, mobile=True), "the mirror: a flip there and back over the loaded pane parks nothing (nothing recorded)")
         js = km._LANDING_MOBILE_JS
         self.assertIn("function failed(k,via){var f=F[k];if(!f)return;var mob=mobileOn();", js, "the layout is read at fire time")
         self.assertIn("f.setAttribute(mob?LAZY:'data-src',URLS[k]);", js)
+        self.assertIn("var again=!mob&&EPI[k]<2,keep=!mob&&!again;", js, "the desktop's bound: one re-promotion per episode, the src kept at the bound")
+        self.assertIn("DEAD[k]=keep?TOK[k]:0;", js, "the failure at the bound is recorded under its promotion's token")
+        self.assertIn("else if(DEAD[lk3]&&DEAD[lk3]===TOK[lk3]){", js, "lazyFlip's phone branch parks the recorded pane")
+        self.assertIn("if(TOK[k]!==tok||PEND[k]!==tok)return;var s=docState(f);", js, "the backstop's guard is the pending verdict, not the phone's paint class")
+        self.assertNotIn("if(mobileOn()){try{var d=paneDiv(f);if(d)d.classList.add('loading');}catch(e){}\nf.addEventListener", js, "the detectors are not under the phone gate")
         self.assertIn("if(mob)d.classList.add('failed');else d.classList.remove('failed');", js)
-        self.assertIn("if(!mob)promote(k);}", js, "the desktop promotes once")
+        self.assertIn("if(again)promote(k);}", js, "the desktop promotes once per episode (review round 4: the bound)")
         self.assertIn("URLS[k]=u;var tok=TOK[k]=(TOK[k]||0)+1;", js, "the token is minted on every promotion, before the layout branch")
 
     def test_the_failed_copy_counts_this_episode_and_the_retry_is_a_button_shown_in_the_failed_state_alone(self):

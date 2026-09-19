@@ -11,8 +11,10 @@ Driven here across the media query itself (tests/lazy_pane_layout_flip_browser.m
 _MOBILE_MQ's 820 px, so Chromium fires the MediaQueryList change event and the shell's own lazyFlip and retell listeners run, with
 mobileOn() the shell's real function over the real query (tests/test_pane_state_broadcast.py LazyPanes drives the same lines under
 node with a MediaQueryList fake). Case A fails the pane on the phone and then flips; case B flips WHILE the pane loads and lets the
-abort land on the desktop. Chromium alone: WebKit's failure detector is the 30 s backstop (no load event for a failed navigation),
-which would cost 30 s a case for the same shell lines the LazyPanes harness covers.
+abort land on the desktop; case C fails the desktop's re-promotion too and, back on the phone, recovers by one of the three gestures
+(review round 4: the desktop promotion has its own detectors, its failure is bounded to one re-promotion per episode, and the flip back
+parks the recorded pane with the failed state). Chromium alone: WebKit's failure detector is the 30 s backstop (no load event for a
+failed navigation), which would cost 30 s a case for the same shell lines the LazyPanes harness covers.
 
 The lab: one kernel from test_ship_reship_served.kernel_env with the return harness's seed (three synthetic sessions of the
 notes-api demo plus a transcript-less one; placeholder uuids, host TESTHOST) and a private dist. Skips LOUDLY without the
@@ -95,10 +97,10 @@ class LazyPaneLayoutFlip(unittest.TestCase):
         if cls.lab:
             shutil.rmtree(cls.lab, ignore_errors=True)
 
-    def _drive(self, case):
-        cfg = {"case": case, "url": "http://127.0.0.1:%d/?token=%s" % (self.port, self.token), "healthz": "http://127.0.0.1:%d/healthz" % self.port,
-               "diag": self.diag, "settleMs": 1200, "holdMs": 1500, "resultPath": os.path.join(self.lab, "result-%s.json" % case)}
-        cfg_path = os.path.join(self.lab, "cfg-%s.json" % case)
+    def _drive(self, case, recover=None):
+        cfg = {"case": case, "recover": recover or "", "url": "http://127.0.0.1:%d/?token=%s" % (self.port, self.token), "healthz": "http://127.0.0.1:%d/healthz" % self.port,
+               "diag": self.diag, "settleMs": 1200, "holdMs": 1500, "resultPath": os.path.join(self.lab, "result-%s%s.json" % (case, "-" + recover if recover else ""))}
+        cfg_path = os.path.join(self.lab, "cfg-%s%s.json" % (case, "-" + recover if recover else ""))
         Path(cfg_path).write_text(json.dumps(cfg))
         try:
             p = subprocess.run(["node", DRIVER], capture_output=True, text=True, timeout=180, env=dict(os.environ, EXT_PKG=os.path.join(EXT, "package.json"), CFG=cfg_path))
@@ -151,22 +153,49 @@ class LazyPaneLayoutFlip(unittest.TestCase):
         self.assertEqual([x for x in r["rows"] if x["what"] == "pane-load-failed"], [{"what": "pane-load-failed", "pane": "waiting", "via": "load", "n": 1}], "one failure row via load, the desktop-judged one: %r" % (r["rows"],))
         self.assertEqual(r["errors"], [], "no page errors")
 
-    def test_C_when_the_desktop_re_promotion_fails_too_the_browsers_page_stands_and_nothing_promotes_a_third_time(self):
-        # extra7-2's refuter: with the token minted on the phone alone, the phone-armed listener also judged the desktop's second failure and the
-        # promote-fail cycle ran until the route passed. The desktop promotion arms no listener and no backstop, so a second failure there shows
-        # the browser's own page (as before this change) with the url under data-src; the token minted per promotion keeps the phone's listener
-        # inert over it, so exactly two document requests reach the wire and two src sets happen, whatever the route would do to a third.
-        r = self._drive("C")
+    def _case_c(self, recover):
+        # review round 4 (2026-09-19, regression-1 with correctness-1 and extra6-1: one defect). At round 3's head the desktop promotion armed no
+        # listener and no backstop, so when the desktop's re-promotion failed too the pane kept a src over the browser's error page with no
+        # state, lazyFlip's flip-back parking skipped a frame with a src, and back on the phone the tab tap, the overlay tap and the Try again
+        # button all did nothing for the page's life (the parent commit recovered from the same sequence). Now every promotion arms both
+        # detectors; the desktop's response is bounded to one re-promotion per episode (the src kept at the bound, the browser's own page as a
+        # desktop failure always showed, the failure recorded), and the flip back parks the recorded pane with the failed state, from which
+        # each of the three gestures promotes it again. Driven three times, one gesture per run (recover), in Chromium against the lab kernel.
+        r = self._drive("C", recover)
         d = r["desktop"]
         self.assertGreaterEqual(d.get("ms", -1), 0, "the desktop's re-promotion reached the wire within the wait: %r" % (d,))
         self.assertEqual((d["src"], d["lazy"], d["dataSrc"], d["divFailed"], d["bodyFailed"]), ("/waiting", None, "/waiting", False, False), "the desktop-judged failure: the url under data-src, promoted again, no failed state: %r" % (d,))
         a = r["after"]
-        self.assertEqual((a["sets"], a["src"], a["dataSrc"], a["divFailed"], a["divLoading"]), (2, "/waiting", "/waiting", False, False), "three seconds on: two promotions and no third (the phone's listener is inert on its stale token over the desktop's re-promotion; without the per-promotion mint it judged the second failure and promoted again): %r" % (a,))
-        self.assertIsNone(a["url"], "the browser's own error page stands in the frame (cross-origin, no readable document), as a desktop failure always did: %r" % (a,))
-        self.assertEqual(len(r["requests"]), 2, "two document requests reached the wire, both aborted; no third: %r" % (r["requests"],))
-        self.assertEqual(r["routeHeld"], 2, "the route saw exactly the two: %r" % (r["routeHeld"],))
-        self.assertEqual([x for x in r["rows"] if x["what"] == "pane-load-failed"], [{"what": "pane-load-failed", "pane": "waiting", "via": "load", "n": 1}], "one failure row: the phone-armed detector's; the desktop's own failure is the browser's page, unsaid: %r" % (r["rows"],))
+        self.assertEqual((a["sets"], a["src"], a["dataSrc"], a["divFailed"], a["divLoading"], a["mobile"]), (2, "/waiting", "/waiting", False, False, False), "three seconds on: two promotions and no third (the episode's bound; the phone's listener is inert on its stale token; without the bound the desktop's own detector would promote, fail, promote): %r" % (a,))
+        self.assertIsNone(a["url"], "the browser's own error page stands in the frame at the bound (cross-origin, no readable document), as a desktop failure always did: %r" % (a,))
+        self.assertEqual(r["requestsAtBound"], 2, "two document requests reached the wire before the flip back, both aborted; no third: %r" % (r["requests"],))
+        pb = r["phoneBack"]
+        self.assertGreaterEqual(pb.get("ms", -1), 0, "the flip back parked the recorded pane within the wait: %r" % (pb,))
+        self.assertEqual((pb["mobile"], pb["src"], pb["lazy"], pb["dataSrc"], pb["divFailed"], pb["bodyFailed"], pb["bodyLoading"], pb["sets"]), (True, None, "/waiting", None, True, True, False, 2),
+                         "back on the phone: no src over the dead document, the url under data-lazy-src, the failed state painted over the shown Waiting tab (at round 3's head: the src stood, no state, every road dead): %r" % (pb,))
+        self.assertEqual(pb["msg"], "Still not loading. Try again, or reload the page.", "the episode's copy (two failures in it): %r" % (pb,))
+        rb = pb.get("retry") or {}
+        self.assertEqual((rb.get("hidden"), rb.get("text")), (False, "Try again"), "the button is shown: %r" % (rb,))
+        self.assertNotEqual(rb.get("display"), "none", "...and painted: %r" % (rb,))
+        rec = r["recovered"]
+        self.assertGreaterEqual(rec.get("ms", -1), 0, "the %s gesture promoted the pane again and its document loaded and painted within the wait: %r" % (recover, rec))
+        self.assertEqual((rec["mobile"], rec["src"], rec["lazy"], rec["divFailed"], rec["bodyFailed"], rec["bodyLoading"], rec["sets"]), (True, "/waiting", None, False, False, False, 3), "the third promotion, by the %s gesture: the pane loaded, the failed state gone: %r" % (recover, rec))
+        self.assertTrue(rec["url"].endswith("/waiting") and rec["spinGone"] and rec["head"], "its document is the Waiting page, painted: %r" % (rec,))
+        self.assertEqual(len(r["requests"]), 3, "three document requests in all: the two aborted and the one that passed: %r" % (r["requests"],))
+        self.assertEqual(r["routeHeld"], 3, "the route saw exactly the three: %r" % (r["routeHeld"],))
+        self.assertEqual([x for x in r["rows"] if x["what"] == "pane-load-failed"], [{"what": "pane-load-failed", "pane": "waiting", "via": "load", "n": 1}, {"what": "pane-load-failed", "pane": "waiting", "via": "load", "n": 2}],
+                         "two failure rows: the phone-armed detector's and the desktop's own (round 3 left the second unsaid); the recovery filed none: %r" % (r["rows"],))
+        self.assertEqual([x for x in r["rows"] if x["what"] == "pane-load-unmarked"], [], "nothing was shown as served")
         self.assertEqual(r["errors"], [], "no page errors")
+
+    def test_C_when_the_desktop_re_promotion_fails_too_the_flip_back_parks_it_with_the_failed_state_and_the_tab_tap_recovers(self):
+        self._case_c("tab")
+
+    def test_C_when_the_desktop_re_promotion_fails_too_the_overlay_tap_recovers(self):
+        self._case_c("overlay")
+
+    def test_C_when_the_desktop_re_promotion_fails_too_the_try_again_button_recovers(self):
+        self._case_c("button")
 
 
 if __name__ == "__main__":

@@ -10,10 +10,14 @@
 //      the phone and 300 ms later the window widens, so the phone-armed load listener judges the failure on the DESKTOP: the url goes
 //      back under data-src and the pane is promoted once more, the real document loads, exactly one pane-load-failed row is filed and
 //      nothing promotes a third time (the token).
-//   C  as B, and the desktop's re-promotion FAILS too (the first two requests are aborted, the third would pass): the desktop promotion
-//      arms no listener, so the browser's own error page stands with the url under data-src and nothing promotes a third time; without
-//      the token minted per promotion the phone-armed listener would judge that second failure too and the promote-fail loop would run
-//      until the route passed (extra7-2's refuter executed it).
+//   C  as B, and the desktop's re-promotion FAILS too (the first two requests are aborted, the third passes): the desktop's own listener
+//      judges it (review round 4, regression-1: round 3 armed none off the phone, so the pane kept a src over a dead document with no
+//      state and every road back on the phone was dead for the page's life), the episode's bound holds (the browser's own error page
+//      stands with the url under data-src, a second pane-load-failed row, nothing promotes a third time within 3 s; without the token
+//      minted per promotion the phone-armed listener would judge the second failure too and the loop would run until the route passed,
+//      extra7-2's refuter executed it), then the window narrows back to the phone: the recorded failure parks the pane with the failed
+//      state painted, and ONE recovery gesture (cfg.recover: "tab" the Waiting tab's button, "overlay" a tap on #pane-load away from its
+//      children, "button" the Try again button) promotes it again; the third request passes and the pane loads.
 // Prints one RESULT: JSON line (cfg.resultPath gets the same object). cfg.healthz names the LAB port and is asserted before any request;
 // a live kernel is never touched. Chromium alone: WebKit's failure detector is the 30 s backstop (no load event), which would cost 30 s a
 // case for the same shell lines. Synthetic sessions only.
@@ -132,6 +136,20 @@ try {
     out.desktop = { ...desk.r, ms: desk.ok ? desk.ms : -1 };
     await sleep(cfg.case === "C" ? 3000 : 1500);   // room for a third promotion, were one to come (the loop the token closes; C leaves time for two more round trips)
     out.after = await readPane();
+    if (cfg.case === "C") {
+      out.requestsAtBound = out.requests.length;
+      out.t.flipBack = now();
+      await page.setViewportSize({ width: 390, height: 844 });   // back across the breakpoint: the shell's lazyFlip parks the recorded pane with the failed state
+      const back = await until((r) => r.mobile && r.src === null && r.lazy === "/waiting", 5000);
+      out.phoneBack = { ...back.r, ms: back.ok ? back.ms : -1, retry: await page.evaluate(() => { const b = document.getElementById("pane-load-retry"); return b ? { hidden: b.hidden, display: getComputedStyle(b).display, text: b.textContent } : null; }) };
+      out.t.recover = now();
+      if (cfg.recover === "tab") await page.click("#mtabs button[data-pane=waiting]");
+      else if (cfg.recover === "overlay") await page.click("#pane-load", { position: { x: 12, y: 12 } });   // the overlay itself, away from the message and the button
+      else if (cfg.recover === "button") await page.click("#pane-load-retry");
+      else throw new Error("case C needs cfg.recover");
+      const rec = await until((r) => r.src === "/waiting" && r.url && r.url.endsWith("/waiting") && r.spinGone === true && r.head === true, 25000);
+      out.recovered = { ...rec.r, ms: rec.ok ? rec.ms : -1 };
+    }
     await page.unroute(isWaiting, gate);
     out.routeHeld = held;
   }
