@@ -2006,11 +2006,14 @@ export class FederationManager {
     // socket, as the extension's pipe mints one per dial), so a replacement socket's first patch cannot apply onto the
     // dead socket's half-assembled slot (2026-09-19). Latent against every kernel in this repo, whose dstate is per
     // connection and whose first frame on a fresh socket is whole; the reset costs nothing there and holds the
-    // contract for a peer that resumes a stream across a reconnect. HERE, after both returns above, and not at the
-    // top: connect() is also called for a conn whose socket is CONNECTING or OPEN (the poll) and for a dial the
-    // local-down rule defers, and a reset before those returns would wipe a LIVE socket's base on a poll tick. Not in
-    // ws.onclose alone either: the watchdog's abandon nulls the dead socket's handlers before dialing, so an onclose
-    // reset never runs on that road. The conn's own latches (deferred) are the conn's and stand across the dial.
+    // contract for a peer that resumes a stream across a reconnect. HERE, below the already-connecting/open guard, and
+    // not at the top: the poll, localUp and the watchdog dial only a conn whose socket is null or CLOSED, but a 2 s
+    // retry timer does not look first, and one can land on a conn whose socket is already CONNECTING or OPEN: the
+    // onclose redial armed by a dead socket whose conn the watchdog's "redial" verdict or a poll dialed again in the
+    // meantime, or the constructor-throw retry below after the same. Those calls return at the guard, and a reset
+    // above it would wipe the LIVE socket's base under the patches applying onto it. Not in ws.onclose alone either:
+    // the watchdog's abandon nulls the dead socket's handlers before dialing, so an onclose reset never runs on that
+    // road. The conn's own latches (deferred, saidDelta) are the conn's and stand across the dial.
     conn.viewDeltas = this.mintReceiver(conn.host);
     delete this.perHostFeedRaw[conn.host];
     // a REDIAL only when the remote served this page whole before (everOpened && readyAcked) and the page has a

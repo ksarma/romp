@@ -13,7 +13,7 @@
 // sessions `api` on the remote and `web` locally).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { FederationManager, REMOTE_STALE_MS } from "./federation";
+import { FederationManager, REMOTE_STALE_MS, REMOTE_REDIAL_MS } from "./federation";
 
 const HOST = "TESTHOST";
 const SID_A = "11111111-2222-4333-8444-000000000701";   // "api" on TESTHOST
@@ -683,3 +683,75 @@ test("the unknown-slot breadcrumb shares the rule: the same slot from the same b
   } finally { restore(); }
 });
 
+// ── connect() reached with a live socket (2026-09-19) ───────────────────────────────────────────────────────────────
+// The poll, localUp and the watchdog dial only a conn whose socket is null or CLOSED, but a 2 s retry timer does not look
+// first: the onclose redial a dead socket armed lands after the watchdog's "redial" verdict (or a poll) already dialed the
+// conn a fresh socket, and the constructor-throw retry lands after the same. connect() returns at its already-connecting/
+// open guard, and the per-dial receiver reset sits BELOW that guard: at the top it would wipe the LIVE socket's base under
+// the patches applying onto it, and the next patch would ask that kernel for the whole slot for nothing (the placement
+// probe of round 4). The behavioural assertion comes first (the base kept: the patch applies, nothing asked); the
+// receiver's identity is the mechanism, checked after.
+test("the onclose retry timer landing after the watchdog already redialed the conn: connect() returns at its open guard and the live socket's base stands (the next patch applies, nothing asked)", async () => {
+  await withManager("timeline", ({ fm, emitted }) => {
+    seedLocalTimeline(fm);
+    const ws = attached(fm);
+    const conn = fm.conns.get(HOST);
+    ws.readyState = 3;
+    const redials = armedRedials(() => ws.onclose!({ code: 1006, wasClean: false }));   // the socket dropped: its 2 s redial, held
+    assert.equal(redials.length, 1, "one redial armed");
+    clock += REMOTE_REDIAL_MS + 1000;   // the watchdog's redial verdict on the CLOSED socket lands before the timer
+    fm.watchdog(clock);
+    const ws2 = last(FakeWS.made);
+    assert.notEqual(ws2, ws, "the watchdog redialed");
+    ws2.open();
+    ws2.frame(remoteBars());
+    ws2.frame(barsPatch(0, bar("seg-2", 1010, 1015, "second"), 505));
+    assert.deepEqual(ids(last(barsOf(emitted)).turns[HOST + ":" + SID_A]), ["seg-1", "seg-2"], "the new socket's base took a patch");
+    const before = barsOf(emitted).length, vd = conn.viewDeltas;
+    assert.ok(before > 0);
+    redials[0]();   // the late timer: connect() on a conn whose socket is OPEN
+    assert.equal(conn.ws, ws2, "no new socket: the guard returned");
+    ws2.frame(barsPatch(1, bar("seg-3", 1020, 1025, "third"), 515));
+    assert.deepEqual(ws2.sent, [], "nothing asked: the live socket's base stood through the late call and the patch applied onto it");
+    assert.equal(barsOf(emitted).length, before + 1, "the patch re-emitted the merge");
+    assert.deepEqual(ids(last(barsOf(emitted)).turns[HOST + ":" + SID_A]), ["seg-1", "seg-2", "seg-3"]);
+    assert.equal(conn.viewDeltas, vd, "the mechanism: a call that dialed nothing minted nothing");
+    fm.conns.get(HOST).closed = true;
+  });
+});
+
+test("the constructor-throw retry timer landing after the watchdog dialed: the same guard, the same base kept", async () => {
+  await withManager("timeline", ({ fm, emitted }) => {
+    seedLocalTimeline(fm);
+    const ws = attached(fm);
+    const conn = fm.conns.get(HOST);
+    ws.readyState = 3;
+    clock += REMOTE_REDIAL_MS + 1000;
+    // the watchdog's redial verdict dials, and the constructor throws once (a browser refusing the URL): connect() arms its
+    // 2 s retry and the dead socket stays on the conn
+    const g: any = globalThis;
+    const Fake = g.WebSocket;
+    g.WebSocket = function () { g.WebSocket = Fake; throw new Error("refused"); };
+    const retries = armedRedials(() => fm.watchdog(clock));
+    assert.equal(retries.length, 1, "the constructor-throw retry, held");
+    assert.equal(conn.ws, ws, "the dead socket still on the conn");
+    clock += REMOTE_REDIAL_MS + 1000;
+    fm.watchdog(clock);   // the next tick's redial verdict: the constructor answers now
+    const ws2 = last(FakeWS.made);
+    assert.notEqual(ws2, ws, "a fresh socket");
+    ws2.open();
+    ws2.frame(remoteBars());
+    ws2.frame(barsPatch(0, bar("seg-2", 1010, 1015, "second"), 505));
+    assert.deepEqual(ids(last(barsOf(emitted)).turns[HOST + ":" + SID_A]), ["seg-1", "seg-2"]);
+    const before = barsOf(emitted).length, vd = conn.viewDeltas;
+    assert.ok(before > 0);
+    retries[0]();   // the late retry: connect() with the fresh socket OPEN
+    assert.equal(conn.ws, ws2, "no new socket");
+    ws2.frame(barsPatch(1, bar("seg-3", 1020, 1025, "third"), 515));
+    assert.deepEqual(ws2.sent, [], "nothing asked: the base stood");
+    assert.equal(barsOf(emitted).length, before + 1);
+    assert.deepEqual(ids(last(barsOf(emitted)).turns[HOST + ":" + SID_A]), ["seg-1", "seg-2", "seg-3"]);
+    assert.equal(conn.viewDeltas, vd);
+    fm.conns.get(HOST).closed = true;
+  });
+});
