@@ -450,18 +450,22 @@ class _WalkHarness(unittest.TestCase):
     def _pass(self, now):
         """One pass over the two sessions: the walk's counter deltas, the placement gate's (served, derived) deltas, and the
         shared-loader calls per mechanism and sid (`walk`: the look's decision read; `gate`: the placement gate's currency
-        check; `sweep`: the wake sweep's read per owned record, over every sid seen; never a total), the writer loads, and
-        the sids parsed. The recorders stand on the judge's two doors, `jd.load_goals_shared` and `jd.load_goals`, and
-        attribute through its boundary frames by code identity, so a shared load from any other function the fixture
-        executes during the pass fails here, named by function, file and line (the helpers the fixture replaces, REPLACED_KM,
-        REPLACED_JD and Sessions.backend_for, are the source census's in TheCountersOneSite, not this witness's), and the
-        sweep is held to its bound per sid; the writer door's list is asserted empty after every pass, separately, each
-        entry named the same way; a reader below the doors is outside the claim. The store's counters are reconciled
-        against the recorded calls per door (`shared`, the delta over SHARED_CALL_KEYS, against the walk's, the gate's and
-        the sweep's; `writerLoads`, the delta of goal_io loads, against the writer records plus the shared door's hand-offs
-        over SHARED_HANDOFF_KEYS), so a load through a door of the judge module the recorders do not wrap is noticed,
-        unnamed; a reader that bypasses the module is outside both. `calls` carries the shared records (sid, function, file,
-        line) for a case's own assertions."""
+        check; `sweep`: the wake sweep's read per owned record; never a total), the writer loads, and the sids parsed. `walk`
+        and `gate` are keyed on SIDS as the floor, so the cases' zero-assertions keep their keys, plus any other sid a
+        recorded call of theirs names; `sweep` is keyed on every sid seen, since its constituency includes unwalked sids. So
+        every recorded call sits inside one bound, and a read by the look or by the gate of a session other than the one it
+        is looking at is named by function, file, line and sid by its own assertion (the sweep's read of an unwalked sid is
+        legitimate and is held to its bound per sid instead). The recorders stand on the judge's two doors,
+        `jd.load_goals_shared` and `jd.load_goals`, and attribute through its boundary frames by code identity, so a shared
+        load from any other function the fixture executes during the pass fails here, named by function, file and line (the
+        helpers the fixture replaces, REPLACED_KM, REPLACED_JD and Sessions.backend_for, are the source census's in
+        TheCountersOneSite, not this witness's), and the sweep is held to its bound per sid; the writer door's list is
+        asserted empty after every pass, separately, each entry named the same way; a reader below the doors is outside the
+        claim. The store's counters are reconciled against the recorded calls per door (`shared`, the delta over
+        SHARED_CALL_KEYS, against every recorded shared call, listed in the message; `writerLoads`, the delta of goal_io
+        loads, against the writer records plus the shared door's hand-offs over SHARED_HANDOFF_KEYS), so a load through a
+        door of the judge module the recorders do not wrap is noticed, unnamed; a reader that bypasses the module is outside
+        both. `calls` carries the shared records (sid, function, file, line) for a case's own assertions."""
         before = {k: km._NUDGE_WALK_STATS[k] for k in self.KEYS}
         gate0 = dict(km._NUDGE_GATE_STATS)
         s0, g0 = jd.shared_store_stats(), jd.goal_io_stats()["loads"]
@@ -470,8 +474,14 @@ class _WalkHarness(unittest.TestCase):
         s1, g1 = jd.shared_store_stats(), jd.goal_io_stats()["loads"]
         d = {k: km._NUDGE_WALK_STATS[k] - before[k] for k in self.KEYS}
         d["memo"] = tuple(km._NUDGE_GATE_STATS[k] - gate0[k] for k in ("served", "derived"))
-        d["walk"] = {sid: sum(1 for s, c, _f, _ln in self.calls if s == sid and c in WALK) for sid in SIDS}
-        d["gate"] = {sid: sum(1 for s, c, _f, _ln in self.calls if s == sid and c in GATE) for sid in SIDS}
+        # the walk's and the gate's counts: keyed on SIDS as the floor (the cases' zero-assertions keep their keys) plus any other
+        # sid a recorded call of theirs names, so every record of theirs sits inside a bound and the reconciliation below balances;
+        # a record for a sid outside SIDS is then named by the assertion after the sweep's bound (review round 2, fresh-1: keyed on
+        # SIDS alone, a foreign-sid read by the gate landed in no bound and red only the reconciliation, with a false cause)
+        d["walk"] = {sid: sum(1 for s, c, _f, _ln in self.calls if s == sid and c in WALK)
+                     for sid in set(SIDS) | {s for s, c, _f, _ln in self.calls if c in WALK}}
+        d["gate"] = {sid: sum(1 for s, c, _f, _ln in self.calls if s == sid and c in GATE)
+                     for sid in set(SIDS) | {s for s, c, _f, _ln in self.calls if c in GATE}}
         d["sweep"] = {}                                   # over every sid seen: the sweep's constituency includes unwalked sids
         for s, c, _f, _ln in self.calls:
             if c in SWEEP:
@@ -485,11 +495,19 @@ class _WalkHarness(unittest.TestCase):
                                  "wake-set, not failed, moot or answered, not muted, and whose sid the walk did not visit or visited "
                                  "under a wedge gate), none for a sid with no owned record; it runs after the per-session loop in the "
                                  "same pass and memos.nudgeWalk.loads does not count it" % sid[-4:])
+        foreign = ["%s (%s:%d, sid ..%s)" % (c, f, ln, s[-4:]) for s, c, f, ln in self.calls if c in WALK + GATE and s not in SIDS]
+        self.assertEqual(foreign, [], "the look and the placement gate read only the session they are looking at: a shared load by "
+                                      "either for another session, by function, file, line and sid: %s" % "; ".join(foreign))
         d["shared"] = {k: s1[k] - s0[k] for k in SHARED_CALL_KEYS if s1[k] != s0[k]}
+        records = ["%s (%s:%d, sid ..%s)" % (c, f, ln, s[-4:]) for s, c, f, ln in self.calls]
         self.assertEqual(sum(d["shared"].values()), sum(d["walk"].values()) + sum(d["gate"].values()) + sum(d["sweep"].values()),
-                         "every shared-store call moves one of the five counters; a difference is a load through a door the recorder "
-                         "does not wrap (unnamed by construction) or a recorded call that took no read: counters %r against walk %r, "
-                         "gate %r, sweep %r" % ((d["shared"],) + tuple({k[-4:]: v for k, v in d[m].items()} for m in ("walk", "gate", "sweep"))))
+                         "the shared cache's five call counters (hit, miss, compare_miss, absent, fallback) moved %d times this pass and the "
+                         "recorder on jd.load_goals_shared saw %d calls; the two must agree, since every call that reaches the cache's "
+                         "branch and returns moves exactly one of them. This line knows the two figures and not the cause: counters %r; "
+                         "recorded calls: %s. Among the possibilities: a load through a door of the judge module the recorders do not "
+                         "wrap, a load through a reference to the real door taken before a recorder stood, a recorded call whose open or "
+                         "read raised, a record appended without a call through"
+                         % (sum(d["shared"].values()), len(self.calls), d["shared"], "; ".join(records) or "none"))
         d["calls"] = list(self.calls)
         writer = ["%s (%s:%d, sid ..%s)" % (c, f, ln, s[-4:]) for s, c, f, ln in self.writer]
         self.assertEqual(writer, [], "zero plain load_goals from any caller during the pass, the whole tick (condition 7 in ruling A's "
