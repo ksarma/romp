@@ -4167,9 +4167,14 @@ true of the snapshot that carries it: `predates-parses.perSession` when the
 snapshot has no `parses.perSession` block (saved by a kernel from before it
 counted parsed sessions), and `perSession.sessions-not-a-number` when the block
 is there and its `sessions` is not a number (absent, a string, a boolean or
-null). The leaf is present exactly when the count is absent, so a reader
-comparing two exports can tell a count the export could not read from a kernel
-that parsed nothing, and an old snapshot from a malformed one. Before
+null). Where the snapshot's count is a number no double can hold (a NaN, an
+infinity or an integer past about 1.8e308), `parsed` is null and no
+`parsedUnavailable` is written beside it: null is the export's output for
+every such number. So `sessions` carries exactly one of three, a `parsed`
+count, `parsed` null or `parsedUnavailable` in the count's place, never two
+and never none, and a reader comparing two exports can tell a count the
+export could not read from a kernel that parsed nothing, an old snapshot from
+a malformed one, and either from a count no double can hold. Before
 writing, the document is searched,
 every key, string value and number (a number by the spelling the export
 writes and, when that spelling carries an exponent, by its plain decimal
@@ -4396,7 +4401,12 @@ before the kernel counted parsed sessions (no perSession block under parses)
 and perSession.sessions-not-a-number for a snapshot whose perSession block is
 there but carries no number under sessions, so a count the export could not
 read is told from a kernel that parsed nothing, and an old snapshot from a
-malformed one, the `actions` block's one count per
+malformed one, and where the snapshot's count is a number no double can hold
+(a NaN, an infinity or an integer past about 1.8e308), `parsed` null with no
+`parsedUnavailable` beside it, null being the export's output for every such
+number, so the `sessions` block carries exactly one of three, a `parsed` count,
+`parsed` null or `parsedUnavailable` in the count's place, never two and never
+none, the `actions` block's one count per
 action route served, the http row's count under the route's name, `color`,
 `compact`, `down`, `emoji`, `end`, `flag`, `fleet-restart`, `fork`,
 `fork-comment`, `fork-promote`, `group`, `interrupt`, `judge-settings`,

@@ -4786,12 +4786,16 @@ class Disclosed(unittest.TestCase):
     snapshot), for the older one (parses.bySid, no perSession, what a kernel before 2026-09-18 saved) and for the malformed one
     (a perSession block whose sessions is not a number, a hand-made snapshot's shape), because the block differs by shape: the
     current shape carries the `parsed` count and the other two carry, in its place, `parsedUnavailable`, the one leaf of the
-    block that is neither a count nor a bucket, present exactly when the count is absent, with a fixed string that is true of
+    block that is neither a count nor a bucket, present where the snapshot gives no number for the count, with a fixed string that is true of
     the shape that carries it: `predates-parses.perSession` for the older shape, `perSession.sessions-not-a-number` for the
     malformed one (the leaf's first cut wrote the first reason for both, and it was false for the malformed shape, whose block is
     there). So an absent count reads as a count the export could not read and never as a kernel that parsed nothing, and an
-    old snapshot is told from a malformed one. _check walks all three blocks into the name population and holds the
-    conditioning (the count and the leaf never both, never neither; each reason on its shape alone) on all three documents."""
+    old snapshot is told from a malformed one. THE THIRD OUTCOME (the ruling of 2026-09-19 restating the two-outcome biconditional
+    as three): a count no double can hold (2**1024, a NaN, an infinity) is null in the count's place, pp.finite_number's output for
+    every such number, with no leaf beside it, and no fourth reason, which would have put one signal over three causes. _check
+    walks the blocks into the name population and holds the conditioning on four documents, the three shapes and a fourth whose
+    served count is replaced by 2**1024 in the raw perf: every document carries exactly one of a count a double holds, `parsed`
+    null or the leaf, never two and never none, and each reason on its shape alone."""
 
     BLOCKS = ("process", "heap", "gc", "usage")
     MALLOC_LEAVES = frozenset({"arena", "fordblks", "hblkhd", "uordblks"})
@@ -4884,6 +4888,16 @@ class Disclosed(unittest.TestCase):
           "test_perf_export:Usage.test_a_per_session_block_whose_count_is_not_a_number_is_told_so_and_never_that_the_snapshot_is_old",
           "test_perf_export:Cli.test_a_snapshot_from_before_the_per_session_count_exports_the_absence_leaf_and_a_current_one_the_count",
           "test_perf_upload:Cli.test_a_plain_export_sends_the_http_table_with_a_count_and_ms_per_route_served_and_no_usage_block_which_is_those_counts_relabelled")),
+        ("and where the snapshot's count is a number no double can hold (a NaN, an infinity or an integer past about 1.8e308), "
+         "`parsed` null with no `parsedUnavailable` beside it, null being the export's output for every such number, so the "
+         "`sessions` block carries exactly one of three, a `parsed` count, `parsed` null or `parsedUnavailable` in the count's "
+         "place, never two and never none",
+         "_check: the fourth document (the served snapshot's count replaced by 2**1024 in the raw perf) carries parsed null and no "
+         "leaf, the same number under perf is null, and every one of the four documents holds exactly one of the three outcomes, "
+         "a sum over (a count a double holds, parsed null, the leaf) equal to one; test_perf_export:Usage drives the corners "
+         "(2**1024, the first integer float() cannot hold, and a NaN, an infinity and 1e400 as the loader reads them) through the "
+         "fold and the export document, with the largest integer a double holds kept as a count",
+         ("Disclosed._check", "test_perf_export:Usage.test_a_count_no_double_can_hold_is_null_in_the_counts_place_with_no_leaf_beside_it")),
         ("the `actions` block's one count per action route served, the http row's count under the route's name",
          "_check holds the population (53 names); test_the_usage_block_is_written_only_with_the_flag... the values (the http "
          "rows' counts); test_a_usage_count_is_present_only_for_a_route... one key per route served and none for an unserved one",
@@ -4998,13 +5012,32 @@ class Disclosed(unittest.TestCase):
         bad = copy.deepcopy(snap)
         bad["parses"]["perSession"]["sessions"] = "1"
         usage_bad = pp.fold(pe.usage_block(bad))
+        # and the FOURTH document (the ruling of 2026-09-19 restating the two outcomes as three): the served count replaced by a
+        # number no double can hold, in the raw perf; the block writes it as the count and the fold nulls it, pp.finite_number's
+        # rule for every such number, so parsed is null and no leaf is written beside it
+        huge = copy.deepcopy(snap)
+        huge["parses"]["perSession"]["sessions"] = 2 ** 1024
+        usage_huge = pp.fold(pe.usage_block(huge))
         self.assertIn("parsed", usage["sessions"], sorted(usage["sessions"]))
         self.assertNotIn("parsedUnavailable", usage["sessions"], "the count present: no absence leaf")
         self.assertEqual(usage_old["sessions"].get("parsedUnavailable"), "predates-parses.perSession", sorted(usage_old["sessions"]))
         self.assertNotIn("parsed", usage_old["sessions"], "the absence leaf present: no count")
         self.assertEqual(usage_bad["sessions"].get("parsedUnavailable"), "perSession.sessions-not-a-number", sorted(usage_bad["sessions"]))
         self.assertNotIn("parsed", usage_bad["sessions"], "the absence leaf present: no count")
-        for other in (usage_old, usage_bad):
+        self.assertIn("parsed", usage_huge["sessions"], sorted(usage_huge["sessions"]))
+        self.assertIsNone(usage_huge["sessions"]["parsed"], "a count no double can hold is null in the count's place")
+        self.assertNotIn("parsedUnavailable", usage_huge["sessions"], "the null is the statement: no leaf beside it")
+        self.assertIsNone(pp.fold(huge)["parses"]["perSession"]["sessions"], "the same number under perf is null too: one rule, not a fourth reason")
+        # exactly one of the three outcomes in every document, a count a double holds, parsed null, or the leaf: a SUM, so two
+        # outcomes in one document (a null with the leaf beside it) reds as surely as none
+        for shape, block in (("current", usage), ("older", usage_old), ("malformed", usage_bad), ("unholdable", usage_huge)):
+            s = block["sessions"]
+            count = "parsed" in s and s["parsed"] is not None and not isinstance(s["parsed"], bool) and pp.finite_number(s["parsed"]) is not None
+            null = "parsed" in s and s["parsed"] is None
+            leaf = "parsedUnavailable" in s
+            self.assertEqual(sum((count, null, leaf)), 1, "the %s shape's sessions block carries %d of the three outcomes, not one: %r"
+                             % (shape, sum((count, null, leaf)), sorted(s)))
+        for other in (usage_old, usage_bad, usage_huge):
             self.assertEqual({k: v for k, v in other.items() if k != "sessions"}, {k: v for k, v in usage.items() if k != "sessions"},
                              "the shapes differ under sessions alone")
         self.assertIn("pid", snap["process"], "the raw snapshot carries the pid the fold drops")
@@ -5091,6 +5124,7 @@ class Disclosed(unittest.TestCase):
             walk(block, groups[block])
         walk("usage", usage_old)                                 # the older shape's block: its absence leaf joins the population
         walk("usage", usage_bad)                                 # and the malformed shape's, the same leaf with its own value
+        walk("usage", usage_huge)                                # and the unholdable count's: parsed null, a name already there
         self.assertIn(("usage", "parsedUnavailable"), keys, "the absence leaf is in the population the clause is held to")
         self.assertGreaterEqual(len(keys), 40, sorted(keys))       # the three blocks of 2026-09-19 carry far more than the fixture's four
         # the malloc clause's CONDITIONING pin (the closing check at the re-run's head, 2026-09-19): "null with no leaves under it where the

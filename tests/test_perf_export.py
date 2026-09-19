@@ -1335,7 +1335,8 @@ class Usage(unittest.TestCase):
         and the reason was false for one of them): the older shape (parses.bySid, no perSession) and a snapshot with no parses
         block at all carry `predates-parses.perSession`; a perSession block whose sessions is not a number carries
         `perSession.sessions-not-a-number` (the next test drives every corner of that shape); the current shape carries the
-        count and no leaf. Never both, never neither. Each value is judged by the machinery the block travels through: it fits
+        count and no leaf; a count no double can hold is null in the count's place with no leaf beside it (the test named for
+        the third outcome, the ruling of 2026-09-19). Exactly one of the three, never two, never none. Each value is judged by the machinery the block travels through: it fits
         the ident grammar, so pp.fold writes it as it is and the block equals its own fold, the belt the upload holds it to,
         and the three walks pass it; a spelling with a space, the refused input, would fold to `other` and be a denylist
         finding, which is why each reason is one token. Fails on: the leaf dropped; the leaf written whatever the shape; either
@@ -1421,6 +1422,52 @@ class Usage(unittest.TestCase):
             self.assertEqual(pp.paste_problems(doc, skip=("schema",), under=("perf",)), [], repr(bad))
             self.assertEqual(pp.denylist_problems(doc, under=("perf",), skip=("schema",)), [], repr(bad))
             self.assertIn('"parsedUnavailable": "perSession.sessions-not-a-number"', pe.document_text(doc), "the line a reader of the file sees")
+
+    def test_a_count_no_double_can_hold_is_null_in_the_counts_place_with_no_leaf_beside_it(self):
+        """The third outcome (the ruling of 2026-09-19, restating the two-outcome biconditional as three): a perSession.sessions
+        that IS a number but one no double can hold, an integer past about 1.8e308 (json.load parses the literal exactly), a NaN
+        or an infinity (json.load admits both literals and reads 1e400 as an infinity), is a count the block copies and the fold
+        nulls, pp.finite_number's rule for every such number in the export, so `parsed` is null in the count's place and no
+        `parsedUnavailable` is written beside it: not an absence claim, and not a fourth reason, which would have put one signal
+        over three causes. Exactly one of a count, null or the leaf in every document, the same sum Disclosed._check takes over
+        its four documents. Both sides of the double's edge: the largest integer a double holds is a count, the first it cannot
+        hold is null. Through the export: the document's usage line reads parsed null, the same number under perf is null, the
+        leaf's name is nowhere in the text, and the three walks pass. Fails on: a leaf written beside the null; the null replaced
+        by a reason; the edge moved."""
+        first_unholdable = 2 ** 1024 - 2 ** 970                       # the first integer float() cannot hold (pp.finite_number)
+        self.assertIsNone(pp.finite_number(first_unholdable))
+        self.assertEqual(pp.finite_number(first_unholdable - 1), first_unholdable - 1, "the largest integer a double holds")
+        loaded = [json.loads('{"parses": {"perSession": {"sessions": %s, "max": 2}}}' % text)["parses"]["perSession"]["sessions"]
+                  for text in ("1e400", "-1e400", "NaN", "Infinity", "-Infinity", str(2 ** 1024))]
+        self.assertEqual((loaded[0], loaded[1], loaded[3], loaded[4], loaded[5]), (float("inf"), float("-inf"), float("inf"), float("-inf"), 2 ** 1024),
+                         "the loader's readings: 1e400 is an infinity, the integer literal is exact")
+        self.assertNotEqual(loaded[2], loaded[2], "NaN as the loader reads it")
+        for n in [2 ** 1024, -(2 ** 1024), first_unholdable, float("nan"), float("inf"), float("-inf")] + loaded:
+            snap = {"parses": {"kernel": 12, "hits": 30, "perSession": {"sessions": n, "max": 2}}}
+            raw = pe.usage_block(snap)["sessions"]
+            self.assertEqual(set(raw), {"parsed"}, "the block copies the count and writes no leaf: %r" % sorted(raw))
+            sessions = pp.fold(pe.usage_block(snap))["sessions"]
+            self.assertEqual(sessions, {"parsed": None}, "null in the count's place, no leaf, for %r" % (n,))
+            doc = pe.export_document(dict(snap, uptime_s=60, process={}, pusher={}, http={}), usage=True)
+            self.assertEqual(doc["usage"]["sessions"], {"parsed": None}, repr(n))
+            self.assertIsNone(doc["perf"]["parses"]["perSession"]["sessions"], "the same number under perf is null: one rule")
+            text = pe.document_text(doc)
+            self.assertIn('"parsed": null', text, "the line a reader of the file sees")
+            self.assertNotIn("parsedUnavailable", text, "no leaf anywhere in the document")
+            self.assertEqual(pp.paste_problems(doc, skip=("schema",), under=("perf",)), [], repr(n))
+            self.assertEqual(pp.denylist_problems(doc, under=("perf",), skip=("schema",)), [], repr(n))
+        # the accepting side of the edge: a count a double holds is the count, whatever its size
+        sessions = pp.fold(pe.usage_block({"parses": {"perSession": {"sessions": first_unholdable - 1, "max": 2}}}))["sessions"]
+        self.assertEqual(sessions, {"parsed": first_unholdable - 1})
+        # exactly one of the three outcomes over the four shapes
+        for snap, expect in (({"parses": {"perSession": {"sessions": 5, "max": 2}}}, "count"),
+                             ({"parses": {"perSession": {"sessions": 2 ** 1024, "max": 2}}}, "null"),
+                             ({"parses": {"perSession": {"sessions": "5", "max": 2}}}, "leaf"),
+                             ({"parses": {"bySid": {SID: 3}}}, "leaf")):
+            s = pp.fold(pe.usage_block(snap))["sessions"]
+            outcomes = {"count": "parsed" in s and s["parsed"] is not None and pp.finite_number(s["parsed"]) is not None,
+                        "null": "parsed" in s and s["parsed"] is None, "leaf": "parsedUnavailable" in s}
+            self.assertEqual([k for k, v in outcomes.items() if v], [expect], repr(snap))
 
     def test_a_non_finite_uptime_fits_no_bucket_and_raises_nothing(self):
         # json.load accepts the NaN and Infinity literals, so a --from file can carry either; the bucket search used
@@ -1831,7 +1878,7 @@ class Cli(unittest.TestCase):
         quotes was refused). A hit is a value finding at the number's path, whatever the file spelled: a plain integer, a
         float, a negative, a run embedded in a longer one, a fraction, an exponent form whose canonical spelling carries the
         run (4.242424242e9 is 4242424242.0), a listed float-shaped entry and its exponent respelling (1234.5678, eight digits, at
-        the floor by digit count; the base's assertion, deleted by a086ced5a when the floor was computed as the longest run and
+        the floor by digit count; the base's assertion, deleted by the first floor, which computed the floor as the longest run, and
         restored by the closing delta), a list element. A
         number whose canonical spelling does not carry the run is no hit (4242424242e-3 is 4242424.242, and a float that
         merely rounds near it), nor are a bool or null under a probe that spells them, nor any number under the machine's
@@ -1872,7 +1919,7 @@ class Cli(unittest.TestCase):
         1000 travel (H). The closing check of 2026-09-19: a listed 12345670000000000 was refused when the leaf spelled the
         integer and travelled when the same value's canonical spelling was 1.234567e+16, repr's point after the first digit
         breaking the substring, while the module claimed a listed run was found however the file spelled it (the hole as old as
-        the numeric scan, 431db9a60). A number yields at most ONE Hit, the first spelling that carries a probe, and the Hit
+        the numeric scan's first version). A number yields at most ONE Hit, the first spelling that carries a probe, and the Hit
         never carries a spelling; the wire spelling is still what the writer puts in the file. Decimal of the text, not of the
         value: Decimal(value) is the double's exact binary expansion (Decimal(1e+23) is 99999999999999991611392, never the
         100000000000000000000000 a reader recovers from the text). An entry that underflows to zero (1000000e-400, seven
@@ -2092,7 +2139,7 @@ class Cli(unittest.TestCase):
         a shorter listed value collides with some number of a real export by coincidence too often for a match to be evidence
         (measured on a real export of 3,770 numbers: a listed four-digit run matched some number about one export in four, a
         seven-digit run about one in 7,000). The quantity is the DIGIT COUNT, never the longest run, never the character length
-        and never the alphabet: the first floor (a086ced5a) gated on the longest run and excluded a listed 1234.5678 (eight
+        and never the alphabet: the first floor gated on the longest run and excluded a listed 1234.5678 (eight
         digits, longest run four) while it kept a bare 4242424, dropping a protection the base had; a length gate would admit
         1234.56 (seven characters, six digits); the closing delta's first cut required the entry to be spelled like a number
         (pp.number_shaped) and so dropped the base's token-run match of a listed (12345678), _12345678 or 12345678/ to the leaf
@@ -2106,7 +2153,7 @@ class Cli(unittest.TestCase):
         trap the first stderr line advised: that number's spelling carries no eight consecutive digits); a listed (12345678)
         (line 1) hits the leaf 12345678 by its token run and not the leaf 1234.5678, a listed 1234 5678 (line 2) hits 1234.5678
         and not 12345678 (the groups split differently), a listed _12345678 and 12345678/ hit 12345678, and a listed zz4242424 is
-        armed and hits nothing (no number's token is zz4242424), all as the base at 5d1de45dc had them; abc12 is under the floor
+        armed and hits nothing (no number's token is zz4242424), all as the base before the floor had them; abc12 is under the floor
         by its two digits. The truth tables of digit_count, number_shaped and numeric_probe pin the count, the alphabet the
         stderr line reads (the ASCII digits; a lone `e`, the empty string, a space and a comma are not shaped) and that the arm
         reads the count alone (zz4242424 and (12345678) are numeric probes, abc12 is not). A word probe keeps today's token-run
@@ -2248,8 +2295,8 @@ class Cli(unittest.TestCase):
         that COULD MATCH A NUMBER (pp.number_matchable), spelled in the number alphabet (number_shaped) or a run of digit-only
         tokens, since the token-run arm applies such an entry at seven digits ((1234567), _1234567 and 1234567/ each refuse the
         leaf 1234567, executed here as literals), so the operator whose private value is an underscored or parenthesised
-        six-digit id is told it is unprotected in numbers; the head at b3df460d5 counted the alphabet alone and said 2 of 6 over
-        the report's six-shape list, justified by a clause execution falsified (an entry outside the alphabet was said to be
+        six-digit id is told it is unprotected in numbers; the head the closing re-run read counted the alphabet alone and said 2 of 6 over
+        the report's six-shape list (the two in the number alphabet, 12-3456 and 123456), justified by a clause execution falsified (an entry outside the alphabet was said to be
         matched by no number, so the remedy could not reach it), and that clause is gone from the module (the negative source
         pins here; the docs/reference.md side is the Docs class's, in the upload module). The truth table of number_matchable;
         the six-shape list gives 6 of 6, list lines 1 to 6, no entry's punctuated text in the line; abc12 and zz424242 stay
@@ -2261,7 +2308,7 @@ class Cli(unittest.TestCase):
         claim that an entry it does not count matches a number: a listed 192.168.100.200 (twelve digits, armed) matches no
         number, four digit groups spelling no json number, and gets no line while 10.0.0.1 beside it is counted, 1 of 2, list
         line 1, and machine_probes' docstring says so. Reverting the count to number_shaped reds the six-shape pin (2 of 6); an
-        any-digit predicate (cd3b4cfab's trigger) reds the abc12 silence and the truth table; the old template phrase reds the
+        any-digit predicate (the trigger at the head the closing check read) reds the abc12 silence and the truth table; the old template phrase reds the
         six-shape literal; the clause back in the module reds the source pin; the silence sentence deleted reds the __doc__
         pin; the letter clause re-asserted in the module reds the negative source pin."""
         for text in ("(1234567)", "_1234567", "1234567/", "(123456)", "1 23456", "12-3456", "10.0.0.1", "1.5e-05", "1e-5", "4242424"):
@@ -2595,7 +2642,7 @@ class Cli(unittest.TestCase):
         number like any other. This is the cost the reference states for a listed string that is romp vocabulary, and the
         remedy is the same, editing the list. Two roads the closing check of 2026-09-19 found open on this verb are refused
         here too. A listed 1234.5678 (eight digits, at the floor by digit count) as pusher.cycle_ms_p50, the shape that counter
-        has on a real kernel: the base at 5d1de45dc refused it and a086ced5a's longest-run floor sent it; the digits are in no
+        has on a real kernel: the base before the floor refused it and the first floor's longest-run gate sent it; the digits are in no
         output, and the stderr line's own worked example, which spells 1234.5678, is not there either, since an armed entry is
         not under the floor and nothing else is listed. A listed 12345670000000000 as pusher.cycles, spelled 1.234567e+16 by
         json.dump (repr puts the point after the first digit) and spelled as the integer: both refused, the first by the
@@ -2771,8 +2818,8 @@ class Cli(unittest.TestCase):
     def test_a_listed_entry_with_an_exponent_beyond_any_double_exports_under_a_finite_address_space_with_one_line_and_no_traceback(self):
         """The refusable input of the closing re-run (2026-09-19, finding 5) through the export child: ROMP_PRIVATE_STRINGS
         naming a list of 1e-1000000000, the entry whose plain decimal expansion asked for a billion digits and took the
-        verb down with an uncaught MemoryError at b3df460d5 (rc 1, no file, a traceback ending in number_spellings' format
-        call), while cd3b4cfab exported the same list with rc 0, and, on line 2, 1e-10000000000000000000, the entry whose
+        verb down with an uncaught MemoryError at the head the closing re-run read (rc 1, no file, a traceback ending in
+        number_spellings' format call), while the head the closing check read, before the expansion, exported the same list with rc 0, and, on line 2, 1e-10000000000000000000, the entry whose
         exponent (10**19) the decimal module refuses to construct (past decimal.MAX_EMAX, about 1e18), which the first cut of
         the bound read bare and died on with an uncaught InvalidOperation out of expansion_bounded (the re-run's verification:
         rc 1 and a traceback from this verb, the upload and restart-metrics alike, on 3.10, 3.12, 3.13 and 3.14t). Now: rc 0,
@@ -2975,15 +3022,22 @@ class Docs(unittest.TestCase):
                     "no number.")
         self.assertTrue(sentence in text, "not in the reference: " + sentence)
         # the second closing check (2026-09-19): the export section says what the block writes in place of a count it cannot
-        # read from an older snapshot, the leaf by name and its fixed value, and when (exactly when the count is absent)
+        # read from an older snapshot, the leaf by name and its fixed value, and the three outcomes (a count, parsed null for a
+        # number no double can hold, or the leaf; exactly one), the ruling of 2026-09-19 restating the two outcomes as three
         absence = ("A snapshot that gives no parsed count has none for the block to copy, and the block says so in place of the count: "
                    "`sessions.parsedUnavailable`, one of two fixed strings, each true of the snapshot that carries it: "
                    "`predates-parses.perSession` when the snapshot has no `parses.perSession` block (saved by a kernel from before it "
                    "counted parsed sessions), and `perSession.sessions-not-a-number` when the block is there and its `sessions` is not a "
-                   "number (absent, a string, a boolean or null). The leaf is present exactly when the count is absent, so a reader "
-                   "comparing two exports can tell a count the export could not read from a kernel that parsed nothing, and an old "
-                   "snapshot from a malformed one.")
+                   "number (absent, a string, a boolean or null). Where the snapshot's count is a number no double can hold (a NaN, an "
+                   "infinity or an integer past about 1.8e308), `parsed` is null and no `parsedUnavailable` is written beside it: null is "
+                   "the export's output for every such number. So `sessions` carries exactly one of three, a `parsed` count, `parsed` null "
+                   "or `parsedUnavailable` in the count's place, never two and never none, and a reader comparing two exports can tell a "
+                   "count the export could not read from a kernel that parsed nothing, an old snapshot from a malformed one, and either "
+                   "from a count no double can hold.")
         self.assertTrue(absence in text, "not in the reference: " + absence)
+        # the ruling of 2026-09-19 restating the two outcomes as three: the two-outcome wording is gone from the page, both passages
+        two_outcomes = "present exactly when the count is absent"
+        self.assertFalse(two_outcomes in text, "the two-outcome wording is back in the reference: " + two_outcomes)
         # the ruling of 2026-09-19 on the leaf: the one-reason wording, false for the malformed shape, is gone
         one_reason = "the fixed string `predates-parses.perSession`, present exactly when the count is absent"
         self.assertFalse(one_reason in text, "the one-reason wording is back in the reference: " + one_reason)

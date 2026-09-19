@@ -1425,7 +1425,7 @@ class Cli(unittest.TestCase):
         naming the kind and the path, the run in no output, nothing sent; 4242424242e-3 still travels, as 4242424.242, a
         spelling that carries no listed run. Fails before: every numeric spelling was sent, the run on the wire as the
         number every check passed, where the quoted spelling alone was the scan's refusal. The float-shaped entry is the
-        base's (5d1de45dc): the first floor (a086ced5a) measured an entry by its LONGEST digit run and so dropped 1234.5678
+        base's, from before the floor: the first floor measured an entry by its LONGEST digit run and so dropped 1234.5678
         (eight digits, longest run four) from the numeric arm while it kept a bare 4242424, and this test was moved to
         1234567.8 with it; the closing check (2026-09-19) found that input refused at the base and sent at head, rc 0, the
         value on the wire. The floor now counts digits across the whole entry (perf_public.numeric_probe), and this case is
@@ -1702,7 +1702,7 @@ class Cli(unittest.TestCase):
         """The alphabet is not asked of the numeric arm (the closing delta, 2026-09-19). A listed (12345678), eight digits inside
         characters no number spells, is applied to a number by its whole-token run (perf_public.probe_in), so an export edited
         to carry the integer 12345678 is refused naming the kind, the path and line 1 of the list, the run in no output, rc 1
-        and NO request at the receiver, as the base at 5d1de45dc did; the delta's first cut required a listed entry to be
+        and NO request at the receiver, as the base before the floor did; the delta's first cut required a listed entry to be
         spelled like a number before it reached the arm, and the closing check's Refuted section measured that cut as three
         refusals turned into POSTs ((12345678), _12345678 and 12345678/ against the leaf 12345678, on this road and the
         export's). The token-run match is by digit GROUPS: the same list lets the pointed 1234.5678 travel, rc 0 and one
@@ -2754,6 +2754,13 @@ class Docs(unittest.TestCase):
                       "block under parses) and perSession.sessions-not-a-number for a snapshot whose perSession block is there but "
                       "carries no number under sessions, so a count the export could not read is told from a kernel that parsed "
                       "nothing, and an old snapshot from a malformed one",
+                      # the ruling of 2026-09-19 restating the two outcomes as three: a count no double can hold is null in the count's
+                      # place with no leaf beside it, the export's rule for every such number, so exactly one of a count, null or the
+                      # leaf; the pin by execution is Disclosed's fourth document and the export module's Usage corners
+                      "and an old snapshot from a malformed one, and where the snapshot's count is a number no double can hold (a NaN, an "
+                      "infinity or an integer past about 1.8e308), `parsed` null with no `parsedUnavailable` beside it, null being the "
+                      "export's output for every such number, so the `sessions` block carries exactly one of three, a `parsed` count, "
+                      "`parsed` null or `parsedUnavailable` in the count's place, never two and never none",
                       "the kernel commit",
                       "so two uploads from one kernel remain linkable by design",
                       # the closing re-run's finding 3, as its verification corrected it: the round's first replacement said an
@@ -2779,6 +2786,8 @@ class Docs(unittest.TestCase):
         # Asserted by boolean like the needles above: assertNotIn on failure prints the whole flattened page (about 400 KB)
         for clause in ("substring of no number", "since no number spells one", "since no number spells a letter"):
             self.assertFalse(clause in text, "the falsified alphabet clause is back in the reference: " + clause)
+        # the ruling of 2026-09-19 restating the two outcomes as three: the two-outcome wording is gone from both passages
+        self.assertFalse("present exactly when the count is absent" in text, "the two-outcome wording is back in the reference")
 
     def test_the_readme_rows_name_every_importer_of_the_public_shape_counted_from_the_code(self):
         """This PR added a fourth importer of cli/perf_public.py and left both README enumerations of who shares the public

@@ -860,9 +860,9 @@ NUMBER_CHARS = frozenset("+-.0123456789e")
 # protect a number). The floor is by DIGIT COUNT and by nothing else: an
 # entry carrying characters outside NUMBER_CHARS ((12345678), _12345678, 12345678/, 1234 5678, zz4242424) is armed by the
 # same count and is applied by its token run
-# (probe_in), which matches a number whose digit groups split the same way, as the base at 5d1de45dc did; the closing delta's
+# (probe_in), which matches a number whose digit groups split the same way, as the base before the floor did; the closing delta's
 # first cut gated the arm on the alphabet and turned three refusals into sends ((12345678), _12345678 and 12345678/ against
-# the leaf 12345678, refused at the base and at cd3b4cfab, exported and POSTed under that cut), so the alphabet decides nothing
+# the leaf 12345678, refused at the base and at the head the closing check read, exported and POSTed under that cut), so the alphabet decides nothing
 # about the arm, and the stderr count is by number_matchable: a run of digit-only tokens under the floor ((123456), _123456,
 # 123456/, 1 23456) is counted beside the alphabet-spelled entries, since the token-run arm would apply it at seven digits, and
 # an entry outside the alphabet with a letter in a token is not, the exponent's e being the one letter a number spells and
@@ -884,11 +884,11 @@ NUMBER_CHARS = frozenset("+-.0123456789e")
 # collides is the count of distinct windows of that shape over the export's spellings divided by ten to the power of its
 # DIGITS: the denominator is set by the digit count alone, and the numerator is bounded by the spellings whatever the shape (a
 # float's spelling holds one point, so a pointed shape has at most one window per float), so each digit divides the chance by
-# about ten and moving the point does not multiply it back. The first floor (a086ced5a) gated on the LONGEST RUN and so
+# about ten and moving the point does not multiply it back. The first floor gated on the LONGEST RUN and so
 # excluded a listed 1234.5678 (eight digits, longest run four) while it kept a bare 4242424: the value with the stronger
 # evidence was dropped (the dddd.dddd window is bounded by one per float, 1.09e-5 on the comment's export against the 1.5e-4
-# of the seven-run it kept, fourteen times; measured 7.2e-7 on the export on disk, two hundred times), the base at 5d1de45dc
-# had refused that value on both roads while a086ced5a sent it, and the stderr line then advised listing more consecutive
+# of the seven-run it kept, fourteen times; measured 7.2e-7 on the export on disk, two hundred times), the base before the floor
+# had refused that value on both roads while the first floor sent it, and the stderr line then advised listing more consecutive
 # digits, which silenced the line and protected nothing, since that number's spelling carries no eight consecutive digits. A
 # CHARACTER-LENGTH gate over the number alphabet admits 1234.56 (seven characters, six digits), a value drawn from a million:
 # the verifier measured its window at 8.75e-4 on a corpus of the comment's shape, 2.6 times the bare seven-run's; on the
@@ -904,8 +904,8 @@ NUMBER_CHARS = frozenset("+-.0123456789e")
 # real export's float sits in those ranges today (none is exponent-spelled), and the count is not corrected for it because a
 # significant-digit floor would drop 0.000015 and 1.5e-05 from the numeric arm, a design change the ruling did not make.
 # The list this was measured beside holds eleven entries, none spelled like a number or as a run of digit-only tokens, so
-# none is counted by the line, and none carries seven digits, so none is applied to a number (at cd3b4cfab the line's longest-run trigger counted five of
-# them, entries carrying a letter, and fired on every run here, which the closing check caught); the floor is a guard for a
+# none is counted by the line, and none carries seven digits, so none is applied to a number (at the head the closing check read, the
+# line's longest-run trigger counted the entries carrying a letter and fired on every run here, which the closing check caught); the floor is a guard for a
 # list that later holds a numeric value.
 # What the floor leaves as it was. A hostname or a login (WORD_KINDS) is matched as a run of whole tokens, so over a number
 # it matches a whole digit group only (an all-digit hostname or login of PROBE_MIN or more characters; rare, the cost
@@ -925,7 +925,7 @@ NUMERIC_PROBE_MIN_DIGITS = 7
 # an ENTRY'S LENGTH while PRIVATE_STRINGS_MAX bounds only the FILE: a 13-character entry, 1e-1000000000, asks for a billion
 # digits (measured at the closing re-run: 1e-400 is 402 characters, 1e-100000 is 100002, 1e-10000000 is 10000002, and
 # 1e-1000000000 a MemoryError that took `romp perf export --public` and `romp perf upload` down with a traceback, where
-# cd3b4cfab exported the same list with rc 0). The bound is stated against the thing that grows, the exponent, and is derived
+# the head the closing check read, before the expansion, exported the same list with rc 0). The bound is stated against the thing that grows, the exponent, and is derived
 # from the double: the smallest positive double is 5e-324 and the largest 1.7976931348623157e+308 (sys.float_info.max), so
 # every finite leaf's repr, which is what json.dumps writes, has its leading digit's exponent (Decimal(text).adjusted()) in
 # [-324, 308]. A listed entry outside that range is the spelling of no leaf, and its plain expansion is longer than any leaf's
@@ -1117,7 +1117,7 @@ def digit_count(s):
     """How many characters of `s` are decimal digits (DIGITS, the ASCII set), counted across the whole string: what
     NUMERIC_PROBE_MIN_DIGITS is measured against (`1234.5678` is 8, `1234.56` is 6, `424242` is 6, `4242424` is 7,
     `1.5e-05` is 4, `12345670000000000` is 17, `0.000015` is 7, `abc12` is 2, `abc` and the empty string are 0). Never
-    the longest run: the first floor (a086ced5a) measured that and excluded 1234.5678 while it kept 4242424, the comment
+    the longest run: the first floor measured that and excluded 1234.5678 while it kept 4242424, the comment
     at NUMERIC_PROBE_MIN_DIGITS."""
     return sum(1 for c in s if c in DIGITS)
 
@@ -1128,7 +1128,7 @@ def number_shaped(s):
     lone `e` and the empty string are not). Read by number_matchable alone, as one of its two arms, to decide whether an
     entry under the floor is COUNTED by the stderr line (machine_probes); the alphabet decides nothing alone, and a
     string outside it can still be counted through the other arm, a run of digit-only tokens ((123456)), or be left
-    uncounted by a letter in a token (abc12: at cd3b4cfab the line counted any digit run under the floor, letters or
+    uncounted by a letter in a token (abc12: at the head the closing check read, the line counted any digit run under the floor, letters or
     not, and fired on every run on this box for entries carrying a letter). It decides nothing about whether an entry is
     APPLIED to a number (numeric_probe, by digit count alone): an entry outside the alphabet can match a number by its
     token run, and the base did. An alphabet test, not a grammar: 10.0.0.1 and 2026-09 are shaped (the comment at
@@ -1243,7 +1243,7 @@ def number_spellings(text, value=None):
     1234.5678, 409600, every int), so a real export's numbers gain none: the export the floor was measured on had no
     exponent-spelled number. The closing check of 2026-09-19: a listed 12345670000000000 was refused when the leaf
     spelled the integer and travelled when the same value's canonical spelling was 1.234567e+16; the hole was as old as
-    the numeric scan (431db9a60), and this module claimed a listed run was found however the file spelled it. A listed
+    the numeric scan's first version, and this module claimed a listed run was found however the file spelled it. A listed
     entry is expanded the same way and the floor is decided PER SPELLING (identifier_hits applies numeric_probe to each):
     a listed 1.5e-05 is armed as its expansion 0.000015 and not as itself, a listed 1e+16 as 10000000000000000, and an
     expansion that carries fewer digits than the entry is not armed (a listed 1.0000000e+2 is armed as itself and as
@@ -1311,7 +1311,7 @@ def machine_probes(state_dir=None, env=None):
     2026-09-19 falsified by execution: (1234567), _1234567 and 1234567/ each refuse the leaf 1234567). An entry with no
     digit, or outside the alphabet with a letter in a token (zz424242, abc12), is not counted: the one letter a number
     spells is an exponent's e, which the alphabet arm reads, so a listed 1e5 or 1.5e-04 is counted by its spelling (at
-    cd3b4cfab the trigger counted any digit run under the floor, letters or not, and the line fired on every run on
+    the head the closing check read, the trigger counted any digit run under the floor, letters or not, and the line fired on every run on
     this box for entries carrying a letter); an entry of seven or more digits (zz4242424, (12345678)) is armed and is
     not what the line is about. The line reports the digit-count side only: an entry it does not count is not thereby
     matchable in a number (a listed 192.168.100.200 carries twelve digits and is armed, and its four digit groups spell
@@ -1420,7 +1420,7 @@ def identifier_hits(doc, probes, skip=()):
     0.000015; never the exact integer of the double, binary noise above 2**53 that nobody spelled), since a listed
     12345670000000000 was refused when the leaf spelled the integer and travelled when the same value's canonical
     spelling was 1.234567e+16, the point after the first digit breaking the substring (the closing check of
-    2026-09-19; the hole was as old as the numeric scan, 431db9a60, and the claim that a listed run is found however
+    2026-09-19; the hole was as old as the numeric scan's first version, and the claim that a listed run is found however
     the file spelled it was false until the expansion). A number yields at most ONE Hit, at the first spelling and
     probe that match, and the Hit never carries a spelling. A bool and null are not scanned (they spell no probe).
     A KEY and a STRING VALUE are scanned by EVERY spelling of a listed entry, its text and its plain expansion
@@ -1450,7 +1450,7 @@ def identifier_hits(doc, probes, skip=()):
     before. The alphabet is NOT asked: a listed entry carrying characters no number spells ((12345678), _12345678,
     12345678/, 1234 5678) is armed by the same digit count and is applied by its token run (probe_in), which matches a
     number whose digit groups split the same way (a listed (12345678) refuses the leaf 12345678, a listed 1234 5678 the
-    leaf 1234.5678), as the base at 5d1de45dc did; the closing delta's first cut required number_shaped here and
+    leaf 1234.5678), as the base before the floor did; the closing delta's first cut required number_shaped here and
     turned three refusals into sends. A listed signed number is applied without its sign the same way (a listed
     -12345670000000000 refuses the leaf 12345670000000000: the token run strips the sign). An armed listed entry is
     applied by every spelling of number_spellings that carries the digits (a listed 1.234567e+16 as 12345670000000000

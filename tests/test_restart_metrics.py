@@ -744,7 +744,7 @@ class PublicForm(unittest.TestCase):
         bucket. The child runs under a pinned hostname, a synthetic HOME and login and no kernel, as the fifo case does, and
         under a timeout. The export and upload roads pin this value in their own modules; this road shares check_document
         and passed by inheritance at the closing delta, unpinned, so a road-specific change here would have gone unseen.
-        Fails at a086ced5a, whose longest-run floor did not apply an entry of this shape to any number: rc 0, the value
+        Fails at the first floor, whose longest-run gate did not apply an entry of this shape to any number: rc 0, the value
         printed."""
         (self.state / "spend.json").write_text(json.dumps({"days": {"2026-09-10": {"usd": 1234.5678, "turns": 30}}, "hours": {}}))
         xdg = tempfile.mkdtemp()
@@ -775,7 +775,7 @@ class PublicForm(unittest.TestCase):
         ROMP_PRIVATE_STRINGS naming a list of 1e-1000000000 alone, the entry whose plain decimal expansion asked for a billion
         digits (format(Decimal(text), 'f') writes about as many digits as the exponent, so the work was exponential in an
         entry's length while PRIVATE_STRINGS_MAX bounded only the file) and took `romp perf export --public` and `romp perf
-        upload` down with an uncaught MemoryError at b3df460d5; this verb shares machine_probes and died the same way. The
+        upload` down with an uncaught MemoryError at the head the closing re-run read; this verb shares machine_probes and died the same way. The
         list's second line is 1e-10000000000000000000, whose exponent (10**19) the decimal module refuses to construct (past
         decimal.MAX_EMAX, about 1e18): the bound's first cut asked Decimal(text).adjusted() bare and this verb died on it with
         an uncaught InvalidOperation too (the re-run's verification, rc 1). Now, over the ordinary fixture: rc 0, stdout
