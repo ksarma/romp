@@ -24,7 +24,9 @@ by design (the boot's stage split under pusher.firstCycle and jobs.firstPass, wh
 counter), because they are the data a reader wants, so two exports from one kernel life, or from one machine,
 remain linkable through them. No hostname, path, pid, session id, username or clock stamp is written; the finished document
 is searched for the strings only this machine knows (perf_public.identifier_hits: every key, string value and number, a
-number by the spelling document_text writes, so a listed digit run inside a counter is found too), walked once more
+number by the spelling document_text writes, so a listed digit run inside a counter is found too; the strings are the
+machine's own and the machine-local private list, which says so on stderr, perf_public.LIST_UNREADABLE, when a path that
+is there yields no list, since a check that turns itself off must say so), walked once more
 (perf_public.paste_problems) and walked for the denylist (perf_public.denylist_problems: a key the fold drops, a key or
 a string value the fold would have written as `other`, an uptime not on whole minutes, a bound not on a power of two, a
 float inside a clock stamp's epoch window under any other key; a fold's own output carries none of the six, except in
