@@ -520,16 +520,24 @@ class Collector(unittest.TestCase):
         self.assertIn("stages_cpu_ms", TOP_KEYS)
 
     def test_the_cpu_follows_the_wall_and_a_mark_routed_off_the_flat_row_records_no_cpu_row(self):
-        """stage() credits a push stage by its writer's purpose and a `jobs.<job>` stage by its writer's owner (the
-        stage-attribution fix, 2026-09-18); the CPU handed with a mark follows the wall: folded into stages_cpu_ms when the
-        wall went to the flat row, dropped when the wall went to pusher.connectPush.stagesMs, pusher.cycleJobsMs or
-        stagesForeign. So a stages_cpu_ms row is the same writer's CPU as the stages_ms row of its name and their
-        difference is that row's wait; a connect push's or a foreign writer's CPU has no row and is not kept."""
+        """stage() credits a push stage to the thread that owns the pusher's cycle (a connect push's, under its "connect"
+        mark, to pusher.connectPush.stagesMs first) and a `jobs.<job>` stage by its writer's owner (the stage-attribution
+        fix, 2026-09-18); the CPU handed with a mark follows the wall: folded into stages_cpu_ms when the wall went to the
+        flat row, dropped when the wall went to pusher.connectPush.stagesMs, pusher.cycleJobsMs or stagesForeign. So a
+        stages_cpu_ms row is the same writer's CPU as the stages_ms row of its name and their difference is that row's
+        wait; a connect push's or a foreign writer's CPU has no row and is not kept. Five writers, each expectation read
+        off stage()'s body at the fix's round-1 head: the cycle owner's push.chat.sig under the "push" mark (the flat row,
+        CPU kept), its cycle job (cycleJobsMs, no CPU row), a connect push (the connect table, no CPU row), a thread with
+        no cycle and no mark (stagesForeign, no CPU row), and a thread under the "push" mark that owns no cycle
+        (stagesForeign, no CPU row). The last is the case the round settled: it dropped the clause that took the mark
+        alone as the pusher's stand-in, so the mark says what _push was called for, not whose cycle it ran in. Before the
+        drop that writer's wall reached the flat row and its CPU the row of its name, and this test is red with the clause
+        restored (push.chat.build 2.0 in the flat row and {2.0, 1.0} in its CPU row, none of it under stagesForeign)."""
         if km._RUSAGE_THREAD is None:
             self.skipTest("no per-thread rusage on this platform: the block is served empty")
         st = self.st
         st.cycle_begin()                                                        # this thread is the pusher
-        km._stage_marked("push")(lambda: st.stage("push.chat.sig", 0.004, cpu=(0.002, 0.001)))()   # the pusher's own: flat
+        km._stage_marked("push")(lambda: st.stage("push.chat.sig", 0.004, cpu=(0.002, 0.001)))()   # the cycle owner's: flat
         st.stage("jobs.persistCheckpoints", 0.003, cpu=(0.003, 0.0))          # the pusher's cycle job: cycleJobsMs, no CPU row
         done = {}
 
@@ -538,22 +546,31 @@ class Collector(unittest.TestCase):
             st.stage("push.chat.sig", 0.020, cpu=(0.010, 0.005))               # connectPush.stagesMs, no CPU row
             done["connect"] = True
 
-        def foreign_thread():                                                   # no cycle, no mark: neither purpose
+        def foreign_thread():                                                   # no cycle, no mark: nobody's
             st.stage("push.chat.sig", 0.001, cpu=(0.001, 0.0))                 # stagesForeign, no CPU row
             done["foreign"] = True
-        for target in (connect_push, foreign_thread):
+
+        @km._stage_marked("push")                                               # _push's mark on a thread owning no cycle: no owner
+        def marked_no_cycle():
+            st.stage("push.chat.build", 0.002, cpu=(0.002, 0.001))              # stagesForeign, no CPU row (the dropped clause)
+            done["marked"] = True
+        for target in (connect_push, foreign_thread, marked_no_cycle):
             th = threading.Thread(target=target); th.start(); th.join(5)
-        self.assertEqual(done, {"connect": True, "foreign": True}, "both threads wrote")
+        self.assertEqual(done, {"connect": True, "foreign": True, "marked": True}, "all three threads wrote")
         st.stage("push", 0.006, cpu=(0.004, 0.001)); st.cycle(0.008)          # the container, the pusher's by its cycle
         snap = st.snapshot()
-        self.assertAlmostEqual(snap["stages_ms"]["push.chat.sig"], 4.0, msg="the flat wall is the pusher's alone")
+        self.assertAlmostEqual(snap["stages_ms"]["push.chat.sig"], 4.0, msg="the flat wall is the cycle owner's alone")
         self.assertEqual(snap["stages_cpu_ms"]["push.chat.sig"], {"user": 2.0, "sys": 1.0}, "and so is the CPU beside it")
         self.assertEqual(snap["stages_cpu_ms"]["push"], {"user": 4.0, "sys": 1.0})
         self.assertEqual(snap["pusher"]["connectPush"]["stagesMs"], {"push.chat.sig": 20.0}, "the connect push's wall, apart")
-        self.assertEqual(snap["stagesForeign"], {"push.chat.sig": 1.0}, "the foreign wall, apart")
+        self.assertEqual(snap["stagesForeign"], {"push.chat.sig": 1.0, "push.chat.build": 2.0},
+                         "the foreign walls, apart: the unmarked thread's and the push-marked thread's, neither owning a cycle")
+        self.assertEqual(snap["stages_ms"]["push.chat.build"], 0.0, "the flat row takes nothing from the push-marked thread owning no cycle")
+        self.assertEqual(snap["stages_cpu_ms"]["push.chat.build"], {"user": 0.0, "sys": 0.0},
+                         "and its CPU row, listed at zero from the start, stays there: a wall routed to stagesForeign records no CPU")
         self.assertAlmostEqual(snap["pusher"]["cycleJobsMs"]["persistCheckpoints"], 3.0, msg="the cycle job's wall, apart")
         self.assertEqual(set(snap["stages_cpu_ms"]), set(km._PerfStats.CPU_STAGES),
-                         "no CPU row appeared for the three routed marks, jobs.persistCheckpoints included")
+                         "no CPU row appeared for the four routed marks, jobs.persistCheckpoints included")
 
     def test_the_chat_signature_counters_are_a_flat_integer_table(self):
         """Stage 1 of the chat-signature design (2026-09-18): memos.chatSig is the pass's own table, one integer per
