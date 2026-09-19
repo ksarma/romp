@@ -22,8 +22,10 @@ second recorder on `jd.load_goals`, the writer's door. Each records the call wit
 stepping over the judge's boundary frames by code identity (never by name) and only while a wrapper's frame sits at its
 pass-through call (the line read from the wrapper's source at setUp), so a load written anywhere in a wrapper's body other
 than its hand-off line is named for the wrapper in the judge's file, while one written on the hand-off line itself is
-caught under the kernel caller's name, on the walk's count (the step-over is line-granular: review round 2), and calls
-through to the real loader, so nothing about the shared cache is stubbed. A call from the look's body or from its gate wrapper (`_nudge_look_gated`'s
+named for the kernel caller of that call and counted under that caller's mechanism, the walk's for the look's read and the
+gate's for its currency check, or the writer list for a call through load_goals_or_fault (the step-over is line-granular:
+review round 2; the walk's ceiling is the line that fires first, since the look's read precedes the gate's on a pass: review
+round 3), and calls through to the real loader, so nothing about the shared cache is stubbed. A call from the look's body or from its gate wrapper (`_nudge_look_gated`'s
 inner function, the same mechanism) is the walk's, a call from `_nudge_placement_gate` is the gate's, a call from
 `_awaiting_wake_outcomes` is the wake sweep's (the store's third reader on the pass, bounded below), and any other caller
 during a pass fails the test, named by function, file and line. The writer door has its own assertion on every pass: the
@@ -34,7 +36,7 @@ loads as `writerLoads`, against the hand-offs each pass expects (review round 2:
 not fail); a call
 through `load_goals_or_fault` is named for its kernel caller, never for the judge's `_or_fault`, and a load written inside
 `_or_fault` or either outer wrapper, off its hand-off line, is named for that wrapper (on the hand-off line it is named
-for the kernel caller and lands on the walk's count). The claim has three limits. The door: a third loader that reaches the store through the judge's loaders during the pass is caught and named;
+for the kernel caller of that call and counted under that caller's mechanism). The claim has three limits. The door: a third loader that reaches the store through the judge's loaders during the pass is caught and named;
 a reader below those loaders (the judge's own file reader and parser) is outside the recorders and outside the claim. The
 road: the execution witness covers every caller the fixture actually executes; the helpers in REPLACED_KM and REPLACED_JD
 and Sessions.backend_for run as stubs, so a loader inside their real bodies is outside the recorders and is caught by the
