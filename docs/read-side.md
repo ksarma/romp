@@ -257,7 +257,8 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   told a word and did not park says `parked: false`; a standalone page's row
   carries no `parked` field. On the phone layout the Outline, the Sessions
   band, the Waiting pane and the Files pane load on their first tap (since
-  2026-09-18; the chat and the feed load at boot), so a pane the phone never
+  2026-09-18; the chat, the feed and the tab the phone was left on load at
+  boot, the last unless the gear has that pane off), so a pane the phone never
   showed has no document and files no rows of any kind: its absence from the
   rows is the saving, not a field.
   A redial declares itself (`reconnect=1` on the `/ws` URL) once the kernel's
@@ -272,9 +273,15 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   records the regime. On the phone layout the chat pane's first dial declares
   `skeleton=1` too (since 2026-09-18), so a cold open there is served the same
   way: the strip, one full for the stored tab and a status per other tab, and
-  the `skeleton` row records it; the idle chain then starts from the moment the
-  stored tab's full has applied, or from the strip when it lists no such tab (a
-  stored tab that ended while the phone was away), never before.
+  the `skeleton` row records it. The idle chain's start gate runs on every
+  layout (the desktop's panes and dial are unchanged; a desktop redial's first
+  background ask follows the active tab's full instead of the strip's paint):
+  the chain starts from the moment the stored tab's full has applied, from a tap
+  onto a tab already served whole, or from the local strip when it lists no such
+  local tab, because the stored tab ended while the phone was away or because it
+  is another host's, whose full arrives on that host's relay socket and is not
+  waited for (as before). On the phone the chain also waits for the chat pane to
+  be on screen: a phone opened on another tab arms it when the Chat tab is shown.
 - **The Outline pane's ages run on the kernel's clock.** Its timestamps are the
   kernel's, so the pane never reads the browser's clock against them: it anchors
   on the frame's `now` paired with the moment that frame arrived from the wire
