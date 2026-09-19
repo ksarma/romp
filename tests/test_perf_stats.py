@@ -1569,11 +1569,14 @@ def _scratch_repo(test):
     repo's operations into this checkout's index); every git call over the scratch repo passes that environment too,
     the listing in _scan through its env keyword. The first version scrubbed for the init alone, and a listing over
     the scratch repo under a hook's GIT_DIR and GIT_INDEX_FILE was this checkout's index, every path skipped at the
-    open, so the pins stayed green over a listing that was not the scratch repo's."""
+    open, so the pins stayed green over a listing that was not the scratch repo's. The init goes through _git_bytes, so
+    a box without git skips the test (the first version's subprocess.run raised FileNotFoundError out of it, and the
+    no-git world was five errors beside the skips the docstrings promised; round 3) and any other failure carries git's
+    words; the not-a-repository skip cannot fire here, since init needs none."""
     d = Path(tempfile.mkdtemp())
     test.addCleanup(shutil.rmtree, d, ignore_errors=True)
     env = _git_env_scrubbed()
-    subprocess.run(["git", "init", "-q", str(d)], env=env, check=True, capture_output=True, timeout=60)
+    _git_bytes(d, "init", "-q", env=env)
     return d, env
 
 
@@ -2041,6 +2044,17 @@ class RoutingStatements(unittest.TestCase):
                 self.fail("the scan returned a listing instead of failing")
         self.assertIn("dubious ownership", message, "the failure carries git's words")
         self.assertIn("exited 128", message, "and the exit code")
+
+    def test_a_scratch_repo_skips_when_git_is_not_installed(self):
+        """The no-git world the lock's docstring describes, for the scratch-repo tests: _scratch_repo's init skips the
+        test through _git_bytes (round 3; the first version's bare subprocess.run raised FileNotFoundError, so a box
+        without git had five errors where the docstring promised skips). The mock replaces the only subprocess call the
+        fixture makes before it returns, so no repository is created; the temp directory it minted is removed by the
+        cleanup it registered first."""
+        with mock.patch.object(subprocess, "run", side_effect=FileNotFoundError("git")):
+            with self.assertRaises(unittest.SkipTest) as skipped:
+                _scratch_repo(self)
+        self.assertIn("git is not installed", str(skipped.exception), "the skip names the cause")
 
     def test_the_lock_path_skips_for_a_missing_repository_only(self):
         """The lock path's own skip road, pinned directly (round 2's fresh-2): a tree with no repository skips, through
