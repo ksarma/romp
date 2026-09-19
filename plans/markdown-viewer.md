@@ -7708,3 +7708,166 @@ test family re-verifies. Where the code as built departs from the text above, wh
 Text size, fluid width, table reflow, whole-word cells (fork PR #348); path and http links in files,
 the `:line` suffix (fork PR #347); the PDF viewer; emoji shortcodes; another parser; editing the rendered
 view in place; the two audit items its refuters overturned.
+
+## Follow-on: Print (2026-09-19)
+
+The user asked (2026-09-19) for a print from the viewer that carries the file's pictures: a printed note shows its
+figures loaded rather than the placeholders and half-loaded pictures the browser's own print caught, a picture from a
+host outside the gear's list is fetched for the print only on the person's choice, and a PDF prints as the document
+rather than as one viewport of its frame. The viewer project above is complete; this follow-on extends Slice 3's item
+12, the print sheet, and lands as one PR at the feature tier. Its contract is kept outside the repo; this section
+records what was built, with the build's deliberate departures from that contract recorded as the decisions, and what
+is left for the owner to rule on.
+
+**What existed.** Item 12's `@media print` block at the end of styles.css and feed.css, byte-equal
+(fileview-parity.test.ts and file-view-print-browser.test.ts pin it), with the pane's overrides in files-pane.css. With
+a file open (`body.fileview-open`) the browser's own print, Ctrl+P or Cmd+P, printed the file body alone, black on
+white, the chrome hidden. No Print button and no script stood in front of window.print, so nothing awaited a picture:
+the figure loader in file-view.ts leaves the load events to its caller, a figure on a host outside the list (decision 8;
+figure-gate.ts) printed as its placeholder naming the host, a picture still loading printed as the browser had it at
+that instant, a picture opened directly (imgBlock, `img.fileview-img`) kept the screen rule's `max-height: 82vh` on
+paper under its box's 14px padding with its corners clipped by the radius, and a PDF (pdfBlock, an iframe at a blob
+URL) printed as one viewport of a frame the sheet named nowhere.
+
+**Decisions.**
+
+P1. **A Print word button in the viewer bar, and Ctrl/Cmd+P runs the same flow.** `installFilePrint` in
+ui/webview/file-print.ts builds the button (`.fileview-btn.fileview-print`, the text "Print", a tooltip naming the
+chord) and the caller places it: openFileView appends it to the file group right after Download, and openUrlView
+inserts it before Copy URL, since the URL viewer has no Download. It carries a direct click listener like Download's:
+the bar is built once per open and is not rebuilt while it stands. The driver registers one document keydown listener
+per open, in the capture phase, and the viewer's close hooks remove it with the card. Ctrl+P or Cmd+P (either case of
+the key, so Caps Lock counts; not with Shift or Alt; not a key repeat, since a held chord would arm and disarm on
+alternate repeats) is prevented and treated as a press only while `body.fileview-open` stands, the card is connected and
+no text field in the document holds the keyboard (`typingHere`, beside isTypingTarget in file-view.ts); otherwise the
+key stays the browser's, and with no file open nothing changes. The same listener reads Escape while the bar is armed:
+it disarms, and the event is stopped there, before the viewer's own Escape (a bubble listener on the document, which
+closes the card) hears it, so during that state a focused control's own Escape handler does not hear it either. At rest
+Escape is left alone. The button is live for every kind of file from the moment the bar is built, while the loader
+still holds the body included (open point 2).
+
+P2. **Over gated placeholders the bar arms instead of printing; then every picture is awaited, 8 s at most; then
+window.print.** The machine is `step`, a pure function over a state (resting, armed, preparing, printing) and an event
+(press, escape, choose, prepare, ready, printed) that returns the next state and the act the driver performs; the DOM
+driver is the rest of installFilePrint. A press counts the body's placeholders by their `data-act`, the mark the gate
+sets and an author cannot type (GATE_ACT in figure-gate.ts). With any, the bar arms: one line right under the title
+bar, a row of the card in the notice bar's dress (`.fileview-err` with two `.fileview-btn.fileview-err-act` word
+buttons, the shape of the changed-on-disk notice and its Reload; no new rule, so the sheets stay byte-equal, and the
+print block, which hides every `.fileview > .fileview-err`, keeps the line off the paper) reading "1 picture from
+another host is not loaded." or "N pictures from other hosts are not loaded.", with **Print with them** and **Print
+without them**; a second press or Escape disarms. The press arms rather than prints, a two-click shape, for decision 8's
+reason: the gate is a privacy choice, so a print never fetches from a host outside the list unless the person chose it.
+"With them" calls `loadGatedHost` for every host every placeholder names, the function the placeholder's own click
+runs, so the requests are the ones a click on each placeholder makes. Then the wait, `settlePictures` over
+`collectPictures`: every `<img>` in the body to `complete` (its load or its error), and a `<video poster>` or an svg
+`<image href>` through a probe `Image` at the element's resolved URL, since neither element reports completeness; the
+probe asks for a URL the element itself fetched, which the browser normally serves from its memory cache and otherwise
+requests a second time from the same host, never from a new one. A gated poster or href has been moved aside and is not
+probed, and a placeholder's img has no src and is complete by HTML's definition, so "without them" waits on nothing for
+a placeholder. The line reads "Preparing 1 picture…" or "Preparing N pictures…" meanwhile. The wait ends at the last
+load or error event, or at `PRINT_SETTLE_MS`, 8 s, after which the print runs anyway: a picture still loading prints as
+the browser has it and a failed one as its label, so a route that never answers cannot hold the print (the events are
+the trigger and the deadline is the backstop). With no placeholder and every picture complete the press prints at once,
+inside the click's own task. Then `window.print()`; on afterprint, or at once when print returns, the bar rests. The
+button carries `data-print` with the phase while it is not resting, `.on` and aria-expanded while armed,
+`.fileview-busy` and aria-busy through the wait and the print. The line is a row of the card, not part of
+`.fileview-bar`: the viewer's own notice (`#fileview-save-err`, inserted above the main row) can stand under it at the
+same time, two rows. A gated clip (a video or audio placeholder) is counted in the line's "pictures" wording, since
+every placeholder is counted. `setPrintSettleMs` and `printSettleMs` are the deadline's test seam; nothing in the
+product calls them, and real-viewer-leg.ts's bundle exports them for the browser leg.
+
+P3. **A picture opened directly prints fitted to the page.** Inside the print block of both sheets, right after the
+`.fileview-body` line: `.fileview-imgbox { padding: 0; }` and `.fileview-img { max-width: 100%; max-height: 100vh;
+border-radius: 0; box-shadow: none; }`. The contract asked for the width and height caps; the padding reset, the square
+corners and the dropped shadow were added by the build. 100vh is the page area at print layout, so the picture fills
+the page at most and keeps its ratio (the screen's `object-fit: contain` stands); the box's 14px paddings go because a
+picture at 100vh does not fit page 1 with them and, being one unbreakable box, would move whole to page 2; the radius
+clipped the corners on paper, and the shadow is the modal's. Measured in Chromium at a 700px viewport: the computed
+max-height under print media is 700px where the screen reads 574px, and a 400 by 3000 PNG prints as one A4 page from
+the pane (styles.css) and the feed modal (feed.css). The flow treats a picture as a document: its one `<img>` is
+awaited and the page prints.
+
+P4. **A PDF prints itself: the frame's own print when the frame holds the document, else the /file URL in a new tab
+and a line saying so.** openFileView passes the file's kind, read at each press (`kind`: the kernel's Content-Type sets
+isPdf when the bytes land, after the bar is built), and an opener, `openFileTab` in preview.ts, the one a modified click
+on a PDF uses; openUrlView passes neither, so the URL viewer's flow is a document's. A press at rest over a PDF is the
+machine's `printPdf` act whatever the counts, since a frame holds no placeholder and no picture. `pdfFrameWindow` reads
+the body's `iframe.fileview-frame` and answers its window when the frame holds the PDF and can print: the window
+reachable, its document's content type `application/pdf` (what Chromium's PDF viewer document reports) or the window's
+location the frame's own blob URL with any `#page=N` fragment set aside, and `print` a function. The contract's test
+was the window reachable and print a function; the build tightened it because a probe of this box's browsers
+(2026-09-19) showed that a browser without a PDF viewer (Playwright's headless shell, headless Firefox) turns the
+frame's navigation into a download and leaves the window at about:blank, where print is a function too and would print
+a blank page. When the frame holds the PDF the driver calls that window's print and the bar rests with no line; when it
+does not, the /file URL opens in a new tab and a line under the bar reads "Print from the tab that opened.", or "The
+browser did not open a tab for this PDF." when the opener answered false (a blocked pop-up, or a page not served over
+http or https, the VS Code webview's, where openFileTab declines); the contract named the first line alone, and the
+second was added rather than print the page or say nothing. That line is a notice: it stands at rest until the next
+press drops it or the viewer closes; Escape at rest is the viewer's, whose close takes the line with the card. The
+page's own window.print never runs for a PDF. The Comments panel's PDF pages are out of scope: with the panel open the
+body holds the pdf.js canvases and no frame, so Print opens the /file tab and the PDF prints from there, never the
+annotated canvases (a frame kept under a notice after the panel's chunk failed to load prints itself, since the
+detector finds it); the project's out-of-scope line, the PDF viewer, stands, since nothing in the viewer changed.
+Verified in the full Chromium build: the blob frame's window is same-origin, its document reports application/pdf at
+the blob URL, and its print is a function the parent may call and replace. Not verified, since headless Chromium opens
+no print dialog: that the real call prints the PDF's pages. Not run at all: desktop Firefox with pdf.js enabled
+(headless Firefox downloads instead) and Safari, where the detector's location clause would accept the frame.
+
+P5. **The guide's printing sentence.** The one sentence in docs/guide.md's "Opening a markdown document" paragraph now
+says that Print in the file's bar, or the chord with a file open, prints the file alone, black on white, with its
+pictures loaded; that pictures from other hosts are loaded for the print only on **Print with them**; and that a PDF
+prints itself, or opens in a new tab to print from when the browser cannot print it in place. The Files chapter's
+sentence on what the printed page leaves out is unchanged and still true: the print line is a `.fileview-err` row the
+block hides.
+
+P6. **Nothing leaves the machine that did not before.** No kernel change, no new route, no server-side render. "With
+them" makes the requests a click on each placeholder makes; the probe asks for a URL a poster or svg image element
+already fetched; a PDF's tab is the URL the modified click already opens.
+
+**Tests.** `ls ui/webview/file-print*.test.ts` lists the follow-on's three modules, and
+tools/markdown-viewer-plan-print.test.mjs holds this section to the tree: every module that listing produces is named
+here, every module named here exists, the sheets carry P3's two rules inside byte-equal print blocks, the flow module
+exists and both viewers call it, and the words quoted here are the module's.
+
+- ui/webview/file-print.test.ts, under node with no DOM: `step` over every phase and event, the words, the chord,
+  `settlePictures` over fake pictures and a fake clock (the incomplete pictures alone are waited on; load or error
+  settles each; the deadline resolves with listeners off; nothing pending resolves at once with no timer; cancel), the
+  8 s constant and its seam, `collectPictures` over a body stand-in, the PDF press and `pdfFrameWindow` over window
+  stand-ins.
+- ui/webview/file-print-browser.test.ts, headless Chromium over the real viewer through real-viewer-leg.ts: a gated
+  note on the pane (the chord and the button arm; Escape and a second press disarm and leave the card up; "Print
+  without them" keeps the placeholder, makes no request to the host and prints once a parked picture lands; "Print with
+  them" restores the placeholder, the host's request appears, and the print comes after that picture settled; every
+  recorded print has zero incomplete `<img>`); the chord on the chat modal (prevented, and printing a complete note at
+  once; untouched with a text field focused or with no file open); one click on a complete note, Rendered and Raw,
+  inside the click handler; the deadline shortened to 300 ms through the seam and restored; the URL kind arming. Its
+  FAILS BEFORE, recorded at the unwired viewer: the chord unprevented with a placeholder standing and an `<img>`
+  incomplete.
+- ui/webview/file-print-media-browser.test.ts: the picture rule under emulated print media on the pane and the feed
+  modal (the computed values, one A4 page for the tall picture, the screen values back, one click printing), and the
+  PDF under two launches, Playwright's headless shell, which has no PDF viewer and takes the tab path of itself, and
+  the full Chromium build, which prints through the frame's stubbed print with no line and takes the tab path once
+  print is taken from the frame's window; both measure the tab's URL and target, the line, the blocked tab's line
+  replacing it, and one line at a time. Its FAILS BEFORE: 574px under print media, and the page's print firing for a
+  PDF.
+- The standing print, gate and bar suites, run at each part's tip as the commit messages record: fileview-parity.test.ts
+  and file-view-print-browser.test.ts (the block byte-equal), file-view-print-inks-browser.test.ts,
+  file-view-print-marks-browser.test.ts, figure-gate.test.ts, file-view-figures-gate-browser.test.ts,
+  pdf-new-tab.test.ts, button-vocab.test.ts, file-view.test.ts.
+
+**Open points for the owner.**
+
+1. The bar at 380px. ui/webview/file-view-text-size.test.ts's browser leg fails at this branch's head at its chat-modal
+   case at 380px and 100%: the Print word button widens the wrapped action row past the card, so its leftmost button
+   lies about 15px left of the card's edge (measured at the records commit, 2026-09-19: x from -5.2 against a card edge
+   at 9.5; the P3/P4 build's run recorded the leg green at the base f9fb8ec6e and red from Part A's tip). Not fixed
+   here. The fix belongs to the bar's layout: a glyph button like Download's, a shorter word, or a row rule at that
+   width.
+2. The button while the body is not in. Print is live from the bar's build: over a PDF before its bytes land, `kind`
+   answers document and a press prints the loader page; the same for any file while the loader holds the body. Whether
+   to hide or disable it until the body is in, and whether to hide it for a PDF whose frame cannot print, is a ruling.
+3. Wording. A gated clip counts as a picture in the armed line.
+4. Not measured here. Headless Chromium opens no print dialog, so "the raw print is prevented" is measured as
+   defaultPrevented on the chord, the afterprint path is exercised by the machine test and by print's return under the
+   stub, and the frame's real print is measured as a call on its stub. The poster and svg probes are covered under node
+   with fakes, not in Chromium. Desktop Firefox and Safari were not run.
