@@ -70,6 +70,22 @@ def _fd_probes(case):
     return opened, closed
 
 
+class _PinnedSeq:
+    """A stand-in for km._atomic_seq that yields one value. The writer's `_atomic_seq[0] += 1` reads item 0 and writes
+    it back, so __getitem__ returns the pin and __setitem__ drops the increment: while the stand-in is in place every
+    call names its temp with this sequence number, and a writer on another thread still gets its own name from
+    threading.get_ident() (review round 2 of PR 789, 2026-09-19)."""
+
+    def __init__(self, n):
+        self.n = n
+
+    def __getitem__(self, i):
+        return self.n
+
+    def __setitem__(self, i, v):
+        pass
+
+
 def _mode_bearing_callers(source):
     """Every `_atomic_write(...)` call in `source` that carries a mode (the `mode=` keyword, or a third positional
     argument), by enclosing function (nested defs joined with a dot; "<module>" for a call at the top level), in source
@@ -215,15 +231,21 @@ class AtomicWriteMode(unittest.TestCase):
         # into FileExistsError where this road had always overwritten it. Round 1 (2026-09-18) went back to O_TRUNC
         # with the mode set on the descriptor, which also re-modes the leftover's inode (O_TRUNC keeps its 0644
         # until the fchmod), so the publish is never the leftover's mode either.
+        # Review round 2 (2026-09-19, fresh-4): until then this case PREDICTED the next temp name from km._atomic_seq
+        # read outside km._atomic_lock, so any other _atomic_write in the process between that read and the call moved
+        # the sequence on and the planted file was never the temp (a refuter's background writer turned the case red in
+        # four calls; the suite has no such thread today, so the flake was latent). The sequence is pinned with a
+        # stand-in for the one call, the way the registry twin in tests/test_sdk_backend.py stubs uuid4: the name is
+        # controlled, not predicted, and the case still proves the overwrite and the re-mode.
         d = km.jd.STATE / "permtest5"
         d.mkdir(parents=True, exist_ok=True)
         target = d / "x.json"
         target.write_text("OLD")
-        stale = target.with_name("%s.tmp.%d.%d.%d" % (target.name, os.getpid(), threading.get_ident(),
-                                                       km._atomic_seq[0] + 1))
+        stale = target.with_name("%s.tmp.%d.%d.%d" % (target.name, os.getpid(), threading.get_ident(), 7))
         stale.write_text('{"stale": "left by a killed writer"}')
         os.chmod(stale, 0o644)
-        km._atomic_write(target, '{"new": 1}', mode=0o600)
+        with mock.patch.object(km, "_atomic_seq", _PinnedSeq(7)):
+            km._atomic_write(target, '{"new": 1}', mode=0o600)
         self.assertEqual(target.read_text(), '{"new": 1}', "published over the leftover, not refused")
         self.assertEqual(_mode(target), 0o600, "the descriptor's mode, not the leftover's 0644")
         self.assertFalse(stale.exists(), "the leftover became the temp and moved")

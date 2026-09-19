@@ -3317,9 +3317,16 @@ def write_reg(state_dir: Path, sid: str, reg: dict) -> None:
         # path, so a reg written before this change tightens on its next write. A reg never written again (a
         # dead session's, since this backend never unlinks one) keeps its older mode, and no boot-time re-mode
         # is added for it (the reviewer's call, review round 1, 2026-09-18): the owner-only root is what makes
-        # that interim safe. Round 1 also replaced the first cut's exclusive create, which would have refused a
-        # leftover temp at the same name and put the mode through the umask. Every reader (the kernel, bin/romp
-        # and the CLI tools it execs, the judges, the postal service) is the same uid, so 0600 shuts nobody out.
+        # that interim safe. Two other credential files do get a loose mode healed, and the difference is one of
+        # shape, not policy (review round 2, 2026-09-19): _remotes_load re-modes remotes.json at boot and
+        # _serve_token_read_or_mint strips a loose serve token's bits under its lock, two single files healed on a
+        # road that already opens them, against N per-session regs behind a memoized read (the kernel's
+        # _thread_reg_read keys its memo on the ctime, which a chmod alone changes, so a heal on read would evict
+        # what it feeds), while the closest analogue, the per-sid flag-settings file holding the same env values
+        # (flag_settings_path), tightened forward-only on 2026-09-03 and took no walk. Round 1 also replaced the
+        # first cut's exclusive create, which would have refused a leftover temp at the same name and put the mode
+        # through the umask. Every reader (the kernel, bin/romp and the CLI tools it execs, the judges, the postal
+        # service) is the same uid, so 0600 shuts nobody out.
         # Defence in depth behind the 0700 state root (kernel/judge.py chmods it at import, says why, and since review
         # round 2, 2026-09-19, reads the mode back and says so on stderr when it is not 0700), not a live fix:
         # PR 776's review round asked for it (kernel-1, extra5-2) and the reviewer deferred it to its own fix
