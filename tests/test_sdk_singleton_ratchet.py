@@ -190,7 +190,7 @@ fixture READS and the branch each read feeds, with the case that reds under each
     disappears) or without its reference condition (K.One passes silently); the windows never recorded (as the
     yield removed).
   the function fixture not naming the object it accused (A.h gets an inherited report, E, D).
-Fifty-three cells red. Four are pinned by no run, each for a stated reason: the unreadable reference root granting
+Fifty-four cells red. Three are pinned by no run, each for a stated reason: the unreadable reference root granting
 the allowance (not constructible: the kernel always binds jd); the yield's identity condition dropped (redundant by
 construction: when the end value is the last read's and is not the last window's value, a class teardown inside the
 scope installed it, and that class's own boundary judged it against its start, which only a restore of the value the
