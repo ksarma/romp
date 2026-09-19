@@ -190,6 +190,20 @@ test("a malformed later collection cannot partly mutate a previously delivered f
   assert.deepEqual(h.delivered.at(-1)!.messages, [{ id: "m" }]);
 });
 
+// The table's non-dictlist arm (view-deltas.ts split: a byid collection arriving as an OBJECT) pins forward compatibility,
+// not a wire any kernel in this history sends: bars.messages is a list at every vintage. Seeded over such a frame the
+// receiver would key nothing for the collection and a patch would collapse it to the patched entries alone; refused, the
+// frame is delivered whole and the patch asks for the whole slot, as the dictlist arm does for a pre-T278c judging list.
+test("a byid collection arriving as an object seeds no base: the frame is delivered whole and its patch asks for the whole slot", async () => {
+  const h = await harness("timeline"), ws = h.sockets[0];
+  const asObject = { type: "bars", turns: { web: [{ id: "a", n: 1 }] }, judging: {}, messages: { m: { id: "m" } } };
+  ws.frame(asObject);
+  assert.deepEqual(h.delivered, [asObject], "delivered whole, as it came");
+  ws.frame({ type: "delta", slot: "bars", base: 0, rev: 1, coll: { messages: { set: { m2: { id: "m2" } } } } });
+  assert.deepEqual(h.delivered, [asObject], "nothing new delivered: no base to apply onto");
+  assert.deepEqual(ws.sent, [{ type: "needSlot", slot: "bars" }], "the patch asks for the whole slot");
+});
+
 test("feed and timeline revisions are independent, and a full frame resets only its slot", async () => {
   const h = await harness(), ws = h.sockets[0];
   ws.frame(feed()); ws.frame({ type: "bars", turns: {}, judging: {}, messages: [] }); ws.frame(delta());

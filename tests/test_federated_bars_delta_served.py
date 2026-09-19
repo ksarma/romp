@@ -71,7 +71,7 @@ LANE = HOST + ":" + SID_R0          # the lane id on the hub (federation prefixe
 LANE_LABEL = HOST + ":api"          # its label's text: the quiet host tspan and the name tspan
 SEED_AGO_S = 5400                   # the seed's first pair 90 min ago: every seed bar inside the pane's fitted window
 SEED_BARS = _dial.SEED_PAIRS
-SEP = ""                      # a bars patch key is the bare sid, this separator and the bar id (_delta_split)
+SEP = "\u001f"                     # the unit separator (0x1F) as an escape, so the key assertion reads in a diff: a bars patch key is the bare sid, this separator and the bar id (_delta_split)
 GUARD = 0.6                         # _DELTA_MAX_FRACTION: a patch this fraction of the whole frame goes whole instead
 CHANGE_PROMPT = "a later turn: did the notes-api index rebuild finish?"
 CHANGE_REPLY = "It finished; the stemmer table is cached now."
@@ -404,8 +404,9 @@ class _BarsLab(unittest.TestCase):
                         % (self._kinds(after), self._kinds()))
         p = patches[0]
         self.assertIn("turns", p.get("coll") or [], "the patch changes the turns collection: %r" % (p,))
-        self.assertTrue(any(k.startswith(SID_R0 + SEP) for k in p.get("setKeys") or []),
-                        "the patch sets a bar keyed under api's sid (bare sid, the separator, the bar id): %r" % (p.get("setKeys"),))
+        keyed = [k.split(SEP) for k in p.get("setKeys") or []]   # exactly two parts around the separator: an empty SEP raises here, a wrong one splits nothing
+        self.assertTrue(any(len(parts) == 2 and parts[0] == SID_R0 and parts[1] for parts in keyed),
+                        "the patch sets a bar keyed as api's bare sid, the unit separator, the bar id: %r" % (p.get("setKeys"),))
         full = self.result.get("fullLen")
         self.assertTrue(full, "a whole bars frame was held before the change: %r" % (self._kinds(),))
         self.assertLess(p["len"], GUARD * full, "the patch (%d B) is under the size guard against the whole frame (%d B, %.2f of it)"
