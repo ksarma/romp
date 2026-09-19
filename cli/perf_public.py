@@ -106,7 +106,9 @@ NUMBER only when it carries a digit run of at least NUMERIC_PROBE_MIN_DIGITS dig
 constant derives from measured collision chances, since 2026-09-19, and a listed entry whose digit runs are all shorter
 is checked in every key and string value and in no number, which machine_probes says once on stderr,
 LIST_UNDER_NUMERIC_FLOOR), and a hit refuses the write naming
-the key path and the kind of string, never the value. A hostname or a login is a WORD and is matched as a run of whole tokens
+the key path and the kind of string, never the value; for a listed string the refusal also names the LINE of the list
+the entry is on (Hit.line, carried from the Probe, never the text) and the remedy, editing that line or the value.
+A hostname or a login is a WORD and is matched as a run of whole tokens
 (a key or value split on everything outside letters and digits): romp's own vocabulary contains common ones as
 substrings (a user named mark and `intrMarks`, a machine named work or arch and `cpu_ms_workers`, `archive`),
 and a substring match would refuse every export on such a machine for good. An id or a directory is matched
@@ -468,11 +470,13 @@ class Problem(collections.namedtuple("Problem", "kind is_key path text depth")):
         return "%s: %s %r at %s" % (self.kind, "key" if self.is_key else "value", self.text, self.path)
 
 
-class Hit(collections.namedtuple("Hit", "kind is_key path depth")):
+class Hit(collections.namedtuple("Hit", "kind is_key path depth line", defaults=(None,))):
     """One finding of the identifier scan (identifier_hits), shaped like Problem: `kind` the probe's kind (hostname,
     username, home directory, session id, session directory, private string), `is_key`, `path` and `depth` as
-    Problem's. The string that matched is not carried (a number's is its wire spelling): a key IS the string, and the
-    scan's callers print the finding in a refusal."""
+    Problem's, and `line`, the one-based line of the private list the matching entry is on (the Probe's; None for a
+    machine string or a probe built without one), which the refusal names in place of the entry. The string that
+    matched is not carried (a number's is its wire spelling): a key IS the string, and the scan's callers print the
+    finding in a refusal."""
     __slots__ = ()
 
 
@@ -1010,7 +1014,8 @@ def probe_in(kind, probe, s):
 def identifier_hits(doc, probes, skip=()):
     """[Hit] for every key, string value or NUMBER of `doc` that carries a probe (probe_in), case-insensitively, one
     per string (the first probe that matches), in walk order. A Hit is structured like the walk's Problem (the kind,
-    key or value, the key path, its depth) and the caller formats it (place), so the string itself is never in the
+    key or value, the key path, its depth, and the list line of a listed entry, Probe.line, when the probe carries
+    one) and the caller formats it (place), so the string itself is never in the
     report (a key IS the string, so its own path is not named, and its dict's is). `skip` names top-level keys
     whose string value is not searched. A number is scanned by its WIRE SPELLING, json.dumps(node), which is the
     spelling perf_export.document_text puts in the file and `romp perf upload` puts on the wire (json.dumps spells a
@@ -1033,9 +1038,10 @@ def identifier_hits(doc, probes, skip=()):
     numeric = [p for p in probes if p[0] in WORD_KINDS or longest_digit_run(p[1]) >= NUMERIC_PROBE_MIN_DIGITS]
 
     def scan(s, where, key, applicable=probes):
-        for kind, probe in applicable:
+        for p in applicable:
+            kind, probe = p
             if probe_in(kind, probe, s):
-                hits.append(Hit(kind, key, "/".join(str(p) for p in where), len(where)))
+                hits.append(Hit(kind, key, "/".join(str(p) for p in where), len(where), getattr(p, "line", None)))
                 return
 
     def walk(node, where):

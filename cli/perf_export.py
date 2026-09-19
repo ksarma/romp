@@ -35,7 +35,8 @@ verb refuses to write (check_document's docstring and pp._merge name it), so her
 upload`, which runs the same check over a file the user may have edited, it is the check
 that what the export dropped, folded or coarsened does not travel, while the measurements it keeps pass, the export's
 own rule: paste-safe, not unlinkable); any finding refuses
-the write, and the SHALLOWEST finding across the three is
+the write (a finding of a listed private string naming the line of the list its entry is on and the remedy, editing
+that line or the value, never the text), and the SHALLOWEST finding across the three is
 the one named (check_document), so a walk problem beneath a machine-named key is reported as the machine string, not
 as a path spelling the key, and a machine string beneath a key the walk refuses (a 32-hex token) is reported as
 that key's rule and its dict, not as a path spelling the token. The refusal is built from the finding's fields
@@ -297,6 +298,11 @@ def check_document(doc: dict, state: Path, under=("perf",), tail="nothing writte
     the fewest path components, a key finding counting the depth of the dict holding it and a value finding its
     own, the scan's wording when the depths tie, then the walk's.
 
+    A finding of a LISTED private string also names the line of the private-strings list the entry is on and the
+    remedy, editing that line or the key or value found (_survives; since 2026-09-19): the refusal reads "a string this
+    machine knows (private string) survives as the value at perf/pusher/cycles; edit line 4 of the private-strings list
+    or that value; nothing written", and the entry's text is in no output, as before.
+
     The rule this keeps: the refusal never prints a path component that the walk would refuse to write, nor one
     that spells a string this machine knows, nor one the denylist drops. Every component of a printed path is a key
     of a dict above the finding, and a key any mechanism flags is a finding of its own at a strictly shallower
@@ -310,8 +316,7 @@ def check_document(doc: dict, state: Path, under=("perf",), tail="nothing writte
     restart-metrics --json --public` runs this same function over its document (`under=()`, "nothing printed"): it
     ran the scan alone and printed a 32-hex token planted in an event row's nested field, the one place raw ledger
     rows pass through, where this verb refused the same document (the export's closing check, 2026-09-18)."""
-    findings = [(h.depth, 0, "a string this machine knows (%s) survives as %s" % (h.kind, pp.place(h)))
-                for h in pp.identifier_hits(doc, pp.machine_probes(state), skip=("schema",))]
+    findings = [(h.depth, 0, _survives(h)) for h in pp.identifier_hits(doc, pp.machine_probes(state), skip=("schema",))]
     findings += [(p.depth, 1, "the public form still fails the walk (%s, %s)" % (p.kind, pp.place(p)))
                  for p in pp.paste_problems(doc, skip=("schema",), under=under)]
     findings += [(p.depth, 2, "the public form still fails the denylist (%s, %s)" % (p.kind, pp.place(p)))
@@ -319,6 +324,16 @@ def check_document(doc: dict, state: Path, under=("perf",), tail="nothing writte
     if not findings:
         return None
     return "%s; %s" % (min(findings, key=lambda f: f[:2])[2], tail)    # min is stable: walk order among equals
+
+
+def _survives(hit):
+    """The scan's finding as check_document names it: the kind and the place (pp.place), never the string, and for a
+    listed private string (hit.line, the one-based line of the private-strings list its entry is on) the remedy clause,
+    editing that line or the key or value the finding sits at."""
+    text = "a string this machine knows (%s) survives as %s" % (hit.kind, pp.place(hit))
+    if hit.line is not None:
+        text += "; edit line %d of the private-strings list or that %s" % (hit.line, "key" if hit.is_key else "value")
+    return text
 
 
 def default_path(state: Path, now=None) -> Path:

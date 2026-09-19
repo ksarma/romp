@@ -3854,7 +3854,10 @@ rather than keep a number it cannot tell from a stamp, and which
 refuses
 the write and names the kind of
 finding and the key path (a value's own path, or the path of the dict holding
-a key), never the key or the value; when more than one check finds something,
+a key), never the key or the value; a finding of a listed private string also
+names the line of `private-strings.txt` the entry is on and says to edit that
+line or the value (`edit line 4 of the private-strings list or that value`),
+never the entry itself; when more than one check finds something,
 the finding with the shortest path is named, so the path printed never carries
 a key any check would refuse.
 The file lands as `perf-exports/perf-export-<YYYYMMDDTHHMM>.json` under the
@@ -3919,7 +3922,9 @@ measurement; a float inside a window under a duration key, a name carrying the
 token `ms`, its own or any key above it, is a millisecond total),
 so a fresh export passes whole and two
 uploads from one kernel remain linkable through them by design. A finding is
-reported by kind and key path, never by value. What is sent is what was
+reported by kind and key path, never by value; a listed private string's
+finding also names the line of the list its entry is on and says to edit that
+line or the value. What is sent is what was
 checked: the body is the parsed document written out again the way the export
 writes it (one space of indent, sorted keys, a trailing newline), never the
 file's own bytes, so a spelling no check read (a number written with more
@@ -5393,7 +5398,9 @@ dropped or coarsened: a key the export drops, a string or key the fold would hav
 replaced, an uptime off whole minutes, a bound off a power of two, a float inside a
 clock stamp's epoch window with no duration key on its path), and any finding
 refuses the print the way the export refuses its write, naming the kind of finding
-and the key path of the shallowest finding, never the string.
+and the key path of the shallowest finding, never the string (a listed private
+string's finding names the line of the list its entry is on as well, with the
+remedy, editing that line or the value).
 
 `scripts/restart_metrics_report.py` draws the before-versus-after figures from
 two or more of the raw `--json` documents with cleanplots, which is not a romp

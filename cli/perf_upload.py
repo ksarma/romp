@@ -23,7 +23,8 @@ export is about 7 deep; a deeper file is refused in one line that names the boun
 traceback: the checks recurse one frame per level, and this is the one road that reads a file a person names),
 and pass the export's own check again as the file stands, since the user may have edited it: the scan for the
 strings only this machine knows, the paste-safety walk and the denylist walk of cli/perf_public.py, through
-perf_export.check_document, so a problem is reported by its kind and key path and never by the key or the value; then,
+perf_export.check_document, so a problem is reported by its kind and key path and never by the key or the value (a
+listed private string by the line of the list its entry is on as well, with the remedy, editing that line or the value); then,
 as a belt under the three, the document's top level must be exactly what the export writes (TOP_LEVEL: schema,
 exported_at and perf, with kernel_commit and usage optional, no other key, exported_at and kernel_commit in the shapes
 the export spells) and each folded block, perf and usage, must equal its own fold, perf_public.fold, at the block root;
@@ -57,8 +58,11 @@ the file spelled it (4242424242, 4242424242.0, -4242424242, 0.4242424242, or 4.2
 4242424242.0 and so once put the run on the wire from a file that never spelled it), where until the same round a number
 was a measurement to every check and the run travelled as the number they passed; the paste walk and the denylist walk
 judge a number by its value, as before. The same scan serves the export and restart-metrics, so a counter that spells a
-listed string refuses those too, naming the kind and the path, the cost the docs already accept for a listed word that
-is romp vocabulary; the remedy is editing the list.
+listed string refuses those too, naming the kind, the path and the line of the list the entry is on, the cost the docs
+already accept for a listed word that is romp vocabulary; the remedy, which the refusal states, is editing that line or
+the value. Since 2026-09-19 the scan applies a listed entry to a number only when it carries a digit run of at least
+perf_public.NUMERIC_PROBE_MIN_DIGITS digits (seven; the comment there has the measured collision chances); a shorter
+listed run is checked in keys and string values and not in numbers, said once on stderr.
 
 Before sending, the verb prints the path, the byte size of the body it will send (the file's own size for a file as
 the export wrote it) and the URL it will dial (the address as configured
@@ -321,7 +325,8 @@ def read_export(path, state):
     comparison catches whatever shape a later fold rule would fold that no check yet names, both at the price of naming
     the top-level key alone. A Refusal
     otherwise, naming the file path the user passed and, for a walk or scan finding, the kind and the key path,
-    never the value; for the belt, the top-level key, which the checks passed. The depth rule runs before the checks and
+    never the value (a listed private string's also the line of the list its entry is on and the remedy, editing that
+    line or the value); for the belt, the top-level key, which the checks passed. The depth rule runs before the checks and
     is this verb's own: the checks and the fold recurse one frame per level, the parser admits documents far deeper than
     their frames reach on some builds, and this is the one road that hands them a file a person named, so a document
     nested deeper than MAX_DEPTH is refused in one line naming the bound and the file's depth (the receiver's depth rule,

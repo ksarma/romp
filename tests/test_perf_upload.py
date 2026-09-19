@@ -843,15 +843,16 @@ class Cli(unittest.TestCase):
         with open(os.path.join(self.home, ".config", "romp", "private-strings.txt"), "w", encoding="utf-8") as fh:
             fh.write("# strings that must never be published\n%s\n" % token)
         edited = os.path.join(self.xdg, "edited.json")
-        for plant, line in (({"leak": token}, "the value at perf/leak"),
-                            ({token + "Chat": 1}, "a key under perf"),                    # the token glued to letters, as a key
-                            ({"leak": "chat" + token.capitalize()}, "the value at perf/leak")):    # and as a value, in another case
+        for plant, line, what in (({"leak": token}, "the value at perf/leak", "value"),
+                                  ({token + "Chat": 1}, "a key under perf", "key"),                    # the token glued to letters, as a key
+                                  ({"leak": "chat" + token.capitalize()}, "the value at perf/leak", "value")):    # and as a value, in another case
             doc = json.loads(self.data)
             doc["perf"].update(plant)
             with open(edited, "w") as fh:
                 json.dump(doc, fh)
             r = self._refused(_run([edited] + base, self.state, home=self.home), 1,
-                              "refused: a string this machine knows (private string) survives as %s; nothing sent" % line)
+                              "refused: a string this machine knows (private string) survives as %s; "
+                              "edit line 2 of the private-strings list or that %s; nothing sent" % (line, what))    # line 2: the comment is line 1
             self.assertNotIn(token, (r.stdout + r.stderr).lower(), line)
             self.assertEqual(r.stdout, "", "refused before the summary line")
         self.assertEqual(self.fake.requests, [], "nothing was sent")
@@ -894,7 +895,8 @@ class Cli(unittest.TestCase):
             fh.write(token + "\n")
         self.fake.reset()
         r = self._refused(_run([edited] + base, self.state, home=self.home), 1,
-                          "refused: a string this machine knows (private string) survives as the value at perf/leak; nothing sent")
+                          "refused: a string this machine knows (private string) survives as the value at perf/leak; "
+                          "edit line 1 of the private-strings list or that value; nothing sent")
         self.assertEqual(self.fake.requests, [], "a readable list refuses the same document, as before")
 
     def test_an_edited_file_carrying_a_split_row_stamp_is_refused_by_the_denylist_naming_the_row_and_never_the_key(self):
@@ -1209,23 +1211,26 @@ class Cli(unittest.TestCase):
             fh.write(text.replace(anchor, anchor + ', "zzratio": "4242424242"'))          # the listed digit run as a string: the scan reads it
         self.fake.reset()
         r = self._refused(_run([edited] + base, self.state, home=self.home), 1,
-                          "refused: a string this machine knows (private string) survives as the value at perf/zzratio; nothing sent")
+                          "refused: a string this machine knows (private string) survives as the value at perf/zzratio; "
+                          "edit line 1 of the private-strings list or that value; nothing sent")
         self.assertNotIn("4242424242", r.stdout + r.stderr)
         self.assertEqual(self.fake.requests, [])
-        refusal = "refused: a string this machine knows (private string) survives as the value at %s; nothing sent"
+        refusal = ("refused: a string this machine knows (private string) survives as the value at %s; "
+                   "edit line %d of the private-strings list or that value; nothing sent")
         for literal in ("4242424242", "4242424242.0", "4242424242.5", "-4242424242", "14242424242", "0.4242424242",
                         "4.242424242e9", "4242424242e0", "1234567.8", "12345678e-1"):      # as a NUMBER: the scan reads the wire spelling
             with open(edited, "w", encoding="utf-8") as fh:
                 fh.write(text.replace(anchor, anchor + ', "zzratio": ' + literal))
             self.assertTrue(any(run in json.dumps(json.loads(literal)) for run in ("4242424242", "1234567.8")),
                             "the canonical spelling of %s carries a listed run" % literal)
-            r = self._refused(_run([edited] + base, self.state, home=self.home), 1, refusal % "perf/zzratio")
+            listed_line = 1 if "4242424242" in json.dumps(json.loads(literal)) else 2          # the refusal names the entry's line, never the entry
+            r = self._refused(_run([edited] + base, self.state, home=self.home), 1, refusal % ("perf/zzratio", listed_line))
             for run in ("4242424242", "1234567.8", "12345678"):
                 self.assertNotIn(run, r.stdout + r.stderr, literal)
             self.assertEqual(r.stdout, "", literal)
         with open(edited, "w", encoding="utf-8") as fh:
             fh.write(text.replace(anchor, anchor + ', "zzlist": [4242424242, 1]'))            # an element of a list
-        self._refused(_run([edited] + base, self.state, home=self.home), 1, refusal % "perf/zzlist/0")
+        self._refused(_run([edited] + base, self.state, home=self.home), 1, refusal % ("perf/zzlist/0", 1))
         xdg, state = _state_root()
         self.addCleanup(shutil.rmtree, xdg, True)
         with open(_export(xdg, state, usage=True), encoding="utf-8") as fh:
@@ -1233,7 +1238,7 @@ class Cli(unittest.TestCase):
         self.assertEqual(usage.count('"send": 7'), 1, "the usage block's one action count is where the leaf is planted")
         with open(edited, "w", encoding="utf-8") as fh:
             fh.write(usage.replace('"send": 7', '"send": 7, "zzratio": 4242424242'))       # a leaf under usage, walked like perf
-        self._refused(_run([edited] + base, state, home=self.home), 1, refusal % "usage/actions/zzratio")
+        self._refused(_run([edited] + base, state, home=self.home), 1, refusal % ("usage/actions/zzratio", 1))
         self.assertEqual(self.fake.requests, [], "no numeric spelling whose canonical form carries a listed run was sent")
         with open(edited, "w", encoding="utf-8") as fh:
             fh.write(text.replace(anchor, anchor + ', "zzratio": 4242424242'))

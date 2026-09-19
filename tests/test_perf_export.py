@@ -474,8 +474,9 @@ class FoldInvariant(unittest.TestCase):
         # the structured findings the rule is computed from: the scan's Hit is shaped like the walk's Problem, and
         # both count their depth at the finding (a key's is its dict's; the root is depth 0 and the empty path)
         hits = pp.identifier_hits({"a": {token: "TESTHOST", "TESTHOST": {"n": 1}}, "TESTHOST": 1}, SYNTHETIC_PROBES)
-        self.assertEqual(hits, [("hostname", False, "a/" + token, 2), ("hostname", True, "a", 1), ("hostname", True, "", 0)])
-        self.assertEqual([(h.kind, h.is_key, h.path, h.depth) for h in hits], hits)
+        self.assertEqual(hits, [("hostname", False, "a/" + token, 2, None), ("hostname", True, "a", 1, None), ("hostname", True, "", 0, None)],
+                         "the fifth field is the list line a listed entry's Probe carries; a machine string has none")
+        self.assertEqual([(h.kind, h.is_key, h.path, h.depth, h.line) for h in hits], hits)
         self.assertEqual([pp.place(h) for h in hits], ["the value at a/" + token, "a key under a", "a key under the root"])
         problems = pp.paste_problems({"a": {token: "x y"}, "GET /perf": {"c d": 1}})
         self.assertEqual([(p.kind, p.is_key, p.path, p.depth) for p in problems],
@@ -1576,16 +1577,18 @@ class Cli(unittest.TestCase):
             self.assertEqual(got, ["a" * (pp.PRIVATE_STRINGS_MAX - 1)])
             self.assertEqual(err.getvalue(), "")
         # through the export's own check, as a value and as a key, the kind and the path named and never the string
-        probes = [("private string", "zzcoinedzz")] + SYNTHETIC_PROBES
+        probes = [pp.Probe("private string", "zzcoinedzz", 3)] + SYNTHETIC_PROBES      # the entry on line 3 of its list
         doc = pe.export_document(leak_snapshot())
         doc["perf"]["heap"]["note"] = "zzcoinedzz"
         with mock.patch.object(pe.pp, "machine_probes", return_value=probes):
             self.assertEqual(pe.check_document(doc, pe.Path(tempfile.mkdtemp())),
-                             "a string this machine knows (private string) survives as the value at perf/heap/note; nothing written")
+                             "a string this machine knows (private string) survives as the value at perf/heap/note; "
+                             "edit line 3 of the private-strings list or that value; nothing written")
             doc = pe.export_document(leak_snapshot())
             doc["perf"]["heap"]["zzcoinedzz"] = 1
             self.assertEqual(pe.check_document(doc, pe.Path(tempfile.mkdtemp())),
-                             "a string this machine knows (private string) survives as a key under perf/heap; nothing written")
+                             "a string this machine knows (private string) survives as a key under perf/heap; "
+                             "edit line 3 of the private-strings list or that key; nothing written")
             self.assertIsNone(pe.check_document(pe.export_document(leak_snapshot()), pe.Path(tempfile.mkdtemp())))
 
     def test_the_private_list_is_read_to_the_bound_plus_one_byte_and_never_whole(self):
@@ -1630,7 +1633,7 @@ class Cli(unittest.TestCase):
         r = _run(["--public", "--from", self.src], env_extra={"ROMP_PRIVATE_STRINGS": listed}, state=self.state)
         self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
         self.assertEqual(r.stderr, "romp perf export: refused: a string this machine knows (private string) survives as a key under "
-                                   "perf/pusher/connectPush/byApp; nothing written\n")
+                                   "perf/pusher/connectPush/byApp; edit line 2 of the private-strings list or that key; nothing written\n")
         self.assertNotIn("abc", r.stdout + r.stderr)
         self.assertFalse(os.path.exists(os.path.join(self.state, "perf-exports")))
         r = _run(["--public", "--from", self.src], state=self.state)
@@ -1653,7 +1656,7 @@ class Cli(unittest.TestCase):
             r = _run(["--public", "--from", self.src], env_extra={"ROMP_PRIVATE_STRINGS": listed}, state=self.state)
             self.assertEqual(r.returncode, 1, repr(value) + "\n" + r.stdout + r.stderr)
             self.assertEqual(r.stderr, "romp perf export: refused: a string this machine knows (private string) survives as the value at "
-                                       "perf/pusher/cycles; nothing written\n", repr(value))
+                                       "perf/pusher/cycles; edit line 1 of the private-strings list or that value; nothing written\n", repr(value))
             self.assertNotIn("4242424242", r.stdout + r.stderr, repr(value))
             self.assertFalse(os.path.exists(os.path.join(self.state, "perf-exports")), repr(value))
         r = _run(["--public", "--from", self.src], state=self.state)
