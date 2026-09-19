@@ -344,6 +344,10 @@ class ReturnFromBackground(unittest.TestCase):
             self.skipTest("optional: this runner declares no %s (ROMP_SERVED_TESTS_ENGINES=%s)" % (engine, declared))
         name = "%s-%s-%s-%ds%s%s%s" % (engine, shell, regime, outage_s, "-tap-" + tap if tap else "", "-abort" if abort else "", "-boot-" + boot_tab if boot_tab else "")
         eager = _eager(shell, tap)
+        # a derived set that came out empty would hand the driver a boot wait and a fresh wait that end at once with nothing witnessed
+        # (review round 2, 2026-09-19: every derived expectation must fail when the derivation yields nothing)
+        self.assertTrue(_eager(shell), "the eager set for the %s shell is not empty" % shell)
+        self.assertTrue([a for a in eager if a in FRESH_APPS], "the fresh set is not empty: %r" % (eager,))
         cfg = {"engine": engine, "shell": shell, "regime": regime, "outageMs": outage_s * 1000, "hiddenDwellMs": 400,
                "url": "http://127.0.0.1:%d/?token=%s" % (self.port, self.token),
                "healthz": "http://127.0.0.1:%d/healthz" % self.port, "diag": self.diag, "apps": list(APPS),
@@ -387,9 +391,29 @@ class ReturnFromBackground(unittest.TestCase):
         self._parked(name, r, m)
         self._lazy(name, r, m, tap)
         self._dial(name, r, boot_tab, tap)
+        self._feed_paint(name, r, boot_tab)
         if abort:
             self._abort(name, r, rows, tap, engine)
         return m
+
+    # ---- the feed's first paint (review round 1, regression-3; 2026-09-19): the change's central paint decision, in a real engine ----
+    def _feed_paint(self, name, r, boot_tab):
+        """On the phone behind another tab the feed's first frame is DELIVERED and applied (the shim's firstFrame mark is stamped) but the
+        board is not painted (zero [data-key] cards, the pane's own loader still up); the Feed tab's first show paints it (cards > 0, the
+        loader retired). On the desktop, and on a phone opened on the Feed tab, the first frame paints on its own."""
+        where = name + ": "
+        b = r.get("feedBeforeShow") or {}
+        self.assertIsNotNone(b.get("firstFrame"), where + "the feed's first frame was delivered before the read (a read before it would say 0 for nothing): %r" % (b,))
+        self.assertGreater(b.get("modelCards", -1), 0, where + "the feed's model holds cards before the read (the lab's three sessions), so an unpainted board is the hold's doing, not an empty frame's: %r" % (b,))
+        if r.get("shell") == "phone" and boot_tab != "feed":
+            self.assertEqual(b.get("cards"), 0, where + "the feed behind the %s tab applied its first frame (%d cards in the model) without painting the board: %r" % (boot_tab or "chat", b.get("modelCards", -1), b))
+            self.assertFalse(b.get("spinGone"), where + "…and its own loader is still up (D3: it stands with no timer while the first paint is owed): %r" % (b,))
+            a = r.get("feedAfterShow") or {}
+            self.assertGreater(a.get("cards", 0), 0, where + "the Feed tab's first show painted the board (the lab's three sessions have cards): %r" % (a,))
+            self.assertTrue(a.get("spinGone"), where + "…and the pane's loader retired on the paint: %r" % (a,))
+            self.assertGreaterEqual(a.get("ms", -1), 0, where + "within the wait: %r" % (a,))
+        else:
+            self.assertGreater(b.get("cards", 0), 0, where + "the feed painted its first frame on its own (the desktop grid, or the phone's shown Feed tab): %r" % (b,))
 
     # ---- HIGH 2 (review round 1, 2026-09-19): a lazy pane whose first document fetch fails is re-parked, says so, and loads on the re-tap ----
     def _abort(self, name, r, rows, tap, engine):
@@ -451,6 +475,7 @@ class ReturnFromBackground(unittest.TestCase):
                 self.assertNotIn(app, r.get("wsWordsAtBoot") or [], where + "…and its shim said nothing before the tap (no document): %r" % (r.get("wsWordsAtBoot"),))
                 if app != tap:   # the tapped pane's one socket, after its tap, is counted below
                     self.assertNotIn(app, m["wsopenBoot"], where + "…so the kernel accepted no socket from it before the suspend (wsopen by app: %r)" % (m["wsopenBoot"],))
+            self.assertEqual(sorted(_eager("phone")), ["chat", "feed"], where + "the phone's eager set is the chat and the feed (a literal, so the loops below cannot run over nothing)")
             for app in _eager("phone"):
                 self.assertEqual(src.get(app), "/" + app, where + "an eager pane has its page at boot: %r" % (src,))
             self.assertEqual(sorted(k for k in m["wsopenBoot"] if k != "shell"), sorted(_eager("phone", tap)), where + "the kernel's boot pane sockets are the eager panes' (plus a tapped one's; the shell dials its own): %r" % (m["wsopenBoot"],))
@@ -466,6 +491,14 @@ class ReturnFromBackground(unittest.TestCase):
             self.assertIn("panes", la, where + "the loading state was read after the tap: %r" % (la,))
             self.assertNotIn(tap + "-pane", la.get("panes") or [], where + "its document had loaded by the time its socket was up, so its .pane no longer carries the loading class: %r" % (la,))
             self.assertFalse(la.get("body"), where + "…and the shell's loader is down: %r" % (la,))
+            if shell == "phone" and tap in LAZY_PHONE:
+                # ui-2 (review round 1): the shell's loader PAINTS, read by an observer armed before the tap the moment body.pane-loading
+                # was added: display flex, a box of some height, above the tab bar, with the romp loader inside it
+                ls = r.get("loaderSeen") or {}
+                self.assertEqual(ls.get("display"), "flex", where + "the shell's loader painted when the pane started loading: %r" % (ls,))
+                self.assertEqual(ls.get("loaderDisplay"), "flex", where + "…with the romp loader inside it: %r" % (ls,))
+                self.assertGreater(ls.get("height", 0), 0, where + "…with a box: %r" % (ls,))
+                self.assertLessEqual(ls.get("bottom", 1e9), ls.get("barTop", 0) + 1, where + "…that stops at the tab bar (the bar stays tappable): %r" % (ls,))
 
     # ---- D2's count pin (2026-09-18): which panes parked, through the wsState words the driver recorded ----
     def _parked(self, name, r, m):
@@ -483,8 +516,12 @@ class ReturnFromBackground(unittest.TestCase):
         parked_apps = sorted({w.get("app") for w in words if w.get("state") == "parked"})
         if r.get("shell") == "phone":
             dialing = {VISIBLE, "feed"}
-            self.assertEqual(parked_apps, sorted(set(_eager("phone", r.get("tapped"))) - dialing),
-                             where + "every pane the shell has loaded but the visible chat and the exempt feed parks at the return; a lazy pane has no shim to park (parked words: %r)" % (parked_apps,))
+            if r.get("tapped") in LAZY_PHONE:
+                expected = sorted(set(_eager("phone", r.get("tapped"))) - dialing)
+                self.assertTrue(expected, where + "a leg that tapped a lazy pane expects it parked (the derivation yielded nothing: tapped %r)" % (r.get("tapped"),))   # review round 1 (tests-1): a derived-empty expectation is not a witness
+                self.assertEqual(parked_apps, expected, where + "the tapped pane, loaded before the suspend and off screen at the return, parks; the visible chat and the exempt feed dial (parked words: %r)" % (parked_apps,))
+            else:
+                self.assertEqual(parked_apps, [], where + "no lazy pane loaded (a tap on the chat is a tap on an eager pane): nothing parks, a lazy pane has no shim to park (parked words: %r)" % (parked_apps,))
             for app in parked_apps:
                 self.assertEqual([w.get("state") for w in words if w.get("app") == app].count("parked"), 1, where + "%s says parked once: %r" % (app, words))
                 self.assertNotIn(app, m["wsopenReturn"], where + "a parked pane dials nothing at the return (kernel wsopen by app: %r)" % (m["wsopenReturn"],))
@@ -511,6 +548,7 @@ class ReturnFromBackground(unittest.TestCase):
         # the precondition of the measurement: every pane socket was up before the suspend (a pane that never connected
         # would file no return row and the storm would be undercounted)
         eager = _eager(r.get("shell"), r.get("tapped"))   # the panes with a document at the suspend: the boot's, plus one a leg tapped
+        self.assertGreaterEqual(len(eager), 2, where + "the eager set holds at least the chat and the feed: %r" % (eager,))   # a derivation that yields nothing must not pass the comparisons below
         self.assertEqual(sorted(r.get("bootUpApps") or []), sorted(_eager(r.get("shell"))),
                          where + "every eager pane's shim said wsState up at boot, and no lazy pane said anything (the boot wait ends before any tap): %r (frames %r)" % (r.get("bootUpApps"), r.get("frames")))
         self.assertGreaterEqual(r.get("closedAtSuspend", 0), len(eager),

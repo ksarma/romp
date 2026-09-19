@@ -464,7 +464,9 @@ test("review round 1 (2026-09-19): the gate's show half, the chat pane's show re
   // F6 (the coordinator's ruling: chain-wide): no layout read in the gate's code or at its call sites
   const SK = fs.readFileSync(path.join(WEBVIEW, "skeleton-tabs.ts"), "utf8");
   assert.doesNotMatch(SK, /phoneLayout|parentMobile|__rompMobileOn|matchMedia/, "skeleton-tabs.ts reads no layout: the gate runs on every layout");
-  for (const line of RENDER.split("\n").filter((l) => /gateOnFrame\(|gateOnStrip\(|gateOnShow\(|onSocketUp\(skeletonTabs/.test(l))) {
+  const gateLines = RENDER.split("\n").filter((l) => /gateOnFrame\(|gateOnStrip\(|gateOnShow\(|onSocketUp\(skeletonTabs/.test(l));
+  assert.ok(gateLines.length >= 5, "the gate's call sites were found (a filter that matched nothing would assert nothing below): " + gateLines.length);
+  for (const line of gateLines) {
     assert.doesNotMatch(line, /phoneLayout|parentMobile|__rompMobileOn/, "no layout read at a gate call site: " + line.trim().slice(0, 80));
   }
 });

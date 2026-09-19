@@ -35,6 +35,9 @@ const APPS = cfg.apps || ["chat", "timeline", "fleet", "feed", "waiting", "files
 // Waiting pane load on their first tap, so their iframes sit at about:blank with no shim and no socket; the desktop loads all six)
 const EAGER = cfg.eagerApps || APPS;
 const FRESH_APPS = cfg.freshApps || APPS.filter((a) => a !== "files");   // the Files pane gets no resync frame, so it never files return-fresh
+// a derived set that came out empty would end the boot wait and the fresh wait at once with nothing witnessed (review round 2,
+// 2026-09-19: every derived expectation must fail when the derivation yields nothing), so the driver refuses it
+if (!EAGER.length || !FRESH_APPS.length) { console.error("empty eager or fresh set in cfg: " + JSON.stringify({ eager: EAGER, fresh: FRESH_APPS })); process.exit(5); }
 const now = () => Date.now();
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const out = { engine, shell: cfg.shell, regime: cfg.regime, outageMs: cfg.outageMs, hiddenDwellMs: cfg.hiddenDwellMs,
@@ -154,6 +157,17 @@ const install = (opts) => {
       (T.__labVis = T.__labVis || []).push({ doc, id, state: document.visibilityState, t: Date.now(), n: (T.__labVisN = (T.__labVisN || 0) + 1) });
     } catch (e) { /* cross-origin */ }
   }, true);
+  // the feed pane's MODEL, read without painting it (review round 1, regression-3): the shim hands every local frame to
+  // window.__rompFed.inbound, so the feed frame's facade is wrapped the moment federation.js publishes it (an accessor armed
+  // before any page script; the pane's own registrations are untouched) and the last full feed frame's ask count is kept
+  if (location.pathname === "/feed" && w.__rompFed === undefined && !w.__labFedHook) {
+    w.__labFedHook = true; w.__labFeed = { asks: -1, fulls: 0, deltas: 0 };
+    let real;
+    Object.defineProperty(w, "__rompFed", { configurable: true, get: () => real, set: (v) => {
+      real = v;
+      if (v && typeof v.inbound === "function") { const orig = v.inbound; v.inbound = (h, m) => { try { if (m && m.type === "feed" && Array.isArray(m.asks)) { w.__labFeed.asks = m.asks.length; w.__labFeed.fulls++; } else if (m && m.type === "feedDelta") w.__labFeed.deltas++; } catch (e) { /* counting only */ } return orig(h, m); }; }
+    } });
+  }
   if (w === w.top && !w.__labTopInit) {
     w.__labTopInit = true;   // once per window: the shell's document is never replaced
     if (opts.bootTab) { try { localStorage.setItem("romp-mobile-tab", opts.bootTab); } catch (e) { /* no storage */ } }   // the tab the phone was left on (stage 0: the boot tab decides which panes load at boot)
@@ -233,6 +247,49 @@ try {
   // the iframes' src after the settle: the lazy contract read off the DOM (a lazy pane has none until its tap; every eager pane has its page)
   out.srcAtBoot = await page.evaluate(() => Object.fromEntries(Array.from(document.querySelectorAll("iframe[id^=f-]")).map((f) => [f.id.slice(2), f.getAttribute("src")])));
   out.wsWordsAtBoot = await page.evaluate(() => (window.__labWs || []).map((w) => w.app));   // every pane that said anything before the tap or the suspend
+  // THE FEED'S FIRST PAINT (review round 1, regression-3; 2026-09-19): the change's central paint decision witnessed in a real engine.
+  // The feed frame's first frame is delivered (the shim stamps __rompPerfMarks.firstFrame) and applied; on the phone behind another
+  // tab the board is NOT painted (zero [data-key] cards, the pane's own loader still up), and the Feed tab's first show paints it
+  // (cards > 0, the loader retired); on the desktop, and on a phone opened on the Feed tab, the first frame paints on its own.
+  const feedFrame = () => page.frames().find((f) => { try { return new URL(f.url()).pathname === "/feed"; } catch (e) { return false; } });
+  // cards: the [data-key] elements render() stamped; modelCards: the asks the last full feed frame handed to the pane carried
+  // (the install's wrap of __rompFed.inbound, above), so "held" is read as a model with cards and a DOM with none, never as a
+  // DOM that is empty because nothing has arrived
+  const feedRead = () => { const f = feedFrame(); return f ? f.evaluate(() => ({ cards: document.querySelectorAll("#feed-list [data-key]").length, firstFrame: (window.__rompPerfMarks || {}).firstFrame, spinGone: !!(document.getElementById("pane-spin") && document.getElementById("pane-spin").classList.contains("gone")),
+    modelCards: (window.__labFeed || {}).asks === undefined ? -1 : window.__labFeed.asks, feedFrames: { fulls: (window.__labFeed || {}).fulls, deltas: (window.__labFeed || {}).deltas } })).catch(() => null) : Promise.resolve(null); };
+  {
+    const feedDeadline = now() + 15000;
+    let fr = null;
+    while (now() < feedDeadline) {   // until the feed's model HOLDS cards (a read before it would say 0 for nothing)
+      fr = await feedRead();
+      if (fr && fr.firstFrame !== undefined && fr.modelCards > 0 && (cfg.shell === "phone" && cfg.bootTab !== "feed" ? true : fr.cards > 0)) break;
+      await sleep(150);
+    }
+    out.feedBeforeShow = fr;
+    if (cfg.shell === "phone" && cfg.bootTab !== "feed") {
+      await sleep(300);   // the hold is a standing state: a beat after the delivery the board is still unpainted
+      out.feedBeforeShow = await feedRead();
+      out.t.feedShow = now();
+      await page.click("#mtabs button[data-pane=feed]");   // the Feed tab's first show
+      const showDeadline = now() + 15000;
+      let after = null;
+      while (now() < showDeadline) { after = await feedRead(); if (after && after.cards > 0 && after.spinGone) break; await sleep(100); }
+      out.feedAfterShow = { ...(after || {}), ms: after && after.cards > 0 ? now() - out.t.feedShow : -1 };
+      await page.click("#mtabs button[data-pane=" + (cfg.bootTab || "chat") + "]");   // back to the boot tab (a Feed show-and-hide: the feed is exempt from parking, so the parked set below is unchanged)
+      await sleep(300);
+    }
+  }
+  // THE SHELL LOADER PAINTS (review round 1, ui-2): armed BEFORE the tap, an observer on the body's class list records the loader's
+  // computed style and box the moment `pane-loading` is added (the socket comes up ~170 ms after the tap, so a read after it races)
+  if (cfg.tapPane) await page.evaluate(() => {
+    window.__labLoaderSeen = null;
+    new MutationObserver(() => {
+      if (window.__labLoaderSeen || !document.body.classList.contains("pane-loading")) return;
+      const el = document.getElementById("pane-load"), bar = document.getElementById("mtabs");
+      const r = el.getBoundingClientRect(), b = bar.getBoundingClientRect();
+      window.__labLoaderSeen = { display: getComputedStyle(el).display, loaderDisplay: getComputedStyle(el.querySelector(".rl-in")).display, height: r.height, bottom: r.bottom, barTop: b.top, t: Date.now() };
+    }).observe(document.body, { attributes: true, attributeFilter: ["class"] });
+  });
   // the TAB-TAP leg (stage 0): tap a lazy pane's tab, wait for its socket (its document loads on the tap), then go back to the chat,
   // so the return below finds a tapped pane off screen: the parked-pane contract (D2) exercised on a pane that did not exist at boot
   if (cfg.tapPane) {
@@ -276,6 +333,7 @@ try {
       await sleep(100);
     }
     out.tapUpMs = tapUp[cfg.tapPane] === "up" ? now() - (out.t.retap || out.t.tap) : -1;   // from the tap that loaded it (the re-tap, under abortPane)
+    out.loaderSeen = await page.evaluate(() => window.__labLoaderSeen || null);   // what the observer saw the moment the loader went up
     out.srcAfterTap = await page.evaluate(() => Object.fromEntries(Array.from(document.querySelectorAll("iframe[id^=f-]")).map((f) => [f.id.slice(2), f.getAttribute("src")])));
     out.loadingAfterTap = await page.evaluate(() => ({ body: document.body.classList.contains("pane-loading"), failed: document.body.classList.contains("pane-failed"), panes: Array.from(document.querySelectorAll(".pane.loading")).map((d) => d.id), failedPanes: Array.from(document.querySelectorAll(".pane.failed")).map((d) => d.id) }));
     await page.click("#mtabs button[data-pane=chat]");
@@ -339,6 +397,9 @@ try {
   out.freshSeenMsAfterOutage = freshSeen;   // wall clock at which the driver first saw each pane's row, from the outage's end
   out.t.fresh = now();
   await sleep(cfg.settleMs || 1500);       // wsconnfail rides the next open; the perf minute rows flush on their own clock
+  // the chain after the return (the owner's answer, 2026-09-19): the chat's background asks (needFull why=prefetch) on the dials
+  // made from the return on. On the phone the redial reloads the visible tab alone; the desktop's chain runs as before.
+  out.prefetchAfterReturn = out.dials.filter((d) => d.app === "chat" && d.t >= out.t.return).reduce((n, d) => n + (d.needFull || []).filter((w) => w === "prefetch").length, 0);
   if (cfg.shots) await page.screenshot({ path: cfg.shots + "-fresh.png" }).catch(() => {});
   out.t.done = now();
   out.vis = await page.evaluate(() => window.__labVis || []);

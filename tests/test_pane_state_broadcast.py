@@ -1270,6 +1270,7 @@ class LazyPanes(unittest.TestCase):
         self.assertEqual(b["sets"], {"feed": 1}, "one src set at boot: the feed's")
         self.assertEqual(b["loading"], ["feed"], "the feed's .pane carries the loading class until its document loads")
         self.assertFalse(b["bodyLoading"], "the shown tab (the chat) is not loading: no loader over it")
+        self.assertEqual(sorted(b["hidden"]), ["chat", "feed", "files", "fleet", "timeline", "waiting"], "the six panes (the read's keys, before a comprehension over them stands in for an expectation)")
         self.assertEqual(b["hidden"], {k: False for k in b["hidden"]}, "every tab is a place to go")
         self.assertEqual(b["promote"], "function", "window.__rompPanePromote is the one road")
 
@@ -1417,6 +1418,7 @@ class LazyPanes(unittest.TestCase):
     def test_the_desktop_loads_every_pane_at_boot_as_before_with_no_loading_state(self):
         o = _lazy("STORE['romp:settings'] = JSON.stringify({ showFilesControl: true });", _LAZY_DESKTOP_DRIVER, phone=False)
         b = o["boot"]
+        self.assertEqual(sorted(b["src"]), ["chat", "feed", "files", "fleet", "timeline", "waiting"], "the six panes were read")
         self.assertEqual(b["src"], {k: "/" + k for k in b["src"]}, "every pane has its document at boot on the desktop")
         self.assertEqual(b["lazy"], {k: None for k in b["lazy"]}, "nothing is parked")
         self.assertEqual(b["sets"], {"waiting": 1, "files": 1, "timeline": 1, "fleet": 1, "feed": 1}, "the desktop-panes script promotes the Waiting and Files panes (no gear row; its own script since review round 1), the controller the three optional panes")
@@ -1438,6 +1440,7 @@ class LazyPanes(unittest.TestCase):
         o = _lazy("STORE['romp:settings'] = JSON.stringify({ showFilesControl: true }); STORE['romp-mobile-tab'] = 'chat';", _LAZY_FLIP_DRIVER)
         self.assertEqual(o["boot"]["lazy"], {"chat": None, "feed": None, "files": "/files", "timeline": "/timeline", "fleet": "/fleet", "waiting": "/waiting"})
         f = o["flipped"]
+        self.assertEqual(sorted(f["src"]), ["chat", "feed", "files", "fleet", "timeline", "waiting"], "the six panes were read")
         self.assertEqual(f["src"], {k: "/" + k for k in f["src"]}, "the grid shows the panes without a tap: all promoted on the media query's change event")
         self.assertEqual(f["lazy"], {k: None for k in f["lazy"]})
         self.assertEqual(f["sets"], {"feed": 1, "timeline": 1, "fleet": 1, "waiting": 1, "files": 1})
