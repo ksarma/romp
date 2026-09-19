@@ -807,7 +807,13 @@ class HostProcess(unittest.TestCase):
 
     def test_a_journal_write_fault_is_a_fault_frame_not_the_clis_death(self):
         # finding 3: a failed journal write used to end the read loop and be reported as the CLI dying
-        host, sock, spec = self._start(_test_journal_fault_at=1)
+        # The journal read below waits for the records to land (2026-09-19): the host sends a record's `out` frame one
+        # event-loop turn BEFORE its writer task appends it (publication precedes durability, by design: the module
+        # docstring of kernel/session_host.py), so a read at the result frame can see [0] where [0, 2] land a moment later,
+        # as a loaded full-suite run did. The wait is _journal_landed, the turn test's precedent (4ec6da845); the writer
+        # delay makes the late landing certain instead of a matter of scheduling. Of the two sibling tests that wait, the
+        # lagging-writer one carries the delay knob (at 0.4 s) and the turn test does not.
+        host, sock, spec = self._start(_test_journal_fault_at=1, _test_journal_delay_s=0.05)
         k, _ = self._attach(sock)
         k.send({"t": "in", "data": self._user("hi sleep=0.2")})
         res = k.recv_until(lambda f: f.get("t") == "out" and f["data"].get("type") == "result")
@@ -818,9 +824,10 @@ class HostProcess(unittest.TestCase):
         self.assertIn("journal-write-failed", kinds); self.assertNotIn("cli-exited", kinds)
         # live delivery was complete (the kernel got every record) even though offset 1 is missing from the journal
         self.assertEqual([f["offset"] for f in k.outs()], list(range(len(k.outs()))))
-        offs = [o for o, _ in sh.read_journal_dir(os.path.join(self.state, "hosts", SID))]
+        landed = [o for o in range(len(k.outs())) if o != 1]               # every live offset but the faulted one
+        offs = [o for o, _ in self._journal_landed(len(landed))]          # readers skip the gap marker, so the count is theirs
         self.assertNotIn(1, offs, "the failed record is a gap the readers skip")
-        self.assertEqual(offs, [o for o in range(len(k.outs())) if o != 1], "the numbering around the gap holds")
+        self.assertEqual(offs, landed, "the numbering around the gap holds")
         k.send({"t": "end", "grace": 10})
         ex = k.recv_until(lambda f: f.get("t") == "exit")
         self.assertEqual(ex["cause"], "end")
