@@ -288,9 +288,9 @@ const RECORDED: Divergence[] = [
   // title left open, so the split is pinned through `<foreignObject>` and `<desc>`. Before decision 52 every member
   // agreed: the integration point was the parser's element and the closed element HTML inside it, `ma5 y5` and `ma7 y7` on both sides
   // with two paint marks over the PR's base tree (c25a2b319). A paragraph holding an inline `<math>` with text inside it is refused with
-  // the mismatch sentence on both trees whatever follows the integration point (`<math><mi>x</mi></math>` too; `<math></math>` maps),
-  // so an entry's verdicts differ from the base tree's in the later blocks, and in the tag's paragraph only where the math held no text
-  // (`<br>`, `<img>`, `<hr>` and `<b/>`). anchor-map-html-rules.test.ts pins the reader's side of the first representative.
+  // the mismatch sentence on both trees whatever follows the integration point (`<math><mi>x</mi></math>` too; `<math></math>` maps);
+  // each entry's own `verdicts` say what its passages do, and the entries speak for themselves. anchor-map-html-rules.test.ts pins the
+  // reader's side of the first representative.
   { name: "an mtext and a first p left open inside an inline math, then `<p>b</p>` closed: the closed p breaks out of the math", src: "ma5 <math><mtext><p>a<p>b</p></math> y5\n", dom: "ma5 b y5", reader: "ma5 y5",
     why: "the mtext and the first p, with no end tags of their own, are literal text inside the math; the closed `<p>b</p>` stands in the math's foreign content with no integration point around it, so the parser breaks out at it and shows `b`, where the reader drops the math whole (before decision 52: `ma5 y5` on both sides)" },
   { name: "an mtext left open inside an inline math, then a closed b: the b breaks out of the math", src: "ma7 <math><mtext><b>x</b></math> y7\n", dom: "ma7 x y7", reader: "ma7 y7",
