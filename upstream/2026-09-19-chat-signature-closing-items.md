@@ -3,7 +3,7 @@ title: Chat signature stage 1: the closing check's items (a counted-call premise
 status: candidate
 where: kernel/kernel.py (`_stat_counting_install` docstring: every class of difference from the builtin the closing check found unnamed is named, the 3.14 `__annotate__` attribute among them, the wraps count is four and the derivation is the WrapperDifferential test; the `memos.chatSig` block comment drops the strace reading that carried no command); tests/test_kernel_delta_send.py (`ByteIdenticalFrames._stats_world`: premise 4 gains one counted call per wrapper beside the marker check; `test_a_displaced_stat_wrapper_fails_the_premise_not_a_count` and the world docstring lose the pre-rebase figures and name the run behind the posix.lstat case; `test_a_marker_carrying_wrapper_that_does_not_count_once_fails_the_premise_not_a_count`: three kinds of marker-carrying world that do not count once are refused on each of the four wrappers and one equivalent wrapper is accepted; `WrapperDifferential`: the docstring's list of differences is recomputed on the interpreter under test); tests/test_perf_stats.py (`_TIME_WORDS` reads an abbreviated unit after a number word, lower-case and without `of`, and stops at a hyphen compound; `_TIME_FIGURE` admits a leading-dot decimal; `_MICROSECOND_REMEDY`, one remedy string for both refusals, names the reword; `test_the_microsecond_figures_live_in_the_reference_alone` loses the superseded definition; `test_the_microsecond_predicate_reads_every_spelling_the_closing_check_planted` gains the escaped, refused-by-design and widened legitimate lists)
 added: 2026-09-19
-pr:
+pr: 856
 tier: docs
 offered:
 closed:
