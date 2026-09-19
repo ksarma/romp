@@ -188,7 +188,8 @@ def _assert_stack_sample(tc, row):
     position or by function (2026-09-19): a thread parked on an Event is sampled at wait, at the lock acquire inside it
     (Condition.__enter__ on the way into Event.wait), at a helper wait calls (_release_save, _is_owned), or in run
     before wait, and the innermost-frame pins that stood in four tests here read `wait (` and went red on the
-    free-threaded 3.14 build when the sampler caught __enter__ (3 module runs of 10)."""
+    free-threaded 3.14 build when the sampler caught __enter__ (in some module runs there and not in others; no tally is
+    kept, since none recomputes)."""
     tc.assertTrue(row["frames"], row)
     for f in row["frames"]:
         m = _STACK_FRAME.fullmatch(f)
