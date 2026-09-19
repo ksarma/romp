@@ -8,9 +8,13 @@
 // flow module exists and both viewers call it where the section says; the words quoted in the section are the module's
 // literals; both sheets carry the two rules right after the `.fileview-body` line inside byte-equal print blocks; the
 // button starts disabled and both viewers report the body at the seatings and the panes the section names; the guide's
-// sentence is the one the section describes and the old sentence is gone; and the module list is two-way (every
-// ui/webview/file-print*.test.ts is named in the section, and every module the section names exists, this one
-// included). Synthetic: only the repo's own text.
+// sentence is the one the section describes, carries the palette clause the first review added, agrees with the Python
+// pin of that clause (tests/test_guide_print_palette_chord.py, whose SENTENCE literal is read here, so the two pins cannot
+// pull the guide two ways again), and the old sentence is gone; and the module list is two-way (every
+// ui/webview/file-print*.test.ts the section's `ls` produces is named in the section and the count the section gives is
+// the listing's, read from its sentence rather than fixed here; every test module that claims the follow-on in its own
+// text, under ui/webview, tools or tests, is named too; and every module the section names exists, this one included).
+// Synthetic: only the repo's own text.
 // Run: node --test tools/markdown-viewer-plan-print.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -195,7 +199,19 @@ test('P5: the guide\'s printing sentence is the one the section describes, insid
   assert.ok(at >= 0, 'the paragraph the section names');
   const para = guide.slice(at, guide.indexOf('\n\n', at)).replace(/\s+/g, ' ');
   const withWords = literalAfter(flow, 'export const WITH_WORDS = ');
-  assert.ok(para.includes('**Print** in the file\'s bar, or **Cmd+P** on a Mac and **Ctrl+P** elsewhere while a file is open, prints the file alone, black on white, with its pictures loaded, across as many pages as it needs. Pictures from other hosts are loaded for the print only when you choose **' + withWords + '**; a PDF prints itself, or opens in a new tab to print from when the browser cannot print it in place.'));
+  // The first sentence, with the clause the first review added (the chord is the dashboard's palette chord too); then the
+  // gate's sentence with the module's own words; then the PDF's.
+  const first = '**Print** in the file\'s bar, or **Cmd+P** on a Mac and **Ctrl+P** elsewhere while a file is open, prints the file alone, black on white, with its pictures loaded, across as many pages as it needs; in the dashboard that key also opens the command palette, which **Escape** closes.';
+  const rest = ' Pictures from other hosts are loaded for the print only when you choose **' + withWords + '**; a PDF prints itself, or opens in a new tab to print from when the browser cannot print it in place.';
+  assert.ok(para.includes(first + rest), 'the guide\'s printing sentence, whole: ' + JSON.stringify(para));
+  assert.ok(!para.includes('as many pages as it needs. Pictures'), 'the sentence before the palette clause is gone');
+  // The Python pin of the palette clause holds the same first sentence: read its SENTENCE literal (adjacent string
+  // pieces inside one pair of parentheses) so a rewording of the guide fails both pins or neither.
+  const py = read('tests', 'test_guide_print_palette_chord.py');
+  const lit = /\nSENTENCE = \(([\s\S]*?)\)\n/.exec(py);
+  assert.ok(lit, 'the Python pin holds the sentence in a SENTENCE literal');
+  const pySentence = [...lit[1].matchAll(/"((?:[^"\\]|\\.)*)"/g)].map((m) => m[1]).join('');
+  assert.equal(pySentence, first, 'the Python pin and this pin hold the same first sentence');
   assert.ok(!guide.includes('Printing the page while a rendered file is open'), 'the old sentence, which described the browser\'s own print, is gone');
   assert.ok(section.includes('The one sentence in docs/guide.md\'s "Opening a markdown document" paragraph now says that Print in the file\'s bar, or the chord with a file open, prints the file alone, black on white, with its pictures loaded'));
   assert.ok(guide.includes('The printed page\nleaves out the title bar, the Comments panel and the Copy buttons.'), 'the Files chapter\'s sentence the section calls unchanged');
@@ -246,20 +262,42 @@ test('P7: the flow starts disabled and the body event moves it, the button wears
 
 // ── the tests the section names, two-way ───────────────────────────────────────────────────────────
 
-test('every ui/webview/file-print*.test.ts is named in the section, every module the section names exists, and the section names this module', () => {
+const NUMBER_WORDS = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10 };
+/** The test modules under `dir` whose names match `re` and whose own text claims the print follow-on, by the section's
+ *  head or by the phrase every leg's header uses; a module that says it tests the follow-on is one the record must name. */
+const CLAIM = /print follow-on|Follow-on: Print \(2026-09-19\)/;
+const claimants = (dir, re) => fs.readdirSync(path.join(REPO, ...dir)).filter((f) => re.test(f) && CLAIM.test(read(...dir, f))).sort();
+
+test('every ui/webview/file-print*.test.ts is named in the section and the count the section gives is the listing\'s, every module the section names exists, and the section names this module', () => {
   const testsAt = section.indexOf('**Tests.**');
   const tests = section.slice(testsAt);
   const onDisk = fs.readdirSync(path.join(REPO, 'ui', 'webview')).filter((f) => /^file-print.*\.test\.ts$/.test(f)).sort();
   assert.ok(onDisk.length >= 3, 'the follow-on\'s modules are on disk: ' + onDisk.join(', '));
   for (const f of onDisk) assert.ok(tests.includes('ui/webview/' + f), f + ' is named in the Tests list');
+  // The section names the command that produces the list and says how many modules it lists; the count is read from
+  // the sentence and compared with the listing, so a module added without the sentence following fails here.
+  const count = /`ls ui\/webview\/file-print\*\.test\.ts` lists the follow-on's (\w+) modules/.exec(section);
+  assert.ok(count, 'the section names the command that produces the list and counts its modules');
+  assert.equal(NUMBER_WORDS[count[1]] ?? Number(count[1]), onDisk.length, 'the section says the listing produces ' + count[1] + ' modules; today it produces ' + onDisk.length + ': ' + onDisk.join(', '));
   const named = [...new Set([...section.matchAll(/\b([\w-]+\.test\.(?:ts|mjs))\b/g)].map((m) => m[1]))];
   assert.ok(named.length >= onDisk.length + 9, 'the section names the follow-on\'s modules and the standing suites (' + named.length + ')');
   for (const f of named) {
     const where = f.endsWith('.mjs') ? ['tools', f] : ['ui', 'webview', f];
     assert.ok(exists(...where), f + ' exists under ' + where.slice(0, -1).join('/'));
   }
+  for (const f of new Set([...section.matchAll(/\btests\/(test_\w+\.py)\b/g)].map((m) => m[1]))) assert.ok(exists('tests', f), f + ' exists under tests');
   assert.ok(named.includes(path.basename(fileURLToPath(import.meta.url))), 'the section names this pin');
-  assert.ok(section.includes('`ls ui/webview/file-print*.test.ts` lists the follow-on\'s three modules'), 'the section names the command that produces the list');
-  assert.equal(onDisk.length, 3, 'and the listing produces three today');
   assert.ok(exists('ui', 'webview', 'file-view-text-size.test.ts'), 'the leg P1 names');
+});
+
+test('every test module that claims the print follow-on in its own text is named in the section\'s Tests list: the browser legs outside the file-print* stem and the Python pin among them', () => {
+  const tests = section.slice(section.indexOf('**Tests.**'));
+  const legs = claimants(['ui', 'webview'], /\.test\.ts$/);
+  const pins = claimants(['tools'], /\.test\.mjs$/);
+  const py = claimants(['tests'], /^test_\w+\.py$/);
+  assert.ok(legs.length >= 4 && pins.length >= 1 && py.length >= 1, 'the claimants are on disk: ' + [...legs, ...pins, ...py].join(', '));
+  assert.ok(legs.some((f) => !/^file-print/.test(f)), 'at least one leg lies outside the file-print* stem, which is why this test exists');
+  for (const f of legs) assert.ok(tests.includes('ui/webview/' + f), 'ui/webview/' + f + ' claims the follow-on and is named in the Tests list');
+  for (const f of pins) assert.ok(tests.includes('tools/' + f), 'tools/' + f + ' claims the follow-on and is named in the Tests list');
+  for (const f of py) assert.ok(tests.includes('tests/' + f), 'tests/' + f + ' claims the follow-on and is named in the Tests list');
 });

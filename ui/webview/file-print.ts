@@ -10,7 +10,14 @@
 //      unlisted host unless the person chose it). "With them" loads every host the placeholders name through
 //      loadGatedHost, the function the placeholder's own click runs, so the requests are the ones a click on each makes;
 //      its title names those hosts (the line counts pictures, by contract, and a placeholder naming two hosts says "and 1
-//      more host" in its own label, so the title is where the hosts a press grants are read together).
+//      more host" in its own label, so the title is where the hosts a press grants are read together). The hosts are read
+//      at the arm and kept: "with them" loads that list and no other, so the title and the loads are one list by
+//      construction. A body repainted under the armed line (the host's `body` report: the changed-on-disk bar's Reload
+//      landing, a Rendered or Raw pick) is counted again (the driver's `recount`): over placeholders the line stands with
+//      the new count and the title with the new hosts, in place; over none the line goes, since the question it asked is
+//      moot, and the next press prints. Before this the line and the title stood as the press left them while "with
+//      them" read the hosts at the click, so a Reload that brought a placeholder on a new host had the click fetch from a
+//      host the title never named (the second review, 2026-09-19).
 //   2. Then the wait: every <img> in the body reaches complete (its load or its error), and a <video poster> or an svg
 //      <image> is awaited through a probe Image at the same URL (neither element reports completeness; the probe asks the
 //      browser for the URL the element itself fetched, so no other host is reached), bounded by PRINT_SETTLE_MS, 8 s,
@@ -29,9 +36,13 @@
 // document keydown listener per open, in the capture phase, so an Escape while armed is stopped before the viewer's own
 // Escape (a bubble listener on the document, which closes the card) and the chord is prevented before the browser's raw
 // print runs; the host's close hook removes it with the viewer. Nothing else is registered. Three keys are left alone by
-// that listener: an Escape from inside a control that owns its Escape (a menu, a listbox, a dialog: the viewer's Outline
-// popover is a role=menu whose Escape closes it and puts the keyboard back on its button), which acts on that control and
-// leaves the bar armed for the next Escape; a chord a listener before this one already prevented (the dashboard shell's
+// that listener: an Escape that is some control's own (a key a listener ahead of this one already stopped, read through
+// the event's stop flag: the viewer's text-size flyout is dismissed by a document listener wired before this per-open one,
+// which closes the flyout and stops the key; ownsEscape: the keyboard inside a menu, a listbox or a dialog, the WAI-ARIA
+// patterns whose Escape closes the widget, the viewer's Outline popover among them, or a popup standing open in the card
+// by its trigger's aria-haspopup with aria-expanded true, one whose own handler runs after this listener; or a text field,
+// whose own Escape is the field's, the Comments composer's cancel among them), which acts on that control and leaves the
+// bar armed for the next Escape; a chord a listener before this one already prevented (the dashboard shell's
 // command palette dispatcher, palette-main.ts, which claims Mod+P on every pane document from the frame's load, so in the
 // shell the chord is the palette's and the button prints); and a text field's chord. A held chord's repeats are prevented
 // too, since the browser's default for each is its own print, but only the first keydown is a press (one per repeat would
@@ -91,7 +102,8 @@ export type PrintEvent =
   | { kind: "prepare"; pending: number }                 // the driver, after the choice: the pictures still loading
   | { kind: "ready" }                                    // every picture settled, or the deadline
   | { kind: "printed" }                                  // afterprint, or print returned
-  | { kind: "body"; in: boolean };                       // the host: the body holds the file's content (true), or the loader or a failure pane took it (false)
+  | { kind: "body"; in: boolean }                        // the host: the body holds the file's content (true), or the loader or a failure pane took it (false)
+  | { kind: "recount"; gated: number };                  // the driver, after a repaint under the armed line: the placeholders the body holds now
 /** What the driver does for a step: `arm` shows the line with its two buttons, `disarm` (a second press, Escape, or the body
  *  going out, when the driver cancels a running wait too) and `rest` remove the line and restore the button, `activate` loads
  *  every gated host and then prepares, `skip` prepares over the placeholders as they stand, `wait` shows the preparing line,
@@ -104,13 +116,16 @@ const begin = (pending: number): { state: PrintState; act: PrintAct } =>
 
 /** The next state and the act for it. The host's `body` event comes first: the body going out disables from every phase
  *  and disarms (the line goes, and the driver cancels a wait), and its arrival rests a disabled flow and changes nothing
- *  elsewhere (during the wait the driver re-aims the wait at the repainted body itself; the phase holds). Then, by phase:
+ *  elsewhere by itself (the driver then reads the repainted body: during the wait it re-aims the wait at it, the phase
+ *  holding; under the armed line it feeds `recount` with the placeholders the body holds now). Then, by phase:
  *  while disabled every other event changes nothing. A press while resting over a PDF prints the PDF itself (`printPdf`),
  *  whatever the counts (a frame holds no placeholder and no picture); over a document it arms over any gated placeholder
- *  and otherwise begins the wait (or prints at once with nothing pending); while armed a press or Escape disarms and a
- *  choice activates or skips, the driver's `prepare` then beginning the wait; `ready` prints; `printed` rests. Every other
+ *  and otherwise begins the wait (or prints at once with nothing pending); while armed a press or Escape disarms, a
+ *  choice activates or skips, the driver's `prepare` then beginning the wait, and a `recount` arms again over the new count
+ *  (`arm`: the driver rewrites the line and the title in place) or disarms over none (the placeholders the line asked about
+ *  are gone, so the question is moot; the next press prints); `ready` prints; `printed` rests. Every other
  *  pairing changes nothing: a press or an Escape during the wait or the print, an Escape at rest, a late `ready` after a
- *  rest, a `printed` after the body went out (the button stays disabled). */
+ *  rest, a `printed` after the body went out (the button stays disabled), a `recount` in any phase but armed. */
 export function step(s: PrintState, ev: PrintEvent): { state: PrintState; act: PrintAct } {
   if (ev.kind === "body") {
     if (!ev.in) return s.phase === "disabled" ? { state: s, act: "none" } : { state: DISABLED, act: "disarm" };
@@ -127,6 +142,7 @@ export function step(s: PrintState, ev: PrintEvent): { state: PrintState; act: P
       if (ev.kind === "press" || ev.kind === "escape") return { state: RESTING, act: "disarm" };
       if (ev.kind === "choose") return { state: s, act: ev.withGated ? "activate" : "skip" };
       if (ev.kind === "prepare") return begin(ev.pending);
+      if (ev.kind === "recount") return ev.gated > 0 ? { state: { phase: "armed", gated: ev.gated, pending: 0 }, act: "arm" } : { state: RESTING, act: "disarm" };
       break;
     case "preparing":
       if (ev.kind === "ready") return { state: { phase: "printing", gated: 0, pending: 0 }, act: "print" };
@@ -178,9 +194,21 @@ export function isPrintChord(e: KeyLike): boolean {
  *  (a menu, the viewer's Outline popover among them; a listbox; a dialog). While the bar is armed an Escape from inside one
  *  is left to it, and the next Escape disarms. */
 export const OWN_ESCAPE_SEL = '[role="menu"], [role="menubar"], [role="listbox"], [role="dialog"], [role="alertdialog"]';
-export function ownsEscape(target: EventTarget | null): boolean {
+/** An open popup's trigger: aria-haspopup with aria-expanded true, the menu-button and disclosure patterns (the viewer's
+ *  text-size flyout, a role=group under a trigger, and its Outline button). Such a popup's Escape closes it from wherever
+ *  the keyboard is, so while one stands open in the card the Escape is its, whatever the target. The rule reads the state
+ *  as the flow's listener finds it: a popup whose own Escape handler runs after that listener (a listener on the popup, or
+ *  one wired after the viewer's bar) is still open then; the flyout's dismiss runs ahead of it and has closed the flyout by
+ *  then, so that one is read through the stopped event instead (the driver's onKey). The Print button's own aria-expanded
+ *  while armed has no aria-haspopup and is not matched. */
+export const OPEN_POPUP_SEL = '[aria-haspopup][aria-expanded="true"]';
+/** `target` is inside a control that owns its Escape (OWN_ESCAPE_SEL), or `scope` (the card) holds an open popup
+ *  (OPEN_POPUP_SEL): the Escape is that control's, and the armed bar leaves it alone. A text field's Escape is the field's
+ *  too, but that is the host's `typing` predicate, read beside this. */
+export function ownsEscape(target: EventTarget | null, scope?: ParentNode | null): boolean {
   const t = target as Element | null;
-  return !!t && typeof t.closest === "function" && t.closest(OWN_ESCAPE_SEL) !== null;
+  if (!!t && typeof t.closest === "function" && t.closest(OWN_ESCAPE_SEL) !== null) return true;
+  return !!scope && typeof scope.querySelector === "function" && scope.querySelector(OPEN_POPUP_SEL) !== null;
 }
 
 // ── the pictures and the wait ────────────────────────────────────────────────────────────────────────
@@ -314,6 +342,8 @@ export function installFilePrint(host: PrintHost): { button: HTMLButtonElement; 
   btn.title = "Print"; btn.setAttribute("aria-label", "Print");
   let state: PrintState = DISABLED;            // the loader holds the body from the build: the host's bodyIn(true) at the first paint rests the flow
   let line: HTMLElement | null = null;
+  let withBtn: HTMLButtonElement | null = null;   // the armed line's "Print with them", while the line stands: a re-arm rewrites its title in place
+  let armedHosts: string[] = [];               // the hosts the armed line's press grants: read at the arm and at each re-arm, named in the with-button's title, and the list "with them" loads (one list, so the title names what the click fetches)
   let notice = false;                          // the line is the PDF flow's notice (the tab), standing at rest until the next press or the close
   let settle: Settle | null = null;
   let waitEnds = 0;                            // when the running wait's deadline falls (Date.now()): a re-aim keeps it and never extends it
@@ -333,7 +363,7 @@ export function installFilePrint(host: PrintHost): { button: HTMLButtonElement; 
   const dropLine = (): void => {
     if (line) {
       const held = !closed && line.contains(doc.activeElement);
-      line.remove(); line = null;
+      line.remove(); line = null; withBtn = null;
       if (held) btn.focus({ preventScroll: true });
     }
     notice = false;
@@ -416,24 +446,28 @@ export function installFilePrint(host: PrintHost): { button: HTMLButtonElement; 
     state = r.state;
     switch (r.act) {
       case "arm": {
-        const row = showLine(armedWords(state.gated));
-        const withWords = withTitle(gatedHosts());   // the hosts the press would grant, read together (the header)
-        for (const [words, withGated] of [[WITH_WORDS, true], [WITHOUT_WORDS, false]] as Array<[string, boolean]>) {
+        armedHosts = gatedHosts();               // the hosts the press would grant, read together (the header) and kept for the click
+        const words = armedWords(state.gated), withWords = withTitle(armedHosts);
+        if (line && withBtn) { line.firstChild!.textContent = words; withBtn.title = withWords; break; }   // a recount under a standing line: the words and the title follow the repainted body in place (the keyboard stays where it is, and the line moves no more than its words)
+        const row = showLine(words);
+        for (const [btnWords, withGated] of [[WITH_WORDS, true], [WITHOUT_WORDS, false]] as Array<[string, boolean]>) {
           const b = doc.createElement("button") as HTMLButtonElement;
-          b.type = "button"; b.textContent = words;
+          b.type = "button"; b.textContent = btnWords;
           b.className = "fileview-btn fileview-err-act";
           b.title = withGated ? withWords : WITHOUT_TITLE;
           b.addEventListener("click", () => { feed({ kind: "choose", withGated }); });
           row.appendChild(b);
+          if (withGated) withBtn = b;
         }
         break;
       }
       case "disarm": dropSettle(); dropLine(); break;   // the body going out during the wait: no wait survives a disarm
       case "rest": dropLine(); break;
       case "activate": {
-        // every host every placeholder names, through the gate's own load path: loadGatedHost is what the placeholder's
-        // click runs (file-view.ts loadGate), and a placeholder naming two hosts takes two clicks, so both hosts are loaded
-        const hosts = gatedHosts();
+        // every host the armed line's title names, through the gate's own load path: loadGatedHost is what the placeholder's
+        // click runs (file-view.ts loadGate), and a placeholder naming two hosts takes two clicks, so both hosts are loaded.
+        // The list is the arm's (re-read at each recount), never the body's at the click: the title and the loads are one list
+        const hosts = armedHosts;
         for (const h of hosts) loadGatedHost(h, doc);
         feed({ kind: "prepare", pending: beginWait() });
         return;
@@ -457,7 +491,8 @@ export function installFilePrint(host: PrintHost): { button: HTMLButtonElement; 
   btn.addEventListener("click", press);
   const onKey = (e: KeyboardEvent): void => {
     if (e.key === "Escape") {
-      if (state.phase !== "armed" || ownsEscape(e.target)) return;   // at rest the viewer's own Escape closes the card; from inside a menu or a dialog the Escape is that control's (the Outline popover closes and puts the keyboard back on its button), and the next one disarms
+      if (e.cancelBubble) return;                // a listener ahead of this one on the document stopped the key: it is that control's (the text-size flyout's dismiss, file-view.ts wireZoomDismiss, a capture listener wired before this per-open one, which closes the flyout and stops the event; stopPropagation stops no listener on the same node, and the flag, the DOM standard's alias for the stop propagation flag, is how a later one reads the claim). The bar stays armed for the next Escape
+      if (state.phase !== "armed" || ownsEscape(e.target, host.card) || host.typing()) return;   // at rest the viewer's own Escape closes the card; from inside a menu or a dialog, with a popup open in the card (its own handler running after this listener) or from a text field (the Comments composer, whose Escape cancels the draft) the Escape is that control's, and the next one disarms
       e.preventDefault(); e.stopPropagation();   // disarm alone: the viewer's own Escape, a bubble listener on the document, would close the card
       feed({ kind: "escape" });
       return;
@@ -478,10 +513,14 @@ export function installFilePrint(host: PrintHost): { button: HTMLButtonElement; 
   });
   syncButton();                                // the disabled dress from the build
   /** The host's word on the body (P7): true at a paint that seats the file's content, false where the loader or a failure
-   *  pane takes it; the machine rests or disables, and a flow under way is disarmed. A paint under the wait re-aims it. */
+   *  pane takes it; the machine rests or disables, and a flow under way is disarmed. A paint under the armed line has the
+   *  placeholders counted again (the line's words and the hosts its title grants follow the repainted body, or the line
+   *  goes with the last placeholder); a paint under the wait re-aims it. */
   const bodyIn = (present: boolean): void => {
     feed({ kind: "body", in: present });
-    if (present && state.phase === "preparing") reaim();
+    if (!present) return;
+    if (state.phase === "armed") feed({ kind: "recount", gated: gates().length });
+    else if (state.phase === "preparing") reaim();
   };
   return { button: btn, bodyIn };
 }
