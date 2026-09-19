@@ -710,8 +710,46 @@ class _PerfStats:
                                    classed to at the handshake (WS_UA_KINDS, a fixed list; the header
                                    is never served): the text frames written and their wire bytes, and
                                    the writes' wall ms (sum, max) with their count (sendMs / sends is the
-                                   mean; a write the socket refused is not counted)
-      stages_ms                    jobs: the cycle's tick jobs outside _push_all; push: _push_all as
+                                   mean; a write the socket refused is not counted); connectPush
+                                   (a fresh client's full push on its handler thread, _push_one,
+                                   2026-09-14) -> count, ms_sum, ms_max, ms_last, byApp {app: the
+                                   same four} under the identifier-and-cap rule of clients.byApp,
+                                   and stagesMs (2026-09-18) -> {stage: ms}, the push.* stages those
+                                   pushes closed (push.chat and its seams, push.feed, push.timeline,
+                                   push.send and its seams, push.feedFirst), cumulative wall under
+                                   the stage name: a connect push runs the same stage calls as the
+                                   pusher's cycle, and its walls were added to the flat push.* rows
+                                   until then. No seed: a row appears when a connect push closes
+                                   that stage, so the table lists what connect pushes ran (push.warm
+                                   and the push container are the pusher's alone and never appear
+                                   here); push.chat, push.feed, push.timeline, push.send and
+                                   push.feedFirst sum to at most ms_sum, a seam to at most its
+                                   container, over closed pushes (the stages_ms row says how a
+                                   snapshot inside one reads); cycleJobsMs
+                                   (2026-09-18) -> {job: ms}, the pusher thread's cumulative wall per
+                                   cycle job (CYCLE_JOBS: beginCheckpointCycle, sessionsListing,
+                                   applyPendingOps, turnNotify, persistCheckpoints,
+                                   convergeCheckpoints, bootRowBackstop, kernelSample, apiHealth; the
+                                   nine listed at zero from the start). A `jobs.<job>` stage the
+                                   pusher's owner closes counts here and not in stages_ms, whose
+                                   `jobs.<job>` rows are the jobs thread's own; the nine sum to at
+                                   most stages_ms.jobs over closed cycles (the stages_ms row says
+                                   how a snapshot inside one reads)
+      stages_ms                    jobs: the pusher's cycle jobs outside _push_all, itemized under
+                                   pusher.cycleJobsMs; jobsPass: the jobs thread's pass, and
+                                   jobs.<job> one row per job of that thread (PASS_JOBS) plus
+                                   jobs.prelude, its opening: since 2026-09-18 a dotted jobs. row is
+                                   the jobs thread's time under that name (stage() routes a jobs.
+                                   write by its writer's owner: the pusher's to pusher.cycleJobsMs,
+                                   a thread owning neither loop's to stagesForeign), where before it
+                                   was every thread's and held the pusher's nine cycle jobs too:
+                                   those nine moved to pusher.cycleJobsMs.<job>, their keys are gone
+                                   from this block, and they do not compare across a capture pair
+                                   spanning the change, while the other jobs.<job> rows keep their
+                                   names and their values, those jobs running on this thread alone,
+                                   except that a dotted part of one (jobs.autoNudge.*, run off both
+                                   loops) sheds what a thread owning neither wrote, now under
+                                   stagesForeign; push: _push_all as
                                    the cycle calls it; push.chat (the tab strip, the build_session
                                    loop and the chat sends), push.feed (the view signature,
                                    _cached_feed and the ledgers attach), push.timeline (the skeleton
@@ -726,9 +764,43 @@ class _PerfStats:
                                    whole dump) and push.send.compare (the per-client _send_feed and
                                    _send_slot calls, whole or delta). A seam is recorded when its
                                    work ran, so a served tab lists no build seam and a wire hit no
-                                   feedParts or barsSplit. The push.* stages are measured inside
-                                   _push for EVERY caller, connect pushes on handler threads
-                                   included, so their sum can exceed `push`
+                                   feedParts or barsSplit. Since 2026-09-18 `push` and the push.*
+                                   rows are the pusher's own (stage() routes a push stage under the
+                                   thread's "connect" mark, _push's decorator's for a fresh
+                                   client's full push on its handler thread, to the connect table,
+                                   and every other push stage by the thread's ownership of the
+                                   pusher's cycle: the pusher's push.* under the "push" mark are
+                                   the cycle owner's, and the pusher's `push` container closes
+                                   outside the mark and is its own by its ownership of the cycle; a
+                                   "push" mark on a thread owning no cycle is no owner): a connect
+                                   push's stages moved to pusher.connectPush.stagesMs, and a push
+                                   stage from a thread that neither carries the connect mark nor
+                                   owns the pusher's cycle counts under stagesForeign. Before, the
+                                   push.* rows took every caller's
+                                   walls, connect pushes included, so their sum could exceed
+                                   `push`; now push.chat, push.feed, push.timeline, push.send,
+                                   push.warm and push.feedFirst sum to at most `push` over closed
+                                   pushes (a stage closes before its container and snapshot() copies
+                                   the rows at any instant, so a snapshot taken inside a push counts
+                                   that push's closed stages before its `push`; every container
+                                   bound in this docstring reads the same way, the cycle time
+                                   included, which cycle() takes after both containers close), and
+                                   a push.* row does not compare across a capture pair spanning the
+                                   change
+      stagesForeign                {stage: ms}, a dotted jobs. stage closed by a thread that owns
+                                   neither loop (no cycle_begin on it: a handler thread, a test that
+                                   opened no cycle), or a push stage (`push`, push.*) closed by a
+                                   thread that neither owns the pusher's cycle nor carries a
+                                   connect push's mark (2026-09-18),
+                                   cumulative wall under the stage name, so a write that fits no
+                                   owner is counted rather than merged into a row that names another
+                                   thread. On a running kernel the block holds the
+                                   jobs.autoNudge.* parts of the act-now pass the dashboard's
+                                   setAutoNudge and setCompactSuggest arms run on the WS handler
+                                   thread (_ws_act_now_tick: key, snapshot, looks, and parse per
+                                   session looked at); any other key names a stage that ran outside
+                                   both loops. The keys are the kernel's own stage literals, never a
+                                   client's text
       builds                       chat / feed / timeline / feedJson -> {cached, built, ms}: served
                                    from the build cache vs rebuilt, and the rebuild time. feedJson is
                                    GET /feed.json's own reads (_pure_feed), kept apart from `feed`,
@@ -917,7 +989,10 @@ class _PerfStats:
                                    a pass is a join over the tier threads, so this is mostly model
                                    latency), cpu_ms_sum (CPU: the two tier threads' own time, from
                                    _run_tier, plus every per-session worker the tiers run in
-                                   judge.py's thread pools; the split rides as cpu_ms_workers; the
+                                   judge.py's thread pools; the in-process pools' share rides as
+                                   cpu_ms_workers, which on the child road (judge.child present) is
+                                   near zero, the child's workers riding cpu_ms_child_workers while
+                                   cpu_ms_sum counts the child's reported tier and worker CPU; the
                                    producer thread's own per-pass work, the episode tick, the goals
                                    snapshot and the compaction, is not in it and lands under "other";
                                    a snapshot() read adds judge.py's in-process pool accumulator,
@@ -966,19 +1041,29 @@ class _PerfStats:
     APPS = 16                                 # distinct client app names either byApp table keys: pusher.clients.byApp (client_send) and
     #                                           pusher.connectPush.byApp (connect_push); the rest, and any name outside _PERF_IDENT, count
     #                                           under "other" (2026-09-18: the name is the client's own text; both tables are capped)
-    JOBS = ("beginCheckpointCycle", "sessionsListing", "applyPendingOps", "turnNotify", "liftSpentAwaiting", "deathSweep", "endOnIdle", "deferralSweep",
-            "unreadableStores",   # the fork's unreadable-store warn (PR 322), a housekeeping stage on the jobs thread since the 2026-09-15 pull-in
-            "autoNudge", "interruptBlock", "persistTickSeen", "persistIntrMarks", "persistSpendTrees", "persistCheckpoints", "convergeCheckpoints", "bootRowBackstop",
-            "kernelSample", "autoPauseOnLimit", "usagePoll", "autoPauseOnSpend", "spendGuard", "autoResumeRetry", "apiHealth",
-            "autoResumeSession", "autoRetry", "idleQueueDrive", "clearDoneNotes")   # the tick jobs, each a `jobs.<job>` stage (T398)
+    # The tick jobs, each a `jobs.<job>` stage (T398), by the thread that runs them (2026-09-18): CYCLE_JOBS run in the pusher's
+    # cycle (_pusher_cycle_jobs: what feeds a frame or shares the cycle's checkpoint byte budget), PASS_JOBS on the jobs thread
+    # (_jobs_pass, the housekeeping split off the pusher on 2026-09-13), each in the order its function runs them; JOBS is the
+    # census of both (tests/test_jobs_thread_split.py holds each list to its function's _job_stage calls). stage() credits a
+    # `jobs.<job>` write by its writer's owner: the jobs thread's to the flat stages_ms row, the pusher's to cycleJobsMs, a
+    # thread owning neither loop's to stagesForeign
+    CYCLE_JOBS = ("beginCheckpointCycle", "sessionsListing", "applyPendingOps", "turnNotify", "persistCheckpoints", "convergeCheckpoints",
+                  "bootRowBackstop", "kernelSample", "apiHealth")
+    PASS_JOBS = ("liftSpentAwaiting", "deathSweep", "endOnIdle", "deferralSweep",
+                 "unreadableStores",   # the fork's unreadable-store warn (PR 322), a housekeeping stage on the jobs thread since the 2026-09-15 pull-in
+                 "autoNudge", "interruptBlock", "persistTickSeen", "persistIntrMarks", "persistSpendTrees", "autoPauseOnLimit", "usagePoll",
+                 "autoPauseOnSpend", "spendGuard", "autoResumeRetry", "autoResumeSession", "autoRetry", "idleQueueDrive", "clearDoneNotes")
+    JOBS = CYCLE_JOBS + PASS_JOBS
     STAGES = ("prelude", "jobs", "push",
               "push.chat", "push.chat.sig", "push.chat.build", "push.chat.send",         # the chat stage and its seams (2026-09-18)
               "push.feed", "push.timeline",
               "push.send", "push.send.feedParts", "push.send.barsSplit", "push.send.compare",   # the send stage and its seams
               "push.warm", "push.feedFirst",
               "jobsPass", "jobs.prelude") \
-        + tuple("jobs." + j for j in JOBS)   # every stage a fresh snapshot lists at zero: the cycle's prelude, the containers, the sub-stages
-    #                                          (`jobsPass` and `jobs.prelude` are the jobs thread's: its pass and its own opening)
+        + tuple("jobs." + j for j in PASS_JOBS)   # every flat stage a fresh snapshot lists at zero: the cycle's prelude, the containers,
+    #                                               the jobs thread's sub-stages (`jobsPass` and `jobs.prelude` are that thread's: its pass
+    #                                               and its own opening). The pusher's cycle jobs are not flat rows: their cumulative
+    #                                               walls sit under pusher.cycleJobsMs, seeded from CYCLE_JOBS (2026-09-18)
     OWNERS = ("pusher", "jobs")              # the two threads whose per-cycle splits the stats keep (the jobs thread since the split
     #                                          of the housekeeping off the pusher, 2026-09-13; see _jobs_loop)
     # a container stage -> the prefix of its sub-stages. push.chat and push.send are containers of their own seams (stage 1 of
@@ -1017,6 +1102,22 @@ class _PerfStats:
                                  "byKind": {k: {"frames": 0, "bytes": 0, "sendMs": 0.0, "sendMax": 0.0, "sends": 0} for k in WS_UA_KINDS}}
             self.ring = collections.deque(maxlen=self.RING)
             self.stages = {k: 0.0 for k in self.STAGES}
+            # A `jobs.<job>` stage by its writer's owner (2026-09-18): the pusher's cycle jobs, cumulative wall ms under the job's
+            # name (the nine seeded so the block is always whole; a name outside them, a job's part or a job that moved lists,
+            # is added as it comes), served as pusher.cycleJobsMs; and the writes from a thread that owns neither loop, under the
+            # stage name, served as stagesForeign: counted, never merged into a row that names another thread. Both are keyed by
+            # the kernel's own literals (a CYCLE_JOBS name, a `jobs.` + _job_stage / _sub_stage literal), never a client's text
+            self.cycle_jobs_ms = {j: 0.0 for j in self.CYCLE_JOBS}
+            self.stages_foreign = {}
+            # A push stage by its writer's purpose or owner (2026-09-18, the second half of the same fix): a connect push
+            # (a fresh client's full push on its handler thread, _push_one, under the "connect" mark) closes the same push.*
+            # stages the pusher's cycle does; its walls go here under the stage name, served as pusher.connectPush.stagesMs,
+            # so the flat push.* rows are the cycle owner's, the pusher's own; a push stage from a thread that neither carries
+            # the mark nor owns the pusher's cycle goes to stages_foreign above.
+            # No seed: a row appears when a connect push closes that stage (push.warm and the `push` container are the pusher's
+            # alone and never appear here), so the table lists what connect pushes ran rather than zeros for stages they cannot
+            # reach. Keyed by the kernel's own stage literals, never a client's text
+            self.connect_stages_ms = {}
             # T397: the stage split PER CYCLE. `cycle_stages` fills as the cycle's stages close (wall ms, the reader's bytes
             # and the hydrated bytes since the previous stage boundary); cycle() keeps the boot's FIRST cycle's split for
             # the process (firstCycleS alone could not name the stage a 59 s boot spent its time in, 2026-09-12) and
@@ -1190,8 +1291,10 @@ class _PerfStats:
         sent nothing and changed nothing (no wake set, no client payload, no goal-store save or write over
         it), so its wall and CPU also go to the idle sums (2026-09-09: the loop re-enters after a fixed 0.5 s
         backstop, and the idle share is what a cadence change would be judged on). A conservative undercount:
-        a wake another thread sets during the cycle, or the periodic repost of an unchanged frame past the
-        dedup window, marks that cycle busy though the cycle itself changed nothing."""
+        a wake another thread sets during the cycle, the periodic repost of an unchanged frame past the
+        dedup window, or a connect push's sends on a handler thread (pusher.sends counts every client payload
+        from every thread, and the idle test reads it through marks()), marks that cycle busy though the cycle
+        itself changed nothing."""
         ms = dt * 1000.0
         gc_now = self._gc_mark()                          # the collector's tallies at the close: the split's gc delta (2026-09-16)
         with self.lock:
@@ -1286,8 +1389,10 @@ class _PerfStats:
         """Whether the calling thread is the one whose cycle the split records (the pusher's, set at cycle_begin): a
         dashboard's connect push runs _push on the HTTP handler thread through the same stage calls, and its whole build
         landed in the pusher cycle's split, in firstCycle and in the boot-health row, the boot being exactly when pages
-        redial (round one, medium). The cumulative totals take every thread's stages as before. Returns the OWNER KIND
-        ("pusher" or "jobs", the two threads that open cycles: see OWNERS) or None for any other thread."""
+        redial (round one, medium). The cumulative totals take every thread's stages as before, except a dotted `jobs.`
+        stage, which stage() credits by this answer, and a push stage, credited by this answer and the thread's purpose
+        (_purpose; 2026-09-18). Returns the OWNER KIND ("pusher" or "jobs", the two threads that open cycles: see OWNERS)
+        or None for any other thread."""
         tid = threading.get_ident()
         for kind, ident in self._owners.items():
             if ident == tid:
@@ -1319,11 +1424,53 @@ class _PerfStats:
         head, dot, _rest = key[len(pfx):].partition(".")
         return bool(dot) and (pfx + head) in cls.CONTAINERS and (pfx + head) in stages
 
+    @staticmethod
+    def _purpose():
+        """The calling thread's stage mark (_STAGE_TL, the thread-local _set_stage writes): "push" inside the pusher's _push and
+        "connect" inside a fresh client's full push on its handler thread (_push's _stage_marked decorator), a job's name
+        inside _job_stage, a route inside a request handler, None with no mark. stage() reads it to credit a push stage to
+        its writer (2026-09-18)."""
+        return getattr(_STAGE_TL, "name", None)
+
     def stage(self, name, dt):
+        """A stage closed on the calling thread, `dt` its wall seconds: added to the flat row of its name (stages_ms) and to
+        the calling owner's open split. Two families are credited by their WRITER instead (2026-09-18). A dotted `jobs.`
+        name (a tick job from _job_stage, or a job's part from _sub_stage) by the writer's owner: the jobs thread's to the
+        flat row, the pusher's to cycleJobsMs under the job's name, and a thread that owns neither loop to stagesForeign
+        under the stage name. Both loops run their jobs under the one `jobs.` prefix, so a flat row could not say whose
+        time it held (the lists are disjoint, but a job that changed lists, or a test driving both loops on one thread,
+        merged the two without a trace). A push stage (`push`, push.*) by the writer's PURPOSE or OWNER: the "connect"
+        stage mark (a fresh client's full push on its handler thread, _push_one, marked by _push's decorator) to
+        connect_stages_ms, served as pusher.connectPush.stagesMs; the pusher's cycle owner (its push.* under the "push"
+        mark _push sets when the pusher calls it, and its `push` container, closed outside the mark) to the flat row;
+        any other writer to stagesForeign, a "push"-marked write from a thread owning no cycle included (the mark says
+        what _push was called for, not whose cycle it ran in). A connect push runs the same stage calls as the cycle, and
+        until then its walls were added to the flat push.* rows, whose one consumer divides them by the pusher's cycle
+        time. The split rows already keep the owners apart and are unchanged; every other stage (`jobs`, `jobsPass`,
+        `prelude`) is a flat row for every writer, as before."""
         marks = self._byte_marks()
+        ms = dt * 1000.0
         with self.lock:
-            self.stages[name] = self.stages.get(name, 0.0) + dt * 1000.0
             kind = self._mine()
+            if name.startswith("jobs."):
+                if kind == "jobs":
+                    self.stages[name] = self.stages.get(name, 0.0) + ms
+                elif kind == "pusher":
+                    job = name[5:]
+                    self.cycle_jobs_ms[job] = self.cycle_jobs_ms.get(job, 0.0) + ms
+                else:                                       # a handler thread, or a test that opened no cycle: counted apart
+                    self.stages_foreign[name] = self.stages_foreign.get(name, 0.0) + ms
+            elif name == "push" or name.startswith("push."):
+                purpose = self._purpose()
+                if purpose == "connect":                    # a fresh client's full push on its handler thread (_push_one)
+                    self.connect_stages_ms[name] = self.connect_stages_ms.get(name, 0.0) + ms
+                elif kind == "pusher":                      # the cycle's owner: its push.* under the "push" mark, its `push` outside it
+                    self.stages[name] = self.stages.get(name, 0.0) + ms
+                else:                                       # neither a connect push nor the cycle's owner (a "push" mark alone is no
+                    #                                         owner): counted apart, never merged
+                    self.stages_foreign[name] = self.stages_foreign.get(name, 0.0) + ms
+            else:
+                self.stages[name] = self.stages.get(name, 0.0) + ms
             if not kind:
                 return                                      # another thread's push: the totals alone
             st = self._cycle_state[kind]
@@ -1647,6 +1794,7 @@ class _PerfStats:
             pusher = dict(self.pusher)
             pusher["connectPush"] = {k: (dict(v) if k != "byApp" else {a: dict(row) for a, row in v.items()}) if isinstance(v, dict) else v
                                      for k, v in self.connect_push_stats.items()}
+            pusher["connectPush"]["stagesMs"] = dict(self.connect_stages_ms)   # the connect pushes' push.* stages, cumulative wall (2026-09-18)
             pusher["clients"] = {"byApp": {a: dict(row) for a, row in self.client_stats["byApp"].items()},   # per-client wire
                                  "byKind": {k: dict(row) for k, row in self.client_stats["byKind"].items()}}   #  counters (2026-09-18)
             pusher["firstCycle"] = dict(self.first_cycle) if self.first_cycle is not None else None   # T397: the boot's
@@ -1654,6 +1802,8 @@ class _PerfStats:
             pusher["stageRing"] = sr if ring_all else sr[-self.STAGE_RING_SERVED:]   # the newest few by default: the whole ring
             pusher["stageRingLen"] = len(sr)                                          #  is up to a few MB of JSON (round one, low 3)
             pusher["stageRingMax"] = self.stage_ring.maxlen if self.stage_ring is not None else _stage_ring_len()
+            pusher["cycleJobsMs"] = dict(self.cycle_jobs_ms)   # the pusher's cycle jobs, cumulative wall per job (2026-09-18)
+            foreign = dict(self.stages_foreign)               # a `jobs.` stage from a thread owning neither loop, or a push stage from a thread neither owning the pusher's cycle nor under a connect push's mark (2026-09-18)
             jring = sorted(self.jobs_ring)
             jobs = dict(self.jobs)                          # the jobs thread's pass counters, the same shape as the pusher's
             jobs["firstPass"] = dict(self.first_pass) if self.first_pass is not None else None
@@ -1781,6 +1931,7 @@ class _PerfStats:
                 "process": _process_stats(), "heap": _heap_stats(),   # heap: where the resident size sits, now (2026-09-15)
                 "gc": gc_block,                                       # gc: the collector's collections and pauses (2026-09-16)
                 "pusher": pusher, "jobs": jobs, "stages_ms": stages,
+                "stagesForeign": foreign,                            # a `jobs.` stage written by a thread owning neither loop, or a push stage by a thread neither owning the pusher's cycle nor under a connect push's mark (2026-09-18)
                 "builds": builds, "sends": sends, "goals": goals, "memos": memos, "judge": judge, "skillLoadIndex": skill_idx, "http": http,
                 "fileSlice": file_slice,                   # T351: the preview popover's slice cache (hit / miss / bytes / warm)
                 "glossary": glossary_stats,                # T351 stage 2: files parsed, frames / terms / bytes BUILT per cycle, entries cut, files refused
@@ -16012,8 +16163,15 @@ def _auto_nudge_pass(now, live_map, run_dead_wait):
     #                                                       node's own cleared flag, written in the same gesture, covers the gap
     _set_stage("jobs.autoNudge"); _PERF_STATS.stage("jobs.autoNudge.snapshot", time.monotonic() - _snap_t)
     _looks_t = time.monotonic(); _set_stage("jobs.autoNudge.looks")   # the looks: one mark over the loop (plans/nudge-walk-events.md)
-    _parse_ms0 = _PERF_STATS.stages.get("jobs.autoNudge.parse", 0.0)   # the parse marks its own time inside the loop: the looks
-    #                                                                     mark is the loop's wall OUTSIDE it, so the parts partition the job
+    _NUDGE_HORIZON.parse_s = 0.0                          # the parse marks its own time inside the loop and tallies its wall here, on
+    #                                                       the walking thread (_auto_nudge_session): the looks mark is the loop's wall
+    #                                                       OUTSIDE the parses, so the parts partition the job. The tally replaced a
+    #                                                       before-and-after read of the flat jobs.autoNudge.parse row (2026-09-18 review):
+    #                                                       stage() moves that row for the jobs owner alone, so the act-now pass on the WS
+    #                                                       handler thread read a zero delta and its looks carried every parse twice.
+    #                                                       The tally is this thread's own, so the looks figure assumes nothing about
+    #                                                       the walk being single-flight on the jobs thread: two walks on two threads
+    #                                                       (the jobs pass and the act-now pass) each subtract their own parses
     for _i, s in enumerate(alive):
         if _yielding and getattr(_NUDGE_HORIZON, "cold", 0) >= 1 and getattr(_NUDGE_HORIZON, "cold_last", False):
             _NUDGE_WALK_STATS["deferredSessions"] += len(alive) - _i
@@ -16048,7 +16206,7 @@ def _auto_nudge_pass(now, live_map, run_dead_wait):
             sys.stderr.write("auto-nudge (session %s): %s\n"
                              % (s.get("sid") or "?", traceback.format_exc()))
     _set_stage("jobs.autoNudge")                          # the looks close with the loop, however it ended: its wall less the parses' (1736 round two)
-    _PERF_STATS.stage("jobs.autoNudge.looks", max(0.0, time.monotonic() - _looks_t - (_PERF_STATS.stages.get("jobs.autoNudge.parse", 0.0) - _parse_ms0) / 1000.0))
+    _PERF_STATS.stage("jobs.autoNudge.looks", max(0.0, time.monotonic() - _looks_t - getattr(_NUDGE_HORIZON, "parse_s", 0.0)))
     # EVICT the sids that left the alive set from both walk memos (ruling A, the 2026-09-09 fold): nothing to
     # gate, and the gate memo alone would hold a dead session's view until its 512-entry cap. No stale-pin
     # sweep: the gate's key is the parse cache's own key, so a re-parsed transcript misses on its next visit
@@ -18143,8 +18301,13 @@ def _auto_nudge_session(s, now, live_map, nudged, waitfor, alive_ids=None, wake_
         # (a synthesized leading idle opens it, vs the human prompt), so the closer-gate below would never
         # match and the nudge was blocked forever (the user 2026-06-22, obsidian).
         _cold = jd._parse_entry(sid) is None          # no cached parse: this look pays it (T401 (2): the yield's event)
-        with _sub_stage("autoNudge.parse"):        # the parse-store read (a hit while the transcript stands) under its own mark
-            turns = jd.parsed_session(sid, [s["path"]], now)["turns"]
+        _t_parse = time.monotonic()
+        try:
+            with _sub_stage("autoNudge.parse"):        # the parse-store read (a hit while the transcript stands) under its own mark
+                turns = jd.parsed_session(sid, [s["path"]], now)["turns"]
+        finally:                                       # the pass's looks mark is the loop's wall less this thread's parses, tallied
+            _NUDGE_HORIZON.parse_s = getattr(_NUDGE_HORIZON, "parse_s", 0.0) + (time.monotonic() - _t_parse)   # here whatever the
+        #                                                                                                        walker's owner
         _NUDGE_HORIZON.parsed = True
         _NUDGE_WALK_STATS["parses"] += 1
         if _cold:
@@ -63792,8 +63955,11 @@ def _pusher_cycle_jobs(now, live_map, any_client):
     cycle (the user asked why the reminder walk had to finish before the UI showed at all), and their writers already end in
     _mark_views_dirty, which wakes this loop, so nothing they decide waits for anything here."""
     _t_jobs = time.monotonic()            # /perf: this function minus the _push_all below is the `jobs` stage
-    if not _PERF_STATS._mine():
-        _PERF_STATS.cycle_begin()         # a caller that did not open the cycle (a test driving the jobs alone) opens it here
+    if _PERF_STATS._mine() != "pusher":
+        _PERF_STATS.cycle_begin()         # a caller that did not open the cycle (a test driving the jobs alone) opens it here; a thread
+        #                                   owning the OTHER loop's cycle flips to this one (2026-09-18 review: the guard read "owns
+        #                                   none", so a test running both bodies on one thread kept the first owner and stage() credited
+        #                                   the nine below to the flat jobs. rows). The loop itself opens the cycle first (_pusher_cycle)
     try:                                  # the cycle's checkpoint byte budget, whole again, and the drops owed from the last one
         _job_stage('beginCheckpointCycle', lambda: _begin_checkpoint_cycle())         # (T362): before the builds below, whose quiescence drops write against it
     except Exception:
@@ -63856,8 +64022,10 @@ def _jobs_pass(now, live_map):
     _mark_views_dirty (a dirty mark plus the pusher's wake), so a card move a job decides rides the pusher's next cycle exactly
     as it did when the job ran on that thread. The stage container is `jobsPass`; each job is still its `jobs.<name>` stage."""
     _t_pass = time.monotonic()
-    if not _PERF_STATS._mine():
-        _PERF_STATS.cycle_begin("jobs")   # a caller that did not open the pass (a test driving the jobs alone) opens it here
+    if _PERF_STATS._mine() != "jobs":
+        _PERF_STATS.cycle_begin("jobs")   # a caller that did not open the pass (a test driving the jobs alone) opens it here; a thread
+        #                                   owning the pusher's cycle flips to the jobs owner (2026-09-18 review, as in _pusher_cycle_jobs),
+        #                                   so the jobs below are the flat rows', whatever ran before on this thread
     _own_stat = _files_stat_pass_open(live_map)   # the dirty set taken, the prelude's observers read, the pass's shared ten-file
     #                                               snapshot opened when the caller did not (closed below; the cycle's finally too)
     try:                                  # EXACT retraction first: dispatches returned → the stamp is spent,

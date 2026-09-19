@@ -14,6 +14,7 @@ and test_tab_meta_push.py patterns). Synthetic fixtures only: placeholder UUIDs,
 import base64
 import collections
 import concurrent.futures
+import copy
 import inspect
 import io
 import json
@@ -53,6 +54,8 @@ SID = "11111111-2222-3333-4444-555555555555"
 # and node ids collide across test modules under the shared placeholder (CLAUDE.md, goal-store fixtures).
 GOAL_SID = "77777777-8888-9999-aaaa-bbbbbbbbbbbb"
 TOP_KEYS = {"now", "since", "uptime_s", "log", "process", "pusher", "jobs", "stages_ms", "builds", "sends",   # jobs: the jobs thread's passes
+            "stagesForeign",                               # stagesForeign: a `jobs.<job>` stage from a thread owning neither loop, or a push stage from a
+            #                                                  thread that neither owns the pusher's cycle nor carries a connect push's mark (2026-09-18)
             "heap",                                        # heap: where the resident size sits at the read, gauges over every content cache (2026-09-15)
             "gc",                                          # gc: the collector's pauses per generation, from the gc.callbacks hook (2026-09-16)
             "goals", "memos", "judge", "http", "parses",   # parses: cold event-model parses (T323 stage 1)
@@ -71,6 +74,48 @@ PROCESS_KEYS = {"rss_kb", "threads", "cpu_s", "pid", "rss_anon_kb", "hwm_kb", "s
 # nothing estimated. A cache added to the kernel, the judge or the event model is added here deliberately.
 CACHE_NAMES = {"jsonl", "asm", "asm_keylocks", "trailing", "judge_parse", "judge_recon", "judge_chain", "parse",
                "built_chat", "judge_usage", "img", "path_links", "space_paths", "session_stamp", "task_seg", "session_tok"}
+
+
+def _doc_row(doc, name):
+    """The _PerfStats docstring row whose entry line starts with `name`: from that line to the next line at or above its
+    indentation that begins an entry (a non-space after the indentation), or the docstring's end. The locator is RELATIVE
+    to the entry line's own indentation on purpose: Python 3.13 and later strip a docstring's common leading whitespace at
+    compile time, so a pin that counts leading spaces (the source's six before a row's name) passes on a 3.12 venv and
+    finds nothing on the 3.13 and 3.14t CI cells. Do not simplify it back to a space count."""
+    m = re.search(r"^( *)%s\s" % re.escape(name), doc, re.M)
+    if m is None:
+        raise ValueError("no docstring row starts with %r" % name)
+    nxt = re.compile(r"^ {0,%d}\S" % len(m.group(1)), re.M).search(doc, m.end())
+    return doc[m.start():nxt.start() if nxt else len(doc)]
+
+
+_ONES = ("zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve",
+         "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen")
+_TENS = ("", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety")
+
+
+def _number_word(n):
+    """The English word for a count under one hundred, spelled as the docs spell one ("nineteen"): the docs' count of the
+    pass jobs' rows is derived from len(_PerfStats.PASS_JOBS) through this, never typed a second time (2026-09-19 review),
+    so a job added to the list turns the sentence that counts them red."""
+    if not 0 <= n < 100:
+        raise ValueError("no word for %r" % (n,))
+    if n < 20:
+        return _ONES[n]
+    tens, ones = divmod(n, 10)
+    return _TENS[tens] + ("-" + _ONES[ones] if ones else "")
+
+
+# Wordings about the stage routing that a review round retired, assembled from parts so this file does not carry them as
+# sentences (the sweep pin below reads this file too): a push stage is foreign unless its writer is the pusher within the
+# open cycle (ownership outlives the cycle: kernel-1, round two); a bare _push in a test always has a cycle open before it
+# (false of 21 modules: extra6-1, round two); a push stage from a thread that is not the pusher and not a connect push (a
+# thread identity, not ownership: round one's wording); the pass jobs' rows keep their values because the housekeeping was
+# the jobs thread's alone from the start (false of the part rows: round one).
+RETIRED_WORDINGS = {"push-inside-cycle": "inside its " + "cycle",
+                    "bare-push-opens-cycle": "_push in a test " + "opens a cycle first",
+                    "pusher-identity": "neither the pusher " + "nor a connect push",
+                    "housekeeping-already-alone": "already ran on the " + "jobs thread alone"}
 
 
 def _burn_cpu(seconds):
@@ -166,6 +211,17 @@ class Collector(unittest.TestCase):
             self.assertEqual(p[k], 0.0, k)
         self.assertEqual(p["ring_n"], 0)
         self.assertEqual(set(snap["stages_ms"]), set(km._PerfStats.STAGES))
+        # the pusher's nine cycle jobs left stages_ms on 2026-09-18 (stage attribution): a `jobs.<job>` row there is the jobs
+        # thread's own, the cycle jobs' rows are pusher.cycleJobsMs, seeded with the nine names, and a fresh snapshot has
+        # no foreign write (a `jobs.` stage from a thread owning neither loop)
+        self.assertFalse({"jobs." + j for j in km._PerfStats.CYCLE_JOBS} & set(snap["stages_ms"]), "no cycle job's row in stages_ms")
+        self.assertTrue({"jobs." + j for j in km._PerfStats.PASS_JOBS} <= set(snap["stages_ms"]), "every pass job's row, at zero")
+        self.assertEqual(p["cycleJobsMs"], {j: 0.0 for j in km._PerfStats.CYCLE_JOBS})
+        self.assertEqual(snap["stagesForeign"], {})
+        # the connect pushes' push.* stages (2026-09-18): no seed, so a fresh table is empty (a seeded push.warm or `push` row
+        # would be one a connect push can never move); the block's counters start at zero beside it
+        self.assertEqual(p["connectPush"]["stagesMs"], {})
+        self.assertEqual((p["connectPush"]["count"], p["connectPush"]["ms_sum"]), (0, 0.0))
         self.assertEqual(set(snap["builds"]), {"chat", "feed", "timeline", "feedJson", "thread"})   # thread: the comment popover's build (2026-09-08)
         self.assertEqual(set(snap["builds"]["timeline"]), {"cached", "built", "ms"})
         self.assertEqual(set(snap["builds"]["chat"]), {"cached", "built", "ms", "active_built", "bg_built", "bg_miss", "moved",
@@ -579,6 +635,9 @@ class Collector(unittest.TestCase):
         self.assertEqual(self.st.parses["bySid"], {A[:8]: 2, B[:8]: 1})
 
     def test_stages_builds_judge(self):
+        self.st.cycle_begin()                                  # this thread stands for the pusher: a push stage is credited to its
+        #                                                        writer since 2026-09-18, and a thread owning no cycle, under no connect
+        #                                                        mark, counts under stagesForeign instead (PushRowsByPurpose)
         self.st.stage("push.chat", 0.5); self.st.stage("push.chat", 0.25); self.st.stage("jobs", 0.1)
         self.st.build("chat", True); self.st.build("chat", False, 0.040); self.st.build("feed", False, 1.0)
         self.st.judge_pass(2.0); self.st.judge_pass(4.0); self.st.judge_cpu(0.25)
@@ -869,6 +928,12 @@ class Collector(unittest.TestCase):
 
     def test_reset_starts_over_and_moves_since(self):
         self.st.cycle(0.1); self.st.http_request("GET /x", 0.1)
+        self.st.stage("jobs.autoNudge.parse", 0.001)          # a `jobs.` write from this thread owning no cycle: stagesForeign
+        self.st.cycle_begin(); self.st.stage("jobs.apiHealth", 0.002); self.st.stage("jobs", 0.002); self.st.cycle(0.002)   # and the pusher's
+        km._stage_marked("connect")(lambda: self.st.stage("push.chat", 0.003))()   # and a connect push's stage (2026-09-18)
+        self.assertEqual(self.st.snapshot()["stagesForeign"], {"jobs.autoNudge.parse": 1.0}, "premise: both blocks hold a row")
+        self.assertEqual(self.st.snapshot()["pusher"]["cycleJobsMs"]["apiHealth"], 2.0)
+        self.assertEqual(self.st.snapshot()["pusher"]["connectPush"]["stagesMs"], {"push.chat": 3.0}, "premise: the connect table holds a row")
         before = self.st.snapshot()["since"]
         time.sleep(0.01)
         self.st.reset()
@@ -876,6 +941,10 @@ class Collector(unittest.TestCase):
         self.assertEqual(snap["pusher"]["cycles"], 0)
         self.assertEqual(snap["http"], {})
         self.assertGreater(snap["since"], before)
+        # the two owner-routed blocks start over with the rest (2026-09-18): the foreign block empty, the pusher's the nine at zero
+        self.assertEqual(snap["stagesForeign"], {})
+        self.assertEqual(snap["pusher"]["cycleJobsMs"], {j: 0.0 for j in km._PerfStats.CYCLE_JOBS})
+        self.assertEqual(snap["pusher"]["connectPush"]["stagesMs"], {}, "the connect table too")
 
     def test_writers_are_thread_safe(self):
         def hammer():
@@ -890,6 +959,563 @@ class Collector(unittest.TestCase):
         self.assertEqual(snap["pusher"]["wakes"], 16000)
         self.assertEqual(snap["sends"]["full"]["chat"]["count"], 16000)
         self.assertEqual(snap["http"]["GET /p"]["count"], 16000)
+
+
+class JobRowsByOwner(unittest.TestCase):
+    """A `jobs.<job>` stage is written from two threads under one prefix: nine jobs in _pusher_cycle_jobs on the pusher and
+    nineteen in _jobs_pass on the jobs thread (plus a job's parts from _sub_stage). Until 2026-09-18 stage() added every
+    writer's wall to the one flat row, so a row said which thread's time it held only by the lists in the source, and a
+    job that changed lists, or a test driving both loops on one thread, merged the two silently. Now stage() routes a
+    dotted `jobs.` write by the WRITER'S OWNER: the jobs thread's to the flat row (stages_ms), the pusher's to
+    pusher.cycleJobsMs under the job's name (the nine seeded at zero), and a thread owning neither loop's to stagesForeign
+    under the stage name, counted rather than dropped. No stage name, mark, split row or boot row changes; three call
+    sites did: the nudge walk's looks computation, a per-thread parse tally since the flat parse row moves for the jobs
+    owner alone, and the two loop bodies' owner guards, which open the loop's own cycle on a thread that owns the other
+    loop's cycle. JOBS stays the census as CYCLE_JOBS + PASS_JOBS."""
+
+    NAME = "jobs.persistCheckpoints"      # a cycle job's name, written here from all three kinds of thread
+
+    def _three_writers(self, jobs_part=False):
+        """The note's run: the pusher (this thread) writes the name for 2 ms, a jobs thread for 3 ms inside a 3 ms pass, and a
+        thread with no cycle for 1 ms; then the pusher closes its `jobs` container and its cycle. With `jobs_part` the jobs
+        thread also runs a job with a part inside its pass (jobs.autoNudge.parse 2 ms inside jobs.autoNudge 2 ms, the pass
+        5 ms): a legitimate part row in the flat table. Returns the snapshot."""
+        st = km._PerfStats()
+        st.cycle_begin()                                              # this thread is the pusher
+        st.stage(self.NAME, 0.002)
+        written, release, foreign_done = threading.Event(), threading.Event(), threading.Event()
+        pass_s = 0.005 if jobs_part else 0.003
+
+        def jobs_thread():
+            st.cycle_begin("jobs")
+            st.stage(self.NAME, 0.003)
+            if jobs_part:
+                st.stage("jobs.autoNudge.parse", 0.002); st.stage("jobs.autoNudge", 0.002)
+            st.stage("jobsPass", pass_s)
+            st.jobs_pass(pass_s)
+            written.set()
+            release.wait(5)                                           # alive until the foreign write is in: the owner map holds
+            #                                                           this thread's ident, and a thread started after its exit can
+            #                                                           be handed the same ident and read as the jobs owner (the
+            #                                                           loops never exit on a kernel, so only a test meets this)
+
+        def foreign_thread():                                         # a handler thread's: it opened no cycle
+            st.stage(self.NAME, 0.001)
+            foreign_done.set()
+        jt = threading.Thread(target=jobs_thread); jt.start()
+        self.assertTrue(written.wait(5), "the jobs thread wrote")
+        ft = threading.Thread(target=foreign_thread); ft.start(); ft.join(5)
+        self.assertTrue(foreign_done.is_set(), "the foreign thread wrote")
+        release.set(); jt.join(5)
+        st.stage("jobs", 0.002)
+        st.cycle(0.002)
+        return st.snapshot()
+
+    def test_one_name_from_three_threads_lands_by_each_writers_owner(self):
+        snap = self._three_writers()
+        self.assertAlmostEqual(snap["stages_ms"][self.NAME], 3.0, msg="the flat row is the jobs thread's 3 ms alone (6 ms before: every writer's)")
+        self.assertAlmostEqual(snap["pusher"]["cycleJobsMs"]["persistCheckpoints"], 2.0, msg="the pusher's 2 ms, under the job's name")
+        self.assertEqual(sorted(snap["stagesForeign"]), [self.NAME], "the thread with no cycle is counted, not merged")
+        self.assertAlmostEqual(snap["stagesForeign"][self.NAME], 1.0)
+        # the split rows keep the owners apart as before, and the foreign write reaches no split
+        self.assertEqual(sorted(snap["pusher"]["firstCycle"]["stages"]), ["jobs", self.NAME])
+        self.assertAlmostEqual(snap["pusher"]["firstCycle"]["stages"][self.NAME]["ms"], 2.0)
+        self.assertEqual(sorted(snap["jobs"]["firstPass"]["stages"]), [self.NAME, "jobsPass"])
+        self.assertAlmostEqual(snap["jobs"]["firstPass"]["stages"][self.NAME]["ms"], 3.0)
+        self.assertAlmostEqual(snap["stages_ms"]["jobs"], 2.0, msg="the containers are not dotted: the flat row as before")
+        self.assertAlmostEqual(snap["stages_ms"]["jobsPass"], 3.0)
+        for j in km._PerfStats.CYCLE_JOBS:
+            self.assertIn(j, snap["pusher"]["cycleJobsMs"], "the nine are always present: %s" % j)
+        self.assertIn(self.NAME[len("jobs."):], km._PerfStats.CYCLE_JOBS, "premise: the name is a cycle job's")
+
+    # The two roll-up sums take the JOB rows alone, by a dot-free key, whoever wrote them (2026-09-18 review). The documented
+    # bounds are per family: a job's parts (jobs.<job>.<part>, from _sub_stage) sum to at most their job, and the jobs sum to
+    # at most their container (the pass for the flat rows, the pusher's `jobs` for cycleJobsMs). A sum over every dotted key
+    # counted a part beside its job and went red on a legitimate part with the routing correct (a real run of both loops
+    # puts jobs.autoNudge.key, .looks and .snapshot in the flat table); a sum over PASS_JOBS or CYCLE_JOBS by name excluded a
+    # cycle job's name the jobs thread wrote and read zero on a planted mis-credit under that name. The three-way test below
+    # holds the sums to both.
+    @staticmethod
+    def _flat_jobs(stages_ms):
+        """The flat `jobs.<job>` rows' sum: dot-free under the prefix, `jobs.prelude` (the jobs thread's opening, outside the
+        pass) excluded."""
+        return sum(v for k, v in stages_ms.items() if k.startswith("jobs.") and "." not in k[len("jobs."):] and k != "jobs.prelude")
+
+    @staticmethod
+    def _cycle_jobs(cycle_jobs_ms):
+        """The pusher's job rows' sum under cycleJobsMs: the block takes a part's name as a key too, so dot-free here as well."""
+        return sum(v for k, v in cycle_jobs_ms.items() if "." not in k)
+
+    def test_the_flat_job_rows_roll_up_to_the_pass_and_the_cycle_jobs_to_the_jobs_container(self):
+        """Over a run of both loops the flat `jobs.<job>` rows are the jobs thread's, so they sum to at most its pass (6 > 3
+        before, when the pusher's and the foreign write sat in them), and the pusher's rows sum to at most its `jobs`
+        container. `jobs.prelude` is the jobs thread's opening, outside the pass, so it is not in the sum."""
+        snap = self._three_writers()
+        flat = self._flat_jobs(snap["stages_ms"])
+        self.assertLessEqual(flat, snap["stages_ms"]["jobsPass"] + 1e-9, "the flat job rows against the pass: %r" % flat)
+        self.assertGreater(flat, 0.0, "the jobs thread's write is in them")
+        self.assertLessEqual(self._cycle_jobs(snap["pusher"]["cycleJobsMs"]), snap["stages_ms"]["jobs"] + 1e-9)
+        self.assertGreater(self._cycle_jobs(snap["pusher"]["cycleJobsMs"]), 0.0)
+
+    def test_the_roll_up_sum_passes_a_legitimate_part_and_catches_a_planted_mis_credit(self):
+        """The guard's sum, on three snapshots (2026-09-18 review): the clean run (3.0 against a 3 ms pass), the run with a
+        legitimate part on the jobs thread (5.0 against a 5 ms pass: the part is not counted beside its job, where a sum over
+        every dotted key read 7.0 and went red with the routing correct), and the clean run with the pusher's 2 ms and the
+        foreign 1 ms planted into the flat row, what a collector merging every writer served (6.0 against 3.0: caught, where
+        a sum over the PASS_JOBS names read 0.0, the name being a cycle job's, and passed the merge)."""
+        every_dotted = lambda st: sum(v for k, v in st.items() if k.startswith("jobs.") and k != "jobs.prelude")      # rejected
+        pass_names = lambda st: sum(st["jobs." + j] for j in km._PerfStats.PASS_JOBS)                                # rejected
+        clean = self._three_writers()
+        part = self._three_writers(jobs_part=True)
+        planted = self._three_writers()
+        planted["stages_ms"][self.NAME] += 2.0 + 1.0
+        with self.subTest("clean"):
+            self.assertAlmostEqual(self._flat_jobs(clean["stages_ms"]), 3.0)
+            self.assertLessEqual(self._flat_jobs(clean["stages_ms"]), clean["stages_ms"]["jobsPass"] + 1e-9)
+        with self.subTest("legitimate part"):
+            self.assertAlmostEqual(part["stages_ms"]["jobs.autoNudge.parse"], 2.0, msg="premise: the part is in the flat table")
+            self.assertAlmostEqual(part["stages_ms"]["jobs.autoNudge"], 2.0)
+            self.assertAlmostEqual(self._flat_jobs(part["stages_ms"]), 5.0)
+            self.assertLessEqual(self._flat_jobs(part["stages_ms"]), part["stages_ms"]["jobsPass"] + 1e-9, "the part is not counted beside its job")
+            self.assertGreater(every_dotted(part["stages_ms"]), part["stages_ms"]["jobsPass"], "the rejected every-key sum reads red here: %r" % every_dotted(part["stages_ms"]))
+            self.assertLessEqual(part["stages_ms"]["jobs.autoNudge.parse"], part["stages_ms"]["jobs.autoNudge"] + 1e-9, "the part against its job: the other family's bound")
+        with self.subTest("planted mis-credit"):
+            self.assertAlmostEqual(self._flat_jobs(planted["stages_ms"]), 6.0)
+            self.assertGreater(self._flat_jobs(planted["stages_ms"]), planted["stages_ms"]["jobsPass"], "caught: the merged writers exceed the pass")
+            self.assertEqual(pass_names(planted["stages_ms"]), 0.0, "the rejected name-list sum is blind to it")
+
+    def test_a_bare_jobs_write_is_the_flat_rows_for_every_writer_under_every_mark(self):
+        """The `jobs` container is not routed (2026-09-19 review, the cell bin/romp's share comment is checked against): stage()
+        adds a bare `jobs` write to the flat row whoever wrote it and whatever mark the thread carries. The pusher's owner
+        writes 2 ms, the jobs owner 3 ms inside its pass, and a thread owning neither loop 1 ms bare, 1 ms under the "push"
+        mark and 1 ms under the "connect" mark: the flat row reads 8.0, nothing reaches cycleJobsMs, stagesForeign or the
+        connect table. The row is the pusher's on a kernel because _pusher_cycle_jobs is its one writer (the census below),
+        not because stage() sends it there."""
+        st = km._PerfStats()
+        st.cycle_begin()                                              # this thread is the pusher
+        st.stage("jobs", 0.002)
+        done = {}
+
+        def jobs_thread():
+            st.cycle_begin("jobs")
+            st.stage("jobs", 0.003); st.stage("jobsPass", 0.003); st.jobs_pass(0.003)
+            done["jobs"] = True
+
+        def owns_nothing():
+            st.stage("jobs", 0.001)
+            km._stage_marked("push")(lambda: st.stage("jobs", 0.001))()
+            km._stage_marked("connect")(lambda: st.stage("jobs", 0.001))()
+            done["foreign"] = True
+        for target in (jobs_thread, owns_nothing):
+            th = threading.Thread(target=target); th.start(); th.join(5)
+        self.assertEqual(done, {"jobs": True, "foreign": True}, "both threads wrote")
+        st.cycle(0.002)
+        snap = st.snapshot()
+        self.assertAlmostEqual(snap["stages_ms"]["jobs"], 8.0, msg="every writer's `jobs`, under every mark, in the one flat row")
+        self.assertEqual(snap["stagesForeign"], {}, "a bare `jobs` write is never foreign")
+        self.assertEqual(snap["pusher"]["cycleJobsMs"], {j: 0.0 for j in km._PerfStats.CYCLE_JOBS}, "nor a cycle job")
+        self.assertEqual(snap["pusher"]["connectPush"]["stagesMs"], {}, "nor a connect stage")
+        # the census: the kernel closes the `jobs` container at exactly one call site, inside _pusher_cycle_jobs, so the flat
+        # row is the pusher's by having one writer; a second writer anywhere would merge into it without a trace
+        src = inspect.getsource(km)
+        sites = re.findall(r'_PERF_STATS\.stage\("jobs",', src)
+        self.assertEqual(len(sites), 1, "the `jobs` container has one writer in the kernel: %d found" % len(sites))
+        self.assertEqual(len(re.findall(r'_PERF_STATS\.stage\("jobs",', inspect.getsource(km._pusher_cycle_jobs))), 1,
+                         "and it is _pusher_cycle_jobs")
+
+    def test_a_pusher_write_under_a_name_outside_the_nine_still_lands_in_its_block(self):
+        """A job's part (jobs.autoNudge.snapshot, _sub_stage) or a job that moved lists, written by the pusher's owner: the
+        block takes the name as it comes, so nothing is dropped and the seeded nine are not a filter."""
+        st = km._PerfStats()
+        st.cycle_begin()
+        st.stage("jobs.autoNudge.snapshot", 0.001); st.stage("jobs.autoNudge", 0.004)
+        st.stage("jobs", 0.004); st.cycle(0.004)
+        snap = st.snapshot()
+        self.assertAlmostEqual(snap["pusher"]["cycleJobsMs"]["autoNudge.snapshot"], 1.0)
+        self.assertAlmostEqual(snap["pusher"]["cycleJobsMs"]["autoNudge"], 4.0)
+        self.assertEqual(snap["stages_ms"]["jobs.autoNudge"], 0.0, "the flat row is the jobs thread's: untouched")
+        self.assertEqual(snap["stagesForeign"], {})
+        self.assertEqual(sorted(snap["pusher"]["firstCycle"]["stages"]), ["jobs", "jobs.autoNudge", "jobs.autoNudge.snapshot"],
+                         "the split takes the pusher's rows as before")
+
+    def test_the_census_is_the_two_lists_and_the_flat_seed_is_the_pass_list(self):
+        P = km._PerfStats
+        self.assertEqual(P.JOBS, P.CYCLE_JOBS + P.PASS_JOBS, "JOBS stays the census")
+        self.assertEqual(len(P.CYCLE_JOBS), 9)
+        self.assertFalse(set(P.CYCLE_JOBS) & set(P.PASS_JOBS), "no job on both lists")
+        self.assertEqual(len(P.JOBS), len(set(P.JOBS)), "no name twice")
+        self.assertTrue({"jobs." + j for j in P.PASS_JOBS} <= set(P.STAGES), "the flat seed lists every pass job")
+        self.assertFalse({"jobs." + j for j in P.CYCLE_JOBS} & set(P.STAGES), "and no cycle job")
+        self.assertIn("jobs.prelude", P.STAGES); self.assertIn("jobsPass", P.STAGES); self.assertIn("jobs", P.STAGES)
+        self.assertEqual(set(km._PerfStats().pusher) & {"cycleJobsMs"}, set(),
+                         "the block is its own attribute, copied into the served pusher block, never the live dict")
+
+    def test_every_job_row_key_fits_the_paste_safe_grammar_and_the_export_keeps_it(self):
+        """The two new blocks are keyed by the kernel's own literals: a job name from CYCLE_JOBS under cycleJobsMs and a stage
+        name (`jobs.` + a _job_stage or _sub_stage literal) under stagesForeign; never a client's or a user's text, so
+        every key fits _PERF_IDENT (the served grammar) and the export's IDENT, is neither denied nor coarsened by
+        cli/perf_public.py, and the values are numbers. The sub-stage names are read from the kernel's source, so a part
+        added later is held to the same grammar."""
+        src = inspect.getsource(km)
+        parts = set(re.findall(r'_sub_stage\("([A-Za-z0-9_.]+)"\)', src)) | set(re.findall(r'stage\("jobs\.([A-Za-z0-9_.]+)"', src))
+        self.assertTrue({"autoNudge.key", "autoNudge.parse", "autoNudge.snapshot", "autoNudge.looks"} <= parts, sorted(parts))
+        names = set(km._PerfStats.STAGES) | set(km._PerfStats.JOBS) | {"jobs." + j for j in km._PerfStats.JOBS} \
+            | {"jobs." + p for p in parts} | set(parts) | {"cycleJobsMs", "stagesForeign"}
+        for k in sorted(names):
+            self.assertTrue(km._PERF_IDENT.fullmatch(k), "outside the served grammar: %s" % k)
+            self.assertTrue(pp.IDENT.fullmatch(k), "outside the export's grammar: %s" % k)
+            self.assertFalse(pp.denied(k, 0.0), "denied by the export: %s" % k)
+            self.assertNotIn(k, pp.BOUND_KEYS, "coarsened by the export: %s" % k)
+        snap = self._three_writers()
+        block = {"pusher": {"cycleJobsMs": snap["pusher"]["cycleJobsMs"]}, "stagesForeign": snap["stagesForeign"]}
+        self.assertEqual(pp.fold(block), block, "the export keeps every key and value as served")
+        for v in list(snap["pusher"]["cycleJobsMs"].values()) + list(snap["stagesForeign"].values()):
+            self.assertIsInstance(v, float)
+        self.assertEqual(pp.paste_problems(block), [])
+
+    def test_the_collectors_docstring_names_the_new_rows(self):
+        doc = km._PerfStats.__doc__
+        # each row is cut by _doc_row, relative to the row's own indentation: Python 3.13 and later strip a docstring's
+        # common leading whitespace at compile time, so a slice between six-space literals passed on the 3.12 venv and
+        # raised ValueError on the 3.13 and 3.14t CI cells; the stagesForeign check below is a line-start match for the
+        # same reason
+        pusher_row = _doc_row(doc, "pusher")
+        self.assertIn("cycleJobsMs", pusher_row, "the pusher row names its cycle jobs' block")
+        stages_row = _doc_row(doc, "stages_ms")
+        self.assertIn("cycleJobsMs", stages_row, "the stages_ms row sends the reader to the pusher's block for the nine")
+        self.assertRegex(stages_row, r"moved to pusher\.cycleJobsMs", "and says the nine MOVED there, so a reader of an older capture knows where the numbers went")
+        # the jobs clause itself, not the bare word: the same row's push sentence also says "counts under stagesForeign",
+        # so a bare assertIn stayed green with the jobs cross-reference dropped (2026-09-18 review). The row is joined and
+        # split first, as the reference-doc test does, because the docstring wraps at 80 columns and the two words sit on
+        # different lines; the colon in "owner:" is load bearing (a bare "owner" matches inside "ownership")
+        self.assertRegex(" ".join(stages_row.split()), r"writer's owner:.{0,120}stagesForeign",
+                         "the stages_ms row's jobs sentence sends a thread owning neither loop's write to stagesForeign")
+        self.assertRegex(doc, r"(?m)^ *stagesForeign ", "the foreign block has a row of its own")
+
+
+
+    def test_the_reference_names_the_new_rows_and_the_discontinuity(self):
+        """docs/reference.md's stages_ms entry names the blocks and states both discontinuities by their load-bearing words,
+        not one wording: the date, the word "moved", the prefix each family moved to (`pusher.cycleJobsMs` for the nine
+        cycle jobs, `pusher.connectPush.stagesMs` for the connect pushes' part of the push.* rows), and that the moved
+        rows do not compare across a capture pair spanning the change; the jobs entry sends the reader to
+        pusher.cycleJobsMs; the pusher entry lists both tables; the foreign entry names both families."""
+        doc = Path(HERE).parent.joinpath("docs", "reference.md").read_text()
+        para = doc[doc.index("- `stages_ms`:"):]
+        para = " ".join(para[:para.index("\n- `stagesForeign`:")].split())   # the reference wraps at 80 columns: one line
+        self.assertIn("`pusher.cycleJobsMs`", para)
+        self.assertIn("2026-09-18", para, "the day the meaning changed")
+        self.assertIn("moved", para, "the rows MOVED: a reader of an older capture is told where the numbers went")
+        self.assertRegex(para, r"moved.{0,120}`pusher\.cycleJobsMs", "the nine moved to the pusher's block (the word and the prefix, close together)")
+        self.assertRegex(para, r"moved.{0,120}`pusher\.connectPush\.stagesMs", "the connect pushes' part of the push rows moved to the connect table")
+        self.assertRegex(para, r"not compar(e|able)", "the discontinuity: the moved rows are not comparable across the change")
+        self.assertNotIn("count every push", para, "the fold sentence is gone")
+        for j in km._PerfStats.CYCLE_JOBS:
+            self.assertIn("`%s`" % j, para, "the nine are named: %s" % j)
+        # The rows that keep their values are the pass jobs' container rows, counted from PASS_JOBS, with the reason (the
+        # act-now pass closes no `jobs.<job>` container) and the clause that a job's part rows narrow under stagesForeign
+        # (2026-09-19 review: round one corrected the sentence and nothing held the correction; the unscoped wording,
+        # every remaining `jobs.<job>` row keeping its value, is false of the part rows and is refused here by shape).
+        n_pass = _number_word(len(km._PerfStats.PASS_JOBS))
+        self.assertRegex(para, r"%s remaining `jobs\.<job>` container rows \(the pass jobs\) keep their names and their values" % n_pass,
+                         "the rows that keep their values are the pass jobs' %s container rows" % n_pass)
+        self.assertRegex(para, r"closes no `jobs\.<job>` container", "the reason: the act-now pass closes no job container")
+        self.assertRegex(para, r"`jobs\.autoNudge\.<part>` rows shed.{0,80}`stagesForeign`", "and a job's part rows narrow, under stagesForeign")
+        self.assertNotRegex(para, r"`jobs\.<job>` rows keep their names", "round one's unscoped sentence (no `container`) is gone")
+        self.assertIn("- `stagesForeign`:", doc, "the foreign block is documented as a top-level block")
+        foreign_para = doc[doc.index("- `stagesForeign`:"):]
+        foreign_para = " ".join(foreign_para[:foreign_para.index("\n- `")].split())
+        self.assertIn("`jobs.<job>`", foreign_para); self.assertIn("`push.*`", foreign_para)
+        jobs_para = doc[doc.index("- `jobs`: the jobs thread"):]
+        jobs_para = jobs_para[:jobs_para.index("\n- `")]
+        self.assertIn("`pusher.cycleJobsMs`", jobs_para)
+        pusher_para = doc[doc.index("- `pusher`: `cycles`"):]
+        pusher_para = " ".join(pusher_para[:pusher_para.index("\n- `")].split())
+        self.assertIn("`cycleJobsMs`", pusher_para)
+        self.assertIn("`stagesMs`", pusher_para, "the connect table is listed under connectPush")
+        self.assertIn("`pusher.connectPush.stagesMs`", pusher_para, "the firstCycle sentence sends a connect push there, not to stages_ms")
+
+    def test_the_ledger_entry_gives_the_measured_reason_for_the_rows_that_keep_their_values(self):
+        """upstream/2026-09-18-stage-attribution.md states the jobs rows' meaning change with the same load-bearing words as the
+        reference: the pass jobs' container rows, counted from PASS_JOBS, keep their values because the act-now path closes no
+        `jobs.<job>` container, and a job's part rows shed that pass's share under stagesForeign. Round one replaced the
+        entry's reason (that the housekeeping was the jobs thread's alone from the start, which the act-now test in
+        tests/test_jobs_thread_split.py falsifies) and nothing held the replacement (2026-09-19 review)."""
+        entry = " ".join(Path(HERE).parent.joinpath("upstream", "2026-09-18-stage-attribution.md").read_text().split())
+        n_pass = _number_word(len(km._PerfStats.PASS_JOBS))
+        self.assertRegex(entry, r"the %s `jobs\.<job>` container rows keep their names and their values because" % n_pass,
+                         "the rows that keep their values are the pass jobs' %s container rows, with a reason" % n_pass)
+        self.assertRegex(entry, r"closes no `jobs\.<job>` container", "the reason: the act-now path closes no job container")
+        self.assertRegex(entry, r"`jobs\.autoNudge\.<part>` rows shed.{0,60}`stagesForeign`", "the part rows narrow, under stagesForeign")
+        self.assertNotIn(RETIRED_WORDINGS["housekeeping-already-alone"], entry, "round one's false reason is gone")
+        self.assertNotRegex(entry, r"those rows keep their names and their values, since", "and its unscoped sentence with it")
+
+
+class PushRowsByPurpose(unittest.TestCase):
+    """The push stages (`push` and the push.* rows: push.chat and its seams, push.feed, push.timeline, push.send and its
+    seams, push.warm, push.feedFirst) are closed by two kinds of thread through one set of calls in _push: the pusher's
+    cycle, and a fresh client's full push on its HTTP handler thread (_push_one: _push(connect=True)). Until 2026-09-18
+    stage() added both to the one flat row, so stages_ms.push.chat over a window held every browser reload's build beside
+    the pusher's, and `romp perf` divided it by the pusher's cycle time (a chat share above the push share, or above one
+    hundred percent, while pages reloaded). Now stage() routes a push stage by the writer's PURPOSE or OWNER: the
+    "connect" stage mark (what _push's decorator sets for connect=True) to pusher.connectPush.stagesMs under the stage
+    name; the pusher's cycle owner (its push.* under the "push" mark and the `push` container it closes outside the
+    mark) to the flat row; any other writer to stagesForeign, a "push"-marked write from a thread owning no cycle included
+    (the mark says what _push was called for, not whose cycle it ran in). No seed: the connect table lists the stages
+    connect pushes ran. No stage name, mark, split row or boot row changes."""
+
+    PUSHER = (("push.chat", 0.005), ("push.send", 0.001))                                # the pusher's push, under its mark
+    CONNECT = (("push.chat", 20.0), ("push.send", 0.5), ("push.feedFirst", 0.25))        # a reload's full push on a handler thread
+    FOREIGN = (("push.chat", 0.001), ("push", 0.02))                                     # a thread with no mark and no cycle; its
+    #                                                                                      `push` wall exceeds the room left in the
+    #                                                                                      8 ms cycle beside the pusher's 6 ms, so
+    #                                                                                      a foreign write merged into the flat row
+    #                                                                                      is red at the cycle bound (at 0.002 the
+    #                                                                                      merged 8.0 sat exactly on the 8.0 cycle)
+
+    def _three_writers(self):
+        """The pusher (this thread, the cycle's owner) closes push.chat and push.send under the "push" mark and then its `push`
+        container outside it, as _pusher_cycle_jobs does; a connect thread under the "connect" mark closes three stages and
+        the whole-wall counter _push_one keeps; a thread with no mark and no cycle closes two. Returns the snapshot."""
+        st = km._PerfStats()
+        st.cycle_begin()                                              # this thread is the pusher
+
+        @km._stage_marked("push")                                     # the mark _push carries when the pusher calls it
+        def pushers_push():
+            for name, dt in self.PUSHER:
+                st.stage(name, dt)
+        pushers_push()
+        done = {}
+
+        @km._stage_marked("connect")                                  # the mark _push carries for connect=True (_push_one)
+        def connect_push():
+            for name, dt in self.CONNECT:
+                st.stage(name, dt)
+            st.connect_push("chat", sum(dt for _, dt in self.CONNECT))   # _push_one's whole-wall counter, beside the stages
+            done["connect"] = True
+
+        def foreign_thread():                                         # no cycle_begin, no mark: a thread standing for neither
+            for name, dt in self.FOREIGN:
+                st.stage(name, dt)
+            done["foreign"] = True
+        for target in (connect_push, foreign_thread):
+            th = threading.Thread(target=target); th.start(); th.join(5)
+        self.assertEqual(done, {"connect": True, "foreign": True}, "both threads wrote")
+        st.stage("push", 0.006)                                       # the container: the pusher closes it outside the mark
+        st.cycle(0.008)
+        return st.snapshot()
+
+    def test_one_push_stage_from_three_threads_lands_by_each_writers_purpose(self):
+        snap = self._three_writers()
+        st = snap["stages_ms"]
+        self.assertAlmostEqual(st["push.chat"], 5.0, msg="the flat row is the pusher's 5 ms alone (20006 ms before: every writer's)")
+        self.assertAlmostEqual(st["push.send"], 1.0)
+        self.assertAlmostEqual(st["push"], 6.0, msg="the container, closed outside the mark, is the pusher's by its ownership of the cycle")
+        self.assertEqual(st["push.feedFirst"], 0.0, "the connect push's cards-first feed is not the pusher's")
+        self.assertEqual(snap["pusher"]["connectPush"]["stagesMs"],
+                         {"push.chat": 20000.0, "push.send": 500.0, "push.feedFirst": 250.0}, "the connect push's stages, under their names, apart")
+        self.assertEqual(snap["pusher"]["connectPush"]["count"], 1)
+        self.assertEqual(snap["stagesForeign"], {"push.chat": 1.0, "push": 20.0}, "the thread with no mark and no cycle is counted, not merged")
+        # the split rows keep the pusher's alone as before, and neither other writer reaches a split
+        self.assertEqual(sorted(snap["pusher"]["firstCycle"]["stages"]), ["push", "push.chat", "push.send"])
+        self.assertAlmostEqual(snap["pusher"]["firstCycle"]["stages"]["push.chat"]["ms"], 5.0)
+        self.assertEqual(snap["pusher"]["cycleJobsMs"], {j: 0.0 for j in km._PerfStats.CYCLE_JOBS}, "no `jobs.` write: the other routing untouched")
+
+    def test_the_flat_push_rows_roll_up_to_the_pushers_cycle_time_and_the_connect_rows_to_the_connect_pushes_wall(self):
+        """Over a run of both, the flat push.* rows are the pusher's, so the direct children of `push` sum to at most `push`,
+        which fits the pusher's cycle time (20757 ms of children against an 8 ms cycle before); the connect rows sum to at
+        most the connect pushes' whole wall, pusher.connectPush.ms_sum. A seam rolls up to its container, not to `push`.
+        Each of the three mis-credits is red here: a connect push merged into the flat rows at the container bound, the
+        pusher's writes sent to stagesForeign at the greater-than-zero bound, and the foreign thread's merged into the
+        flat rows at the cycle bound (its 20 ms `push` beside the pusher's 6 ms in an 8 ms cycle: 26.0 against 8.0)."""
+        snap = self._three_writers()
+        st = snap["stages_ms"]
+        children = sorted(k for k in st if k.startswith("push.") and k.count(".") == 1)
+        self.assertEqual(children, ["push.chat", "push.feed", "push.feedFirst", "push.send", "push.timeline", "push.warm"])
+        self.assertLessEqual(sum(st[k] for k in children), st["push"] + 1e-9, "the push.* rows against the container: %r" % {k: st[k] for k in children})
+        self.assertLessEqual(st["push"], snap["pusher"]["cycle_ms_sum"] + 1e-9, "the pusher's push fits its cycles")
+        self.assertGreater(sum(st[k] for k in children), 0.0, "the pusher's writes are in them")
+        cst = snap["pusher"]["connectPush"]["stagesMs"]
+        self.assertLessEqual(sum(v for k, v in cst.items() if k.count(".") == 1), snap["pusher"]["connectPush"]["ms_sum"] + 1e-9)
+        self.assertGreater(sum(cst.values()), 0.0)
+
+    def test_a_push_under_the_push_mark_with_no_cycle_is_foreign_not_the_pushers_row(self):
+        """The "push" mark says what _push was called for, not whose cycle it ran in: a push stage under it from a thread
+        owning no cycle is neither a connect push nor the cycle's owner, so it counts under stagesForeign beside the
+        container the same thread closes with no mark, and the flat rows the CLI divides by the pusher's cycle time take
+        nothing from it. The mark alone as the pusher's stand-in (this test's first meaning, 2026-09-18 review) let a
+        _push(connect=False) from any other thread merge its walls into those rows: a push share above one hundred percent
+        with stagesForeign empty. Latent on a kernel: _push_all's one caller opens the cycle first and _push_one passes
+        connect=True, so no live caller takes this road."""
+        st = km._PerfStats()
+        out = {}
+
+        def bare_thread():
+            km._stage_marked("push")(lambda: st.stage("push.feed", 0.002))()
+            st.stage("push", 0.002)
+            out["done"] = True
+        th = threading.Thread(target=bare_thread); th.start(); th.join(5)
+        self.assertTrue(out.get("done"))
+        snap = st.snapshot()
+        self.assertEqual(snap["stages_ms"]["push.feed"], 0.0, "the flat row takes nothing from a thread owning no cycle, marked or not")
+        self.assertEqual(snap["stages_ms"]["push"], 0.0)
+        self.assertEqual(snap["stagesForeign"], {"push.feed": 2.0, "push": 2.0}, "both counted apart, under their names")
+        self.assertEqual(snap["pusher"]["connectPush"]["stagesMs"], {})
+
+    # The two cells below are what the routing sentences in the reference, the ledger entry, bin/romp and this module are
+    # checked against (2026-09-19 review): ownership is a thread's registration in _owners, made by cycle_begin and left
+    # standing by cycle(), not the interval a cycle is open, so the same push stage closed in the gap between two cycles
+    # lands in the flat rows from the registered thread and under stagesForeign from a thread that registered nothing.
+    def test_a_push_stage_the_pushers_thread_closes_between_two_cycles_is_the_flat_rows(self):
+        """The pusher's thread opens a cycle, closes it, and then closes a push stage under _push's "push" mark and its `push`
+        container outside it before the next cycle opens: both land in the flat rows, nothing under stagesForeign, and the
+        gap's writes reach no split (the next cycle_begin empties the open split, so they belong to no cycle's rows)."""
+        st = km._PerfStats()
+        st.cycle_begin()                                              # this thread is the pusher
+        km._stage_marked("push")(lambda: st.stage("push.chat", 0.005))()
+        st.stage("push", 0.005); st.cycle(0.005)                     # the first cycle closes
+        self.assertEqual(st._mine(), "pusher", "premise: the close of a cycle leaves the thread registered as the owner")
+        km._stage_marked("push")(lambda: st.stage("push.feed", 0.003))()   # between the cycles, under _push's mark
+        st.stage("push", 0.002)                                       # and outside it
+        st.cycle_begin(); st.cycle(0.001)                             # the second cycle, with nothing written inside it
+        snap = st.snapshot()
+        self.assertAlmostEqual(snap["stages_ms"]["push.feed"], 3.0, msg="the gap's stage is the flat row's: the thread owns the pusher's cycle")
+        self.assertAlmostEqual(snap["stages_ms"]["push"], 7.0, msg="the gap's container too")
+        self.assertEqual(snap["stagesForeign"], {}, "nothing foreign: the writer is the registered owner")
+        self.assertEqual(snap["pusher"]["connectPush"]["stagesMs"], {})
+        ring = snap["pusher"]["stageRing"]
+        self.assertEqual(len(ring), 2)
+        self.assertEqual(sorted(ring[0]["stages"]), ["push", "push.chat"], "the first cycle's split holds its own writes")
+        self.assertEqual(ring[1]["stages"], {}, "the gap's writes are in no split: the second opening emptied them")
+
+    def test_a_push_stage_from_a_thread_owning_nothing_is_foreign_while_the_owner_sits_between_cycles(self):
+        """At the same instant, the pusher's thread between two cycles and a thread that opened no cycle each close push.feed,
+        the second under the "push" mark and bare: the owner's write is the flat row's and both of the other's count under
+        stagesForeign. Neither writer is inside an open cycle; the registration is what separates them."""
+        st = km._PerfStats()
+        st.cycle_begin(); st.stage("push", 0.001); st.cycle(0.001)  # one cycle, closed: this thread stays registered
+        done = {}
+
+        def owns_nothing():
+            km._stage_marked("push")(lambda: st.stage("push.feed", 0.004))()
+            st.stage("push.feed", 0.001)
+            done["written"] = True
+        th = threading.Thread(target=owns_nothing); th.start(); th.join(5)
+        self.assertTrue(done.get("written"))
+        km._stage_marked("push")(lambda: st.stage("push.feed", 0.002))()   # the owner's, in the same gap
+        snap = st.snapshot()
+        self.assertEqual(snap["stagesForeign"], {"push.feed": 5.0}, "the thread owning nothing: counted apart, marked or not")
+        self.assertAlmostEqual(snap["stages_ms"]["push.feed"], 2.0, msg="the flat row is the registered owner's write alone")
+        self.assertEqual(snap["pusher"]["connectPush"]["stagesMs"], {})
+
+    def test_a_fresh_snapshot_seeds_no_connect_stage_row_and_reset_empties_the_table(self):
+        """No seed, and the docstring says so: a seeded push.warm or `push` row would be one a connect push can never move (the
+        warm runs for the pusher alone, and _push_one closes no container), reading as time connect pushes never spend
+        there. The table is its own attribute, copied into the served block; the live counters dict never holds it."""
+        st = km._PerfStats()
+        self.assertEqual(st.snapshot()["pusher"]["connectPush"]["stagesMs"], {})
+        self.assertNotIn("stagesMs", st.connect_push_stats)
+        km._stage_marked("connect")(lambda: st.stage("push.timeline", 0.004))()
+        self.assertEqual(st.snapshot()["pusher"]["connectPush"]["stagesMs"], {"push.timeline": 4.0})
+        st.reset()
+        self.assertEqual(st.snapshot()["pusher"]["connectPush"]["stagesMs"], {})
+        doc = km._PerfStats.__doc__
+        # the row by _doc_row, relative to its own indentation: Python 3.13 and later strip a docstring's common leading
+        # whitespace at compile time, so a slice between six-space literals raised ValueError on the 3.13 and 3.14t CI cells
+        self.assertIn("No seed", _doc_row(doc, "pusher"), "the pusher row says the table is unseeded")
+
+    def test_every_push_row_key_fits_the_paste_safe_grammar_and_the_export_keeps_it(self):
+        """The connect table and the foreign block are keyed by the kernel's own stage literals (`push`, the push.* names in
+        STAGES, and every `push.` name stage() is called with in the kernel's source), under the fixed keys connectPush and
+        stagesMs; never a client's or a user's text. Every key fits _PERF_IDENT (the served grammar) and the export's IDENT,
+        is neither denied nor coarsened by cli/perf_public.py (a denied key would drop the table from an export, a coarsened
+        one would round it), and the values are numbers; the fold keeps the populated blocks byte for byte and the paste
+        walk finds nothing. The stage names are read from the source, so a seam added later is held to the same grammar."""
+        src = inspect.getsource(km)
+        written = set(re.findall(r'_PERF_STATS\.stage\("(push(?:\.[A-Za-z0-9_.]+)?)"', src))
+        self.assertTrue({"push", "push.chat", "push.chat.sig", "push.feedFirst", "push.send.compare", "push.warm"} <= written, sorted(written))
+        names = written | {k for k in km._PerfStats.STAGES if k.startswith("push")} | {"connectPush", "stagesMs", "stagesForeign", "stages_ms"}
+        for k in sorted(names):
+            self.assertTrue(km._PERF_IDENT.fullmatch(k), "outside the served grammar: %s" % k)
+            self.assertTrue(pp.IDENT.fullmatch(k), "outside the export's grammar: %s" % k)
+            self.assertFalse(pp.denied(k, 0.0), "denied by the export: %s" % k)
+            self.assertNotIn(k, pp.BOUND_KEYS, "coarsened by the export: %s" % k)
+        snap = self._three_writers()
+        tab = snap["pusher"]["connectPush"].get("stagesMs")           # the premise first: a kernel without the table fails here, by name
+        self.assertEqual(sorted(tab or {}), ["push.chat", "push.feedFirst", "push.send"], "premise: the table is populated")
+        block = {"pusher": {"connectPush": snap["pusher"]["connectPush"]}, "stagesForeign": snap["stagesForeign"],
+                 "stages_ms": {k: v for k, v in snap["stages_ms"].items() if k.startswith("push")}}
+        self.assertEqual(pp.fold(block), block, "the export keeps every key and value as served")
+        for v in list(snap["pusher"]["connectPush"]["stagesMs"].values()) + list(snap["stagesForeign"].values()) + list(block["stages_ms"].values()):
+            self.assertIsInstance(v, float)
+        self.assertEqual(pp.paste_problems(block), [])
+
+    def test_the_collectors_docstring_names_the_connect_table(self):
+        doc = km._PerfStats.__doc__
+        # each row is cut by _doc_row, relative to the row's own indentation: Python 3.13 and later strip a docstring's
+        # common leading whitespace at compile time, so a slice between six-space literals raised ValueError on the 3.13
+        # and 3.14t CI cells
+        pusher_row = _doc_row(doc, "pusher")
+        self.assertIn("connectPush", pusher_row, "the pusher row documents the block the table rides")
+        self.assertIn("stagesMs", pusher_row)
+        stages_row = _doc_row(doc, "stages_ms")
+        self.assertIn("pusher.connectPush.stagesMs", stages_row, "the stages_ms row sends the reader to the connect table")
+        self.assertRegex(stages_row, r"moved to pusher\.connectPush\.stagesMs", "and says the connect pushes' part moved there")
+        self.assertIn("2026-09-18", stages_row)
+        self.assertNotIn("EVERY caller", stages_row, "the fold sentence is gone")
+        foreign_row = _doc_row(doc, "stagesForeign")
+        self.assertIn("push", foreign_row, "the foreign block names the push stages as a second family")
+
+
+class RoutingStatements(unittest.TestCase):
+    """Every place in the tree that names a routed block (stagesForeign, pusher.cycleJobsMs, pusher.connectPush.stagesMs, or
+    their attributes) is where a sentence about the routing can live, and two review rounds found such a sentence wrong
+    in a way the code was not, each time in a file a hand-kept sweep had missed (2026-09-19 review). The sweep's scope is
+    therefore derived here from the tree, not listed: the files that name a block are found by reading them, pinned as a
+    set so a new one turns the test red until it is swept, and none of them may carry a wording a round retired
+    (RETIRED_WORDINGS at the top of this module). The truth of what the files say is measured by the routing tests above
+    (PushRowsByPurpose, JobRowsByOwner); this test holds only the scope and the retired wordings."""
+
+    ROOTS = ("kernel", "bin", "cli", "docs", "upstream", "tests", "scripts", "ui/webview")
+    TEXT = (".py", ".md", ".bats", ".ts", ".js", ".mjs", ".sh", ".css", ".html", ".txt", ".toml", ".yml", ".yaml", "")
+    SKIP_DIRS = {"node_modules", "dist", "out-tests", "__pycache__", "assets"}
+    BLOCKS = re.compile(r"stagesForeign|cycleJobsMs|connectPush\.stagesMs|stages_foreign|cycle_jobs_ms|connect_stages_ms")
+    # the places a routing sentence lives today; a file added here has been read against the measured cells
+    PLACES = {"bin/romp", "docs/reference.md", "kernel/kernel.py", "tests/test_first_cycle_stage_split.py",
+              "tests/test_jobs_thread_split.py", "tests/test_perf_stats.py", "upstream/2026-09-18-stage-attribution.md"}
+
+    def _places(self):
+        root = Path(HERE).parent
+        found = {}
+        for top in self.ROOTS:
+            for dirpath, dirnames, filenames in os.walk(root / top):
+                dirnames[:] = [d for d in dirnames if d not in self.SKIP_DIRS and not d.startswith(".")]
+                for fn in filenames:
+                    path = Path(dirpath) / fn
+                    if path.suffix not in self.TEXT or path.is_symlink():
+                        continue
+                    try:
+                        text = path.read_text()
+                    except (UnicodeDecodeError, OSError):
+                        continue
+                    if self.BLOCKS.search(text):
+                        found[str(path.relative_to(root))] = text
+        return found
+
+    def test_the_files_that_name_a_routed_block_are_the_swept_set(self):
+        found = self._places()
+        self.assertEqual(set(found), self.PLACES, "a file names a routed block and is not in the sweep (or left it): %r" % sorted(set(found) ^ self.PLACES))
+
+    def test_no_swept_file_carries_a_retired_wording(self):
+        for rel, text in sorted(self._places().items()):
+            joined = " ".join(text.split())
+            for key, phrase in sorted(RETIRED_WORDINGS.items()):
+                self.assertFalse(phrase in joined, "%s carries a wording a review round retired (%s): %r" % (rel, key, phrase))
+                #                                    not assertNotIn: its failure message would print the whole file
+
+    def test_this_modules_top_keys_comment_names_both_families(self):
+        line = next(l for l in Path(__file__).read_text().splitlines() if l.strip().startswith('"stagesForeign",'))
+        self.assertIn("push stage", line + " ", "the TOP_KEYS comment names the push family beside the jobs family")
 
 
 class ProcessStatsFallback(unittest.TestCase):
@@ -1502,6 +2128,16 @@ class PusherRecords(unittest.TestCase):
             "_turn_notify_tick")                       # upstream's turn-end notification pass
 
     def setUp(self):
+        # The real _pusher_cycle the tests below drive opens the pusher's cycle on this thread: cycle_begin registers the thread
+        # in _PERF_STATS._owners and cycle() leaves the registration standing, so until this cleanup every class run after
+        # this one in the module inherited the main thread as the pusher's owner (the leak PushStages's real-push test was
+        # green through; 2026-09-19 review). Registered before anything else in setUp, so a raising setUp cannot skip it.
+        owners, cycle_state = dict(km._PERF_STATS._owners), copy.deepcopy(km._PERF_STATS._cycle_state)
+
+        def restore_cycle_owner():
+            km._PERF_STATS._owners.clear(); km._PERF_STATS._owners.update(owners)
+            km._PERF_STATS._cycle_state.clear(); km._PERF_STATS._cycle_state.update(cycle_state)
+        self.addCleanup(restore_cycle_owner)
         self.td = tempfile.TemporaryDirectory()
         names = Path(self.td.name) / "names"
         names.mkdir()
@@ -1767,7 +2403,16 @@ class PushStages(unittest.TestCase):
     """_push driven for real (the test_tab_meta_push.py pattern) with builders stubbed to sleep 5 ms
     each: every push.* stage grows by at least its builder's sleep, the chat build counts as built on
     the first push and as cached on the second (same transcript, background tab), and the timeline
-    client's bars go out in the send stage."""
+    client's bars go out in the send stage. setUp opens the pusher's cycle on the module collector
+    first (2026-09-18): stage() credits a push stage to the thread that owns the pusher's cycle, and
+    the "push" mark _push carries is no owner, so a bare _push with no cycle open counts under
+    stagesForeign and the flat rows read zero. Before that line the real-push test was green only
+    through a leak: PusherRecords drove the real _pusher_cycle, whose cycle_begin registered this
+    thread as the pusher's owner, and never restored the owner map, so the registration reached
+    every class after it (red with this class run alone). That leak is closed at its source, a
+    cleanup in PusherRecords.setUp; this class opens its own cycle because its _push needs an owner,
+    not because a sibling leaves one. tearDown puts the owner map and the split state back so no
+    later test inherits this class's cycle."""
 
     STUBS = ("NAMES", "_live_map", "_live_names", "_chat_tab_sessions", "build_session",
              "_cached_feed", "_cached_timeline", "build_timeline", "_fleet_view_sig", "_comments_frame",
@@ -1803,8 +2448,13 @@ class PushStages(unittest.TestCase):
         self.chat_frames, self.tl_frames = [], []
         self.chat = {"app": "chat", "alive": True, "sent": {}, "send": lambda s: self.chat_frames.append(json.loads(s))}
         self.tl = {"app": "timeline", "alive": True, "sent": {}, "send": lambda s: self.tl_frames.append(json.loads(s))}
+        self.saved_cycle = (dict(km._PERF_STATS._owners), dict(km._PERF_STATS._cycle_state))
+        km._PERF_STATS.cycle_begin()          # this thread is the pusher: its _push below is the cycle owner's (the class docstring)
 
     def tearDown(self):
+        owners, cycle_state = self.saved_cycle
+        km._PERF_STATS._owners.clear(); km._PERF_STATS._owners.update(owners)
+        km._PERF_STATS._cycle_state.clear(); km._PERF_STATS._cycle_state.update(cycle_state)
         for nm, v in self.saved.items():
             setattr(km, nm, v)
         st, bc, pe, pl, lo = self.saved_state
@@ -2551,7 +3201,25 @@ class ServedSnapshotIsPasteSafe(unittest.TestCase):
         st.send(("chat", SID), "full", 10)
         st.send(("status", SID), "delta", 5)
         st.cycle(0.050)
-        st.stage("push.chat", 0.010)
+        # the push stages by their writer (2026-09-18), all three routes populated so the walk covers them: a write under a
+        # request handler's route mark from this thread while it owns no cycle, neither a connect push nor the cycle's
+        # owner, to stagesForeign; a connect push's, under the "connect" mark, to pusher.connectPush.stagesMs; and the
+        # pusher's, under the "push" mark _push carries when the pusher calls it, from this thread once it owns the
+        # pusher's cycle (below: the mark alone is no owner), to the flat row. Every key is a stage literal spelled in the
+        # kernel's source: stage() is never called with a client's or a user's text, so no planted string can reach any of
+        # the three; the walk holds them to the grammar anyway
+        km._stage_marked("http.GET.other")(lambda: st.stage("push.feed", 0.004))()
+        km._stage_marked("connect")(lambda: (st.stage("push.chat", 0.003), st.stage("push.send.compare", 0.002)))()
+        # the two owner-routed blocks (2026-09-18), populated so the walk covers them: a `jobs.` stage from this thread
+        # while it owns no cycle lands in stagesForeign, then the same thread as the pusher's owner writes a cycle job
+        # into pusher.cycleJobsMs and its push.chat into the flat row. Both keys are the kernel's own literals (a stage
+        # name from the STAGES vocabulary, a job name from CYCLE_JOBS), never a client's or a user's text: stage() is
+        # called with names spelled in the kernel's source alone, so no planted string can reach either block; the walk
+        # holds them to the grammar anyway
+        st.stage("jobs.autoNudge.parse", 0.001)
+        st.cycle_begin()
+        st.stage("jobs.persistCheckpoints", 0.002)
+        km._stage_marked("push")(lambda: st.stage("push.chat", 0.010))()
 
     def _unplant_reads(self):
         with self.em._READ_BYTES_LOCK:
@@ -2622,6 +3290,10 @@ class ServedSnapshotIsPasteSafe(unittest.TestCase):
         self.assertEqual(sorted(snap["pusher"]["connectPush"]["byApp"]), ["chat", "other"])
         self.assertEqual(sorted(snap["pusher"]["clients"]["byApp"]), ["chat", "other"], "the per-client wire table follows the same rule")
         self.assertEqual(snap["pusher"]["clients"]["byKind"]["other"]["frames"], 1)
+        self.assertEqual(snap["stagesForeign"], {"jobs.autoNudge.parse": 1.0, "push.feed": 4.0}, "the two foreign writes rode in the walk")
+        self.assertEqual(snap["pusher"]["cycleJobsMs"]["persistCheckpoints"], 2.0, "and the pusher's cycle job")
+        self.assertEqual(snap["pusher"]["connectPush"]["stagesMs"], {"push.chat": 3.0, "push.send.compare": 2.0}, "and the connect push's stages")
+        self.assertEqual(snap["stages_ms"]["push.chat"], 10.0, "the pusher's push.chat alone in the flat row")
 
     def test_the_route_mark_is_the_registers_word_never_the_requesters(self):
         """_route_seg (2026-09-18): GET /perf?stacks=1 and ROMP_PERF_STACKS serve each thread's stage mark, and a handler's is

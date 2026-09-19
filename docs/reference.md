@@ -2474,7 +2474,10 @@ serialized until a request reads them. `romp perf` takes two snapshots
 `--interval` seconds apart (default 10) and prints the difference as rates on
 one screen: pusher cycles and wakes per second, the cycles the minimum
 interval between cycle starts held and the watched-tab wakes exempt from it,
-cycle time percentiles, the share of cycle time in each stage, CPU split between the pusher thread, the
+cycle time percentiles, the share of the pusher's cycle time in each stage
+with the connect pushes' count, wall and per-stage wall printed apart (since
+2026-09-18; a share of the pusher's cycle time would be a share of time the
+pusher never spent), CPU split between the pusher thread, the
 judge threads and the rest of the process, builds served from cache against
 rebuilds, bytes sent per slot as full frames, deltas and deduplicated frames,
 goal-store loads and writes per second, judge passes and their durations
@@ -2607,10 +2610,9 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   skipped), `splitFailed`, `firstPass` (the boot's first pass's stage split,
   the shape of `pusher.firstCycle`) and `stageRing`. The pass's container
   stage is `jobsPass`, its opening `jobs.prelude`; each job is still its
-  `jobs.<job>` stage, so a stage name says which thread ran it by the list
-  in `_pusher_cycle_jobs` (the pusher's: the checkpoint cycle, pending ops,
-  turn notify, the checkpoint persist and converge, the boot row backstop,
-  the kernel sample, the API health frame) against `_jobs_pass`.
+  `jobs.<job>` stage, and a `jobs.<job>` row in `stages_ms` is this thread's
+  own (since 2026-09-18); the pusher's cycle jobs are counted under
+  `pusher.cycleJobsMs`.
 - `caches`: one block per cache the kernel, the judge and the event model keep,
   each an exact occupancy (a `len()` or a sum of `len()`s under the cache's
   lock; nothing estimated): `jsonl` with `entries`, `file_bytes` and `records`
@@ -2636,7 +2638,17 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   the client declared under the identifier-and-cap rule `clients.byApp`
   states below, so `other` and `none` are keys there too; the pusher's
   cycles never see this push, so before it the restart's logo phase had no
-  number),
+  number; and `stagesMs` (2026-09-18): `{stage: ms}`, the `push.*` stages
+  those pushes closed (`push.chat` and its seams, `push.feed`,
+  `push.timeline`, `push.send` and its seams, `push.feedFirst`), cumulative
+  wall under the stage name, with no seed, so the table lists the stages
+  connect pushes ran (`push.warm` and the `push` container are the pusher's
+  alone and never appear); `push.chat`, `push.feed`, `push.timeline`,
+  `push.send` and `push.feedFirst` add up to at most `ms_sum`, a seam to at
+  most its container, over closed pushes (a stage closes before `ms_sum`
+  takes the push's wall; the `stages_ms` entry says how a snapshot inside a
+  push reads). Until that day these walls sat in the `stages_ms`
+  `push.*` rows beside the pusher's),
   `clients` (what each client's sender thread wrote to its socket,
   2026-09-18): `byApp`, per app the client declared on its socket URL,
   `frames` and `bytes` (the text frames written and their wire bytes, header
@@ -2671,6 +2683,15 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   longer wait between cycles would have skipped; a conservative undercount,
   since a wake set by another thread or a periodic repost of an unchanged
   frame marks a cycle busy).
+  `cycleJobsMs` (2026-09-18): `{job: ms}`, the pusher thread's cumulative
+  wall per cycle job, the nine listed at zero from the start
+  (`beginCheckpointCycle`, `sessionsListing`, `applyPendingOps`,
+  `turnNotify`, `persistCheckpoints`, `convergeCheckpoints`,
+  `bootRowBackstop`, `kernelSample`, `apiHealth`). A `jobs.<job>` stage the
+  thread that owns the pusher's cycle closes counts here and not in
+  `stages_ms`, whose `jobs.<job>` rows are the jobs thread's; the nine sum to
+  at most `stages_ms.jobs` over closed cycles (the `stages_ms` entry says how
+  a snapshot inside one reads).
   The interval is 1.0 s (`PUSH_MIN_INTERVAL_S` in the kernel): a cycle starts
   no sooner than that after the previous one began unless the live tail of a
   chat tab a connected client is watching changed (a Claude Code session's
@@ -2684,8 +2705,10 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   cut's `hydrated` bytes ON THE PUSHER'S THREAD since the previous stage
   boundary (another thread's reads in the window, the judges' first pass or
   a boot warm, are not the pusher's; a dashboard's connect push, which runs
-  the same stages on the HTTP handler thread, feeds `stages_ms` and never the
-  split); the `push` container carries its sub-stages' sums, the jobs before
+  the same stages on the HTTP handler thread, feeds
+  `pusher.connectPush.stagesMs` since 2026-09-18, the `stages_ms` rows
+  before, and never the split); the `push` container carries its
+  sub-stages' sums, the jobs before
   the push land in `jobs`, and the boundary sits at the push's entry, before
   the cards-first path. A plain GET carries the newest 16 splits and
   `stageRingLen` (how many splits the ring holds now, not how many were
@@ -3061,9 +3084,11 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   no client connected reads `kernel` zero, and a connecting chat client adds
   at most its shown tabs.
 - `stages_ms`: `prelude` (the cycle's opening: the liveness snapshot and the
-  names), `jobs` (the cycle's tick jobs outside the push) and inside it one
-  `jobs.<job>` per tick job (`jobs.interruptBlock`, `jobs.autoNudge`,
-  `jobs.convergeCheckpoints` and the rest, T398), `push`, and inside it
+  names), `jobs` (the pusher's cycle jobs outside the push, itemized under
+  `pusher.cycleJobsMs`), `jobsPass` (the jobs thread's pass) and one
+  `jobs.<job>` per job of the jobs thread (`jobs.interruptBlock`,
+  `jobs.autoNudge` and the rest, T398) plus `jobs.prelude`, its opening,
+  `push`, and inside it
   `push.chat`, `push.feed`, `push.timeline`, `push.send`, `push.warm`,
   `push.feedFirst`; a fresh snapshot lists every one at zero. Two of those
   are split further: inside `push.chat`, `push.chat.sig` (each tab's build
@@ -3078,9 +3103,57 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   and an unchanged build no `feedParts` or `barsSplit`; the cycle's split
   (`pusher.firstCycle`, `pusher.stageRing`) carries a seam's own bytes, its
   parent's glue under `push.chat.other` or `push.send.other`, and `push`
-  counts the parent's rows through the parent's own row, once. The `push.*`
-  stages count every push, including the one a connecting page gets, so they
-  can add up to more than `push`.
+  counts the parent's rows through the parent's own row, once. `push` and
+  the `push.*` rows are the pusher's own: a connect push (the full push a
+  connecting page gets, on its HTTP handler thread) runs the same stages,
+  and its walls are counted under `pusher.connectPush.stagesMs.<stage>`, so
+  `push.chat`, `push.feed`, `push.timeline`, `push.send`, `push.warm` and
+  `push.feedFirst` add up to at most `push` over closed pushes. A stage
+  closes before its container and a snapshot copies the rows at any
+  instant, so a snapshot taken inside a push counts that push's closed
+  stages before its `push`, and a capture pair can read the children ahead
+  of the container by the one push in flight; every bound in this section
+  that sets rows against their container reads the same way (a seam against
+  its stage, the connect stages against `ms_sum`, the nine cycle jobs
+  against `stages_ms.jobs`, and the `romp perf` shares against the cycle
+  time, which `cycle_ms_sum` takes after both containers close). A push
+  stage from a thread that neither owns the pusher's cycle nor carries a
+  connect push's mark is counted under `stagesForeign`; a thread owns the
+  pusher's cycle from the cycle's opening on that thread, the cycle's close
+  included, so a push stage the pusher's thread closes between two cycles
+  lands in the flat rows.
+  Two discontinuities, both on 2026-09-18, for anyone comparing a capture
+  from before that day with one from after it. The nine cycle jobs the
+  pusher runs (`beginCheckpointCycle`, `sessionsListing`, `applyPendingOps`,
+  `turnNotify`, `persistCheckpoints`, `convergeCheckpoints`,
+  `bootRowBackstop`, `kernelSample`, `apiHealth`) moved from `jobs.<job>`
+  rows here to `pusher.cycleJobsMs.<job>`: their `jobs.<job>` keys are gone
+  from `stages_ms`, and a `jobs.<job>` row is the jobs thread's time under
+  that name, where before it was every thread's; the nine do not compare
+  across a capture pair spanning the change, while the nineteen remaining
+  `jobs.<job>` container rows (the pass jobs) keep their names and their
+  values: the act-now pass the dashboard's arms run on the WS handler thread
+  closes no `jobs.<job>` container, so the jobs thread alone wrote those
+  nineteen. A job's part rows narrow too: the `jobs.autoNudge.<part>` rows
+  shed that pass's share, now counted under `stagesForeign` (the
+  `stagesForeign` bullet below, since 2026-09-18). The `push.*` rows
+  narrowed to the pusher's own work: the connect pushes' part, in those rows
+  until then (so they could add up to more than `push`), moved to
+  `pusher.connectPush.stagesMs.<stage>`, and a `push.*` row does not compare
+  across a capture pair spanning the change either. A `jobs.<job>` write
+  from a thread owning neither loop is counted under `stagesForeign`.
+- `stagesForeign`: `{stage: ms}` (2026-09-18), a `jobs.<job>` stage closed by
+  a thread that owns neither loop (a handler thread, a test that opened no
+  cycle), or a push stage (`push`, `push.*`) closed by a thread that
+  neither owns the pusher's cycle nor carries a connect push's mark (a
+  push-marked write from a thread owning no cycle included), cumulative
+  wall under the stage name, so a write that fits no owner is counted
+  rather than merged into a row that names another thread. On a
+  running kernel the block holds the `jobs.autoNudge.*` parts of the
+  act-now pass the dashboard's Auto Nudge and compaction-suggestion arms run
+  on the WS handler thread (`_ws_act_now_tick`: `key`, `snapshot`, `looks`,
+  and `parse` per session looked at); any other key names a stage that ran
+  outside both loops. The keys are the kernel's own stage names.
 - `builds`: `chat`, `feed`, `timeline`, each with `cached`, `built`, `ms`.
   `chat` also carries `bySession`, one row per living session built since
   the boot, ordered by `max` (slowest first) and numbered by `rank` in that
@@ -3439,7 +3512,13 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   `loaded`). `goalArchive` memoizes a readable archive only: an archive that
   exists and cannot be read or parsed is answered empty, marks the running
   judge stage incomplete, and is not memoized, so the next call reads the file
-  again. `plannerSkip` is the planner's inner change gate (`skipped`,
+  again. On the child road `chain`, `courierSkip`, `plannerSkip`, `backref`
+  and `captions` read this process's judge module, which does not judge
+  while the child does, so they read zero here; `shared` still counts the
+  pusher's loads, and `goalArchive` moves here too: a store load that
+  replays a `restore` override (`_replay_overrides`, under `load_goals` and
+  `load_goals_shared`) reads the archive through the counted shared reader.
+  `plannerSkip` is the planner's inner change gate (`skipped`,
   `planned`, `recorded`, and since T401 (5c) `restored`, `refused`,
   `persisted`: the gate's memo of "the key of the last pass that had
   nothing to do", one row per session, persists across boots in
@@ -3727,7 +3806,9 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   is one miss, plus the gauge `entries` (sessions held).
 - `judge`: `passes`, `ms_sum`, `ms_last`, `ms_mean` (wall time; a pass waits
   on model calls), `cpu_ms_sum` (CPU time of the judge tier threads and every
-  per-session worker they run; the workers' share is `cpu_ms_workers`; the
+  per-session worker they run; the in-process pools' share is
+  `cpu_ms_workers`, which on the child road is near zero, the child's
+  workers riding `cpu_ms_child_workers`; the
   producer thread's own per-pass work is not included and shows under the
   process line's "other"; a `/perf` snapshot adds judge.py's in-process pool
   accumulator, `judge_worker_cpu_ms()`, to the sum at read time while the
@@ -3762,7 +3843,10 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   background task's deadline made due), plus `stamps`, the number of
   per-session records held. The index tier's signature is the session's
   parse pair, captions file, archive record and unit cache, and no goal
-  store: its idle path reads none.
+  store: its idle path reads none. On the child road the gate runs in the
+  child and this block reads this process's counters, which stay at zero
+  while the child judges (the done line carries no tiers block), so
+  `romp perf` prints no gated runs on the `tiers` line.
   `skipped / (ran + skipped)` is the share of per-session runs the gate saved;
   `romp perf` prints it per tier on the `tiers` line and adds `cpu/pass` to
   the `judge` line, since the judge's CPU share alone cannot tell a cheaper
@@ -5459,7 +5543,12 @@ Bounds and counters, all on `/perf` under `judge`:
   so the exit stays inside the grace whatever the child does. A boot sweep that cannot list the state root leaves the
   sweep unmarked and the first request retries it.
 - On the child road `parses.judge` and the `goals` block read zero: the judges' parses and store writes happen in the
-  child, and their per-pass figures ride its done line as `judge.child.parses` and `judge.child.goalIo`.
+  child, and their per-pass figures ride its done line as `judge.child.parses` and `judge.child.goalIo`. So do
+  `judge.tiers` and the judge-module memos (`memos.chain`, `courierSkip`, `plannerSkip`, `backref`, `captions`): the
+  gate and those memos run in the child, the done line carries neither, and `romp perf` prints no gated runs and zero
+  chain memo hits while the child judges. `memos.goalArchive` moves here too: a store load that replays a `restore`
+  override (`_replay_overrides`, under `load_goals` and `load_goals_shared`) reads the archive through the counted
+  shared reader. `judge.cpu_ms_workers` is the in-process pools' share, near zero on this road.
 - `cpu_ms_sum` counts the child's tier and worker CPU as it counts the in-process tiers and pools; `cpu_ms_child_workers`
   is the workers' share alone; `child` is the last done line's numbers: `seq`, `pid`, `t`, `chars` (the line's length),
   `status` (`ok` or `failed`), `failures` (a count), `recovered`, `wallMs`, `tierStarts`, `tierCpuMs`, `workerCpuMs`,

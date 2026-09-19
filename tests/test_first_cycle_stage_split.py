@@ -187,21 +187,30 @@ class StageSplitUnit(unittest.TestCase):
     def test_the_split_is_the_pusher_threads_alone(self):
         """Round one, medium: a dashboard's connect push runs _push on the HTTP handler thread through the same stage calls; its
         whole build landed in the pusher cycle's split (a 5 ms cycle reporting a 20 s push.chat), in firstCycle and in the
-        boot-health row. The split records the thread that opened the cycle alone; the cumulative totals take every thread."""
+        boot-health row. The split records the thread that opened the cycle alone. The cumulative push.chat took every
+        thread's until 2026-09-18 (this test pinned 20005.0 there); since then the flat row is the pusher's 5 ms and the
+        connect push's 20 s sits under pusher.connectPush.stagesMs, routed by the "connect" mark _push's decorator sets on
+        that thread. A connect push closes no `push` container (_push_one times the whole push instead)."""
         km = self.km
         ps = km._PerfStats()
         ps.cycle_begin()
         ps.stage("push.chat", 0.005); ps.stage("push", 0.005)
+
+        @km._stage_marked("connect")                              # what _push(connect=True) carries on the handler thread
         def connect_push():
-            ps.stage_boundary(); ps.stage("push.chat", 20.0); ps.stage("push", 20.0)
+            ps.stage_boundary(); ps.stage("push.chat", 20.0)
         th = threading.Thread(target=connect_push); th.start(); th.join()
         ps.stage("jobs", 0.001)
         ps.cycle(0.006)
-        first = ps.snapshot()["pusher"]["firstCycle"]
+        snap = ps.snapshot()
+        first = snap["pusher"]["firstCycle"]
         self.assertEqual(first["stages"]["push.chat"]["ms"], 5.0, "the pusher's own push.chat, not the connect's 20 s")
         self.assertLessEqual(sum(v["ms"] for k, v in first["stages"].items() if k in ("jobs", "push")), first["s"] * 1000.0 + 0.5,
                              "the stages fit the cycle's wall with a second thread pushing mid-cycle")
-        self.assertAlmostEqual(ps.snapshot()["stages_ms"]["push.chat"], 20005.0, "the totals took both")
+        self.assertAlmostEqual(snap["stages_ms"]["push.chat"], 5.0, msg="the flat row is the pusher's alone (20005.0 before: both)")
+        self.assertAlmostEqual(snap["stages_ms"]["push"], 5.0)
+        self.assertEqual(snap["pusher"]["connectPush"]["stagesMs"], {"push.chat": 20000.0}, "the connect push's stage, apart")
+        self.assertEqual(snap["stagesForeign"], {}, "a connect push is a known writer, not a foreign one")
 
     def test_a_push_in_the_gap_between_cycles_lands_in_no_cycle(self):
         """A connect push between two cycles (on any thread) is not the next cycle's: cycle_begin empties the split."""
