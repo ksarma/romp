@@ -11,8 +11,10 @@ ExecStart-argument surfaces, the unit-name specifiers also as template instances
 and digits, the deprecated %c %r %R, % before eleven non-alphanumerical characters, eight EnvironmentFile forms, 61
 escape tokens on six surfaces plus two single-quoted ones, eight stray-backslash forms, 97 ExecStart forms), plus a
 small batch the fold added (raw noncharacters, the plane-1 noncharacter escapes, a last-line continuation on an
-Environment line, a backslash at the end of a quoted argument), reported separately so the 684 stay comparable with
-the lens's numbers. Each fixture is written as a synthetic user unit under a scratch root and loaded by
+Environment line, a backslash at the end of a quoted argument) and its addendum added to (the accepted side of each
+refused Unicode range, the last plane's noncharacters raw and escaped, a 255-byte name and path component, and the
+continuation shapes a comment line, a blank line or a whitespace-only line follows), reported separately so the 684
+stay comparable with the lens's numbers. Each fixture is written as a synthetic user unit under a scratch root and loaded by
 `systemd-analyze --user --man=no verify` with `env -i`, HOME and XDG_RUNTIME_DIR under that root, SYSTEMD_UNIT_PATH
 pointing at the fixtures (stub basic, shutdown and default targets beside them; nothing of the live user
 configuration is read) and SYSTEMD_LOG_LEVEL=debug, which makes verify dump the loaded unit (its Environment:,
@@ -24,16 +26,19 @@ extracted verbatim from tests/romp-service.bats and run through its CLI in `dump
 Verdicts per fixture: agree; agree (both refuse); REFUSES (the oracle raises NotImplementedError, its documented
 not-modelled path, not a disagreement); DISAGREE. The direction that matters most is counted on its own: a
 disagreement where the oracle accepts what systemd drops or refuses (a value systemd never sets reported as set, a
-unit systemd fails to load reported as loaded, a command systemd drops reported as run).
+unit systemd fails to load reported as loaded, a command or an EnvironmentFile systemd drops reported as kept). That
+column marks those shapes alone: two values both set and different, or the same number of commands with other
+arguments, is a DISAGREE without the mark, so a disagreement row is read by its detail text, not by the column.
 
-Run:  python3 tests/romp-service-differential.py            (about two minutes; four verify runs at a time)
+Run:  python3 tests/romp-service-differential.py            (about ten seconds; four verify runs at a time)
       python3 tests/romp-service-differential.py --list    (the fixture ids and their [Service] lines, no runs)
 It needs systemd-analyze on PATH and exits 2 saying so when there is none: it is a documented command, not a test
 that skips, since its counts are a claim about one systemd build. Every class is a reading of that build:
 
   WRITTEN AGAINST: systemd 255 (255.4-1ubuntu8.17)
   EXPECTED AT THE FOLD HEAD (2026-09-19): see tests/README.md, which carries the pasted totals and the per-class
-  table from the run at that head. 256 may move any class; a different version prints a notice beside the counts.
+  table from the run at that head, and the fold batch's count after the addendum. 256 may move any class; a
+  different version prints a notice beside the counts.
 
 Classes (the round-4 lens's ids; assignment by fixture id, every disagreement in exactly one class):
   A  % before a non-alphanumerical character (systemd keeps both characters)    B  the deprecated %c %r %R
@@ -179,7 +184,26 @@ def fold_fixtures():
             ("fold-E-pct-nonascii", "E", ["Environment=V=a%\xc3\xa9b", f"ExecStart={NX}"], "normal"),
             ("fold-E-eof-nl", "E", [f"ExecStart={NX}", "Environment=V=x\\"], "eof-nl"),
             ("fold-A-quoted-trailing-bs", "A", [f'ExecStart={NX} "a\\'], "normal"),
-            ("fold-X-dash-quoted-trailing-bs-then", "X", [f'ExecStart=-{NX} "a\\', "ExecStart=/nx/bin/b", "Type=oneshot"], "normal")]
+            ("fold-X-dash-quoted-trailing-bs-then", "X", [f'ExecStart=-{NX} "a\\', "ExecStart=/nx/bin/b", "Type=oneshot"], "normal"),
+            # the fold's addendum (2026-09-19): the accepted side of each refused range, the last plane's noncharacters, the 255-byte
+            # boundary from the accepted side, and the continuation shapes a comment, a blank or a whitespace-only line follows
+            ("fold-E-raw10FFFE", "E", ["Environment=A=1 V=x\xf4\x8f\xbf\xbey C=3", f"ExecStart={NX}"], "normal"),
+            ("fold-E-rawBFFFF", "E", ["Environment=A=1 V=x\xf2\xaf\xbf\xbfy C=3", f"ExecStart={NX}"], "normal"),
+            ("fold-E-raw10FFFD", "E", ["Environment=A=1 V=x\xf4\x8f\xbf\xbdy C=3", f"ExecStart={NX}"], "normal"),
+            ("fold-E-rawFDCF", "E", ["Environment=A=1 V=x\xef\xb7\x8fy C=3", f"ExecStart={NX}"], "normal"),
+            ("fold-E-bsuFDCF", "E", ["Environment=A=1 V=x\\uFDCFy C=3", f"ExecStart={NX}"], "normal"),
+            ("fold-E-bsuD7FF", "E", ["Environment=A=1 V=x\\uD7FFy C=3", f"ExecStart={NX}"], "normal"),
+            ("fold-E-bsU0010FFFE", "E", ["Environment=A=1 V=x\\U0010FFFEy C=3", f"ExecStart={NX}"], "normal"),
+            ("fold-E-bsU0010FFFD", "E", ["Environment=A=1 V=x\\U0010FFFDy C=3", f"ExecStart={NX}"], "normal"),
+            ("fold-E-cont-comment-eof-nl", "E", [f"ExecStart={NX}", "Environment=V=x\\", "# c", "; d"], "eof-nl"),
+            ("fold-E-cont-comment-eof-nonl", "E", [f"ExecStart={NX}", "Environment=V=x\\", "# c"], "eof-nonl"),
+            ("fold-E-cont-blank-install", "E", [f"ExecStart={NX}", "Environment=V=x\\"], "normal"),
+            ("fold-E-cont-ws-text", "E", [f"ExecStart={NX}", "Environment=V=x\\", " \t ", "Environment=W=y"], "normal"),
+            ("fold-E-cont-comment-blank-text", "E", [f"ExecStart={NX}", "Environment=V=x\\", "# c", "", "Environment=W=y"], "normal"),
+            ("fold-E-cont-comment-text", "E", [f"ExecStart={NX}", "Environment=V=x\\", "# c", "Environment=W=y"], "normal"),
+            ("fold-E-cont-quoted-blank", "E", [f"ExecStart={NX}", 'Environment=V="x\\', "", "Environment=W=y"], "normal"),
+            ("fold-X-path-name-255", "X", ["ExecStart=" + "a" * 255], "normal"),
+            ("fold-X-path-comp-255", "X", ["ExecStart=/nx/" + "a" * 255 + "/x"], "normal")]
 
 CLASSES = [
     ("A", re.compile(r"^spec-(E|P|A|F)-nonalnum|^spec-P-trail$")),

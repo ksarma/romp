@@ -140,7 +140,10 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   way systemd 255 does) run against the real `systemd-analyze --user verify`,
   offline, over the fixture set round 4 of fork PR #778's review used as a lens
   (684 synthetic units: every specifier letter on three surfaces, the escape
-  set on six, the ExecStart forms) plus a small batch the fold added. It needs
+  set on six, the ExecStart forms) plus a small batch the fold added and its
+  addendum added to (the accepted side of each refused Unicode range, the last
+  plane's noncharacters, the 255-byte name and component, the continuation
+  shapes a comment, a blank or a whitespace-only line follows). It needs
   a `systemd-analyze` on PATH and exits 2 saying so when there is none; it
   never skips, and it is not a bats case because its counts are a claim about
   one systemd build (a mac has no systemd-analyze, and a runner's build may
@@ -174,7 +177,9 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
 
   REFUSES is the oracle raising NotImplementedError on a form it does not
   model (a specifier whose value is the host's, the cgroup's or the unit
-  path's), not a disagreement; the fold batch of 10 agrees 10 of 10; the
+  path's), not a disagreement; the fold batch agreed 10 of 10 at the fold
+  head and 27 of 27 with the addendum's 17 (pasted from its run: `fold batch:
+  27 cases, 27 agree, 0 REFUSES, 0 DISAGREE, 0 dangerous`); the
   dangerous-direction count is 0. Before the fold the lens counted 421 agree,
   138 REFUSES and 125 DISAGREE over the same 684.
 - **node suites** — live beside their sources in `ui/webview/*.test.ts` and

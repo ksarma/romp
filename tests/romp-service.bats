@@ -2066,6 +2066,8 @@ else:
     elif what == "has": out = "yes" if sys.argv[3] in env else "no"
     elif what == "exec0": out = execs[0]["path"]                           # exec->path, the simplified one systemd runs and verifies
     elif what == "execn": out = str(len(execs[0]["argv"]))                 # systemd's argv: the path is in it unless @ separated it
+    elif what == "arg": out = execs[0]["argv"][int(sys.argv[3])]           # one argument's text (the fold's addendum: the count alone let a
+                                                                           # \; kept as two characters pass as the argument ;)
     elif what == "execs": out = str(len(execs))
     elif what == "envfile": out = envfiles[0][1] if envfiles else ""
     elif what == "dump": out = json.dumps({"env": env, "execs": execs, "envfiles": [{"prefix": a, "path": b} for a, b in envfiles]}, ensure_ascii=False)
@@ -2074,7 +2076,7 @@ sys.stdout.buffer.write(out.encode("latin-1") + b"\n")
 PY
     printf '%s' "$py"
 }
-_sd_read() {   # $1 the unit, $2 env NAME | has NAME | exec0 | execn | execs | envfile: what systemd reads, through the oracle
+_sd_read() {   # $1 the unit, $2 env NAME | has NAME | exec0 | execn | arg N | execs | envfile: what systemd reads, through the oracle
     python3 "$(_sd)" "$@"
 }
 _unit_env_value() {   # $1 the unit, $2 a name: the value systemd reads for it (the oracle above; the shlex of round 3 was not systemd's reading)
@@ -4002,14 +4004,18 @@ EOF
     # join to a next line that does not exist, where config_parse parses the pending continuation at the end of the file.
     local unit="$ROMP_SYSTEMD_DIR/romp-manager.service" form v raw
     _old_unit "$unit"; cp "$unit" "$unit.clean"
-    # A, a kept value: accepted, written in the writer's form (%% doubled), and read back as the same value by the oracle
-    for form in '/x/a%/b' '/x/a%-b' '/x/a%.b' '/x/a%~b' '/x/a%:b'; do
+    # A, a kept value: accepted, written in the writer's form (%% doubled), and read back as the same value by the oracle. The last form
+    # has a non-ASCII letter after the % (systemd's POSSIBLE_SPECIFIERS is ASCII, so it copies both characters), and the reader runs under
+    # a UTF-8 locale, where a test asking the locale's alphabet instead of the listed one takes the letter for a specifier (the fold's
+    # addendum: the reader's [[:alnum:]] and the oracle's isalnum both would, and no case had a letter outside ASCII)
+    local utf8loc; utf8loc="$(locale -a 2>/dev/null | grep -iE '^(C|en_US)\.utf-?8$' | head -1)"; : "${utf8loc:=C.UTF-8}"
+    for form in '/x/a%/b' '/x/a%-b' '/x/a%.b' '/x/a%~b' '/x/a%:b' '/x/a%'$'\xc3\xa9''b'; do
         cp "$unit.clean" "$unit"; _svc_line "$unit" "Environment=CLAUDE_CONFIG_DIR=$form"
         [ "$(_sd_read "$unit" env CLAUDE_CONFIG_DIR)" = "$form" ]                     # systemd keeps % and the character
-        CLAUDE_CONFIG_DIR="$form" ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite --check
+        LC_ALL="$utf8loc" CLAUDE_CONFIG_DIR="$form" ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite --check
         [ "$status" -eq 0 ]
         CLAUDE_CONFIG_DIR="$form" _marked_install_ok
-        ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite
+        LC_ALL="$utf8loc" ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite
         [ "$status" -eq 0 ]
         grep -qxF "Environment=\"CLAUDE_CONFIG_DIR=${form//%/%%}\"" "$unit"
         [ "$(_sd_read "$unit" env CLAUDE_CONFIG_DIR)" = "$form" ]
@@ -4040,11 +4046,14 @@ EOF
         cp "$unit.clean" "$unit"; _svc_line "$unit" "Environment=CLAUDE_CONFIG_DIR=/x/$form ADMIN_KNOB=1"
         [ "$(_sd_read "$unit" has CLAUDE_CONFIG_DIR)" = no ]
         [ "$(_sd_read "$unit" env ADMIN_KNOB)" = 1 ]                                    # the rest of the line stands
-        _three_roads_refuse "$unit" "the escape $form, a noncharacter, which systemd decodes into bytes that are not UTF-8 by its rule" "systemd does not decode"
+        _three_roads_refuse "$unit" "the escape $form, a noncharacter, which systemd decodes into bytes that are not UTF-8 by its rule" "systemd does not decode" \
+            "drops the item and the rest of the line" "Write the character itself"
         [[ "$output" == *"this reader does not model that reading"* ]]
+        # the kind's remedy (the fold's addendum): the escape goes, since the character written raw is the whole-file refusal below
+        [[ "$output" == *"Remove the escape from the value (written as the character itself, the line is not UTF-8 to systemd, which then loads nothing from the file)"* ]]
     done
     # D: a \U surrogate or noncharacter, which cunescape_one refuses: the item and the rest of the line are dropped as invalid syntax
-    for form in '\U0000D800|a surrogate' '\U0000DFFF|a surrogate' '\U0000FFFE|a noncharacter' '\U0000FDD0|a noncharacter' '\U0001FFFE|a noncharacter'; do
+    for form in '\U0000D800|a surrogate' '\U0000DFFF|a surrogate' '\U0000FFFE|a noncharacter' '\U0000FDD0|a noncharacter' '\U0001FFFE|a noncharacter' '\U0010FFFE|a noncharacter'; do
         cp "$unit.clean" "$unit"; _svc_line "$unit" "Environment=CLAUDE_CONFIG_DIR=/x/${form%%|*} ADMIN_KNOB=1"
         [ "$(_sd_read "$unit" has CLAUDE_CONFIG_DIR)" = no ]
         [ "$(_sd_read "$unit" has ADMIN_KNOB)" = no ]                                    # the rest of the line is dropped too
@@ -4056,14 +4065,17 @@ EOF
     _svc_line "$unit" "ExecStart=$TEST_DIR/a\\U0000FFFEb/romp-manager up"
     [[ "$(_sd_read "$unit" exec0)" == "ERROR: Executable name contains special characters: "* ]]
     ROMP_MANAGER_BIN="$TEST_DIR/a"$'\xef\xbf\xbe'"b/romp-manager" _three_roads_refuse "$unit" "ExecStart's command has the escape \\U0000FFFE, a noncharacter, which systemd refuses in the \\U form"
-    # C raw: a noncharacter written as its bytes is a line systemd refuses the whole file on, where iconv and python pass it
-    for raw in $'\xef\xbf\xbe' $'\xef\xb7\x90' $'\xf0\x9f\xbf\xbe'; do
+    # C raw: a noncharacter written as its bytes is a line systemd refuses the whole file on, where iconv and python pass it: U+FFFE, U+FDD0,
+    # U+1FFFE, and beyond plane 1 U+BFFFF and U+10FFFE (the last two code points of every plane; the fold's addendum, where the check
+    # narrowed to plane 1 passed)
+    for raw in $'\xef\xbf\xbe' $'\xef\xb7\x90' $'\xf0\x9f\xbf\xbe' $'\xf2\xaf\xbf\xbf' $'\xf4\x8f\xbf\xbe'; do
         cp "$unit.clean" "$unit"; _svc_line "$unit" "Environment=CLAUDE_CONFIG_DIR=/x/$raw"
         [[ "$(_sd_read "$unit" exec0)" == "ERROR: String is not UTF-8 clean"* ]]
         CLAUDE_CONFIG_DIR="/x/$raw" _three_roads_refuse "$unit" "it is not valid UTF-8, on which systemd refuses the whole file"
     done
-    # C and D, the neighbours: the code points beside the refused ranges read whole, agree with the shell and round-trip
-    for form in '\uFDF0|'$'\xef\xb7\xb0' '\U0001FFFD|'$'\xf0\x9f\xbf\xbd' '\uE000|'$'\xee\x80\x80'; do
+    # C and D, the neighbours: the code points beside the refused ranges, on both sides (U+FDCF and U+FDF0 around the noncharacter block,
+    # U+D7FF and U+E000 around the surrogates, U+1FFFD below plane 1's last two), read whole, agree with the shell and round-trip
+    for form in '\uFDF0|'$'\xef\xb7\xb0' '\uFDCF|'$'\xef\xb7\x8f' '\U0001FFFD|'$'\xf0\x9f\xbf\xbd' '\uE000|'$'\xee\x80\x80' '\uD7FF|'$'\xed\x9f\xbf'; do
         v="/x/${form#*|}"
         cp "$unit.clean" "$unit"; _svc_line "$unit" "Environment=CLAUDE_CONFIG_DIR=/x/${form%%|*}"
         [ "$(_sd_read "$unit" env CLAUDE_CONFIG_DIR)" = "$v" ]
@@ -4076,7 +4088,8 @@ EOF
     done
     # E: the [Service] section moved to the end of the file, so its hand line is the file's LAST line and ends in a backslash: systemd parses
     # the pending continuation without it, and so does the reader on all three roads; the rewrite writes the line without the backslash
-    for form in 'Environment=CLAUDE_CONFIG_DIR=/x/cc|env CLAUDE_CONFIG_DIR|/x/cc' "ExecStart=$ROMP_MANAGER_BIN up|exec0|$ROMP_MANAGER_BIN"; do
+    # (the PATH form: its line is replayed as stored, so the stored line must be the one without the backslash: the fold's addendum)
+    for form in 'Environment=CLAUDE_CONFIG_DIR=/x/cc|env CLAUDE_CONFIG_DIR|/x/cc' "ExecStart=$ROMP_MANAGER_BIN up|exec0|$ROMP_MANAGER_BIN" 'Environment=PATH=/x/bin:/usr/bin|env PATH|/x/bin:/usr/bin'; do
         { sed -n '/^\[Install\]/,$p' "$unit.clean"; echo; sed '/^\[Install\]/,$d' "$unit.clean"; } > "$unit"
         [[ "$form" != ExecStart=* ]] || { grep -v '^ExecStart=' "$unit" > "$unit.new" && mv -f "$unit.new" "$unit"; }
         printf '%s\\' "${form%%|*}" >> "$unit"                                          # no newline after the backslash: the file's end
@@ -4090,9 +4103,58 @@ EOF
         [ "$status" -ne 0 ]                                                             # no line ends in a backslash any more
         [ "$(_sd_read "$unit" ${v%|*})" = "${v#*|}" ]
     done
-    # E, the neighbour: the same line followed by another is the continuation systemd joins, refused as before
+    # E, the neighbour: the same line followed by a text line is the continuation systemd joins, refused as before (the oracle reads the
+    # join: the next line's text is a second item); a comment or a blank line after it is the addendum's case below
     { sed -n '/^\[Install\]/,$p' "$unit.clean"; echo; sed '/^\[Install\]/,$d' "$unit.clean"; } > "$unit"
-    printf 'Environment=CLAUDE_CONFIG_DIR=/x/cc\\\n# a comment after it\n' >> "$unit"
+    printf 'Environment=CLAUDE_CONFIG_DIR=/x/cc\\\nEnvironment=ADMIN_KNOB=1\n' >> "$unit"
+    [ "$(_sd_read "$unit" env Environment)" = ADMIN_KNOB=1 ]
+    _three_roads_refuse "$unit" "it ends in a backslash, a continuation systemd joins to the next line"
+}
+
+@test "rewrite (Linux): the fold's addendum, class E as systemd applies it: a continuation backslash that only comment lines separate from a blank line or the file's end stands as its own line (a comment then the end, with and without a final newline; a blank line then [Install]; a whitespace-only line then a text line; a comment, a blank line, a text line), read the same on all three roads and written back without the backslash, where one a text line follows past any comments is still the refused join, the header directly after it too, and the oracle reads the join systemd makes" {
+    # the mutation pass on the fold (2026-09-19): the fold read the file's LAST line as systemd parses a pending continuation, and the
+    # fold case's neighbour asserted a refusal on a comment line following the backslash, a shape systemd reads exactly as the end
+    # (config_parse skips a comment line inside an open continuation, and a blank line, whitespace alone included, closes it: the
+    # pending line is parsed then); the realistic shape, a trailing backslash typed on the block's last line above the blank line before
+    # [Install], was refused. Each shape here was run against systemd-analyze --user verify on 255.4, and the differential's fold batch
+    # (tests/romp-service-differential.py) carries them.
+    local unit="$ROMP_SYSTEMD_DIR/romp-manager.service" mgr="$ROMP_MANAGER_BIN"
+    _old_unit "$unit"; cp "$unit" "$unit.clean"
+    _end() { { sed -n '/^\[Install\]/,$p' "$unit.clean"; echo; sed '/^\[Install\]/,$d' "$unit.clean"; } > "$unit"; printf "$1" >> "$unit"; }
+    _ok() {   # the file at $unit: the oracle reads /x/cc, the three roads accept, the rewrite writes no line ending in a backslash and the
+              # oracle still reads /x/cc from what it wrote
+        [ "$(_sd_read "$unit" env CLAUDE_CONFIG_DIR)" = /x/cc ]
+        CLAUDE_CONFIG_DIR=/x/cc ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite --check
+        [ "$status" -eq 0 ]
+        CLAUDE_CONFIG_DIR=/x/cc _marked_install_ok
+        ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite
+        [ "$status" -eq 0 ]
+        run grep -c '\\$' "$unit"
+        [ "$status" -ne 0 ]
+        [ "$(_sd_read "$unit" env CLAUDE_CONFIG_DIR)" = /x/cc ]
+        [ "$(_sd_read "$unit" exec0)" = "$mgr" ]
+    }
+    # accepted: comment lines (# and ;) then the end of the file, with and without a final newline
+    _end 'Environment=CLAUDE_CONFIG_DIR=/x/cc\\\n# a comment after it\n; and another\n'; _ok
+    _end 'Environment=CLAUDE_CONFIG_DIR=/x/cc\\\n# a comment after it'; _ok
+    # accepted: a blank line then [Install], the standard layout with the backslash typed on the block's last line; the header stays one
+    cp "$unit.clean" "$unit"; _svc_line "$unit" 'Environment=CLAUDE_CONFIG_DIR=/x/cc\' ''; _ok
+    grep -qx '\[Install\]' "$unit"
+    # accepted: a whitespace-only line closes it too, and the text line after that is its own line
+    cp "$unit.clean" "$unit"; _svc_line "$unit" 'Environment=CLAUDE_CONFIG_DIR=/x/cc\' $'  \t ' 'Environment=ADMIN_KNOB=1'
+    [ "$(_sd_read "$unit" env ADMIN_KNOB)" = 1 ]; _ok
+    # accepted: a comment, then a blank line, then a text line
+    cp "$unit.clean" "$unit"; _svc_line "$unit" 'Environment=CLAUDE_CONFIG_DIR=/x/cc\' '# c' '' 'Environment=ADMIN_KNOB=1'
+    [ "$(_sd_read "$unit" env ADMIN_KNOB)" = 1 ]; _ok
+    # refused: a text line past the comment is the join systemd makes (the oracle reads the second line as the item Environment=ADMIN_KNOB=1,
+    # a variable named Environment), and the header directly after the backslash is joined the same way (then no header)
+    cp "$unit.clean" "$unit"; _svc_line "$unit" 'Environment=CLAUDE_CONFIG_DIR=/x/cc\' '# c' 'Environment=ADMIN_KNOB=1'
+    [ "$(_sd_read "$unit" env CLAUDE_CONFIG_DIR)" = /x/cc ]
+    [ "$(_sd_read "$unit" has ADMIN_KNOB)" = no ]
+    [ "$(_sd_read "$unit" env Environment)" = ADMIN_KNOB=1 ]
+    _three_roads_refuse "$unit" "it ends in a backslash, a continuation systemd joins to the next line (past any comment lines), which this reader reads as a line of its own"
+    cp "$unit.clean" "$unit"; _svc_line "$unit" 'Environment=CLAUDE_CONFIG_DIR=/x/cc\'
+    [ "$(_sd_read "$unit" env CLAUDE_CONFIG_DIR)" = /x/cc ]
     _three_roads_refuse "$unit" "it ends in a backslash, a continuation systemd joins to the next line"
 }
 
@@ -4128,9 +4190,11 @@ EOF
     _x "ExecStart=$mgr up \";\" x"                                                       # H: a quoted ; is an argument, not a separator
     [ "$(_sd_read "$unit" execs)" = 1 ]
     [ "$(_sd_read "$unit" execn)" = 4 ]
-    _x "ExecStart=$mgr up \; x"                                                         # \; is the argument ;
-    [ "$(_sd_read "$unit" execs)" = 1 ]
-    [ "$(_sd_read "$unit" execn)" = 4 ]
+    [ "$(_sd_read "$unit" arg 2)" = ';' ]
+    _x "ExecStart=$mgr up \; x"                                                         # \; is the argument ; (its text, not its count alone:
+    [ "$(_sd_read "$unit" execs)" = 1 ]                                                  # the fold's addendum, where a \; kept as two
+    [ "$(_sd_read "$unit" execn)" = 4 ]                                                  # characters counted the same)
+    [ "$(_sd_read "$unit" arg 2)" = ';' ]
     _x "ExecStart=$mgr up ; $mgr down" "Type=oneshot"                                    # the unquoted ; separates, as before
     [ "$(_sd_read "$unit" execs)" = 2 ]
     _x "ExecStart=."                                                                     # I: . and .. are no executable names; .x is one
@@ -4139,6 +4203,15 @@ EOF
     [[ "$(_sd_read "$unit" exec0)" == "ERROR: Neither a valid executable name nor an absolute path: .."* ]]
     _x "ExecStart=.x"
     [ "$(_sd_read "$unit" exec0)" = ".x" ]
+    local long; long="$(printf 'a%.0s' $(seq 1 255))"                                  # filename_is_valid and path_is_valid: a name or a component of
+    _x "ExecStart=$long"                                                                 # 255 bytes is the most (the fold's addendum: NAME_MAX was
+    [ "$(_sd_read "$unit" exec0)" = "$long" ]                                            # pinned by the recipe alone, and from the refused side)
+    _x "ExecStart=/nx/$long/x"
+    [ "$(_sd_read "$unit" exec0)" = "/nx/$long/x" ]
+    _x "ExecStart=${long}a"
+    [[ "$(_sd_read "$unit" exec0)" == "ERROR: Neither a valid executable name nor an absolute path: "* ]]
+    _x "ExecStart=/nx/${long}a/x"
+    [[ "$(_sd_read "$unit" exec0)" == "ERROR: Neither a valid executable name nor an absolute path: "* ]]
     _x "ExecStart=${mgr%/romp-manager}//romp-manager up"                                 # J: exec0 is exec->path, simplified; the reader agrees as a place
     [ "$(_sd_read "$unit" exec0)" = "$mgr" ]
     ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite --check
@@ -4158,9 +4231,11 @@ EOF
 @test "unit reader: the header's numbered list of refusals is one item per _unit_refuse call site in _unit_scan, 1 to N with no gap, every call site in the file inside that function, and N is 21" {
     # the mutation pass (2026-09-19): the header states the list's definition (the call sites) and its count, and nothing held either;
     # a refusal added without its item, or an item without its call site, turns this red until the header is brought level
+    # a call site is the name followed by a blank on a line that is not a comment (the fold's addendum: the count read the name and a
+    # quote, and a call whose first argument was unquoted, `_unit_refuse 0 ...`, escaped it; the definition has ( after the name)
     local n_sites n_file items
-    n_sites="$(awk '/^_unit_scan\(\) \{/ { f = 1 } f && /_unit_refuse "/ { c++ } f && /^\}/ { print c + 0; exit }' "$SVC")"
-    n_file="$(grep -c '_unit_refuse "' "$SVC")"
+    n_sites="$(awk '/^_unit_scan\(\) \{/ { f = 1 } f && !/^[[:space:]]*#/ && /_unit_refuse / { c++ } f && /^\}/ { print c + 0; exit }' "$SVC")"
+    n_file="$(grep -vE '^[[:space:]]*#' "$SVC" | grep -c '_unit_refuse ')"
     [ -n "$n_sites" ]
     [ "$n_sites" = "$n_file" ]
     items="$(sed -n '/Refused, one item per _unit_refuse call site/,/^# A line systemd ignores that carries nothing/p' "$SVC" \

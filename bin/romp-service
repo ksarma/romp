@@ -329,8 +329,11 @@ _unit_env_file_line() {   # EnvironmentFile=: the whole rvalue is the path, read
 #   3. a line ending in a backslash, a continuation systemd joins to the next line (round 3 replayed the physical line, so the
 #      backslash joined it to the next WRITTEN line and swallowed that: D5; round 4 put the CR strip and the comment skip before the
 #      count, since a CRLF continuation was not refused and a comment ending in a backslash, which systemd joins to nothing, was), except
-#      on the file's last line, where systemd parses the pending continuation without its backslash and so does this reader (the fold,
-#      class E);
+#      when no text line follows it: systemd skips a comment line inside an open continuation, and a blank line (whitespace alone
+#      included) or the end of the file closes it, at which config_parse parses the pending line without its backslash, so a
+#      continuation that only comment lines separate from a blank line or the file's end stands as its own line here too (the fold,
+#      class E, the file's last line; the fold's addendum, the comment and blank lines, verified on 255.4: a comment then the end
+#      reads the value, a blank line then [Install] reads it and the header, a comment then a text line joins the two);
 #   4. a line that is not UTF-8 by systemd's rule (the encoding, and no surrogate or noncharacter: the fold, class C, where a noncharacter
 #      written raw passed iconv), 5. a section header not ending in ], and 6. one whose name carries a quote, a backslash or a
 #      control character: systemd refuses the WHOLE file on each (String is not UTF-8 clean; Invalid section header; Bad characters
@@ -353,7 +356,9 @@ _unit_env_file_line() {   # EnvironmentFile=: the whole rvalue is the path, read
 #      \xNN and \NNN at or above 0x80, and a \u surrogate or noncharacter, into raw bytes and then judges the assignment as UTF-8; the
 #      ASCII range and every other escape are decoded here as systemd decodes them: round 4, correctness-4, where they were refused
 #      with a text saying systemd drops them, which it does not; the fold, class C, where a \u noncharacter was carried and written
-#      raw); 19. a specifier, % followed by a letter or a digit (a % before any other character is a % to systemd: the fold, class A), in
+#      raw; the remedy for a byte escape is the character itself, for a \u surrogate or noncharacter it is to remove the escape, since
+#      the character written raw is refusal 4: the fold's addendum, where both said to write the character); 19. a specifier, %
+#      followed by a letter or a digit (a % before any other character is a % to systemd: the fold, class A), in
 #      a value the writer re-encodes (systemd expands it and this reader would take it literally: a state root under %h/ had its audit
 #      row written under a relative %h/ in the caller's working directory, and an EnvironmentFile under %h/ was re-doubled into a
 #      path that is not absolute: D3), where PATH's line, replayed as written, and a variable the rewrite drops keep theirs
@@ -370,6 +375,9 @@ _unit_env_file_line() {   # EnvironmentFile=: the whole rvalue is the path, read
 # whose drop-in resets ExecStart through a shell wrapper).
 _U_SCANNED=""; _U_KEYS=(); _U_VALS=(); _U_LINES=(); _U_EXEC=""; _U_ENVFILE=""; _U_ENVFILE_PREFIX=""
 _W_WORD=""; _W_REST=""; _W_ERR=""; _W_KIND=""; _W_CH=""
+_W_FIX=""; _W_FIX_TAIL=""   # for a `carry` refusal: the remedy's verb phrase, ending in its preposition (the call site adds `the value` or
+                            # `the path`), and what follows that (the fold's addendum: one remedy served the byte escapes, where the
+                            # character itself is right, and the \u surrogates and noncharacters, where it is refusal 4)
 _WS=$' \t\n\r'   # systemd's WHITESPACE: what strstrip strips, what the comment test skips and what extract_first_word splits on
 _unit_refuse() {   # $1 the line number, $2 the form, $3 the remedy; $4 non-empty: $3 is the whole second line and the shared tail is not
                    # appended (round 4, extra7-4: the ExecStart-path site named the install route itself, and the tail then added a
@@ -397,7 +405,7 @@ _unit_byte() {   # $1 a byte value from \xNN or \NNN, $2 the escape as written: 
     _W_CH=""
     if (( $1 == 0 )); then _W_ERR="the escape $2, a NUL byte, which systemd refuses"; _W_KIND=drop; return 1; fi
     if (( $1 > 255 )); then _W_ERR="the escape $2, above \\377, which systemd refuses"; _W_KIND=drop; return 1; fi
-    if (( $1 >= 128 )); then _W_ERR="the escape $2, a byte at or above 0x80, which systemd writes into the value raw and then judges the whole assignment as UTF-8 by; this reader does not model that reading"; _W_KIND=carry; return 1; fi
+    if (( $1 >= 128 )); then _W_ERR="the escape $2, a byte at or above 0x80, which systemd writes into the value raw and then judges the whole assignment as UTF-8 by; this reader does not model that reading"; _W_KIND=carry; _W_FIX="Write the character itself in"; _W_FIX_TAIL=""; return 1; fi
     printf -v o '\\%03o' "$1"; printf -v _W_CH "$o"
 }
 _unit_unichar() {   # $1 a code point from \uNNNN or \UNNNNNNNN, $2 the escape as written: _W_CH its UTF-8 bytes; 1 for one not carried.
@@ -415,7 +423,10 @@ _unit_unichar() {   # $1 a code point from \uNNNN or \UNNNNNNNN, $2 the escape a
     elif (( ($1 >= 0xFDD0 && $1 <= 0xFDEF) || ($1 & 0xFFFE) == 0xFFFE )); then what="a noncharacter"; fi
     if [[ -n "$what" ]]; then
         if [[ "${2:0:2}" == '\U' ]]; then _W_ERR="the escape $2, $what, which systemd refuses in the \\U form"; _W_KIND=drop; return 1; fi
-        _W_ERR="the escape $2, $what, which systemd decodes into bytes that are not UTF-8 by its rule (an Environment= assignment carrying them is dropped); this reader does not model that reading"; _W_KIND=carry; return 1
+        # the remedy is to remove it, not to write the character: a surrogate has no UTF-8 form and a noncharacter written raw is a line
+        # systemd refuses the whole file on (refusal 4; the fold's addendum, where the byte escapes' remedy served here too)
+        _W_ERR="the escape $2, $what, which systemd decodes into bytes that are not UTF-8 by its rule (an Environment= assignment carrying them is dropped); this reader does not model that reading"; _W_KIND=carry
+        _W_FIX="Remove the escape from"; _W_FIX_TAIL=" (written as the character itself, the line is not UTF-8 to systemd, which then loads nothing from the file)"; return 1
     fi
     _utf8_char "$1" _W_CH
 }
@@ -425,7 +436,7 @@ _unit_first_word() {   # $1 an rvalue: _W_WORD its first word, unquoted and unes
                        # backslash, an escape it does not decode, \x00, an octal above \377, \u0000, a code point above U+10FFFF), or `carry`,
                        # an escape systemd decodes into bytes whose reading this reader does not model (_unit_byte, _unit_unichar say which)
     local s="$1" c q="" bs="" out="" h
-    _W_WORD=""; _W_REST=""; _W_ERR=""; _W_KIND=""
+    _W_WORD=""; _W_REST=""; _W_ERR=""; _W_KIND=""; _W_FIX=""; _W_FIX_TAIL=""
     s="${s#"${s%%[!$_WS]*}"}"
     [[ -n "$s" ]] || return 2
     while [[ -n "$s" ]]; do
@@ -527,11 +538,21 @@ _unit_scan() {
         c=0; w="$t"
         while [[ "$w" == *\\ ]]; do w="${w%\\}"; c=$((c + 1)); done
         if (( c % 2 == 1 )); then
-            # on the file's LAST line there is no next line: systemd's config_parse parses the pending continuation when the file ends, the
-            # backslash a blank that its strip then removes, so the line stands without it, here too (the fold, 2026-09-19, class E of the
-            # oracle lens: it was refused as a join to a line that does not exist); anywhere else it joins the next line, refused below
-            if (( n == total )); then t="${t%\\}"; line="${t#"${t%%[!$_WS]*}"}"
-            else _unit_refuse "$n" "it ends in a backslash, a continuation systemd joins to the next line, which this reader reads as a line of its own" "Write the continued lines as one line, without the backslash"; return 1; fi
+            # systemd's config_parse skips a comment line inside an open continuation and closes the continuation at a blank line (the
+            # blank appended adds nothing) or at the end of the file, parsing the pending line then, the backslash a blank that its strip
+            # removes; so the line stands without it here when no text line follows before a blank line or the end (the fold, 2026-09-19,
+            # class E of the oracle lens: the file's last line, refused as a join to a line that does not exist; the fold's addendum: the
+            # comment and blank lines, each shape run against systemd-analyze verify on 255.4). A text line after it, past any comments,
+            # is the join, refused below: this reader would read the two lines as two.
+            i=$n; w=""
+            while (( i < total )); do
+                v="${ls[$i]}"; v="${v%$'\r'}"; v="${v#"${v%%[!$_WS]*}"}"
+                case "$v" in \#*|\;*) i=$((i + 1)); continue ;; esac
+                [[ -z "$v" ]] || w=1
+                break
+            done
+            if [[ -z "$w" ]]; then t="${t%\\}"; line="${t#"${t%%[!$_WS]*}"}"
+            else _unit_refuse "$n" "it ends in a backslash, a continuation systemd joins to the next line (past any comment lines), which this reader reads as a line of its own" "Write the continued lines as one line, without the backslash"; return 1; fi
         fi
         line="${line%"${line##*[!$_WS]}"}"
         [[ -n "$line" ]] || continue
@@ -564,7 +585,7 @@ _unit_scan() {
             execs=$((execs + 1))
             (( execs == 1 )) || { _unit_refuse "$n" "a second ExecStart= line, which systemd refuses in a service of this type (more than one ExecStart= setting)" "Keep the one line that runs romp-manager up"; return 1; }
             if ! _unit_first_word "$rv"; then
-                if [[ "$_W_KIND" == carry ]]; then _unit_refuse "$n" "ExecStart's command has $_W_ERR" "Write the character itself in the path"; return 1; fi
+                if [[ "$_W_KIND" == carry ]]; then _unit_refuse "$n" "ExecStart's command has $_W_ERR" "$_W_FIX the path$_W_FIX_TAIL"; return 1; fi
                 _unit_refuse "$n" "ExecStart's command has $_W_ERR; systemd reads such a line as no command (Unbalanced quoting) or keeps the backslash and refuses the executable name, so the service does not start, where this rewrite would write a command that does" "Write the path plain, quoted as systemd.syntax(7) describes only if it needs quoting"; return 1
             fi
             w="$_W_WORD"; rest="$_W_REST"
@@ -590,7 +611,7 @@ _unit_scan() {
             rest="$rv"; items=0; found=""
             while [[ -n "$rest" ]]; do
                 if ! _unit_first_word "$rest"; then
-                    if [[ "$_W_KIND" == carry ]]; then _unit_refuse "$n" "an Environment= item with $_W_ERR" "Write the character itself in the value"; return 1; fi
+                    if [[ "$_W_KIND" == carry ]]; then _unit_refuse "$n" "an Environment= item with $_W_ERR" "$_W_FIX the value$_W_FIX_TAIL"; return 1; fi
                     _unit_refuse "$n" "an Environment= item with $_W_ERR, at which systemd drops the item and the rest of the line as invalid syntax (the items before it on the line stand)" "Quote the value the way systemd.syntax(7) describes, with \\\\ and \\\" escaped"; return 1
                 fi
                 rest="$_W_REST"; w="$_W_WORD"
@@ -610,8 +631,8 @@ _unit_scan() {
                 j=""; i=0
                 while (( i < ${#_U_KEYS[@]} )); do [[ "${_U_KEYS[$i]}" == "$k" ]] && j=$i; i=$((i + 1)); done
                 [[ -n "$j" ]] || j=${#_U_KEYS[@]}
-                _U_KEYS[$j]="$k"; _U_VALS[$j]="${v#*=}"; _U_LINES[$j]="$t"    # the line as read, its CR off (and, on the file's last line, its
-                                                                             # continuation backslash off, as systemd reads it)
+                _U_KEYS[$j]="$k"; _U_VALS[$j]="${v#*=}"; _U_LINES[$j]="$t"    # the line as read, its CR off (and a continuation backslash no
+                                                                             # text line follows off, as systemd reads it)
             done
             if [[ -n "$found" ]] && (( items > 1 )); then _unit_refuse "$n" "$found is assigned beside another assignment on one line, where this rewrite writes one assignment a line" "Write each assignment on its own Environment= line"; return 1; fi ;;
         esac

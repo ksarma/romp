@@ -1602,8 +1602,10 @@ cannot read whole is refused, exit 5, nothing written, with the line, the
 form and the remedy named: a carriage return anywhere but before the LF, or a
 NUL byte (line ends systemd reads and bash's `read` does not, so a CR-only
 unit read as one line); a line ending in a backslash (a continuation), except
-on the file's last line, where systemd parses the pending continuation without
-the backslash and the reader reads the line the same way; a line that is not
+when no text line follows it before a blank line or the file's end (a comment
+line between is skipped, as systemd skips it), where systemd parses the pending
+continuation without the backslash and the reader reads the line the same way;
+a line that is not
 UTF-8 by systemd's rule (the encoding, and no surrogate or noncharacter, which
 systemd refuses the whole file on where iconv passes them), and a section header systemd refuses (`[Instal`,
 `[Service]x`, a quote or a control character in the name), on which systemd
