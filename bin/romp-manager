@@ -432,6 +432,12 @@ function ensureKernel(port) {
   const id = idForPort(port);
   const existing = kernels.get(id);
   if (existing) return { id, port: existing.spec.port, pid: existing.child.pid, spawned: false };
+  // The third door that brings a kernel up under the RUNNING manager, consulted like /restart and the crash respawn
+  // (round 2 of the install-rewrite review, 2026-09-18): after a deploy that restarted nothing (install.sh by hand,
+  // which by design restarts no manager) a kernel spawned here by the stale manager inherits its start-time
+  // environment, and reads as the primary when that environment predates ROMP_KERNEL_ID. Supervised, the manager
+  // exits for its own respawn instead and the front end's next /ensure meets the new manager.
+  if (staleManagerYields(`spawning kernel '${id}' for /ensure`)) return { id, port: Number(port), pid: null, spawned: false, managerRestart: true };
   spawnKernel({ id, port: Number(port) });
   const rec = kernels.get(id);
   return { id, port: Number(port), pid: rec ? rec.child.pid : null, spawned: true };

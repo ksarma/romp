@@ -372,15 +372,45 @@ if [[ -z "${ROMP_NO_SERVICE:-}" ]]; then
         # The rewrite bakes nothing from this run's environment (round 1 of the review, 2026-09-18): this
         # runs from the kernel's detached update child and from sessions' shells, so the unit keeps its own
         # ExecStart, ROMP_DIR, PATH and instance lines, and a value here that differs from the unit's is
-        # the other exit 1, the line above naming both.
+        # refused with its own exit code, 5 (round 2 of the review, 2026-09-18), the lines above naming
+        # both values and the way through for the class it is: a value this environment carries is fixed
+        # by a shell without it, another clone by running from the installed one. romp-service says which,
+        # so nothing is repeated or guessed here; the one retry line this printed for every failure sent
+        # the refusal back to the command that had just refused it. Exit 1 is a reload that failed, which
+        # a retry from the same shell can fix, so that arm keeps its retry line.
+        # Exit 3 under a running manager (round 2): status says `running` (systemd reports the service
+        # active) and `not installed` (no unit at the path romp-service writes), so the loaded unit is
+        # somewhere else (a unit deleted while active, a config home this shell does not name). The
+        # rewrite writes nothing then, since with no file there is no identity to keep and a fresh unit
+        # would bake this caller's environment, and this run does NOT fall through to `install`: under a
+        # running manager that is the bootout the gate exists to prevent, and inside the kernel's update
+        # child it would restart every kernel on an otherwise untouched box. Nor does it fail the deploy:
+        # romp is serving and nothing this run did changed that; the release's unit did not land, which
+        # is said, with the route that installs one (a person's `romp-service install` from the owning
+        # shell and clone, which restarts the manager).
+        # The convention these arms follow (round 2, so the next reader finds a decision): a service step
+        # that FAILED (a failed install, a failed or refused rewrite) ends the run here, before the
+        # closing report and the dashboard link, since capability banners and a tokened link over a
+        # state that means this release's unit did not land would read as success (and the link may be
+        # another clone's manager); a step that changed nothing while romp is serving (this exit 3, the
+        # install road's exit 3 below) goes on to the report. The install road's exit 3 exits non-zero at
+        # the end because the installed service is not the manager serving; this one exits zero because
+        # nothing about the serving manager is in question, only the file this release wanted to refresh.
         if "$_svc" status 2>/dev/null | grep -qx running; then
             _svc_rc=0
             "$_svc" rewrite || _svc_rc=$?
-            if [[ "$_svc_rc" -ne 0 ]]; then
+            case "$_svc_rc" in
+              0) ;;
+              3)
+                echo "install.sh: romp-manager is running, but no login service unit is at the path romp-service writes (its line above), so this release's unit was not written and nothing was changed. romp is serving, and this run goes on. To install the unit, run  $_svc install  from the shell and clone that should own the service; that restarts the manager." >&2 ;;
+              5)
+                echo "install.sh: romp-service rewrite refused (the reason is printed above): romp-manager is still running on the definition it started under, and the login service on disk was not rewritten." >&2
+                exit 1 ;;
+              *)
                 echo "install.sh: romp-service rewrite FAILED (the line above says why): romp-manager is still running on the definition it started under, but the login service on disk may not be this release's." >&2
                 echo "  Retry by hand:  $_svc rewrite" >&2
-                exit 1
-            fi
+                exit 1 ;;
+            esac
         else
             echo "  Installing the romp login service (romp-manager)..."
             _svc_rc=0

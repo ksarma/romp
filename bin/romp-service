@@ -15,9 +15,13 @@
 #                             (macOS) WITHOUT restarting the running manager, which keeps the definition it
 #                             started under until its next restart; `install.sh` runs this while the manager
 #                             is up. The file keeps its own identity (ExecStart, ROMP_DIR, PATH, the service.env
-#                             path, the instance Environment block) and gets the release's lines; a value this
-#                             environment carries that differs from the file's is refused, exit 1, naming both.
-#                             Exit 3 when none is installed
+#                             path, the instance Environment block, the state root) and gets the release's lines; a
+#                             value this environment carries that differs from the file's is refused, EXIT 5, naming
+#                             both (round 2 of the review, 2026-09-18: its own code, so install.sh and the kernel's
+#                             update can tell the refusal from a reload that failed, exit 1). Exit 3 when none is
+#                             installed. `rewrite --check` runs the installed and identity checks alone and writes,
+#                             reloads and journals nothing: the kernel's update runs it BEFORE it fetches the release
+#                             and moves the checkout, so a deploy the rewrite would refuse moves nothing first.
 # Safe + idle-free: the kernel is hardened (Origin gate + token) and the producer is
 # presence-gated (zero model calls when no browser is connected). Runs as a USER-level
 # agent (no root). PATH + ROMP_DIR are baked into the unit so the service finds
@@ -130,7 +134,29 @@ _INSTANCE_VARS=(ROMP_SERVE_PORT ROMP_KERNEL_PORT ROMP_POSTAL_PORT ROMP_MANAGER_P
 # ExecStart and ROMP_DIR are compared the same way, so a deploy from a clone that is not the installed one (a review
 # worktree, a second checkout) neither re-points the service at itself nor refreshes another clone's unit from its own
 # template. `romp-service install` from the clone and shell that should own the service is the deliberate change.
-_SVC_PATH="$PATH"           # the PATH the writers bake: this environment's on an install, the file's on a rewrite
+# Round 2 of the review (2026-09-18) settled what ABSENCE means, per value, since a file that carries no line for a
+# value is the population this road exists to refresh (a unit from before the EnvironmentFile line, every default
+# plist), so absence is never refused:
+#   PATH: a file with no PATH line gets none (the writers omit it), never this caller's. A hand-quoted
+#         Environment="PATH=..." line is a PATH line and is written back as it is.
+#   the service.env path: compared only when THIS environment set it (ROMP_SERVICE_ENV_FILE, or the alias
+#         ROMP_SERVICE_ENV); otherwise the file's own path is taken, and a file with no line reads the kernel's default,
+#         $HOME/.config/romp/service.env, which is what the service reads with no line. The refusal on raw absence that
+#         round 1 shipped (the environment's default resolution against the file's non-default line) refused every
+#         deploy over a renumbered install from a plain shell, and merely skipping the compare there would have dropped
+#         the override line, a silent loss in place of a false refusal.
+#   the state root: the file's own (its ROMP_STATE_DIR line; the plist's StandardOutPath, kept as it is; else the
+#         default from $HOME), never this caller's XDG_STATE_HOME or ROMP_STATE_DIR: the audit row, the log paths and the
+#         node copy belong to the service the file runs, not to the profile or session that ran the deploy.
+# The refusal is exit 5 (EXIT_IDENTITY), its own code: exit 1 is a reload that failed, which a retry may fix; a refused
+# identity is fixed only by the shell (a value this environment carries) or the clone (ExecStart, ROMP_DIR), and the
+# text says which. The kernel's detached update child sets ROMP_UPDATE_CHILD=1; on the INSTALL road (the manager not
+# running: `romp up --foreground`, a hand-run install) that child keeps the file's identity too when a file exists,
+# where a person's install bakes what their shell sets: the child's environment is not a person's shell, and it dropped
+# the ports and the Claude config dir from an installed unit while re-baking the state root (the round's probes).
+EXIT_IDENTITY=5
+_SVC_PATH="$PATH"           # the PATH the writers bake: this environment's on an install, the file's on a rewrite (empty: no line)
+_SVC_PATH_LINE=""           # on a rewrite, the unit's own PATH line as written (quoted or not), written back as it is
 _KEEP_INSTANCE=()           # on a rewrite, the file's value per _INSTANCE_VARS index (empty: no line)
 _KEEP_ON=""                 # non-empty once _keep_identity ran: _instance_value reads _KEEP_INSTANCE, not the environment
 _instance_value() {   # $1 a variable of _INSTANCE_VARS, $2 its index: the value the writers bake, empty for no line
@@ -158,7 +184,11 @@ _file_value() {
         case "$key" in
             ExecStart) line="$(grep -m1 '^ExecStart=' "$UNIT" 2>/dev/null || true)"; line="${line#ExecStart=}"; line="${line% up}" ;;
             ROMP_SERVICE_ENV_FILE) line="$(grep -m1 '^EnvironmentFile=' "$UNIT" 2>/dev/null || true)"; line="${line#EnvironmentFile=}"; line="${line#-}"; line="${line//%%/%}" ;;
-            *) line="$(grep -m1 "^Environment=$key=" "$UNIT" 2>/dev/null || true)"; line="${line#Environment=$key=}" ;;
+            # the unquoted form romp writes, and the quoted form systemd also reads (Environment="PATH=..."), which a
+            # hand-edited unit carries (round 2 of the review, 2026-09-18: the quoted line read as absent and was dropped)
+            *) line="$(grep -m1 -E "^Environment=\"?$key=" "$UNIT" 2>/dev/null || true)"; line="${line#Environment=}"
+               if [[ "$line" == \"* ]]; then line="${line#\"}"; line="${line%\"}"; fi
+               line="${line#"$key="}" ;;
         esac
     else
         case "$key" in
@@ -170,42 +200,99 @@ _file_value() {
 }
 # $1 = unit | plist. Reads the file's identity into the writers' inputs; on a disagreement says every differing value
 # on stderr and returns 1, the file untouched. ROMP_STATE_DIR and CLAUDE_CONFIG_DIR are paths and compare as places.
+# Two classes of disagreement, said apart (round 2 of the review, 2026-09-18): a value THIS ENVIRONMENT carries
+# (an instance variable, the service.env path) is fixed by retrying from a shell that does not set it; the CLONE
+# (ExecStart, ROMP_DIR) is fixed by running from the installed clone. The same retry line for both sent the
+# environment class to the command that had just refused it.
 _keep_identity() {
-    local kind="$1" v i=0 fv ev bad=""
+    local kind="$1" v i=0 fv ev bad_env="" bad_clone=""
     fv="$(_file_value "$kind" ExecStart)"
     if [[ -n "$fv" ]]; then
-        if _same_path "$fv" "$MANAGER"; then MANAGER="$fv"; else bad+="  ExecStart: the file runs $fv, this clone would write $MANAGER"$'\n'; fi
+        if _same_path "$fv" "$MANAGER"; then MANAGER="$fv"; else bad_clone+="  ExecStart: the file runs $fv, this clone would write $MANAGER"$'\n'; fi
     fi
     fv="$(_file_value "$kind" ROMP_DIR)"
     if [[ -n "$fv" ]]; then
-        if _same_path "$fv" "$ROMP_DIR"; then ROMP_DIR="$fv"; LAUNCHER="$ROMP_DIR/bin/romp-node-launch"; else bad+="  ROMP_DIR: the file names $fv, this clone is $ROMP_DIR"$'\n'; fi
+        if _same_path "$fv" "$ROMP_DIR"; then ROMP_DIR="$fv"; LAUNCHER="$ROMP_DIR/bin/romp-node-launch"; else bad_clone+="  ROMP_DIR: the file names $fv, this clone is $ROMP_DIR"$'\n'; fi
     fi
-    fv="$(_file_value "$kind" PATH)"
-    if [[ -n "$fv" ]]; then _SVC_PATH="$fv"; fi
+    # PATH: the file's line, or none. Empty _SVC_PATH makes the writers omit the line (round 2: a PATH-less unit took the
+    # whole caller PATH, a session's, and a hand-quoted line read as absent, so _file_value matches the quoted form and
+    # the unit's line is written back as it is).
+    _SVC_PATH="$(_file_value "$kind" PATH)"
+    _SVC_PATH_LINE=""
+    if [[ -n "$_SVC_PATH" && "$kind" == unit ]]; then _SVC_PATH_LINE="$(grep -m1 -E '^Environment="?PATH=' "$UNIT" 2>/dev/null || true)"; fi
+    # The service.env path (round 2, departure c of round 1's body): compared only against a value this environment
+    # SET, the primary name or the alias, never against the default the resolver computes from XDG_CONFIG_HOME or
+    # $HOME; otherwise the file's own path is kept, and a file with no line reads the kernel's default, since that is
+    # what its service reads with no line. The assignment is the point: skipping the compare alone dropped the file's
+    # override line, and the writer then wrote the caller's resolution.
+    ev="${ROMP_SERVICE_ENV_FILE:-${ROMP_SERVICE_ENV:-}}"
     fv="$(_file_value "$kind" ROMP_SERVICE_ENV_FILE)"
-    if [[ -n "$fv" ]]; then
-        if _same_path "$fv" "$SERVICE_ENV_FILE"; then SERVICE_ENV_FILE="$fv"; else bad+="  service.env: the file reads $fv, this environment names $SERVICE_ENV_FILE"$'\n'; fi
+    [[ -n "$fv" ]] || fv="$HOME/.config/romp/service.env"
+    if [[ -z "$ev" ]] || _same_path "$fv" "$ev"; then
+        SERVICE_ENV_FILE="$fv"
+    else
+        local which="ROMP_SERVICE_ENV_FILE"; [[ -n "${ROMP_SERVICE_ENV_FILE:-}" ]] || which="ROMP_SERVICE_ENV"
+        bad_env+="  $which: the file reads $fv, this environment names $ev"$'\n'
     fi
     _KEEP_INSTANCE=()
     for v in "${_INSTANCE_VARS[@]}"; do
         fv="$(_file_value "$kind" "$v")"; ev="${!v:-}"
         if [[ -n "$fv" && -n "$ev" && "$fv" != "$ev" ]]; then
             case "$v" in
-                ROMP_STATE_DIR|CLAUDE_CONFIG_DIR) _same_path "$fv" "$ev" || bad+="  $v: the file carries $fv, this environment carries $ev"$'\n' ;;
-                *) bad+="  $v: the file carries $fv, this environment carries $ev"$'\n' ;;
+                ROMP_STATE_DIR|CLAUDE_CONFIG_DIR) _same_path "$fv" "$ev" || bad_env+="  $v: the file carries $fv, this environment carries $ev"$'\n' ;;
+                *) bad_env+="  $v: the file carries $fv, this environment carries $ev"$'\n' ;;
             esac
         fi
         _KEEP_INSTANCE[$i]="$fv"; i=$((i + 1))
     done
     _KEEP_ON=1
-    if [[ -n "$bad" ]]; then
+    if [[ -n "$bad_clone$bad_env" ]]; then
         local what="unit"; [[ "$kind" == plist ]] && what="agent"
         echo "romp-service: the login $what on disk and this environment disagree; nothing was rewritten:" >&2
-        printf '%s' "$bad" >&2
-        echo "  A rewrite keeps the file's own values. To change them on purpose, run romp-service install from the shell and clone that should own the service (the header says what it bakes)." >&2
+        printf '%s%s' "$bad_clone" "$bad_env" >&2
+        echo "  A rewrite keeps the file's own values." >&2
+        if [[ -n "$bad_env" ]]; then
+            echo "  This environment carries a value the file does not: retry from a shell that does not set it. To change the file's value on purpose, run romp-service install from the shell that should own the service (the header says what it bakes)." >&2
+        fi
+        if [[ -n "$bad_clone" ]]; then
+            echo "  This deploy ran from a clone that is not the installed one: run it from the installed clone. To move the service to this clone on purpose, run romp-service install from it." >&2
+        fi
         return 1
     fi
+    _keep_state "$kind"
     return 0
+}
+# $1 = unit | plist, after _keep_identity agreed: the STATE root the writers, the audit row and the node copy use is the
+# FILE's service's, not this caller's (round 2 of the review, 2026-09-18; departure a of round 1's body, fixed rather
+# than accepted). The file's ROMP_STATE_DIR line names it; a plist with no line names it through StandardOutPath, which
+# is kept as it is (an XDG_STATE_HOME install's log path is not in any line, so a recomputed default would have moved
+# it); with neither, the default from $HOME, which is the root a service with no line runs on (its environment is
+# systemd's or launchd's, not the caller's). Never this caller's XDG_STATE_HOME or ROMP_STATE_DIR: neither writer bakes
+# XDG_STATE_HOME into the file, so a file with no line can only be resolved here, and the caller's value (a profile's
+# update child, a session's shell) is the one that moved the primary's log paths, journaled the deploy's row under an
+# aux root and refreshed the node copy there while the primary's stayed stale (the round's probes, both directions).
+_keep_state() {
+    local sd lp=""
+    sd="$(_file_value "$1" ROMP_STATE_DIR)"
+    if [[ "$1" == plist ]]; then lp="$(_file_value plist StandardOutPath)"; fi
+    if [[ -z "$sd" && -n "$lp" ]]; then sd="$(dirname "$lp")"; fi
+    [[ -n "$sd" ]] || sd="$HOME/.local/state/romp"
+    STATE="$sd"
+    LOG="${lp:-$STATE/manager.log}"
+    ROMP_NODE="$STATE/romp-node"
+    DOWN_MARKER="$STATE/down-by-romp"
+}
+
+# The PATH line, formatted for the platform ($1 = plist | unit), newline-terminated; nothing when a kept file carried
+# none (round 2 of the review, 2026-09-18). On a rewrite the unit's own line goes back as written, quoted or not.
+_path_line() {
+    if [[ -n "$_KEEP_ON" ]]; then
+        [[ -n "$_SVC_PATH" ]] || return 0
+        if [[ "$1" == unit ]]; then printf '%s\n' "$_SVC_PATH_LINE"; return 0; fi
+    elif [[ "$1" == unit ]]; then
+        printf 'Environment=PATH=%s\n' "$_SVC_PATH"; return 0
+    fi
+    printf '    <key>PATH</key><string>%s</string>\n' "$_SVC_PATH"
 }
 
 # The SET ones, formatted for the platform: $1 = plist (EnvironmentVariables dict pairs) or
@@ -276,6 +363,8 @@ write_plist() {
     if [[ -n "$_plist_env" ]]; then _plist_env+=$'\n'; fi
     local _plist_envf; _plist_envf="$(_service_env_override plist)"
     if [[ -n "$_plist_envf" ]]; then _plist_envf+=$'\n'; fi
+    local _plist_path; _plist_path="$(_path_line plist)"
+    if [[ -n "$_plist_path" ]]; then _plist_path+=$'\n'; fi
     cat > "$PLIST.tmp" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -290,8 +379,7 @@ write_plist() {
   </array>
   <key>EnvironmentVariables</key>
   <dict>
-    <key>PATH</key><string>$_SVC_PATH</string>
-    <key>ROMP_DIR</key><string>$ROMP_DIR</string>
+${_plist_path}    <key>ROMP_DIR</key><string>$ROMP_DIR</string>
     <key>ROMP_SUPERVISED</key><string>1</string>
 ${_plist_envf}${_plist_env}  </dict>
   <key>RunAtLoad</key><true/>
@@ -314,6 +402,8 @@ write_unit() {
     if [[ -n "$_unit_env" ]]; then _unit_env+=$'\n'; fi
     local _unit_envf; _unit_envf="$(_service_env_override unit)"
     if [[ -n "$_unit_envf" ]]; then _unit_envf+=$'\n'; fi
+    local _unit_path; _unit_path="$(_path_line unit)"
+    if [[ -n "$_unit_path" ]]; then _unit_path+=$'\n'; fi
     # MALLOC_ARENA_MAX=2 (the kernel memory work, 2026-09-11): the kernel is a Python process with dozens of threads
     # (per-session SDK threads, the judge pools, the pusher, the dashboard senders) rebuilding large record lists, and
     # glibc's per-thread arenas kept ten 100 to 140 MB arenas of freed memory between restarts; two arenas hand freed
@@ -327,8 +417,7 @@ After=default.target
 ExecStart=$MANAGER up
 Restart=always
 RestartSec=2
-Environment=PATH=$_SVC_PATH
-Environment=ROMP_DIR=$ROMP_DIR
+${_unit_path}Environment=ROMP_DIR=$ROMP_DIR
 Environment=ROMP_SUPERVISED=1
 Environment=MALLOC_ARENA_MAX=2
 ${_unit_envf}EnvironmentFile=-$(printf '%s' "$SERVICE_ENV_FILE" | sed 's/%/%%/g')
@@ -473,6 +562,30 @@ audit_install() {
 }
 
 _linux_active() { "$SYSTEMCTL" --user is-active romp-manager.service 2>/dev/null || true; }
+# After a daemon-reload that returned 0, on both writing roads (round 2 of the review, 2026-09-18: the install arm kept
+# a grep of the loaded Environment for the allocator line, which a drop-in supplying that line satisfies over a stale
+# fragment, while the rewrite arm read systemd's own flag; one file, one answer to "did systemd pick this up"). Two
+# reads, advisory at exit 0 (install.sh gates on the exit code, and a box whose probe alone is unreadable must still
+# deploy; unreadable is said, never read as clean): NeedDaemonReload, systemd's flag for a unit file newer than its
+# loaded definition, the state a reload that returned 0 and kept the old definition leaves; and FragmentPath, the file
+# systemd loads the unit FROM, compared as a place (_same_path) against the file just written, since the flag answers
+# `no` for a unit systemd has never heard of, so a unit written outside its search path read as loaded and current
+# (the round's probe). One property per call: systemd orders a multi-property answer by its own rules.
+_reload_readback() {
+    local need frag
+    need="$("$SYSTEMCTL" --user show -p NeedDaemonReload --value romp-manager.service 2>/dev/null || true)"
+    case "$need" in
+      no) ;;
+      yes) echo "romp-service: systemd still reports the unit file newer than its loaded definition after the reload (NeedDaemonReload=yes): systemd kept an older definition; run systemctl --user daemon-reload and check again." >&2 ;;
+      *) echo "romp-service: NeedDaemonReload could not be read after the reload (systemctl --user show -p NeedDaemonReload --value romp-manager.service printed '$need'); whether systemd loaded the new unit is unverified. Check it by hand: systemctl --user show -p NeedDaemonReload romp-manager.service" >&2 ;;
+    esac
+    frag="$("$SYSTEMCTL" --user show -p FragmentPath --value romp-manager.service 2>/dev/null || true)"
+    if [[ -z "$frag" ]]; then
+        echo "romp-service: the loaded unit's FragmentPath could not be read (systemctl --user show -p FragmentPath --value romp-manager.service printed nothing); whether systemd loads romp-manager.service from $UNIT is unverified." >&2
+    elif ! _same_path "$frag" "$UNIT"; then
+        echo "romp-service: systemd loads romp-manager.service from $frag, not from the file just written ($UNIT): the written unit is outside systemd's search path or shadowed there, so the reload changed nothing for the service. Check: systemctl --user show -p FragmentPath romp-manager.service" >&2
+    fi
+}
 # launchctl print of a LOADED job succeeds whether or not its process is alive: a job crash-looping under
 # KeepAlive is loaded the whole time (issue 1600: status said running, install.sh trusted it, and the
 # fresh install exited 0 over a manager that had never lived). The job's record names its process, so the
@@ -631,6 +744,17 @@ _service_start() {
 
 case "${1:-status}" in
   install)
+    # The kernel's detached update child (ROMP_UPDATE_CHILD=1) reaches this road when the manager is not running under
+    # the service (`romp up --foreground`, a hand-run install): its environment is not a person's shell, so with a file
+    # on disk it keeps the file's identity as the rewrite does and refuses a disagreement the same way (EXIT_IDENTITY;
+    # the update preflights this check before the checkout moves). With no file, the install a fresh box wants (round 2
+    # of the review, 2026-09-18). A person's install bakes what their shell sets, as the header says.
+    if [[ -n "${ROMP_UPDATE_CHILD:-}" ]]; then
+        case "$os" in
+          Darwin) if [[ -f "$PLIST" ]]; then _keep_identity plist || exit "$EXIT_IDENTITY"; fi ;;
+          Linux)  if [[ -f "$UNIT" ]]; then _keep_identity unit || exit "$EXIT_IDENTITY"; fi ;;
+        esac
+    fi
     audit_install install
     case "$os" in
       Darwin)
@@ -727,16 +851,15 @@ case "${1:-status}" in
             "$SYSTEMCTL" --user enable --now romp-manager.service
             loginctl enable-linger "$(id -un)" 2>/dev/null || true   # survive logout (best-effort)
             # The loaded definition, for the deploy to read against the file: the Environment the next respawn gets.
-            # The unit's own MALLOC_ARENA_MAX line missing from it is the stale state above, so it is named.
             _loaded="$("$SYSTEMCTL" --user show -p Environment romp-manager.service 2>/dev/null || true)"
             if [[ -n "$_loaded" ]]; then
                 echo "  Loaded unit (systemctl --user show -p Environment): $_loaded"
-                if ! grep -qw 'MALLOC_ARENA_MAX=2' <<<"$_loaded"; then
-                    echo "romp-service: the loaded unit does not carry MALLOC_ARENA_MAX=2, which the file just written has: systemd kept an older definition; run systemctl --user daemon-reload and check again." >&2
-                fi
             else
                 echo "  (the loaded unit's Environment could not be read: systemctl --user show -p Environment romp-manager.service printed nothing)"
             fi
+            # Whether systemd took the file just written: its own flag and the fragment it loads, not a grep of the
+            # merged Environment for the allocator line (round 2 of the review; _reload_readback says why)
+            _reload_readback
         fi
         echo "  Installed systemd --user service: $UNIT"
         echo "  romp-manager now auto-starts at login — just open the browser."
@@ -773,18 +896,26 @@ case "${1:-status}" in
     # Only an INSTALLED service is rewritten (exit 3 otherwise, as stop and start): a unit written and never enabled
     # would read as installed to status while nothing starts it. The reload's failure is said in the install's own
     # words and is exit 1: the file on disk would read as this release's while the loaded definition is the old one.
-    # The file keeps its own identity and the environment's disagreement with it is exit 1 (_keep_identity, round 1
-    # of the review, 2026-09-18); both checks come before the write and the audit row, so a run that writes nothing
-    # journals nothing.
+    # The file keeps its own identity and the environment's disagreement with it is exit 5 (_keep_identity, round 1
+    # of the review, 2026-09-18; its own code since round 2); both checks come before the write and the audit row, so
+    # a run that writes nothing journals nothing. `--check` ends here, exit 0 (the same checks, nothing written,
+    # reloaded or journaled): the kernel's update runs it before the fetch that moves the checkout, so a deploy this
+    # would refuse moves nothing first (round 2: the refusal sat after the fast-forward, and a refused deploy left the
+    # tree on the new release with the old code running and no restart).
+    [[ $# -le 1 || "$2" == --check ]] || { echo "usage: romp-service rewrite [--check]" >&2; exit 2; }
     case "$os" in
       Darwin)
         [[ -f "$PLIST" ]] || { echo "romp-service: no login agent is installed (romp-service install writes and loads one)" >&2; exit 3; }
-        _keep_identity plist || exit 1 ;;
+        _keep_identity plist || exit "$EXIT_IDENTITY" ;;
       Linux)
         [[ -f "$UNIT" ]] || { echo "romp-service: no login service is installed (romp-service install writes and enables one)" >&2; exit 3; }
-        _keep_identity unit || exit 1 ;;
+        _keep_identity unit || exit "$EXIT_IDENTITY" ;;
       *) echo "romp-service: unsupported OS '$os'" >&2; exit 1 ;;
     esac
+    if [[ "${2:-}" == --check ]]; then
+        echo "  The login service on disk and this environment agree; a rewrite would keep its identity (nothing written: --check)."
+        exit 0
+    fi
     # The row this writes, action service-rewrite, is attribution (who ran the deploy), never a restart request: the
     # kernel's restart-audit walk lists it in _NO_RESTART_ACTIONS (kernel/kernel.py) and walks past it, as it does the
     # manager's quiet-window note. A new action written here that restarts nothing goes into that set too, or the
@@ -803,19 +934,9 @@ case "${1:-status}" in
                 echo "  Is the user manager reachable from this shell? XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR. Run systemctl --user daemon-reload by hand, or re-run romp-service rewrite." >&2
                 exit 1
             fi
-            # The read-back after the reload (round 1 of the review, 2026-09-18): systemd's own flag for a unit file
-            # newer than its loaded definition, the state a reload that returned 0 and kept the old definition leaves.
-            # Not the install arm's grep of the loaded Environment for the allocator line: that reads the MERGED
-            # environment, so a drop-in supplying the one line vouches for an entirely stale fragment, and the drop-in
-            # boxes are the population this road exists for. An advisory at exit 0, as the install arm's: install.sh
-            # gates on the exit code, and a box whose probe alone is unreadable must still deploy; unreadable is said
-            # too, never read as clean.
-            _need="$("$SYSTEMCTL" --user show -p NeedDaemonReload --value romp-manager.service 2>/dev/null || true)"
-            case "$_need" in
-              no) ;;
-              yes) echo "romp-service: systemd still reports the unit file newer than its loaded definition after the reload (NeedDaemonReload=yes): systemd kept an older definition; run systemctl --user daemon-reload and check again." >&2 ;;
-              *) echo "romp-service: NeedDaemonReload could not be read after the reload (systemctl --user show -p NeedDaemonReload --value romp-manager.service printed '$_need'); whether systemd loaded the new unit is unverified. Check it by hand: systemctl --user show -p NeedDaemonReload romp-manager.service" >&2 ;;
-            esac
+            # The read-back after the reload (round 1 of the review, 2026-09-18; shared with the install arm and widened
+            # to the loaded fragment in round 2: _reload_readback says what it reads and why)
+            _reload_readback
             echo "  Rewrote the login service unit ($UNIT) and reloaded systemd; the running romp-manager keeps its old unit until its next restart:  systemctl --user restart romp-manager"
         else
             echo "  Rewrote the login service unit ($UNIT); not reloaded (ROMP_SERVICE_NO_LOAD)"
@@ -838,5 +959,5 @@ case "${1:-status}" in
         if [[ -z "$NO_LOAD" ]] && [[ "$(_linux_active)" == "active" ]]; then echo "running"; else _down_marker_line; fi ;;
       *) echo "romp-service: unsupported OS '$os'" >&2; exit 1 ;;
     esac ;;
-  *) echo "usage: romp-service [install|uninstall|rewrite|stop|start|status]" >&2; exit 2 ;;
+  *) echo "usage: romp-service [install|uninstall|rewrite [--check]|stop|start|status]" >&2; exit 2 ;;
 esac

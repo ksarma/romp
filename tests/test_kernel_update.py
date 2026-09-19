@@ -272,6 +272,49 @@ class UpdateCheck(Fresh):
         self.assertIn("v0.7.0", ns[0]["text"])
         self.assertEqual(sent, [])
 
+    def test_the_once_only_marker_is_on_record_before_the_launch_and_taken_back_on_a_refusal(self):
+        # round 2 of the install-rewrite review (2026-09-18): the child removes the marker itself when the checkout
+        # advanced without a restart (RunUpdate pins the script), so a marker written AFTER the spawn could land after
+        # that removal and stand for an attempt the child had already disowned. Written first; a refused launch takes
+        # it back, so "a refusal is not an attempt" still holds (HonestLaunch pins that side).
+        seen = []
+        with mock.patch.object(km, "_kernel_ver", return_value="v0.6.0"), \
+             mock.patch.object(km, "_latest_release_tag", return_value="v0.7.0"), \
+             mock.patch.object(km, "_run_update",
+                               side_effect=lambda tag: seen.append((jd.STATE / "update-attempted.json").exists()) or True), \
+             mock.patch.object(km, "_send_to_app"):
+            km._set_update_mode("auto")
+            km._update_check()
+        self.assertEqual(seen, [True], "the marker exists when the launch is asked for, not only after it returns")
+        self.assertEqual(json.loads((jd.STATE / "update-attempted.json").read_text())["tag"], "v0.7.0")
+        # a launch refused for any reason takes it back: nothing ran
+        km._UPDATE_AVAIL[0] = ""
+        (jd.STATE / "update-attempted.json").unlink()
+        with mock.patch.object(km, "_kernel_ver", return_value="v0.6.0"), \
+             mock.patch.object(km, "_latest_release_tag", return_value="v0.7.0"), \
+             mock.patch.object(km, "_run_update", return_value=False), \
+             mock.patch.object(km, "_send_to_app"):
+            km._update_check()
+        self.assertFalse((jd.STATE / "update-attempted.json").exists(), "a refused launch is not an attempt")
+
+    def test_ask_mode_on_a_kernel_that_is_not_the_primary_still_raises_the_banner(self):
+        # round 2 of the install-rewrite review (2026-09-18, regression-2 as ruled): the push stays. The banner is a
+        # true, standing statement that a newer romp exists, re-derived on every page load; the click's refusal reaches
+        # the user as a sentence naming the kernel id and the primary's dashboard (Routes pins the 409), and Not-now
+        # clears it. A sync notice is a one-shot ring, so trading the banner for one would cost the aux dashboard its
+        # standing signal. No notice is filed here: the refusal is the click's answer, not the discovery's.
+        sent = []
+        with mock.patch.object(km, "_kernel_ver", return_value="v0.6.0"), \
+             mock.patch.object(km, "_latest_release_tag", return_value="v0.7.0"), \
+             mock.patch.object(km, "_run_update", side_effect=AssertionError("ask mode launches nothing")), \
+             mock.patch.object(km, "_send_to_app", side_effect=lambda app, m: sent.append(m)), \
+             mock.patch.dict(km.os.environ, {"ROMP_KERNEL_ID": "alice"}):
+            km._set_update_mode("ask")
+            km._update_check()
+        self.assertEqual([m["type"] for m in sent], ["updateAvail"])
+        self.assertEqual(sent[0]["tag"], "v0.7.0")
+        self.assertEqual(self.notices(), [])
+
     def test_rediscovering_the_same_release_mid_run_stays_quiet(self):
         # the 6h re-check re-finds a version for weeks — only a CHANGED discovery is new information
         sent = []
@@ -502,6 +545,33 @@ class RunUpdate(Fresh):
         self.assertEqual(env.get("ROMP_SERVE_TOKEN"), "test-token-DO-NOT-USE", "the script reads the token at run time")
         self.assertEqual(env.get("PATH"), km.os.environ.get("PATH"), "everything else rides through")
         self.assertIn("/restart-all'", a[0][2], "the manager port was read before the scrub: the restart leg stays")
+
+    def test_the_detached_child_is_marked_and_preflights_the_unit_rewrite_before_the_fetch(self):
+        # round 2 of the install-rewrite review (2026-09-18). The mark: bin/romp-service keeps an installed unit's
+        # identity on its INSTALL road too when ROMP_UPDATE_CHILD is set (the road install.sh takes when the manager is
+        # not running under the service), where a person's install bakes what their shell sets. The preflight: the
+        # rewrite's identity refusal used to be met inside the && chain after advance() had moved the checkout, so the
+        # same check (`rewrite --check`) runs first, and its refusal, exit 5, ends the run before the fetch. Exit 3 (no
+        # unit at the path) and any other exit are install.sh's to handle, as before.
+        calls = []
+        with mock.patch.object(km.subprocess, "Popen", side_effect=lambda *a, **kw: calls.append((a, kw))), \
+             mock.patch.object(km, "_release_remote", return_value="origin"):
+            self.assertTrue(km._run_update("v0.7.0"))
+        (a, kw), = calls
+        self.assertEqual(kw["env"].get("ROMP_UPDATE_CHILD"), "1", "the child is marked for bin/romp-service")
+        script = a[0][2]
+        self.assertIn("rewrite --check", script)
+        self.assertLess(script.index("rewrite --check"), script.index("git fetch origin refs/tags/v0.7.0"),
+                        "the identity check runs before anything moves")
+        self.assertIn('[ "$prc" -ne 5 ]', script, "only the identity refusal ends the run early")
+        self.assertIn("nothing was fetched and the checkout did not move", script)
+        self.assertIn("the checkout moved to v0.7.0 but its install failed", script)
+        self.assertIn('"advanced": true', script)
+        self.assertIn("update-attempted.json", script, "the auto marker is the child's to withhold")
+        svc = open(os.path.join(BIN, "romp-service")).read()
+        self.assertIn("EXIT_IDENTITY=%d" % km._SERVICE_IDENTITY_REFUSED, svc,
+                      "the code the preflight aborts on is the one bin/romp-service exits with")
+        self.assertIn('exit "$EXIT_IDENTITY"', svc)
 
     def test_a_kernel_that_is_not_the_primary_launches_no_update(self):
         # round 1 of the install-rewrite review (2026-09-18): the update's install.sh rewrites the login service's
@@ -866,6 +936,58 @@ class Routes(Fresh):
         self.assertEqual(ran, [], "nothing launched")
         self.assertEqual(self._audit_rows(), [], "a refused click is not a restart request; no row")
         self.assertEqual(km._UPDATE_STATE[0], "", "not latched")
+
+    def test_post_update_on_a_kernel_that_is_not_the_primary_converges_main_drift_though_a_release_is_known(self):
+        # round 2 of the install-rewrite review (2026-09-18, regression-2's real defect): with a release tag known, a
+        # non-primary's click was refused before the drift branch even when the click was the drift converge, which is
+        # this kernel's own and legitimate there. On a non-primary the release is never this kernel's to run, so a
+        # known tag does not outrank drift: the click converges, and the release's refusal is the answer only when
+        # there is no drift to converge (the test after this one).
+        km._UPDATE_AVAIL[0] = "v0.7.0"
+        km._MAIN_DRIFT[0], km._MAIN_DRIFT[1] = "aaaa1111", ""
+        ran = []
+        try:
+            with mock.patch.object(km, "_run_update", side_effect=AssertionError("the release is not this kernel's to run")), \
+                 mock.patch.object(km, "_run_main_update",
+                                   side_effect=lambda kind, immediate=False, manager_port=None, target="":
+                                       ran.append((kind, immediate, target))), \
+                 mock.patch.dict(km.os.environ, {"ROMP_KERNEL_ID": "alice"}):
+                code, body = self._post("/update")
+                self.assertEqual(code, 200, body)
+                self.assertIn("converging", body)
+                for _ in range(200):
+                    if ran:
+                        break
+                    time.sleep(0.01)
+            self.assertEqual(ran, [("pull", True, "aaaa1111")])
+            rows = self._audit_rows()
+            self.assertEqual([r["action"] for r in rows], ["main-converge"], "the drift converge's own row, no self-update row")
+        finally:
+            km._MAIN_DRIFT[0] = ""
+            km._MAIN_CONVERGE_INFLIGHT[0] = False
+
+    def test_post_update_on_a_kernel_that_is_not_the_primary_with_no_drift_is_still_refused_naming_the_primary(self):
+        km._UPDATE_AVAIL[0] = "v0.7.0"
+        km._MAIN_DRIFT[0] = km._MAIN_DRIFT[1] = ""
+        with mock.patch.object(km, "_run_update", side_effect=AssertionError("must not launch")), \
+             mock.patch.object(km, "_run_main_update", side_effect=AssertionError("nothing to converge")), \
+             mock.patch.dict(km.os.environ, {"ROMP_KERNEL_ID": "alice"}):
+            code, text = self._post("/update")
+        self.assertEqual(code, 409, text)
+        self.assertIn("not the primary", text)
+        self.assertIn("primary kernel's dashboard", text)
+        self.assertEqual(self._audit_rows(), [])
+        # the primary with the same state runs the release, drift or no drift (unchanged)
+        km._MAIN_DRIFT[0] = "aaaa1111"
+        ran = []
+        try:
+            with mock.patch.object(km, "_run_update", side_effect=lambda tag: ran.append(tag) or True), \
+                 mock.patch.object(km, "_run_main_update", side_effect=AssertionError("the release outranks drift on the primary")):
+                code, body = self._post("/update")
+            self.assertEqual(code, 200, body)
+            self.assertEqual(ran, ["v0.7.0"])
+        finally:
+            km._MAIN_DRIFT[0] = ""
 
     def _audit_rows(self):
         p = jd.STATE / "restart-audit.jsonl"
@@ -2849,6 +2971,173 @@ class BootOnTheTag(Fresh):
         self.assertEqual(len(ns), 1)
         self.assertIn("this start is running it", ns[0]["text"])
         self.assertNotIn("restart romp yourself", ns[0]["text"])
+
+
+class AssembledUpdateRoad(Fresh):
+    """The update script _run_update assembles, RUN for real against a scratch clone (round 2 of the install-rewrite
+    review, 2026-09-18). The bats pins covered install.sh's half and the pins above the kernel's, and nothing executed
+    the two together: the refusal that sat after the fast-forward stayed invisible with both sides green. Here a clone
+    sits one release behind its remote, its install.sh and bin/romp-service are stubs the case steers (the fake
+    romp-service refuses `rewrite --check` with the identity code, or agrees; the fake install.sh fails or succeeds),
+    and the assertions are about the tree, the report and the marker after the script ends. Synthetic paths only."""
+
+    IDENTITY_REFUSED = 5
+
+    def _clone(self, tmp):
+        env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.invalid",
+               "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.invalid"}
+
+        def g(cwd, *args):
+            r = git(cwd, *args, env=env, check=False)
+            self.assertEqual(r.returncode, 0, "git %s: %s%s" % (" ".join(args), r.stdout, r.stderr))
+            return r.stdout.strip()
+        remote = os.path.join(tmp, "remote")
+        os.makedirs(os.path.join(remote, "bin"))
+        init_repo(remote, "-q", "-b", "main", env=env)
+        with open(os.path.join(remote, "VERSION"), "w") as f:
+            f.write("0.6.0\n")
+        # the stubs travel in the tree, so the tree on the tag carries them too (install.sh runs from the ADVANCED tree)
+        with open(os.path.join(remote, "install.sh"), "w") as f:
+            f.write("#!/usr/bin/env bash\necho ran >> \"$ROMP_TEST_INSTALL_LOG\"\nexit \"${ROMP_TEST_INSTALL_RC:-0}\"\n")
+        with open(os.path.join(remote, "bin", "romp-service"), "w") as f:
+            f.write("#!/usr/bin/env bash\necho \"$*\" >> \"$ROMP_TEST_SVC_LOG\"\n"
+                    "if [ \"$1 $2\" = 'rewrite --check' ] && [ \"${ROMP_TEST_CHECK_RC:-0}\" -ne 0 ]; then\n"
+                    "  echo 'romp-service: the login unit on disk and this environment disagree; nothing was rewritten:' >&2\n"
+                    "  echo '  ROMP_KERNEL_PORT: the file carries 29866, this environment carries 31855' >&2\n"
+                    "  exit \"$ROMP_TEST_CHECK_RC\"\nfi\nexit 0\n")
+        os.chmod(os.path.join(remote, "install.sh"), 0o755)
+        os.chmod(os.path.join(remote, "bin", "romp-service"), 0o755)
+        g(remote, "add", "-A")
+        g(remote, "commit", "-qm", "the installed release")
+        base = g(remote, "rev-parse", "HEAD")
+        clone = os.path.join(tmp, "clone")
+        r = subprocess.run(["git", "clone", "-q", remote, clone], env=env, capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        forbid_background(clone, env=env)
+        with open(os.path.join(remote, "VERSION"), "w") as f:
+            f.write("9.9.9\n")
+        g(remote, "add", "VERSION")
+        g(remote, "commit", "-qm", "VERSION 9.9.9")
+        g(remote, "commit", "-qm", "merge the release PR", "--allow-empty")
+        g(remote, "tag", "v9.9.9")
+        tag_sha = g(remote, "rev-parse", "v9.9.9")
+        return clone, base, tag_sha, g
+
+    def _run(self, clone, extra_env, manager_port=""):
+        calls = []
+        km._UPDATE_STATE[0] = ""                      # a case that runs the road twice: the first launch's latch is over
+        with mock.patch.object(km.subprocess, "Popen", side_effect=lambda *a, **kw: calls.append((a, kw))), \
+             mock.patch.object(km, "_release_remote", return_value="origin"), \
+             mock.patch.object(km, "ROOT", Path(clone)), \
+             mock.patch.dict(km.os.environ, {"ROMP_MANAGER_PORT": manager_port}):
+            self.assertTrue(km._run_update("v9.9.9"))
+        (a, kw), = calls
+        env = dict(kw["env"])
+        env.update(extra_env)
+        env.setdefault("ROMP_TEST_INSTALL_LOG", os.path.join(clone, "..", "install.log"))
+        env.setdefault("ROMP_TEST_SVC_LOG", os.path.join(clone, "..", "svc.log"))
+        r = subprocess.run(a[0], env=env, cwd=clone, capture_output=True, text=True, timeout=120)
+        return r, env
+
+    def _report(self):
+        return json.loads((jd.STATE / "update-report.json").read_text())
+
+    def test_a_refused_unit_rewrite_ends_the_run_before_the_tree_moves(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            clone, base, tag_sha, g = self._clone(tmp)
+            (jd.STATE / "update-attempted.json").write_text(json.dumps({"tag": "v9.9.9", "t": 1}))
+            r, env = self._run(clone, {"ROMP_TEST_CHECK_RC": str(self.IDENTITY_REFUSED)})
+            self.assertEqual(g(clone, "rev-parse", "HEAD"), base, "the checkout did not move")
+            self.assertEqual(g(clone, "tag", "-l", "v9.9.9"), "", "the tag was never fetched")
+            self.assertFalse(os.path.exists(env["ROMP_TEST_INSTALL_LOG"]), "install.sh never ran")
+            with open(env["ROMP_TEST_SVC_LOG"]) as f:
+                self.assertEqual(f.read().split("\n")[0], "rewrite --check", "the check ran, from the OLD tree's romp-service")
+            rep = self._report()
+            self.assertFalse(rep["ok"])
+            self.assertEqual(rep["tag"], "v9.9.9")
+            self.assertIn("would be refused", rep["why"])
+            self.assertIn("the checkout did not move", rep["why"])
+            self.assertNotIn("advanced", rep)
+            log = (jd.STATE / "update.log").read_text()
+            self.assertIn("this environment disagree; nothing was rewritten", log, "romp-service's own lines are in update.log")
+            self.assertIn("ROMP_KERNEL_PORT: the file carries 29866", log)
+            self.assertFalse((jd.STATE / "restart-audit.jsonl").exists(), "no restart was requested, so no self-update row")
+            self.assertTrue((jd.STATE / "update-attempted.json").exists(),
+                            "a deterministic refusal with the tree unmoved spends the try: the next pass offers the banner")
+            # the still-running kernel's poll files it as a failure that restarted nothing
+            km._UPDATE_STATE[0] = "running"
+            out = km._consume_update_report(running_only=True)
+            self.assertFalse(out["ok"])
+            ns = self.notices()
+            self.assertEqual(len(ns), 1)
+            self.assertIn("nothing was restarted", ns[0]["text"])
+            self.assertIn("the checkout did not move", ns[0]["text"])
+
+    def test_an_install_that_fails_after_the_tree_moved_says_so_and_withholds_the_auto_marker(self):
+        # the preflight covers the identity class alone; a failure after advance() is still possible (the SDK venv,
+        # the dashboard build), and the report used to say only that the fetch, fast-forward or install failed
+        with tempfile.TemporaryDirectory() as tmp:
+            clone, base, tag_sha, g = self._clone(tmp)
+            (jd.STATE / "update-attempted.json").write_text(json.dumps({"tag": "v9.9.9", "t": 1}))
+            r, env = self._run(clone, {"ROMP_TEST_INSTALL_RC": "1"})
+            self.assertEqual(g(clone, "rev-parse", "HEAD"), tag_sha, "the tree is on the release")
+            self.assertEqual(g(clone, "describe", "--exact-match", "--tags"), "v9.9.9")
+            with open(env["ROMP_TEST_INSTALL_LOG"]) as f:
+                self.assertEqual(f.read(), "ran\n")
+            rep = self._report()
+            self.assertFalse(rep["ok"])
+            self.assertTrue(rep["advanced"])
+            self.assertIn("the checkout moved to v9.9.9", rep["why"])
+            self.assertIn("still the previous release", rep["why"])
+            self.assertFalse((jd.STATE / "update-attempted.json").exists(),
+                             "the version's one automatic try is not spent on an attempt that restarted nothing")
+            self.assertFalse((jd.STATE / "restart-audit.jsonl").exists())
+            km._UPDATE_STATE[0] = "running"
+            km._consume_update_report(running_only=True)
+            ns = self.notices()
+            self.assertEqual(len(ns), 1)
+            self.assertIn("the checkout moved to v9.9.9", ns[0]["text"])
+            self.assertIn("nothing was restarted", ns[0]["text"])
+
+    def test_a_clean_run_with_no_manager_lands_on_the_tag_and_withholds_the_marker_too(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            clone, base, tag_sha, g = self._clone(tmp)
+            (jd.STATE / "update-attempted.json").write_text(json.dumps({"tag": "v9.9.9", "t": 1}))
+            r, env = self._run(clone, {})
+            self.assertEqual(g(clone, "rev-parse", "HEAD"), tag_sha)
+            with open(env["ROMP_TEST_SVC_LOG"]) as f:
+                self.assertEqual(f.read().split("\n")[0], "rewrite --check")
+            with open(env["ROMP_TEST_INSTALL_LOG"]) as f:
+                self.assertEqual(f.read(), "ran\n")
+            rep = self._report()
+            self.assertEqual((rep["ok"], rep["restarted"], rep["why"]), (True, False, km._NO_MANAGER_WHY))
+            self.assertFalse((jd.STATE / "update-attempted.json").exists(), "landed on disk without a restart: not spent")
+
+    def test_a_preflight_under_romp_no_service_is_skipped_and_a_service_exit_3_lets_the_run_go_on(self):
+        # ROMP_NO_SERVICE skips install.sh's service step, so it skips the preflight; and exit 3 from the check (no unit
+        # at the path) is install.sh's to handle after the tree moves, as before, not the preflight's to abort on
+        with tempfile.TemporaryDirectory() as tmp:
+            clone, base, tag_sha, g = self._clone(tmp)
+            r, env = self._run(clone, {"ROMP_NO_SERVICE": "1", "ROMP_TEST_CHECK_RC": str(self.IDENTITY_REFUSED)})
+            self.assertEqual(g(clone, "rev-parse", "HEAD"), tag_sha)
+            self.assertFalse(os.path.exists(env["ROMP_TEST_SVC_LOG"]), "no check under ROMP_NO_SERVICE")
+        with tempfile.TemporaryDirectory() as tmp:
+            clone, base, tag_sha, g = self._clone(tmp)
+            r, env = self._run(clone, {"ROMP_TEST_CHECK_RC": "3"})
+            self.assertEqual(g(clone, "rev-parse", "HEAD"), tag_sha, "exit 3 does not hold the tree")
+            with open(env["ROMP_TEST_INSTALL_LOG"]) as f:
+                self.assertEqual(f.read(), "ran\n")
+
+
+class KernelIdFloor(unittest.TestCase):
+    """tests/conftest.py floors ROMP_KERNEL_ID to the primary's id at import (round 2 of the install-rewrite review,
+    2026-09-18): the name is a new manager-to-kernel variable every session shell inherits, and a suite run from a shell
+    under a profile kernel read every update test here as an aux kernel's while CI, which exports no such name, stayed
+    green. The precedent of the port floors: the floor is asserted, so a conftest that loses it goes red here."""
+
+    def test_the_suite_runs_as_the_primary_kernel(self):
+        self.assertEqual(os.environ.get("ROMP_KERNEL_ID"), "main")
+        self.assertTrue(km._is_primary_kernel())
 
 
 if __name__ == "__main__":

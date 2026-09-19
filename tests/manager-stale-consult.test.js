@@ -1,5 +1,6 @@
-// romp-manager's stale-manager consult on the two doors that bring a kernel up under the RUNNING manager: a
-// single kernel's /restart and the crash respawn (T325 review; `romp refresh` had it first, in restartAllOrSelf).
+// romp-manager's stale-manager consult on the doors that bring a kernel up under the RUNNING manager: a single
+// kernel's /restart and the crash respawn (T325 review; `romp refresh` had it first, in restartAllOrSelf), and since
+// round 2 of the install-rewrite review (2026-09-18) /ensure, the spawn door a front end takes for a new port.
 // A manager whose binary changed since it started must not bring a kernel up under itself, because that kernel
 // inherits the old manager's environment for as long as the checkout sits ahead of it: supervised, the manager
 // exits for its own respawn instead, stopping the kernel with trigger refresh; foreground, it warns and lets the
@@ -99,9 +100,45 @@ test('a stale supervised manager whose kernel crashes exits for its own respawn 
   assert.equal((r.stderr.match(/kernel 'main' → :1 \(pid/g) || []).length, 1, 'spawned once, never respawned under the stale manager');
 });
 
-test('a stale manager yields on a single kernel restart and on a crash respawn, as it does on refresh', () => {
+test('a stale supervised manager asked for a kernel on a new port (/ensure) exits for its own respawn instead of spawning it under itself', () => {
+  // Round 2 of the install-rewrite review (2026-09-18): the third door that brings a kernel up under the running
+  // manager had no consult. After a deploy that restarted nothing (install.sh by hand restarts no manager), a front
+  // end's /ensure on a profile port spawned a new-code kernel under the stale manager, with the manager's start-time
+  // environment: no ROMP_KERNEL_ID from a manager that predates it, so the kernel read as the primary and could run
+  // the release self-update. The other two doors already yielded; this one now does the same.
+  const copy = staleCopy();
+  const port = 20000 + Math.floor(Math.random() * 20000);
+  const kport = 20000 + Math.floor(Math.random() * 20000);
+  const stubRoot = tmpRoot('romp-mgr-stale-stub-');
+  const stub = path.join(stubRoot, 'romp-serve');
+  fs.writeFileSync(stub, '#!/bin/sh\nexec sleep 30\n', { mode: 0o755 });
+  const r = inChild(`
+    const COPY = ${JSON.stringify(copy)};
+    const m = require(COPY);
+    ${standIn}
+    m.startManager();
+    const token = fs.readFileSync(path.join(process.env.ROMP_STATE_DIR, 'serve-token'), 'utf8').trim();
+    const http = require('http');
+    setTimeout(() => {
+      const req = http.request({ host: '127.0.0.1', port: ${port}, method: 'POST', path: '/ensure?port=${kport}', headers: { 'X-Romp-Token': token } }, (res) => {
+        let body = ''; res.on('data', (c) => body += c); res.on('end', () => fs.writeFileSync(path.join(process.env.ROMP_STATE_DIR, 'verdict.json'), body));
+      });
+      req.on('error', (e) => { fs.writeFileSync(path.join(process.env.ROMP_STATE_DIR, 'verdict.json'), JSON.stringify({ error: String(e) })); process.exit(4); });
+      req.end();
+    }, 300);
+    setTimeout(() => process.exit(5), 15000);
+  `, { ROMP_MANAGER_PORT: String(port), ROMP_CLI_SCOPE: '0', ROMP_SERVE_BIN: stub });
+  assert.equal(r.status, 0, r.stderr);   // shutdownAll(0): the manager left for the supervisor's respawn
+  const verdict = JSON.parse(fs.readFileSync(path.join(r.root, 'verdict.json'), 'utf8'));
+  assert.deepEqual(verdict, { ok: true, id: 'k' + kport, port: kport, pid: null, spawned: false, managerRestart: true });
+  assert.match(r.stderr, new RegExp(`exiting for a supervised respawn instead of spawning kernel 'k${kport}' for /ensure`));
+  assert.doesNotMatch(r.stderr, new RegExp(`kernel 'k${kport}' → :${kport}`), 'no kernel spawned under the stale manager');
+});
+
+test('a stale manager yields on a single kernel restart, on a crash respawn and on /ensure, as it does on refresh', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'bin', 'romp-manager'), 'utf8');
   assert.match(src, /function staleManagerYields\(why\) \{\s*if \(!managerStale\(\)\) return false;\s*if \(process\.env\.ROMP_SUPERVISED\) \{[\s\S]*?shutdownAll\(0, 'refresh'\);\s*return true;/);
   assert.match(src, /if \(staleManagerYields\(`respawning kernel '\$\{spec\.id\}'`\)\) return;[^\n]*\n\s*spawnKernel\(spec\);/, 'the crash respawn consults it');
   assert.match(src, /if \(staleManagerYields\(`restarting kernel '\$\{kid\}'`\)\) return json\(200, \{ ok: true, restarted: kid, managerRestart: true \}\);\s*return restartKernel\(kid\)/, '/restart consults it');
+  assert.match(src, /if \(staleManagerYields\(`spawning kernel '\$\{id\}' for \/ensure`\)\) return \{ id, port: Number\(port\), pid: null, spawned: false, managerRestart: true \};\s*spawnKernel\(\{ id, port: Number\(port\) \}\);/, '/ensure consults it (round 2 of the install-rewrite review, 2026-09-18)');
 });

@@ -310,16 +310,22 @@ PY
 # The login-service step (the user's rescue_me, 2026-07-21): a webview deploy must never bootout a
 # HEALTHY romp-manager, and must FAIL LOUDLY (not `|| echo`-swallow) if an install it DID attempt fails —
 # the swallowed failure is what left the dashboard dead on :29855. ROMP_SERVICE_BIN stubs romp-service.
-_svc_stub() {   # write a fake romp-service to $1; behavior toggled by ROMP_SVC_RUNNING / ROMP_SVC_FAIL
+_svc_stub() {   # write a fake romp-service to $1; behavior toggled by ROMP_SVC_RUNNING / ROMP_SVC_FAIL / ROMP_SVC_REWRITE_FAIL
+                # (exit 1, a reload that failed) / ROMP_SVC_REWRITE_REFUSE (exit 5, the identity refusal, with romp-service's
+                # own two lines) / ROMP_SVC_NOT_INSTALLED (status says not installed AND running; rewrite exits 3)
     cat > "$1" <<'SH'
 #!/usr/bin/env bash
 echo "$1" >> "$ROMP_SVC_LOG"
 case "$1" in
-  status) echo "installed: /tmp/plist"; [[ -n "${ROMP_SVC_RUNNING:-}" ]] && echo "running"
+  status) if [[ -n "${ROMP_SVC_NOT_INSTALLED:-}" ]]; then echo "not installed"; else echo "installed: /tmp/plist"; fi
+          [[ -n "${ROMP_SVC_RUNNING:-}" ]] && echo "running"
           [[ -n "${ROMP_SVC_DYING:-}" ]] && echo "loaded but not running (last exit code: 134); launchd keeps respawning it — check /tmp/manager.log" ;;
   install) [[ -n "${ROMP_SVC_FAIL:-}" ]] && { echo "romp-service: bootstrap lost the drain-race" >&2; exit 1; }
            [[ -n "${ROMP_SVC_HELD:-}" ]] && { echo "romp-service: the agent's manager exited at once because a manager is ALREADY serving on :7432 outside the login service" >&2; exit 3; } ;;
-  rewrite) [[ -n "${ROMP_SVC_REWRITE_FAIL:-}" ]] && { echo "romp-service: the unit was written but systemd did NOT reload it" >&2; exit 1; } ;;
+  rewrite) [[ -n "${ROMP_SVC_REWRITE_FAIL:-}" ]] && { echo "romp-service: the unit was written but systemd did NOT reload it" >&2; exit 1; }
+           [[ -n "${ROMP_SVC_REWRITE_REFUSE:-}" ]] && { echo "romp-service: the login unit on disk and this environment disagree; nothing was rewritten:" >&2
+                                                       echo "  ROMP_KERNEL_PORT: the file carries 29866, this environment carries 31855" >&2; exit 5; }
+           [[ -n "${ROMP_SVC_NOT_INSTALLED:-}" ]] && { echo "romp-service: no login service is installed (romp-service install writes and enables one)" >&2; exit 3; } ;;
 esac
 exit 0
 SH
@@ -348,12 +354,56 @@ SH
     [ "$status" -ne 0 ]
     [[ "$output" == *"romp-service rewrite FAILED"* ]]
     [[ "$output" == *"still running"* ]]                    # the manager is up; the unit is what did not land
-    [[ "$output" == *"Retry by hand:"* ]]
+    [[ "$output" == *"Retry by hand:"* ]]                   # a reload that failed (exit 1) is retryable from this shell
     # the run stops there, as a failed install's does: no closing report (the ROMPHOME note, the dashboard link)
     # over a state that means the login service on disk is not this release's (round 1 of the review, 2026-09-18)
     [[ "$output" != *"ROMPHOME"* ]]
     [[ "$output" != *"http://127.0.0.1"* ]]
     [[ "$output" != *"romp url"* ]]
+    run grep -x install "$TEST_DIR/svc.log"
+    [ "$status" -ne 0 ]
+}
+
+@test "install.sh: a REFUSED unit rewrite (exit 5) fails the run, says the reason is printed above with romp-service's own lines reaching the operator, invents no retry command, and install never runs" {
+    # Round 2 of the review (2026-09-18, departure d of round 1's body): romp-service exited 1 for the identity refusal
+    # and for a failed reload alike, so the one retry line here sent the refusal back to the command that had just
+    # refused it. The refusal has its own code now; install.sh points at the reason above and adds nothing.
+    unset ROMP_NO_SERVICE
+    _svc_stub "$TEST_DIR/romp-service"
+    export ROMP_SVC_LOG="$TEST_DIR/svc.log" ROMP_SVC_RUNNING=1 ROMP_SVC_REWRITE_REFUSE=1
+    ROMP_SERVICE_BIN="$TEST_DIR/romp-service" run "$ROMP_DIR/install.sh"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp-service rewrite refused"* ]]
+    [[ "$output" == *"the reason is printed above"* ]]
+    [[ "$output" == *"the login unit on disk and this environment disagree"* ]]    # romp-service's own text (tests-4)
+    [[ "$output" == *"ROMP_KERNEL_PORT: the file carries 29866, this environment carries 31855"* ]]
+    [[ "$output" == *"still running"* ]]
+    [[ "$output" != *"Retry by hand"* ]]
+    [[ "$output" != *"rewrite FAILED"* ]]
+    [[ "$output" != *"ROMPHOME"* ]]
+    [[ "$output" != *"romp url"* ]]
+    run grep -x install "$TEST_DIR/svc.log"
+    [ "$status" -ne 0 ]
+}
+
+@test "install.sh: a running manager with no unit at the path (status: not installed, then running) does not fail the deploy and does not fall through to install; the route is named, with the restart it costs" {
+    # Round 2 of the review (correctness-3): a unit deleted while systemd still reports the service active gives this
+    # status; the rewrite exits 3, and the filed version failed the whole deploy with a retry line that could never
+    # succeed, where the base finished. Falling through to `install` is the bootout the gate exists to prevent, and
+    # inside the kernel's update child it would restart every kernel on an otherwise untouched box.
+    unset ROMP_NO_SERVICE
+    _svc_stub "$TEST_DIR/romp-service"
+    export ROMP_SVC_LOG="$TEST_DIR/svc.log" ROMP_SVC_RUNNING=1 ROMP_SVC_NOT_INSTALLED=1
+    ROMP_SERVICE_BIN="$TEST_DIR/romp-service" run "$ROMP_DIR/install.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"no login service unit is at the path romp-service writes"* ]]
+    [[ "$output" == *"romp is serving"* ]]
+    [[ "$output" == *"$TEST_DIR/romp-service install"* ]]
+    [[ "$output" == *"restarts the manager"* ]]
+    [[ "$output" != *"Retry by hand"* ]]
+    [[ "$output" != *"rewrite FAILED"* ]]
+    [[ "$output" == *"ROMPHOME"* ]]                          # the run goes on to the closing report
+    grep -qx rewrite "$TEST_DIR/svc.log"
     run grep -x install "$TEST_DIR/svc.log"
     [ "$status" -ne 0 ]
 }
@@ -370,7 +420,10 @@ _systemctl_active_stub() {   # a systemctl whose is-active says the manager runs
 echo "\$*" >> "$TEST_DIR/systemctl-calls"
 case "\$2" in
   is-active) echo active ;;
-  show) case "\$*" in *NeedDaemonReload*) echo no ;; esac ;;   # the rewrite's read-back after its reload: loaded is current
+  show) case "\$*" in
+          *NeedDaemonReload*) echo no ;;                                  # the rewrite's read-back after its reload: loaded is current
+          *FragmentPath*) echo "$TEST_DIR/systemd/romp-manager.service" ;;   # and loaded from the file just written
+        esac ;;
   *) exit 0 ;;
 esac
 EOF
@@ -382,15 +435,22 @@ EOF
     _systemctl_active_stub
     export ROMP_SYSTEMCTL="$TEST_DIR/systemctl" ROMP_OS_OVERRIDE=Linux
     export ROMP_SYSTEMD_DIR="$TEST_DIR/systemd" ROMP_MANAGER_BIN="$TEST_DIR/romp-manager"
-    # the previous release's unit: the state of a box that installs while its manager runs
-    mkdir -p "$ROMP_SYSTEMD_DIR"
-    printf '[Service]\nExecStart=%s up\nEnvironment=ROMP_SUPERVISED=1\n' "$ROMP_MANAGER_BIN" > "$ROMP_SYSTEMD_DIR/romp-manager.service"
-    run "$ROMP_DIR/install.sh"
+    # the previous release's unit: the state of a box that installs while its manager runs. Its own PATH and ROMP_DIR
+    # lines (round 2 of the review, 2026-09-18: the fixture had neither, so the end-to-end case asserted nothing about
+    # PATH while the rewrite baked the caller's, and leaked the review worktree's ROMP_DIR in probes)
+    mkdir -p "$ROMP_SYSTEMD_DIR" "$TEST_DIR/callerbin"
+    printf '[Service]\nExecStart=%s up\nEnvironment=PATH=/unit/own/bin:/usr/bin\nEnvironment=ROMP_DIR=%s\nEnvironment=ROMP_SUPERVISED=1\n' \
+        "$ROMP_MANAGER_BIN" "$ROMP_DIR" > "$ROMP_SYSTEMD_DIR/romp-manager.service"
+    PATH="$TEST_DIR/callerbin:$PATH" run "$ROMP_DIR/install.sh"
     [ "$status" -eq 0 ]
     # the release's unit reached the disk, whole (its allocator line is the review's example), and no scratch file stayed
     grep -q '^Environment=MALLOC_ARENA_MAX=2$' "$ROMP_SYSTEMD_DIR/romp-manager.service"
     grep -q "^ExecStart=$ROMP_MANAGER_BIN up$" "$ROMP_SYSTEMD_DIR/romp-manager.service"
     [ ! -e "$ROMP_SYSTEMD_DIR/romp-manager.service.tmp" ]
+    # the unit's own PATH and ROMP_DIR, kept (round 2, tests-3, end to end through install.sh); the caller's PATH
+    # reaching nothing is asserted last, since that `run` replaces $output
+    grep -qx 'Environment=PATH=/unit/own/bin:/usr/bin' "$ROMP_SYSTEMD_DIR/romp-manager.service"
+    grep -qxF "Environment=ROMP_DIR=$ROMP_DIR" "$ROMP_SYSTEMD_DIR/romp-manager.service"
     # the one line: the manager keeps its old unit, and the command that restarts it
     [[ "$output" == *"keeps its old unit until its next restart"* ]]
     [[ "$output" == *"systemctl --user restart romp-manager"* ]]
@@ -404,6 +464,8 @@ EOF
     # here. Last, and armed: `run` replaces $output, and a bare `!` mid-test asserts nothing in bats
     grep -qx -- '--user daemon-reload' "$TEST_DIR/systemctl-calls"
     run grep -E -- 'enable|start|stop|restart|kill' "$TEST_DIR/systemctl-calls"
+    [ "$status" -ne 0 ]
+    run grep -F "$TEST_DIR/callerbin" "$ROMP_SYSTEMD_DIR/romp-manager.service"
     [ "$status" -ne 0 ]
 }
 
