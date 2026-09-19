@@ -7939,7 +7939,7 @@ for figureTarget's read of the candidate the browser chose, ui/webview/file-view
 chosenSource's body, figureTarget's order, failedSource's delegation and the two callers) and
 ui/webview/file-view-figure-chosen-browser.test.ts (Chromium over the real chat modal: a `<picture>`, a srcset img and a
 gated remote `<picture>` open the candidate shown through the paint's URL).
-Ten standing suites were re-aimed, not undone:
+Eleven standing suites were re-aimed, not undone:
 ui/webview/file-view-text-size.test.ts (its real-module bar leg at 380, 420, 480 and 600 px in the chat and feed modals
 measures the two glyphs among the actions, case 8), ui/webview/file-view.test.ts and ui/webview/file-view-links.test.ts
 (the delegate's open through openFromViewer; the model import), ui/webview/file-view-figure-error.test.ts and
@@ -7951,7 +7951,10 @@ order, the capture phase first, since the trail's listener is an open's newest r
 removal carries the capture flag its add did), ui/webview/md-url-view.test.ts (the local-file mode's sibling link opens
 through openFromViewer with a push, and the door's shape: the tag set, the host's opener called, the tag cleared in a
 finally) and tests/test_guide_files_failures.py (both walks' control lists carry fv-figopen, the figure's other
-text-free neighbour, as the seventh entry). The guide's Links in a file paragraph gained two sentences, the trail's and
+text-free neighbour, as the seventh entry), and in the sweep after the review ui/webview/pdf-new-tab.test.ts (its count
+of the gesture reads inside openFileView, which held the links' two, counts the links' two and the figure's four as two
+regions and the stretches before, between and after them as none, so a read anywhere else in the function, its own
+open's, still fails). The guide's Links in a file paragraph gained two sentences, the trail's and
 the figure control's, and the browser plan's navigation-stack section (plans/file-browser.md) a pointer sentence.
 tools/markdown-viewer-plan-linknav.test.mjs holds this section to the tree: the section is present once after "## Out of
 scope" and carries the ask, what existed, the six decisions, the tests and the open points in that order; the trail
