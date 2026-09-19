@@ -676,6 +676,7 @@ class SocketMode(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.state, True)
         self.sdir = Path(self.state) / "hosts" / SID
         self.sdir.mkdir(parents=True, mode=0o700)       # hosts/<sid>/ as the kernel writes it (0700); hosts/ itself at the umask
+        #                                                 here (0777), the shape an old install's kernel left: the host tightens it
         spec = {"sid": SID, "name": "web", "version": "abc12345", "state_dir": self.state, "protocol": 1,
                 "cli_path": FAKE, "cwd": self.state, "unattached_grace_s": 3600}
         (self.sdir / "spawn.json").write_text(json.dumps(spec))
@@ -764,7 +765,12 @@ class SocketMode(unittest.TestCase):
         self.assertEqual(rc, 0, self.host_log[-3:])
         self.assertNotIn(self.pub, [p for p, _ in tightened],
                          "no chmod on the published path: a tightening after the bind is the window itself")
-        self.assertEqual(tightened, [(self.pub.with_name(SID[:8] + ".tmp"), 0o600)], "one chmod, of the temp beside the published name")
+        self.assertEqual([t for t in tightened if t[0] != self.pub.parent], [(self.pub.with_name(SID[:8] + ".tmp"), 0o600)],
+                         "one chmod of a socket path, the temp beside the published name")
+        self.assertEqual([t for t in tightened if t[0] == self.pub.parent], [(self.pub.parent, 0o700)],
+                         "and one of hosts/ itself, to 0700 from the 0777 setUp left it at (hosts_dir, before the bind)")
+        self.assertLess(tightened.index((self.pub.parent, 0o700)), tightened.index((self.pub.with_name(SID[:8] + ".tmp"), 0o600)),
+                        "the directory is owner-only before anything is bound in it")
         self.assertEqual(mode, 0o600, "0600 at the first sighting of hosts/<sid8>.sock, under a 000 umask")
         kinds = [r["kind"] for r in self.host_log]
         self.assertIn("socket-ready", kinds)
@@ -806,6 +812,46 @@ class SocketMode(unittest.TestCase):
         self.addCleanup(host.journal.close)
         self.assertEqual((host.sock_path.name, host.sock_tmp.name), (pub, tmp), "the host binds and publishes these two names")
         self.assertEqual(host.sock_tmp.parent, host.sock_path.parent)
+
+    def test_hosts_is_owner_only_once_the_host_binds(self):
+        """The guard on the temp during its life at the umask's mode is `hosts/`, the directory it is bound in, and that
+        directory's mode is set by code (sh.hosts_dir), not by the umask of whoever created it (the pre-round of this fix,
+        2026-09-19). The host's road: a `hosts/` planted at 0755 (an old install's, made by a kernel before the fix) is
+        0700 once the host has bound its socket, under the 000 umask setUp installs. The kernel's road is pinned by
+        tests/test_host_transport.py SpawnSpec.test_hosts_is_owner_only_by_code_and_a_loose_one_is_tightened."""
+        hosts = self.pub.parent
+        os.chmod(hosts, 0o755)
+        self.assertEqual(stat.S_IMODE(os.stat(hosts).st_mode), 0o755, "planted loose")
+        seen = []
+        mode, rc = self._run_host(ready=lambda: self.pub.exists() and not seen.append(stat.S_IMODE(os.stat(hosts).st_mode)))
+        self.assertEqual(rc, 0, self.host_log[-3:])
+        self.assertEqual(mode, 0o600)
+        self.assertEqual(seen[:1], [0o700], "hosts/ is 0700 by the time the published path exists")
+        self.assertEqual(stat.S_IMODE(os.stat(hosts).st_mode), 0o700, "and stays so after the host's exit")
+        self.assertEqual(stat.S_IMODE(os.stat(self.sdir).st_mode), 0o700, "hosts/<sid>/ untouched at 0700")
+
+
+class SocketFchmod(unittest.TestCase):
+    def test_fchmod_on_a_bound_socket_descriptor_leaves_the_path_mode_alone(self):
+        """Why _serve_socket tightens the temp by PATH: on Linux the listening descriptor is the socket, not the file
+        the bind created, so fchmod on it changes the socket inode and the path's mode reads back unchanged; os.chmod
+        on the path is what moves it (the pre-round of the socket-mode fix, 2026-09-19, pinning what the fix's docstring
+        states from a probe). Under a 000 umask so the bind's own mode is unmistakable."""
+        if not sys.platform.startswith("linux"):
+            self.skipTest("the no-op is Linux's; other platforms may refuse the fchmod outright")
+        self.addCleanup(os.umask, os.umask(0o000))
+        d = tempfile.mkdtemp(prefix="fch-")
+        self.addCleanup(shutil.rmtree, d, True)
+        path = os.path.join(d, "s.sock")
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.addCleanup(s.close)
+        s.bind(path)
+        s.listen(1)
+        self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o777, "the bind gives the umask's mode")
+        os.fchmod(s.fileno(), 0o600)
+        self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o777, "fchmod on the descriptor: the path's mode is unchanged")
+        os.chmod(path, 0o600)
+        self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o600, "chmod on the path is the one that takes")
 
 
 class HostProcess(unittest.TestCase):
@@ -973,6 +1019,19 @@ class HostProcess(unittest.TestCase):
         k, hello = self._attach(sock)
         self.assertEqual(hello.get("t"), "hello", hello)
         k.s.close()
+
+    def test_a_real_host_leaves_hosts_owner_only(self):
+        """The real bin/romp-session-host, spawned under a 000 umask over a state root whose `hosts/` _spec left at that
+        umask's mode (0777, the parents=True mkdir): once the host serves its socket, `hosts/` is 0700, the directory's
+        mode set by the host's own code (sh.hosts_dir) and not by any umask (the pre-round of this fix, 2026-09-19). The
+        in-process SocketMode case pins the same road through run(); this one pins it for the process the kernel starts."""
+        self.addCleanup(os.umask, os.umask(0o000))
+        hosts = Path(self.state) / "hosts"
+        host, sock, spec = self._start()
+        self.assertEqual(stat.S_IMODE(os.stat(hosts).st_mode), 0o700, "hosts/ is owner-only once the socket is served")
+        self.assertEqual(stat.S_IMODE(os.stat(sock).st_mode), 0o600)
+        self.assertEqual(stat.S_IMODE(os.stat(hosts / SID).st_mode), 0o700)
+        self.assertNotIn("socket-bind-failed", [r["kind"] for r in self._hostlog()])
 
     def test_the_lease_and_the_hello_carry_the_clis_spawn_time_once_and_the_specs_login(self):
         """The host is the authority for when ITS CLI spawned: the lease's spawnedAt is stamped once at the spawn and stands

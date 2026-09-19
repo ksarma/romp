@@ -158,9 +158,13 @@ def write_spawn_spec(state_dir, sid: str, spec: dict) -> Path:
     be written, and the shape is deliberately not widened to catch them, since no such name has a road into
     the overlay today and a legitimate TOKEN_BUDGET or PRIVATE_KEY_PATH would be moved out of the file for
     nothing. A credential never lives in a file, the fork's rule, and the box admin's hazard review of the
-    pull-in, 2026-09-16, found the first cut moving the three login names alone."""
+    pull-in, 2026-09-16, found the first cut moving the three login names alone.
+    `hosts/` itself is made 0700 first (sh.hosts_dir: this is the road that creates it on
+    a fresh state root, and until 2026-09-19 the mkdir with parents=True left it at the umask's mode; the
+    host's control socket is bound in that directory, so its mode is the guard on the socket's temp name)."""
+    sh.hosts_dir(state_dir)
     d = host_dir(state_dir, sid)
-    d.mkdir(parents=True, exist_ok=True)
+    d.mkdir(mode=0o700, parents=True, exist_ok=True)
     os.chmod(d, 0o700)
     p = d / "spawn.json"
     fd = os.open(str(p), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)

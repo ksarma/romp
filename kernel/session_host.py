@@ -514,6 +514,25 @@ def sock_names(sid: str) -> tuple[str, str]:
     return sid[:8] + ".sock", sid[:8] + ".tmp"
 
 
+def hosts_dir(state_dir) -> Path:
+    """`<state>/hosts/`, made owner-only (0700) and kept so: the directory that holds every host's control socket, the
+    temp name each socket is bound at (`_serve_socket`), and the per-session `hosts/<sid>/` directories. Both creators
+    go through here (the kernel's write_spawn_spec, whose mkdir of `hosts/<sid>/` with parents=True used to leave
+    `hosts/` itself at the umask's mode, and the host's own bind), so the mode is set by code, not by the umask of the
+    process that happened to create it. mkdir's mode passes through the umask, so a chmod follows whenever the mode
+    read back is not 0700; an EXISTING loose `hosts/` (every install before 2026-09-19 made it at the umask's mode) is
+    tightened the same way on the next spawn or bind, since we own it and its contents are ours alone (the state root
+    is 0700 for the same reason, kernel/judge.py; the judge scratch dir's repair is the precedent). Pinned by
+    tests/test_host_transport.py SpawnSpec.test_hosts_is_owner_only_by_code_and_a_loose_one_is_tightened (the
+    kernel's road, under a 000 umask) and tests/test_session_host.py SocketMode.test_hosts_is_owner_only_once_the_host_binds
+    and HostProcess.test_a_real_host_leaves_hosts_owner_only (the host's road, in-process and as a real process)."""
+    d = Path(state_dir) / "hosts"
+    d.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if (os.stat(d).st_mode & 0o777) != 0o700:
+        os.chmod(d, 0o700)
+    return d
+
+
 def sdk_importable() -> bool:
     import importlib.util
     return importlib.util.find_spec("claude_agent_sdk") is not None
@@ -973,9 +992,14 @@ class SessionHost:
         is the socket, not the file); os.rename then moves it onto the published path, which is therefore born
         0600. A connect through the new name reaches the same listening socket (AF_UNIX resolves a path to its
         inode), so the kernel keeps connecting to the one documented path (docs/reference.md) and no process-wide
-        umask moves. During its brief life at the umask's mode the temp is protected by the state root's
-        owner-only mode (nothing outside the uid can traverse `hosts/`) and by the umask itself (002 or 022
-        already excludes the group and other write an AF_UNIX connect needs); the published path never exists
+        umask moves. During its brief life at the umask's mode the temp is guarded by the directory it lives in:
+        `hosts/` is owner-only BY CODE (hosts_dir, called here and by the kernel's write_spawn_spec, 0700 whatever
+        the umask, an existing loose one tightened; pinned by tests/test_session_host.py
+        SocketMode.test_hosts_is_owner_only_once_the_host_binds and HostProcess.test_a_real_host_leaves_hosts_owner_only
+        and by tests/test_host_transport.py SpawnSpec.test_hosts_is_owner_only_by_code_and_a_loose_one_is_tightened),
+        so nothing outside the uid can traverse to the temp; behind it stand the state root's own 0700
+        (kernel/judge.py at import, pinned by tests/test_judge_scratch_private.py) and the umask itself (002 or
+        022 already excludes the group and other write an AF_UNIX connect needs). The published path never exists
         at a loose mode. The temp is in the SAME directory and one byte shorter than the published name because
         the published path is the socket path budget (sun_path, 107 usable bytes on Linux): a deep test root sits
         at 107 exactly, and both longer shapes tried first (a temp inside `hosts/<sid>/`, then a 0700 directory
@@ -984,7 +1008,7 @@ class SessionHost:
         a bind that fails is loud: a `socket-bind-failed` row here, then main()'s host-crashed. Cleanup of the
         published path is unchanged: asyncio's Server.close never unlinks a path on 3.12, and 3.13's cleanup
         compares the bound path's inode and finds the temp gone, so run()'s own unlink stays the one."""
-        self.sock_path.parent.mkdir(parents=True, exist_ok=True)
+        hosts_dir(self.state_dir)                       # `hosts/` 0700 before anything is bound in it
         for stale in (self.sock_path, self.sock_tmp):
             try:
                 stale.unlink()

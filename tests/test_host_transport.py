@@ -28,6 +28,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import sys
 import tempfile
 import time
@@ -146,6 +147,32 @@ class SpawnSpec(unittest.TestCase):
         self.assertEqual(oct(os.stat(p).st_mode & 0o777), "0o600")
         self.assertEqual(oct(os.stat(p.parent).st_mode & 0o777), "0o700")
         self.assertEqual(json.loads(p.read_text())["env"]["ROMP_SID"], SID)
+
+    def test_hosts_is_owner_only_by_code_and_a_loose_one_is_tightened(self):
+        """The guard on the host's socket temp name is the mode of the directory it is bound in, `hosts/`, so that mode
+        is set by code, not by the umask of whichever process created it (the pre-round of the socket-mode fix,
+        2026-09-19). This is the kernel's road, the one that creates `hosts/` on a fresh state root: write_spawn_spec
+        used to mkdir `hosts/<sid>/` with parents=True and leave `hosts/` itself at the umask's mode (0777 under the
+        000 umask this test runs under). An existing loose `hosts/` (every install before the fix made one at the
+        umask's mode) is tightened on the next spawn, since it is ours."""
+        self.addCleanup(os.umask, os.umask(0o000))      # permissive on purpose: whatever mode results is the code's doing
+        spec = {"sid": SID, "name": "web", "version": "abc12345", "state_dir": "/state", "protocol": 1}
+        fresh = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, fresh, True)
+        p = ht.write_spawn_spec(fresh, SID, spec)
+        hosts = Path(fresh) / "hosts"
+        self.assertEqual(stat.S_IMODE(os.stat(hosts).st_mode), 0o700, "hosts/ is 0700 by code under a 000 umask")
+        self.assertEqual(stat.S_IMODE(os.stat(p.parent).st_mode), 0o700, "and hosts/<sid>/ as before")
+        self.assertEqual(stat.S_IMODE(os.stat(p).st_mode), 0o600)
+        loose = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, loose, True)
+        (Path(loose) / "hosts").mkdir()
+        os.chmod(Path(loose) / "hosts", 0o755)
+        self.assertEqual(stat.S_IMODE(os.stat(Path(loose) / "hosts").st_mode), 0o755, "planted loose, an old install's shape")
+        ht.write_spawn_spec(loose, SID, spec)
+        self.assertEqual(stat.S_IMODE(os.stat(Path(loose) / "hosts").st_mode), 0o700, "tightened by the next spawn's write")
+        self.assertEqual(sh.hosts_dir(loose), Path(loose) / "hosts", "the helper both creators call, idempotent")
+        self.assertEqual(stat.S_IMODE(os.stat(Path(loose) / "hosts").st_mode), 0o700)
 
     @unittest.skipUnless(SDK, "the SDK is not importable here")
     def test_the_spec_fields_track_what_the_sdk_transport_reads(self):
