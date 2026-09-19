@@ -2888,7 +2888,9 @@ PY
     grep -v '^Environment=PATH=' "$unit" > "$unit.new" && mv -f "$unit.new" "$unit"
     _svc_line "$unit" 'Environment=PATH=' 'Environment=CLAUDE_CONFIG_DIR='
     [ "$(_sd_read "$unit" has PATH)" = yes ]                                              # systemd: set, to the empty string
-    [ "$(_sd_read "$unit" env PATH)" = "" ]
+    run _sd_read "$unit" env PATH                                                         # the run form (the round-6 addendum of fork PR #778,
+    [ "$status" -eq 0 ]                                                                   # tests-5: an empty answer is a status 0 and no text)
+    [ "$output" = "" ]
     [ "$(_sd_read "$unit" has CLAUDE_CONFIG_DIR)" = yes ]
     mkdir -p "$TEST_DIR/markerbin" "$TEST_DIR/cc"
     PATH="$TEST_DIR/markerbin:$PATH" ROMP_SYSTEMCTL="$stub" ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite --check
@@ -2903,7 +2905,9 @@ PY
     [ "$status" -ne 0 ]                                                                   # never the caller's PATH
     grep -q '^Environment=MALLOC_ARENA_MAX=2$' "$unit"                                     # the release's line landed
     [ "$(_sd_read "$unit" has PATH)" = yes ]                                              # systemd's reading, unchanged
-    [ "$(_sd_read "$unit" env PATH)" = "" ]
+    run _sd_read "$unit" env PATH
+    [ "$status" -eq 0 ]
+    [ "$output" = "" ]
     [ "$(_sd_read "$unit" has CLAUDE_CONFIG_DIR)" = yes ]
     cp "$unit" "$unit.kept"
     ROMP_SYSTEMCTL="$stub" ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite
@@ -3173,13 +3177,17 @@ _three_roads_refuse() {   # $1 the unit, $2 a phrase the refusal carries, $@ phr
     for absent in "$@"; do [[ "$output" != *"$absent"* ]]; done
     cmp -s "$unit" "$unit.before"
 }
-_marked_install_ok() {   # the marked child's install over the unit on disk, expected to keep it and exit 0; $output is its output. CLAUDE_CONFIG_DIR
-                         # is forwarded when the caller's shell carries it and stays unset otherwise (round 6 of fork PR #778, tests-4: four legs
-                         # prefixed a value onto this helper, whose env -i dropped it, so the marked child ran with the variable unset and the
-                         # legs could not see a disagreement)
+_marked_install() {   # the marked child's install over the unit on disk; $status and $output are its. CLAUDE_CONFIG_DIR is forwarded when the
+                      # caller's shell carries it and stays unset otherwise (round 6 of fork PR #778, tests-4: four legs prefixed a value onto
+                      # _marked_install_ok, whose env -i dropped it, so the marked child ran with the variable unset and the legs could not see
+                      # a disagreement; the addendum split the run from the exit-0 assertion so a leg can expect the refusal a disagreeing
+                      # value earns, which is what pins the forward: without it the child keeps the file's line at exit 0)
     local ccd=(); [[ -z "${CLAUDE_CONFIG_DIR+x}" ]] || ccd=(CLAUDE_CONFIG_DIR="$CLAUDE_CONFIG_DIR")
     run env -i HOME="$HOME" PATH="$PATH" ROMP_UPDATE_CHILD=1 ROMP_OS_OVERRIDE=Linux ROMP_SERVICE_NO_LOAD=1 ROMP_SYSTEMD_DIR="$ROMP_SYSTEMD_DIR" \
         ROMP_MANAGER_BIN="$ROMP_MANAGER_BIN" XDG_STATE_HOME="$XDG_STATE_HOME" "${ccd[@]}" "$SVC" install
+}
+_marked_install_ok() {   # the marked child's install over the unit on disk, expected to keep it and exit 0; $output is its output
+    _marked_install
     [ "$status" -eq 0 ]
 }
 _bom_before() {   # $1 a unit, $2 where to write it, $3 a needle: the file with $4 (text, default none) and then $5 (default the UTF-8 byte order
@@ -3877,6 +3885,250 @@ PY
     _bom_before "$unit.o" "$unit" 'Environment=CLAUDE_CONFIG_DIR=' "$bom"'# c\'$'\n' ''
     [ "$(_sd_read "$unit" has CLAUDE_CONFIG_DIR)" = no ]
     _three_roads_refuse "$unit" "ends in a backslash, a continuation"
+}
+
+@test "rewrite (Linux): the byte order mark's remaining shapes read as systemd reads them on all three roads: the mark beside a CRLF line ending (before line 1, before a kept line, alone on the line that closes a continuation, before [Service]); before the PATH line, the EnvironmentFile line and a ROMP_DIR line (another clone's refused as that clone's, this clone's kept); before an indented, a quoted and a trailing-blank kept line; a marked empty Environment= reset; a marked whitespace-only line; two marks on one line, a marked second ExecStart with the latch spent and a marked ExecStart= reset; a mark inside a value, before a name, before the ExecStart path and inside the section name; and a continuation closed by a line holding only a second mark, which systemd joins and this reader refuses as the continuation it is; the marked child's install runs with the shell's CLAUDE_CONFIG_DIR, so a disagreeing value is refused on that road too" {
+    # the round-6 addendum of fork PR #778: the lens over the round-6 commit ran these shapes by hand against systemd-analyze --user verify on
+    # 255.4 and against the reader, found them agreeing, and named them unpinned; each is a fixture of the differential's fold batch too
+    # (fold-bom-*). At f7525fe16 the first leg is red: a mark before a kept line under CRLF read the line as absent, the D4 class on the
+    # success path, and the marked child's install then wrote the file without it at exit 0.
+    local unit="$ROMP_SYSTEMD_DIR/romp-manager.service" mgr="$ROMP_MANAGER_BIN" bom=$'\xef\xbb\xbf' pathval form v repo
+    repo="$(cd "$(dirname "$SVC")/.." && pwd)"
+    _old_unit "$unit"; cp "$unit" "$unit.clean"
+    pathval="$(_sd_read "$unit.clean" env PATH)"; [ -n "$pathval" ]
+    _kept() {   # the file at $unit, built by the function $2, carries a marked kept CLAUDE_CONFIG_DIR line systemd reads as $1: kept and compared
+                # on the three roads, the rewrite writing it without the mark and with LF endings (the marked child's install rewrites the
+                # file, so it is rebuilt between the roads)
+        local want="$1" build="$2"
+        [ "$(_sd_read "$unit" env CLAUDE_CONFIG_DIR)" = "$want" ]
+        CLAUDE_CONFIG_DIR=/x/other ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite --check
+        [ "$status" -eq 5 ]
+        [[ "$output" == *"CLAUDE_CONFIG_DIR: the file carries $want, this environment carries /x/other"* ]]
+        CLAUDE_CONFIG_DIR="$want" ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite --check
+        [ "$status" -eq 0 ]
+        CLAUDE_CONFIG_DIR="$want" _marked_install_ok
+        [ "$(_sd_read "$unit" env CLAUDE_CONFIG_DIR)" = "$want" ]
+        "$build"
+        ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite
+        [ "$status" -eq 0 ]
+        run env LC_ALL=C grep -c $'\xef\xbb\xbf' "$unit"
+        [ "$status" -ne 0 ]
+        run grep -c $'\r' "$unit"
+        [ "$status" -ne 0 ]
+        [ "$(grep -cE '^Environment="?CLAUDE_CONFIG_DIR=' "$unit")" -eq 1 ]
+        [ "$(_sd_read "$unit" env CLAUDE_CONFIG_DIR)" = "$want" ]
+        [ "$(_sd_read "$unit" exec0)" = "$mgr" ]
+    }
+    _whole() {   # the file at $unit, built by the function $1, reads whole (the oracle: the manager, ROMP_DIR set) and passes the three roads,
+                 # the rewrite writing no mark and no CR
+        "$1"
+        [ "$(_sd_read "$unit" exec0)" = "$mgr" ]
+        [ "$(_sd_read "$unit" has ROMP_DIR)" = yes ]
+        ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite --check
+        [ "$status" -eq 0 ]
+        [[ "$output" == *"agree"* ]]
+        _marked_install_ok
+        "$1"
+        ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite
+        [ "$status" -eq 0 ]
+        run env LC_ALL=C grep -c $'\xef\xbb\xbf' "$unit"
+        [ "$status" -ne 0 ]
+        run grep -c $'\r' "$unit"
+        [ "$status" -ne 0 ]
+        [ "$(_sd_read "$unit" exec0)" = "$mgr" ]
+    }
+    # CRLF: the mark before a kept line (the red leg at f7525fe16)
+    cp "$unit.clean" "$unit.o"; _svc_line "$unit.o" 'Environment=CLAUDE_CONFIG_DIR=/x/cc'
+    _b_crlf_kept() { _bom_before "$unit.o" "$unit" 'Environment=CLAUDE_CONFIG_DIR='; _line_endings "$unit" crlf; }
+    _b_crlf_kept; grep -q $'\r' "$unit"
+    _kept /x/cc _b_crlf_kept
+    grep -qxF 'Environment=CLAUDE_CONFIG_DIR=/x/cc' "$unit"
+    # tests-4's pin: the marked child's install from a shell carrying another value is refused, the file byte for byte (_marked_install
+    # forwards the variable; a helper that dropped it ran the child with the variable unset, which keeps the file's line at exit 0)
+    _b_crlf_kept; cp "$unit" "$unit.before"
+    CLAUDE_CONFIG_DIR=/x/other _marked_install
+    [ "$status" -eq 5 ]
+    [[ "$output" == *"CLAUDE_CONFIG_DIR: the file carries /x/cc, this environment carries /x/other"* ]]
+    [[ "$output" == *"disagree; nothing was rewritten"* ]]
+    cmp -s "$unit" "$unit.before"
+    # CRLF: the mark before line 1 and before [Service], whole on the three roads, written back without the mark and with LF
+    sed -n '/^\[Service\]/,$p' "$unit.clean" > "$unit.svc"
+    _b_crlf_first() { { printf '%s' "$bom"; cat "$unit.svc"; } > "$unit"; _line_endings "$unit" crlf; }
+    _b_crlf_service() { _bom_before "$unit.clean" "$unit" '[Service]'; _line_endings "$unit" crlf; }
+    _whole _b_crlf_first
+    _whole _b_crlf_service
+    # a mark alone on the line that closes an open continuation, under LF and under CRLF: a blank to systemd (the latch free), so the pending
+    # line stands as its own; the reader reads it the same on the three roads and writes it without the backslash
+    for form in lf crlf; do
+        _b_cont() { cp "$unit.clean" "$unit"; _svc_bytes "$unit" 'Environment=CLAUDE_CONFIG_DIR=/x/cc\\\n\xef\xbb\xbf\nEnvironment=ADMIN_KNOB=1\n'; [[ "$form" != crlf ]] || _line_endings "$unit" crlf; }
+        _b_cont
+        [ "$(_sd_read "$unit" env ADMIN_KNOB)" = 1 ]
+        _kept /x/cc _b_cont
+        run grep -c '\\$' "$unit"
+        [ "$status" -ne 0 ]
+    done
+    # the mark before the PATH line, which the rewrite replays as written: the written line is the one without the mark and systemd reads
+    # the same PATH (at f7525fe16 the line read as absent and the rewrite omitted PATH)
+    _b_path() { _bom_before "$unit.clean" "$unit" 'Environment=PATH='; }
+    _b_path
+    [ "$(_sd_read "$unit" env PATH)" = "$pathval" ]
+    ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite --check
+    [ "$status" -eq 0 ]
+    _marked_install_ok
+    [ "$(_sd_read "$unit" env PATH)" = "$pathval" ]
+    _b_path
+    ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite
+    [ "$status" -eq 0 ]
+    grep -qxF "Environment=PATH=$pathval" "$unit"
+    [ "$(grep -cE '^Environment="?PATH=' "$unit")" -eq 1 ]
+    run env LC_ALL=C grep -c $'\xef\xbb\xbf' "$unit"
+    [ "$status" -ne 0 ]
+    [ "$(_sd_read "$unit" env PATH)" = "$pathval" ]
+    # the mark before a non-default EnvironmentFile line: the file's path is kept and compared (at f7525fe16 the line read as absent, the
+    # default path was written in its place and a shell naming the file's own path was refused)
+    grep -v '^EnvironmentFile=' "$unit.clean" > "$unit.o"; _svc_line "$unit.o" "EnvironmentFile=-$TEST_DIR/svc.env"
+    _b_envf() { _bom_before "$unit.o" "$unit" 'EnvironmentFile='; }
+    _b_envf
+    [ "$(_sd_read "$unit" envfile)" = "$TEST_DIR/svc.env" ]
+    ROMP_SERVICE_ENV_FILE="$TEST_DIR/svc.env" ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite --check
+    [ "$status" -eq 0 ]
+    ROMP_SERVICE_ENV_FILE="$TEST_DIR/other.env" ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite --check
+    [ "$status" -eq 5 ]
+    [[ "$output" == *"ROMP_SERVICE_ENV_FILE: the file reads $TEST_DIR/svc.env, this environment names $TEST_DIR/other.env"* ]]
+    _marked_install_ok
+    grep -qxF "EnvironmentFile=-$TEST_DIR/svc.env" "$unit"
+    _b_envf
+    ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite
+    [ "$status" -eq 0 ]
+    grep -qxF "EnvironmentFile=-$TEST_DIR/svc.env" "$unit"
+    [ "$(_sd_read "$unit" envfile)" = "$TEST_DIR/svc.env" ]
+    # the mark before a ROMP_DIR line: another clone's is refused on the three roads as that clone's, the file byte for byte (at f7525fe16 the
+    # line read as absent and the rewrite wrote this clone's ROMP_DIR at exit 0, the D4 re-point on a value the identity guard exists for);
+    # this clone's is kept
+    grep -q "^Environment=ROMP_DIR=$repo\$" "$unit.clean"
+    sed "s|^Environment=ROMP_DIR=.*|Environment=ROMP_DIR=$TEST_DIR/otherclone|" "$unit.clean" > "$unit.o"
+    _bom_before "$unit.o" "$unit" 'Environment=ROMP_DIR='
+    [ "$(_sd_read "$unit" env ROMP_DIR)" = "$TEST_DIR/otherclone" ]
+    cp "$unit" "$unit.before"
+    ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite
+    [ "$status" -eq 5 ]
+    [[ "$output" == *"ROMP_DIR: the file names $TEST_DIR/otherclone, this clone is $repo"* ]]
+    [[ "$output" == *"disagree; nothing was rewritten"* ]]
+    cmp -s "$unit" "$unit.before"
+    ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite --check
+    [ "$status" -eq 5 ]
+    [[ "$output" == *"ROMP_DIR: the file names $TEST_DIR/otherclone"* ]]
+    cmp -s "$unit" "$unit.before"
+    _marked_install
+    [ "$status" -eq 5 ]
+    [[ "$output" == *"ROMP_DIR: the file names $TEST_DIR/otherclone"* ]]
+    cmp -s "$unit" "$unit.before"
+    _b_rompdir() { _bom_before "$unit.clean" "$unit" 'Environment=ROMP_DIR='; }
+    _whole _b_rompdir
+    grep -qxF "Environment=ROMP_DIR=$repo" "$unit"
+    # an indented kept line, a quoted one and one with trailing blanks behind the mark: systemd strips the mark, then the blanks, and unquotes
+    # the word; kept and compared as the value it reads
+    for form in "  Environment=CLAUDE_CONFIG_DIR=/x/cc|/x/cc" 'Environment="CLAUDE_CONFIG_DIR=/x/c c"|/x/c c' "Environment=CLAUDE_CONFIG_DIR=/x/cc  "$'\t'"|/x/cc"; do
+        v="${form#*|}"
+        _b_form() { cp "$unit.clean" "$unit"; _svc_line "$unit" "$bom${form%%|*}"; }
+        _b_form
+        _kept "$v" _b_form
+    done
+    # a marked empty Environment= reset after the kept lines: systemd forgets PATH, ROMP_DIR and the kept line before it, and the reader
+    # follows (PATH omitted from the written unit, ROMP_DIR written as this clone's, the documented absence behaviour; a shell carrying
+    # another CLAUDE_CONFIG_DIR is not compared, since the file assigns nothing at its end). At f7525fe16 the reset read as absent and PATH
+    # was written back where systemd had reset it
+    _b_reset() { cp "$unit.clean" "$unit"; _svc_line "$unit" 'Environment=CLAUDE_CONFIG_DIR=/x/cc' "${bom}Environment="; }
+    _b_reset
+    [ "$(_sd_read "$unit" has PATH)" = no ]
+    [ "$(_sd_read "$unit" has ROMP_DIR)" = no ]
+    [ "$(_sd_read "$unit" has CLAUDE_CONFIG_DIR)" = no ]
+    CLAUDE_CONFIG_DIR=/x/other ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite --check
+    [ "$status" -eq 0 ]
+    _marked_install_ok
+    [ "$(_sd_read "$unit" has PATH)" = no ]
+    _b_reset
+    ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite
+    [ "$status" -eq 0 ]
+    run grep -cE '^Environment="?PATH=' "$unit"
+    [ "$status" -ne 0 ]
+    [ "$(_sd_read "$unit" has PATH)" = no ]
+    grep -qxF "Environment=ROMP_DIR=$repo" "$unit"
+    run grep -c '/x/cc' "$unit"
+    [ "$status" -ne 0 ]
+    # a marked whitespace-only line spends the strip and is a blank; the kept line after it is read
+    _b_ws() { cp "$unit.clean" "$unit"; _svc_line "$unit" "$bom  "$'\t' 'Environment=CLAUDE_CONFIG_DIR=/x/cc'; }
+    _b_ws
+    _kept /x/cc _b_ws
+    # two marks on one line: the second is text, so the line is an unknown key to systemd and the variable is not set; the reader keeps
+    # nothing of it
+    cp "$unit.clean" "$unit"; _svc_line "$unit" "$bom${bom}Environment=CLAUDE_CONFIG_DIR=/x/cc"
+    [ "$(_sd_read "$unit" has CLAUDE_CONFIG_DIR)" = no ]
+    CLAUDE_CONFIG_DIR=/x/other ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite --check
+    [ "$status" -eq 0 ]
+    ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite
+    [ "$status" -eq 0 ]
+    run grep -c '/x/cc' "$unit"
+    [ "$status" -ne 0 ]
+    # a marked second ExecStart line with the latch spent on line 1: text to systemd, which runs the first; no second-ExecStart refusal here,
+    # and the rewrite drops the line. A marked empty ExecStart= reset before the real line: a reset to systemd, and the real line stands
+    mkdir -p "$TEST_DIR/other"
+    _b_second_exec() { cp "$unit.clean" "$unit.o"; _svc_line "$unit.o" "${bom}ExecStart=$TEST_DIR/other/romp-manager up"; { printf '%s' "$bom"; cat "$unit.o"; } > "$unit"; }
+    _whole _b_second_exec
+    run grep -c "$TEST_DIR/other/romp-manager" "$unit"
+    [ "$status" -ne 0 ]
+    _b_exec_reset() { _bom_before "$unit.clean" "$unit" 'ExecStart=' '' "$bom"$'ExecStart=\n'; }
+    _whole _b_exec_reset
+    [ "$(grep -c '^ExecStart=' "$unit")" -eq 1 ]
+    # a mark in the middle of a line: inside a kept value it is bytes of the value, carried and compared; before the name it is no assignment
+    # to systemd (Invalid environment assignment, ignoring), so the variable is not set and the reader keeps nothing; before the ExecStart
+    # path the command is not absolute, which systemd refuses whole, and the reader refuses the identity (the file runs the marked path);
+    # inside the section name the section is one systemd does not know, so the kept lines under it are refusal 7
+    _b_mid_value() { cp "$unit.clean" "$unit"; _svc_line "$unit" "Environment=CLAUDE_CONFIG_DIR=/x/c${bom}c"; }
+    _b_mid_value
+    [ "$(_sd_read "$unit" env CLAUDE_CONFIG_DIR)" = "/x/c${bom}c" ]
+    CLAUDE_CONFIG_DIR=/x/cc ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite --check
+    [ "$status" -eq 5 ]
+    [[ "$output" == *"CLAUDE_CONFIG_DIR: the file carries /x/c${bom}c, this environment carries /x/cc"* ]]
+    CLAUDE_CONFIG_DIR="/x/c${bom}c" ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite --check
+    [ "$status" -eq 0 ]
+    CLAUDE_CONFIG_DIR="/x/c${bom}c" _marked_install_ok
+    _b_mid_value
+    ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite
+    [ "$status" -eq 0 ]
+    [ "$(_sd_read "$unit" env CLAUDE_CONFIG_DIR)" = "/x/c${bom}c" ]
+    cp "$unit.clean" "$unit"; _svc_line "$unit" "Environment=${bom}CLAUDE_CONFIG_DIR=/x/cc"
+    [ "$(_sd_read "$unit" has CLAUDE_CONFIG_DIR)" = no ]
+    CLAUDE_CONFIG_DIR=/x/other ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite --check
+    [ "$status" -eq 0 ]
+    ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite
+    [ "$status" -eq 0 ]
+    run grep -c '/x/cc' "$unit"
+    [ "$status" -ne 0 ]
+    grep -v '^ExecStart=' "$unit.clean" > "$unit"; _svc_line "$unit" "ExecStart=${bom}$mgr up"
+    [[ "$(_sd_read "$unit" exec0)" == "ERROR: Neither a valid executable name nor an absolute path"* ]]
+    cp "$unit" "$unit.before"
+    ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite
+    [ "$status" -eq 5 ]
+    [[ "$output" == *"ExecStart: the file runs ${bom}$mgr, this clone would write $mgr"* ]]
+    cmp -s "$unit" "$unit.before"
+    ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite --check
+    [ "$status" -eq 5 ]
+    cmp -s "$unit" "$unit.before"
+    _marked_install
+    [ "$status" -eq 5 ]
+    [[ "$output" == *"ExecStart: the file runs ${bom}$mgr"* ]]
+    cmp -s "$unit" "$unit.before"
+    sed "s/^\[Service\]/[Ser${bom}vice]/" "$unit.clean" > "$unit"
+    [[ "$(_sd_read "$unit" exec0)" == "ERROR: Service has no ExecStart"* ]]
+    _three_roads_refuse "$unit" "ExecStart under [Ser${bom}vice], a section systemd does not read it in"
+    # a continuation closed by a line holding only a second mark, the latch spent by a marked line 1: systemd joins the two (the mark a word it
+    # drops: Invalid environment assignment, ignoring) and reads the kept value; the reader refuses the join as the continuation it is, on the
+    # three roads, the safe direction (the header's refusal 3 names the shape)
+    cp "$unit.clean" "$unit.o"; _svc_bytes "$unit.o" 'Environment=CLAUDE_CONFIG_DIR=/x/cc\\\n\xef\xbb\xbf\n'
+    { printf '%s' "$bom"; cat "$unit.o"; } > "$unit"
+    [ "$(_sd_read "$unit" env CLAUDE_CONFIG_DIR)" = /x/cc ]
+    _three_roads_refuse "$unit" "ends in a backslash, a continuation systemd joins to the next line"
 }
 
 @test "rewrite (Linux): a shell value ending in a newline names no place the file names: CLAUDE_CONFIG_DIR and ROMP_MANAGER_BIN carrying the file's own path plus a newline are refused on rewrite, rewrite --check and the marked child's install as differing values, never compared equal through basename and pwd -P, which lose the newline; the same values without it agree" {
@@ -4645,6 +4897,22 @@ EOF
         | grep -oE '(^|[^0-9.])[0-9]+\. [a-z]' | sed -E 's/^[^0-9]*//; s/\. .*//' | sort -n | uniq | tr '\n' ' ')"
     [ "$items" = "$(seq 1 "$n_sites" | tr '\n' ' ')" ]
     [ "$n_sites" -eq 21 ]
+}
+
+@test "unit reader tests: an oracle answer expected to be empty is read through run and its status, never through a command substitution compared to the empty string, so a raising oracle is a red case and not an empty answer (a census of this file)" {
+    # round 6 of fork PR #778 (tests-5): bats applies no errexit inside a test command's substitution, so a nonzero exit of the oracle read as
+    # the empty answer the assertion expected, and the same delta had given the oracle a raising path. The three sites were rewritten to the
+    # run form (a status 0 and no text), the two PATH reads beside them with the addendum, and the shape is held here over the file, since no
+    # checked-in unit those sites read makes the oracle raise (the pin the revert reds is this census, not a case)
+    local sub='\[ "\$\(_sd_read [^)]*\)" = "" \]' n_run
+    run grep -cE -- "$sub" "$BATS_TEST_FILENAME"
+    [ "$status" -ne 0 ]
+    [ "$output" = 0 ]
+    run grep -cE -- "${sub%\"\" \\]}'' \\]" "$BATS_TEST_FILENAME"
+    [ "$status" -ne 0 ]
+    [ "$output" = 0 ]
+    n_run="$(grep -cE 'run _sd_read "\$unit" (envfile|env PATH)( +#.*)?$' "$BATS_TEST_FILENAME")"
+    [ "$n_run" -ge 5 ]                                                                    # the run form stands at the five sites
 }
 
 

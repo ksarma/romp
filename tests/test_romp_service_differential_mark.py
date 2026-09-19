@@ -86,6 +86,50 @@ class MarkSelfCheck(unittest.TestCase):
         sd = m._sd(cmds=[["/nx/bin/a"], ["/nx/bin/b"]], path="/nx/bin/a")
         self.assertTrue(m.compare("X", sd, m._orc(execs=[m._ex("/nx/bin/b")]))[2])
         self.assertFalse(m.compare("X", sd, m._orc(execs=[m._ex("/nx/bin/a")]))[2])
+        # the round-6 addendum: the pair above is marked by the exec->path branch whether the argv branch's first-command clause exists or
+        # not (systemd printed a path); the clause alone marks the shift where the path is uncompared, a first command under the - prefix
+        unread = m._sd(cmds=[["/nx/bin/a"], ["/nx/bin/b"]], path=None)
+        v, detail, dangerous = m.compare("X", unread, m._orc(execs=[m._ex("/nx/bin/b", "/nx/bin/b", ignore=True)]))
+        self.assertEqual((v, dangerous), ("DISAGREE", True), detail)
+        self.assertIn("exec->path uncompared", detail)       # the unread field is still said on a row a DISAGREE wins
+        v, detail, dangerous = m.compare("X", unread, m._orc(execs=[m._ex("/nx/bin/a", "/nx/bin/a", ignore=True)]))
+        self.assertEqual((v, dangerous), ("DISAGREE", False), detail)
+
+    def test_the_exec_path_compare_is_positional(self):
+        # the round-6 addendum: systemd's first command's path against the oracle's FIRST; an identity compare (any oracle command carrying
+        # systemd's path) would read this pair as agree, and every other row of the table carries one oracle command, where the two coincide
+        m = self.m
+        sd = m._sd(cmds=[["/nx/bin/a"], ["/nx/bin/b"]], path="/nx/bin/b")
+        v, detail, dangerous = m.compare("X", sd, m._orc(execs=[m._ex("/nx/bin/a"), m._ex("/nx/bin/b")]))
+        self.assertEqual((v, dangerous), ("DISAGREE", True), detail)
+        self.assertIn("exec->path: systemd '/nx/bin/b', oracle '/nx/bin/a'", detail)
+
+    def test_the_per_key_env_guard(self):
+        # the round-6 addendum: a key equal on both sides beside one systemd alone sets is the unmarked D4 class; a compare that marked every
+        # key of a differing env would mark the equal one
+        m = self.m
+        v, detail, dangerous = m.compare("X", m._sd(env={"A": "1", "B": "2"}), m._orc(env={"A": "1"}))
+        self.assertEqual((v, dangerous), ("DISAGREE", False), detail)
+        self.assertEqual(detail, "B: systemd '2', oracle unset")
+        self.assertEqual(m.compare("X", m._sd(env={"A": "1"}), m._orc(env={"A": "1"}))[0], "agree")
+
+    def test_the_row_printer_lists_the_uncompared_rows_under_their_own_heading(self):
+        # the round-6 addendum: main printed DISAGREE rows alone, so a REFUSES row with the uncompared reason reached no report; the printer
+        # is factored (print_rows) and pinned here over rows made from the table, the way main makes them from the sweep
+        m = self.m
+        rows = [(name, v, detail, dangerous) for name, sd, orc, _, _ in m.MARK_CASES for v, detail, dangerous in [m.compare("X", sd, orc)]]
+        out = io.StringIO()
+        m.print_rows(rows, out)
+        text = out.getvalue()
+        self.assertIn("uncompared (REFUSES with the reason, never agree: systemd printed no exec->path for the row's first command):\n", text)
+        block = text.split("uncompared (REFUSES", 1)[1]
+        self.assertIn("  exec->path uncompared under the - prefix (the loud skip): exec->path uncompared: systemd printed no resolved path for its first command (its errors are downgraded by the - prefix, which skips the executable check that prints it), so the oracle's '/nx/bin/x' stands unchecked\n", block)
+        self.assertNotIn("the oracle does not model the form", text)   # a not-modelled REFUSES row is counted, not listed
+        self.assertIn("disagreements:\n", text)
+        self.assertIn("  env both set and different [dangerous]: A: systemd '1', oracle '2'\n", text)
+        self.assertIn("  exec->path uncompared, but a DISAGREE elsewhere on the row wins [dangerous]: A: systemd '1', oracle '2'; exec->path uncompared:", text)
+        self.assertNotIn("exec->path equal", text)                         # an agree row is printed nowhere
+        self.assertNotIn("both refuse", text)
 
 
 if __name__ == "__main__":

@@ -153,13 +153,23 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   differ from the one below), so a case that must fail loudly without one
   would fail every mac run and go red on a build change with no change here.
   The dangerous mark's own check needs no systemd and runs first: `MARK_CASES`,
-  20 synthetic (systemd, oracle) pairs with one on each side of every shape
+  25 synthetic (systemd, oracle) pairs with one on each side of every shape
   the column marks, the fatal shapes, the not-modelled row and the loud skip,
-  printed as one line (`mark self-check: 20 of 20 ...`) and exiting 1 on a
+  printed as one line (`mark self-check: 25 of 25 ...`) and exiting 1 on a
   mismatch; `tests/test_romp_service_differential_mark.py` pins the same
   table in the suite, so an edit to `compare()` is caught where the recipe
   is not run (round 6, tests-2: no real fixture at an agreeing head reaches
   the mark, so a dead mark printed the same table with the tag alone gone).
+  Round 6's addendum added the five rows the first table could not tell a
+  mutant by: a key equal on both sides beside one systemd alone sets (the
+  per-key guard; unmarked), an agree with a nonempty env, a dropped first
+  command where the path is uncompared under the `-` prefix (the argv
+  branch's first-command clause on its own; marked), the oracle's first
+  command resolving elsewhere while a later one carries systemd's path (the
+  positional compare; marked, where an identity compare would agree), and a
+  dropped FIRST EnvironmentFile with a later one kept (unmarked: the
+  first-kept rule is for commands alone, since the reader's identity check
+  reads the first command and no first file).
   Run it when the oracle or the reader in `bin/romp-service` changes:
   `python3 tests/romp-service-differential.py` (about ten seconds, four
   verify runs at a time; `--list` prints the fixtures without running).
@@ -175,8 +185,9 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   reader. The other direction is unmarked and is two things where the reader
   follows the oracle: the oracle REFUSING what systemd loads is a false
   refusal, which the operator sees; the oracle leaving UNSET what systemd sets
-  (a variable, an EnvironmentFile), or listing fewer commands or files every
-  one among systemd's with the first kept, is the D4 class, since the reader
+  (a variable, an EnvironmentFile), or listing fewer commands every one
+  among systemd's with the first command kept, or fewer files every one
+  among systemd's, is the D4 class, since the reader
   does not refuse on an absence: it writes this clone's value (ExecStart,
   ROMP_DIR, the service.env default) or omits the line (PATH, an instance
   variable) at exit 0. That half stays unmarked on purpose, since the column
@@ -188,8 +199,10 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   printed one: for a first command under the `-` prefix systemd skips the
   executable check that prints it, so the field is uncompared and the row is
   REFUSES with the reason, never agree (round 6, extra6-1: six fixtures agreed
-  with the field skipped in silence); a non-first command's path is never
-  printed and never compared. A shorter oracle list is unmarked only while it
+  with the field skipped in silence; the run prints those rows with the
+  reason under their own heading, and a row a DISAGREE elsewhere wins keeps
+  the note in its detail, since round 6's addendum); a non-first command's path
+  is never printed and never compared. A shorter oracle list is unmarked only while it
   keeps systemd's first command (round 6, extra6-2: the exec-path branch
   marked a dropped first command by accident, and the prose here placed it on
   the unmarked side; it is a named shape of the argv branch now). Until fork
@@ -223,11 +236,25 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   model (a specifier whose value is the host's, the cgroup's or the unit
   path's), not a disagreement, or, since round 6, a comparison the harness
   cannot make: the six fixtures whose first command is under the `-` prefix
-  (`form-pre-dash`, `form-pre-dashat`, `form-pre-atdash`,
-  `form-pre-dashbangbang`, `form-pre-dash-quoted`, `form-pre-dash-dqpath`,
-  listed from the run) have their exec path uncompared, since systemd prints
-  none for them, and moved from agree to REFUSES with that reason (F 7 to 5
-  agree, none 421 to 417, total 537 to 531). The fold batch agreed 10 of 10
+  have their exec path uncompared, since systemd prints none for them, and
+  moved from agree to REFUSES with that reason (F 7 to 5 agree, none 421 to
+  417, total 537 to 531). The run prints them under their own heading after
+  the disagreements (round 6's addendum: until it the report listed DISAGREE
+  rows alone, so the six sat in the REFUSES column beside the not-modelled
+  rows with nothing in the output to tell them apart); pasted from the run
+  at round 6's addendum's head:
+
+  ```
+  uncompared (REFUSES with the reason, never agree: systemd printed no exec->path for the row's first command):
+    form-pre-dash: exec->path uncompared: systemd printed no resolved path for its first command (its errors are downgraded by the - prefix, which skips the executable check that prints it), so the oracle's '/nx/bin/x' stands unchecked
+    form-pre-dashat: exec->path uncompared: systemd printed no resolved path for its first command (its errors are downgraded by the - prefix, which skips the executable check that prints it), so the oracle's '/nx/bin/x' stands unchecked
+    form-pre-atdash: exec->path uncompared: systemd printed no resolved path for its first command (its errors are downgraded by the - prefix, which skips the executable check that prints it), so the oracle's '/nx/bin/x' stands unchecked
+    form-pre-dashbangbang: exec->path uncompared: systemd printed no resolved path for its first command (its errors are downgraded by the - prefix, which skips the executable check that prints it), so the oracle's '/nx/bin/x' stands unchecked
+    form-pre-dash-quoted: exec->path uncompared: systemd printed no resolved path for its first command (its errors are downgraded by the - prefix, which skips the executable check that prints it), so the oracle's '/nx/bin/x' stands unchecked
+    form-pre-dash-dqpath: exec->path uncompared: systemd printed no resolved path for its first command (its errors are downgraded by the - prefix, which skips the executable check that prints it), so the oracle's '/nx/bin/x' stands unchecked
+  ```
+
+  The fold batch agreed 10 of 10
   at the fold head, 27 of 27 with the addendum's 17, 35 of 35 with the
   round-5 preface's 8 EnvironmentFile forms (a doubled slash, a `.`
   component, a trailing slash with and without the `-` prefix, a trailing `.`
@@ -235,19 +262,34 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   as not normalized; the oracle models `path_simplify_and_warn` for
   `EnvironmentFile=` since that commit, where it raised on a doubled slash,
   `/./` and a trailing slash and, unguarded, read `/x/env/.` as written and a
-  `..` path as a file: 3 dangerous rows against the previous oracle), and 52
-  of 52 with round 6's 11 byte order mark shapes and 6 Restart= shapes.
-  Against the round-5 oracle the same 52 read `fold batch: 52 cases, 45
-  agree, 0 REFUSES, 7 DISAGREE, 4 dangerous`: `fold-bom-service` and
+  `..` path as a file: 3 dangerous rows against the previous oracle), 52
+  of 52 with round 6's 11 byte order mark shapes and 6 Restart= shapes, and
+  74 of 74 with round 6's addendum's 22 further mark shapes (the mark beside a
+  CRLF ending, before the PATH, EnvironmentFile and Restart lines, before an
+  indented, a quoted and a trailing-blank line, a marked empty reset, a
+  marked blank line, two marks on one line, the latch spent before a second
+  ExecStart, a marked ExecStart= reset, a mark inside a value, a name, the
+  ExecStart path and the section name, and a continuation closed by a second
+  mark). Against the round-5 oracle the first 52 read `fold batch: 52 cases,
+  45 agree, 0 REFUSES, 7 DISAGREE, 4 dangerous`: `fold-bom-service` and
   `fold-bom-exec` (the oracle refuses a unit systemd loads), `fold-bom-env`
   (`A: systemd '1', oracle unset`), the three unmarked, the D4 class where the
   reader follows it, which the reader did; and the four Restart= shapes
   systemd refuses (`always`, `on-success`, an empty and an unknown value
-  after `always`) read by the oracle as loaded, marked dangerous. Pasted from
-  the round-6 run: `fold batch: 52 cases, 52 agree, 0 REFUSES, 0 DISAGREE, 0
-  dangerous` and `total     684    531      153         0          0`; the
-  dangerous-direction count is 0. Before the fold the lens
-  counted 421 agree, 138 REFUSES and 125 DISAGREE over the same 684.
+  after `always`) read by the oracle as loaded, marked dangerous. The 74
+  against the same oracle read `fold batch: 74 cases, 58 agree, 0 REFUSES,
+  16 DISAGREE, 6 dangerous`: the seven above and nine of that addendum's,
+  `fold-bom-crlf-env`, `-path`, `-indented`, `-quoted` and `-trailing-ws`
+  (a value systemd sets read as unset), `fold-bom-envfile` (`EnvironmentFile:
+  systemd ['-/x/env'], oracle []`) and `fold-bom-crlf-service` (the oracle
+  refuses), unmarked, the same D4 class; and two dangerous, `fold-bom-env-reset`
+  (`A: systemd unset, oracle '1'`: the marked reset read as text, so the oracle
+  kept a value systemd had forgotten) and `fold-bom-restart-spent` (the
+  Restart= rule again). Pasted from round 6's addendum's run: `fold batch: 74
+  cases, 74 agree, 0 REFUSES, 0 DISAGREE, 0 dangerous` and `total     684
+  531      153         0          0`; the dangerous-direction count is 0.
+  Before the fold the lens counted 421 agree, 138 REFUSES and 125 DISAGREE
+  over the same 684.
 - **node suites** — live beside their sources in `ui/webview/*.test.ts` and
   `vscode-extension/src/*.test.ts`, run with `npm test` from
   `vscode-extension/`. Many pin lines of `kernel/kernel.py` as strings — run

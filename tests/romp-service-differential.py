@@ -29,7 +29,9 @@ Verdicts per fixture: agree; agree (both refuse); REFUSES (the oracle raises Not
 not-modelled path, or a comparison this harness cannot make: systemd prints the resolved exec->path of its FIRST command
 alone, and only in the executable check, which the - prefix's error downgrade skips, so for a first command under - the
 field is uncompared and the row says so, never agree; round 6 of fork PR #778, extra6-1: six fixtures agreed with the
-field skipped in silence); DISAGREE. The direction that matters most is counted on its own, the dangerous column: a
+field skipped in silence; its addendum prints those rows with the reason under their own heading, where the report had
+listed DISAGREE rows alone, and keeps the note on a row a DISAGREE elsewhere wins); DISAGREE. The direction that matters
+most is counted on its own, the dangerous column: a
 disagreement where the oracle reports what systemd does not set, run or read. Its shapes: a value systemd leaves unset or
 sets to something else (both set and different is the oracle, and a reader following it, reporting a value systemd will
 not set, the direction's worst member since it is confidently wrong), a unit systemd fails to load reported as loaded, a
@@ -41,8 +43,10 @@ another exec->path for the first command (positional, since that is the one path
 does not read (as many EnvironmentFile paths or more with a difference, or fewer with one not among systemd's). The
 other direction is a DISAGREE without the mark, and it is two things where the reader in bin/romp-service follows the
 oracle: the oracle REFUSING (a fatal) what systemd loads is a false refusal, which the operator sees and cannot work
-around; the oracle leaving UNSET what systemd sets (a variable, an EnvironmentFile), or listing fewer commands or files
-every one among systemd's with the first kept, is the D4 class, since the reader does not refuse on an absence: it
+around; the oracle leaving UNSET what systemd sets (a variable, an EnvironmentFile), or listing fewer commands every one
+among systemd's with the first command kept, or fewer files every one among systemd's (the first-kept rule is the argv
+branch's alone: the reader's identity check reads the first command and no first file, so a dropped first file with a
+later one kept is this class too), is the D4 class, since the reader does not refuse on an absence: it
 writes this clone's value (ExecStart, ROMP_DIR, the service.env default) or omits the line (PATH, an instance variable)
 at exit 0. That half stays unmarked on purpose: the column means the ORACLE reporting what systemd does not do, a
 confident wrong report, and marking a silence too would make every DISAGREE dangerous and the column say nothing; every
@@ -260,6 +264,39 @@ def fold_fixtures():
             ("fold-bom-comment-cont", "X", [BOM + "# c\\", f"ExecStart={NX}"], "normal"),
             ("fold-bom-cont-alone", "E", ["Environment=V=x\\", BOM, f"ExecStart={NX}"], "normal"),
             ("fold-bom-ws-comment", "X", [" " + BOM + "# c", f"ExecStart={NX}"], "normal"),
+            # the round-6 addendum (the lens over the round-6 commit named the shapes it had run by hand and found unpinned): the mark
+            # beside a CRLF line ending (before line 1, before a kept line, alone on a line closing a continuation, before [Service]); before
+            # the lines the reader keeps or replays (PATH, EnvironmentFile, and Restart where the marked line decides the load: Type=oneshot
+            # with Restart=always refused unless the marked Restart=on-failure is read, so the pair below has the latch free and spent);
+            # before an indented, a quoted and a trailing-blank kept line; a marked empty Environment= reset; a marked whitespace-only line,
+            # plain and closing a continuation; two marks on one line (the second is text: an unknown key); a marked second ExecStart with
+            # the latch spent (text to systemd, the first stands); a marked empty ExecStart= reset before the real line; a mark in the
+            # middle of a line (in a value, carried; before a name, no assignment; before the ExecStart path, not absolute, refused; inside
+            # the [Service] name, an unknown section, so no ExecStart, refused); and a continuation closed by a line holding only a second
+            # mark, the latch spent by line 1, which systemd joins (the mark a word it drops) and the reader in bin/romp-service refuses
+            # under its refusal 3, the safe direction. Each run against 255.4 through this harness before it was written here.
+            ("fold-bom-crlf-first", "X", [f"ExecStart={NX}", "Environment=A=1"], "crlf-bom-first"),
+            ("fold-bom-crlf-env", "E", [f"ExecStart={NX}", BOM + "Environment=A=1"], "crlf"),
+            ("fold-bom-crlf-cont-alone", "E", ["Environment=V=x\\", BOM, f"ExecStart={NX}"], "crlf"),
+            ("fold-bom-crlf-service", "X", [f"ExecStart={NX}", "Environment=A=1"], "crlf-bom-service"),
+            ("fold-bom-path", "E", [f"ExecStart={NX}", BOM + "Environment=PATH=/x/bin:/usr/bin"], "normal"),
+            ("fold-bom-envfile", "F", [f"ExecStart={NX}", BOM + "EnvironmentFile=-/x/env"], "normal"),
+            ("fold-bom-restart-read", "X", ["ExecStart=/nx/bin/a", "ExecStart=/nx/bin/b", "Type=oneshot", "Restart=always", BOM + "Restart=on-failure"], "normal"),
+            ("fold-bom-restart-spent", "X", ["ExecStart=/nx/bin/a", "ExecStart=/nx/bin/b", "Type=oneshot", "Restart=always", BOM + "Restart=on-failure"], "bom-first"),
+            ("fold-bom-indented", "E", [f"ExecStart={NX}", BOM + "  Environment=A=1"], "normal"),
+            ("fold-bom-quoted", "E", [f"ExecStart={NX}", BOM + 'Environment="A=a b"'], "normal"),
+            ("fold-bom-trailing-ws", "E", [f"ExecStart={NX}", BOM + "Environment=A=1  \t"], "normal"),
+            ("fold-bom-env-reset", "E", [f"ExecStart={NX}", "Environment=A=1", BOM + "Environment="], "normal"),
+            ("fold-bom-ws-only", "E", [f"ExecStart={NX}", BOM + "  \t", "Environment=A=1"], "normal"),
+            ("fold-bom-ws-only-cont", "E", [f"ExecStart={NX}", "Environment=V=x\\", BOM + "  ", "Environment=W=y"], "normal"),
+            ("fold-bom-double", "E", [BOM + BOM + "Environment=A=1", f"ExecStart={NX}"], "normal"),
+            ("fold-bom-second-exec-spent", "X", ["ExecStart=/nx/bin/a", BOM + "ExecStart=/nx/bin/b"], "bom-first"),
+            ("fold-bom-exec-reset-then", "X", [BOM + "ExecStart=", f"ExecStart={NX}"], "normal"),
+            ("fold-bom-mid-value", "E", [f"ExecStart={NX}", "Environment=A=a" + BOM + "b"], "normal"),
+            ("fold-bom-mid-name", "E", [f"ExecStart={NX}", "Environment=" + BOM + "A=1"], "normal"),
+            ("fold-bom-mid-exec-path", "X", ["ExecStart=" + BOM + NX], "normal"),
+            ("fold-bom-in-section", "X", [f"ExecStart={NX}", "Environment=A=1"], "bom-in-service"),
+            ("fold-bom-cont-second-mark", "E", ["Environment=V=x\\", BOM, f"ExecStart={NX}"], "bom-first"),
             # round 6 (extra5-2): service_verify refuses Restart=always or on-success beside Type=oneshot; a later Restart= replaces an earlier
             # one when its value is in the table, and an empty or unknown value is Failed to parse service restart specifier, ignoring, so the
             # earlier value stands (verified on 255.4). The oracle read a command list from the refused shape until this commit.
@@ -292,6 +329,8 @@ def klass(fid):
 BOM = "\xef\xbb\xbf"     # the UTF-8 byte order mark, as latin-1 text (the fixture files are written latin-1, byte for byte)
 
 def unit_text(lines, layout):
+    if layout == "crlf" or layout.startswith("crlf-"):                     # the whole file with CRLF line endings, over any layout below (the
+        return unit_text(lines, layout[5:] or "normal").replace("\n", "\r\n")   # round-6 addendum of fork PR #778: a mark beside a CR)
     body = "\n".join(lines)
     if layout.startswith("eof"):
         t = "[Unit]\nDescription=f\n\n[Install]\nWantedBy=default.target\n\n[Service]\n" + body
@@ -299,6 +338,7 @@ def unit_text(lines, layout):
     t = "[Unit]\nDescription=f\n\n[Service]\n" + body + "\n\n[Install]\nWantedBy=default.target\n"
     if layout == "bom-first": return BOM + t                              # the mark before line 1
     if layout == "bom-service": return t.replace("[Service]", BOM + "[Service]", 1)   # the mark before the [Service] header on a later line
+    if layout == "bom-in-service": return t.replace("[Service]", "[Ser" + BOM + "vice]", 1)   # the mark inside the header's name
     return t
 
 def unquote_cmdline(s):
@@ -424,7 +464,8 @@ def compare(kind, sd, orc):
     if sd["envfiles"] != orc["envfiles"]:
         diffs.append("EnvironmentFile: systemd %r, oracle %r" % (sd["envfiles"], orc["envfiles"]))
         if len(orc["envfiles"]) >= len(sd["envfiles"]) or any(f not in sd["envfiles"] for f in orc["envfiles"]): dangerous = True   # more files than systemd reads, as many with another path, or fewer with one systemd does not read
-    if diffs: return "DISAGREE", "; ".join(diffs), dangerous
+    if diffs: return "DISAGREE", "; ".join(diffs + ([unread] if unread else [])), dangerous   # the DISAGREE wins the verdict; the unread
+                                                                                              # field is still said (the round-6 addendum)
     if unread: return "REFUSES", unread, False
     return "agree", "", False
 
@@ -442,12 +483,22 @@ MARK_CASES = [   # (name, systemd's reading, the oracle's, the verdict, dangerou
     ("env both set and different", _sd(env={"A": "1"}), _orc(env={"A": "2"}), "DISAGREE", True),
     ("env set by the oracle alone", _sd(), _orc(env={"A": "1"}), "DISAGREE", True),
     ("env set by systemd alone (the D4 class where the reader follows it; unmarked, see the docstring)", _sd(env={"A": "1"}), _orc(), "DISAGREE", False),
+    # the round-6 addendum: the per-key guard (a key equal on both sides beside one systemd alone sets stays unmarked; without the guard the
+    # equal key's own compare would mark the row), and an agree with a nonempty env
+    ("env systemd sets A and B, the oracle A alone (one key equal, one systemd-only; unmarked)", _sd(env={"A": "1", "B": "2"}), _orc(env={"A": "1"}), "DISAGREE", False),
+    ("env both set and equal", _sd(env={"A": "1"}), _orc(env={"A": "1"}), "agree", False),
     ("argv same count, other words", _sd(cmds=[["/nx/bin/x", "up"]]), _orc(execs=[_ex("/nx/bin/x", "/nx/bin/x", "down")]), "DISAGREE", True),
     ("argv more commands than systemd runs", _sd(cmds=[["/nx/bin/a"]], path="/nx/bin/a"), _orc(execs=[_ex("/nx/bin/a"), _ex("/nx/bin/b")]), "DISAGREE", True),
     ("argv fewer, one systemd does not run", _sd(cmds=[["/nx/bin/a"], ["/nx/bin/b"]], path="/nx/bin/a"), _orc(execs=[_ex("/nx/bin/c")]), "DISAGREE", True),
     ("argv fewer, systemd's first dropped (the second reported first)", _sd(cmds=[["/nx/bin/a"], ["/nx/bin/b"]], path="/nx/bin/a"), _orc(execs=[_ex("/nx/bin/b")]), "DISAGREE", True),
     ("argv fewer, every one among systemd's, the first kept", _sd(cmds=[["/nx/bin/a"], ["/nx/bin/b"]], path="/nx/bin/a"), _orc(execs=[_ex("/nx/bin/a")]), "DISAGREE", False),
+    # the round-6 addendum: the first-command clause on its own, where the exec->path branch cannot mark (the path uncompared under the -
+    # prefix); the row above it is marked by that branch whether the clause exists or not
+    ("argv fewer, systemd's first dropped, the path uncompared under -", _sd(cmds=[["/nx/bin/a"], ["/nx/bin/b"]], path=None), _orc(execs=[_ex("/nx/bin/b", "/nx/bin/b", ignore=True)]), "DISAGREE", True),
     ("exec->path another path, argv equal", _sd(), _orc(execs=[_ex("/nx//bin/x", "/nx/bin/x")]), "DISAGREE", True),
+    # the round-6 addendum: the compare is positional, systemd's first command's path against the oracle's first; an identity compare (any
+    # oracle command carrying systemd's path) would read this row as agree
+    ("exec->path: the oracle's first resolves elsewhere while a later oracle command carries systemd's path (positional: marked)", _sd(cmds=[["/nx/bin/a"], ["/nx/bin/b"]], path="/nx/bin/b"), _orc(execs=[_ex("/nx/bin/a"), _ex("/nx/bin/b")]), "DISAGREE", True),
     ("exec->path equal", _sd(), _orc(), "agree", False),
     ("exec->path uncompared under the - prefix (the loud skip)", _sd(path=None), _orc(execs=[_ex("/nx/bin/x", "/nx/bin/x", ignore=True)]), "REFUSES", False),
     ("exec->path uncompared, but a DISAGREE elsewhere on the row wins", _sd(path=None, env={"A": "1"}), _orc(env={"A": "2"}, execs=[_ex("/nx/bin/x", "/nx/bin/x", ignore=True)]), "DISAGREE", True),
@@ -455,6 +506,9 @@ MARK_CASES = [   # (name, systemd's reading, the oracle's, the verdict, dangerou
     ("EnvironmentFile more files than systemd reads", _sd(envfiles=["/x/env"]), _orc(envfiles=["/x/env", "/y/env"]), "DISAGREE", True),
     ("EnvironmentFile fewer, one systemd does not read", _sd(envfiles=["/x/env", "/y/env"]), _orc(envfiles=["/z/env"]), "DISAGREE", True),
     ("EnvironmentFile fewer, every one among systemd's (the D4 class where the reader follows it; unmarked)", _sd(envfiles=["/x/env", "/y/env"]), _orc(envfiles=["/x/env"]), "DISAGREE", False),
+    # the round-6 addendum: the first-kept rule is the argv branch's alone (the reader's identity check reads the first command and no
+    # first file), so a dropped FIRST file with a later one kept is the same unmarked D4 class; the prose says "first command" for that
+    ("EnvironmentFile fewer, systemd's first file dropped, a later one kept (unmarked: no first-file rule)", _sd(envfiles=["/x/env", "/y/env"]), _orc(envfiles=["/y/env"]), "DISAGREE", False),
     ("systemd refuses, the oracle loads", _sd(fatal=True, notes=["bad"]), _orc(), "DISAGREE", True),
     ("the oracle refuses, systemd loads (a false refusal)", _sd(), _orc(fatal="Refusing"), "DISAGREE", False),
     ("both refuse", _sd(fatal=True), _orc(fatal="Refusing"), "agree (both refuse)", False),
@@ -533,13 +587,26 @@ def main():
     print("%-6s %6d %6d %8d %9d %10d" % ("total", tot["cases"], tot["agree"], tot["refuses"], tot["disagree"], tot["dangerous"]))
     f = per.get("fold", {"cases": 0, "agree": 0, "refuses": 0, "disagree": 0, "dangerous": 0})
     print("fold batch: %d cases, %d agree, %d REFUSES, %d DISAGREE, %d dangerous" % (f["cases"], f["agree"], f["refuses"], f["disagree"], f["dangerous"]))
-    print("dangerous = a disagreement where the oracle reports what systemd does not set, run or read (a value unset or other to systemd, a unit it fails to load, as many commands or files or more with a difference, fewer with one systemd does not run or read or with a first command that is not systemd's first, another exec->path for the first command); unmarked = the oracle refusing what systemd loads (a false refusal), or leaving unset or listing fewer with the first kept (the D4 class where the reader follows it: it writes this clone's value or omits the line, at exit 0)")
+    print("dangerous = a disagreement where the oracle reports what systemd does not set, run or read (a value unset or other to systemd, a unit it fails to load, as many commands or files or more with a difference, fewer with one systemd does not run or read or with a first command that is not systemd's first, another exec->path for the first command); unmarked = the oracle refusing what systemd loads (a false refusal), or leaving unset or listing fewer commands with the first command kept or fewer files every one among systemd's (the D4 class where the reader follows it: it writes this clone's value or omits the line, at exit 0)")
+    print_rows(rows)
+    return 0
+
+def print_rows(rows, out=sys.stdout):
+    """The rows under the table, the ones an operator reads: every DISAGREE with its detail, then every REFUSES whose reason is an exec->path
+    this harness could not compare, under its own heading with the reason (the round-6 addendum of fork PR #778: compare() said it and main
+    printed DISAGREE rows alone, so the six uncompared fixtures sat in the REFUSES column beside the not-modelled rows with nothing in the
+    output to tell them apart, and tests/README.md named them as listed from a run that listed none). The not-modelled REFUSES rows stay
+    counted, not listed: their reason is one line of the oracle's, the same for all."""
     bad = [r for r in rows if r[1] == "DISAGREE"]
     if bad:
-        print("disagreements:")
+        print("disagreements:", file=out)
         for fid, verdict, detail, dangerous in bad:
-            print("  %s%s: %s" % (fid, " [dangerous]" if dangerous else "", detail))
-    return 0
+            print("  %s%s: %s" % (fid, " [dangerous]" if dangerous else "", detail), file=out)
+    unread = [r for r in rows if r[1] == "REFUSES" and r[2].startswith("exec->path uncompared")]
+    if unread:
+        print("uncompared (REFUSES with the reason, never agree: systemd printed no exec->path for the row's first command):", file=out)
+        for fid, verdict, detail, dangerous in unread:
+            print("  %s: %s" % (fid, detail), file=out)
 
 if __name__ == "__main__":
     sys.exit(main())

@@ -343,7 +343,11 @@ _unit_env_file_line() {   # EnvironmentFile=: the whole rvalue is the path, read
 #      included) or the end of the file closes it, at which config_parse parses the pending line without its backslash, so a
 #      continuation that only comment lines separate from a blank line or the file's end stands as its own line here too (the fold,
 #      class E, the file's last line; the fold's addendum, the comment and blank lines, verified on 255.4: a comment then the end
-#      reads the value, a blank line then [Install] reads it and the header, a comment then a text line joins the two);
+#      reads the value, a blank line then [Install] reads it and the header, a comment then a text line joins the two). One shape of
+#      this refusal is the mark's: a continuation followed by a line holding only a byte order mark the file's one strip is already
+#      spent on (a marked line 1, say) is a join to systemd, which reads the mark as a word and drops it (Invalid environment
+#      assignment, ignoring), so the pending line stands with its own items; this reader refuses the join as it refuses every other,
+#      the safe direction, and the remedy above clears it (the round-6 addendum of fork PR #778, verified on 255.4);
 #   4. a line that is not UTF-8 by systemd's rule (the encoding, and no surrogate or noncharacter: the fold, class C, where a noncharacter
 #      written raw passed iconv), 5. a section header not ending in ], and 6. one whose name carries a quote, a backslash or a
 #      control character: systemd refuses the WHOLE file on each (String is not UTF-8 clean; Invalid section header; Bad characters
