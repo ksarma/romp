@@ -115,7 +115,7 @@ walk and the gate load nothing, the sweep loads once per pass and reaches the fa
 since its real body is a writer).
 
 Two provenances are named in this module, never by one word. The reviewer's rounds carry a number: review round 1 ruled
-twelve findings, round 2 fourteen, round 3 nine, and "the round-N fixes" are the changes that answer round N's rulings. The
+twelve findings, round 2 fourteen, round 3 nine, round 4 seventeen, and "the round-N fixes" are the changes that answer round N's rulings. The
 build's own passes carry a role and never a number: the build's verifier pass after the round-1 fixes, the build's verifier
 pass after the round-2 fixes, and the consolidation pass, the build's pass between the round-2 fixes and the reviewer's round
 3, in which three lenses read the head, the reviewer ruled on what they found (the reviewer's rulings on the pre-emption,
