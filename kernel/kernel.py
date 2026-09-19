@@ -70299,6 +70299,15 @@ def _landing():
             # alone; the param stays for the reveal script, whose /reveal still lands the focus (a revive prompt for an ended session). Its
             # own try/catch: a page whose storage is missing or throws must still reach the token scrub below. No layout gate: on the desktop
             # the seed makes the notified tab the active-tab-first build, the outcome the reveal produces there anyway.
+            # The cost when the seeded hint names a session this kernel cannot match (review round 4, 2026-09-19, regression-4): the notified
+            # session ended while the phone was away, or the id is host-prefixed (another host's, admitted by the shape on purpose). The
+            # kernel's _resolve_reconnect reads the hint as any stored tab, and _skeleton_for over an active that matches no session lists
+            # EVERY local transcript-bearing tab as a skeleton, so that cold open is served no local full where the last-shown tab would have
+            # been served whole. The page recovers on its own side, the road the shim's diet comment (_shim, RESTART_DIET) and the strip gate
+            # already describe: a local strip that lists no such local tab opens the prefetch gate (skeleton-tabs.ts gateOnStrip) and the idle
+            # chain loads the tabs in the kernel's order; a tap loads its tab at once. A kernel-side fail-safe (a live-session fallback in
+            # _resolve_reconnect) was executed in the review and declined: it restored the whole board in place of one full, misfired for
+            # the host-prefixed hints the page handles by design, and reached beyond the push cold open.
             "try{var _pr=new URL(location.href).searchParams.get('push-reveal');if(_pr&&/^[A-Za-z0-9_.:-]{1,128}$/.test(_pr)){"
             "var _sk='romp-vscode-state-chat',_sb=null;try{_sb=JSON.parse(localStorage.getItem(_sk)||'null');}catch(e){}"
             "if(!_sb||typeof _sb!=='object'||Array.isArray(_sb))_sb={};"
