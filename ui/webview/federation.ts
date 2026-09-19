@@ -1030,7 +1030,7 @@ export class FederationManager {
   // (openRemote; the first /tunnels answer assigns several at once in the kernel's row order, the order poll() opens
   // them in), h1 the first REMOTE host (hostSeq[0] is LOCAL, and hostSeq is pruned on detach and re-pushed on re-attach,
   // so it cannot be the source); and the text-frame characters received on that ordinal's sockets, counted in the conn's
-  // ws.onmessage in the shim's own unit ((ev.data && ev.data.length) || 0: String.length, keepalives and undecodable
+  // socket message handler (connect()) in the shim's unit ((ev.data && ev.data.length) || 0: String.length, keepalives and undecodable
   // frames included). NEITHER is pruned by closeRemote, unlike every per-host map there: the collector
   // (perf-telemetry.ts) reads the totals as a monotone counter and differences them per minute against a baseline, so a
   // detach that dropped an ordinal would make the next row's difference wrong or re-key a re-attached host; a re-attached
