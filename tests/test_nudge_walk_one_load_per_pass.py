@@ -1,29 +1,35 @@
 #!/usr/bin/env python3
-"""Fold ruling A condition 7 as the reviewer ruled it on 2026-09-19, after jobs stage 1 (fork PR 784): with the auto-nudge
-toggle off, the walk makes AT MOST ONE shared goal-store load per alive session per pass; EXACTLY ONE on a pass whose look
-RUNS; ZERO on a pass whose look is SKIPPED. Stage 1 made the wake-only look record a memo row and skip on the ten-file key,
-and the first wording of its amendment kept the ceiling (at most one) and dropped the floor; the ruling restored the floor,
-so this pin holds both.
+"""Fold ruling A condition 7 as the reviewer ruled it on 2026-09-19 after jobs stage 1 (fork PR 784), stated PER MECHANISM:
+two loaders read a session's goal store on the walk's road, and each has a bound of its own. The WALK takes at most one
+shared goal-store load per alive session per pass: exactly one when its look reaches the store, zero when the look is
+skipped or ends at a state gate before the store read. The PLACEMENT GATE's post-derivation currency check is a SEPARATE
+load, at most one per DERIVED session, counted apart. Two loaders, two bounds, each attributable to its caller. The rule was
+first written as one call count; a total is falsified by any new legitimate reader of the store, where a named mechanism
+adds a clause, so the counts below never sum the two. Stage 1 made the wake-only look record a memo row and skip on the
+ten-file key, and the first wording of its amendment kept the walk's ceiling (at most one) and dropped the floor; the ruling
+restored the floor, so this pin holds both.
 
-The shared load is the walk's one decision read, `jd.load_goals_shared_or_fault(sid)` in `_auto_nudge_session`, the read
-ruling A counted (its wording: every alive session walked wake-only with exactly one load_goals_shared_or_fault and zero
-plain load_goals in the decision path). Two witnesses count it. By execution: a recorder stands in for the name the walk
-resolves at call time (`km.jd.load_goals_shared_or_fault`, the kernel's own judge instance), records each call with the
-function that made it, and calls through to the real loader, so nothing about the shared cache is stubbed. By the served
-counter: `memos.nudgeWalk.loads`, bumped at that one call site, must move by the same amount per pass. A skipped look
-repeats its verdict and writes nothing (the wake-only memo of PR 784), so it needs no data: the recorder sees no call.
+The walk's load is its one decision read, `jd.load_goals_shared_or_fault(sid)` in `_auto_nudge_session`, the read ruling
+A counted (its wording: every alive session walked wake-only with exactly one load_goals_shared_or_fault and zero plain
+load_goals in the decision path). Two witnesses count it. By execution: a recorder stands in for the name the walk resolves
+at call time (`km.jd.load_goals_shared_or_fault`, the kernel's own judge instance), records each call with the function
+that made it, and calls through to the real loader, so nothing about the shared cache is stubbed; a call from the look's
+body or from its gate wrapper (`_nudge_look_gated`'s inner function, the same mechanism) is the walk's, a call from
+`_nudge_placement_gate` is the gate's, and any other caller is unattributed and fails the test. By the served counter:
+`memos.nudgeWalk.loads`, bumped at the walk's one call site, must move by the walk's count per pass. A skipped look repeats
+its verdict and writes nothing (the wake-only memo of PR 784), so it needs no data: the recorder sees no call from either.
 
-The placement gate's post-derivation currency re-read (`_nudge_placement_gate`, upstream's since the 2026-09-09 fold) is
-the one other caller of the shared loader on the walk's road: one call per DERIVED session, none when the gate is served
-or the look skipped. Ruling A listed it as open (to be offered upstream, never edited here), so it is counted apart and
-named, never folded into the walk's count: a pass whose looks run with the gate served (the ledger moved, the tenth keyed
-file) takes exactly one loader call per session in total; a pass whose looks derive (the first pass, a moved transcript)
-takes the walk's one plus the gate's one. The floor is a look that runs to its decision read: a look the state gates end
-earlier (a working session's, say) runs, records and takes none, which the ceiling allows and a case here shows.
+The gate's load is `_nudge_placement_gate`'s currency check after a derivation (upstream's since the 2026-09-09 fold; ruling
+A listed it as open, to be offered upstream, never edited here): one call per DERIVED session, none when the gate is served
+or the look skipped. So the first pass and a moved-transcript pass derive and the gate loads once per derived session
+beside the walk's one; a ledger-driven run pass (the ledger is the tenth keyed file) re-evaluates every look with the gate
+served, so the walk loads once and the gate not at all. A look the state gates end before the store read (a working
+session's, say) runs, records, and loads through neither.
 
 Red in both directions, each mutation landed on kernel/kernel.py and reverted: a load creeping into the skip path (a shared
-read in the gated look before it consults the memo) reds the skip pass; the load disappearing from the run path (the walk
-reusing a stale snapshot instead of reading) reds the run pass. The assertion texts are in the commit message.
+read in the gated look before it consults the memo, or the skip's early return dropped) reds the skip pass on the walk's
+bound; the load disappearing from the run path (the walk reusing a stale snapshot instead of reading) reds the run pass on
+the walk's bound. The assertion texts name the mechanism and are in the commit message.
 
 Drives the real pass (_auto_nudge_tick) over two alive sessions with real transcript files and real goal stores, on the
 suite's fake clock (the pass takes `now`). SYNTHETIC fixtures only; a PRIVATE synthetic sid pair (the goal-store fixture
@@ -53,8 +59,8 @@ SID_B = "c7c0a001-5e55-4a11-8b22-000000000002"   # a stamped top whose dead-man 
 SIDS = (SID_A, SID_B)
 NOW = 1_787_900_000
 H = 3600
-WALK = "_auto_nudge_session"          # the walk's decision read: the caller condition 7 counts
-GATE = "_nudge_placement_gate"        # the placement gate's currency re-read on a derive: counted apart
+WALK = ("_auto_nudge_session", "gated")   # the walk's look: its body and its gate wrapper (_nudge_look_gated's inner function)
+GATE = ("_nudge_placement_gate",)         # the placement gate's post-derivation currency check: a second loader, counted apart
 
 
 class _FakeBackend:
@@ -217,18 +223,18 @@ class _WalkHarness(unittest.TestCase):
 
     def _pass(self, now):
         """One pass over the two sessions: the walk's counter deltas, the placement gate's (served, derived) deltas, and the
-        shared-loader calls by caller and sid (`walk`: the decision read; `gateReads`: the gate's currency re-read; `others`:
-        any third caller, expected none), the writer loads, and the sids parsed."""
+        shared-loader calls per mechanism and sid (`walk`: the look's decision read; `gate`: the placement gate's currency
+        check; `others`: any unattributed caller, expected none; never a total of the two), the writer loads, and the sids
+        parsed."""
         before = {k: km._NUDGE_WALK_STATS[k] for k in self.KEYS}
         gate0 = dict(km._NUDGE_GATE_STATS)
         self.calls.clear(); self.writer.clear(); self.parsed.clear()
         km._auto_nudge_tick(now, {sid: {"state": ""} for sid in SIDS})
         d = {k: km._NUDGE_WALK_STATS[k] - before[k] for k in self.KEYS}
-        d["gate"] = tuple(km._NUDGE_GATE_STATS[k] - gate0[k] for k in ("served", "derived"))
-        d["walk"] = {sid: sum(1 for s, c in self.calls if (s, c) == (sid, WALK)) for sid in SIDS}
-        d["gateReads"] = {sid: sum(1 for s, c in self.calls if (s, c) == (sid, GATE)) for sid in SIDS}
-        d["others"] = [(s[-4:], c) for s, c in self.calls if c not in (WALK, GATE)]
-        d["shared"] = len(self.calls)
+        d["memo"] = tuple(km._NUDGE_GATE_STATS[k] - gate0[k] for k in ("served", "derived"))
+        d["walk"] = {sid: sum(1 for s, c in self.calls if s == sid and c in WALK) for sid in SIDS}
+        d["gate"] = {sid: sum(1 for s, c in self.calls if s == sid and c in GATE) for sid in SIDS}
+        d["others"] = [(s[-4:], c) for s, c in self.calls if c not in WALK + GATE]
         d["writer"] = len(self.writer)
         d["parsedSids"] = sorted(self.parsed)
         return d
@@ -243,35 +249,36 @@ class OneSharedLoadPerAliveSessionPerPass(_WalkHarness):
         p1 = self._pass(NOW)
         self.assertEqual((p1["looks"], p1["parses"], p1["skippedParses"], p1["wakeOnly"]), (2, 2, 0, 2), p1)
         self.assertEqual(p1["walk"], {SID_A: 1, SID_B: 1},
-                         "exactly one shared load per alive session on a pass whose look runs (condition 7's floor on a run)")
-        self.assertEqual(p1["loads"], 2, "memos.nudgeWalk.loads moves by the walk's loads: one per look that ran")
-        self.assertEqual((p1["gateReads"], p1["gate"]), ({SID_A: 1, SID_B: 1}, (0, 2)),
-                         "the one other caller is the placement gate's currency re-read, once per derived session (upstream's; "
-                         "ruling A's open item, counted apart)")
-        self.assertEqual(p1["writer"], 0, "zero plain load_goals in the decision path (the third caller check is in the loop below)")
+                         "the walk takes exactly one shared load per alive session when its look reaches the store (condition 7, the walk's bound)")
+        self.assertEqual(p1["loads"], 2, "memos.nudgeWalk.loads moves by the walk's count: one per look that reached the store")
+        self.assertEqual((p1["gate"], p1["memo"]), ({SID_A: 1, SID_B: 1}, (0, 2)),
+                         "the placement gate's currency check loads once per derived session, and here every gate derived (condition 7, the gate's bound)")
+        self.assertEqual(p1["writer"], 0, "zero plain load_goals in the decision path")
         for sid in SIDS:
             self.assertIsNotNone(self._row(sid), "a wake-mode memo row stands for %s" % sid[-4:])
         # (b) nothing changed: every look skips, and a skipped look repeats its verdict and needs no data
         p2 = self._pass(NOW + 5)
-        self.assertEqual(p2["shared"], 0,
-                         "a skipped look takes no shared load: zero per alive session on a pass whose look is skipped (condition 7's floor on a skip)")
+        self.assertEqual(p2["walk"], {SID_A: 0, SID_B: 0},
+                         "the walk takes no shared load on a skipped look: zero per alive session (condition 7, the walk's bound)")
+        self.assertEqual(p2["gate"], {SID_A: 0, SID_B: 0},
+                         "the placement gate makes no currency check on a skipped look: it is never reached (condition 7, the gate's bound)")
         self.assertEqual((p2["looks"], p2["skippedParses"], p2["parses"]), (2, 2, 0), p2)
-        self.assertEqual((p2["walk"], p2["gateReads"], p2["loads"], p2["writer"]),
-                         ({SID_A: 0, SID_B: 0}, {SID_A: 0, SID_B: 0}, 0, 0), "and the counter does not move")
+        self.assertEqual((p2["loads"], p2["writer"]), (0, 0), "and the counter does not move")
         # (a) again with the gate SERVED: the ledger is the tenth keyed file, so its move re-evaluates every session once while
-        # the parse and the store stand, and the pass takes exactly one loader call per session in total
+        # the parse and the store stand; the walk loads once per session and the gate not at all
         os.utime(jd.STATE / "auto-nudge.json", (NOW + 8, NOW + 8))
         p3 = self._pass(NOW + 10)
         self.assertEqual((p3["looks"], p3["parses"], p3["skippedParses"]), (2, 2, 0), p3)
         self.assertEqual(p3["walk"], {SID_A: 1, SID_B: 1},
-                         "exactly one shared load per alive session on a pass whose look runs (condition 7's floor on a run)")
-        self.assertEqual((p3["gateReads"], p3["gate"]), ({SID_A: 0, SID_B: 0}, (2, 0)), "the gate is served: no currency re-read")
-        self.assertEqual((p3["shared"], p3["loads"], p3["writer"]), (2, 2, 0),
-                         "one loader call per session in total, the counter moves by the same two, no writer load")
+                         "the walk takes exactly one shared load per alive session when its look reaches the store (condition 7, the walk's bound)")
+        self.assertEqual((p3["gate"], p3["memo"]), ({SID_A: 0, SID_B: 0}, (2, 0)),
+                         "the placement gate is served and makes no currency check (condition 7, the gate's bound)")
+        self.assertEqual((p3["loads"], p3["writer"]), (2, 0), "the counter moves by the walk's two, no writer load")
         # (b) again
         p4 = self._pass(NOW + 15)
-        self.assertEqual((p4["skippedParses"], p4["shared"], p4["loads"]), (2, 0, 0),
-                         "a skipped look takes no shared load: zero per alive session on a pass whose look is skipped (condition 7's floor on a skip)")
+        self.assertEqual((p4["walk"], p4["gate"]), ({SID_A: 0, SID_B: 0}, {SID_A: 0, SID_B: 0}),
+                         "the walk takes no shared load on a skipped look, and the placement gate is never reached (condition 7, both bounds)")
+        self.assertEqual((p4["skippedParses"], p4["loads"]), (2, 0))
         # one session's transcript moves: its look runs and derives (the parse key moved), the other's skips; per session
         pa = Path(self.rows[SID_A]["path"])
         pa.write_text(pa.read_text() + json.dumps({"type": "user", "uuid": "aaaaaaaa", "timestamp": "2026-09-10T00:01:00Z",
@@ -280,36 +287,46 @@ class OneSharedLoadPerAliveSessionPerPass(_WalkHarness):
         self.parse_gen[SID_A] += 1
         p5 = self._pass(NOW + 20)
         self.assertEqual((p5["parsedSids"], p5["parses"], p5["skippedParses"]), ([SID_A], 1, 1), p5)
-        self.assertEqual(p5["walk"], {SID_A: 1, SID_B: 0}, "per session: one for the look that ran, none for the one that skipped")
-        self.assertEqual((p5["gateReads"], p5["gate"]), ({SID_A: 1, SID_B: 0}, (0, 1)), "the moved parse derives once, with its re-read")
+        self.assertEqual(p5["walk"], {SID_A: 1, SID_B: 0},
+                         "the walk, per session: one load for the look that reached the store, none for the one that skipped (condition 7, the walk's bound)")
+        self.assertEqual((p5["gate"], p5["memo"]), ({SID_A: 1, SID_B: 0}, (0, 1)),
+                         "the placement gate, per session: the moved parse derives once and checks once, the skipped session not at all (condition 7, the gate's bound)")
         self.assertEqual((p5["loads"], p5["writer"]), (1, 0))
         for name, p in (("p1", p1), ("p2", p2), ("p3", p3), ("p4", p4), ("p5", p5)):
             for sid in SIDS:
-                self.assertLessEqual(p["walk"][sid], 1, "%s %s: at most one shared load per alive session per pass (condition 7's ceiling)" % (name, sid[-4:]))
-            self.assertEqual(p["others"], [], "%s: the decision read and the gate's re-read are the only callers" % name)
+                self.assertLessEqual(p["walk"][sid], 1, "%s %s: the walk takes at most one shared load per alive session per pass (condition 7, the walk's bound)" % (name, sid[-4:]))
+                self.assertLessEqual(p["gate"][sid], 1, "%s %s: the placement gate checks at most once per derived session (condition 7, the gate's bound)" % (name, sid[-4:]))
+            self.assertEqual(sum(p["gate"].values()), p["memo"][1], "%s: the gate's checks equal its derives, none on a served or skipped look" % name)
+            self.assertEqual(p["others"], [], "%s: every shared load is attributable to the walk or to the gate" % name)
         self.assertEqual(self.fb.sent, [], "nudges off: nothing injected")
         served = km._PERF_STATS.snapshot()["memos"]["nudgeWalk"]
         self.assertEqual(served["loads"], km._NUDGE_WALK_STATS["loads"], "served under memos.nudgeWalk.loads")
         self.assertEqual(served["loads"], 5, "the five loads the five passes made, cumulative")
 
     def test_a_look_the_state_gates_end_before_its_store_read_takes_no_load(self):
-        """The floor is a look that runs to its decision read. A look the state gates end earlier (here `working`: the
-        session is still working by the event model) runs, parses, records a file-keyed row and takes no shared load at
-        all; the ceiling holds and the counter stays. Its verdict is journaled as a walk gate, a write into the ledger that
-        moves every session's key once, so the skip comes on the third pass, with no load on the second either."""
+        """The walk's exactly-one is for a look that reaches the store. A look a state gate ends earlier (here `working`: the
+        session is still working by the event model) runs, parses, records a file-keyed row and loads through neither
+        mechanism: the walk never reaches its read and the placement gate is never called; the counter stays. Its verdict
+        is journaled as a walk gate, a write into the ledger that moves every session's key once, so the skip comes on the
+        third pass, with no load on the second either."""
         km._session_working = lambda turns: True
         p1 = self._pass(NOW)
         self.assertEqual((p1["looks"], p1["parses"], p1["skippedParses"]), (2, 2, 0), p1)
-        self.assertEqual((p1["shared"], p1["loads"], p1["writer"]), (0, 0, 0), "the gates ended both looks before the store read: no load")
+        self.assertEqual(p1["walk"], {SID_A: 0, SID_B: 0},
+                         "the walk takes no load on a look a state gate ends before the store read (condition 7, the walk's bound)")
+        self.assertEqual((p1["gate"], p1["memo"]), ({SID_A: 0, SID_B: 0}, (0, 0)),
+                         "and the placement gate, never reached, checks nothing (condition 7, the gate's bound)")
+        self.assertEqual((p1["loads"], p1["writer"], p1["others"]), (0, 0, []))
         for sid in SIDS:
             self.assertEqual(self._row(sid)[-1], "working", "the verdict recorded, file-keyed, for %s" % sid[-4:])
         p2 = self._pass(NOW + 5)
         self.assertEqual((p2["looks"], p2["parses"], p2["skippedParses"]), (2, 2, 0),
                          "the first pass journaled each verdict as a walk gate (_put_walk_gate, a write-on-change into the ledger, the "
                          "tenth keyed file), so the second pass re-evaluates every session once")
-        self.assertEqual((p2["shared"], p2["loads"]), (0, 0), "and takes no load either")
+        self.assertEqual((p2["walk"], p2["gate"], p2["loads"]), ({SID_A: 0, SID_B: 0}, {SID_A: 0, SID_B: 0}, 0), "and loads through neither")
         p3 = self._pass(NOW + 10)
-        self.assertEqual((p3["skippedParses"], p3["shared"], p3["loads"]), (2, 0, 0), "the gate rows stand: skipped, and still no load")
+        self.assertEqual((p3["skippedParses"], p3["walk"], p3["gate"], p3["loads"]), (2, {SID_A: 0, SID_B: 0}, {SID_A: 0, SID_B: 0}, 0),
+                         "the gate rows stand: skipped, and still no load through either")
 
 
 class TheCountersOneSite(unittest.TestCase):
@@ -318,12 +335,12 @@ class TheCountersOneSite(unittest.TestCase):
         after it so the two cannot drift, and the gate around the look reads no store (a skipped look needs no data)."""
         lines = inspect.getsource(km._auto_nudge_session).splitlines()
         at = [i for i, ln in enumerate(lines) if "jd.load_goals_shared_or_fault(" in ln]
-        self.assertEqual(len(at), 1, "one shared load in the walk's look: a second call site is a second load per look (condition 7's ceiling)")
+        self.assertEqual(len(at), 1, "one shared load in the walk's look: a second call site is a second load per look (condition 7, the walk's bound)")
         bump = [i for i, ln in enumerate(lines) if '_NUDGE_WALK_STATS["loads"] += 1' in ln]
         self.assertEqual(len(bump), 1, "the counter is bumped once")
         self.assertEqual(bump[0], at[0] + 1, "on the line after the load")
         gated = inspect.getsource(km._nudge_look_gated)
-        self.assertNotIn("load_goals", gated, "the gate around the look reads no store: a skipped look takes none")
+        self.assertNotIn("load_goals", gated, "the gate around the look reads no store: a skipped look loads through neither mechanism")
         self.assertIn("loads", km._NUDGE_WALK_STATS, "the counter is a key of the served block")
 
 
@@ -332,12 +349,17 @@ class Docs(unittest.TestCase):
         doc = Path(HERE).parent.joinpath("docs", "reference.md").read_text()
         jobs = doc[doc.index("- `jobs`: the jobs thread"):]
         jobs = " ".join(jobs[:jobs.index("\n- `caches`:")].split())   # the paragraph is wrapped: one space between words
-        for words in ("at most one shared goal-store load per alive session per pass", "exactly one on a pass whose look runs",
-                      "zero on a pass whose look is skipped", "`memos.nudgeWalk.loads`", "tests/test_nudge_walk_one_load_per_pass.py"):
-            self.assertIn(words, jobs, "the jobs paragraph states condition 7 and names the counter and this test: %r" % words)
-        walk = doc[doc.index("`nudgeWalk` is the auto-nudge walk's"):]
+        for words in ("two loaders", "the walk takes at most one shared goal-store load per alive session per pass",
+                      "exactly one when its look reaches the store",
+                      "zero when the look is skipped or ends at a state gate before the store read",
+                      "the placement gate's post-derivation currency check is a second load", "not an exception to the walk's bound",
+                      "at most one per derived session and counted apart",
+                      "`memos.nudgeWalk.loads`", "tests/test_nudge_walk_one_load_per_pass.py"):
+            self.assertIn(words, jobs, "the jobs paragraph states condition 7 per mechanism and names the counter and this test: %r" % words)
+        walk = " ".join(doc[doc.index("`nudgeWalk` is the auto-nudge walk's"):].split())   # wrapped: normalise before slicing
         walk = walk[:walk.index("a memo row is the ten files' stat")]
         self.assertIn("`loads`", walk, "memos.nudgeWalk.loads is named in the walk's entry")
+        self.assertIn("a second loader with a bound of its own", walk, "and the entry names the gate's check as the second loader")
         gloss = km._PerfStats.__doc__
         field = gloss[gloss.index("nudgeWalk (the auto-nudge walk's"):]
         field = " ".join(field[:field.index("nudgeGate")].split())   # wrapped too

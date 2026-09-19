@@ -2616,14 +2616,17 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   stage is `jobsPass`, its opening `jobs.prelude`; each job is still its
   `jobs.<job>` stage, and a `jobs.<job>` row in `stages_ms` is this thread's
   own (since 2026-09-18); the pusher's cycle jobs are counted under
-  `pusher.cycleJobsMs`. With the nudge toggle off, the auto-nudge walk this
-  thread runs takes at most one shared goal-store load per alive session per
-  pass: exactly one on a pass whose look runs (a look the state gates end
-  before its store read, a working or awaiting session's, takes none), zero
-  on a pass whose look is skipped (fold ruling A condition 7 as ruled on
-  2026-09-19; `memos.nudgeWalk.loads` counts the loads, and
-  `tests/test_nudge_walk_one_load_per_pass.py` counts them by execution
-  against whether each look ran or skipped).
+  `pusher.cycleJobsMs`. With the nudge toggle off, two loaders read a
+  session's goal store on this thread's auto-nudge walk, and fold ruling A
+  condition 7 (as ruled on 2026-09-19) bounds each on its own: the walk takes
+  at most one shared goal-store load per alive session per pass, exactly one
+  when its look reaches the store and zero when the look is skipped or ends
+  at a state gate before the store read; the placement gate's post-derivation
+  currency check is a second load, a mechanism of its own and not an
+  exception to the walk's bound, at most one per derived session and counted
+  apart (`memos.nudgeWalk.loads` counts the walk's loads, `nudgeGate.derived`
+  the derives, and `tests/test_nudge_walk_one_load_per_pass.py` counts each
+  mechanism by execution against whether the look ran, skipped or derived).
 - `caches`: one block per cache the kernel, the judge and the event model keep,
   each an exact occupancy (a `len()` or a sum of `len()`s under the cache's
   lock; nothing estimated): `jsonl` with `entries`, `file_bytes` and `records`
@@ -3369,12 +3372,14 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   records like any other, under its own mode tag, so with the gear off
   `skippedParses` rises toward `looks` on a quiet board, where until then
   every wake-only look parsed), `wakeOnlyRecorded` (memo rows a wake-only
-  look recorded) and `loads` (the walk's shared goal-store reads, one per
-  look that runs to its decision read and none on a skip: the count fold
-  ruling A condition 7 bounds at one per alive session per pass, since
-  2026-09-19; the placement gate's currency re-read on a derive is the
-  gate's own, `nudgeGate.derived` counts the derives, and it is not counted
-  here); a memo row is the ten files' stat, the look's mode tag
+  look recorded) and `loads` (the walk's shared goal-store loads: one per
+  look that reaches the store, none on a look that is skipped or that a
+  state gate ends before the store read, the walk's bound under fold ruling
+  A condition 7 since 2026-09-19, at most one per alive session per pass;
+  the placement gate's post-derivation currency check is a second loader
+  with a bound of its own, at most one load per derived session, counted
+  apart and not here, `nudgeGate.derived` counting the derives); a memo row
+  is the ten files' stat, the look's mode tag
   (`full`, `wake`, or `wake+reminders` for tracking off with nudges on), the
   earliest flip and the verdict, and a row serves a look of the same mode
   only (a row of another mode counts a miss under
