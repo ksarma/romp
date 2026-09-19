@@ -33972,13 +33972,26 @@ def _awaiting_nest(agents, commands, cmd_owner, path):
             by_agent[aid] = it
     if not by_agent:
         return agents, commands
-    launch_sets = {}   # agentId → the launch tool_use ids in that agent's own transcript (read lazily, once)
+    sc = _subagent_scope()
+    # (transcript, agentId) → the launch tool_use ids in that agent's own transcript, read lazily, once per call; inside a
+    # pusher cycle or a jobs pass the cycle scope's map (2026-09-19), so the up-to-five _session_awaiting calls per session
+    # per cycle share one resolution and fold per agent (each re-folded every agent's file, a stat and a checkpoint realpath
+    # per agent per call). The attribution then sees an agent's file as it stood at the cycle's first fold; a launch appended
+    # mid-cycle nests on the next cycle. A fold that did not read the file (the reader's fail path, or a raise) answers set()
+    # for this call and is not held, so the next call reads again; a file that resolved to nothing (ap None) is a state, held.
+    launch_sets = sc["launches"] if sc is not None else {}
+    pkey = str(path or "")
 
     def launches(aid):
-        if aid not in launch_sets:
+        k = (pkey, aid)
+        if k not in launch_sets:
             ap = _subagent_file(path, aid) if path else None
-            launch_sets[aid] = _agent_launch_ids(ap) if ap else set()
-        return launch_sets[aid]
+            faults = []
+            ids = _agent_launch_ids(ap, faults) if ap else set()
+            if faults:
+                return ids
+            launch_sets[k] = ids
+        return launch_sets[k]
 
     def owner_by_transcript(tuid, exclude=None):
         if not tuid:
@@ -35694,14 +35707,21 @@ def _launch_ids_step(state, o):
     return state
 
 
-def _agent_launch_ids(agent_path):
+def _agent_launch_ids(agent_path, faults=None):
     """The launch tool_use ids in one agent's own file (_launch_ids_step), folded append-incrementally like
     the head's steps (a growing file steps only its new records; an unchanged one costs a stat). The
     transcript half of _awaiting_nest's attribution: a background command whose tool_use id is in THIS
-    file was launched by THIS agent. set() when unreadable."""
+    file was launched by THIS agent. set() when unreadable; `faults`, a list when given, receives the
+    reason (the reader's "fail" path, or the exception's type name) when the answer stands for a read that
+    did not happen, so a caller's memo can decline to hold it (_awaiting_nest's per-cycle map, 2026-09-19)."""
+    def on(kind):
+        if kind == "fail" and faults is not None:
+            faults.append(kind)
     try:
-        return em.fold_records(_AGENT_LAUNCH_IDS_CACHE, str(agent_path), _launch_ids_fresh, _launch_ids_step, ckpt="agentLaunchIds", drop_after="quiescent")
-    except Exception:
+        return em.fold_records(_AGENT_LAUNCH_IDS_CACHE, str(agent_path), _launch_ids_fresh, _launch_ids_step, on=on, ckpt="agentLaunchIds", drop_after="quiescent")
+    except Exception as e:
+        if faults is not None:
+            faults.append(type(e).__name__)
         return set()
 
 
