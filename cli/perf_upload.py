@@ -83,14 +83,12 @@ import json
 import os
 import re
 import socket
-import stat
 import sys
 import threading
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))   # cli/, whether run through the bin/ symlink or loaded by path
 import perf_export as pe  # noqa: E402
@@ -280,7 +278,10 @@ def nesting_depth(node):
 def read_export(path, state):
     """The checked document's bytes, re-serialised by the export's own writer (pe.document_text), once every check
     passes; never the file's raw bytes (the module docstring, WHAT IS SENT IS WHAT WAS CHECKED). The checks: the file
-    exists and is a regular file, it is at most MAX_BYTES, it
+    exists and is a regular file (pp.open_regular: opened O_NONBLOCK and fstat'ed, the one look the verb takes at the
+    path, so a fifo there is refused at once and never opened blocking; a stat followed by a blocking open left a window
+    in which a fifo appearing between the two hung the verb forever, the fourth review round, 2026-09-19), it is at most
+    MAX_BYTES (the size from that fstat; MAX_BYTES + 1 bytes are read as the belt for a file that grew after it), it
     parses as strict JSON (strict_loads: a repeated key is named as the reason, since the file may be one the
     user edited by hand and an editor calls it valid) to an object with the schema line, it nests at most MAX_DEPTH
     levels (nesting_depth), and it passes
@@ -301,22 +302,23 @@ def read_export(path, state):
     about eight levels, is the receiver's and is not enforced here). A RecursionError out of the checks is caught behind
     the bound as a belt, the same one-line refusal naming the error's class, never a traceback; with the bound in front
     no file reaches it."""
-    p = Path(path)
     try:
-        st = p.stat()
+        fh = pp.open_regular(path)
     except FileNotFoundError:
         raise Refusal("refused: %s does not exist; nothing sent" % path, 1)
     except OSError as e:
         raise Refusal("refused: %s cannot be read (%s); nothing sent" % (path, e.__class__.__name__), 1)
-    if not stat.S_ISREG(st.st_mode):
+    if fh is None:
         raise Refusal("refused: %s is not a regular file; nothing sent" % path, 1)
-    if st.st_size > MAX_BYTES:
-        raise Refusal("refused: %s is %d bytes and the receiver takes at most %d (1 MiB); nothing sent" % (path, st.st_size, MAX_BYTES), 1)
     try:
-        data = p.read_bytes()
+        with fh:
+            size = os.fstat(fh.fileno()).st_size
+            if size > MAX_BYTES:
+                raise Refusal("refused: %s is %d bytes and the receiver takes at most %d (1 MiB); nothing sent" % (path, size, MAX_BYTES), 1)
+            data = fh.read(MAX_BYTES + 1)
     except OSError as e:
         raise Refusal("refused: %s cannot be read (%s); nothing sent" % (path, e.__class__.__name__), 1)
-    if len(data) > MAX_BYTES:    # grew between the stat and the read
+    if len(data) > MAX_BYTES:    # grew between the fstat and the read
         raise Refusal("refused: %s is %d bytes and the receiver takes at most %d (1 MiB); nothing sent" % (path, len(data), MAX_BYTES), 1)
     try:
         doc = strict_loads(data)

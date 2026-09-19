@@ -52,6 +52,7 @@ import re
 import shutil
 import socket
 import ssl
+import stat
 import subprocess
 import sys
 import tempfile
@@ -585,6 +586,57 @@ class Cli(unittest.TestCase):
             fh.write(b"{" + b" " * ((1 << 20) - 1))                # exactly 1 MiB: through the size gate, stopped by the parse
         self._refused(_run([big, "--yes", "--receiver"] + base, self.state), 1, "refused: %s is not strict JSON; nothing sent" % big)
         self.assertEqual(self.fake.requests, [])
+
+    def test_a_fifo_at_the_file_path_is_refused_at_once_and_the_file_is_looked_at_once_through_open_regular(self):
+        """read_export decided the FILE's kind with a stat and then read it with a blocking open, so a fifo appearing at the
+        path between the two hung the verb forever with no timeout (correctness-1, the third review round; the code closed
+        the same window for SIZE and not for KIND). pp.open_regular (O_NONBLOCK, fstat, S_ISREG) closes it atomically, as it
+        already did for the setting file. Three pins. A fifo at the path is refused at once as not a regular file, the child
+        hard-killed on a timeout since the defect is a hang. A child whose Path.stat swaps the regular file for a fifo the
+        moment it is asked about that path, the race made deterministic, sends the file and leaves it a regular file: the
+        verb never asks Path.stat about the file now, the open is its one look; before, the swap ran between the stat and
+        the read and the read blocked forever (killed after 8 s: the fails-before). And an AST census that read_export
+        reaches the file through pp.open_regular and never through a stat or read_bytes attribute."""
+        base = ["--yes", "--receiver", self.fake.url]
+        fifo = os.path.join(self.xdg, "export.fifo")
+        os.mkfifo(fifo)
+        try:
+            r = subprocess.run([sys.executable, "-c", CHILD, UPLOAD, fifo] + base, capture_output=True, text=True, timeout=8,
+                               env=_env(self.state), stdin=subprocess.DEVNULL)
+        except subprocess.TimeoutExpired:
+            self.fail("the upload child hung on a fifo at the file path (killed after 8 s)")
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertEqual(r.stderr, "romp perf upload: refused: %s is not a regular file; nothing sent\n" % fifo)
+        self.assertEqual(self.fake.requests, [])
+        swap = ("import os, pathlib, runpy, socket, stat, sys\n"
+                "socket.gethostname = lambda: %r\n"
+                "target, sys.argv = sys.argv[1], sys.argv[2:]\n"
+                "real = pathlib.Path.stat\n"
+                "def swapping(self, *a, **k):\n"
+                "    r = real(self, *a, **k)\n"
+                "    if str(self) == target and stat.S_ISREG(r.st_mode):\n"
+                "        os.unlink(target)\n"
+                "        os.mkfifo(target)\n"
+                "    return r\n"
+                "pathlib.Path.stat = swapping\n"
+                "runpy.run_path(sys.argv[0], run_name='__main__')\n") % HOSTNAME
+        copy = os.path.join(self.xdg, "copy.json")
+        shutil.copyfile(self.file, copy)
+        try:
+            r = subprocess.run([sys.executable, "-c", swap, copy, UPLOAD, copy] + base, capture_output=True, text=True, timeout=8,
+                               env=_env(self.state), stdin=subprocess.DEVNULL)
+        except subprocess.TimeoutExpired:
+            self.fail("the upload child hung: it stat'ed the file, the swap put a fifo there, and the blocking read waited on it (killed after 8 s)")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(len(self.fake.requests), 1)
+        self.assertEqual(self.fake.requests[0][2], self.data)
+        self.assertTrue(os.path.isfile(copy) and not stat.S_ISFIFO(os.stat(copy).st_mode), "Path.stat was never asked about the file, so the swap never ran")
+        with open(os.path.join(ROOT, "cli", "perf_upload.py"), encoding="utf-8") as fh:
+            tree = ast.parse(fh.read())
+        fn = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "read_export")
+        self.assertIn("pp.open_regular", [ast.unparse(n.func) for n in ast.walk(fn) if isinstance(n, ast.Call)], "the FILE road goes through open_regular")
+        self.assertFalse({n.attr for n in ast.walk(fn) if isinstance(n, ast.Attribute)} & {"stat", "read_bytes", "read_text", "open"},
+                         "and never through a stat followed by an open")
 
     def test_the_file_must_be_strict_json_with_the_schema_line(self):
         base = ["--yes", "--receiver", self.fake.url]
