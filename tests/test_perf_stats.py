@@ -4823,9 +4823,13 @@ class Disclosed(unittest.TestCase):
     # too; the refusal tests in tests/test_perf_upload.py (a status other than 201, a redirect, a body outside the shape, a
     # timeout, each refused by its code or class alone) pin it.
     CONDITIONAL_CLAIMS = (
-        ("the `malloc` block's `arena`, `fordblks`, `hblkhd` and `uordblks`, null with no leaves under it where the C library has no mallinfo2",
+        ("the `malloc` block's `arena`, `fordblks`, `hblkhd` and `uordblks`, null with no leaves under it where the C library has no mallinfo2, glibc before 2.33, musl and macOS among them",
          "_check with km._MALLINFO2 patched None: the raw and the public malloc are None and none of the four is a process name "
-         "walked; live, where the handle resolved, the block is a dict and all four are walked",
+         "walked; live, where the handle resolved, the block is a dict and all four are walked. The platform list after the "
+         "condition names where the handle is None, a fact of the C libraries that no single box executes: the patched run "
+         "stands for every one of them, and the list's words are held by this entry (the clause's text in the paragraph, "
+         "exactly once) and not by a run on each platform (a verifier at the consolidation of the neighbours found the list "
+         "classified unconditional, as the grammar's residue, while it is the condition's own content)",
          (("Disclosed._check",
            "reds when the snapshot taken with the mallinfo2 handle None carries a malloc block or any of the four leaves under "
            "process, or when the live snapshot, the handle resolved, carries malloc as anything but a dict of all four"),
@@ -5051,9 +5055,10 @@ class Disclosed(unittest.TestCase):
     # word for word with the grammar as the PR body states it. The last eight words (if, unless, except, otherwise, elsewhere,
     # wherever, whenever, until) have no hit in today's paragraph and are in the grammar since the consolidation of the second
     # closing check: a clause phrased with one of them tomorrow is found, where before it was not (a clause planted with
-    # unless left both tests green, executed). before is not a word of the grammar: its one hit, "glibc before 2.33", is a
-    # platform list no single-box execution holds, so an entry for it would fail; the residue the grammar leaves is stated
-    # in the PR body. Since the reviewer's re-check of the second closing check (2026-09-19) this grammar is the SECOND
+    # unless left both tests green, executed). before is not a word of the grammar: its one hit, "glibc before 2.33", is the
+    # platform list that spells out the malloc clause's condition (where the C library has no mallinfo2), and since the
+    # consolidation of the neighbours it lies inside that entry's words, whose "where" the grammar finds; a single box
+    # executes one platform, so the list is the entry's stated part that no run holds. Since the reviewer's re-check of the second closing check (2026-09-19) this grammar is the SECOND
     # layer: COVERAGE, the table below, classifies every character of the paragraph and takes an unconditional row on the
     # author's reason; the grammar is the mechanical check that no unconditional or names row carries one of these words
     # (the forward direction, restated on the rows) and that every conditional entry carries one (the reverse). A clause
@@ -5090,8 +5095,8 @@ class Disclosed(unittest.TestCase):
         ("unconditional", " (`rss_kb`, `rss_anon_kb`, `hwm_kb`, `cpu_s`, `threads`, `gc_gen2`, `allocated_blocks`, ",
          "leaf names of the process block, held to the live fold both ways by _check's name walk"),
         ("conditional", "the `malloc` block's"),
-        ("unconditional", ", glibc before 2.33, musl and macOS among them, and the fixed string `source`) ",
-         "a platform list no single-box execution holds (the grammar's stated residue: before is not a marker) and the last process leaf, held by the name walk"),
+        ("unconditional", ", and the fixed string `source`) ",
+         "the last process leaf, held by the name walk, and the close of the process list"),
         ("conditional", "plus, on macOS alone"),
         ("unconditional", " (the peak resident size), ", "a gloss on the leaf's meaning, no condition"),
         ("head", "heap"),
