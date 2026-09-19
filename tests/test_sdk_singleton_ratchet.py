@@ -36,8 +36,15 @@ removed under the object it found). The class and module boundaries: a read at t
 after tearDownClass or tearDownModule, and the scope whose setup or teardown made the bad state fails, the error
 landing on the scope's last test with the boundary named. The setup before a test: a singleton found over a gone
 directory that no verdict has named yet was made by something outside every window (import-time code) and is
-reported once per worker, at the first test that meets it, worded as inherited; every later test that inherits
-the same object is quiet. Its allowances are derived from the transition, never from a list of test names:
+reported once per worker, at the first test that meets it, worded as inherited, raised after that test's own teardown
+so its body runs and its own transition is judged beside it; every later test that inherits the same object is quiet.
+At the worker's first test window, where only import-time code has run, the same report covers a real backend over a
+directory that stands but is not jd.STATE. The class and module boundaries yield to the tests' own windows: when the
+changing windows inside the scope run from the value the scope found to the value it ends on, each judged where it
+happened against the scope's own reference root, the boundary says nothing, so a test's accused reset or allowed
+rebuild is never re-attributed to a tearDownClass or tearDownModule that did nothing; a class that drops the object
+it found before a test rebuilds, or moves jd.STATE for a test's build, stays the author. Its allowances are derived
+from the transition, never from a list of test names:
 None before and, after, the kernel's own class (module romp_sdk_backend, qualname SdkBackend; a look-alike is
 refused) over jd.STATE AS THE TEST FOUND IT, that directory present, is a worker's lazy first build under the root
 the test inherited, the kernel's own design; None before and False after is the kernel's own unavailable outcome.
@@ -86,8 +93,9 @@ alphabetically, and each case's `before` is what the previous case left):
     nothing under the named object and pass.
   E, an import-time leak (the module builds over a sandbox after loading the kernel, restores jd.STATE and
     removes the sandbox, before any test runs):
-    a. does nothing and is the first test to meet the state: an ERROR at setup, worded as inherited, with no remedy
-       addressed to it; b. does nothing and passes; c. makes a kept-sandbox leak of its own and fails as its own.
+    a. does nothing and is the first test to meet the state: PASSED, then an ERROR at its teardown worded as
+       inherited, with no remedy addressed to it; b. does nothing and passes; c. makes a kept-sandbox leak of its own
+       and fails as its own.
   K, a class that moves jd.STATE for its tests:
     One: setUpClass moves jd.STATE to a class sandbox; a's lazy build lands over it and passes at its own window
     (it inherited that root); b passes; tearDownClass restores jd.STATE and keeps the sandbox, and the class
@@ -113,27 +121,81 @@ alphabetically, and each case's `before` is what the previous case left):
     and the ratchet still fails it, on the root the test inherited; the judge fixture names the STATE leak in the
     same teardown (two failures on one item render as an exception group in pytest 9), and the outer test reads
     both texts.
+  N, with a follower module (the pair is one nested run; the follower takes the loaded kernel from sys.modules):
+    One.a builds first; Sandboxed moves jd.STATE for its one test and never builds (quiet: the singleton over the run
+    root is unnamed and not jd.STATE, the picture the first-window report names at the worker's first window only);
+    Two.a leaves None (accused) and Two.b makes the allowed rebuild (passes alone); Three.a leaves None as the last
+    test of a class that started on a real backend; Four.a rebuilds and Four.b leaves False; Five.a leaves None in
+    place of False and Five.b rebuilds; Six's setUpClass drops the object it found and Six.a rebuilds (the class is
+    named at its boundary with the rebuild text, the one boundary text in the run); the follower's one test leaves
+    None as the last test of its module. Six accused tests, no boundary accused of what its tests did, no exception
+    group.
+  S6, an import-time build over a sandbox that STANDS (jd.STATE restored): a is the first test to meet it and also
+    leaks on its own; its one teardown failure carries the inherited report (the kept-root wording, both roots named,
+    no remedy) and its own verdict; b is quiet under a's named object.
+  M, class teardowns that install a value: One.a builds first; Two's tearDownClass builds over a kept sandbox (the
+    class boundary names the change from the run root's backend to the sandbox's, sandbox remedy); Three's
+    tearDownClass resets the slot to None (object remedy, no sandbox sentence); Four does nothing under the None and
+    is quiet; Five's tearDownClass builds from None over a sandbox (named); Six does nothing under it and the module
+    end is quiet.
+  P, a class that puts back the object it found and removes that object's directory: One.a leaks over a kept sandbox
+    (named); Two's setUpClass saves and replaces the singleton and moves jd.STATE, Two.a builds over the class root
+    (allowed), and Two's tearDownClass restores both and removes both roots: the class boundary names the put-back
+    with the gone clause; Three does nothing under the gone object and is quiet.
+  G, values on the other roads: a. a class whose __module__ claims romp_sdk_backend under another qualname, installed
+    as the worker's first value over jd.STATE, is refused and rendered romp_sdk_backend.Fake; b. a re-execution that
+    leaves a types.SimpleNamespace is named with the re-execution wording as a value that is not the kernel's build.
+  R1 and R2, a real backend over the reference root whose directory is gone: the first build then rmtree(jd.STATE)
+    (the allowance asks for a directory: the change from None is named with the gone clause and the sandbox remedy),
+    and a re-execution, the lazy build, then rmtree(jd.STATE) (the reload road says jd.STATE is no longer a
+    directory); the judge fixture names the removed root in the same teardown, one exception group each.
 
-Mutations of the fixture run against this module, each landed and reverted (2026-09-19): the same-object gone
-transition deleted (A.f passes silently); the gone check made absolute again (A.h, E.b and D.Two fail as false
-accusations and every error count rises); the inherited report deleted (E.a passes: an import-time leak is never
-reported); the named list dropped from the inherited report (E.b errors too); the class-scoped end judgment
-deleted (D.One.b and K.One.b show no boundary error); the module-scoped end judgment deleted (L.b shows none);
-the boundary comparing its end only to the last read (K.One passes silently); the boundary's restore exemption
-dropped (K.Two errors); os.path.isdir replaced by os.path.exists (D.One's boundary verdict disappears: a file at
-the path exists); the named skip at the boundary dropped (a second report at the class or module end of A, B, C, D, E, K
-and L; where the scope's last case fails on its own, the boundary failure folds into that item's one teardown
-report, so those runs pin it by reading the boundary text, not the count); the old re-execution exemption restored,
-only the gone check surviving a changed marker (B.c and H.a pass silently); the marker ignored, every test on the
-same-marker road (A.c fails falsely on the stale pre-reload object); a None marker before treated as the same-marker
-road (H2.a fails falsely once the reference is the before read) or as an exemption (H.a passes); the changed road
-compared to jd.STATE before the test (B.d fails falsely); the gone clause dropped from the re-execution wording
-(B.b's clause assertion); the class check dropped, or reduced to the qualname (F.a's look-alike passes); the
-reference moved to jd.STATE after the test (J.a passes this fixture); the None-to-False allowance removed (F.c
-errors); any False after admitted (F.f passes); a None after treated as nothing left (A.i and F.d pass); the
-sandbox remedy printed on every road (F.a, F.b, F.d, F.f, F.g and A.i assert it absent); the rebuild road rendered
-as before (A.d's text); the allowance gate opened to any before value (A.d passes); identity replaced by equality of
-state_dir (A.d passes); the root comparison dropped (C.a passes).
+Mutations of the fixture run against this module, each landed and reverted (2026-09-19; the runner compile-checks the
+mutated conftest and counts a NameError in the outer output as a crash, never as a weakening), listed by what the
+fixture READS and the branch each read feeds, with the case that reds under each:
+  the reads (_sdk_read): the marker ignored, every test on the same-marker road (A.c fails falsely on the stale
+    pre-reload object); a None marker before treated as the same-marker road (H2.a fails falsely) or as an exemption
+    (H.a passes); os.path.isdir replaced by os.path.exists (D.One's boundary verdict disappears, A.g); isdir forced
+    True (A.f, A.g, B.a, D, L); the last read never recorded (D and L boundary text); the before read replaced by a
+    null record (A.d, A.e, E.a and more); the after read skipped (every failing case).
+  the same-marker judgment: the same-object gone transition deleted (A.f passes silently); the gone check made
+    absolute again (A.h, E.b and D.Two fail as false accusations and every error count rises); identity replaced by
+    equality of state_dir (A.d passes); the rebuild road rendered as before (A.d's text); a None after treated as
+    nothing left (A.i and F.d pass); any False after admitted (F.f passes); the None-to-False allowance removed (F.c
+    errors).
+  the allowance: its gate opened to any before value (A.d passes); the class check dropped (F.a's look-alike passes),
+    reduced to the qualname (F.a) or to the module (G.a's module-claiming look-alike passes); the root comparison
+    dropped (C.a passes); the reference moved to jd.STATE after the test (J.a passes this fixture); the isdir term
+    dropped (R1: the ratchet's clause disappears and the run stays red on the judge's alone); root and isdir both
+    dropped (B.a, C.a, J.a).
+  the changed-marker road: turned back into an exemption with only the gone check surviving (B.c and H.a pass
+    silently); compared to jd.STATE before the test (B.d fails falsely); the gone clause dropped from its wording
+    (B.b); a value that is not the kernel's build admitted (G.b passes); the build over a gone jd.STATE admitted (R2:
+    the ratchet's clause disappears); the real-elsewhere verdict deleted (B.c, H.a).
+  the remedy pick: one remedy on every road (F.a, F.b, F.d, F.f, F.g and A.i assert it absent); the object road for
+    a real backend over a gone reference (R1 and R2 assert the sandbox remedy).
+  the inherited report: deleted (E.a passes: an import-time leak is never reported); without the named list (E.b
+    errors too); fired only on a named object (E.a); raised at the setup again (E.a and S6.a run no body); the own
+    verdict dropped beside it (S6.a); the inherited object not named (E.b, S6.b); the kept-root clause deleted (S6.a
+    passes silently); its first-window flag ignored (N's Sandboxed gets a false report).
+  the boundary: the class end deleted (D.One.b and K.One.b show no boundary error, M, P); the module end deleted
+    (L.b shows none); compared to its last read only (K.One passes silently); judged without the restore exemption
+    (K.Two errors); the named skip dropped (a second report at the class or module end of A, B, C, D, E, K and L;
+    where the scope's last case fails on its own the boundary failure folds into that item's one teardown report, so
+    those runs pin it by reading the boundary text, not the count); the same-object gone transition deleted (D and
+    L); the put-back-of-a-gone-object branch deleted (P's boundary text disappears); the final start-to-end judgment
+    deleted (M's three boundary verdicts disappear); the object it accused not named (D.Two.a gets an inherited
+    report); the start read replaced by a null record (K.Two and others); the yield to the tests' windows removed
+    (N: boundary text on every accused class, Two.b errors), without its first-window condition (Six's boundary
+    disappears) or without its reference condition (K.One passes silently); the windows never recorded (as the
+    yield removed).
+  the function fixture not naming the object it accused (A.h gets an inherited report, E, D).
+Fifty-three cells red. Four are pinned by no run, each for a stated reason: the unreadable reference root granting
+the allowance (not constructible: the kernel always binds jd); the yield's identity condition dropped (redundant by
+construction: when the end value is the last read's and is not the last window's value, a class teardown inside the
+scope installed it, and that class's own boundary judged it against its start, which only a restore of the value the
+scope found passes, so the module end is looking at its own start value); the windows list not cleared at the module
+end (the read-count filter never selects a stale entry; the clearing bounds memory); and no others.
 """
 import os
 import re
