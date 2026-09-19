@@ -1622,7 +1622,9 @@ class RoutingStatements(unittest.TestCase):
 
     What PLACES counts, since PR 797's closing check asked for the derivation: one entry per text file in the tree
     above whose text matches BLOCKS at least once, however many times it matches, so the count the sweep holds is the
-    size of PLACES, a set of files. `git ls-files -z --cached --others --exclude-standard | xargs -0 grep -I -l -E
+    size of PLACES, a set of files. The block-name regex is a one-directional proxy: it finds the files that NAME a
+    routed block, and a file can state the routing without naming one (this branch's own ledger entry does), so such
+    prose is outside the sweep whatever the file set. `git ls-files -z --cached --others --exclude-standard | xargs -0 grep -I -l -E
     '<the BLOCKS pattern>'` at the repo root approximates it (at 639043a31 it lists the same files plus the bin/romp-kernel
     symlink the scan skips) and is not the scan's rule (GNU grep 3.11; another grep's -I may differ): grep -I drops a
     file when it meets a NUL byte in what it has read before the first match, so a NUL after the scan's 8 KiB probe
@@ -2281,6 +2283,9 @@ class RoutingStatements(unittest.TestCase):
         self.assertTrue(hits, "the class spells the probe in KiB somewhere; a pin over no spelling would pass vacuously")
         self.assertEqual(set(hits), {spelled}, "every KiB spelling in the class is the constant's value")
         self.assertEqual(source.count(str(RoutingStatements.PROBE)), 1, "the literal appears once, at the assignment")
+        self.assertTrue("one-directional proxy" in RoutingStatements.__doc__,          # assertTrue, not assertIn: a failure
+                        "the class docstring says the block-name regex finds the files that NAME a block and no other "
+                        "prose (round 1's fresh-2)")                                       # would otherwise print the whole docstring
 
 
 class ProcessStatsFallback(unittest.TestCase):
