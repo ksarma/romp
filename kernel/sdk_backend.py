@@ -3243,6 +3243,21 @@ def reg_reads_on_thread() -> int:
     return getattr(_REG_READ_TL, "n", 0)
 
 
+def _entry_stat(e, **kw):
+    """The kernel's _entry_stat twin (judge.py and event_model.py carry the same body): a scandir entry's stat, counted
+    on the kernel's open chat signature (its memos.chatSig.stats) through the thread-local the kernel hangs on its
+    os.stat wrapper, read by attribute because this module never imports the kernel (a DirEntry stats in C and reaches
+    no wrapper). list_regs's per-reg stat goes through it: the chat signature's fork component calls fork_children,
+    whose memo misses whenever a reg write moved the sdk/ directory's mtime, and every reg's stat is then one stat
+    inside that signature (2026-09-19 review, regression-1: the count was short by the reg count on every such
+    signature, which on a state root with registry files is most of them). The kernel's source pin derives every
+    scandir entry name in kernel/ from the AST and holds its .stat() to the kernel's helper and its twins."""
+    tl = getattr(os.stat, "_romp_sig_counting", None)
+    if tl is not None and tl.active:
+        tl.stats += 1
+    return e.stat(**kw)
+
+
 def read_reg(state_dir: Path, sid: str) -> dict | None:
     """The reg as parsed, or None when the file is absent, will not read, or holds JSON that is not an
     object (a list, a string, null). A non-object body is the failed read that read_reg_for_rmw's
@@ -5105,7 +5120,7 @@ def list_regs(state_dir: Path) -> list[dict]:
         seen.add(de.path)
         hit = _REG_CACHE.get(de.path)
         try:
-            st = de.stat()
+            st = _entry_stat(de)                       # counted on an open chat signature (the fork component's memo miss)
         except OSError:
             # an exists() corroboration here defeats itself — it stats the same path the same way
             # (review find). A genuinely unlinked reg stops being LISTED by the next scandir, so

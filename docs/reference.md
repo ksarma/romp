@@ -4102,9 +4102,10 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   them: `os.stat` and `os.lstat` in the wrappers the kernel installs around
   them on the `os` and `posix` modules at import (and on pathlib's accessor
   on Python 3.10), which every `os.path`, `pathlib` and `importlib` caller
-  reaches; `DirEntry.stat` in the one helper every scandir entry's stat in
-  `kernel/` goes through, because a `DirEntry` stats in C and reaches no
-  wrapper. Not in the count, and not countable from Python: the fstat
+  reaches; `DirEntry.stat` in `_entry_stat` and its twins in the judge,
+  event-model and SDK-backend modules, which every scandir entry's stat in
+  `kernel/` goes through (a source pin derives the entry names from every
+  scandir there), because a `DirEntry` stats in C and reaches no wrapper. Not in the count, and not countable from Python: the fstat
   inside `open()` (C, part of a read, counted by the read counters and the
   bytes column) and a `DirEntry.is_dir` on a filesystem that reports no
   d_type. A test intercepts `os.stat`, `os.lstat` and `DirEntry.stat`
