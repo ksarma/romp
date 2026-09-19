@@ -1,5 +1,5 @@
 ---
-title: Tests: the routing sweep in tests/test_perf_stats.py reads every text file git tracks or would track and a plant test proves its file set is derived, not listed; PushStages' docstring states the foreign push case as ownership (a thread never registered as an owner) and the openness wording joins the retired table; the sweep's docstring records what its file count counts and the command that reproduces it
+title: Tests: the routing sweep in tests/test_perf_stats.py reads every text file git tracks or would track and a plant test proves its file set is derived, not listed; PushStages' docstring states the foreign push case as ownership (a thread never registered as an owner) and the openness wording joins the retired table; the sweep's docstring records what its file count counts, at a named head, and the grep command that approximates it
 status: candidate
 where: tests/test_perf_stats.py (RoutingStatements, _git_bytes, _scratch_repo, PushStages' docstring, RETIRED_WORDINGS; from git diff --name-only against PR 797's head)
 added: 2026-09-19

@@ -1560,17 +1560,17 @@ class RoutingStatements(unittest.TestCase):
     hooks/ 8, claude/ 4, overrides/ 2, postal/ 2, .githooks/ 1), and inside its eight roots it read only a suffix
     allowlist and pruned assets and dot directories, 68 more (37 under docs/assets, 26 .json, 3 .bash, 1 .csv, 1 .svg);
     none of the 441 named a block, so the pin was complete by luck and would not have caught a statement added there.
-    Measured at 639043a31 in a clean worktree: git lists 3109 paths,
-    14 are symlinks, 41 hold a NUL in their first 8 KiB, none fails to decode, 3054 read as text, 71.8 MB (decimal) of
-    them. The count moves with every file added, so it is only ever quoted with its head; no directory list is kept. An
-    untracked file git does not ignore is read too: a scratch note, a saved diff, an editor backup, a .orig or .rej a
-    merge left, a caption under docs/assets (none of those is ignored here), so a machine holding one reds this pin
-    before CI does; the webview test build's output, vscode-extension/out-tests, is ignored by vscode-extension/.gitignore
-    and never read, and ui/out-tests does not exist. The scan
-    takes a file lock shared and the plant test below takes it exclusive: pytest-xdist can run the tests on different
-    workers at once, and a sibling's scan during the plant would read the plant and red. The lock is one file per
-    checkout, in its git dir, so an xdist worker, a second pytest run, or a run under its own TMPDIR all wait on the
-    same inode (the first version sat in the per-process temp root tests/__init__.py mints and serialised nothing).
+    Measured at 639043a31 in a clean worktree: git lists 3109 paths, 14 are symlinks, 41 hold a NUL in their first 8 KiB,
+    none fails to decode, 3054 read as text, 71.8 MB (decimal) of them. The count moves with every file added, so it is
+    only ever quoted with its head; no directory list is kept. An untracked file git does not ignore is read too: a
+    scratch note, a saved diff, an editor backup, a .orig or .rej a merge left, a caption under docs/assets (none of
+    those is ignored here), so a machine holding one reds this pin before CI does; the webview test build's output,
+    vscode-extension/out-tests, is ignored by vscode-extension/.gitignore and never read, and ui/out-tests does not
+    exist. The scan takes a file lock shared and the plant test below takes it exclusive: pytest-xdist can run the tests
+    on different workers at once, and a sibling's scan during the plant would read the plant and red. The lock is one
+    file per checkout, in its git dir, so an xdist worker, a second pytest run, or a run under its own TMPDIR all wait
+    on the same inode (the first version sat in the per-process temp root tests/__init__.py mints and serialised
+    nothing).
 
     What PLACES counts, since PR 797's closing check asked for the derivation: one entry per text file in the tree
     above whose text matches BLOCKS at least once, however many times it matches, so the count the sweep holds is the
@@ -1767,9 +1767,11 @@ class RoutingStatements(unittest.TestCase):
 
     def test_a_binary_file_is_rejected_on_its_first_bytes_not_read_whole(self):
         """A 64 MiB sparse file whose first bytes hold a NUL and a block name after it (a probe-less scan would list it)
-        costs the scan its header and nothing more: the peak allocation during the scan stays under 16 x PROBE. Measured
-        with tracemalloc per call, not ru_maxrss: that is a process high-water mark an earlier test can already have
-        raised past 64 MiB, which would let a scan that reads the blob whole pass."""
+        costs the scan its header and nothing more: the peak allocation during the scan stays under 128 x PROBE, 1 MiB
+        (measured 60756 bytes on 3.12 and 315580 on the free-threaded 3.14t, whose allocator books more per call, against
+        67 million when the blob is read whole). Measured with tracemalloc per call, not ru_maxrss: that is a process
+        high-water mark an earlier test can already have raised past 64 MiB, which would let a scan that reads the blob
+        whole pass."""
         d = _scratch_repo(self)
         (d / "control.md").write_text("a control note naming stagesForeign\n")    # so the absence below cannot pass vacuously
         with open(d / "blob.bin", "wb") as fh:
@@ -1790,7 +1792,7 @@ class RoutingStatements(unittest.TestCase):
         self.assertIn("control.md", sorted(found))
         self.assertNotIn("blob.bin", sorted(found), "a NUL in the first bytes rejects the file")
         #                            the paths, not the dict: a failure would otherwise print the decoded blob, 64 MiB of it
-        self.assertLess(peak, 16 * self.PROBE, "the scan read the blob past its first bytes: peak %d" % peak)
+        self.assertLess(peak, 128 * self.PROBE, "the scan read the blob past its first bytes: peak %d" % peak)
 
     def test_a_path_whose_name_is_not_utf8_is_read_and_named(self):
         """One listed path whose NAME is not valid UTF-8 (git ls-files -z emits the raw bytes) used to error every test
