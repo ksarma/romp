@@ -1618,5 +1618,88 @@ class FormSpace(unittest.TestCase):
         self.assertTrue(any("in f_urlopen:" in o for o in orphans))
 
 
+# ---------------------------------------------------------------------------------------------------
+# The reference's list held equal to the allowlist, and the guide pointing here.
+# ---------------------------------------------------------------------------------------------------
+
+ITEMS_HEAD = "and on an entry with no site: "
+ITEMS_TAIL = ". The agents' and the judge pipeline's model calls go through `claude`"
+
+
+def reference_items(flat):
+    """The items of the reference's list, in order: the span between the fixed head and tail split on `; `, the
+    last item's leading `and ` removed. None when the head or the tail is absent."""
+    if ITEMS_HEAD not in flat or ITEMS_TAIL not in flat:
+        return None
+    start = flat.index(ITEMS_HEAD) + len(ITEMS_HEAD)
+    end = flat.index(ITEMS_TAIL, start)
+    items = flat[start:end].split("; ")
+    if items and items[-1].startswith("and "):
+        items[-1] = items[-1][4:]
+    return items
+
+
+def listed_docs():
+    """The allowlist's docs in first-appearance order, the upload's head sentence excluded."""
+    out = []
+    for e in ALLOWLIST:
+        if e.doc != DOC_UPLOAD and e.doc not in out:
+            out.append(e.doc)
+    return out
+
+
+class Docs(unittest.TestCase):
+    """docs/reference.md's "Requests Romp makes on its own" equals the allowlist, item for item and in order, and
+    docs/guide.md points at this module and at that subsection. By boolean, naming the item, never the page."""
+
+    @staticmethod
+    def _flat(*parts):
+        with open(os.path.join(ROOT, *parts), encoding="utf-8") as fh:
+            return " ".join(fh.read().split())
+
+    def test_the_reference_list_is_the_allowlist_in_order(self):
+        flat = self._flat("docs", "reference.md")
+        items = reference_items(flat)
+        self.assertIsNotNone(items, "the reference has no list between %r and %r" % (ITEMS_HEAD, ITEMS_TAIL))
+        docs = listed_docs()
+        missing_entries = [i for i in items if i not in docs]
+        missing_items = [d for d in docs if d not in items]
+        self.assertFalse(missing_entries, "reference items no allowlist entry carries (a reworded or added item):\n"
+                         + "\n".join(missing_entries))
+        self.assertFalse(missing_items, "allowlist docs the reference does not list (add each as an item):\n"
+                         + "\n".join(missing_items))
+        self.assertEqual(items, docs, "the reference lists the same items in another order than the allowlist")
+        for d in docs:
+            self.assertEqual(flat.count(d), 1, "the item must occur exactly once in the reference: " + d)
+        self.assertEqual(flat.count(DOC_UPLOAD), 1, "the subsection's head sentence names the upload")
+
+    def test_the_reference_marks_the_list_derived_by_this_module_and_names_the_shell_layers_finds(self):
+        flat = self._flat("docs", "reference.md")
+        section = flat[flat.index("### Requests Romp makes on its own"):flat.index("### The chat wire's two protocols")]
+        self.assertIn("tests/test_outbound_requests_census.py", section)
+        self.assertIn("derived", section)
+        for e in SHELL_ALLOWLIST:
+            self.assertEqual(section.count(e.doc), 1, "the shell layer's find is not in the subsection once: " + e.doc)
+        # the sentence this census contradicts: bin/'s scripts make more than one non-local fetch (pip in both
+        # installers, gh in watch-pr), so a claim of one cannot stand beside the derived list
+        self.assertFalse("the one non-local fetch the census allows in a shell script" in section,
+                         "the subsection claims one non-local fetch in the shell scripts; the shell layer finds "
+                         "%d" % len(SHELL_ALLOWLIST))
+        # the route probe: a connect that sends nothing is disclosed beside the loopback sentence
+        self.assertIn(ROUTE_PROBES[0][0].split("/")[-1], "kernel.py")
+
+    def test_the_guide_points_at_this_module_and_the_reference_subsection(self):
+        flat = self._flat("docs", "guide.md")
+        self.assertIn("`tests/test_outbound_requests_census.py`", flat)
+        self.assertIn("reference.md#requests-romp-makes-on-its-own", flat)
+        self.assertIn("Other parts of Romp make requests of their own", flat)
+
+    def test_reference_items_reads_the_span_the_way_the_reference_spells_it(self):
+        flat = ("... and on an entry with no site: alpha one; beta two; and gamma three. The agents' and the judge "
+                "pipeline's model calls go through `claude`, not ...")
+        self.assertEqual(reference_items(flat), ["alpha one", "beta two", "gamma three"])
+        self.assertIsNone(reference_items("no list here"))
+
+
 if __name__ == "__main__":
     unittest.main()
