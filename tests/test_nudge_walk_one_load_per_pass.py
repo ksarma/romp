@@ -455,7 +455,12 @@ class _WalkHarness(unittest.TestCase):
         recorded call of theirs names; `sweep` is keyed on every sid seen, since its constituency includes unwalked sids. So
         every recorded call sits inside one bound, and a read by the look or by the gate of a session other than the one it
         is looking at is named by function, file, line and sid by its own assertion (the sweep's read of an unwalked sid is
-        legitimate and is held to its bound per sid instead). The recorders stand on the judge's two doors,
+        legitimate and is held to its bound per sid instead). With no owned record (`owned_records` empty, as in the first
+        class) that bound holds the sweep to zero on every pass, which is why those cases assert nothing about it. The
+        walk's per-sid ceiling, the gate's per-sid ceiling, the gate's general bound (checks never exceed derives) and its
+        fixture equality (checks equal derives, because the harness's parsed_session records every parse) are asserted
+        here too, on every pass, ahead of the cases' exact counts: a case pins each pass's dicts exactly, so a ceiling
+        placed after those pins could never be the line that fails. The recorders stand on the judge's two doors,
         `jd.load_goals_shared` and `jd.load_goals`, and attribute through its boundary frames by code identity, so a shared
         load from any other function the fixture executes during the pass fails here, named by function, file and line (the
         helpers the fixture replaces, REPLACED_KM, REPLACED_JD and Sessions.backend_for, are the source census's in
@@ -498,6 +503,22 @@ class _WalkHarness(unittest.TestCase):
         foreign = ["%s (%s:%d, sid ..%s)" % (c, f, ln, s[-4:]) for s, c, f, ln in self.calls if c in WALK + GATE and s not in SIDS]
         self.assertEqual(foreign, [], "the look and the placement gate read only the session they are looking at: a shared load by "
                                       "either for another session, by function, file, line and sid: %s" % "; ".join(foreign))
+        # the ceilings and the gate's equality, here ahead of the cases' exact per-pass counts: a case pins each pass's dicts and
+        # memo exactly, so a ceiling placed after those pins could never be the line that fails (review round 2, regression-1: the
+        # three ceilings sat after the first case's five passes and no state reached them red), and the equality placed there
+        # could fail only through a plant conditioned on the pass history; here each fires on the first pass that violates it
+        for sid, n in sorted(d["walk"].items()):
+            self.assertLessEqual(n, 1, "pass at %d, sid ..%s: the walk takes at most one shared load per alive session per pass "
+                                       "(condition 7, the walk's bound)" % (now, sid[-4:]))
+        for sid, n in sorted(d["gate"].items()):
+            self.assertLessEqual(n, 1, "pass at %d, sid ..%s: the placement gate checks at most once per derived session (condition 7, "
+                                       "the gate's bound)" % (now, sid[-4:]))
+        self.assertLessEqual(sum(d["gate"].values()), d["memo"][1],
+                             "pass at %d: the gate's checks never exceed its derives (condition 7, the gate's bound; a derive without a "
+                             "cached parse checks nothing)" % now)
+        self.assertEqual(sum(d["gate"].values()), d["memo"][1],
+                         "pass at %d: equal here because the harness's parsed_session records every parse in jd._PARSE_CACHE, so every "
+                         "derive holds its parse and checks once; the gate's rule is the bound above" % now)
         d["shared"] = {k: s1[k] - s0[k] for k in SHARED_CALL_KEYS if s1[k] != s0[k]}
         records = ["%s (%s:%d, sid ..%s)" % (c, f, ln, s[-4:]) for s, c, f, ln in self.calls]
         self.assertEqual(sum(d["shared"].values()), sum(d["walk"].values()) + sum(d["gate"].values()) + sum(d["sweep"].values()),
@@ -581,17 +602,8 @@ class OneSharedLoadPerAliveSessionPerPass(_WalkHarness):
                          "the placement gate, per session: the moved parse derives once and checks once, the skipped session not at all "
                          "(condition 7, the gate's bound: at most one check per derive; equal here because the harness caches every parse)")
         self.assertEqual((p5["loads"], p5["writer"], p5["shared"]), (1, 0, {"hit": 2}), "the walk's one and the gate's one, both hits")
-        for name, p in (("p1", p1), ("p2", p2), ("p3", p3), ("p4", p4), ("p5", p5)):
-            for sid in SIDS:
-                self.assertLessEqual(p["walk"][sid], 1, "%s %s: the walk takes at most one shared load per alive session per pass (condition 7, the walk's bound)" % (name, sid[-4:]))
-                self.assertLessEqual(p["gate"][sid], 1, "%s %s: the placement gate checks at most once per derived session (condition 7, the gate's bound)" % (name, sid[-4:]))
-            self.assertLessEqual(sum(p["gate"].values()), p["memo"][1],
-                                 "%s: the gate's checks never exceed its derives (condition 7, the gate's bound; a derive without a cached parse "
-                                 "checks nothing)" % name)
-            self.assertEqual(sum(p["gate"].values()), p["memo"][1],
-                             "%s: equal here because the harness's parsed_session records every parse in jd._PARSE_CACHE, so every derive "
-                             "holds its parse and checks once; the gate's rule is the bound above" % name)
-            self.assertEqual(p["sweep"], {}, "%s: the fixture ledger holds no wake record, so the wake sweep reads no store" % name)
+        # the walk's and the gate's ceilings, the gate's general bound and its equality are _pass's, on every pass (see there); with
+        # no owned record the sweep's bound in _pass holds the sweep to zero on every pass, so this case asserts nothing about it
         self.assertEqual(self.fb.sent, [], "nudges off: nothing injected")
         served = km._PERF_STATS.snapshot()["memos"]["nudgeWalk"]
         self.assertEqual(served["loads"], km._NUDGE_WALK_STATS["loads"], "served under memos.nudgeWalk.loads")
@@ -624,8 +636,7 @@ class OneSharedLoadPerAliveSessionPerPass(_WalkHarness):
         p3 = self._pass(NOW + 10)
         self.assertEqual((p3["skippedParses"], p3["walk"], p3["gate"], p3["loads"]), (2, {SID_A: 0, SID_B: 0}, {SID_A: 0, SID_B: 0}, 0),
                          "the gate rows stand: skipped, and still no load through either")
-        for name, p in (("p1", p1), ("p2", p2), ("p3", p3)):
-            self.assertEqual(p["sweep"], {}, "%s: the fixture ledger holds no wake record, so the wake sweep reads no store" % name)
+        # no owned record, so the sweep's bound in _pass holds the sweep to zero on every pass: nothing to assert about it here
 
 
 class TheSweepIsItsOwnBoundedReader(_WalkHarness):
