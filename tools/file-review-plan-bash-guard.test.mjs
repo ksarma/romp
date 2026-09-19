@@ -83,7 +83,7 @@ test('decision 47 states what passes, and the hook agrees: reads, opaque command
   // since 2026-09-18 a write target the hook cannot read (a variable, a substitution, a glob or brace list it cannot
   // expand) is refused while a project that tracks anything is in play, and the decision says so
   assert.ok(d47.includes('a write whose target the hook cannot read') && d47.includes('is refused while a project that tracks anything is in play'));
-  assert.ok(hook.includes('function trackingRootAt(dir, memo)') && hook.includes('function inPlayFor(u, cwd, memo)') && hook.includes('const cannotRead = (w, how) => {'));
+  assert.ok(hook.includes('function trackingRootAt(dir, memo)') && hook.includes('function inPlayFor(u, cwd, memo)') && hook.includes('const cannotRead = (w, how, why = null) => {'));
   assert.ok(hook.includes('which is not a literal path'), 'the refusal says the target is not literal');
   // the round-1 review (2026-09-18) bounded the rule in four places and named two residuals, and the decision
   // records each against the hook's own function
@@ -95,23 +95,40 @@ test('decision 47 states what passes, and the hook agrees: reads, opaque command
   // environment clause says which value can reach a refusal
   assert.ok(d47.includes('or when it holds more than 2000 entries, past which the hook does not scan it and takes it as in play (`LANDING_SCAN_CAP`, a deliberate false refusal'));
   assert.ok(hook.includes('const LANDING_SCAN_CAP = 2000;') && hook.includes('if (names.length > LANDING_SCAN_CAP) return true;'), 'the cap the decision names');
-  assert.ok(d47.includes('a target whose only expansions the shell running it will not let it assign (`$$` and `${$}` in every shell; `$RANDOM` and `$SECONDS`, their brace forms too, read-only integers in bash and in zsh'));
-  assert.ok(d47.includes('not inside a script the command hands to `sh` or `dash`, where they are ordinary variables; `$BASHPID`, which round 1 listed as numeric by construction, is unset and assignable in zsh and is out of the set) and whose text is an absolute path outside every project in play is allowed'));
-  assert.ok(hook.includes("const NUMERIC_EXPANSIONS = new Set(['RANDOM', 'SECONDS']);") && hook.includes('const POSIX_SH_NUMERIC = new Set();') && hook.includes("const KEEPS_NUMERIC_SPECIALS = new Set(['bash', 'zsh']);"), 'the per-shell sets');
-  assert.ok(!/NUMERIC_EXPANSIONS = new Set\(\[[^\]]*BASHPID/.test(hook), 'BASHPID is in no numeric set');
-  assert.ok(hook.includes('recurse(sh.script.text, name)') && hook.includes('recurse(body, name)') && hook.includes('lex(command, numericSetFor(shell))'), 'a script handed to a shell is lexed with that shell\'s set');
-  assert.ok(d47.includes('the project the target\'s own literal prefix sits in being asked first') && hook.includes('const { cut, dir } = literalDirOf(norm);') && hook.includes('const own = trackingRootAt(dir, memo);') && hook.includes('if (own && landingInPlay(own, memo)) {'));   // the own step keeps the cut since round 2's addendum (unknownFolderOf reads it)
-  assert.ok(d47.includes('a `..` that folds every expansion away still resolving the literal directory part') && hook.includes("const cut = dollar < 0 ? norm.lastIndexOf('/') : norm.lastIndexOf('/', dollar);"));
-  // review round 2's addendum (2026-09-18): the numeric folder in the first segment under a tracked root is the
-  // second deliberate false refusal the decision states, with the ruling's reason, and the hook routes that case
-  // to a refusal that names the unknown folder rather than the project and asks for it spelled out
-  assert.ok(d47.includes('when the expansion names a folder in the first segment under that root, `<root>/x-$$/y.md`, the literal prefix is the root itself'));
-  assert.ok(d47.includes('a deliberate false refusal ruled correct in round 2\'s addendum, 2026-09-18: the folder\'s name does not exist at check time and is not derivable from the text'));
-  assert.ok(d47.includes('naming the unknown folder rather than the project and asking for the folder spelled out'));
-  assert.ok(d47.includes('`<root>/sub/x-$$/y.md` resolves its literal prefix to `<root>/sub` and an untracked `sub` falls through to the cwd rule'), 'the class is the first segment only');
-  assert.ok(hook.includes('function unknownFolderOf(hit, norm, cut)') && hook.includes('return folder == null ? own : { ...own, unknownFolder: folder };') && hook.includes('if (hit.unknownFolder) {'), 'the hook routes the case');
-  assert.ok(hook.includes('I cannot tell which folder the write lands in') && hook.includes('Spell the folder out'), 'to a refusal that names the folder and asks for it spelled out');
-  assert.ok(hook.includes('function numericOutside(text, root)') && hook.includes('function literalDirOf(norm)'));
+  // review round 3 (2026-09-19): the numeric set is the process id alone, in every shell, and the decision says why;
+  // the per-shell table is gone from the hook with the names it trusted
+  assert.ok(d47.includes('a target whose only expansions are `$$` and `${$}`, the shell\'s process id, and whose text is an absolute path outside every project in play is allowed'));
+  assert.ok(d47.includes('The numeric set is those two spellings and nothing else, in every shell: every other candidate can be unset or shadowed by the command and then hold a path'));
+  assert.ok(!d47.includes('read-only integers in bash and in zsh'), 'the round-2 premise is gone from the decision');
+  assert.ok(hook.includes("const NUMERIC_EXPANSIONS = ['$$', '${$}'];"), 'the numeric set is the two spellings of the process id');
+  assert.ok(!/NUMERIC_EXPANSIONS = \[[^\]]*(RANDOM|SECONDS|BASHPID)/.test(hook) && !/['"](RANDOM|SECONDS|BASHPID)['"]/.test(hook), 'no other name is in the set, and no code names one');
+  assert.ok(!hook.includes('KEEPS_NUMERIC_SPECIALS') && !hook.includes('POSIX_SH_NUMERIC') && !hook.includes('numericSetFor'), 'the per-shell table is gone');
+  assert.ok(hook.includes('recurse(sh.script.text, name)') && hook.includes('recurse(body, name)') && hook.includes('lex(command, shell)') && hook.includes("const ANSI_C_SHELLS = new Set(['bash', 'zsh']);"), 'a script handed to a shell is lexed as that shell reads `$\'...\'`');
+  assert.ok(d47.includes('`$\'...\'` is ANSI-C quoting in bash and zsh, a literal word') && hook.includes('function ansiC(body)') && hook.includes("if (e.kind === 'ansi') {"), 'ANSI-C quoting');
+  // the target's own project, asked first for every target the hook can place (round 2 for a numeric one, round 3 for
+  // every unreadable word and for a relative spelling), and the fold judged as the kernel opens the path
+  assert.ok(d47.includes('the project the target\'s own literal directory part sits in is asked first, from any cwd, for every target the hook cannot read that it can place, absolute or relative to a write-time directory it knows'));
+  assert.ok(hook.includes('function ownProjectFor(u, memo)') && hook.includes('const own = trackingRootAt(v.dir, memo);') && hook.includes('return own && landingInPlay(own, memo) ? own : null;'));
+  assert.ok(d47.includes('a fold that leaves no expansion handed to the literal rule') && hook.includes('function foldSegments(segs)') && hook.includes('if (v.literal != null && isGuardedPath(v.literal, memo.closures)) return { literal: v.literal };'));
+  assert.ok(d47.includes('a `..` after a directory that exists climbs from that directory\'s real path, as the kernel does') && hook.includes('function resolveLiteral(text, dir)'));
+  assert.ok(d47.includes('each entry of that directory that exists now and whose name the process id could spell') && hook.includes('function spelledCandidates(segs, idx, dir, memo, budget)') && hook.includes('function couldSpell(seg, name)'));
+  // review round 2's addendum (2026-09-18) and round 3: the numeric folder name is a deliberate false refusal wherever
+  // the landing gate on the literal directory part holds, not in the first segment only, and the refusal names the
+  // unknown folder with a remedy the person can take
+  assert.ok(d47.includes('the landing gate on that literal directory part is folder-granular, so a numeric name in any folder where a tracked file could land is refused from any cwd while its literal spelling may pass'));
+  assert.ok(d47.includes('a deliberate false refusal ruled correct in round 2\'s addendum (2026-09-18) for the first segment (the folder\'s name does not exist at check time and is not derivable from the text'));
+  assert.ok(d47.includes('names the unknown folder when the expansion names one, at any depth, and offers a literal folder name or a write outside the project, never the name the shell would give it'));
+  assert.ok(!d47.includes('only the first segment behaves so') && !d47.includes('the class is the first segment only'), 'the first-segment boundary is gone');
+  assert.ok(hook.includes('unknownFolder: v.folder') && hook.includes('unknownFolder: view.folder') && hook.includes('if (hit.unknownFolder) {'), 'the hook routes the case at any depth');
+  assert.ok(hook.includes('I cannot tell which folder the write lands in') && hook.includes('Spell the folder out with a literal name of your own, or write outside that project') && !hook.includes('the name the shell would give it'), 'a refusal that names the folder and a remedy the person can take');
+  assert.ok(hook.includes('function numericOutside(view, root)') && hook.includes('function numericView(u, memo)'));
+  // round 3's other classes: a literal relative target after a cd the hook cannot follow, a landing folder no project
+  // claims, the option clusters bash takes a word for, and the recursion caps
+  assert.ok(d47.includes('a literal relative target after a `cd` the hook cannot follow') && hook.includes("{ kind: 'unknownDir', text: unknownWhy }") && hook.includes('function enterable(dir)'));
+  assert.ok(d47.includes('a landing folder no project claims counts when an entry of it is or leads to a tracked file') && hook.includes('function guardedEntryIn(dir, memo)'));
+  assert.ok(d47.includes('an entry named by the process id in a folder outside every project that holds more than 2000 entries, which is not listed') && hook.includes('if (names.length > LANDING_SCAN_CAP) return out;'), 'the open scan is stated');
+  assert.ok(d47.includes('`bash -O extglob -c') && hook.includes("(shell === 'bash' && (t === '-O' || t === '+O'))"));
+  assert.ok(d47.includes('nested past 64 substitutions or brace lists') && hook.includes('const RECURSION_CAP = 64;') && hook.includes('const BRACE_DEPTH_CAP = 64;'));
   assert.ok(d47.includes('a `$(date)` in a log\'s name among them, a cost stated to the user rather than solved'), 'the residual false refusal is stated, not claimed solved');
   assert.ok(d47.includes('the hook reads no variable named in the command to resolve the word'));
   assert.ok(d47.includes('TRACKCHANGES_ROOT, which stands in for the root search only for a directory under it') && hook.includes('const fromEnv = !!env && !outside(d, env);'));
@@ -125,11 +142,11 @@ test('decision 47 states what passes, and the hook agrees: reads, opaque command
   assert.ok(d47.includes('or a glob that matches nothing or names more than the hook will list) is refused'));
   assert.ok(d47.includes('a glob is otherwise expanded against the filesystem as the shell expands it (a redirection onto several matches or brace alternatives names each, as zsh\'s multios writes them; bash writes none)'));
   assert.ok(hook.includes('function expandGlob(w, cwd)') && hook.includes('const GLOB_MATCH_CAP = ') && hook.includes('const GLOB_READ_CAP = '));
-  assert.ok(d47.includes('a brace list is expanded before the operands are read') && hook.includes('function braceExpand(text, marks)'));
+  assert.ok(d47.includes('a brace list is expanded before the operands are read') && hook.includes('function braceExpand(text, marks, depth = 0)'));
   assert.ok(d47.includes('a here-string is scanned like a heredoc') && hook.includes("expect = { kind: 'herestring' }"));
   assert.ok(d47.includes('a process substitution\'s command is read like a `$(...)`') && hook.includes("if ((c === '>' || c === '<') && src[i + 1] === '(') {"));
   assert.ok(d47.includes('`cd` moving the working directory for what follows, inside `( ... )` only up to the `)`'));
-  assert.ok(hook.includes("frames.push({ kind: 'subshell', dir, unknownDir });"));
+  assert.ok(hook.includes("frames.push({ kind: 'subshell', dir, unknownDir, unknownWhy });"));
   assert.ok(hook.includes("case 'eval': case 'xargs': sawOpaqueCommand = true; break;"));
   assert.ok(d47.includes('a tracked image or PDF passes by name'));
   assert.ok(hook.includes('if (isNonTextPath(file)) return false;'));

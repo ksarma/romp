@@ -143,9 +143,13 @@ the clone updates it:
   tracks files it also refuses a shell write whose target it cannot read (a variable, a
   substitution, a glob or brace list it cannot expand) and asks for the path spelled out; a copy
   whose name it cannot read into a folder where a tracked file could land is refused wherever the
-  command is run from. A temp file named only by the shell's process id or a random number, at an
-  absolute path outside every project that tracks files, still runs; the same name written as a
-  relative path is refused. If you had installed track-changents yourself, the installer re-points
+  command is run from, and so is a relative path after a `cd` the guard cannot follow (to a name
+  the shell fills in, inside an `if` or a loop, or to a folder that does not exist yet), with the
+  reason. A temp file named only by the shell's process id (`$$`), at an absolute path where no
+  tracked file could land (outside the project you are working in, and not in a folder of another
+  project where a tracked file could land), still runs; a name built from `$RANDOM` or `$SECONDS`
+  is refused, since a script can reassign those, and the same `$$` name written as a relative path,
+  from a session in such a project, is refused. If you had installed track-changents yourself, the installer re-points
   those links at the bundled copy, which carries fixes the checkout lacks, and says so.
 
 ### Manual and custom installs

@@ -12,8 +12,10 @@
 // before the operands are read; a wrapped `open(` call and a here-string script are scanned; a
 // process substitution is a word, not a segment break; a glob operand is expanded against the
 // filesystem; a directory source is walked to every file; a symlink to a tracked file is the
-// tracked file; and store-io's isTrackedFile is pinned to the steps the verdict copies. Synthetic:
-// a project under os.tmpdir(), invented paths, no session data.
+// tracked file; and store-io's isTrackedFile is pinned to the steps the verdict copies. Review round 3
+// (2026-09-19) added: a literal relative target after a cd inside a body is refused in a tracked project
+// with the reason, not dropped; bash's -O and an o or O inside an option cluster take the next word.
+// Synthetic: a project under os.tmpdir(), invented paths, no session data.
 //
 // Run: node --test tools/romp-track-bash-guard-shapes.test.mjs
 import { test, beforeEach, afterEach } from 'node:test';
@@ -91,16 +93,38 @@ test('a write inside the subshell, a brace group and a nested subshell resolve a
 });
 
 test('a cd inside an if, loop or case body leaves the cwd unknown once the body closes: the body may not run', () => {
-  // before the fix `if false; then cd docs; fi; cp base/report.md report.md` was refused as a write to docs/report.md
-  for (const cmd of [
+  // Before the review's first fix `if false; then cd docs; fi; cp base/report.md report.md` was refused as a write to
+  // docs/report.md; that fix left the cwd unknown and DROPPED the literal relative target, so the same command from a
+  // tracked cwd passed, and a body cd turned a refused write on a tracked file into an allowed one (review round 3,
+  // 2026-09-19, by execution in real bash: the body did not run and the copy ran in the project). A literal relative
+  // target whose directory is not known is now refused while the cwd's project is in play, with the reason (the cd
+  // sits in a body that may not run) and a remedy (an absolute target, or a cd to a literal directory first); from a
+  // cwd in no project it passes as every unreadable target does, and an absolute target after the same body is judged
+  // as ever. Both directions, so the rule cannot be met by refusing everything after a body.
+  const UNKNOWN_DIR = /the directory it is relative to is not known/;
+  const bodies = [
     'if false; then cd docs; fi; cp base/report.md report.md',
     'while false; do cd docs; done; echo x > report.md',
     'for d in docs; do cd "$d"; done; echo x > report.md',
     'case $x in a) cd docs;; esac; echo x > report.md',
-  ]) {
-    assert.deepEqual(targets(cmd), [], `unresolvable after the body: ${cmd}`);
-    assert.equal(evaluate(payload(cmd)), null, `allowed: ${cmd}`);
+  ];
+  for (const cmd of bodies) {
+    assert.deepEqual(targets(cmd), [], `no literal target after the body: ${cmd}`);
+    const reason = evaluate(payload(cmd));
+    // the reason is the first thing that made the directory unknown: the body for a literal cd, the word for `cd "$d"`
+    const why = cmd.includes('"$d"') ? 'an earlier `cd` names "$d", a directory the shell fills in' : 'sits in an if, loop or case body that may not run';
+    assert.ok(reason && UNKNOWN_DIR.test(reason) && reason.includes(why), `refused in the tracked project, saying why: ${cmd}: ${reason}`);
+    assert.ok(reason.includes('Spell the target as an absolute path, or cd to a literal directory that exists first'), 'and what to do');
+    assert.ok(!/is not a literal path/.test(reason), 'not the non-literal text: the word is literal, the directory is what is not known');
+    assert.ok(reason.includes(`and ${proj} tracks files`), 'naming the project in play');
   }
+  const plain = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'romp-bash-guard-shapes-plain-')));
+  try {
+    fs.mkdirSync(path.join(plain, 'docs'));
+    for (const cmd of bodies) assert.equal(evaluate(payload(cmd, plain)), null, `from a cwd in no project: ${cmd}`);
+  } finally { fs.rmSync(plain, { recursive: true, force: true }); }
+  assert.equal(evaluate(payload(`if false; then cd docs; fi; cp base/report.md ${rootFile}`)), null, 'an absolute untracked target after the body is judged as ever');
+  assert.match(evaluate(payload(`if false; then cd docs; fi; cp base/report.md ${report}`)), /^Track-changes is ON for /, 'and an absolute tracked one is refused by name');
   assert.deepEqual(targets('if true; then cd docs; cp ../base/report.md report.md; fi'), [report], 'inside the body the cd holds');
   assert.deepEqual(targets('if true; then echo x > docs/report.md; fi; cp base/report.md docs/report.md'), [report, report], 'a body with no cd leaves the cwd as it was (evaluate dedupes)');
   assert.deepEqual(targets('for f in a b; do cp "$f" docs/report.md; done; echo x > docs/report.md'), [report, report], 'the loop body and the echo each name it');
@@ -167,6 +191,27 @@ test('a -c in an option cluster is a -c: bash -lc, sh -ec, bash -xc; a variable 
   assert.ok(extractWriteTargets('bash -lc "$SCRIPT"', proj).opaque, 'a script the hook cannot read is marked so');
   assert.equal(evaluate(payload('bash -lc "$SCRIPT"')), null);
   assert.deepEqual(targets('bash -x run.sh'), [], 'no -c, a script file');
+  // Review round 3 (2026-09-19): bash reads `-O <shopt>` and `+O <shopt>`, and an O anywhere in a cluster, as taking the
+  // next word, so `bash -O extglob -c '<script>'` read extglob as the operand and the script was never scanned (a literal
+  // tracked target in it passed and, run for real, overwrote the file); an o anywhere in a cluster takes a word too
+  // (`-oc errexit`), where before only a cluster ending in o did. zsh takes no word after -O and dash rejects it, so the
+  // rule is bash's alone: `zsh -O -c '<script>'` is judged on its script. Both directions.
+  for (const cmd of [
+    "bash -O extglob -c 'cp base/report.md docs/report.md'",
+    "bash +O extglob -c 'cp base/report.md docs/report.md'",
+    "bash -iO extglob -c 'cp base/report.md docs/report.md'",
+    "bash -Oc extglob 'cp base/report.md docs/report.md'",
+    "bash -oc errexit 'cp base/report.md docs/report.md'",
+    "bash -ox errexit -c 'cp base/report.md docs/report.md'",
+    "zsh -O -c 'cp base/report.md docs/report.md'",
+  ]) {
+    assert.deepEqual(targets(cmd), [report], cmd);
+    assert.ok(evaluate(payload(cmd)), `refused: ${cmd}`);
+  }
+  for (const cmd of ["bash -O extglob -c 'cp base/report.md sub/ok.md'", "bash -Oc extglob 'cp base/report.md sub/ok.md'", "zsh -O -c 'cp base/report.md sub/ok.md'"]) {
+    assert.deepEqual(targets(cmd), [path.join(proj, 'sub', 'ok.md')], cmd);
+    assert.equal(evaluate(payload(cmd)), null, `allowed: ${cmd}`);
+  }
 });
 
 // ── interpreter options before a heredoc ───────────────────────────

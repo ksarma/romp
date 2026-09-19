@@ -240,14 +240,18 @@ test('P9 the skill says a shell write whose target is not a literal path is refu
   for (const form of ['`"$DST"`', '`$(...)`', 'glob or brace list']) assert.ok(section.includes(form), `the rule names ${form}`);
   assert.ok(section.includes('so the refusal holds whatever the word would expand to'), 'the guard does not resolve the word');
   // the round-1 review (2026-09-18): the guard reads HOME (for `~` and a leading `$HOME`), so the skill says
-  // "variables", not "environment", and names the one exception, a numeric-only target outside the project
+  // "variables", not "environment", and names the one exception, a process-id-only target where no tracked file could land
   assert.ok(section.includes('does not read your variables to find out'));
   assert.ok(section.includes('`$HOME/` is read as `~/` is'));
-  // round 2 of that review (2026-09-18): the set is per shell, and `$BASHPID` (assignable in zsh) is out of it
-  assert.ok(section.includes('whose only expansions are `$$`, `$RANDOM` or `$SECONDS`') && section.includes('at an absolute path outside the project, is allowed'));
-  assert.ok(section.includes('not inside a script handed to `sh`, where they are ordinary variables; `$BASHPID` never'), 'the per-shell rule and the dropped name');
-  assert.ok(!section.includes('`$RANDOM`, `$BASHPID`'), 'BASHPID is no longer listed as allowed');
-  assert.ok(section.includes('Spell the path out'), 'what to do');
+  // round 3 of that review (2026-09-19): the exception is the process id alone, in every shell, stated exactly as the
+  // code allows it (rounds 1 and 2 promised `$RANDOM` and `$SECONDS`, which a command can unset or shadow), with the
+  // reason and each remedy a session can take; the stale promise is gone
+  assert.ok(section.includes('whose only expansions are `$$` or `${$}`, the shell\'s process id, at an absolute path where no tracked file could land'), 'the exception, exactly as the code allows it');
+  assert.ok(section.includes('Nothing else is: `$RANDOM`, `$SECONDS` and every other name can be unset or shadowed and then hold a path'), 'why nothing else is');
+  assert.ok(section.includes('`log.$RANDOM` inside a tracked project is refused, in every shell'), 'what a session experiences');
+  assert.ok(!section.includes('at an absolute path outside the project, is allowed') && !section.includes('`$$`, `$RANDOM` or `$SECONDS`') && !section.includes('$BASHPID'), 'the round-2 promise is gone');
+  assert.ok(section.includes('a relative path after a `cd` the guard cannot follow'), 'the round-3 refusal class');
+  assert.ok(section.includes('Spell the path out') && section.includes('name a temp file with `$$`') && section.includes('give a folder a literal name of your own, or write outside the tracked project'), 'what to do');
 });
 
 // ── P8: one writer per sidecar: the CLIs take store-io's lock around their load-to-rename ──

@@ -3565,7 +3565,9 @@ document stands on its own, each with the reasoning it was given.
     by the project's `.trackchanges/config.json` through store-io's `findVaultRoot` and the three steps of its
     `isTrackedFile` (the veto list, the explicit list by name, then the link closure), which the hook runs itself
     as `trackedIn` so the closure is built once per call; a path is judged under the name given and under the real
-    path the kernel opens, so a symlink to a tracked file carries no write past it. The refusal is exit 2 with one
+    path the kernel opens, so a symlink to a tracked file carries no write past it (a `..` after a directory that
+    exists climbs from that directory's real path, as the kernel does, round 3, 2026-09-19; a link the same command
+    creates is not resolved, a hook-wide limit stated with the change). The refusal is exit 2 with one
     line naming the file and the track-edit command, in the person's voice. What it lets through: a read (cat,
     grep, diff, git, sed without -i) names no target; a command behind eval, xargs or a shell -c it cannot read
     is unresolvable and passes, since a silent block of ordinary work would cost more than a missed write, and
@@ -3585,27 +3587,64 @@ document stands on its own, each with the reasoning it was given.
     such project in play (2026-09-18, after a research session's report through the box admin, 2026-09-17: a
     `cp` built from shell variables landed raw on a tracked file beside a refused literal one; the round-1
     review the same day bounded the rule so that a temp log or a copy into an untracked folder is not refused
-    across the box once one project tracks a file); one narrowing from that review, corrected by its round 2
-    (2026-09-18): a target whose only expansions the shell running it will not let it assign (`$$` and `${$}`
-    in every shell; `$RANDOM` and `$SECONDS`, their brace forms too, read-only integers in bash and in zsh, the
-    shells the Bash tool runs, so counted at the top level but not inside a script the command hands to `sh` or
-    `dash`, where they are ordinary variables; `$BASHPID`, which round 1 listed as numeric by construction, is
-    unset and assignable in zsh and is out of the set) and whose text is an absolute path outside every project
-    in play is allowed, since such an expansion cannot carry a `../` back in, the project the target's own
-    literal prefix sits in being asked first (a numeric name landing in a second tracked project is refused as
-    its literal spelling is, from any cwd, and the refusal names that project, not the cwd's; when the expansion
-    names a folder in the first segment under that root, `<root>/x-$$/y.md`, the literal prefix is the root itself
-    and the target is refused from any cwd even where its literal spelling would pass into an untracked folder, a
-    deliberate false refusal ruled correct in round 2's addendum, 2026-09-18: the folder's name does not exist at
-    check time and is not derivable from the text, so the hook cannot tell which folder the write lands in, a
-    person recovers in one step by spelling the folder, and the opposite error overwrites tracked content
-    silently; the refusal says so, naming the unknown folder rather than the project and asking for the folder
-    spelled out, and only the first segment behaves so, since `<root>/sub/x-$$/y.md` resolves its literal prefix
-    to `<root>/sub` and an untracked `sub` falls through to the cwd rule, both sides pinned by execution) and a
-    `..` that folds every expansion away still resolving the literal directory part (a link after the fold is judged
-    under its real path), both of which round 2 found by overwriting a tracked file, while a variable of unknown
-    content, a substitution (a `$(date)` in a log's name among them, a cost stated to the user rather than
-    solved) and a relative or bare expansion stay refused; the hook reads no variable named in the command to
+    across the box once one project tracks a file); a landing folder no project claims counts when an entry of it is
+    or leads to a tracked file whose name the copy could take (round 3, 2026-09-19: `cp "$SRC" <outside>/` over a link
+    there onto a tracked file overwrote it while the same copy spelled out was refused; past 2000 entries such a folder
+    is not scanned and the copy passes, a stated residual, since a folder no project claims carries no case for a
+    blanket refusal); the project the target's own literal directory part sits in is asked first, from any cwd, for
+    every target the hook cannot read that it can place, absolute or relative to a write-time directory it knows, when
+    a tracked file could land in that folder (round 2 for a numeric target; round 3 for every unreadable word and for a
+    relative spelling, after `cp x <project>/notes/$N.md` from a cwd in no project overwrote a tracked note while
+    `<project>/notes/`, the literal name and the numeric spelling were all refused); a literal relative target after a
+    `cd` the hook cannot follow (one to a name the shell fills in, `cd -`, `popd`, one inside an if, loop or case body,
+    or one to a directory the command cannot enter when the hook runs, which it may make first or which the cd fails
+    on, leaving the shell where it was) is refused while the cwd's project is in play, with the reason and the remedy
+    (an absolute target, or a `cd` to a literal directory that exists), where before it was dropped (round 3: one such
+    `cd` turned a refused write on a tracked file into an allowed one; the cost, a `mkdir -p build && cd build && cmd >
+    log.txt` from a tracked cwd, is a deliberate false refusal); one narrowing from the round-1 review, corrected by its
+    round 2 and again by round 3 (2026-09-19): a target whose only expansions are `$$` and `${$}`, the shell's process
+    id, and whose text is an absolute path outside every project in play is allowed, since such an expansion cannot
+    carry a `../` back in. The numeric set is those two spellings and nothing else, in every shell: every other
+    candidate can be unset or shadowed by the command and then hold a path (round 1 listed `$RANDOM`, `$SECONDS` and
+    `$BASHPID` as read-only integers; round 2 dropped BASHPID, which zsh leaves assignable, and kept the other two
+    under bash and zsh; round 3 measured `unset RANDOM; RANDOM=../x` and `local RANDOM=` in a function in bash,
+    `typeset -h RANDOM` in a function in zsh and a sourced file carrying the unset, each carrying a traversal onto a
+    tracked file while the hook read the word as numeric; `$$` resists every road in bash, zsh and dash), so a
+    `log.$RANDOM` inside a tracked project is refused, a deliberate false refusal recoverable in one step (`$$`, the
+    literal spelling, or a write outside the project), where an overwrite with no change recorded is not. A numeric
+    target is judged by where it lands: the project its own literal directory part sits in first (a numeric name
+    landing in a second tracked project is refused from any cwd, the refusal naming that project), that part resolved
+    through the filesystem (a link in it, a `..` after one), each entry of that directory that exists now and whose
+    name the process id could spell (`x-4242` for `x-$$`) followed as the write would follow it, and a fold that
+    leaves no expansion handed to the literal rule (round 3: a pre-existing link named by the number, a fold onto a
+    link to a tracked file, and a literal `..` after a link were each folded away before the resolve step and a write
+    landed on a tracked file); the landing gate on that literal directory part is folder-granular, so a numeric name
+    in any folder where a tracked file could land is refused from any cwd while its literal spelling may pass,
+    `<root>/x-$$/y.md` and `<root>/docs/build-$$.log` alike, a deliberate false refusal ruled correct in round 2's
+    addendum (2026-09-18) for the first segment (the folder's name does not exist at check time and is not derivable
+    from the text, so the hook cannot tell which folder of the project the write lands in, a person recovers in one
+    step, and the opposite error overwrites tracked content silently) and restated by round 3 as the gate rather than
+    the segment, since `<root>/docs/x-$$/y.md` is refused the same way when docs/ holds a tracked file; the refusal
+    names the unknown folder when the expansion names one, at any depth, and offers a literal folder name or a write
+    outside the project, never the name the shell would give it, which nobody can know before the command runs; a
+    folder of more than 2000 entries inside a tracked project refuses a numeric name unscanned, as it does a copy
+    (`LANDING_SCAN_CAP`, both sides pinned); a segment that is nothing but an expansion cancelled by a `..`
+    (`<out>/$$/../x.md`) is not narrowed. Two things the rule does not see, stated: a link the same command creates (a
+    PreToolUse hook cannot resolve a link the command has not yet made; a literal path just the same), and an entry
+    named by the process id in a folder outside every project that holds more than 2000 entries, which is not listed
+    (a fail-closed cap there would refuse every temp log in a large `/tmp` from a tracked cwd; the box's `/tmp` held
+    2767 entries when measured). A relative numeric target stays refused even when the write-time directory is known
+    and outside every project in play, since the allowance needs an absolute path; a variable of unknown content, a
+    substitution (a `$(date)` in a log's name among them, a cost stated to the user rather than solved) and a bare
+    expansion stay refused; `$'...'` is ANSI-C quoting in bash and zsh, a literal word (round 3: it was a non-literal
+    word dropped from a cwd in no project, and bash wrote the tracked file), one the hook cannot read inside a script
+    handed to `sh`, `dash` or `ksh` (dash reads a literal dollar), and `$"..."` stays one the hook cannot read; a
+    bare, escaped or quoted `$` is a literal dollar, so a folder or a project whose name holds one is judged by that
+    name (round 3: every dollar in a word read as an expansion, with a false refusal one way and an allowed write
+    into a tracked folder the other); `bash -O extglob -c '...'` and an option cluster holding `o` or `O` take their
+    word, so the script is read (round 3; it was taken as the operand); a command nested past 64 substitutions or
+    brace lists is marked opaque rather than followed, so it cannot overflow the stack, which evaluate read as allow
+    (round 3); the hook reads no variable named in the command to
     resolve the word, which would read names shaped like secrets and guess at the cwd (of the environment it
     reads HOME, for `~` and a leading `$HOME` as the shell does, TRACKCHANGES_ROOT, which stands in for the root
     search only for a directory under it, and ROMP_SID; of those only HOME's value can appear in a refusal, and
