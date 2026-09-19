@@ -30,6 +30,16 @@ test("COMPACTNESS (the user 2026-07-07; action corner 2026-08-08): time trails t
   assert.doesNotMatch(FEED, /const row3 = el\("div", "fask-row3"\); row3\.append\(time\)/, "the group card's time-only row3 is gone");
 });
 
+test("the request marker is a direct row2 child of its own, appended after the pinned badge list, so grouped mode shows it and the pinned list stays byte for byte", () => {
+  // the marker (plans/user-todos.md, the ambient surfaces): the owning session has an open request for you; a BUTTON like its
+  // row-mates Retry, Revive and the cap switch, minted hidden and painted per update
+  assert.match(FEED, /const utMark = el\("button", "fask-usertodo"\) as HTMLButtonElement; utMark\.type = "button"; utMark\.style\.display = "none";/);
+  assert.match(FEED, /row2\.append\(idwrap, retryBadge, apiBadge, apiRetry, apiLogin, capLine, capBtn, jauthBadge, blkBadge, origin, fupBadge, dcBadge, nfBadge, intingBadge, intBadge, warnChip, waitOnBadge\);\n(\s*\/\/[^\n]*\n)*\s*row2\.append\(utMark\);/,
+    "its own append right after the pinned list: a direct row2 child (visible in grouped mode, counting toward row2's liveness)");
+  assert.doesNotMatch(FEED, /idwrap\.append\([^)]*utMark/, "never inside idwrap, which grouped mode hides wholesale");
+  assert.match(FEED, /a\._utMark = utMark;/, "kept on the card for the per-update paint");
+});
+
 test("row3 + name row are styled", () => {
   assert.match(CSS, /\.fask-row3 \{[^}]*display: flex/);
   // the session name stays on ONE line (ellipsis only if truly too long) — it used to wrap mid-word

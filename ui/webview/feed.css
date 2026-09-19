@@ -1072,6 +1072,16 @@ body { display: flex; flex-direction: column; position: relative; }   /* column 
   border: 1px solid #c0392b; border-radius: 5px; padding: 1px 6px;
 }
 .fask-blocked:hover { color: #fff; background: #c0392b; border-color: #c0392b; }
+/* ⚑ the quiet REQUEST marker (plans/user-todos.md): the owning session has an open request for you (a decision, a
+   credential, a review it filed with you). Session furniture on the name row like its badge siblings, in the quiet chips'
+   metric set (.fask-followedup and its kin), DIM by default: a marker, never an alarm; the card by the session's composer
+   is where Reply and Dismiss are. A button (focusable, Enter and Space from the element), so the user-agent's button
+   chrome is reset and the pill tokens applied; --box-border and --dim are defined in both theme blocks (a white alpha
+   vanished on the light theme). Hover and keyboard focus brighten it to say it is clickable. */
+.fask-usertodo { flex: 0 0 auto; font: inherit; font-size: 0.66em; font-weight: 700; letter-spacing: 0.04em;
+  padding: 1px 6px; border-radius: var(--radius-pill); line-height: 1.4; cursor: pointer; background: none;
+  color: var(--dim); border: 1px solid var(--box-border); }
+.fask-usertodo:hover, .fask-usertodo:focus-visible { color: var(--fg); border-color: var(--dim); }
 
 /* ⚠ API error: a red-OUTLINED badge (the session stopped on an API error) + a Retry button beside it
    that pastes "retry" into the session to resume (the user 2026-06-16). */

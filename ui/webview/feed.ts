@@ -733,6 +733,10 @@ const sessionColors = new Map<string, string>();
 // Rendered as a neutral chip on the grouped-mode session header; flat mode has no headers (the chat view's
 // background-task box still lists the processes there).
 let bgServicesMap: Record<string, string[]> = {};
+// sid -> OPEN request count (kernel build_feed userTodos; plans/user-todos.md, the ambient surfaces): requests are
+// session-scoped, so EVERY card of the owning session wears the quiet marker; the card by the session's composer is where
+// Reply and Dismiss live, one click away. A board-level input: it rides the card gate's key (feed-card-gate.ts).
+let userTodosMap: Record<string, number> = {};
 const openBgSvc = new Set<string>();   // sids with the chip's process list expanded — survives re-renders
 // COLLAPSED threads (the user 2026-07-31): grouped mode's session header carries a caret, and folding one
 // leaves the header alone in every column that thread appears in, with a count of what is folded away.
@@ -1273,7 +1277,14 @@ function makeAskCard(it: AskItem): HTMLElement {
   // direct children they render in BOTH modes, count toward row2's grouped-mode liveness, and the
   // API badge stays immediately before its Retry button — one visual unit. idwrap keeps only the
   // name. Placement only; every badge's mint/retire semantics are untouched.
+  // the quiet REQUEST marker (plans/user-todos.md): the owning session has an open request for you. A BUTTON, like its
+  // row-mates Retry, Revive and the cap switch: focusable, Enter and Space from the element. Minted hidden; updateAskCard
+  // shows and words it from the frame's map.
+  const utMark = el("button", "fask-usertodo") as HTMLButtonElement; utMark.type = "button"; utMark.style.display = "none";
   row2.append(idwrap, retryBadge, apiBadge, apiRetry, apiLogin, capLine, capBtn, jauthBadge, blkBadge, origin, fupBadge, dcBadge, nfBadge, intingBadge, intBadge, warnChip, waitOnBadge);
+  // ...and the marker joins those badges as a DIRECT row2 child (inside idwrap it would vanish on grouped cards; as a direct
+  // child it counts toward row2's liveness), appended on its own so the pinned list above stays the shape the layout tests match
+  row2.append(utMark);
   // the bell BUTTON (the user 2026-07-28): INLINE in row1's metadata cluster, right after the
   // timestamp (the last line's tail), the one spot that never shoves the title — and in-flow, so it
   // cannot overlap the floated Clear. It hides with VISIBILITY, so its slot is reserved whether or
@@ -1496,6 +1507,7 @@ function makeAskCard(it: AskItem): HTMLElement {
   a._warnChip = warnChip;
   a._waitOn = waitOnBadge;
   a._blocked = blkBadge;
+  a._utMark = utMark;
   a._apiBadge = apiBadge; a._apiRetry = apiRetry; a._apiLogin = apiLogin; a._retryBadge = retryBadge; a._revive = revive; a._clr = clr;
   a._capLine = capLine; a._capBtn = capBtn;
   a._jauthBadge = jauthBadge;
@@ -2409,6 +2421,25 @@ function updateAskCard(card: HTMLElement, it: AskItem) {
     // the prompt (a picker / permission approval) is the session's LIVE bottom → `live` lands the chat right
     // on it, not wherever it was last scrolled (the user 2026-07-08).
     a._blocked.onclick = (ev: Event) => { ev.stopPropagation(); vscodeApi?.postMessage({ type: "openSession", id: it.sid, live: true }); };
+  }
+  // the quiet REQUEST marker (plans/user-todos.md, the ambient surfaces): the owning session has an open request for you.
+  // Every card of that session wears it (requests are session-scoped), dim by default: a marker, never an alarm. The count
+  // is a board-level input off the frame's map, in the card gate's key (feed-card-gate.ts), so a request registered or
+  // closed reaches an unchanged card; rewired per repaint on the card's kept element (click-safe). Nothing here moves a
+  // card, and the blocked badge above says nothing about requests.
+  const utn = userTodosMap[it.sid] || 0;
+  const utMark = a._utMark as HTMLButtonElement;
+  if (utn > 0) {
+    utMark.style.display = "";
+    utMark.textContent = utn > 1 ? "⚑ " + utn + " requests" : "⚑ request";
+    const utTip = utn > 1 ? "this session has " + utn + " requests for you: click to open its chat and answer them"
+      : "this session has a request for you: click to open its chat and answer it";
+    setTip(utMark, utTip);
+    utMark.setAttribute("aria-label", utTip);   // setTip drops the native title; a button keeps an accessible name
+    // the card by the session's composer, where Reply and Dismiss are, is the session's live bottom: `live` lands the chat on it
+    utMark.onclick = (ev: Event) => { ev.stopPropagation(); vscodeApi?.postMessage({ type: "openSession", id: it.sid, live: true }); };
+  } else {
+    utMark.style.display = "none";
   }
   // The DISTILLER's line (restored 2026-06-29): completed card → takeaway (it.summary), blocked card → decision
   // brief (it.blockSummary), shown ONLY when produced; never a generating placeholder, never the planner's why.
@@ -5768,6 +5799,7 @@ function renderBody(list: HTMLElement) {
     prefs: { grouped: gprefs.grouped, collapsed: gprefs.collapsed, colormap: gprefs.colormap },
     hostDown: hostIsDown, selfHost: feedSelfHost, repo: prRepoOf,
     boardTitle: (it) => boardLabelOf(it),   // a card on a data-defined board: its label reads the title
+    userTodos: (sid) => userTodosMap[sid] || 0,   // the session's open request count (the quiet marker), off the frame's map
   };
   // The focused session's section above the board (T347): its own elements and caches, the same builders and
   // the same update gate. Painted BEFORE the board's FLIP capture below: the section sits above the board, so
@@ -6405,6 +6437,7 @@ function applyFeedPayload(m: any): void {
   awaitingSet = new Set(Array.isArray(m.awaiting) ? m.awaiting : []);   // await-green awaiting dots (the user 2026-07-13)
   unknownSet = new Set(Array.isArray(m.stateUnknown) ? m.stateUnknown : []);   // listed-but-unreadable → gray ring, never a blank
   bgServicesMap = m.bgServices && typeof m.bgServices === "object" ? m.bgServices : {};   // session name -> judge-classified service descs → the session-header chip (2026-07-24)
+  userTodosMap = m.userTodos && typeof m.userTodos === "object" && !Array.isArray(m.userTodos) ? m.userTodos : {};   // sid -> open request count, the quiet per-card marker (plans/user-todos.md): a board-level input, so it rides the card gate's key; a missing map (the off frame's, an older kernel's) reads as none
   if (Array.isArray(m.order)) sessionOrder = m.order.filter((x: any) => typeof x === "string");   // grouped-mode session rank (tab/lane order)
   pendingHosts = Array.isArray(m.pendingHosts) ? m.pendingHosts.filter((h: any) => typeof h === "string") : [];
   pendingDead = Array.isArray(m.pendingDead) ? m.pendingDead.filter((h: any) => typeof h === "string") : [];

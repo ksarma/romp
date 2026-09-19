@@ -72,6 +72,16 @@ class MobilePickerClickSafe(unittest.TestCase):
         self.assertIn("if(prt&&!prt.classList.contains('tab-placeholder')){pendingId=null;prt.click();hide();}",
                       km._CHAT_MOBILE_JS, "the payload's arrival is the activation event")
 
+    def test_the_request_flag_updates_in_place_never_by_a_wipe(self):
+        """The request flag on a picker row (the desktop tab's request flag widget, mirrored) follows the workdot's
+        create-once-then-toggle shape: one span, made when the tab first carries the flag, removed when it stops, and
+        no innerHTML write on a row (a wipe destroys the row under the finger)."""
+        js = km._CHAT_MOBILE_JS
+        self.assertIn("if(!uf){uf=document.createElement('span');uf.className='utflag';", js, "created once")
+        self.assertIn("else if(uf)uf.remove();", js, "removed when the tab drops the flag; no rebuild")
+        rows = js[js.index("function rowUpdate(row,s){"):js.index("function headUpdate(")]
+        self.assertNotIn("innerHTML", rows, "no innerHTML write touches a row")
+
     def test_the_rows_say_syncing_and_opening(self):
         self.assertIn(".mrow.ph::after{content:'syncing", km._CHAT_MOBILE_CSS)
         self.assertIn(".mrow.pending::after{content:'opening", km._CHAT_MOBILE_CSS)

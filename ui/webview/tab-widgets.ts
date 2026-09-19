@@ -35,7 +35,7 @@ export type { WidgetChoice, WidgetOption };
 export type WidgetSlot = "before" | "after" | "ring";
 // the status a widget reads: the state and the gauge inputs, plus the fields the ring predicates read (tab-state.ts's
 // TabStateLike: the on-you API flags and the feed's needsYou)
-export interface WidgetStatus extends TabStateLike { ctx?: string; ctxColor?: number[]; ctxTone?: number[]; faded?: boolean }
+export interface WidgetStatus extends TabStateLike { ctx?: string; ctxColor?: number[]; ctxTone?: number[]; faded?: boolean; openRequests?: number | null }   // openRequests: the session's open request count off the status row (the request flag widget's input)
 export interface TabWidget {
   id: string;                 // "dot" | "ctx" | "hotkey" | a ring's id | a contributor's id
   label: string;              // the settings row's name
@@ -206,6 +206,27 @@ registerTabWidget({
     if (tip) d.title = tip;
     else if (opts.idle === "grey" && cls === "tab-dot none") d.title = "idle";
     return d;
+  },
+});
+
+// The REQUEST FLAG (plans/user-todos.md, the ambient surfaces): a small flag after the name while the session has an open
+// request for you (a need it filed with you through add_user_todo: a decision, a credential, a review), off the status
+// row's openRequests, which build_session and _light_status both carry, so a skeleton tab wears it too. Non-numeric on
+// purpose: tabs carry no counts; the card by the session's composer lists the requests with Reply and Dismiss, and the
+// feed's cards wear a marker with the count. Its own element, never a .tab-dot variant: pips encode turn state, and the
+// phone's picker scrapes the pips and this flag by class (kernel.py _CHAT_MOBILE_JS). No options.
+registerTabWidget({
+  id: "request", label: "Request flag", defaultOn: true, slot: "after",
+  description: "a flag after the name while the session has an open request for you",
+  demo: { state: "working", ctx: "62%", openRequests: 1 },
+  render(_sid, status) {
+    const n = status.openRequests || 0;   // the `|| 0` first: a relational compare on number | null | undefined does not typecheck under strict
+    if (n <= 0 || status.state === "closed") return null;
+    const f = el("span", "tab-usertodo");
+    f.textContent = "⚑";
+    f.title = "this session has a request for you; the card at the bottom of its chat says what";
+    f.setAttribute("aria-label", f.title);
+    return f;
   },
 });
 

@@ -2365,6 +2365,264 @@ class ContextRoute(_StoreSandbox):
         self.assertIn("Need the auth-scheme decision", res["block"])
 
 
+# ── the ambient surfaces' data (plans/user-todos.md): the feed frame's request map and the status rows' count ─────────
+def _ut_memo_snapshot():
+    """(the entries, the counters, the fault episodes) as they stand, handed back in tearDown."""
+    with km._feed_memo_lock:
+        return (dict(km._feed_memo), json.loads(json.dumps(km._FEED_MEMO_STATS)), dict(km._FEED_DERIVE_FAILED))
+
+
+def _ut_memo_restore(snap):
+    entries, stats, failed = snap
+    with km._feed_memo_lock:
+        km._feed_memo.clear(); km._feed_memo.update(entries)
+        km._FEED_MEMO_STATS.clear(); km._FEED_MEMO_STATS.update(stats)
+        km._FEED_DERIVE_FAILED.clear(); km._FEED_DERIVE_FAILED.update(failed)
+
+
+def _ut_memo_reset():
+    """The feed memo empty and its counters at zero (tests/test_feed_session_memo.py's idiom): every case starts cold."""
+    with km._feed_memo_lock:
+        km._feed_memo.clear()
+        st = km._FEED_MEMO_STATS
+        for k in ("hit", "miss", "evict", "derived", "entries", "bytes", "failed", "coldLive", "coldFlip"):
+            if k in st:
+                st[k] = 0
+        for k in st["miss_by"]:
+            st["miss_by"][k] = 0
+        for k in st.get("row_by", {}):
+            st["row_by"][k] = 0
+        km._FEED_DERIVE_FAILED.clear()
+
+
+class FeedSeamUserTodos(unittest.TestCase):
+    """The data behind the ambient surfaces (the request flag on the tab, the quiet marker on the feed cards, the
+    phone's mirror): build_feed's sid-keyed `userTodos` map of OPEN request counts, derived inside the memoized
+    per-session entry with the sorted open ids as a key component (a register, answer, dismiss or withdraw moves the
+    owning session's key and no other; a text edit moves nothing), and the status rows' `openRequests` count on
+    build_session and _light_status (one reader and one gate behind the rows and the count, so the tab and the card
+    cannot disagree). The ended gate here is the live map: a session build_feed's loop never visits (not alive)
+    contributes nothing and its rows stay in the store; a muted session contributes nothing while its status keeps
+    the count (the feed goes quiet, the tab stays truthful). The requests switch is read through the store reader
+    alone: off reads zero everywhere and the rows stay.
+
+    World: BuildSessionSeam's for two sessions (web and api), a discoverable transcript and a names entry each,
+    `_sessions` patched to the two rows (the cold-start shape: no parse, no anchor), the live map handed to
+    build_feed so _alive_sessions is the REAL filter, `_warm_fleet_bg` a no-op, the feed memo reset per case.
+    Private synthetic sids; every case builds the real build_feed, build_session and _light_status."""
+    WEB, API = SID, SID2
+
+    def setUp(self):
+        self.td = tempfile.TemporaryDirectory()
+        td = Path(self.td.name)
+        proj = td / "projects"
+        state = td / "state"
+        state.mkdir()
+        _hosts_off(state)
+        self.saved = (jd.STATE, jd.PROJECTS, km.NAMES, km.WORKING_DIR, km._GLOBAL_CLAUDE_MD, km._live_map, km._sdk,
+                      km._sessions, km._warm_fleet_bg, os.environ.get("CLAUDE_CONFIG_DIR"), km._read_task_store,
+                      dict(km._pending_ops))
+        self.saved_memo = _ut_memo_snapshot()
+        jd._rebind_state(state)                       # every STATE-derived dir (goals, states, gone, sdk, ...)
+        jd.PROJECTS = proj
+        jd.NAMES.mkdir()
+        km.NAMES = jd.NAMES
+        km.WORKING_DIR = state / "working"
+        km._GLOBAL_CLAUDE_MD = td / "no-global-claude.md"
+        os.environ["CLAUDE_CONFIG_DIR"] = str(td / "claude")
+        self.tpath, self.rows = {}, []
+        for sid, name, color in ((self.WEB, "web", "#1EA1EB"), (self.API, "api", "#E67E22")):
+            cdir = td / ("launch-" + name)
+            cdir.mkdir()
+            pdir = proj / re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(str(cdir)))
+            pdir.mkdir(parents=True)
+            tp = pdir / (sid + ".jsonl")
+            tp.write_text("\n".join(json.dumps(r) for r in [
+                {"type": "user", "uuid": "u1", "timestamp": "2026-06-01T00:00:00Z", "sessionId": sid,
+                 "message": {"role": "user", "content": "wire the notes-api %s routes" % name}},
+                {"type": "assistant", "uuid": "a1", "parentUuid": "u1", "timestamp": "2026-06-01T00:00:05Z",
+                 "sessionId": sid, "message": {"role": "assistant", "stop_reason": "end_turn",
+                                               "content": [{"type": "text", "text": "starting on the routes"}]}},
+            ]) + "\n")
+            (jd.NAMES / sid).write_text("%s\t%s\t%s\twhite\n" % (name, cdir, color))
+            self.tpath[sid] = tp
+            self.rows.append({"sid": sid, "name": name, "anchor": None, "path": str(tp), "mtime": 0})
+        self.live = {self.WEB: self._row(), self.API: self._row()}
+        km._live_map = lambda: self.live
+        km._sdk = lambda: None
+        km._sessions = lambda now, window=None, forks=True: [dict(r) for r in self.rows]
+        km._warm_fleet_bg = lambda now: None
+        km._read_task_store = lambda fsid, fold=None: []
+        km._pending_ops.clear()
+        km._built_chat.clear()
+        km._parse_cache.clear()
+        km._flags_cache.clear()
+        km._live_scope.names = None
+        km._live_scope.snapshot = None
+        km._live_scope.sessions = None
+        jd._discover_cache.clear()
+        km._user_todos_cache.clear()
+        km._user_todos_bad.clear()
+        km._user_todos_switch_cache.clear()
+        km._set_user_todos(True)
+        _ut_memo_reset()
+
+    def tearDown(self):
+        (state, proj, names, wdir, gmd, live_fn, sdk, sessions, warm, cfg, rts, ops) = self.saved
+        _ut_memo_restore(self.saved_memo)
+        jd._rebind_state(state)
+        jd.PROJECTS = proj
+        km.NAMES, km.WORKING_DIR, km._GLOBAL_CLAUDE_MD, km._live_map, km._sdk = names, wdir, gmd, live_fn, sdk
+        km._sessions, km._warm_fleet_bg, km._read_task_store = sessions, warm, rts
+        if cfg is None:
+            os.environ.pop("CLAUDE_CONFIG_DIR", None)
+        else:
+            os.environ["CLAUDE_CONFIG_DIR"] = cfg
+        km._pending_ops.clear()
+        km._pending_ops.update(ops)
+        km._built_chat.clear()
+        km._parse_cache.clear()
+        km._flags_cache.clear()
+        km._live_scope.names = None
+        km._live_scope.snapshot = None
+        km._live_scope.sessions = None
+        jd._discover_cache.clear()
+        km._user_todos_cache.clear()
+        km._user_todos_bad.clear()
+        km._user_todos_switch_cache.clear()
+        self.td.cleanup()
+
+    @staticmethod
+    def _row():
+        return {"state": "idle", "since": NOW - 100, "model": "", "effort": "", "context": None,
+                "compactPct": None, "color": None, "backend": "sdk"}
+
+    def _feed(self, now=NOW, live=None):
+        f = km.build_feed(now, self.live if live is None else live)
+        self.assertEqual(km._FEED_DERIVE_FAILED, {}, "a session's card build raised inside build_feed")
+        return f
+
+    def _session(self, sid):
+        km._parse_cache.clear()
+        km._built_chat.clear()
+        return km.build_session(sid, NOW, live_map=self.live)
+
+    def _light(self, sid):
+        return km._light_status(sid, str(self.tpath[sid]), self.live[sid], NOW)
+
+    def _delta(self, fn):
+        """(the memo counters' movement over fn(), fn's result): hit / derived and the non-zero miss attributions."""
+        b = km._feed_memo_report()
+        out = fn()
+        a = km._feed_memo_report()
+        d = {k: a[k] - b[k] for k in ("hit", "miss", "derived")}
+        d["miss_by"] = {k: v - b["miss_by"].get(k, 0) for k, v in a["miss_by"].items() if v - b["miss_by"].get(k, 0)}
+        return d, out
+
+    def test_the_map_carries_open_counts_per_sid(self):
+        km._add_user_todo(self.WEB, "Need your pick of the two route layouts")
+        km._add_user_todo(self.WEB, "Need the staging database name")
+        tid = km._add_user_todo(self.API, "Need a test credential for the api session")
+        km._withdraw_user_todo(self.API, tid)
+        self.assertEqual(self._feed()["userTodos"], {self.WEB: 2}, "open rows only: a resolved-only session is absent")
+
+    def test_the_key_always_rides_and_reads_empty_for_a_request_less_world(self):
+        f = self._feed()
+        self.assertIn("userTodos", f, "a dict, never a missing key: federation's merge and the client's guard see an honest empty map")
+        self.assertEqual(f["userTodos"], {})
+
+    def test_a_session_absent_from_the_live_map_contributes_nothing_and_its_rows_stay(self):
+        km._add_user_todo(self.WEB, "Need your pick of the two route layouts")
+        live = {self.API: self.live[self.API]}          # web is not alive: _alive_sessions drops it, the map has no key for it
+        self.assertEqual(self._feed(live=live)["userTodos"], {})
+        self.assertTrue(km._open_user_todos(self.WEB), "hidden, not cleared: the row stays for the revival")
+
+    def test_a_revived_session_counts_again(self):
+        km._add_user_todo(self.WEB, "Need your pick of the two route layouts")
+        self.assertEqual(self._feed(live={self.API: self.live[self.API]})["userTodos"], {})
+        self.assertEqual(self._feed()["userTodos"], {self.WEB: 1}, "back in the live map: the count is back")
+
+    def test_a_muted_session_contributes_nothing_while_its_status_keeps_the_count(self):
+        km._add_user_todo(self.WEB, "Need your pick of the two route layouts")
+        (jd.STATE / "session-flags.json").write_text(json.dumps({self.WEB: {"hideFromFeed": True}}))
+        km._flags_cache.clear()
+        self.assertEqual(self._feed()["userTodos"], {}, "the feed goes quiet for a muted session")
+        self.assertEqual(self._session(self.WEB)["status"]["openRequests"], 1, "the tab stays truthful about what its session holds")
+        self.assertEqual(self._light(self.WEB)["openRequests"], 1)
+
+    def test_an_ended_session_reads_zero_on_both_status_rows_while_its_rows_stay(self):
+        km._add_user_todo(self.WEB, "Need your pick of the two route layouts")
+        (jd.STATE / "sdk").mkdir(parents=True, exist_ok=True)
+        reg = jd.STATE / "sdk" / (self.WEB + ".json")
+        reg.write_text(json.dumps({"alive": False}))    # ended-but-revivable: the registry's alive bit, build_session's own gate
+        self.assertEqual(self._light(self.WEB)["openRequests"], 0, "an unbuilt tab's flag is off while its session is ended")
+        sess = self._session(self.WEB)
+        self.assertEqual(sess["status"]["openRequests"], 0, "and the built status agrees: one gate behind both legs")
+        self.assertEqual(sess["userTodos"], [], "the card hides the rows the same way")
+        self.assertEqual(len(km._open_user_todos(self.WEB)), 1, "hidden, not cleared: the row stays for the revival")
+        reg.write_text(json.dumps({"alive": True}))
+        self.assertEqual(self._light(self.WEB)["openRequests"], 1, "revived: both legs read the row again")
+        self.assertEqual(self._session(self.WEB)["status"]["openRequests"], 1)
+
+    def test_the_map_serializes_stably_across_builds_and_clocks(self):
+        km._add_user_todo(self.API, "Need a test credential for the api session")
+        km._add_user_todo(self.WEB, "Need your pick of the two route layouts")
+        a = json.dumps(self._feed()["userTodos"])
+        b = json.dumps(self._feed(now=NOW + 3600)["userTodos"])
+        self.assertEqual(a, b, "store values only: an hour later, the same bytes")
+        self.assertEqual(set(json.loads(a)), {self.WEB, self.API})
+        # The alive order REVERSED: _alive_sessions keeps _sessions' order, which follows the listing (mtimes, in
+        # production), so the loop now visits api before web while the sid order is web (...01) before api (...02).
+        # An unsorted map would carry the listing order and re-send the frame on every listing move.
+        km._sessions = lambda now, window=None, forks=True: [dict(r) for r in reversed(self.rows)]
+        c = self._feed()["userTodos"]
+        self.assertEqual(list(c), sorted([self.WEB, self.API]), "sid-sorted whatever the alive order")
+        self.assertEqual(json.dumps(c), a, "the same bytes from the other listing order: the frame's dedup holds")
+
+    def test_a_register_re_derives_the_owning_session_alone_through_a_warm_memo(self):
+        self._feed()
+        d, _ = self._delta(self._feed)
+        self.assertEqual((d["derived"], d["hit"]), (0, 2), "warm: an unchanged rebuild derives nothing")
+        km._add_user_todo(self.API, "Need a test credential for the api session")
+        d, f = self._delta(self._feed)
+        self.assertEqual(f["userTodos"], {self.API: 1})
+        self.assertEqual((d["derived"], d["hit"]), (1, 1), "the register re-derived api and served web: %r" % d)
+        self.assertEqual(d["miss_by"], {"usertodos": 1}, "attributed to the request component")
+        d, f = self._delta(self._feed)
+        self.assertEqual((d["derived"], d["hit"]), (0, 2), "and stands: a hit")
+        self.assertEqual(f["userTodos"], {self.API: 1})
+
+    def test_the_view_sig_watches_the_store(self):
+        before = km._fleet_view_sig(NOW, self.live)
+        self.assertEqual(before, km._fleet_view_sig(NOW, self.live), "the signature is a function of the inputs")
+        km._add_user_todo(self.WEB, "Need your pick of the two route layouts")
+        self.assertNotEqual(before, km._fleet_view_sig(NOW, self.live), "a register moves the feed's signature at once, not at the 5 s bucket")
+
+    def test_the_off_frame_carries_no_map_and_the_status_rows_keep_the_count(self):
+        km._add_user_todo(self.WEB, "Need your pick of the two route layouts")
+        self.assertNotIn("userTodos", km._feed_off_frame(NOW, self.live), "the off frame is unchanged: no map")
+        self.assertEqual(self._light(self.WEB)["openRequests"], 1, "the tab flag survives tracking off")
+        self.assertEqual(self._session(self.WEB)["status"]["openRequests"], 1)
+
+    def test_the_requests_switch_off_reads_zero_everywhere_and_keeps_the_rows(self):
+        km._add_user_todo(self.WEB, "Need your pick of the two route layouts")
+        self.assertEqual(self._feed()["userTodos"], {self.WEB: 1})
+        km._set_user_todos(False)
+        self.assertEqual(self._feed()["userTodos"], {})
+        self.assertEqual(self._session(self.WEB)["status"]["openRequests"], 0)
+        self.assertEqual(self._light(self.WEB)["openRequests"], 0)
+        self.assertEqual(len(km._user_todos().get(self.WEB) or []), 1, "the store keeps the row for the day the switch flips back")
+
+    def test_the_status_count_is_the_payload_rows_count(self):
+        for n in (0, 1, 3):
+            while len(km._open_user_todos(self.WEB)) < n:
+                km._add_user_todo(self.WEB, "Need your pick of layout %d" % len(km._open_user_todos(self.WEB)))
+            sess = self._session(self.WEB)
+            self.assertEqual(len(sess["userTodos"]), n)
+            self.assertEqual(sess["status"]["openRequests"], n, "one reader, one gate: the tab and the card cannot disagree")
+            self.assertEqual(self._light(self.WEB)["openRequests"], n)
+
+
 class HookWiring(unittest.TestCase):
     """The hook, the installer and the uninstaller agree on one file, one route and one name (repo text, read
     the way the shell suites read it): a rename in one place fails here instead of silently disabling the hook

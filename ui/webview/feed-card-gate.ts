@@ -69,6 +69,10 @@ export interface GateEnv {
    *  names it, and a board defined, retitled or removed between two frames must repaint its cards (card boards,
    *  phase three). */
   boardTitle: (it: GateItem) => string;
+  /** The session's OPEN request count (plans/user-todos.md): the quiet marker every card of that session wears, a
+   *  board-level input off the frame's userTodos map, so a request registered or closed reaches an unchanged card
+   *  through the key. */
+  userTodos: (sid: string) => number;
 }
 
 /** One string of every board-level input this card's face reads. Two renders with equal inputs
@@ -85,6 +89,7 @@ export function cardInputsKey(it: GateItem, env: GateEnv): string {
     env.hostDown(it.sid) ? "d" : "",
     env.selfHost,
     env.repo(it.sid) || "",
+    String(env.userTodos(it.sid) || ""),   // the session's open request count; empty for none, so a request-less card's key is unchanged
     // the colour echo (feed.ts applyColorEcho) writes `a.color` IN PLACE — the one write into a shared
     // ask object — so identity cannot carry it; the colour rides the key instead
     (it.color && it.color.bg) || "",

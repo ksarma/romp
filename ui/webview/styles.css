@@ -603,6 +603,10 @@ body.tabbar-resizing { cursor: ns-resize; user-select: none; }
 .tab-dot.opening { background: var(--accent); animation: opening-line-pulse 1.2s ease-in-out infinite; }
 /* the dot widget's option (T379): a quiet grey dot when idle instead of the hidden slot, so a tab always shows its dot */
 .tab-dot.idle { background: var(--dim); opacity: 0.45; }
+/* the request flag widget (plans/user-todos.md): a small flag after the name while the session has an open request for you.
+   Its own element, never a .tab-dot variant (pips encode turn state); themed through --dim like .tab-close, since classic
+   tabs have no chip fill and a hardcoded white vanishes under body.theme-light. */
+.tab-usertodo { flex: 0 0 auto; color: var(--dim); font-size: 10px; line-height: 1; }
 /* the hot-key keycap widget (T379): the chord at its shortest after the name, a bordered chip in the dim tier, no width
    beyond its glyphs. ONE rule text, agreed with the tab hot keys pull request (2026-09-12): this file owns .tab-key, and
    that change drops its copy when it lands on this one */

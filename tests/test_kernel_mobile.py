@@ -5,6 +5,7 @@ brings the chat forward. Pure-HTML + routing asserts; no real session data.
 """
 import json
 import os
+import re
 import subprocess
 import unittest
 from romp_load import load_source
@@ -375,6 +376,33 @@ class ChatSessionPicker(unittest.TestCase):
         self.assertIn("wd.classList.toggle('await',!!(act&&act.awaitbg&&!act.working))", js)
         self.assertNotIn("(act.working?'• ':'')", js)
 
+    def test_picker_rows_and_the_current_button_mirror_the_request_flag(self):
+        """The desktop tab's request flag (tab-widgets.ts, the `request` widget: a small flag after the name while the
+        session has an open request for you) is scraped off the tab like the pips and the ask ring, painted on the
+        picker row between the name and the end-session x and on the current-session button, in the dim tier with a
+        light-theme arm (a white alpha vanished on the light theme). The phone reads the desktop DOM, so a widget
+        switched off in the settings leaves the phone plain too. MobilePickerRequestFlagExecutes runs it."""
+        js, css = km._CHAT_MOBILE_JS, km._CHAT_MOBILE_CSS
+        self.assertIn("ut:!!t.querySelector('.tab-usertodo'),", js, "scraped off the widget's element, beside ask:")
+        self.assertIn("uf.className='utflag'", js)
+        self.assertIn("row.insertBefore(uf,row.querySelector('.mclose'))", js, "between the name and the x")
+        self.assertIn("else if(uf)uf.remove();", js)
+        self.assertIn('class="utf"', js, "the current-session button's own flag")
+        self.assertIn("cuf.style.display=(act&&act.ut)?'':'none'", js)
+        self.assertIn(".mrow .utflag{", css)
+        self.assertIn("#mcur .utf{", css)
+        self.assertIn("body.theme-light .mrow .utflag{", css, "a light-theme arm, the way .mrow .mclose has one")
+        self.assertIn("body.theme-light #mcur .utf{", css)
+        self.assertNotIn("#ffffffbf", css, "no white alpha: it vanishes on the light theme")
+        button = re.search(r'class="utf" style="display:none" title="([^"]*)"', js)
+        row = re.search(r"uf\.title='([^']*)'", js)
+        self.assertTrue(button and row, "both flags carry a hover title")
+        for title in (button.group(1), row.group(1)):
+            self.assertIn("request", title, "the request vocabulary, on the button's flag and the row's")
+            self.assertNotIn("todo", title.lower())
+            self.assertNotIn("waiting on you", title.lower())
+            self.assertNotIn("\u2014", title, "no em dash")
+
     def test_current_session_title_is_bold_color_on_the_grey_chip(self):
         # the user 2026-07-22: the mobile current-session title reads as the identity color in BOLD on the
         # SAME grey chip as the +/madd button, with a hairline color border, not the color as a fill.
@@ -426,6 +454,148 @@ class ChatSessionPicker(unittest.TestCase):
         self.assertIn("var rtc=realTab(id);var c=rtc&&rtc.querySelector('.tab-close');if(c)c.click();", js)   # delegated form (2026-08-19 click-safe rewrite)
         self.assertIn("e.stopPropagation();hide();", js)
         self.assertIn(".mrow .mclose{", css)
+
+
+# A node stand-in for the chat page's tab strip on a phone: the picker script runs against a stub DOM whose elements
+# keep classes, attributes, children and inline styles, with a fake desktop strip of two tabs, so the request flag on a
+# picker row and on the current-session button is state read back after each strip change (the tab's request flag
+# widget appearing or leaving, the active tab moving), never a pin on the source text. The strip's MutationObserver is
+# captured and fired by hand where the browser would fire it.
+_PICKER_HARNESS = r"""
+'use strict';
+class Txt { constructor(t) { this.nodeType = 3; this.textContent = t; this.parentNode = null; }
+  cloneNode() { return new Txt(this.textContent); } remove() { if (this.parentNode) this.parentNode.removeChild(this); } }
+class El {
+  constructor(tag) { this.nodeType = 1; this.tag = tag; this.attrs = {}; this.childNodes = []; this.parentNode = null; this.L = {}; this.title = '';
+    const props = {};
+    this.style = { display: '', color: '', setProperty(k, v) { props[k] = v; }, removeProperty(k) { delete props[k]; }, getPropertyValue(k) { return props[k] || ''; } };
+    const cls = new Set(); this._cls = cls;
+    this.classList = { add: (...c) => c.forEach((x) => cls.add(x)), remove: (...c) => c.forEach((x) => cls.delete(x)), contains: (c) => cls.has(c),
+      toggle: (c, f) => { const on = f === undefined ? !cls.has(c) : !!f; if (on) cls.add(c); else cls.delete(c); return on; } }; }
+  get id() { return this.attrs.id || ''; } set id(v) { this.attrs.id = v; }
+  get className() { return [...this._cls].join(' '); } set className(v) { this._cls.clear(); String(v).split(/\s+/).filter(Boolean).forEach((c) => this._cls.add(c)); }
+  get children() { return this.childNodes.filter((c) => c.nodeType === 1); }
+  get firstChild() { return this.childNodes[0] || null; }
+  get textContent() { return this.childNodes.map((c) => c.textContent).join(''); }
+  set textContent(v) { this.childNodes.forEach((c) => { c.parentNode = null; }); this.childNodes = []; if (v !== '' && v !== null && v !== undefined) this.appendChild(new Txt(String(v))); }
+  set innerHTML(html) {   // the current-session button's markup: a flat run of spans with class, style and title attributes
+    this.textContent = ''; const re = /<span([^>]*)>([^<]*)<\/span>/g; let m;
+    while ((m = re.exec(html))) { const s = new El('span'); const ar = /(\w+)="([^"]*)"/g; let a;
+      while ((a = ar.exec(m[1]))) { if (a[1] === 'class') s.className = a[2]; else if (a[1] === 'style') { const d = /display:([^;]+)/.exec(a[2]); if (d) s.style.display = d[1]; } else if (a[1] === 'title') s.title = a[2]; else s.attrs[a[1]] = a[2]; }
+      if (m[2]) s.appendChild(new Txt(m[2])); this.appendChild(s); } }
+  appendChild(c) { if (c.parentNode) c.parentNode.removeChild(c); c.parentNode = this; this.childNodes.push(c); return c; }
+  insertBefore(c, ref) { if (c.parentNode) c.parentNode.removeChild(c); c.parentNode = this; const i = ref ? this.childNodes.indexOf(ref) : -1; if (i < 0) this.childNodes.push(c); else this.childNodes.splice(i, 0, c); return c; }
+  removeChild(c) { const i = this.childNodes.indexOf(c); if (i >= 0) { this.childNodes.splice(i, 1); c.parentNode = null; } }
+  remove() { if (this.parentNode) this.parentNode.removeChild(this); }
+  setAttribute(k, v) { this.attrs[k] = String(v); } getAttribute(k) { return k in this.attrs ? this.attrs[k] : null; } hasAttribute(k) { return k in this.attrs; }
+  addEventListener(k, f) { (this.L[k] = this.L[k] || []).push(f); }
+  cloneNode(deep) { const e = new El(this.tag); Object.assign(e.attrs, this.attrs); e.className = this.className; e.title = this.title; if (deep) this.childNodes.forEach((c) => e.appendChild(c.cloneNode(true))); return e; }
+  matches(sel) {   // one compound selector: tag, .class, [attr], [attr="value"]
+    const m = sel.match(/^([a-z]*)((?:\.[\w-]+|\[[\w-]+(?:="[^"]*")?\])*)$/); if (!m) throw new Error('selector ' + sel);
+    if (m[1] && m[1] !== this.tag) return false;
+    for (const p of m[2].match(/\.[\w-]+|\[[^\]]+\]/g) || []) {
+      if (p[0] === '.') { if (!this._cls.has(p.slice(1))) return false; }
+      else { const mm = /^\[([\w-]+)(?:="([^"]*)")?\]$/.exec(p); if (!(mm[1] in this.attrs)) return false; if (mm[2] !== undefined && this.attrs[mm[1]] !== mm[2]) return false; } }
+    return true; }
+  all() { return this.children.flatMap((c) => [c, ...c.all()]); }
+  querySelectorAll(sel) { return this.all().filter((e) => e.matches(sel)); }
+  querySelector(sel) { return this.querySelectorAll(sel)[0] || null; }
+  closest(sel) { for (let n = this; n; n = n.parentNode) { if (n.nodeType === 1 && n.matches(sel)) return n; } return null; }
+}
+// the desktop strip the phone reads: two tabs of the notes-api demo, api active and carrying the request flag widget's element
+const root = new El('div'), body = new El('body'); root.appendChild(body);
+const tabbar = new El('div'); tabbar.id = 'tabbar'; const tabs = new El('div'); tabs.id = 'tabs'; tabbar.appendChild(tabs); body.appendChild(tabbar);
+function mkTab(id, name, opts) { const t = new El('div'); t.className = 'tab' + (opts.active ? ' active' : ''); t.setAttribute('data-id', id);
+  const lab = new El('span'); lab.className = 'tab-label'; lab.textContent = name; t.appendChild(lab);
+  if (opts.flag) { const f = new El('span'); f.className = 'tab-usertodo'; f.textContent = '⚑'; t.appendChild(f); }
+  const x = new El('span'); x.className = 'tab-close'; t.appendChild(x); return t; }
+const api = mkTab('11111111-2222-3333-4444-666666666666', 'api', { active: true, flag: true });
+const web = mkTab('11111111-2222-3333-4444-555555555555', 'web', { active: false, flag: false });
+tabs.appendChild(api); tabs.appendChild(web);
+const OBS = [];
+global.MutationObserver = class { constructor(cb) { OBS.push(cb); } observe() {} };
+global.document = { getElementById: (id) => root.querySelector('[id="' + id + '"]'), createElement: (t) => new El(t), addEventListener() {} };
+"""
+_PICKER_DRIVER = r"""
+(0, eval)(PICKER_JS);
+const fire = () => OBS.forEach((f) => f());
+const list = root.querySelector('[id="mlist"]'), cur = root.querySelector('[id="mcur"]');
+const row = (id) => list.querySelector('.mrow[data-id="' + id + '"]');
+const flagOf = (r) => { const f = r.querySelectorAll('.utflag'); const x = r.querySelector('.mclose');
+  return { n: f.length, text: f[0] ? f[0].textContent : null, title: f[0] ? f[0].title : null,
+           beforeClose: f[0] ? r.children.indexOf(f[0]) === r.children.indexOf(x) - 1 : null }; };
+const curFlag = () => { const u = cur.querySelector('.utf'); return u ? { display: u.style.display, text: u.textContent, title: u.title } : null; };
+const A = api.getAttribute('data-id'), W = web.getAttribute('data-id');
+const out = {};
+out.boot = { api: flagOf(row(A)), web: flagOf(row(W)), cur: curFlag(), rows: list.children.length };
+row(A)._mark = 'kept';
+// the active tab moves to web: the current chip drops the flag, the rows keep theirs
+api.classList.remove('active'); web.classList.add('active'); fire();
+out.webActive = { cur: curFlag(), api: flagOf(row(A)).n, web: flagOf(row(W)).n };
+// web files a request: its tab gains the widget's element, its row gains the flag once; a second sync adds no second one
+const wf = new El('span'); wf.className = 'tab-usertodo'; wf.textContent = '⚑'; web.insertBefore(wf, web.querySelector('.tab-close')); fire();
+out.webFlag = { cur: curFlag(), web: flagOf(row(W)) };
+fire(); out.webFlagAgain = flagOf(row(W)).n;
+// api's request is answered: the widget's element leaves its tab, the row's flag leaves in place (the row node is the boot's)
+api.querySelector('.tab-usertodo').remove(); fire();
+out.apiCleared = { n: flagOf(row(A)).n, sameRow: row(A)._mark === 'kept', close: !!row(A).querySelector('.mclose'), name: row(A).querySelector('.nm').textContent };
+console.log(JSON.stringify(out));
+"""
+
+
+class MobilePickerRequestFlagExecutes(unittest.TestCase):
+    """The phone's session picker mirrors the desktop tab's request flag (the `request` widget of tab-widgets.ts): a
+    picker row wears a flag between the name and the end-session x while its tab carries the widget's element, the
+    current-session button wears one while the active tab does, and both follow the strip in place, the row node kept
+    (the click-safety rule: a push mid-press must not destroy the row under the finger). Executed against a stub DOM
+    (the harness above), so the flag is read back from the picker's own DOM after each change."""
+
+    @classmethod
+    def setUpClass(cls):
+        src = "const PICKER_JS=%s;" % json.dumps(km._CHAT_MOBILE_JS)
+        with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as f:
+            f.write(_PICKER_HARNESS + src + _PICKER_DRIVER)
+            path = f.name
+        try:
+            r = subprocess.run(["node", path], capture_output=True, text=True, timeout=30)
+        finally:
+            os.unlink(path)
+        assert r.returncode == 0, "the picker script threw: " + r.stderr[:800]
+        cls.out = json.loads(r.stdout.strip().splitlines()[-1])
+
+    def test_a_row_wears_the_flag_while_its_tab_does_and_the_current_button_follows_the_active_tab(self):
+        b = self.out["boot"]
+        self.assertEqual(b["rows"], 2, "two session rows")
+        self.assertEqual((b["api"]["n"], b["api"]["text"]), (1, "⚑"), "api's tab carries the flag: its row wears one")
+        self.assertTrue(b["api"]["beforeClose"], "between the name and the end-session x")
+        self.assertEqual(b["web"]["n"], 0, "web's tab carries none: no flag, no empty span")
+        self.assertIsNotNone(b["cur"], "the current-session button has its flag slot")
+        self.assertEqual((b["cur"]["display"], b["cur"]["text"]), ("", "⚑"), "api is active: the button shows the flag")
+
+    def test_the_flag_speaks_the_request_vocabulary(self):
+        b = self.out["boot"]
+        for title in (b["api"]["title"], b["cur"]["title"]):
+            self.assertIn("request", title)
+            self.assertNotIn("todo", title.lower())
+            self.assertNotIn("waiting on you", title.lower())
+            self.assertNotIn("\u2014", title, "no em dash")
+
+    def test_the_active_tab_moving_drops_the_buttons_flag_and_leaves_the_rows_alone(self):
+        w = self.out["webActive"]
+        self.assertEqual(w["cur"]["display"], "none", "web is active and has no request: the button's flag hides")
+        self.assertEqual((w["api"], w["web"]), (1, 0), "the rows still say which session asked")
+
+    def test_a_request_filed_paints_the_flag_once_and_a_request_answered_removes_it_in_place(self):
+        f = self.out["webFlag"]
+        self.assertEqual((f["web"]["n"], f["web"]["text"]), (1, "⚑"), "web's row gains the flag when its tab does")
+        self.assertTrue(f["web"]["beforeClose"])
+        self.assertEqual(f["cur"]["display"], "", "web is active: the button shows it now")
+        self.assertEqual(self.out["webFlagAgain"], 1, "a second sync adds no second flag: created once, toggled after")
+        c = self.out["apiCleared"]
+        self.assertEqual(c["n"], 0, "api's tab dropped the flag: the row's flag left")
+        self.assertTrue(c["sameRow"], "in place: the row node from boot is the one still listed")
+        self.assertTrue(c["close"], "its end-session x stands")
+        self.assertEqual(c["name"], "api")
 
 
 class RevealRouting(unittest.TestCase):

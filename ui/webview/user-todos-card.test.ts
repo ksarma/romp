@@ -198,7 +198,8 @@ class FakeEl {
   childNodes: FakeEl[] = []; parentNode: FakeEl | null = null;
   get parentElement(): FakeEl | null { return this.parentNode; }
   classes = new Set<string>(); dataset: Record<string, string> = {}; attrs: Record<string, string> = {};
-  textContent = ""; title = ""; type = ""; placeholder = ""; rows = 0; value = "";
+  textContent = ""; title = ""; type = ""; placeholder = ""; rows = 0; value = ""; tabIndex = -1;
+  listeners: Record<string, ((ev: any) => void)[]> = {};
   style: { props: Record<string, string>; setProperty: (k: string, v: string) => void };
   constructor(public tagName: string) {
     const props: Record<string, string> = {};
@@ -225,7 +226,11 @@ class FakeEl {
     if (k.startsWith("data-")) { const d = k.slice(5).replace(/-([a-z])/g, (_, ch: string) => ch.toUpperCase()); return d in this.dataset ? this.dataset[d] : null; }
     return k in this.attrs ? this.attrs[k] : null;
   }
-  addEventListener(): void {}
+  addEventListener(type: string, f: (ev: any) => void): void { (this.listeners[type] ??= []).push(f); }
+  /** A keydown on this node, as the browser would deliver it; returns whether a listener called preventDefault. */
+  keydown(key: string): boolean { const ev = { key, defaultPrevented: false, preventDefault() { ev.defaultPrevented = true; }, target: this }; for (const f of this.listeners.keydown ?? []) f(ev); return ev.defaultPrevented; }
+  /** The body delegate's road: a click walks up to the nearest [data-act] and runs the action (the test installs them). */
+  click(): void { for (let n: FakeEl | null = this; n; n = n.parentNode) { const act = n.dataset.act; if (act && DELEGATES[act]) { DELEGATES[act](n); return; } } }
   matchesCompound(c: Compound): boolean {
     if (c.tag && c.tag !== this.tagName) return false;
     for (const k of c.classes) if (!this.classes.has(k)) return false;
@@ -249,6 +254,7 @@ class FakeEl {
   *walk(): Generator<FakeEl> { for (const c of this.childNodes) { yield c; yield* c.walk(); } }
 }
 
+const DELEGATES: Record<string, (elx: FakeEl) => void> = {};   // the delegated actions a test lifts (uttoggle), keyed by data-act
 type Row = { id: string; text: string; detail?: string; blocking?: boolean; queued?: boolean };
 type Task = { subject: string; status: string; activeForm?: string };
 type Lifted = { renderTodo: (ev: { kind: "todo"; tasks: Task[]; userTodos: Row[] }) => FakeEl; utDropRow: (row: FakeEl | null) => void };
@@ -274,9 +280,14 @@ function liftTodoCard(opts: { openFolds?: string[] } = {}): Lifted {
     const todoFoldLabel = () => {};
     const UT_INLINE_ROWS = 12;
   `;
-  const make = new Function("WORLD", prelude + elFn + noticeFn + paint + todo + "\nreturn { renderTodo, utDropRow };") as
-    (w: { FakeEl: typeof FakeEl; sid: string; openFolds: string[] }) => Lifted;
-  return make({ FakeEl, sid: "web", openFolds: opts.openFolds || [] });
+  // the delegated uttoggle action (the body delegate's member), lifted with the card so the keyboard road can run it; a
+  // bare object member is not a program, so it is wrapped in a literal before the transpile
+  const t0 = RENDER.indexOf("uttoggle: (elx) => {"), t1 = RENDER.indexOf("utreply: (elx) => {", t0);
+  assert.ok(t0 > 0 && t1 > t0, "anchors not found: the uttoggle or utreply delegate moved; re-anchor");
+  const acts = requireCjs("esbuild").transformSync("const ACTS = { " + RENDER.slice(t0, t1) + " };", { loader: "ts" }).code;
+  const make = new Function("WORLD", prelude + elFn + noticeFn + paint + todo + "\n" + acts + "\nW.DELEGATES.uttoggle = ACTS.uttoggle;\nreturn { renderTodo, utDropRow };") as
+    (w: { FakeEl: typeof FakeEl; sid: string; openFolds: string[]; DELEGATES: typeof DELEGATES }) => Lifted;
+  return make({ FakeEl, sid: "web", openFolds: opts.openFolds || [], DELEGATES });
 }
 
 function todoCard(rows: Row[], tasks: Task[] = [], opts: { openFolds?: string[] } = {}) {
@@ -389,6 +400,31 @@ test("executed: past twelve open rows the rest hide behind a keyed toggle; at tw
   assert.equal(open.head(), "Waiting on you · 11");
 });
 
+test("executed: the details toggle is keyboard-reachable: the row's text is a focusable button that says whether it is open, and Enter or Space open and close the details through the one delegated action", () => {
+  // the text IS the toggle (progressive disclosure: the one-line version by default, detail one click away); a span with a
+  // delegated click was reachable by pointer alone, so it gains tabIndex, a role, aria-expanded and a keydown that calls
+  // click(), and the delegated uttoggle handler stays the one road (no second handler to drift from it)
+  const c = todoCard([{ id: "u1", text: "which name for the new tab", detail: "the two names in play are notes and journal" }, { id: "u2", text: "ok to delete the old branch" }]);
+  const txt = c.row("u1")!.querySelector(".ut-text")!, det = c.row("u1")!.querySelector(".ut-detail")!;
+  assert.equal(txt.tabIndex, 0, "in the tab order");
+  assert.equal(txt.getAttribute("role"), "button");
+  assert.equal(txt.getAttribute("aria-expanded"), "false", "closed by default");
+  assert.equal(det.classList.contains("open"), false);
+  assert.equal(txt.keydown("Enter"), true, "Enter is the toggle's, not the page's");
+  assert.equal(det.classList.contains("open"), true, "Enter opened the detail through the delegated action");
+  assert.equal(txt.getAttribute("aria-expanded"), "true", "and the state follows");
+  assert.equal(txt.querySelector(".ut-more")!.textContent, "▾ details");
+  assert.equal(txt.keydown(" "), true);
+  assert.equal(det.classList.contains("open"), false, "Space closed it again");
+  assert.equal(txt.getAttribute("aria-expanded"), "false");
+  assert.equal(txt.keydown("a"), false, "another key is not the toggle's");
+  assert.equal(det.classList.contains("open"), false);
+  const bare = c.row("u2")!.querySelector(".ut-text")!;
+  assert.equal(bare.tabIndex, -1, "a row without detail has nothing to open: not a button");
+  assert.equal(bare.getAttribute("role"), null);
+  assert.equal(bare.keydown("Enter"), false);
+});
+
 test("the toggle past twelve is delegated and relabels through one helper (the checklist's idiom)", () => {
   assert.match(TODO, /const UT_INLINE_ROWS = 12/);
   assert.match(TODO, /uts\.slice\(0, UT_INLINE_ROWS\)/);
@@ -488,5 +524,7 @@ test("the waiting-on-you styles reuse the todo card vocabulary", () => {
     assert.match(r, /color: var\(--dim\);/);
     assert.doesNotMatch(r, /--st-|--err|--accent|#[0-9a-f]{3,8}\b/i, sel + " wears no status colour");
   }
-  assert.ok(!/\.tab-usertodo/.test(CSS), "no tab mark in this change");
+  // the tab's request flag arrived with the ambient surfaces (the request flag widget of tab-widgets.ts); its rule is
+  // pinned in tab-usertodo.test.ts and is not this card's business beyond existing
+  assert.ok(/\.tab-usertodo \{/.test(CSS), "the tab's request flag has its rule");
 });

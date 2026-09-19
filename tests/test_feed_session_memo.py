@@ -182,6 +182,7 @@ class _Board(unittest.TestCase):
         # override journals, cleared.jsonl, session-order.json) is a directory the whole run shares. This board
         # builds over ITS root and nothing else: _rebind_state moves GOALDIR and every derived dir with it.
         jd._rebind_state(td)
+        (td / "session-hosts").write_text("off")   # a state root of its own: per-session hosts off in it (the 2026-09-11 rule)
         jd.PROJECTS = proj
         km.NAMES = jd.NAMES
         km._GLOBAL_CLAUDE_MD = td / "no-global-claude.md"
@@ -504,6 +505,39 @@ class EveryInputMovesItsSessionOnly(_Board):
         self.assertEqual((d["derived"], d["hit"], d["miss_by"], d["row_by"]), (1, 2, {"row": 1}, {"agents": 1}), d)
         d, _ = self._delta(self._build)
         self.assertEqual((d["derived"], d["hit"], d["row_by"]), (0, 3, {}), "the moved row stands: a hit")
+
+    def test_a_request_registered_or_resolved_re_derives_its_session_alone_and_a_text_edit_derives_nothing(self):
+        """The request store (user-todos.json): a row registered for api, then answered, each re-derives api alone under
+        the `usertodos` label, the frame's map follows, and a memoized build equals a from-scratch one; a rewrite of an
+        open row's text (same id, same state) derives nothing, since no ambient surface reads the text."""
+        km._set_user_todos(True)                                   # the requests switch, in this board's state root
+        self.addCleanup(km._user_todos_switch_cache.clear)
+        self.addCleanup(km._user_todos_cache.clear)
+        self._build()
+        tid = km._add_user_todo(API, "Need your pick of the two route layouts")
+        d, f = self._delta(self._build)
+        self.assertEqual((d["derived"], d["hit"]), (1, 2), d)
+        self.assertEqual(d["miss_by"], {"usertodos": 1}, "the open ids are the component")
+        self.assertEqual(f["userTodos"], {API: 1})
+        _reset_memo()
+        self.assertEqual(_dump(self._build()), _dump(f), "a memoized build equals a from-scratch one")
+        self.assertTrue(km._resolve_user_todo(API, tid, "answered"))
+        d, f = self._delta(self._build)
+        self.assertEqual((d["derived"], d["hit"], d["miss_by"]), (1, 2, {"usertodos": 1}), d)
+        self.assertEqual(f["userTodos"], {}, "answered: the count is gone")
+        tid2 = km._add_user_todo(API, "Need the staging database name")
+        self._build()
+        with km._user_todos_lock:                                  # the store's writer, the row's text alone rewritten
+            cur = dict(km._user_todos())
+            lst = [dict(t) for t in cur.get(API) or []]
+            for t in lst:
+                if t.get("id") == tid2:
+                    t["text"] = "Need the staging database name (the one the api session should read)"
+            cur[API] = lst
+            km._write_user_todos(cur)
+        d, f = self._delta(self._build)
+        self.assertEqual((d["derived"], d["hit"], d["miss_by"]), (0, 3, {}), "a text edit moves no key: %r" % d)
+        self.assertEqual(f["userTodos"], {API: 1})
 
     def test_a_background_agents_tool_call_moves_no_key(self):
         """A background agent's every tool call rewrites its task row's lastTool; no card reads it, so the key holds

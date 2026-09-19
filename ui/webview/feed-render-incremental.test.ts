@@ -348,6 +348,36 @@ test("column placement and the order walk are not gated: a changed session order
   assert.deepEqual(nameRebuilds(), before);
 });
 
+test("the frame's request map is a paint input: the count repaints the owning session's card alone, as a marker button hidden until needed; the same map again repaints nothing; a frame without the map hides it", async () => {
+  // plans/user-todos.md, the ambient surfaces: the kernel's build_feed carries sid -> open request count; the marker is
+  // board-level furniture on a card that exists, so it reaches an unchanged card through the gate's key (feed-card-gate.ts)
+  const before = nameRebuilds();
+  await dispatch(frame([g1, card("g2")._it, g3], { working: ["web"], userTodos: { [API]: 2 } }));
+  assert.deepEqual(nameRebuilds(), { ...before, g2: before.g2 + 1 }, "api's card repainted under its new key, the others did not");
+  const mark = card("g2")._utMark;
+  assert.equal(mark.tagName, "BUTTON", "keyboard-reachable by element, like its row-mates");
+  assert.equal(mark.type, "button");
+  assert.equal(mark.style.display, "");
+  assert.equal(mark.textContent, "⚑ 2 requests");
+  assert.match(mark._tipText, /2 requests for you/);
+  assert.match(mark.getAttribute("aria-label"), /2 requests for you/, "setTip drops the native title: the label is the button's accessible name");
+  assert.equal(mark.parentNode, card("g2").querySelector(".fask-row2"), "a direct row2 child: grouped mode, which hides idwrap wholesale, still shows it");
+  assert.equal(card("g1")._utMark.style.display, "none", "web has no open request: hidden, no empty pill");
+  assert.equal(card("g3")._utMark.style.display, "none");
+  await dispatch(frame([g1, card("g2")._it, g3], { working: ["web"], userTodos: { [API]: 2 } }));
+  assert.deepEqual(nameRebuilds(), { ...before, g2: before.g2 + 1 }, "the same map again: nothing repainted");
+  await dispatch(frame([g1, card("g2")._it, g3], { working: ["web"], userTodos: { [API]: 1 } }));
+  assert.deepEqual(nameRebuilds(), { ...before, g2: before.g2 + 2 }, "one answered: api's card alone again");
+  assert.equal(card("g2")._utMark.textContent, "⚑ request", "one request: no count");
+  assert.match(card("g2")._utMark.getAttribute("aria-label"), /a request for you/, "the singular label");
+  const sent = posted.length;
+  card("g2")._utMark.onclick(ev);
+  assert.deepEqual(posted.slice(sent), [{ type: "openSession", id: API, live: true }], "the click opens the session's chat at its live bottom, where the card with Reply is");
+  await dispatch(frame([g1, card("g2")._it, g3], { working: ["web"] }));   // the last request closed: no map at all (the same objects)
+  assert.deepEqual(nameRebuilds(), { ...before, g2: before.g2 + 3 }, "the closing reaches the card once more");
+  assert.equal(card("g2")._utMark.style.display, "none");
+});
+
 test("Revive latches on the click and re-arms on the kernel's reviveFailed for the revived session, its idle label restored and the reason toasted; a re-emit, another session's failure and an err for a different request leave the latch", async () => {
   // the kernel's parked-handoff card (build_feed): its sid IS the recipient the button revives (sid and blocked.toSid
   // are both the parked message's toId), so the kernel's reviveFailed, keyed by the revived id, names this card

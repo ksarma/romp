@@ -72,6 +72,7 @@ type Hooks = {
 };
 type Api = {
   renderTabs: () => void; sig: () => string; folded: () => Set<string>;
+  skeletons: () => ReturnType<typeof newSkeletonState>;   // the strip's skeleton set and status frames, for the cases that turn a tab skeleton
   set: (patch: Record<string, unknown>) => void; pending: () => { renderPendingAfterRename: boolean; renderPendingWhilePressed: boolean };
 };
 
@@ -161,7 +162,7 @@ function lift(): (hooks: Hooks) => Api {
     const focusActiveTab = () => {}; const syncNoSessionsPlaceholder = (v, t) => { H.aftermaths.push([v, t]); };
   `;
   const epilogue = `
-    return { renderTabs, sig: () => tabStripSig, folded: () => collapsedTabIds,
+    return { renderTabs, sig: () => tabStripSig, folded: () => collapsedTabIds, skeletons: () => skeletonTabs,
       set: (p) => { for (const k of Object.keys(p)) {
         if (k === "activeId") activeId = p[k]; else if (k === "peekId") peekId = p[k]; else if (k === "order") order = p[k];
         else if (k === "sessions") sessions = p[k]; else if (k === "tabMeta") tabMeta = p[k]; else if (k === "settings") settings = p[k];
@@ -264,8 +265,28 @@ test("every input the strip paints repaints it, once, when it changes", () => {
     ["a placeholder's name", () => { H.hidden.delete("p"); api.renderTabs(); tabMeta.get("p").name = "tests2"; }],
     ["a placeholder's color", () => { tabMeta.get("p").color = { bg: "#445566", fg: "#000000" }; }],
     ["a placeholder's session landing", () => { sessions.set("p", session("tests2", "opening")); }],
+    ["the request flag on a loaded tab (the status row's openRequests)", () => { sessions.get("a").status.openRequests = 1; }],
+    ["the request answered (the count back to none)", () => { sessions.get("a").status.openRequests = 0; }],
   ];
   for (const [what, change] of changes) repaintsOnce(H, api, what, change);
+});
+
+test("a request registered or closed on a SKELETON tab repaints the strip once: the signature reads the kernel's status frame's count", () => {
+  // a skeleton tab gets only status frames (the reconnect regime, 2026-09-09), so the flag on it can only come from the
+  // status row's openRequests; the loaded row and the skeleton row are two lists in the signature, so this case is what
+  // proves the skeleton's repaint rather than assuming it from the loaded tab's
+  const { H, api } = world();
+  api.renderTabs();
+  const sk = api.skeletons();
+  sk.ids.add("a"); sk.status.set("a", { state: "ready", openRequests: 0 });
+  api.renderTabs();
+  assert.equal(H.skeletons, 1, "the tab turned skeleton");
+  repaintsOnce(H, api, "a request registered on the skeleton (its status frame's count 0 to 1)", () => { sk.status.set("a", { state: "ready", openRequests: 1 }); });
+  repaintsOnce(H, api, "the request answered on the skeleton (1 to 0)", () => { sk.status.set("a", { state: "ready", openRequests: 0 }); });
+  const before = H.bar.wipes;
+  sk.status.set("a", { state: "ready" });   // an older kernel's frame without the field reads as none: no repaint from 0
+  api.renderTabs();
+  assert.equal(H.bar.wipes, before, "a missing count and a zero count are the same signature");
 });
 
 test("the sectioned strip: every input a group header paints repaints it, once, when it changes", () => {

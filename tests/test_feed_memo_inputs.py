@@ -222,6 +222,8 @@ CTX = {
     "interrupting": ("sig", ("interrupting",)),
     "store": ("sig", ("store",)),                      # _feed_goals_keyed(fsid), read once in the key
     "closer": ("sig", ("closer", "jactive")),          # the settle gap under the body's gate
+    "usertodos": ("sig", ("usertodos",)),              # the session's open request rows (_open_user_todos, read once in the key):
+    #                                                    the entry's userTodos count, the feed frame's marker map
 }
 
 # closures defined inside the body: pure over its locals, no component

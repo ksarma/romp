@@ -4466,13 +4466,14 @@ carries `userTodos` at the top level, with its stamp under `settingsGt` as `user
 While the switch is off: `POST /usertodo` and `POST /usertodo/withdraw` answer `409 {"ok": false, "error":
 "requests from sessions are turned off on this machine"}` and write nothing; Reply and Dismiss on the card
 answer with a warning that names the switch and change nothing; the postal bus leaves `add_user_todo` and
-`withdraw_user_todo` out of `tools/list` and refuses a call anyway before any post; the card shows no requests
-and the chat's delta frames carry no `userTodos` key at all. Requests filed earlier stay stored (the store is
-`user-todos.json` in the same directory, a different file) and reappear when the switch is turned back on; at
-startup the kernel log says how many open requests sit stored behind an off switch. A session already connected
-gains or loses the two tools within a few seconds of a flip, in either direction, without a restart: the bus
-declares `tools.listChanged` and polls the switch file every two seconds (`ROMP_POSTAL_SWITCH_POLL`; a value that
-is not a number falls back to two and is said once).
+`withdraw_user_todo` out of `tools/list` and refuses a call anyway before any post; the card shows no requests,
+the tab's request flag and the feed cards' request marker show none (the status row's `openRequests` reads 0 and
+the feed frame's `userTodos` map is empty), and the chat's delta frames carry no `userTodos` key at all.
+Requests filed earlier stay stored (the store is `user-todos.json` in the same directory, a different file) and
+reappear when the switch is turned back on; at startup the kernel log says how many open requests sit stored
+behind an off switch. A session already connected gains or loses the two tools within a few seconds of a flip,
+in either direction, without a restart: the bus declares `tools.listChanged` and polls the switch file every two
+seconds (`ROMP_POSTAL_SWITCH_POLL`; a value that is not a number falls back to two and is said once).
 
 The routes' other answers: `POST /usertodo` takes `{"id": <sid>, "text": <one short line>, "detail"?: <longer
 context>, "blocking"?: true|false}` and answers `{"ok": true, "todoId": "ut-..."}`; 400 for a missing id or text,

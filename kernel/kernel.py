@@ -40594,6 +40594,11 @@ def build_session(sid, now, live_map=None, path_override=None, tail_cap_t=None, 
                   # the APPROVAL BOX's rows (2026-09-19): this session's needs-you notices with actions (a held peer message's
                   # Approve and Deny), on the status so a status-only delta carries a decision's disappearance like the ring's
                   "notices": _chat_notices(sid),
+                  # the OPEN request count (plans/user-todos.md), on the STATUS so the strip's request flag widget reads it
+                  # (tab-widgets.ts) and a SKELETON tab, which gets only status frames, wears it too: the same rows as the
+                  # payload's `userTodos` below (one reader and one gate, the switch and the ended gate), so the tab and the
+                  # card cannot disagree; 0 with the requests switch off. _light_status carries the field for an unbuilt tab.
+                  "openRequests": len(_user_todos_open),
                   # user interrupted this thread's retry/API-error storm → romp's auto-retry stays OFF for it
                   # until a successful turn re-arms (the user 2026-07-06); the card + retry loop read this
                   "retrySuppressed": _session_retry_suppressed(sid),
@@ -42269,7 +42274,7 @@ def _state_unknown_names(alive, live_map, working, awaiting):
 _FEED_MEMO_LABELS = ("transcript", "parse", "cut", "states", "names", "captions", "store", "anchors", "reg",
                      "cleared", "row", "ask", "live", "bg", "wait", "postal", "stalls", "nudge", "jauth", "jactive",
                      "hide", "watch", "subagents", "usage", "offer", "auth", "downtime", "debug", "interrupting",
-                     "closer", "peers")
+                     "closer", "usertodos", "peers")
 _FEED_MEMO_DEPS = ("usage", "offer", "peers", "nudge", "stalls")    # components evaluated over the previous entry's read record
 _FEED_NUDGE_FIELDS = ("count", "failed", "failedAt")  # the fields the card reads; pinned by the input census
 # The `row` component's positions and the live-row fields each folds (2026-09-18): _feed_row_key reads them by name,
@@ -42643,7 +42648,7 @@ def _feed_session_key(s, tm, ctx, prev_entry):
     an old key with new content, which the next build's stat sees and re-derives; the other order could pair a new
     key with old content and never heal). The clock is not a component; the two booleans it decides are. The
     per-session facts the body needs and this function already computed are handed over in `ctx` (`ps`,
-    `who_working`, `interrupting`, `store`, `closer`, `hide`), so a build reads each once, hit or miss, and their
+    `who_working`, `interrupting`, `store`, `closer`, `hide`, `usertodos`), so a build reads each once, hit or miss, and their
     side effects (the live merge's prune/settle, the interrupt stamp's pop, the snapshot punch) run every build as
     they did before the memo. `prev_entry` is the session's previous decoded entry (None when cold): its `peers` and
     `reads` records drive the dependency components (_FEED_MEMO_DEPS), which _feed_key_with_deps re-evaluates over the NEW entry
@@ -42759,6 +42764,13 @@ def _feed_session_key(s, tm, ctx, prev_entry):
       interrupting: _interrupting(fsid, ps or {}, now, tm), computed here (the stamp's 120 s cap and its settle).
       closer: _closer_pending(fsid, path, now, store) under the body's exact gate (live, warm parse, idle, no judge
         call in flight), the settle gap the Analyzing swirl reads.
+      usertodos: the session's OPEN request ids, sorted (plans/user-todos.md): _open_user_todos, the request store's
+        reader with the requests switch (_user_todos_on) inside it, so the component is () while the switch is off;
+        taken here and handed over in ctx["usertodos"], so hit and miss read the store once and the entry's count and
+        the key's ids come from ONE read. A row registered, answered, dismissed or withdrawn moves it; a text edit does
+        not, and no ambient surface reads the text. The entry's `userTodos` count (the feed frame's per-card marker
+        map) reads it; a hidden session reads none. The ended gate is the live map alone: a session build_feed's loop
+        never visits (not alive) yields no entry, so its rows stay out of the frame until a revival puts it back.
       peers: ((peer sid, _feed_peer_facts(peer)) ...) for every peer the previous derivation read (origin senders
         via jd.load_goals_shared_or_fault / _name_of / _name_color, handoff rows' _ho_sid, the identities
         _handoff_peer_identities, _peer_identity and _handoff_card_fields resolved, the awaiting arm's peers);
@@ -42817,6 +42829,7 @@ def _feed_session_key(s, tm, ctx, prev_entry):
     # ── the per-session facts the body reads through ctx, once per build (a hidden session reads none of them,
     #    exactly as the loop's `continue` skipped them) ──
     ps, st, who_working, interrupting, closer, snap_key = None, None, False, False, False, None
+    ut_rows = []                                     # the session's open requests: none for a hidden session
     if not hide:
         ps = _parse_cached(s["path"]) if path else None   # CACHE-ONLY: the cards paint at once on a cold kernel (the user 2026-06-26)
         if ps is None and path:
@@ -42861,7 +42874,11 @@ def _feed_session_key(s, tm, ctx, prev_entry):
         #                                              snapshot key it was served from (None: the live file)
         closer = bool(live and ps and not who_working and not jactive
                       and _closer_pending(fsid, path, now, st if st is not None else {"nodes": {}, "status": {}}))
-    ctx.update(ps=ps, who_working=who_working, interrupting=interrupting, store=st, closer=closer, hide=hide)
+        ut_rows = _open_user_todos(fsid)             # the request store's open rows for this session, ONCE per build (the
+        #                                              switch inside the reader: off reads []); the key's component and the
+        #                                              body's count come from this one read, so they cannot disagree
+    ctx.update(ps=ps, who_working=who_working, interrupting=interrupting, store=st, closer=closer, hide=hide,
+               usertodos=ut_rows)
     # the store component closes on the READ's outcome (st is None: the read faulted, jd.load_goals_shared_or_fault filed it):
     # an EIO or a permissions fault moves no stat, so without the bit a faulted derivation (no cards) would serve
     # on after the fault cleared, and a pre-fault entry would serve through it (tests/test_goal_store_fault_boundary)
@@ -42881,9 +42898,11 @@ def _feed_session_key(s, tm, ctx, prev_entry):
     bg = (tuple((r.get("tid"), r.get("desc"), r.get("t"), r.get("type"), r.get("deadline"), r.get("agentId"))
                 for r in _bg_live_norm(fsid, path)) if (ps is not None and path) else None)
     parse = (ps is not None, (ps["turns"][-1].get("end") if ps and ps.get("turns") else None))   # the warm bit + the parse's own edge
+    usertodos = tuple(sorted(str(r.get("id")) for r in ut_rows))   # the open ids: a register, answer, dismiss or withdraw moves
+    #                                                                 it; a text edit does not (no ambient surface reads the text)
     return (transcript, parse, cut, states, names, captions, store, anchors, reg, cl, row, ask, live_rev,
             bg, wait, postal, stalls, nudge, jauth, jactive, hide, watch, subagents, usage, offer, auth, downtime,
-            debug, interrupting, closer, peers)
+            debug, interrupting, closer, usertodos, peers)
 
 
 _FEED_PARSE_IDX = _FEED_MEMO_LABELS.index("parse")
@@ -42936,6 +42955,8 @@ def _feed_session_entry(s, ctx):
       working       the session's name when its turn is open (the working-dot list), else None
       awaiting      the session's name when it is idle and awaiting (the await-green dot list), else None
       bgServices    the live judge-classified SERVICE descriptions for the session chip, else None
+      userTodos     the session's OPEN request count (ctx["usertodos"], the rows the key read; plans/user-todos.md),
+                    None when none: the feed frame's per-card marker map (build_feed's userTodos). Store values only
       servingFolds  [{"tracker", "card"}]: worker mirror cards awaiting the post-loop fold under the sender's row
       heal, hidden  the session-started tops nested / hidden this derivation (T319 / T333 counts)
       cold          True when the session is living, unparsed and worth warming (_warm_fleet_bg)
@@ -42943,8 +42964,8 @@ def _feed_session_entry(s, ctx):
                     peers): the key's `peers` dependency component re-evaluates them next build
       reads         usage=True for a cap offer, nudges=[node ids] for the nudge facts read by this entry
     `ctx` carries the build's cross-session reads (now, live_map, cleared, dbg_rows, wmap, stalls, jauth_map,
-    jactive) and the per-session facts the key already computed (ps, who_working, interrupting, store, closer):
-    the body reads those from ctx and nothing twice. Every helper this body calls is covered by a component of
+    jactive) and the per-session facts the key already computed (ps, who_working, interrupting, store, closer,
+    usertodos): the body reads those from ctx and nothing twice. Every helper this body calls is covered by a component of
     _feed_session_key (its docstring maps them); tests/test_feed_memo_inputs.py pins that mapping against this
     function's source."""
     now, live_map, cleared, dbg_rows = ctx["now"], ctx["live_map"], ctx["cleared"], ctx["dbg_rows"]
@@ -44008,7 +44029,9 @@ def _feed_session_entry(s, ctx):
             ent_asks.append(_awaiting_card(s, name, color, fsid, live, now, sess_awaiting_why,
                                            kind=sess_awaiting_kind, since=sess_awaiting_since,
                                            count=sess_awaiting_count, items=sess_awaiting_items))
+    ut_rows = ctx["usertodos"]                       # the open requests the key read (the store's idiom): the marker's count
     return {"asks": ent_asks, "working": ent_working, "awaiting": ent_awaiting, "bgServices": ent_bg,
+            "userTodos": len(ut_rows) or None,
             "servingFolds": ent_folds, "heal": heal_total, "hidden": hidden_total, "cold": cold_parse,
             "peers": sorted(peers_read), "reads": reads,
             "faults": _SUMMARY_ANCHOR_STATS["fault"] - _faults0}
@@ -44030,11 +44053,12 @@ def _feed_fold_card(card, now, cmap):
     return card
 
 
-def _feed_fold_entry(entry, now, cmap, name, asks, working, awaiting, bg_services, serving_folds):
+def _feed_fold_entry(entry, now, cmap, name, asks, working, awaiting, bg_services, serving_folds, fsid, user_todos):
     """Fold one session's entry (a fresh decode of its memoized JSON, or the derivation just made) into the build's
     cross-session accumulators, in the session's place in `alive` order: its cards onto `asks` (tinted for this
-    build), its serving-fold candidates, its dot names, its service chip under `name`. Returns (heal, hidden, cold)
-    for the caller's totals. None (a muted session) folds nothing."""
+    build), its serving-fold candidates, its dot names, its service chip under `name`, its open request count under
+    `fsid` (the frame's marker map; plans/user-todos.md). Returns (heal, hidden, cold) for the caller's totals. None
+    (a muted session) folds nothing."""
     if entry is None:
         return 0, 0, False
     for c in entry.get("asks") or []:
@@ -44048,6 +44072,8 @@ def _feed_fold_entry(entry, now, cmap, name, asks, working, awaiting, bg_service
         awaiting.append(entry["awaiting"])
     if entry.get("bgServices"):
         bg_services[name] = entry["bgServices"]
+    if entry.get("userTodos"):
+        user_todos[fsid] = int(entry["userTodos"])
     return int(entry.get("heal") or 0), int(entry.get("hidden") or 0), bool(entry.get("cold"))
 
 
@@ -44084,6 +44110,7 @@ def build_feed(now, live_map=None):
     heal_total = 0                                    # T319: session-started tops nested this build (logged once per rise)
     hidden_total = 0                                  # T333: skill-load tops with no host, hidden from the feed this build
     bg_services = {}          # session name -> live SERVICE descs (judge-classified, _bg_split) → the neutral chip
+    user_todos = {}           # sid -> OPEN request count (the entry's userTodos; plans/user-todos.md): the cards' quiet marker
     alive = _alive_sessions(now, live_map)               # hard filter: living sessions only
     wmap = _wait_for_graph(now, {s["sid"] for s in alive})   # per-session 'waiting on a live peer' (the user 2026-06-22)
     _stalls = _stalled_goals()                       # goals romp's nudge gate is holding → the card's Stalled section
@@ -44144,7 +44171,8 @@ def build_feed(now, live_map=None):
             entry = prev
         else:
             _feed_derive_recovered(fsid)
-        _heal, _hid, _cold = _feed_fold_entry(entry, now, cmap, s["name"], asks, working, awaiting, bg_services, serving_folds)
+        _heal, _hid, _cold = _feed_fold_entry(entry, now, cmap, s["name"], asks, working, awaiting, bg_services, serving_folds,
+                                              fsid, user_todos)
         heal_total += _heal
         hidden_total += _hid
         cold_parse = cold_parse or _cold
@@ -44236,6 +44264,13 @@ def build_feed(now, live_map=None):
             # session name -> live judge-classified SERVICE descs (a dev server the session keeps around;
             # _bg_split) → the grouped-mode session header's neutral chip, never a waiting state (2026-07-24)
             "bgServices": bg_services,
+            # sid -> OPEN request count (plans/user-todos.md): the quiet marker every card of the owning session wears, off
+            # the memoized entry's userTodos. Sorted so the serialized frame is byte-stable across builds when nothing
+            # changed: _send_client dedups on _dedup_sig, the serialization minus `now` and `buildId` (_DEDUP_VOLATILE), so
+            # any other per-build value inside the frame would re-send it every push. Store values only; a session the
+            # loop never visits (not alive, or muted: its entry is None) has no key here. The off frame carries no map, and
+            # the client reads a missing map as none.
+            "userTodos": {k: user_todos[k] for k in sorted(user_todos)},
             # the data-defined boards (plans/card-boards.md, phase three): the definitions a producer or the user made through
             # the door, for the renderer to merge over its code constants; fixed across builds until a define or a remove
             "boards": _boards_data(),
@@ -50357,9 +50392,13 @@ def _light_status(sid, path, tm, now):
     tries, next_at = _retry_gate_state(sid)
     ctx = tm.get("context")
     stops = cm.stops_for(_colormap())
+    ut_open = _open_user_todos(sid)                  # the request flag widget's input, by the built status's reader and gate
+    if ut_open and _user_todo_session_ended(sid):    # (build_session: the store's open rows, the switch inside the reader,
+        ut_open = []                                 #  the corroborated ended gate); one stat and a memo read per push
     return {"state": chip, "sinceEpoch": int(since * 1000) if since else None, "provisional": True,
             "faded": _idle_faded(chip, since, now),      # the built status's own fact (T155), so the chip reads it the same
             "needsYou": _feed_needs_input_of(sid),       # the yellow ask ring's one input (round four): the feed's verdict, a membership read
+            "openRequests": len(ut_open),                # the request flag's count, equal to the built status's (plans/user-todos.md)
             # the painter's context gauge and tints (round three): the row carries the context, the colours are the built
             # status's own derivations over it (cm.ramp on the global colormap, cm.context_rgb), so a cold tab's gauge and
             # its model and effort tints paint as built for as long as the tab stays unbuilt
@@ -55965,7 +56004,10 @@ def _fleet_view_sig(now, live_map):
                  # resolve on a dormant thread or a watch firing changes only the store, and used to reach
                  # the lane at the bucket
                  (jd.STATE / "comments", "__comments__"),
-                 (WATCH_FILE, "__watches__")):
+                 (WATCH_FILE, "__watches__"),
+                 # the request store (plans/user-todos.md): the feed's marker map and the status rows read it, so a
+                 # register, answer, dismiss or withdraw rebuilds the feed at once rather than at the 5 s bucket
+                 (jd.STATE / "user-todos.json", "__utodos__")):
         try:
             sig[k] = os.stat(p).st_mtime
         except OSError:
@@ -60210,6 +60252,9 @@ _CHAT_MOBILE_CSS = (
     # the working cue is the SAME gold status dot desktop uses (the tab's .tab-dot), not a text bullet
     "#mcur .wd{flex:0 0 auto;width:7px;height:7px;border-radius:50%;background:var(--st-working-bg,#e0b020)}"
     "#mcur .wd.await{background:var(--st-awaitbg-bg,#54B204)}"   # green when idle-waiting-on-bg-work
+    # the request flag (plans/user-todos.md): the desktop tab's request flag widget, mirrored on the current-session
+    # button; the dim tier (never a white alpha, which vanished on the light theme), non-numeric like the tab's
+    "#mcur .utf{flex:0 0 auto;color:var(--dim,#8a8a8a);font-size:.85em;line-height:1}"
     "#mcur .cv{flex:0 0 auto;opacity:.6;font-size:11px}"
     # something of the current session's is waiting on you (the desktop tab's dashed yellow ring, the class ring-waiting-on-you):
     # the chip's border takes the ring — dashed, in the ask yellow — over the identity color (declared after
@@ -60230,6 +60275,8 @@ _CHAT_MOBILE_CSS = (
     "body.theme-light .mrow{border-bottom-color:var(--menu-border)}"
     "body.theme-light .mrow .nm{color:var(--menu-fg)}"
     "body.theme-light .mrow .mclose{color:var(--text-muted)}"
+    "body.theme-light .mrow .utflag{color:var(--text-muted)}"   # the request flag's light arm, the x's tier
+    "body.theme-light #mcur .utf{color:var(--text-muted)}"
     "body.theme-light .mrow.active{background:var(--accent-wash)}"
     # the trigger chip's text tiers (its surfaces already re-skin through --btn-bg/--hairline above);
     # the .colored restatement outweighs the plain override so the identity color keeps the name
@@ -60244,6 +60291,8 @@ _CHAT_MOBILE_CSS = (
     ".mrow .workdot{flex:0 0 auto;width:7px;height:7px;border-radius:50%;background:var(--st-working-bg,#e0b020)}"
     ".mrow .workdot.await{background:var(--st-awaitbg-bg,#54B204)}"   # green: idle-waiting-on-bg-work
     ".mrow .nm{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#dddddd}"
+    # the per-row request flag sits between the name and the x: the same quiet treatment as #mcur .utf
+    ".mrow .utflag{flex:0 0 auto;margin-left:6px;color:var(--dim,#8a8a8a);font-size:.85em;line-height:1}"
     # per-row end-session x (the mobile picker's only way to end a session — desktop has the tab x)
     ".mrow .mclose{flex:0 0 auto;margin-left:8px;padding:0 6px;color:#8a8a8a;font-size:20px;line-height:1}"
     ".mrow .mclose:active{color:#e5484d}"
@@ -60291,7 +60340,7 @@ _CHAT_MOBILE_JS = """
 if(!tabbar||!tabs)return;
 var hdr=document.createElement('div');hdr.id='mhdr';
 var cur=document.createElement('button');cur.id='mcur';cur.type='button';
-cur.innerHTML='<span class="wd" style="display:none"></span><span class="nm"></span><span class="cv">▾</span>';
+cur.innerHTML='<span class="wd" style="display:none"></span><span class="nm"></span><span class="utf" style="display:none" title="this session has a request for you; the card at the bottom of its chat says what">\u2691</span><span class="cv">▾</span>';
 var add=document.createElement('button');add.id='madd';add.type='button';add.textContent='+';add.title='Open / new session';
 var list=document.createElement('div');list.id='mlist';
 // T161: an empty slot for the chat surface's TAG control — render.js mounts the shared button into
@@ -60313,7 +60362,7 @@ if(!t.classList.contains('tab')||!t.hasAttribute('data-id'))return;
 var lab=t.querySelector('.tab-label'),id=t.getAttribute('data-id'),copy=t.getAttribute('data-copy');
 out.push({key:'t:'+id+'/'+(copy===null?'':copy),id:id,copy:copy,name:(lab?lab.textContent:id),lab:lab,
 bg:t.style.getPropertyValue('--chip-bg').trim(),fg:t.style.getPropertyValue('--chip-fg').trim(),
-working:t.classList.contains('tab-working'),awaitbg:!!t.querySelector('.tab-dot.await'),ask:t.classList.contains('ring-waiting-on-you'),active:t.classList.contains('active'),
+working:t.classList.contains('tab-working'),awaitbg:!!t.querySelector('.tab-dot.await'),ask:t.classList.contains('ring-waiting-on-you'),ut:!!t.querySelector('.tab-usertodo'),active:t.classList.contains('active'),
 ph:t.classList.contains('tab-placeholder')});});return out;}
 // A name is filled from the desktop label's own CHILD NODES, cloned — not from its flattened text. A
 // federated session's name carries a <span class="host-prefix"> that renders the "host:" as quiet
@@ -60338,6 +60387,13 @@ var wd=row.querySelector('.workdot');
 if(s.working||s.awaitbg){if(!wd){wd=document.createElement('span');wd.className='workdot';row.insertBefore(wd,row.firstChild);}
 wd.classList.toggle('await',!s.working&&!!s.awaitbg);}
 else if(wd)wd.remove();
+// the request flag (the desktop tab's request flag widget, .tab-usertodo; switched off in the settings it puts no element on
+// the tab, so the phone follows): between the name and the x, created once and removed when the tab drops it (the workdot's shape)
+var uf=row.querySelector('.utflag');
+if(s.ut){if(!uf){uf=document.createElement('span');uf.className='utflag';uf.textContent='\u2691';
+uf.title='this session has a request for you; the card at the bottom of its chat says what';
+row.insertBefore(uf,row.querySelector('.mclose'));}}
+else if(uf)uf.remove();
 var lbl=row.querySelector('.nm');fillName(lbl,s);lbl.style.color=s.bg||'';}
 function rowMake(s){var row=document.createElement('div');row.className='mrow';row.setAttribute('data-id',s.id);row.setAttribute('data-key',s.key);
 if(s.copy!==null)row.setAttribute('data-copy',s.copy);   // the group this copy sits in ('' for the trail), as the tab carries it
@@ -60366,6 +60422,7 @@ var nm=cur.querySelector('.nm');
 var wd=cur.querySelector('.wd');wd.style.display=(act&&(act.working||act.awaitbg))?'':'none';   // gold working / green awaiting dot, matching desktop
 wd.classList.toggle('await',!!(act&&act.awaitbg&&!act.working));
 cur.classList.toggle('ask',!!(act&&act.ask));   // the current chip wears the yellow ring too
+var cuf=cur.querySelector('.utf');if(cuf)cuf.style.display=(act&&act.ut)?'':'none';   // the current chip's request flag follows the active tab's
 if(act){fillName(nm,act);
 if(act.bg){cur.classList.add('colored');cur.style.setProperty('--cbg',act.bg);cur.style.setProperty('--cfg',act.fg||'#ffffff');}
 else{cur.classList.remove('colored');cur.style.removeProperty('--cbg');cur.style.removeProperty('--cfg');}}

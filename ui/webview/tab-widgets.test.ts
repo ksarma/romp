@@ -32,20 +32,20 @@ const compose = (slot: "before" | "after", status: WidgetStatus, prefs: TabWidge
 };
 const P = (p: Partial<TabWidgetPrefs> = {}): TabWidgetPrefs => ({ on: {}, order: [], opts: {}, ...p });
 
-test("the six built-in widgets register in order: the dot before the name, the context bar and the hot key after it, then the three rings in precedence order; all on by default", () => {
+test("the seven built-in widgets register in order: the dot before the name, the request flag, the context bar and the hot key after it, then the three rings in precedence order; all on by default", () => {
   assert.deepEqual(W.tabWidgets().map((w) => [w.id, w.slot, w.defaultOn]),
-    [["dot", "before", true], ["ctx", "after", true], ["hotkey", "after", true], ["ring-needs-you", "ring", true], ["ring-waiting-on-you", "ring", true], ["ring-retrying", "ring", true]]);
-  assert.deepEqual(W.tabWidgets().map((w) => w.label), ["Status dot", "Context bar", "Hot key", "Needs you", "Waiting on you", "Retrying"]);
+    [["dot", "before", true], ["request", "after", true], ["ctx", "after", true], ["hotkey", "after", true], ["ring-needs-you", "ring", true], ["ring-waiting-on-you", "ring", true], ["ring-retrying", "ring", true]]);
+  assert.deepEqual(W.tabWidgets().map((w) => w.label), ["Status dot", "Request flag", "Context bar", "Hot key", "Needs you", "Waiting on you", "Retrying"]);
   assert.ok(W.tabWidgets().every((w) => w.description.length > 0 && !/\bfleet\b/i.test(w.description)));
-  assert.deepEqual(W.titleWidgets().map((w) => w.id), ["dot", "ctx", "hotkey"], "the settings' Tab widgets rows: the widgets that render into the title");
+  assert.deepEqual(W.titleWidgets().map((w) => w.id), ["dot", "request", "ctx", "hotkey"], "the settings' Tab widgets rows: the widgets that render into the title");
   assert.deepEqual(W.ringWidgets().map((w) => [w.id, w.ring]), [["ring-needs-you", "ring-needs-you"], ["ring-waiting-on-you", "ring-waiting-on-you"], ["ring-retrying", "ring-retrying"]], "each ring's class is its id");
 });
 
 test("registration by id replaces; a contributed widget lands after the built-ins in the default order", () => {
   W.registerTabWidget({ id: "mark", label: "Demo mark", description: "a synthetic mark", defaultOn: false, slot: "after", render: () => { const e = mkEl("span"); e.className = "tab-mark"; return e as unknown as HTMLElement; } });
-  assert.deepEqual(W.tabWidgets().map((w) => w.id), ["dot", "ctx", "hotkey", "ring-needs-you", "ring-waiting-on-you", "ring-retrying", "mark"]);
+  assert.deepEqual(W.tabWidgets().map((w) => w.id), ["dot", "request", "ctx", "hotkey", "ring-needs-you", "ring-waiting-on-you", "ring-retrying", "mark"]);
   W.registerTabWidget({ id: "mark", label: "Demo mark", description: "a synthetic mark, again", defaultOn: false, slot: "after", render: () => null });
-  assert.equal(W.tabWidgets().length, 7, "the same id replaces, never duplicates");
+  assert.equal(W.tabWidgets().length, 8, "the same id replaces, never duplicates");
   assert.equal(W.tabWidget("mark")!.description, "a synthetic mark, again");
 });
 
@@ -91,6 +91,40 @@ test("the hot key: nothing until a hot key is assigned; the tab hot-key store sh
   assert.equal(keys[0].attrs["aria-label"], keys[0].title);
   assert.deepEqual(compose("after", { state: "working" }, P({ on: { hotkey: false } })).filter((c) => classes(c).includes("tab-key")), [], "switched off");
   store.delete(W.TABKEYS_KEY); store.delete("romp:keys");
+});
+
+// THE REQUEST FLAG (plans/user-todos.md, the ambient surfaces): a flag after the name while the session has an open request
+// for you, off the status row's openRequests (build_session's and _light_status's, so a skeleton tab wears it too); its own
+// element, never a .tab-dot variant (pips encode turn state; the phone's picker scrapes them by class); non-numeric, since
+// tabs carry no counts; the card by the session's composer says what.
+test("the request flag: a bare flag for one open request and for three (no digit), nothing for none, nothing on a closed tab; its words say request", () => {
+  const flags = (status: WidgetStatus, prefs = P()) => compose("after", status, prefs).filter((c) => classes(c).includes("tab-usertodo"));
+  assert.equal(flags({ state: "working", openRequests: 1 }).length, 1);
+  assert.equal(flags({ state: "working", openRequests: 1 })[0].textContent, "⚑");
+  assert.equal(flags({ state: "ready", openRequests: 3 })[0].textContent, "⚑", "three requests: the same flag");
+  assert.doesNotMatch(flags({ state: "ready", openRequests: 3 })[0].textContent, /\d/, "tabs carry no counts");
+  assert.deepEqual(flags({ state: "working", openRequests: 0 }), [], "no open request: no element, not even an empty one");
+  assert.deepEqual(flags({ state: "working" }), [], "an older kernel without the field: nothing");
+  assert.deepEqual(flags({ state: "working", openRequests: null }), []);
+  assert.deepEqual(flags({ state: "closed", openRequests: 2 }), [], "a closed tab with rows still stored wears nothing");
+  const f = flags({ state: "working", openRequests: 1 })[0];
+  assert.match(f.title, /request/);
+  assert.equal(f.attrs["aria-label"], f.title);
+  assert.doesNotMatch(f.title, /todo|waiting on you|\u2014/i, "the request vocabulary; the yellow ring owns the phrase waiting on you; no em dash");
+  assert.equal(f.tag, "span");
+  assert.deepEqual(classes(f), ["tab-usertodo"], "its own class, never a .tab-dot variant");
+});
+
+test("the request flag: on by default, off by its switch, no options, demo lit, composed after the name before the context bar", () => {
+  const w = W.tabWidget("request")!;
+  assert.equal(w.label, "Request flag");
+  assert.equal(w.options, undefined, "nothing to choose yet");
+  assert.equal(W.widgetOn(P(), w), true, "defaultOn");
+  assert.deepEqual(compose("after", { state: "working", openRequests: 2 }, P({ on: { request: false } })).filter((c) => classes(c).includes("tab-usertodo")), [], "switched off: nothing");
+  const demo = W.renderWidgetDemo(w, P()) as unknown as El | null;
+  assert.ok(demo && classes(demo).includes("tab-usertodo"), "the settings row's demo lights the flag");
+  assert.deepEqual(compose("after", { state: "working", ctx: "62%", openRequests: 1 }, P()).map((c) => classes(c)[0]), ["tab-usertodo", "tab-ctx"], "after the name, before the gauge");
+  assert.deepEqual(compose("after", { state: "working", ctx: "62%", openRequests: 1 }, P({ order: ["ctx", "request"] })).map((c) => classes(c)[0]), ["tab-ctx", "tab-usertodo"], "a stored order can put the gauge first");
 });
 
 test("the after slot composes in registration order: the bar, then the keycap; the stored order can put the keycap first", () => {
@@ -188,14 +222,14 @@ test("widgetSlot: the registered slot until the order names both the widget and 
   assert.deepEqual([W.widgetSlot(moved, ctx), W.widgetSlot(moved, dot), W.widgetSlot(moved, key)], ["before", "after", "after"], "dragged across: the context bar before the name, the dot after it");
   assert.equal(W.widgetSlot(P({ order: [W.NAME_DIVIDER, "ctx"] }), dot), "before", "a widget the order does not name keeps its registered slot");
   assert.deepEqual(noMark(W.orderedWidgets(moved, "before").map((w) => w.id)), ["ctx"]);
-  assert.deepEqual(noMark(W.orderedWidgets(moved, "after").map((w) => w.id)), ["dot", "hotkey"]);
+  assert.deepEqual(noMark(W.orderedWidgets(moved, "after").map((w) => w.id)), ["dot", "hotkey", "request"], "an order without the request flag keeps it on the after side, after the ids the order names");
 });
 
 test("tabListOrder: the rows' visual order, the divider between the sides; a drag's result stored back reproduces itself", () => {
-  assert.deepEqual(noMark(W.tabListOrder(P())), ["dot", W.NAME_DIVIDER, "ctx", "hotkey"], "registration order until the user drags");
-  assert.deepEqual(noMark(W.tabListOrder(P({ order: ["hotkey"] }))), ["dot", W.NAME_DIVIDER, "hotkey", "ctx"], "a partial order without the divider reorders within the sides");
+  assert.deepEqual(noMark(W.tabListOrder(P())), ["dot", W.NAME_DIVIDER, "request", "ctx", "hotkey"], "registration order until the user drags");
+  assert.deepEqual(noMark(W.tabListOrder(P({ order: ["hotkey"] }))), ["dot", W.NAME_DIVIDER, "hotkey", "request", "ctx"], "a partial order without the divider reorders within the sides");
   const dragged = P({ order: ["ctx", W.NAME_DIVIDER, "dot", "hotkey"] });
-  assert.deepEqual(noMark(W.tabListOrder(dragged)), ["ctx", W.NAME_DIVIDER, "dot", "hotkey"]);
+  assert.deepEqual(noMark(W.tabListOrder(dragged)), ["ctx", W.NAME_DIVIDER, "dot", "hotkey", "request"], "a stored order from before the request flag draws it last on the after side until the user drags it");
   assert.deepEqual(W.tabListOrder(P({ order: W.tabListOrder(dragged) })), W.tabListOrder(dragged), "storing the list back is a fixed point");
 });
 
@@ -253,7 +287,7 @@ test("ring: a ring widget registers with its class and predicate; ringWidgets li
   W.registerTabWidget(ring("ra", (s) => s.state === "retrying"));
   assert.deepEqual(hereRings().map((w) => [w.id, w.ring]), [["rr", "r-rr"], ["ry", "r-ry"], ["ra", "r-ra"]]);
   assert.ok(W.titleWidgets().every((w) => w.slot !== "ring"), "the title's widgets exclude the rings");
-  assert.deepEqual(noMark(W.titleWidgets().map((w) => w.id)), ["dot", "ctx", "hotkey"]);
+  assert.deepEqual(noMark(W.titleWidgets().map((w) => w.id)), ["dot", "request", "ctx", "hotkey"]);
   assert.ok(RINGS_HERE.every((id) => W.tabWidgets().some((w) => w.id === id)), "…while tabWidgets lists every registration");
 });
 
@@ -284,7 +318,7 @@ test("ring: rings have no position — widgetSlot says ring whatever the order, 
   assert.equal(W.widgetSlot(P({ order: ["rr", W.NAME_DIVIDER, "dot"] }), rr), "ring", "even a stored order that puts it before the divider");
   const stored = P({ order: ["rr", "ctx", W.NAME_DIVIDER, "ry", "dot", "ra"] });
   assert.ok(!W.orderedWidgets(stored, "before").some((w) => w.slot === "ring") && !W.orderedWidgets(stored, "after").some((w) => w.slot === "ring"));
-  assert.deepEqual(noRings(W.tabListOrder(stored)), ["ctx", W.NAME_DIVIDER, "dot", "hotkey"]);
+  assert.deepEqual(noRings(W.tabListOrder(stored)), ["ctx", W.NAME_DIVIDER, "dot", "request", "hotkey"]);
   assert.ok(!W.tabListOrder(stored).some((id) => RINGS_HERE.includes(id)), "the drag list never names a ring");
   assert.deepEqual(W.orderedWidgets(stored, "ring").map((w) => w.id).filter((id) => RINGS_HERE.includes(id)), RINGS_HERE, "the ring list is the registration order, not the stored one");
   assert.deepEqual(W.tabWidgetPrefs({ order: ["rr", "ctx", W.NAME_DIVIDER, "ry", "dot"] }).order, ["ctx", W.NAME_DIVIDER, "dot"], "a stored order never keeps a ring id");

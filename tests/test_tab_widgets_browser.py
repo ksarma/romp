@@ -586,26 +586,28 @@ class ServedTabWidgets(unittest.TestCase):
         self.assertTrue(p["open"], "the panel opened: " + json.dumps(p)[:300])
         rows = p["rows"]
         table = "\n  " + json.dumps(rows)[:2000]
-        self.assertEqual([r["id"] for r in rows], ["dot", "ctx", "hotkey"], "registration order: the dot, the bar, the hot key" + table)
-        self.assertEqual([r["label"] for r in rows], ["Status dot", "Context bar", "Hot key"], table)
+        self.assertEqual([r["id"] for r in rows], ["dot", "request", "ctx", "hotkey"], "registration order: the dot, the request flag, the bar, the hot key" + table)
+        self.assertEqual([r["label"] for r in rows], ["Status dot", "Request flag", "Context bar", "Hot key"], table)
         for r in rows:
             self.assertEqual((r["sw"]["role"], r["sw"]["checked"], r["sw"]["on"]), ("switch", "true", True), r["id"] + " is on by default" + table)
             self.assertEqual(r["sw"]["radius"], "999px", "the sliding toggle, a pill" + table)
             self.assertGreater(r["sw"]["w"], r["sw"]["h"], table)
             self.assertEqual(r["sw"]["knobLeft"], "18px", "on: the knob sits right" + table)
             self.assertTrue(r["desc"], "a one-line description" + table)
-        dot, ctx, key = rows
+        dot, req, ctx, key = rows
+        self.assertEqual([c["cls"] for c in req["demo"]], ["tab-label", "tab-usertodo"], "the request flag after the name, over its own demo status (one open request)" + table)
+        self.assertIn("request", req["demo"][1]["title"], table)
         self.assertEqual([c["cls"] for c in dot["demo"]], ["tab-dot", "tab-label"], "the demo: a working session's gold dot before the name" + table)
         self.assertEqual(dot["demo"][0]["title"], "working — a turn is running right now", table)
         self.assertEqual([c["cls"] for c in ctx["demo"]], ["tab-label", "tab-ctx"], "the bar after the name" + table)
         self.assertEqual([c["cls"] for c in key["demo"]], ["tab-label", "tab-key"], table)
         self.assertEqual(key["demo"][1]["text"], "⌃⇧1", "the demo keycap" + table)
-        self.assertEqual([[o["key"] for o in r["opts"]] for r in rows], [["idle"], ["show"], []], "the dot's idle option, the bar's show option, the hot key none" + table)
+        self.assertEqual([[o["key"] for o in r["opts"]] for r in rows], [["idle"], [], ["show"], []], "the dot's idle option, the request flag none, the bar's show option, the hot key none" + table)
         self.assertEqual(dot["opts"][0]["current"].replace("▾", "").strip(), "Hide when idle", table)
         self.assertEqual(ctx["opts"][0]["current"].replace("▾", "").strip(), "From 50% full", table)
         # round one, LOW 2: one grid across the rows, so every switch starts at the same x; the description sits behind the hover popover
         self.assertEqual(len({round(r["swLeft"]) for r in rows}), 1, "the switches line up down the list" + table)
-        self.assertEqual([r["descDisplay"] for r in rows], ["none"] * 3, "the descriptions are hover popovers at rest, the panel's idiom" + table)
+        self.assertEqual([r["descDisplay"] for r in rows], ["none"] * 4, "the descriptions are hover popovers at rest, the panel's idiom" + table)
 
     def test_the_ring_rows_list_the_three_rings_in_precedence_order_with_a_switch_and_a_live_demo_each_and_no_grip(self):
         # THE RINGS (2026-09-14): the three dashed rings are widgets with a switch each, their rows under the title rows and
@@ -651,7 +653,7 @@ class ServedTabWidgets(unittest.TestCase):
             if x["id"] != "ring-waiting-on-you":
                 self.assertEqual((x["sw"]["checked"], x["demo"]["outlineStyle"]), ("true", "dashed"), x["id"] + " stands" + table)
         self.assertIs(a["store"]["tabWidgets"]["on"].get("ring-waiting-on-you"), False, "the store: the same tabWidgets prefs, the ring's own flag" + table)
-        self.assertEqual([x["sw"]["checked"] for x in a["panel"]["rows"]], ["true", "true", "true"], "the title rows untouched" + table)
+        self.assertEqual([x["sw"]["checked"] for x in a["panel"]["rows"]], ["true", "true", "true", "true"], "the title rows untouched" + table)
         self.assertIs(r["afterYellowOn"]["store"]["tabWidgets"]["on"].get("ring-waiting-on-you"), True, "…and back on: " + json.dumps(r["afterYellowOn"]["store"]))
         self.assertEqual(next(x for x in r["afterYellowOn"]["rings"]["rows"] if x["id"] == "ring-waiting-on-you")["demo"]["outlineStyle"], "dashed")
 
@@ -675,7 +677,7 @@ class ServedTabWidgets(unittest.TestCase):
         a = r["afterCtxOff"]
         self.assertTrue(a["panel"]["open"], "the panel opened: " + json.dumps(a["panel"])[:300])
         table = "\n  " + json.dumps(a["strip"]["store"]) + " " + json.dumps([x["sw"]["checked"] for x in a["panel"]["rows"]])
-        self.assertEqual([x["sw"]["checked"] for x in a["panel"]["rows"]], ["true", "false", "true"], "the Context bar's switch is off" + table)
+        self.assertEqual([x["sw"]["checked"] for x in a["panel"]["rows"]], ["true", "true", "false", "true"], "the Context bar's switch is off" + table)
         self.assertEqual(a["strip"]["store"]["tabWidgets"]["on"], {"ctx": False}, "the store's prefs" + table)
         self.assertEqual(a["strip"]["store"]["tabCtx"], "never", "…and the older key mirrors it, for older readers" + table)
         self.assertFalse(a["strip"]["web"]["ctx"], "the bar left web's tab live" + table)

@@ -53,6 +53,7 @@ test("every input the strip renders is in the signature", () => {
     "st.ctx", "st.ctxColor", "st.ctxTone", "!!s.sub", "hostIsDown(id)", "hostDownNote(id)",
     "settings.tabWidgets", "tabHotkey(id)",   // T379: which widgets a tab carries (and their options), and the hot-key keycap's chord
     "st.needsYou === true", "kst?.needsYou === true",   // the yellow ring's input (the ask ring, 2026-09-13; a widget since 2026-09-14): a card of the session's entering or leaving the feed's needs-you column repaints, on a loaded tab and a skeleton alike; the switches ride settings.tabWidgets above
+    "st.openRequests || 0", "kst?.openRequests || 0",   // the request flag widget's input: a request registered or closed repaints the flag, on a loaded tab and a skeleton alike
   ]) assert.ok(sig.includes(needle), "the signature reads " + needle);
   assert.match(fn, /const unions = viewTagUnion\(effViews\(\)\);\s*\n\s*const plan = planStrip\(visibleIds, unions, readTabGroups\(unions\), activeId, phoneLayout\(\),/,
     "the plan reads the unions the signature carries");

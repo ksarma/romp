@@ -470,13 +470,29 @@ its request store, the card says so in place of the requests and names the
 file; Reply and Dismiss change nothing and say so, and the kernel log has the
 cause. Fix or remove the file and the card reads again.
 
-If a session has ended, its requests stay out of the card until you revive it;
-they are hidden, not cleared, and come back with the session. A session that is
-only asleep after a kernel restart is still listed, and Reply wakes it with its
-history intact. An answer that never reached the session (its process died
-holding it, or you cancelled it from the queue) puts the request back on the
-card; an answer the transcript shows the session received keeps the request
-closed.
+**The tab.** A session with an open request carries a small flag after its name
+in the tab strip. The flag says that the session has a request for you; the
+card says what. Tabs carry no counts. The flag is a tab widget like the status
+dot and the context bar, with its own switch in the gear's Tab widgets section,
+and on a phone the session picker shows the same flag on the session's row and
+on the current-session button.
+
+![A flag on the tab of a session that has a request for you](assets/guide/user-todos-tab.png){ width="232" }
+
+**The feed.** Every card of that session wears a small "request" marker, with
+the number of open requests when there is more than one; click it and the
+session's chat opens at the card. The marker moves no card: the session told
+you what it needs and goes on working, so its cards stay where they are.
+
+Hiding a session from the feed (right-click its tab, **Hide from feed**) hides
+its cards and their markers; its tab keeps the flag, because the tab describes
+the session itself. If a session has ended, its requests stay out of the card
+and off its tab until you revive it; they are hidden, not cleared, and come
+back with the session. A session that is only asleep after a kernel restart is
+still listed, and Reply wakes it with its history intact. An answer that never
+reached the session (its process died holding it, or you cancelled it from the
+queue) puts the request back on the card; an answer the transcript shows the
+session received keeps the request closed.
 
 ### Turning it on
 
@@ -530,7 +546,8 @@ was asked.
 - A request has no priority, deadline, or edit. To change one, the session
   withdraws it and files another.
 - A request moves no card and rings no bell: it waits on the card at the
-  bottom of the session's transcript.
+  bottom of the session's transcript, with the flag on the tab and the marker
+  on the session's feed cards pointing there.
 
 ## Inter-agent communication (the Romp Postal Service)
 

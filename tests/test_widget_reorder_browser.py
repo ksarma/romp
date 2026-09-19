@@ -175,9 +175,11 @@ out.ctxBefore = { panel: await readPanel(setF), strip: await readStrip(chatF) };
   out.escAfter = { panel: await readPanel(setF), strip: await readStrip(chatF), before,
                    shellOpen: await page.evaluate(() => document.body.classList.contains("settings-open")) };   // the panel's own Escape-to-close must not have fired
 }
-// 3. the keyboard road: the hot key's grip focused, ArrowUp moves it one place (above the dot, still after the name)
+// 3. the keyboard road: the hot key's grip focused, ArrowUp moves it one place each press: above the request flag, then above the
+//    name (the divider), so the second press is the one that changes its side
 await setF.focus('#rs-widgets > .rs-widget[data-widget="hotkey"] .rs-grip');
 await page.keyboard.press("ArrowUp"); await setF.waitForTimeout(400);   // the page's keyboard reaches the focused grip inside the frame
+await page.keyboard.press("ArrowUp"); await setF.waitForTimeout(400);
 out.keyUp = { panel: await readPanel(setF), strip: await readStrip(chatF), focused: await setF.evaluate(() => (document.activeElement && document.activeElement.getAttribute("aria-label")) || null) };
 // 3b. round two, medium 1: a switch toggled by Space keeps the focus through the paint, and a second Space toggles back
 await setF.focus('#rs-widgets > .rs-widget[data-widget="ctx"] .rs-switch');
@@ -425,7 +427,7 @@ class ServedWidgetReorder(unittest.TestCase):
 
     def test_every_widget_row_has_a_grip_and_the_tab_widgets_carry_the_divider_between_the_sides(self):
         p = self.out["panel0"]
-        self.assertEqual(self._ids(p["tabRows"]), ["dot", "name", "ctx", "hotkey"], "registration order with the divider between the sides")
+        self.assertEqual(self._ids(p["tabRows"]), ["dot", "name", "request", "ctx", "hotkey"], "registration order with the divider between the sides")
         self.assertEqual(self._ids(p["statusRows"]), ["name", "folder", "branch", "host"])
         for r in p["tabRows"] + p["statusRows"]:
             if r["divider"]:
@@ -448,8 +450,8 @@ class ServedWidgetReorder(unittest.TestCase):
 
     def test_dragging_the_context_bar_above_the_divider_puts_it_before_the_name_on_the_strip_live_and_stores_the_order_whole(self):
         c = self.out["ctxBefore"]
-        self.assertEqual(self._ids(c["panel"]["tabRows"]), ["ctx", "dot", "name", "hotkey"], "the row landed above the dot, on the name's other side")
-        self.assertEqual(c["strip"]["store"]["tabOrder"], ["ctx", "dot", "name", "hotkey"], "the order stored whole, the divider's id in it")
+        self.assertEqual(self._ids(c["panel"]["tabRows"]), ["ctx", "dot", "name", "request", "hotkey"], "the row landed above the dot, on the name's other side")
+        self.assertEqual(c["strip"]["store"]["tabOrder"], ["ctx", "dot", "name", "request", "hotkey"], "the order stored whole, the divider's id in it")
         tab = c["strip"]["tab"]
         self.assertLess(self._at(tab, "tab-ctx"), self._at(tab, "tab-dot"), "the context bar leads the before side on the chat frame's strip: %r" % tab)
         self.assertLess(self._at(tab, "tab-dot"), self._at(tab, "tab-label"), "...the dot still before the name, its own side unchanged: %r" % tab)
@@ -458,15 +460,15 @@ class ServedWidgetReorder(unittest.TestCase):
     def test_escape_during_a_drag_restores_the_rows_and_writes_nothing(self):
         e = self.out["escAfter"]
         self.assertNotEqual(self._ids(self.out["escMid"]["tabRows"]), self._ids(e["panel"]["tabRows"]), "the row had moved mid-drag: %r" % self.out["escMid"]["tabRows"])
-        self.assertEqual(self._ids(e["panel"]["tabRows"]), ["ctx", "dot", "name", "hotkey"], "back where it was")
+        self.assertEqual(self._ids(e["panel"]["tabRows"]), ["ctx", "dot", "name", "request", "hotkey"], "back where it was")
         self.assertEqual(e["strip"]["store"]["tabOrder"], e["before"]["store"]["tabOrder"], "nothing written")
         self.assertEqual(e["strip"]["tab"], e["before"]["tab"], "the strip unchanged")
         self.assertTrue(e["shellOpen"], "the settings stayed open: the drag's Escape went no further (release: %r)" % (self.out.get("escRelease"),))
 
     def test_the_arrow_keys_move_a_row_one_place_and_keep_the_focus_on_its_grip(self):
         k = self.out["keyUp"]
-        self.assertEqual(self._ids(k["panel"]["tabRows"]), ["ctx", "dot", "hotkey", "name"], "ArrowUp took the hot key above the divider: before the name now")
-        self.assertEqual(k["strip"]["store"]["tabOrder"], ["ctx", "dot", "hotkey", "name"])
+        self.assertEqual(self._ids(k["panel"]["tabRows"]), ["ctx", "dot", "hotkey", "name", "request"], "two ArrowUps took the hot key past the request flag and above the divider: before the name now")
+        self.assertEqual(k["strip"]["store"]["tabOrder"], ["ctx", "dot", "hotkey", "name", "request"])
         self.assertEqual(k["focused"], "Drag to reorder: Hot key", "the grip keeps the focus for the next key")
         tab = k["strip"]["tab"]
         self.assertLess(self._at(tab, "tab-key"), self._at(tab, "tab-label"), "the keycap before the name on the strip: %r" % tab)
@@ -534,9 +536,9 @@ class ServedWidgetReorder(unittest.TestCase):
 
     def test_every_move_speaks_through_the_live_region_and_the_previews_are_inert(self):
         c = self.out["ctxBefore"]["panel"]
-        self.assertEqual(c["live"], {"text": "Context bar moved to position 1 of 3, before the session name", "polite": "polite"}, "the drag's move announced: %r" % c["live"])
+        self.assertEqual(c["live"], {"text": "Context bar moved to position 1 of 4, before the session name", "polite": "polite"}, "the drag's move announced: %r" % c["live"])
         k = self.out["keyUp"]["panel"]
-        self.assertEqual(k["live"]["text"], "Hot key moved to position 3 of 3, before the session name", "the key's move announced: %r" % k["live"])
+        self.assertEqual(k["live"]["text"], "Hot key moved to position 3 of 4, before the session name", "the key's move announced: %r" % k["live"])
         b = self.out["branchFirst"]["panel"]
         self.assertEqual(b["live"]["text"], "Git branch moved to position 1 of 3 in the right slot", "the status line counts within the slot and names it (round three, low 2): %r" % b["live"])
         h = self.out["nameHeld"]["panel"]
@@ -556,7 +558,7 @@ class ServedWidgetReorder(unittest.TestCase):
 
     def test_a_store_from_before_the_reorder_renders_registration_order_until_the_user_drags(self):
         L = self.out["legacy"]
-        self.assertEqual(self._ids(L["panel"]["tabRows"]), ["dot", "name", "ctx", "hotkey"])
+        self.assertEqual(self._ids(L["panel"]["tabRows"]), ["dot", "name", "request", "ctx", "hotkey"])
         self.assertEqual(L["strip"]["store"]["tabOrder"], [], "the empty order stays as it was")
         tab = L["strip"]["tab"]
         self.assertLess(self._at(tab, "tab-dot"), self._at(tab, "tab-label"))
