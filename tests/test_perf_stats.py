@@ -1084,6 +1084,45 @@ class JobRowsByOwner(unittest.TestCase):
             self.assertGreater(self._flat_jobs(planted["stages_ms"]), planted["stages_ms"]["jobsPass"], "caught: the merged writers exceed the pass")
             self.assertEqual(pass_names(planted["stages_ms"]), 0.0, "the rejected name-list sum is blind to it")
 
+    def test_a_bare_jobs_write_is_the_flat_rows_for_every_writer_under_every_mark(self):
+        """The `jobs` container is not routed (2026-09-19 review, the cell bin/romp's share comment is checked against): stage()
+        adds a bare `jobs` write to the flat row whoever wrote it and whatever mark the thread carries. The pusher's owner
+        writes 2 ms, the jobs owner 3 ms inside its pass, and a thread owning neither loop 1 ms bare, 1 ms under the "push"
+        mark and 1 ms under the "connect" mark: the flat row reads 8.0, nothing reaches cycleJobsMs, stagesForeign or the
+        connect table. The row is the pusher's on a kernel because _pusher_cycle_jobs is its one writer (the census below),
+        not because stage() sends it there."""
+        st = km._PerfStats()
+        st.cycle_begin()                                              # this thread is the pusher
+        st.stage("jobs", 0.002)
+        done = {}
+
+        def jobs_thread():
+            st.cycle_begin("jobs")
+            st.stage("jobs", 0.003); st.stage("jobsPass", 0.003); st.jobs_pass(0.003)
+            done["jobs"] = True
+
+        def owns_nothing():
+            st.stage("jobs", 0.001)
+            km._stage_marked("push")(lambda: st.stage("jobs", 0.001))()
+            km._stage_marked("connect")(lambda: st.stage("jobs", 0.001))()
+            done["foreign"] = True
+        for target in (jobs_thread, owns_nothing):
+            th = threading.Thread(target=target); th.start(); th.join(5)
+        self.assertEqual(done, {"jobs": True, "foreign": True}, "both threads wrote")
+        st.cycle(0.002)
+        snap = st.snapshot()
+        self.assertAlmostEqual(snap["stages_ms"]["jobs"], 8.0, msg="every writer's `jobs`, under every mark, in the one flat row")
+        self.assertEqual(snap["stagesForeign"], {}, "a bare `jobs` write is never foreign")
+        self.assertEqual(snap["pusher"]["cycleJobsMs"], {j: 0.0 for j in km._PerfStats.CYCLE_JOBS}, "nor a cycle job")
+        self.assertEqual(snap["pusher"]["connectPush"]["stagesMs"], {}, "nor a connect stage")
+        # the census: the kernel closes the `jobs` container at exactly one call site, inside _pusher_cycle_jobs, so the flat
+        # row is the pusher's by having one writer; a second writer anywhere would merge into it without a trace
+        src = inspect.getsource(km)
+        sites = re.findall(r'_PERF_STATS\.stage\("jobs",', src)
+        self.assertEqual(len(sites), 1, "the `jobs` container has one writer in the kernel: %d found" % len(sites))
+        self.assertEqual(len(re.findall(r'_PERF_STATS\.stage\("jobs",', inspect.getsource(km._pusher_cycle_jobs))), 1,
+                         "and it is _pusher_cycle_jobs")
+
     def test_a_pusher_write_under_a_name_outside_the_nine_still_lands_in_its_block(self):
         """A job's part (jobs.autoNudge.snapshot, _sub_stage) or a job that moved lists, written by the pusher's owner: the
         block takes the name as it comes, so nothing is dropped and the seeded nine are not a filter."""

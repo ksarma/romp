@@ -806,13 +806,17 @@ def kb(n):                        # bytes over the window as a rate
 
 
 def share(ms):                    # a pusher-owned stage's share of the PUSHER'S cycle time over the window: the numerator is a
-    #                               stages_ms row, the pusher's own since 2026-09-18 (kernel/kernel.py, _PerfStats.stage credits a
-    #                               push stage to the thread that owns the pusher's cycle), and the divisor its cycle_ms_sum. A
-    #                               connect push's stages, closed on a handler thread under the "connect" mark, ride
+    #                               stages_ms row and the divisor the pusher's cycle_ms_sum. The five push numerators (push,
+    #                               push.chat, push.feed, push.timeline, push.send) are the pusher's own since 2026-09-18
+    #                               (kernel/kernel.py, _PerfStats.stage credits a push stage to the thread that owns the pusher's
+    #                               cycle: a connect push's stages, closed on a handler thread under the "connect" mark, ride
     #                               pusher.connectPush.stagesMs and print apart below, and a push stage from a thread that neither
-    #                               owns the cycle nor carries the mark counts under stagesForeign, in no share, so no share here
-    #                               counts time the pusher's cycles never spent (before the split the chat share read above the
-    #                               push share, or above one hundred percent, while pages reloaded)
+    #                               owns the cycle nor carries the mark counts under stagesForeign, in no share), so no push share
+    #                               here counts time the pusher's cycles never spent (before the split the chat share read above
+    #                               the push share, or above one hundred percent, while pages reloaded). The sixth numerator,
+    #                               stages_ms.jobs, is not routed: stage() adds a bare `jobs` write to the flat row for every
+    #                               writer under every mark, and the row is the pusher's because _pusher_cycle_jobs, inside the
+    #                               pusher's cycle, is its one writer (tests/test_perf_stats.py holds the call-site count to one)
     return "%3.0f%%" % (100.0 * ms / cyc_ms) if cyc_ms else "  -"
 
 
