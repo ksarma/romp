@@ -151,8 +151,9 @@ _MICROSECOND_REMEDY = (
     "and point at it from %s, or write the sentence without a sub-millisecond time figure (a figure of a millisecond or "
     "more, or a unit word with no number, reads as none; a number word counts as a number, and an article before "
     "microsecond or nanosecond reads as one, so a unit used as a noun modifier, three nanosecond fields, a nanosecond "
-    "timestamp, is refused too: reword the noun phrase, three st_*_ns fields, when you meant a field name rather than a "
-    "duration; a hyphen compound, microsecond-resolution, reads as none). The reader is _microsecond_figures in "
+    "timestamp, is refused too: reword the noun phrase, three st_*_ns fields or a nanosecond-resolution timestamp, when "
+    "you meant a field name or a resolution rather than a duration; a hyphen compound, microsecond-resolution, reads as "
+    "none). The reader is _microsecond_figures in "
     "tests/test_perf_stats.py; the comment above it says what counts.")
 
 
