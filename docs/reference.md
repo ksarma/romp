@@ -3812,8 +3812,15 @@ registry, and the lines of `~/.config/romp/private-strings.txt` when that
 file exists, the list the repository's pre-push hook reads, one string per
 line with `#` comments, `ROMP_PRIVATE_STRINGS` naming another file and
 `XDG_CONFIG_HOME` honoured, absent on a clone that never set one up, so a
-no-op there; a hostname, user or private string is matched as whole words,
-so a user named `mark` is not found in the counter `intrMarks`), then walked
+no-op there, and no list either when the path is not a regular file, a fifo
+among them, so nothing waits on it; the file is read as far as 64 KiB, a
+partial last line dropped so a fragment never becomes a probe, and every entry
+is a probe whatever its length; one line on stderr says when the bound was hit
+and the entries past it are not checked, or when listed entries did not become
+probes; a hostname or user is matched as whole words, so a user named `mark`
+is not found in the counter `intrMarks`, and a private string as whole words
+or as a substring, whichever finds it, so a listed word glued into a camelCase
+key or value is found and a dotted entry is found as a run of words), then walked
 once more for a uuid, a 32-hex or 40-hex token, an absolute path or free text
 (a string
 carrying whitespace), and checked against the denylist (a key the export
@@ -3889,9 +3896,13 @@ string value the export would have folded to `other`, a key it would have
 replaced, one ending in a newline among them, an uptime typed to the second,
 a bound typed to the byte, a float inside a clock stamp's epoch window, 1.5e9
 to 2.0e9 seconds or 1.5e12 to 2.0e12 milliseconds, with no duration key on
-its path), and, whatever those find, every top-level block outside the
-envelope (`schema`, `exported_at`, `kernel_commit`) must equal its own fold,
-or the verb refuses naming the block; the measurements the export keeps
+its path), and, whatever those find, the document's top-level keys must be
+the ones the export writes and no other (`schema`, `exported_at` and `perf`,
+with `kernel_commit` and `usage` optional; any other top-level key is refused
+naming the key alone, which the checks passed over), `exported_at` and
+`kernel_commit` must match the shapes the export writes them in, and the
+`perf` and `usage` blocks must each equal their own fold, or the verb refuses
+naming the block; the measurements the export keeps
 pass (an integer is a byte total or a count; a float outside both windows is a
 measurement; a float inside a window under a duration key, a name carrying the
 token `ms`, its own or any key above it, is a millisecond total),
