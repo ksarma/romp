@@ -15,7 +15,11 @@ load_goals in the decision path). Two witnesses count it. By execution: a record
 at call time (`km.jd.load_goals_shared_or_fault`, the kernel's own judge instance), records each call with the function
 that made it, and calls through to the real loader, so nothing about the shared cache is stubbed; a call from the look's
 body or from its gate wrapper (`_nudge_look_gated`'s inner function, the same mechanism) is the walk's, a call from
-`_nudge_placement_gate` is the gate's, and any other caller is unattributed and fails the test. By the served counter:
+`_nudge_placement_gate` is the gate's, and any other caller during a pass is unattributed and fails the test, named by
+function and line. The recorder's window is each pass, the `_auto_nudge_tick` call (cleared before it, read after it): a
+third loader anywhere on the pass's path, the tick's setup included, is caught; a load elsewhere in the process (a
+builder, a handler, the perf snapshot the test reads after its last pass) is outside the window and is not this test's
+claim. By the served counter:
 `memos.nudgeWalk.loads`, bumped at the walk's one call site, must move by the walk's count per pass. A skipped look repeats
 its verdict and writes nothing (the wake-only memo of PR 784), so it needs no data: the recorder sees no call from either.
 
@@ -53,6 +57,7 @@ os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 km = load_source("romp_kernel_c7pin", os.path.join(BIN, "romp-kernel"))
 jd = km.jd                                        # the kernel's OWN judge instance: the recorder must land where the walk reads it
+pp = load_source("romp_perf_public", os.path.join(os.path.dirname(HERE), "cli", "perf_public.py"))   # the export's public fold
 
 SID_A = "c7c0a001-5e55-4a11-8b22-000000000001"   # private to this module (the goal-store fixture rule): a plain working top
 SID_B = "c7c0a001-5e55-4a11-8b22-000000000002"   # a stamped top whose dead-man is an hour away (the wake-only branch's other road)
@@ -162,7 +167,8 @@ class _WalkHarness(unittest.TestCase):
         self.calls, self.writer = [], []
 
         def _shared(sid):
-            self.calls.append((sid, inspect.currentframe().f_back.f_code.co_name))
+            f = inspect.currentframe().f_back                     # the caller: its function and the line of the call
+            self.calls.append((sid, f.f_code.co_name, f.f_lineno))
             return real_shared(sid)
 
         def _load(sid):
@@ -224,17 +230,19 @@ class _WalkHarness(unittest.TestCase):
     def _pass(self, now):
         """One pass over the two sessions: the walk's counter deltas, the placement gate's (served, derived) deltas, and the
         shared-loader calls per mechanism and sid (`walk`: the look's decision read; `gate`: the placement gate's currency
-        check; `others`: any unattributed caller, expected none; never a total of the two), the writer loads, and the sids
-        parsed."""
+        check; never a total of the two), the writer loads, and the sids parsed. A call from any other function during the
+        pass fails here, named by function and line, so a third loader of the store is caught on the first pass it runs in."""
         before = {k: km._NUDGE_WALK_STATS[k] for k in self.KEYS}
         gate0 = dict(km._NUDGE_GATE_STATS)
         self.calls.clear(); self.writer.clear(); self.parsed.clear()
         km._auto_nudge_tick(now, {sid: {"state": ""} for sid in SIDS})
         d = {k: km._NUDGE_WALK_STATS[k] - before[k] for k in self.KEYS}
         d["memo"] = tuple(km._NUDGE_GATE_STATS[k] - gate0[k] for k in ("served", "derived"))
-        d["walk"] = {sid: sum(1 for s, c in self.calls if s == sid and c in WALK) for sid in SIDS}
-        d["gate"] = {sid: sum(1 for s, c in self.calls if s == sid and c in GATE) for sid in SIDS}
-        d["others"] = [(s[-4:], c) for s, c in self.calls if c not in WALK + GATE]
+        d["walk"] = {sid: sum(1 for s, c, _ln in self.calls if s == sid and c in WALK) for sid in SIDS}
+        d["gate"] = {sid: sum(1 for s, c, _ln in self.calls if s == sid and c in GATE) for sid in SIDS}
+        others = ["%s (kernel.py:%d, sid ..%s)" % (c, ln, s[-4:]) for s, c, ln in self.calls if c not in WALK + GATE]
+        self.assertEqual(others, [], "a shared load from a caller that is neither the walk nor the placement gate, by function "
+                                     "and line: %s" % "; ".join(others))
         d["writer"] = len(self.writer)
         d["parsedSids"] = sorted(self.parsed)
         return d
@@ -297,11 +305,13 @@ class OneSharedLoadPerAliveSessionPerPass(_WalkHarness):
                 self.assertLessEqual(p["walk"][sid], 1, "%s %s: the walk takes at most one shared load per alive session per pass (condition 7, the walk's bound)" % (name, sid[-4:]))
                 self.assertLessEqual(p["gate"][sid], 1, "%s %s: the placement gate checks at most once per derived session (condition 7, the gate's bound)" % (name, sid[-4:]))
             self.assertEqual(sum(p["gate"].values()), p["memo"][1], "%s: the gate's checks equal its derives, none on a served or skipped look" % name)
-            self.assertEqual(p["others"], [], "%s: every shared load is attributable to the walk or to the gate" % name)
         self.assertEqual(self.fb.sent, [], "nudges off: nothing injected")
         served = km._PERF_STATS.snapshot()["memos"]["nudgeWalk"]
         self.assertEqual(served["loads"], km._NUDGE_WALK_STATS["loads"], "served under memos.nudgeWalk.loads")
         self.assertEqual(served["loads"], 5, "the five loads the five passes made, cumulative")
+        self.assertIs(type(served["loads"]), int, "the served key carries nothing but an integer count")
+        block = {"memos": {"nudgeWalk": {"loads": served["loads"]}}}
+        self.assertEqual(pp.fold(block), block, "and the export's public fold keeps it as it is: neither denied, coarsened nor folded to other")
 
     def test_a_look_the_state_gates_end_before_its_store_read_takes_no_load(self):
         """The walk's exactly-one is for a look that reaches the store. A look a state gate ends earlier (here `working`: the
@@ -316,7 +326,7 @@ class OneSharedLoadPerAliveSessionPerPass(_WalkHarness):
                          "the walk takes no load on a look a state gate ends before the store read (condition 7, the walk's bound)")
         self.assertEqual((p1["gate"], p1["memo"]), ({SID_A: 0, SID_B: 0}, (0, 0)),
                          "and the placement gate, never reached, checks nothing (condition 7, the gate's bound)")
-        self.assertEqual((p1["loads"], p1["writer"], p1["others"]), (0, 0, []))
+        self.assertEqual((p1["loads"], p1["writer"]), (0, 0))
         for sid in SIDS:
             self.assertEqual(self._row(sid)[-1], "working", "the verdict recorded, file-keyed, for %s" % sid[-4:])
         p2 = self._pass(NOW + 5)
@@ -353,13 +363,14 @@ class Docs(unittest.TestCase):
                       "exactly one when its look reaches the store",
                       "zero when the look is skipped or ends at a state gate before the store read",
                       "the placement gate's post-derivation currency check is a second load", "not an exception to the walk's bound",
-                      "at most one per derived session and counted apart",
+                      "at most one per derived session, counted apart by the test rather than by a served counter",
                       "`memos.nudgeWalk.loads`", "tests/test_nudge_walk_one_load_per_pass.py"):
             self.assertIn(words, jobs, "the jobs paragraph states condition 7 per mechanism and names the counter and this test: %r" % words)
         walk = " ".join(doc[doc.index("`nudgeWalk` is the auto-nudge walk's"):].split())   # wrapped: normalise before slicing
         walk = walk[:walk.index("a memo row is the ten files' stat")]
         self.assertIn("`loads`", walk, "memos.nudgeWalk.loads is named in the walk's entry")
         self.assertIn("a second loader with a bound of its own", walk, "and the entry names the gate's check as the second loader")
+        self.assertIn("counted by the test and by no served counter", walk, "and says what counts it")
         gloss = km._PerfStats.__doc__
         field = gloss[gloss.index("nudgeWalk (the auto-nudge walk's"):]
         field = " ".join(field[:field.index("nudgeGate")].split())   # wrapped too

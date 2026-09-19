@@ -2623,9 +2623,10 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   when its look reaches the store and zero when the look is skipped or ends
   at a state gate before the store read; the placement gate's post-derivation
   currency check is a second load, a mechanism of its own and not an
-  exception to the walk's bound, at most one per derived session and counted
-  apart (`memos.nudgeWalk.loads` counts the walk's loads, `nudgeGate.derived`
-  the derives, and `tests/test_nudge_walk_one_load_per_pass.py` counts each
+  exception to the walk's bound, at most one per derived session, counted
+  apart by the test rather than by a served counter (`memos.nudgeWalk.loads`
+  counts the walk's loads, `nudgeGate.derived` the derives that bound the
+  gate's checks, and `tests/test_nudge_walk_one_load_per_pass.py` counts each
   mechanism by execution against whether the look ran, skipped or derived).
 - `caches`: one block per cache the kernel, the judge and the event model keep,
   each an exact occupancy (a `len()` or a sum of `len()`s under the cache's
@@ -3377,8 +3378,9 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   state gate ends before the store read, the walk's bound under fold ruling
   A condition 7 since 2026-09-19, at most one per alive session per pass;
   the placement gate's post-derivation currency check is a second loader
-  with a bound of its own, at most one load per derived session, counted
-  apart and not here, `nudgeGate.derived` counting the derives); a memo row
+  with a bound of its own, at most one load per derived session, counted by
+  the test and by no served counter, `nudgeGate.derived` counting the derives
+  that bound it); a memo row
   is the ten files' stat, the look's mode tag
   (`full`, `wake`, or `wake+reminders` for tracking off with nudges on), the
   earliest flip and the verdict, and a row serves a look of the same mode
