@@ -4189,10 +4189,15 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   `pushes` counts the pushes that ran the chat tab loop (the pusher's
   cycles and the connect pushes of a chat or Sessions page; a feed,
   timeline or other page's connect push runs no loop and does not count),
-  bumped once where the loop opens. Every key here but two is a delta over
-  `pushes` for a per-push figure: `targetedBuilds` counts a push that runs
+  bumped once where the loop opens; every key here but six is a delta over
+  `pushes` for a per-push figure. `targetedBuilds` counts a push that runs
   no loop, and `thread` counts a comments frame's signatures, taken outside
-  any push too, so each has its own denominator. A figure over
+  any push too (the WebSocket comment-create acknowledgements run a
+  comments frame with no push), so each has its own denominator; and the
+  four read counters `stats`, `namesReads`, `switchReads` and `regReads`
+  move with every signature, the thread signatures outside a push included,
+  so their denominator is `pre` plus `post` plus `thread`, the per-signature
+  figure above, never `pushes`. A figure over
   `pusher.cycles` alone runs high by those connect pushes, largest in the
   boot window. The `push.chat.sig` rows of `stages_ms` and `stages_cpu_ms`
   exclude connect pushes (their wall goes to `pusher.connectPush.stagesMs`

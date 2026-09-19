@@ -1100,14 +1100,11 @@ class _PerfStats:
                                    heldBody (a tab some connected chat client holds as a body, the
                                    watched tab included); pushes, the pushes that ran the chat tab
                                    loop (the pusher's cycles and a chat or Sessions page's connect
-                                   pushes), so every key but targetedBuilds (a push with no loop) and
-                                   thread (a comments frame's signatures, outside a push too) is a
-                                   delta over pushes for a per-push figure; a figure over
-                                   pusher.cycles alone runs high by those connect pushes, largest in
-                                   the boot window, and stages_ms push.chat.sig and stages_cpu_ms
-                                   exclude connect pushes while this table includes them, so a
-                                   per-signature wall or CPU divides a pusher-only numerator by a
-                                   mixed denominator unless the window has no connect push. The
+                                   pushes). Which keys divide by pushes and which by the signature
+                                   count pre + post + thread (the four read counters, fed by the
+                                   thread signatures outside a push too), and how connect pushes
+                                   enter the denominators, is stated once, in the memos.chatSig entry
+                                   of docs/reference.md. The
                                    judge's own memos, reported through its
                                    readers (2026-09-09): courierSkip (the courier's per-session
                                    inputs key, jd.courier_skip_stats), plannerSkip (the planner's,
@@ -38017,15 +38014,10 @@ def _chat_postal_relevant(ev):
 #   heldBody             a tab some connected chat client holds as a body, the watched tab included
 #   pushes               the pushes that ran the chat tab loop (a _push with a chat or Sessions target: the pusher's
 #                        cycles and the connect pushes of a chat or Sessions page; a feed, timeline or other page's
-#                        connect push runs no loop and does not count), bumped once where the loop opens. Every key
-#                        here but two is a delta over pushes for a per-push figure: targetedBuilds counts a push that
-#                        runs no loop (_push_session_now), and thread counts a comments frame's signatures, taken
-#                        outside any push too, so each has its own denominator (the targeted pushes, the frames).
-#                        A figure over pusher.cycles alone runs high by those connect pushes, largest in the boot
-#                        window. And stages_ms push.chat.sig and stages_cpu_ms EXCLUDE connect pushes (their wall
-#                        goes to pusher.connectPush.stagesMs and they record no CPU row) while this table includes
-#                        them, so a per-signature wall or CPU divides a pusher-only numerator by a mixed denominator
-#                        unless the window has no connect push
+#                        connect push runs no loop and does not count), bumped once where the loop opens. Which
+#                        keys divide by pushes and which by the signature count pre + post + thread (the four read
+#                        counters, fed by the thread signatures outside a push too), and how connect pushes enter
+#                        the denominators, is stated once, in the memos.chatSig entry of docs/reference.md.
 class _ChatSigLocal(threading.local):
     """The per-thread accumulator of the chat signature pass (memos.chatSig): class defaults, so the hot check in the
     stat wrappers is a plain attribute read on any thread, one that never opened a signature included."""

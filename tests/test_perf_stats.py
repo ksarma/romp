@@ -2499,7 +2499,13 @@ class GoalIoCounters(unittest.TestCase):
         Python cannot count (regression-1), compares at the three reads and not the final compare (kernel-1), the share's
         denominator (regression-5), the identities' two terms and which nosig (extra5-1), the census without the gate's
         live-row clause (regression-4), the CPU containers (extra5-3), the per-push denominator and the mixed population
-        (fresh-2), the split's bytes on the static row (fresh-3) and the instrumentation's own cost per stat (fresh-4)."""
+        (fresh-2), the split's bytes on the static row (fresh-3) and the instrumentation's own cost per stat (fresh-4);
+        and the round-3 sentences (the same review's second round): every key but SIX is a delta over pushes, the four
+        read counters dividing by the signature count pre plus post plus thread since the thread signatures feed them
+        outside a push too (correctness-1: the sentence said two, in every copy), and the stats a signature's git children
+        make stated by class, any git child a signature forks, with a child's CPU on no row (extra7-1: the list named the
+        cwd memo's two children and missed the dependency tail's ls-files; tests/test_chat_build_sig_inputs.py pins the
+        set by execution)."""
         doc = " ".join(Path(HERE).parent.joinpath("docs", "reference.md").read_text().split())
         for why, pattern in (
                 ("regression-1: stats counts by execution, whoever makes the stat", r"whichever function or module makes them"),
@@ -2518,7 +2524,11 @@ class GoalIoCounters(unittest.TestCase):
                 ("regression-4: the census drops the gate's live-row clause", r"without the gate's live-row clause"),
                 ("extra5-3: push.chat.sig's CPU row is exactly its two sub-seams", r"exactly `?push\.chat\.sig\.static`? plus `?push\.chat\.sig\.deps`?"),
                 ("extra5-3: push.chat's row covers its seams plus the glue, a superset", r"plus the loop's glue \(a superset, not a sum"),
-                ("fresh-2: every key is a delta over pushes", r"delta over `?pushes`?"),
+                ("fresh-2, correctness-1: every key but six is a delta over pushes", r"every key here but six is a delta over `?pushes`?"),
+                ("correctness-1: the four read counters divide by pre plus post plus thread, never by pushes",
+                 r"`?stats`?, `?namesReads`?, `?switchReads`? and `?regReads`?[^.]{0,200}`?pre`? plus `?post`? plus `?thread`?"),
+                ("extra7-1: the uncounted git children are stated by class, not as a closed list", r"any git child a signature forks"),
+                ("extra7-1: a forked child's CPU lands on no row", r"RUSAGE_THREAD`? excludes a child"),
                 ("fresh-2: a pusher.cycles denominator runs high by the connect pushes", r"runs high by those connect pushes"),
                 ("fresh-2: the seam rows exclude connect pushes while the table includes them", r"(exclude|EXCLUDE) connect pushes"),
                 ("fresh-3: the signature's bytes in the split land on the static row", r"land on the static row"),
