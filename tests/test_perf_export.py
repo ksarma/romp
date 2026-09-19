@@ -1698,11 +1698,15 @@ class Cli(unittest.TestCase):
         pp.LIST_UNREADABLE once, the path and the reason: a directory, a fifo, a socket and a character device by kind, whether
         the fstat or the open itself found them (a socket is ENXIO at the open); an unreadable regular file and a parent that
         is not a directory by the error's class; a ROMP_PRIVATE_STRINGS that names
-        a file that is not there as absent (the operator named it, so its absence is a typo, not a clone without a list). The
-        two silent roads: no path at all, and the DERIVED default absent, the normal case of a clone that never set a list up,
-        which stays silent so every export on such a clone does not nag. A readable list still reads with nothing said, and a
-        line that is not UTF-8 is dropped and counted in pp.LIST_NOT_UTF8 rather than replaced into a probe that matches
-        nothing. Fails before: every one of these returned [] in silence."""
+        a file that is not there as absent (the operator named it, so its absence is a typo, not a clone without a list); and
+        a symbolic link whose target is gone, at the derived path or the named one, as a link whose target is absent (a list
+        set up once and now pointing at nothing is the protection turning itself off, the fourth round's verifier: os.open
+        follows the link and reports FileNotFoundError like a plain absence, so the derived road was silent until lstat told
+        the two apart). The two silent roads: no path at all, and the DERIVED default PLAINLY absent, nothing at the path, the
+        normal case of a clone that never set a list up, which stays silent so every export on such a clone does not nag. A
+        readable list still reads with nothing said, and a line that is not UTF-8 is dropped and counted in pp.LIST_NOT_UTF8
+        rather than replaced into a probe that matches nothing. Fails before: every one of these returned [] in silence, the
+        dangling link at the derived path among them after the others were said."""
         home = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, home, True)
         derived = os.path.join(home, ".config", "romp", "private-strings.txt")
@@ -1713,11 +1717,20 @@ class Cli(unittest.TestCase):
                 got = pp.private_strings(env)
             return got, err.getvalue()
 
-        self.assertEqual(read({"HOME": home}), ([], ""), "the derived default absent: a clone without a list, silent")
+        self.assertEqual(read({"HOME": home}), ([], ""), "the derived default plainly absent: a clone without a list, silent")
         self.assertEqual(read({}), ([], ""), "no path at all: silent")
         missing = os.path.join(home, "no-such-list.txt")
         self.assertEqual(read({"HOME": home, "ROMP_PRIVATE_STRINGS": missing}), ([], pp.LIST_UNREADABLE % (missing, "absent") + "\n"),
                          "a file the operator named and which is not there is said")
+        os.makedirs(os.path.dirname(derived))
+        os.symlink(os.path.join(home, "moved-away.txt"), derived)
+        self.assertTrue(os.path.islink(derived) and not os.path.exists(derived))
+        self.assertEqual(read({"HOME": home}), ([], pp.LIST_UNREADABLE % (derived, "a symbolic link whose target is absent") + "\n"),
+                         "a dangling link at the DERIVED path is a list that was set up and points at nothing: said, where a plain absence is not")
+        self.assertEqual(read({"HOME": home, "ROMP_PRIVATE_STRINGS": derived}),
+                         ([], pp.LIST_UNREADABLE % (derived, "a symbolic link whose target is absent") + "\n"), "and the same link named by the operator")
+        os.unlink(derived)
+        os.rmdir(os.path.dirname(derived))
         for make, kind in ((os.mkdir, "a directory"), (os.mkfifo, "a fifo")):
             path = os.path.join(home, kind.split()[-1])
             make(path)

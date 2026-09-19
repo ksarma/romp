@@ -95,10 +95,10 @@ identifier_hits) is the last of the three, the backstop: strings only this machi
 working directories the state directory's sdk registry holds; and the strings listed in the machine-local file
 ~/.config/romp/private-strings.txt, the same list the repository's pre-push hook reads, one string per line with
 `#` comments, resolved the way the hook resolves it: ROMP_PRIVATE_STRINGS, else $XDG_CONFIG_HOME, else $HOME/.config,
-and absent on a clone that never set one up, which adds nothing, in silence; every other road to no list, a path that
-is there but is not a regular file, one that cannot be read, a ROMP_PRIVATE_STRINGS naming a file that is not there, is
-said on stderr at the moment it happens, LIST_UNREADABLE, naming the path and the reason, since a check that turns
-itself off must say so) are searched for in every key, string value and NUMBER of
+and plainly absent on a clone that never set one up, which adds nothing, in silence; every other road to no list, a path
+that is there but is not a regular file, one that cannot be read, a symbolic link whose target is gone, a
+ROMP_PRIVATE_STRINGS naming a file that is not there, is said on stderr at the moment it happens, LIST_UNREADABLE, naming
+the path and the reason, since a check that turns itself off must say so) are searched for in every key, string value and NUMBER of
 the finished document, case-insensitively (a number by its wire spelling, json.dumps, the spelling the export's writer
 puts in the file and the upload puts on the wire, so a listed digit run inside a numeric leaf is found however the file
 spelled it, the fourth review round, 2026-09-19; a bool and null are not scanned), and a hit refuses the write naming
@@ -726,12 +726,14 @@ PRIVATE_KIND = "private string"                    # a listed string: matched as
 TOKEN = re.compile(r"[a-z0-9]+")
 # The machine-local list of strings that must never be published: the file the repository's pre-push hook reads
 # (.githooks/pre-push, scan_identifiers), one string per line, a `#` starting a comment, surrounding whitespace
-# dropped, blanks skipped, resolved as the hook resolves it (private_strings_path). Absent on a clone that never set
-# one up, and then it adds nothing, in silence: that is the normal case. EVERY OTHER ROAD TO NO LIST IS SAID: a path that
-# is there but is not a regular file (a directory, a fifo, a device node, a socket), one that cannot be opened or read
-# (a permission, a parent that is not a directory), a ROMP_PRIVATE_STRINGS that names a file that is not there (a typo
-# in the one setting the operator wrote), each writes LIST_UNREADABLE to stderr at the moment it happens, naming the path
-# and the reason, and the caller goes on with no list. The list is a protection, and a protection that turns itself off
+# dropped, blanks skipped, resolved as the hook resolves it (private_strings_path). Plainly absent on a clone that never
+# set one up (nothing at the derived path), and then it adds nothing, in silence: that is the normal case. EVERY OTHER
+# ROAD TO NO LIST IS SAID: a path that is there but is not a regular file (a directory, a fifo, a device node, a socket),
+# one that cannot be opened or read (a permission, a parent that is not a directory), a symbolic link whose target is
+# gone (a list set up once and now pointing at nothing; the open reports the target absent, and the link is told apart
+# by lstat), a ROMP_PRIVATE_STRINGS that names a file that is not there (a typo in the one setting the operator wrote),
+# each writes LIST_UNREADABLE to stderr at the moment it happens, naming the path and the reason, and the caller goes on
+# with no list. The list is a protection, and a protection that turns itself off
 # must say so when it does, not when someone wonders: the upload's third review round (2026-09-18) found the two loud
 # lines below written for the over-the-bound case and for a case the reader cannot produce, while the one road that
 # disabled the whole list, a fifo or a directory or an unreadable file at the path, sent a document carrying a listed
@@ -813,18 +815,23 @@ def private_strings(env):
     are not checked; a file exactly at the bound is read whole and nothing is said. A line that is not UTF-8 is not an
     entry, and how many were dropped is said once (LIST_NOT_UTF8), never a traceback. [] when there is no list to read,
     and in SILENCE for exactly two of those roads: no path at all (no HOME and no variable), and the derived default
-    path absent, a clone that never set a list up. Every other road to [] is said once on stderr (LIST_UNREADABLE,
-    the path and the reason): a ROMP_PRIVATE_STRINGS that names a file that is not there (absent), a path that is not
-    a regular file (a directory, a fifo, a device node, a socket, by kind through _file_kind, whether the fstat or the
-    open itself found it), and one that cannot be opened or read (the error's class). The comment at
-    PRIVATE_STRINGS_VAR says why silence is the wrong signal here."""
+    path PLAINLY absent, nothing at the path (os.path.islink False), a clone that never set a list up. Every other road
+    to [] is said once on stderr (LIST_UNREADABLE, the path and the reason): a symbolic link at either path whose target
+    is gone (a list set up once and now pointing at nothing, the protection turning itself off, not a clone without a
+    list: os.open follows the link and reports the target absent, so the link is told apart by lstat), a
+    ROMP_PRIVATE_STRINGS that names a file that is not there (absent), a path that is not a regular file (a directory,
+    a fifo, a device node, a socket, by kind through _file_kind, whether the fstat or the open itself found it), and
+    one that cannot be opened or read (the error's class). The comment at PRIVATE_STRINGS_VAR says why silence is the
+    wrong signal here."""
     path = private_strings_path(env)
     if not path:
         return []
     try:
         fh = open_regular(path)
     except FileNotFoundError:
-        if env.get(PRIVATE_STRINGS_VAR):         # named by the operator and not there; the derived default's absence is the normal case
+        if os.path.islink(path):                 # a link whose target is gone: a list set up once, now pointing at nothing
+            sys.stderr.write(LIST_UNREADABLE % (path, "a symbolic link whose target is absent") + "\n")
+        elif env.get(PRIVATE_STRINGS_VAR):       # named by the operator and not there; the derived default's plain absence is the normal case
             sys.stderr.write(LIST_UNREADABLE % (path, "absent") + "\n")
         return []
     except OSError as e:                          # a socket (ENXIO), a device the account cannot open, a permission, a parent that is a file
