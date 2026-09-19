@@ -3177,6 +3177,8 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   `feed` also carries `dirty`, the rebuilds a kernel-side mutation forced past
   the view signature (a card reply, a clear, a follow-up: the mutation is
   invisible to the signature and must not wait out the rebuild interval).
+  What the built feed frame is made of, in bytes, is under
+  `memos.feedComposition`.
   Every chat tab, the watched one included, is served from its cached build
   while one complete per-session signature holds: one component per input the
   build reads (the transcript and states files, the session's goal store and
@@ -3625,7 +3627,18 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   build: a `?delta=1` feed client that did not announce the feed delta
   capability. The counter is cumulative since kernel start, like the rest of
   the block: nonzero means such a client has connected since start, and a
-  value that rises between two snapshots means one is connected now).
+  value that rises between two snapshots means one is connected now). The
+  feed's split through that path is walked and memoized like the bars' but
+  counts none of its entries under `entries_walked` or `entries_encoded`:
+  its entries are the cards, one each, so the two counters were the card
+  count per build (`entries_walked` over `split_miss`, exact with no
+  timeline delta client) while such a client was connected, and
+  `memos.feedComposition` publishes sums over the cards that must not stand
+  beside their count (that entry says why). The bars' entries count as
+  before; the per-card cost of the feed's slot path is measured nowhere on
+  `/perf`. A time measurement of the same path would restore that diagnostic
+  without yielding a card count, since a duration does not divide into a
+  cardinality, and that is the form to use if the number is wanted back.
   `intrMarks` is the interrupt-marks
   memo behind the interrupt tick, the nudge tick and the feed's badge, one
   entry per (session, parse family) keyed on the parse object's identity and
@@ -3816,6 +3829,203 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   list and fingerprint: `hit` and `miss` count turns served from the memo
   against turns scanned, so a build of a working session with one moved turn
   is one miss, plus the gauge `entries` (sessions held).
+  `feedComposition` says what the feed frame is made of, in bytes, and what
+  each pane would receive if it were sent only the fields it reads. One feed
+  frame goes whole to every client that rides the feed slot (the feed pane;
+  the Outline, which dials as `fleet` on every layout; and the Waiting-on-you
+  pane, `waiting`), and each reads a part of it. `passes` counts the
+  per-entry encodes of a frame whose accounting completed, wherever the
+  encode runs: the pusher's send stage (a build, or a ledgers refill of the
+  same build), the cold serve on a handler thread (a `ready` handshake or a
+  re-base served while the pusher holds no fresh wire) and the cold kernel's
+  first frame. `/feed.json`, which encodes the frame on its own, and the
+  `/feed` page are not counted. `failed` counts the encodes whose accounting
+  raised; the fault is said once on stderr and the frame goes out unchanged
+  either way. `last` is the latest counted pass and says whether the ledgers
+  were attached (`ledgersAttached`). The block keeps lifetime sums over every
+  counted pass in its store and publishes none of them: `passes` is
+  published, a ledgers refill re-counts the same build with the ledgers
+  attached, and at two passes (the cold kernel's first push with a feed pane
+  connected: the cards-first frame without ledgers, then the send stage's
+  refill of that build with them) a published lifetime table and `last` were
+  two exact sums over passes sharing a build, so twice `last.rest` minus
+  `lifetime.rest` (equally over `other` and `frame`) was the ledgers' bytes,
+  one ledger row on a one-session board, the figure the fold below withholds.
+  No lifetime sum survives that subtraction while a pass can share its build
+  with the pass before it, and a coarsened sum is the sum again, so the table
+  is stored for the tests and not served. `wire` is `{}` until the first per-entry encode of a
+  frame and `last` until the first counted one; a cold kernel that has never
+  had a feed-slot client serves both empty. `frame` is the frame's bytes as
+  the pusher's size estimate counts them (the per-card strings minus their
+  tints, the per-ledger strings and the remainder), so it sits under the
+  served body by the key names, separators and tints it does not count.
+  `cards` and `rest` are its two parts: the per-card strings, and the frame
+  outside the cards (the per-ledger strings and the remainder). The card
+  count and the ledger count are measured and withheld: a count published
+  beside a sum discloses the single-object case, because a sum over one
+  object is that object's measurement and the count says when, so the sums
+  are aggregates only while their counts are unpublished, here or anywhere
+  else in the export. The card count is not recoverable in general and exact
+  under one condition: on cards with no tree, `wire.bytes` minus `frame` is
+  a constant plus a per-card term, measured on the test fixture's board (one
+  ledger, a one-digit `buildId`, cards younger than 459 seconds) as
+  82, 109, 136 and 190 bytes for one, two, three and five cards, 55 plus 27
+  per card; the second residual below states the terms, and a test holds the
+  formula on those boards. The ledgers have no row of their own for the same
+  reason: their count is the chat tab count, which `/perf` publishes whatever
+  this block does (`heap.builtChat.tabs`, `caches.built_chat.entries`,
+  `memos.chatLedger.entries` and the length of `builds.chat.bySession` are
+  each that count on a steady board), so a ledgers sum beside it was one
+  session's whole ledger row on a one-session board; the ledgers are folded
+  into `other` below and counted in `rest`. `by` splits `rest` by top-level
+  field, each row the field's quoted name, its separators and its value, and
+  publishes rows drawn from a fixed list: the flag and count fields
+  (`userTodosOn`, `dismissedCount`, `showDismissed`, `canUndoClear`, `off`:
+  the checked-in list `FEED_BY_ROWS` in `kernel/kernel.py`), the off frame's
+  four empty federation lists (`items`, `hosts`, `pendingHosts`,
+  `pendingDead`) and `other`. Every field whose value can carry a string
+  (`ledgers`, `selfHost`, `working`, `awaiting`, `stateUnknown`, `order`,
+  `sessions`, `userTodos`, `userTodoRows`, `views`, `viewsFault`,
+  `judgeLimit`, `bgServices`, `clearedForeign`, `clearNotices`, `sdkNotices`
+  and `syncNotices`: the checked-in list `FEED_BY_FOLDED` beside it) is
+  folded into `other` when the block is reported, and a key outside
+  `FEED_FRAME_FIELDS` and the off frame's lists is counted under `other` when
+  the table is built. A row of its own for one of the folded fields would
+  have been the length of one string (the machine's hostname under
+  `selfHost`, a session name under `working`, a todo's text under
+  `userTodoRows`, a session's ledger under `ledgers`); `other` mixes them,
+  and `other` is present on every non-empty published table. `frame` is
+  `cards` plus `rest`, and `rest` is the exact sum of the published rows,
+  because the fold regroups bytes and drops none.
+  `apps` has one row per
+  consuming app and one projection row, `phoneFace`: `today`, the whole frame
+  it receives, beside `projected`, the bytes of the fields its bundle reads,
+  from the checked-in table `FEED_APP_FIELDS` in `kernel/kernel.py`, which a
+  test pins against the bundles' source and against `federation.ts`: the merge
+  reads `clearedForeign` off the local frame for the feed pane and the Outline
+  (it drops the remote cards and strikes the remote ledger tops the local
+  ledger cleared), so those two rows carry it. `projected` counts the folded
+  fields as one, the ledgers among them: an app that reads any of them is
+  credited with all of `other`, and only the flag and count rows it reads
+  are added by name. The feed row is `cards` plus `other` plus the flag rows
+  but `userTodosOn`, which is `frame` minus `userTodosOn` on a built frame
+  and `frame` minus `userTodosOn` minus the four federation lists on the off
+  frame; the Outline's row is its `cardFields`, the card-field estimate
+  published beside it as a row (an aggregate over the cards, on the footing
+  of `cards`), plus `other` plus `off`; the Waiting-on-you row is `other`
+  plus `userTodosOn`. The invariant, in the words of the kernel's
+  `FEED_COMPOSITION_INVARIANT` and of the ledger entry (a test holds the
+  three equal): Every published number is a published row or a sum of
+  published rows: `frame` is `cards` plus `rest`; `rest` is the sum of the
+  `by` table; every `today` is `frame`; the feed row is `cards` plus `other`
+  plus the flag rows it reads; the Outline's row is its `cardFields`, the
+  card-field estimate published beside it, plus `other` plus `off`; the
+  Waiting-on-you row is `other` plus `userTodosOn`; and a one-character step
+  in any folded field, the ledgers among them, moves the same published
+  leaves by the same amounts, whichever field took it, so no published
+  number or difference of published numbers says which folded field a byte
+  belongs to.
+  A per-field sum published
+  here re-derived two folded rows by subtraction (the todo rows and the
+  session list), and a feed row credited with the remainder but not the
+  ledgers re-derived the ledgers (`frame` minus the feed row minus
+  `userTodosOn`), so the rows over-count the fields an app reads by the rest
+  of `other`: the ledgers, which the feed and Waiting-on-you panes do not
+  read, and the text-bearing fields the app does not read, about 16 KB of
+  remainder against an 8.8 MB frame. One
+  figure is estimated, not bounded, and published as the Outline row's
+  `cardFields`: the
+  Outline reads a few fields of each card, not the card, and those fields
+  are sized from their text lengths, never re-encoded, so the figure
+  over-counts by naming every field of every card and under-counts JSON
+  escapes. The `phoneFace` row is a projection of a frame that does not
+  exist yet (the table `FEED_PROJECTIONS`): a phone client's feed slot
+  carrying a face per active card plus one summary row per session with a
+  card. A card is active when its `column` is `working` or `needs_input`,
+  the Working and Blocked columns. The face is five of the card's fields:
+  `itemId` and `sid`, the address a tap fetches the detail by; `text`, the
+  title; `column`, the state; and `t`, the age. A summary row is the
+  session's `sid` and the count of cards it holds. Both are sized the way
+  the Outline's card fields are. The row's `today` is the whole frame, as
+  for every row (a phone's feed page dials as `feed` and its Outline as
+  `fleet`), so the row reads as the saving the face would bring. No bundle
+  reads such a frame, so the test's pin against the bundles skips the row.
+  Two residuals remain, stated here in the words of the kernel's
+  `FEED_COMPOSITION_RESIDUALS` and of the ledger entry (a test holds the
+  three equal). First: On a board with no session, no open todo, no tag, no
+  notice, no cleared id, no judge-limit latch, an empty stored session order
+  and a clean tags read, `other` is a constant plus the hostname's length
+  and the digit width of `views.seq`, which the frame's whole length on
+  `push.send` and the served body has always carried; with a session it is
+  the sum of that session's name and id, its ledger row when the ledgers are
+  attached, the pips, the tag names and the notices, and no published number
+  or difference of published numbers is one of those alone; two blocks
+  served across a change differ by what changed, as the frame's length on
+  `push.send` always did. Second, for the user's ruling: The card figures
+  are aggregates over the cards, whose count is withheld and published
+  nowhere else on /perf (the feed's view-delta split, the path a ?delta=1
+  client without the feed delta capability takes, counted one entry per card
+  per build under memos.wire until the review's third round and counts none
+  now): `cards` is the whole per-card strings, and the two card-field
+  estimates (the Outline's `cardFields`, which is its row minus `other` and
+  `off`; the `phoneFace` row) are sums of a few fields' lengths over the
+  cards, so one export of a board with one card discloses that card's total
+  and its tree apart: `cards` is that card's string, `cardFields` its title,
+  name, summary, background and blockSummary lengths plus a constant and the
+  digit width of its id, and `cards` minus `cardFields` its tree plus a
+  constant fixed by its other keys (the `t`, `live`, `turnId`, `column` and
+  `notify` values and the `tree` key: 129 bytes on the test fixture's card,
+  whose tree is 852 of its 1957 bytes), and on a board with one active card
+  the `phoneFace` row is a constant plus that card's title length, the
+  constant fixed by the column's spelling and the width of `t`. Two exports
+  across a one-character step tell the step's kind by which leaves move,
+  four kinds: a title moves `cards`, `cardFields` and the `phoneFace` row;
+  an Outline field (a name, a summary, a background, a blockSummary) moves
+  `cards` and `cardFields`; a tree text moves `cards` alone; a folded field
+  (a session name, a note, the hostname) moves `other` alone; so a title
+  step is told from every other step, and a session's name rides in each of
+  its cards and in the folded fields, so two blocks served across a
+  one-character rename move `cards` by that session's card count and `other`
+  by the number of folded fields carrying the name. A reader bounds the
+  count from the size of `cards` (a card's fixed keys are several hundred
+  bytes) and from the `phoneFace` row's group rows (61 bytes per session
+  holding fewer than ten cards, so the number of sessions with a card is
+  exact when no card is active); the count is not recoverable in general,
+  and exact under one condition: while `wire.exact` is 1, `wire.bytes` minus
+  `frame` is the frame's `asks`, `buildId`, `ledgers` and `type` keys,
+  brackets and separators plus each card's tint and separator and each tree
+  node's tint, so on cards with no tree it is a constant plus a per-card
+  term, measured on the test fixture's board (one ledger, a one-digit
+  `buildId`, cards younger than 459 seconds) as 82, 109, 136 and 190 bytes
+  for one, two, three and five cards, 55 plus 27 per card (a 25-byte tint and
+  a 2-byte separator; two more bytes per further ledger, one more per further
+  digit of `buildId`), and a tint is 22 to 25 bytes by the card's age (16
+  bytes of key, brackets and separators plus one byte per digit of the three
+  channels of the colour ramp: nine digits through 458 seconds of a card's
+  age, eight from 459 seconds, seven from about 27.1 hours with the first
+  channel at one digit, eight again from about 39.7 hours, seven from about
+  40.8 hours with the third channel at two digits, and six from about 91.4
+  hours with the third channel at one digit), so the count is exact from the
+  difference on a board of fewer than eight tree-less cards whatever their
+  ages, and at any count when the ages fall in one band.
+  `wire` is the served body as the kernel holds it now: `bytes`, its length,
+  and `exact`, 1 once a whole frame has gone out and the body's text is
+  held, 0 while the length is the size estimate. A delta client never needs
+  the whole text, so 0 says the held body is still estimated, not that
+  nothing was sent. Every number comes from the encode the wire needs
+  anyway, and there is no second encode. The accounting costs about two
+  milliseconds per thousand cards per build, measured on cards carrying the
+  Outline's fields, about a third of it the projections' pass; the
+  card-field and projection estimates are memoised with the cards, so a
+  ledgers refill pays none of that work, only the two part sums, the
+  per-field lengths and the record. Taking the remainder's encode in pieces
+  (one per field name and one per value) costs about one and a half times
+  the whole-remainder encode at a 16 KB remainder and about three and a
+  third times at a 1.4 KB one, a cost per field, not per byte, measured
+  before the pass shared one encoder over its fields, which takes about
+  forty percent off that overhead. The block is counts and byte totals under
+  identifier keys, and the public export (`romp perf export --public`)
+  carries it whole.
 - `judge`: `passes`, `ms_sum`, `ms_last`, `ms_mean` (wall time; a pass waits
   on model calls), `cpu_ms_sum` (CPU time of the judge tier threads and every
   per-session worker they run; the in-process pools' share is
