@@ -1041,6 +1041,121 @@ class FoldInvariant(unittest.TestCase):
                          {"quietWindows": [{"waitedS": 297, "cutTurns": 2}], "restarts": [{"boot": {"settleS": 0.2, "outageS": 2.5}}],
                           "range": {}, "live": {"kernel": {"uptimeS": 60}}})
 
+    def test_an_integer_no_double_can_hold_is_null_in_the_fold_like_a_nan_with_the_edge_where_float_draws_it(self):
+        """HIGH 2 of the closing check (2026-09-19), the fold's side. json.load parses an integer literal of any size exactly,
+        and until that day the fold kept it (pp._finite passed every int), so fold({"rss_kb": 10**400}) wrote 401 digits and
+        the export road put them in the file, while the two coarsenings raised OverflowError on the same value. The rule now
+        (pp.finite_number, the old name kept as an alias) is "representable as a finite double", the rule that already nulled
+        a NaN and an infinity: every double reader, a browser's JSON.parse or the receiver, makes an infinity of an int at or
+        past 2**1024 - 2**970 (309 digits), so it is null in the fold, under any key, in a list, and inside a merged subtree,
+        where None is _merge's identity, so the re-coarsening sees one side. The edge is float()'s, not a digit count:
+        int(sys.float_info.max), int(sys.float_info.max) + 1 (rounds to the largest double) and 2**1024 - 2**970 - 1, all 309
+        digits, are kept; 2**1024 - 2**970 and its negative are null. The denylist walk over each fold's output finds nothing
+        (the fixed point), and over a RAW value it names the coarsening's finding and never raises: an uptime or a bound of
+        10**400 is "not rounded", since pp.public_uptime and pp.public_bound are total over ints, and an ordinary counter of
+        10**400 passes the walk (an integer is never a stamp; the parse refuses it on the upload road and the fold nulls it on
+        the others, so it reaches no walk from a file). Fails with finite_number's int arm reverted (10**400 - 40 where None is
+        asserted, and the digits kept under the counter), and with the edge moved to a digit count (len(str(x)) > 309 keeps
+        the edge; >= 309 nulls the three kept values)."""
+        fmax, edge = int(sys.float_info.max), 2 ** 1024 - 2 ** 970
+        self.assertEqual((len(str(fmax)), len(str(edge))), (309, 309))
+        self.assertEqual(pp.fold({"uptime_s": 10 ** 400}), {"uptime_s": None})
+        self.assertEqual(pp.fold({"uptime_s": -(10 ** 400)}), {"uptime_s": None})
+        self.assertIsNone(pp.fold({"capBytes": -(10 ** 400)})["capBytes"])
+        self.assertIsNone(pp.fold({"heap": {"hydrated": {"capBytes": 10 ** 400, "bytes": 5}}})["heap"]["hydrated"]["capBytes"])
+        self.assertEqual(pp.fold({"rss_kb": 10 ** 400}), {"rss_kb": None}, "an ordinary counter too: the closing check saw 401 digits written")
+        self.assertEqual(pp.fold({"x": [10 ** 400, 1, -(10 ** 400)]}), {"x": [None, 1, None]}, "in a list")
+        self.assertEqual(pp.fold({"a b": {"bound": 10 ** 400}, "a c": {"bound": 4}}), {"other": {"bound": 4}},
+                         "None is the merge identity, so the re-coarsening after the sum sees one side")
+        self.assertEqual(pp.fold({"a b": {"n": 10 ** 400}, "a c": {"n": 4}}), {"other": {"n": 4}})
+        for kept in (fmax, fmax + 1, edge - 1, -(edge - 1), 10 ** 307, 10 ** 308):
+            self.assertEqual(pp.fold({"rss_kb": kept}), {"rss_kb": kept}, "float() holds it: kept")
+            self.assertIs(pp.finite_number(kept), kept)
+        for nulled in (edge, -edge, 10 ** 400, 10 ** 5000, float("nan"), float("inf"), float("-inf")):
+            self.assertEqual(pp.fold({"rss_kb": nulled}), {"rss_kb": None}, "no double holds it: null")
+            self.assertIsNone(pp.finite_number(nulled))
+        self.assertIs(pp.finite_number(True), True)
+        self.assertIs(pp.finite_number(False), False)
+        self.assertEqual(pp.finite_number(1.5), 1.5)
+        self.assertIs(pp._finite, pp.finite_number, "the old name is an alias of the new")
+        for doc in ({"uptime_s": 10 ** 400}, {"capBytes": -(10 ** 400)}, {"a b": {"bound": 10 ** 400}, "a c": {"bound": 4}},
+                    {"rss_kb": edge}, {"x": [10 ** 400]}):
+            self.assertEqual(pp.denylist_problems(pp.fold(doc)), [], "a fold's output is the walk's fixed point: %r" % (sorted(doc),))
+        # over a RAW value (the upload road, before the parse refused it): a finding, never a raise
+        self.assertEqual([p.kind for p in pp.denylist_problems({"uptime_s": 10 ** 400})], ["an uptime not rounded to whole minutes"])
+        self.assertEqual([p.kind for p in pp.denylist_problems({"bound": 10 ** 400})], ["a bound not rounded to a power of two"])
+        self.assertEqual([p.kind for p in pp.denylist_problems({"uptimeS": -(10 ** 400)})], ["an uptime not rounded to whole minutes"])
+        self.assertEqual(pp.denylist_problems({"bound": -(10 ** 400)}), [], "public_bound returns a non-positive value as it is")
+        self.assertEqual(pp.denylist_problems({"rss_kb": 10 ** 400}), [], "an integer is never a stamp; the parse and the fold keep it off the wire")
+
+    def test_a_coarsening_or_a_sum_whose_result_no_double_holds_is_null_so_the_folds_output_is_its_own_fold(self):
+        """The fold's stated rule, no number a double cannot hold in its output, held over what the fold itself MAKES and not
+        only over what it reads (the closing check at the re-run's head, its verification, 2026-09-19): public_bound rounds a
+        bound at or past 2**1023 UP, so int(sys.float_info.max) under capBytes became 2**1024, which no double holds; two ints
+        of fmax under keys that fold to one `other` summed to 2 * fmax (310 digits) in _merge, and two 1e308 floats to inf, the
+        Infinity literal in the file. Each was written by the export child (exit 0) and the upload refused the export's own
+        output as not strict JSON; fold(fold(x)) differed from fold(x). Now every coarsening's and every sum's result passes
+        pp.held_number (finite_number's rule over a result): null, as a parsed NaN or a parsed 10**400 is, so on each input
+        the output is its own fold, every number in it is held by a double, the denylist walk finds nothing, and the export
+        child's file passes the upload (the road case in tests/test_perf_upload.py). public_uptime's int arm is held too: a
+        negative uptime just inside the edge, -(2**1024 - 2**970 - 1), has a residue of 49 and steps past it. Values that
+        stay inside are untouched: a bound of 2**1023 is its own power of two, 2**1022 + 1 rounds to 2**1023, a held sum
+        stays a sum. Fails with held_number dropped from either coarsening, from _merge's sum (2**1024, 2 * fmax and inf
+        written, and the second fold differing from the first) or from _merge's re-coarsening of a summed bound (2**1023 and
+        2**1022 sum to 3 * 2**1022, held, which rounds up to 2**1024: the one case the sum's own held_number does not reach)."""
+        fmax, edge = int(sys.float_info.max), 2 ** 1024 - 2 ** 970
+        cases = ({"heap": {"hydrated": {"capBytes": fmax, "bytes": 5}}},               # a bound a double holds rounds up past every double
+                 {"heap": {"hydrated": {"capBytes": 2 ** 1023 + 1}}},
+                 {"a b": {"n": fmax}, "a c": {"n": fmax}},                              # two held ints summed past the edge
+                 {"a b": {"n": 1e308}, "a c": {"n": 1e308}},                            # two held floats summed to an infinity
+                 {"x": {"a b": {"bound": 2 ** 1023}, "c d": {"bound": 2 ** 1023}}},     # two coarsened bounds summed past the edge
+                 {"x": {"a b": {"bound": 2 ** 1023}, "c d": {"bound": 2 ** 1022}}},     # summed to 3 * 2**1022, held, then coarsened again past it
+                 {"uptime_s": -(edge - 1)},
+                 {"memos": {"a k": {"uptime_s": -(edge - 1)}, "b k": {"uptime_s": 0}}})
+        self.assertEqual((-(edge - 1)) % 60, 49, "the residue that steps the int arm past the edge")
+
+        def numbers(node):
+            if isinstance(node, dict):
+                for v in node.values():
+                    yield from numbers(v)
+            elif isinstance(node, list):
+                for v in node:
+                    yield from numbers(v)
+            elif isinstance(node, (int, float)) and not isinstance(node, bool):
+                yield node
+        for snap in cases:
+            out = pp.fold(snap)
+            self.assertEqual(pp.fold(out), out, "the output is its own fold: %r" % (sorted(snap),))
+            for n in numbers(out):
+                self.assertIsNotNone(pp.finite_number(n), "a number no double holds in a fold's output: %r" % (sorted(snap),))
+            self.assertEqual(pp.denylist_problems(out), [], repr(sorted(snap)))
+        self.assertEqual(pp.fold(cases[0]), {"heap": {"hydrated": {"capBytes": None, "bytes": 5}}}, "the bound is null, the occupancy beside it kept")
+        self.assertEqual(pp.fold(cases[1]), {"heap": {"hydrated": {"capBytes": None}}})
+        self.assertEqual(pp.fold(cases[2]), {"other": {"n": None}}, "2 * fmax is null")
+        self.assertEqual(pp.fold(cases[3]), {"other": {"n": None}}, "inf is null, never the Infinity literal")
+        self.assertEqual(pp.fold(cases[4]), {"x": {"other": {"bound": None}}}, "the sum itself passes the edge")
+        self.assertEqual(pp.fold(cases[5]), {"x": {"other": {"bound": None}}}, "the sum is held and its re-coarsening passes the edge")
+        self.assertEqual(pp.fold(cases[6]), {"uptime_s": None})
+        self.assertEqual(pp.fold(cases[7]), {"memos": {"other": {"uptime_s": 0}}}, "None is the merge identity: the held side gives way to the sibling's 0")
+        self.assertEqual(pp.fold({"heap": {"hydrated": {"capBytes": 2 ** 1023}}}), {"heap": {"hydrated": {"capBytes": 2 ** 1023}}},
+                         "the largest power of two a double holds stays")
+        self.assertEqual(pp.fold({"heap": {"hydrated": {"capBytes": 2 ** 1022 + 1}}}), {"heap": {"hydrated": {"capBytes": 2 ** 1023}}})
+        self.assertEqual(pp.fold({"a b": {"n": 1e308}, "a c": {"n": 1.0}}), {"other": {"n": 1e308 + 1.0}}, "a held sum stays")
+        self.assertEqual(pp.fold({"uptime_s": -(edge - 61)}), {"uptime_s": -(edge - 12)}, "an uptime whose rounding stays inside the edge is rounded")
+        self.assertIsNotNone(pp.finite_number(-(edge - 12)))
+        for x in (None, "other", True, False):
+            self.assertIs(pp.held_number(x), x, "not a number: returned as it is")
+        self.assertIsNone(pp.held_number(2 ** 1024))
+        self.assertIsNone(pp.held_number(float("inf")))
+        self.assertEqual(pp.held_number(2 ** 1023), 2 ** 1023)
+        snap = leak_snapshot()
+        snap["heap"] = {"tracing": False, "hydrated": {"entries": 1, "bytes": 2, "capBytes": fmax}}
+        doc = pe.export_document(snap, usage=True)
+        self.assertIsNone(doc["perf"]["heap"]["hydrated"]["capBytes"], "through the export document")
+        self.assertEqual(doc["perf"]["heap"]["hydrated"]["bytes"], 2)
+        self.assertIsNone(_check(doc), "and it passes its own check")
+        self.assertEqual(pp.fold(doc["perf"]), doc["perf"], "and the output is its own fold")
+
     def test_no_absolute_clock_stamp_survives_the_export(self):
         # the PROPERTY, not key names (round 3): with every stamp of the leak snapshot moved into the seconds epoch window
         # (the fixture's own are small numbers), no numeric leaf inside an epoch window survives anywhere in the export
@@ -1102,6 +1217,27 @@ class BoundCoarsening(unittest.TestCase):
                          "a bound that IS a power of two (the floor on a small machine) reads the same, which a reader cannot tell from a rounded one")
 
 
+    def test_public_bound_is_total_over_ints_so_a_raw_bound_no_double_can_hold_is_a_finding_and_never_a_raise(self):
+        """pp.public_bound over an int float() cannot hold: until 2026-09-19 the guard was math.isfinite(value), which raises
+        OverflowError for such an int, and pp.denylist_problems applies the function to a RAW file value on the upload road
+        (the closing check's HIGH 2 drove a 401-digit bound to a traceback there). The finiteness test is now asked of a float
+        alone, and the body is exact for an int: public_bound(10**400) is 1 << 1329 (the next power of two), -10**400 is
+        returned as it is (not positive), int(sys.float_info.max) is 1 << 1024, and the float cases stand. The parse refuses
+        such an int first on the upload road, so this is the belt behind it, which is why the unit exists. Fails with the
+        isfinite reorder reverted (OverflowError)."""
+        self.assertEqual(pp.public_bound(10 ** 400), 1 << 1329)
+        self.assertEqual((10 ** 400).bit_length(), 1329)
+        self.assertEqual(pp.public_bound(-(10 ** 400)), -(10 ** 400))
+        self.assertEqual(pp.public_bound(int(sys.float_info.max)), 1 << 1024)
+        self.assertEqual(pp.public_bound(2 ** 1024 - 2 ** 970), 1 << 1024)
+        self.assertEqual(pp.public_bound(10 ** 5000), 1 << (10 ** 5000).bit_length())
+        self.assertEqual(pp.public_bound(1 << 1329), 1 << 1329, "a power of two of any size reads the same")
+        inf, nan = float("inf"), float("nan")
+        self.assertIs(pp.public_bound(inf), inf)
+        self.assertIs(pp.public_bound(nan), nan)
+        self.assertEqual(pp.public_bound(2.5), 4)
+
+
 class UptimeRounding(unittest.TestCase):
     """`uptime_s` stays (it is the span the lifetime totals cover) but rounded DOWN to whole minutes: to the second,
     beside the export minute (a stamp with no seconds), it placed the kernel's start within a minute, the same start the
@@ -1127,6 +1263,29 @@ class UptimeRounding(unittest.TestCase):
         self.assertIs(pp.fold({"uptime_s": True})["uptime_s"], True, "a bool is not a number here")
         self.assertEqual(pp.public_uptime(3725), 3720)
         self.assertEqual(pp.UPTIME_KEYS, frozenset({"uptime_s", "uptimeS"}))
+
+    def test_public_uptime_is_total_over_ints_so_a_raw_uptime_no_double_can_hold_is_a_finding_and_never_a_raise(self):
+        """pp.public_uptime over an int float() cannot hold: until 2026-09-19 the guard was math.isfinite(value) and the body
+        value / 60, and each raises OverflowError for such an int ("int too large to convert to float"; "integer division
+        result too large for a float"); pp.denylist_problems applies the function to a RAW file value on the upload road, the
+        first raise the closing check's HIGH 2 drove there (a 401-digit uptime_s, a thirty-line traceback where the verb
+        promises one line). An int now takes an exact arm, value - value % 60 (10**400 - 40: 10**400 is 40 mod 60), a float
+        the floor of its quotient as before, and the finiteness test is asked of a float alone. The parse refuses such an int
+        first on the upload road, so this is the belt behind it, which is why the unit exists. Fails with the reorder
+        reverted (OverflowError) and with the int arm dropped (the quotient raises)."""
+        self.assertEqual(pp.public_uptime(10 ** 400), 10 ** 400 - 40)
+        self.assertEqual((10 ** 400 - 40) % 60, 0)
+        self.assertEqual(pp.public_uptime(-(10 ** 400)), -(10 ** 400) - 20)
+        fmax = int(sys.float_info.max)
+        self.assertEqual(pp.public_uptime(fmax), fmax - fmax % 60)
+        self.assertEqual(pp.public_uptime(10 ** 5000) % 60, 0)
+        self.assertEqual(pp.public_uptime(3725), 3720)
+        self.assertEqual(pp.public_uptime(-61), -120, "the int arm floors like the float arm did")
+        self.assertEqual(pp.public_uptime(100.5), 60)
+        self.assertIsInstance(pp.public_uptime(100.5), int)
+        inf, nan = float("inf"), float("nan")
+        self.assertIs(pp.public_uptime(inf), inf)
+        self.assertIs(pp.public_uptime(nan), nan)
 
     def test_the_usage_bucket_reads_the_raw_uptime_and_agrees_with_the_rounded_one(self):
         # usage_block reads the RAW snapshot's uptime_s (the block is built from the snapshot, before the fold); every
@@ -1173,6 +1332,21 @@ class Usage(unittest.TestCase):
         self.assertEqual(pe.usage_block({"uptime_s": 0})["kernelUptime"], "lt1h")
         self.assertEqual(pe.usage_block({"uptime_s": 8 * 86400.0})["kernelUptime"], "gt7d")
         self.assertNotIn("kernelUptime", pe.usage_block({"uptime_s": "100"}), "a string is not an uptime")
+
+
+    def test_an_uptime_no_double_can_hold_fits_no_bucket_and_raises_nothing(self):
+        """pe.usage_block's bucket guard was math.isfinite(up), which raises OverflowError for an int float() cannot hold
+        (json.load parses 10**400 exactly from a --from snapshot; the closing check's HIGH 2 audit, :258); the guard is
+        pp.finite_number now, so 10**400 and -10**400 fit no bucket and the key is left out, as for a NaN, while the rest of
+        the block stands, and an int a double holds still buckets (8 * 86400 and int(sys.float_info.max) are gt7d). Fails
+        with the guard reverted (OverflowError)."""
+        for up in (10 ** 400, -(10 ** 400), 2 ** 1024 - 2 ** 970, 10 ** 5000):
+            u = pe.usage_block({"uptime_s": up, "http": {"POST /send": {"count": 1}}})
+            self.assertNotIn("kernelUptime", u)
+            self.assertEqual(u["actions"], {"send": 1}, "the rest of the block is unaffected")
+        self.assertEqual(pe.usage_block({"uptime_s": 8 * 86400})["kernelUptime"], "gt7d")
+        self.assertEqual(pe.usage_block({"uptime_s": int(sys.float_info.max)})["kernelUptime"], "gt7d", "an int a double holds buckets")
+        self.assertEqual(pe.usage_block({"uptime_s": 2 ** 1024 - 2 ** 970 - 1})["kernelUptime"], "gt7d")
 
 
 class Cli(unittest.TestCase):
@@ -1229,20 +1403,69 @@ class Cli(unittest.TestCase):
         self.assertFalse(os.path.exists(os.path.join(self.state, "perf-exports")), "--out means no default file")
 
     def test_a_snapshot_with_a_nan_uptime_exports_under_usage_with_no_traceback(self):
-        snap = leak_snapshot()
-        snap["uptime_s"] = float("nan")
-        with open(self.src, "w") as fh:
-            json.dump(snap, fh)                       # json writes the NaN literal, which json.load reads back
-        out = os.path.join(self.xdg, "nan.json")
-        r = _run(["--public", "--from", self.src, "--usage", "--out", out], state=self.state)
-        self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(r.stderr, "", "no traceback, no warning")
-        self.assertNotIn("Traceback", r.stdout + r.stderr)
-        with open(out, encoding="utf-8") as fh:
-            doc = json.load(fh)
-        self.assertNotIn("kernelUptime", doc["usage"])
-        self.assertEqual(doc["usage"]["actions"], {"send": 7, "new": 2})
-        self.assertIsNone(doc["perf"]["uptime_s"], "the fold nulls the non-finite number")
+        """The export road NULLS a number no double can hold and writes the file, one success line and no traceback: the NaN
+        literal was the precedent (json.load accepts it; the bucket search once ran off the end of UPTIME_BUCKETS on it and the
+        verb printed a traceback carrying the checkout's path, the review of 2026-09-18), and since the closing check's HIGH 2
+        (2026-09-19) an integer float() cannot hold takes the same road: json.load parses 10**400 exactly, the fold nulls it
+        (pp.finite_number, the NaN rule), usage_block leaves the bucket out, and the two coarsenings are total over ints (before
+        that day pp.public_uptime raised OverflowError on it inside the fold, and under an ordinary counter the 401 digits were
+        written). Refusing an integer here while admitting NaN would be inconsistent, and the file is re-checked by `romp perf
+        upload` before anything leaves, where the parse refuses both. Driven as a child for NaN, 10**400 and -10**400 (the ints
+        spliced into the snapshot text) at uptime_s, at a BOUND_KEYS leaf, at an ordinary counter, at an http row's count and
+        at a list element: exit 0, nothing on stderr, the leaf null in the written file, no kernelUptime for the uptime plant,
+        the action count null for the http-count plant. A 5001-digit literal at a counter is the one refusal here, "is not
+        JSON", exit 1, nothing written: that outcome is the INTERPRETER'S int() digit limit (PYTHONINTMAXSTRDIGITS, 4300 by
+        default on 3.10.20, 3.12.3, 3.13 and 3.14.6t, pinned in the child's environment), not this verb's rule; with the
+        limit off the fold nulls it like the others. Fails with finite_number's int arm reverted (the digits in the file)."""
+        mark = "@@LITERAL@@"
+        sites = (("uptime_s", lambda d: d.__setitem__("uptime_s", mark), lambda doc: doc["perf"]["uptime_s"]),
+                 ("heap/hydrated/capBytes", lambda d: d["heap"].__setitem__("hydrated", {"entries": 12, "bytes": 5000, "capBytes": mark}),
+                  lambda doc: doc["perf"]["heap"]["hydrated"]["capBytes"]),
+                 ("process/rss_kb", lambda d: d["process"].__setitem__("rss_kb", mark), lambda doc: doc["perf"]["process"]["rss_kb"]),
+                 ("http/POST /send/count", lambda d: d["http"]["POST /send"].__setitem__("count", mark), lambda doc: doc["perf"]["http"]["POST /send"]["count"]),
+                 ("probe/ring/0", lambda d: d.__setitem__("probe", {"ring": [mark]}), lambda doc: doc["perf"]["probe"]["ring"][0]))
+
+        def write(plant, literal):
+            snap = leak_snapshot()
+            plant(snap)
+            text = json.dumps(snap)                   # json writes a NaN literal for the fixture's own NaN, which json.load reads back
+            self.assertEqual(text.count(json.dumps(mark)), 1)
+            with open(self.src, "w") as fh:
+                fh.write(text.replace(json.dumps(mark), literal))
+
+        out = os.path.join(self.xdg, "nulled.json")
+        for where, plant, leaf in sites:
+            for name, literal in (("NaN", "NaN"), ("10**400", "1" + "0" * 400), ("-10**400", "-1" + "0" * 400)):
+                label = "%s at %s" % (name, where)
+                write(plant, literal)
+                if os.path.exists(out):
+                    os.unlink(out)
+                r = _run(["--public", "--from", self.src, "--usage", "--out", out], state=self.state)
+                self.assertEqual(r.returncode, 0, label + "\n" + r.stderr[-800:])
+                self.assertEqual(r.stderr, "", label + ": no traceback, no warning")
+                self.assertNotIn("Traceback", r.stdout + r.stderr, label)
+                self.assertNotRegex(r.stdout + r.stderr, r"0{40}", label)
+                with open(out, encoding="utf-8") as fh:
+                    text = fh.read()
+                self.assertNotRegex(text, r"0{40}", label + ": the digits are not in the file")
+                doc = json.loads(text)
+                self.assertIsNone(leaf(doc), label + ": the fold nulls the number no double can hold")
+                if where == "uptime_s":
+                    self.assertNotIn("kernelUptime", doc["usage"], label)
+                    self.assertEqual(doc["usage"]["actions"], {"send": 7, "new": 2}, label)
+                elif where == "http/POST /send/count":
+                    self.assertEqual(doc["usage"]["actions"], {"send": None, "new": 2}, label + ": the relabelled count is null too")
+                else:
+                    self.assertEqual(doc["usage"]["kernelUptime"], "lt1h", label)
+                    self.assertEqual(doc["usage"]["actions"], {"send": 7, "new": 2}, label)
+        # past the interpreter's int() digit limit: its ValueError, one line, the limit's outcome and not the verb's
+        write(sites[2][1], "1" + "0" * 5000)
+        os.unlink(out)
+        r = _run(["--public", "--from", self.src, "--usage", "--out", out], state=self.state, env_extra={"PYTHONINTMAXSTRDIGITS": "4300"})
+        self.assertEqual(r.returncode, 1, r.stderr[-800:])
+        self.assertEqual(r.stderr, "romp perf export: %s is not JSON\n" % self.src)
+        self.assertEqual(r.stdout, "")
+        self.assertFalse(os.path.exists(out), "nothing written")
 
     def test_a_missing_or_unreadable_snapshot_is_said(self):
         r = _run(["--public", "--from", os.path.join(self.xdg, "none.json")], state=self.state)

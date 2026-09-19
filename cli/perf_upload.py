@@ -17,7 +17,8 @@ file that is not UTF-8 text or that is there but cannot be read among it, is ref
 unauthenticated: no credential exists for it, and the verb reads no token from anywhere and sends none.
 
 The file must exist, be a regular file of at most 1 MiB, parse as strict JSON (no NaN or Infinity, as a literal or as
-a number written past the double's range, 1e999; no
+a number written past the double's range, 1e999, or as an integer past about 1.8e308, which a double reader makes an
+infinity of, refused by _bounded_int before int() runs for a literal over 309 digits and by float() at the edge; no
 key repeated within one object at any depth: the receiver's contract refuses one, and a reader that kept one copy
 would silently choose which value is checked and sent) with the top-level `schema` line `romp-perf-export/1`, nest at most MAX_DEPTH levels (32; a fresh
 export is about 7 deep; a deeper file is refused in one line that names the bound, before any check walks it and never with a
@@ -37,8 +38,9 @@ so two exports from one kernel remain linkable through them by design. The re-ch
 dropped, folded or coarsened, and of clock stamps it judges a FLOAT-VALUED one (a `t` put back on a split row, a string
 value the export would have folded to `other`, a key it would have replaced, one ending in a newline among them, an uptime
 typed to the second, a bound typed to the byte, a float inside a clock stamp's epoch window, 1.5e9 to 2.0e9 seconds or
-1.5e12 to 2.0e12 milliseconds, under any key but a duration key) and passes what it keeps (an integer is a byte total or a count,
-which a long-lived kernel's totals carry into the window within hours; a float outside both windows is a measurement,
+1.5e12 to 2.0e12 milliseconds, under any key but a duration key) and passes what it keeps (an integer a double can hold is a byte
+total or a count, whatever its size, which a long-lived kernel's totals carry into the window within hours, one a double cannot
+hold being refused at the parse above; a float outside both windows is a measurement,
 the allocator's arena on a long-lived kernel among them; a float inside a window under a duration key, a name carrying
 the token `ms` such as `cycle_cpu_ms_sum` or `wallMs`, is a millisecond total, which the kernel's sums carry through
 the seconds window in weeks), so a fresh export passes whole.
@@ -290,10 +292,14 @@ class RepeatedKey(ValueError):
 
 
 class NonFinite(ValueError):
-    """A number is written past the double's range (1e999, -1e999, 1E400) and parses to an infinity: valid JSON to
-    every editor and validator (RFC 8259 leaves range to the implementation), so the verb's refusal names the reason,
-    as it does for a repeated key, or an operator whose hand edit produced it is told nothing they can act on (the
-    closing re-run's verification, 2026-09-19). The number itself is not carried."""
+    """A number is written past the double's range and parses to an infinity, or would in any double reader: a float
+    spelling (1e999, -1e999, 1E400, _finite_float) or, since the closing check of 2026-09-19, an INTEGER literal
+    float() cannot hold (_bounded_int: 2**1024 - 2**970 and above, 309 digits or more; json parses it exactly, and
+    every double reader, a browser's JSON.parse or the receiver, makes an infinity of it, so to the wire the two
+    spellings are the same number). Valid JSON to every editor and validator (RFC 8259 leaves range to the
+    implementation), so the verb's refusal names the reason, as it does for a repeated key, or an operator whose hand
+    edit produced it is told nothing they can act on (the closing re-run's verification, 2026-09-19). The number
+    itself is not carried."""
 
 
 def _no_constant(name):
@@ -311,6 +317,37 @@ def _finite_float(text):
     return v
 
 
+# The digit count of the largest double, 309 (len(str(int(sys.float_info.max)))): an integer literal of more digits is
+# past every double, and _bounded_int refuses it by its length BEFORE int() runs, so the outcome is this verb's rule and
+# not the interpreter's int() digit limit (4300 by default, sys.get_int_max_str_digits; a 5001-digit literal is that
+# limit's ValueError, the bare "is not strict JSON" line, without the pre-check). At 309 digits the count decides nothing:
+# 10**308 converts, 2**1024 - 2**970 does not, and float() is asked.
+DOUBLE_DIGITS = len(str(int(sys.float_info.max)))
+
+
+def _bounded_int(text):
+    """The int `text` spells, or NonFinite (a ValueError) when no double can hold it: json's scanner hands every
+    integer literal here as its TEXT (verified on 3.12: a 5001-digit literal arrives whole, before any int()), so a
+    literal over DOUBLE_DIGITS digits, the sign not counted, is refused by its length and never converted, and one
+    within it is converted and asked of float(), which raises OverflowError at 2**1024 - 2**970 and above (309 digits;
+    int(sys.float_info.max) + 1 and everything below the edge round to the largest double and pass). THE CHOKE POINT of
+    the closing check's HIGH 2 (2026-09-19): the checks downstream apply float-domain functions to the parsed value
+    (public_uptime and public_bound over a raw file value in pp.denylist_problems, math.isfinite before that day), and
+    json hands them unbounded ints; refusing here, with the line the overflowing float already has, means no site on
+    this road, present or future, can see one. The threshold is behavioural (does float() hold it), not a digit
+    count; the pre-check exists to stay clear of the interpreter's int() limit, so that a 5001-digit literal is this
+    verb's one line and not the interpreter's."""
+    digits = text[1:] if text.startswith("-") else text
+    if len(digits) > DOUBLE_DIGITS:
+        raise NonFinite("not strict JSON: a number outside the finite range")
+    v = int(text)
+    try:
+        float(v)
+    except OverflowError:
+        raise NonFinite("not strict JSON: a number outside the finite range")
+    return v
+
+
 def _no_repeat(pairs):
     if len({k for k, _v in pairs}) != len(pairs):
         raise RepeatedKey("not strict JSON: a key repeats")
@@ -321,7 +358,9 @@ def strict_loads(data):
     """The document `data` (bytes) spells, or a ValueError: UTF-8, no NaN or Infinity whether spelled as a literal
     (parse_constant) or reached by an overflowing number (parse_float, _finite_float: 1e999 parses to inf and is
     refused here as NonFinite, a ValueError, so read_export can name the reason; 1e-999 underflows to 0.0 and is a
-    measurement), no key repeated within one object at any depth
+    measurement) or by an integer literal no double can hold (parse_int, _bounded_int: 2**1024 - 2**970 and above,
+    the same NonFinite, a literal over 309 digits refused by its length before int() runs, so the outcome is this
+    verb's line and never the interpreter's int() digit limit), no key repeated within one object at any depth
     (RepeatedKey, a ValueError), and nesting within the parser's reach (json raises RecursionError past it; here that
     is a ValueError like any other unparseable input, never a traceback). The parser's reach is not the verb's depth
     rule: read_export holds the parsed document to MAX_DEPTH, a far smaller number, before any check walks it. Before
@@ -330,7 +369,8 @@ def strict_loads(data):
     it was not written for and did not know it held (the closing re-run of 2026-09-19), so a later relaxation of the
     belt would have reopened it silently; the refusal now lives with the other strict-JSON rules."""
     try:
-        return json.loads(data.decode("utf-8"), parse_constant=_no_constant, parse_float=_finite_float, object_pairs_hook=_no_repeat)
+        return json.loads(data.decode("utf-8"), parse_constant=_no_constant, parse_float=_finite_float, parse_int=_bounded_int,
+                          object_pairs_hook=_no_repeat)
     except RecursionError:
         raise ValueError("not strict JSON: nested past the parser")
 
@@ -424,7 +464,8 @@ def read_export(path, state):
         # point of its own output (pinned over every fixture and a served export; fold is idempotent even on the summed-floats
         # case pp._merge names, which the denylist walk above refuses first), so a block that differs from its fold was
         # changed after the export in a way the checks above do not name. The belt no longer holds the non-finite case
-        # alone: strict_loads refuses an overflowing number (1e999) first, so a block carrying one never reaches this line
+        # alone: strict_loads refuses an overflowing number (1e999) or an integer a double cannot hold (2**1024 - 2**970 and
+        # above, which the fold nulls) first, so a block carrying either never reaches this line
         for k in doc:
             if k not in TOP_LEVEL:
                 raise Refusal("refused: %s is not the export's own shape (a top-level %s block the export does not write); nothing sent" % (path, k), 1)
@@ -624,10 +665,13 @@ def post(url, data, timeout=None):
 
 def receipt(status, body):
     """(receipt, retention_days, av) of the one answer accepted: status 201 and a body of at most ANSWER_MAX bytes
-    that is one strict JSON object (strict_loads: a repeated key is not the shape either, and a retention_days of
-    1e999 is refused by the parser as an overflow before the integer check below would have refused it) with exactly
-    the keys receipt (a uuid4 string), retention_days (a non-negative integer, not a bool) and av (ok or skipped).
-    Anything else is a Refusal whose text carries the status code and nothing of the body."""
+    that is one strict JSON object (strict_loads: a repeated key is not the shape either, a retention_days of 1e999
+    is refused by the parser as an overflow before the integer check below would have refused it, and since the
+    closing check of 2026-09-19 so is a retention_days no double can hold, 2**1024 - 2**970 and above, NonFinite through
+    parse_int and NOT_THE_SHAPE here, where before it a 401-digit one passed the integer check and was printed in the
+    success line, 401 digits wide) with exactly the keys receipt (a uuid4 string), retention_days (a non-negative
+    integer, not a bool) and av (ok or skipped). Anything else is a Refusal whose text carries the status code and
+    nothing of the body."""
     if status != 201:
         raise Refusal("refused: the receiver answered HTTP %d where the 201 receipt was expected; no receipt" % status, 1)
     if len(body) > ANSWER_MAX:

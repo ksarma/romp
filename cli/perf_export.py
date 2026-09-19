@@ -55,7 +55,6 @@ habit: without --public it refuses with one line and exit 2. A reader for the te
 import argparse
 import http.client
 import json
-import math
 import os
 import re
 import sys
@@ -188,6 +187,11 @@ def read_kernel(state: Path) -> dict:
 
 
 def read_file(path: str) -> dict:
+    """A saved `romp perf --json` snapshot (--from), json.load with no hooks: this road builds its own document, so a
+    number no double can hold is NULLED by the fold like the NaN literal json.load admits (the export writes null, no
+    traceback; usage_block leaves the bucket out), and the file is re-checked by `romp perf upload` before anything
+    leaves. An integer literal past the interpreter's int() digit limit (4300 by default, sys.get_int_max_str_digits)
+    is the interpreter's ValueError, one line here ("is not JSON"), the limit's outcome and not this verb's rule."""
     try:
         with open(path, encoding="utf-8") as fh:
             snap = json.load(fh)
@@ -255,8 +259,13 @@ def usage_block(snap: dict) -> dict:
         elif method == "GET" and path in VIEW_ROUTES:
             out["views"][_feature_name(path)] = count
     up = _num(snap.get("uptime_s"))
-    if up is not None and math.isfinite(up):   # a NaN or an infinite uptime (json.load accepts both literals) fits no
-        out["kernelUptime"] = next(name for bound, name in UPTIME_BUCKETS if up < bound)   # bucket: the key is left out
+    if up is not None:
+        # a NaN, an infinite uptime (json.load accepts both literals) or an integer a double cannot hold (2**1024 - 2**970
+        # and above, which json.load parses exactly) fits no bucket: the key is left out for all three. pp.finite_number
+        # is the test, never math.isfinite(up), which raises OverflowError on such an int (the closing check's HIGH 2)
+        up = pp.finite_number(up)
+    if up is not None:
+        out["kernelUptime"] = next(name for bound, name in UPTIME_BUCKETS if up < bound)
     return out
 
 
@@ -284,7 +293,8 @@ def check_document(doc: dict, state: Path, under=("perf",), tail="nothing writte
     the walk's anchored match admits, a joined key past the cap), a string value it would have (a token outside the
     identifier grammar with none of the shapes the walk names), an uptime not on whole minutes, a bound not on a power
     of two, or a float inside a clock stamp's epoch window, 1.5e9 to 2.0e9 seconds or 1.5e12 to 2.0e12 milliseconds
-    (pp.STAMP_WINDOWS), with no duration key on its path; an integer is a byte total or a count, a float outside both
+    (pp.STAMP_WINDOWS), with no duration key on its path; an integer a double can hold is a byte total or a count (one it
+    cannot hold is null in any fold and refused at the upload's parse, so no walk sees it), a float outside both
     windows is a measurement the export keeps, the allocator's figures on a long-lived kernel among them, and a float
     under a duration key, a name carrying the token `ms`, its own or any key above it, is a millisecond total, all of
     which a long-lived kernel's figures reach, so all pass; none of the six a fold's own

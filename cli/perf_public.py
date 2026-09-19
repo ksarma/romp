@@ -15,7 +15,11 @@ reader wants, so two exports from one kernel life, or from one machine, REMAIN L
 make a copy safe by construction and two kinds of value are kept coarsened, so a block added to the kernel later
 costs nothing here:
 
-1. The SHAPE rule, over the whole document. Numbers, booleans and null pass. Every dict key and every string
+1. The SHAPE rule, over the whole document. Numbers, booleans and null pass; a number no double can hold (a NaN, an
+   infinity, and since 2026-09-19 an integer at or past 2**1024 - 2**970, 309 digits, which every double reader, a
+   browser's JSON.parse or the receiver, would make an infinity of) is written null, finite_number, and so is the result
+   of a coarsening or a merged sum that passes the edge from inputs within it (held_number: a bound rounded up to
+   2**1024, two measurements summed past the largest double). Every dict key and every string
    value must fullmatch the browser's `ident` grammar, `^[A-Za-z0-9_.:-]{1,32}$` (ui/webview/perf-telemetry.ts),
    or it folds to the literal `other`: a key folded to `other` merges with any sibling already there (numbers
    summed, dicts merged, lists joined), a value folded to `other` is the word. Two blocks join fixed
@@ -337,10 +341,19 @@ UPTIME_GRAIN_S = 60
 
 def public_uptime(value):
     """`value` rounded down to a whole number of minutes, as an int (3725 -> 3720; 100.5 -> 60; 59.9 -> 0), the
-    reason in UPTIME_KEYS's comment; anything that is not a finite number (a bool, null, a string, a NaN the fold
-    has nulled) is returned as it is."""
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+    reason in UPTIME_KEYS's comment; anything that is not a number, or is a float that is not finite (a bool, null, a
+    string, a NaN the fold has nulled) is returned as it is. TOTAL over ints, whatever their size: an int takes the
+    exact arm (value - value % 60), a float the floor of its quotient. Until 2026-09-19 the guard was math.isfinite(value)
+    over either type and the quotient was taken for both, and each raises OverflowError for an int float() cannot hold
+    (10**400: "int too large to convert to float", "integer division result too large for a float"); denylist_problems
+    applies this function to a RAW file value on the upload road, and the verb answered a 401-digit uptime with a
+    thirty-line traceback where it promises one refusal line (the closing check's HIGH 2). The parse now refuses such
+    an int before any check (cli/perf_upload.py, _bounded_int) and finite_number nulls it in any fold; this arm is
+    the belt behind both, so no caller can raise here whatever it hands in."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or (isinstance(value, float) and not math.isfinite(value)):
         return value
+    if isinstance(value, int):
+        return value - value % UPTIME_GRAIN_S
     return int(math.floor(value / UPTIME_GRAIN_S)) * UPTIME_GRAIN_S
 
 
@@ -359,20 +372,76 @@ BOUND_KEYS = frozenset({"capBytes", "budgetBytes", "cap", "bound", "stageRingMax
 def public_bound(value):
     """`value` rounded UP to a power of two, as an int (3 -> 4; 4 -> 4; 2.5 -> 4; 501 -> 512), the machine-fact reason
     in BOUND_KEYS's comment; a bound that already is a power of two (a floor on a small machine) reads the same, which
-    a reader cannot tell from a rounded one. Anything that is not a finite positive number (a bool, null, a string,
-    zero, a NaN the fold has nulled) is returned as it is."""
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+    a reader cannot tell from a rounded one. Anything that is not a positive number, or is a float that is not finite (a
+    bool, null, a string, zero, a negative, a NaN the fold has nulled) is returned as it is. TOTAL over ints, whatever
+    their size: the finiteness test is asked of a float alone, and the body is exact for an int (math.ceil of an int is
+    the int, bit_length is exact), so public_bound(10**400) is 1 << 1329. Until 2026-09-19 the guard was
+    math.isfinite(value) over either type, which raises OverflowError for an int float() cannot hold, and
+    denylist_problems applies this function to a RAW file value on the upload road (the closing check's HIGH 2; the
+    same belt as public_uptime's)."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or (isinstance(value, float) and not math.isfinite(value)) or value <= 0:
         return value
     return 1 << (math.ceil(value) - 1).bit_length()
 
 
-def _finite(x):
-    return x if (isinstance(x, (int, bool)) or math.isfinite(x)) else None
+# The memory-fraction bounds by PATH below the snapshot root, the ten the BOUND_KEYS comment lists, and the one constant
+# that sits under a BOUND_KEYS name (memos.judgingBand.bound, the kernel's _JUDGING_ROW_CAP, a literal count of rows,
+# coarsened at no cost). The judge child's copies of its tables carry the same keys under ("judge", "child"). The
+# disclosure paragraph's "ten memory-fraction bounds" is pinned against these two sets by tests/test_perf_stats.py
+# (Disclosed): every bound-keyed leaf on the wire, the ("judge", "child") prefix stripped, is classified against them,
+# and a leaf in neither is red there, so a constant added under one of the keys does not read as an eleventh fraction
+# and a fraction dropped does not pass as a constant (the closing check's finding 4, 2026-09-19: the pin's set-aside
+# had the two labels swapped, pusher.stageRingMax as a ring length and memos.judgingBand.bound as a fraction, where the
+# kernel's _stage_ring_len scales the ring one per 256 MiB of MemTotal and _JUDGING_ROW_CAP is the literal 20000).
+MEMORY_FRACTION_BOUNDS = frozenset({
+    ("recordCache", "budgetBytes"), ("heap", "hydrated", "capBytes"), ("checkpoints", "docMemo", "capBytes"),
+    ("asmCheckpoint", "asmDocMemo", "capBytes"), ("asmIndex", "cap"), ("pusher", "stageRingMax"),
+    ("builds", "feed", "memo", "bound"), ("memos", "notices", "bound"), ("memos", "spendTree", "bound"),
+    ("memos", "summaryAnchor", "bound"),
+})
+CONSTANT_BOUNDS = frozenset({("memos", "judgingBand", "bound")})
+
+
+def finite_number(x):
+    """`x` when a double can hold it, else None: a bool passes; an int passes when float(x) does not raise OverflowError
+    (2**1024 - 2**970, 309 digits, is the first int that raises; int(sys.float_info.max) + 1 and everything below the
+    edge round to the largest double and pass); a float passes when math.isfinite. THE RULE is "representable as a
+    finite double", the same rule that nulls a NaN or an infinity: every double reader, a browser's JSON.parse or the
+    receiver, makes an infinity of an integer past the double, so it is not a value the public form can carry and is
+    written null the way a NaN is. Until 2026-09-19 (_finite, the name kept below as an alias) an int of any size was
+    kept, so fold({"rss_kb": 10**400}) wrote 401 digits and the export road put them in the file (the closing check's
+    HIGH 2). The fold's leaf case and the coarsenings' None identity in _merge rest on this."""
+    if isinstance(x, bool):
+        return x
+    if isinstance(x, int):
+        try:
+            float(x)
+        except OverflowError:
+            return None
+        return x
+    return x if math.isfinite(x) else None
+
+
+_finite = finite_number      # the name before 2026-09-19
+
+
+def held_number(x):
+    """`x` unless it is a number no double holds, then None: finite_number over the RESULT of a coarsening or a sum, which
+    can pass the edge from inputs that did not. public_bound rounds a bound at or past 2**1023 up to 2**1024, which no
+    double holds (int(sys.float_info.max) under capBytes); public_uptime's int arm steps a negative uptime just inside the
+    edge past it (-(2**1024 - 2**970 - 1) has a residue of 49); _merge sums two ints or two floats near the largest double
+    past it, the float sum an infinity. The closing check at the re-run's head (2026-09-19) drove the first two through the
+    export child: the file carried 2**1024 and 2 * fmax, numbers the fold's own docstring said it never writes, and the
+    upload refused the export's own output as not strict JSON. So every such result is held to the same rule as a parsed
+    leaf, and a fold's output is its own fold on these inputs (pinned in tests/test_perf_export.py, FoldInvariant).
+    Anything that is not a number (None, a string, a bool) is returned as it is, so a coarsening that returned its input
+    unchanged is not judged twice."""
+    return finite_number(x) if isinstance(x, (int, float)) and not isinstance(x, bool) else x
 
 
 def _merge(a, b):
     """Two values whose keys folded to the same name: numbers add, dicts merge, lists join; anything else that
-    disagrees is `other`. None is the identity: a non-finite number is nulled by _finite before it gets here, and
+    disagrees is `other`. None is the identity: a non-finite number is nulled by finite_number before it gets here, and
     a counter beside it must stay a number (and a bool a bool), not become the word `other`; a null beside a null
     is null. Inside a merged dict a memory-fraction bound (BOUND_KEYS) is coarsened AGAIN after the sum: the two sides
     were each rounded up to a power of two by fold before the merge, and a sum of two powers of two is one only when
@@ -384,19 +453,22 @@ def _merge(a, b):
     FLOATS summed under a merged key can land inside a stamp window (STAMP_WINDOWS) and read as a clock stamp to the
     denylist walk; no coarsening is involved, so neither this pass nor a key-aware sum fixes it, and whether to exempt a
     value whose key folded to `other` from the stamp rule at the merge sites, or accept the hole, is a separate
-    decision."""
+    decision. The sum's RESULT is held to finite_number's rule (held_number): two ints or two floats a double holds can sum
+    past the largest double (the float sum is an infinity), and until 2026-09-19 the fold wrote the sum as it stood, 2 *
+    int(sys.float_info.max) under a merged key, the closing check at the re-run's head; null now, like a parsed number no
+    double holds, and the re-coarsened bound the same way."""
     if a is None or b is None:
         return b if a is None else a
     if isinstance(a, bool) or isinstance(b, bool):
         return a if a == b else OTHER
     if isinstance(a, (int, float)) and isinstance(b, (int, float)):
-        return a + b
+        return held_number(a + b)                 # two measurements near the largest double sum past it: null, as a parsed one is
     if isinstance(a, dict) and isinstance(b, dict):
         out = dict(a)
         for k, v in b.items():
             out[k] = _merge(out[k], v) if k in out else v
             if k in BOUND_KEYS and k in a:
-                out[k] = public_bound(out[k])     # the sum of two coarsened bounds is not a power of two: coarsen again
+                out[k] = held_number(public_bound(out[k]))     # the sum of two coarsened bounds is not a power of two: coarsen again
         return out
     if isinstance(a, list) and isinstance(b, list):
         return a + b
@@ -416,10 +488,17 @@ def _public_key(key, where):
 def fold(node, where=()):
     """The public form of `node`: the denylist dropped, every key and string outside its grammar folded to
     `other` (colliding keys merged, a bound inside a merged subtree coarsened again after the sum, see _merge),
-    non-finite numbers null, the kernel's uptime rounded down to whole minutes (UPTIME_KEYS), every memory-fraction
+    non-finite numbers null (finite_number: a NaN, an infinity, and since 2026-09-19 an integer a double cannot hold,
+    2**1024 - 2**970 and above, which every double reader, a browser's JSON.parse or the receiver, would make an
+    infinity of), the kernel's uptime rounded down to whole minutes (UPTIME_KEYS), every memory-fraction
     bound rounded up to a power of two (BOUND_KEYS). `where` is the path of ORIGINAL keys, which the denylist and the
-    block grammars are keyed on. Returns a new document; the input is not touched. The output is a fixed point of the
-    denylist walk (denylist_problems) except for the float case _merge names."""
+    block grammars are keyed on. The RESULTS of the two coarsenings and of _merge's sums are held to the same rule as a
+    parsed leaf (held_number): a bound at or past 2**1023 rounds up to 2**1024, which no double holds, and two summed
+    measurements can pass the largest double, so each is written null too, and the output carries no number a double
+    cannot hold whatever the input carried (the closing check at the re-run's head, 2026-09-19, found the export writing
+    2**1024 under capBytes for int(sys.float_info.max) and the upload refusing that file). Returns a new document; the
+    input is not touched. The output is a fixed point of the denylist walk (denylist_problems) except for the float case
+    _merge names, and on the constructed inputs above it is its own fold (fold(fold(x)) == fold(x), pinned)."""
     if isinstance(node, dict):
         out = {}
         for k, v in node.items():
@@ -430,9 +509,9 @@ def fold(node, where=()):
             nk = _public_key(k, where)
             fv = fold(v, here)
             if k in UPTIME_KEYS:
-                fv = public_uptime(fv)          # kept coarsened: whole minutes (UPTIME_KEYS)
+                fv = held_number(public_uptime(fv))     # kept coarsened: whole minutes (UPTIME_KEYS); the result held by a double
             elif k in BOUND_KEYS:
-                fv = public_bound(fv)           # kept coarsened: the next power of two (BOUND_KEYS)
+                fv = held_number(public_bound(fv))      # kept coarsened: the next power of two (BOUND_KEYS); null past 2**1023
             out[nk] = _merge(out[nk], fv) if nk in out else fv
         return out
     if isinstance(node, (list, tuple)):
@@ -442,7 +521,7 @@ def fold(node, where=()):
     if isinstance(node, bool) or node is None:
         return node
     if isinstance(node, (int, float)):
-        return _finite(node)
+        return finite_number(node)     # a NaN, an infinity or an int a double cannot hold is null
     return OTHER
 
 
@@ -665,7 +744,12 @@ def denylist_problems(doc, under=(), skip=()):
     key), in a dict or a list, a value finding at its own path (the fold's output carries no absolute clock stamp under any
     key, so one in a file was typed in after the export, whatever key it sits under; a time.time() value is a float, and an
     integer inside a window is a count or a byte total, which the kernel's lifetime totals reach within hours, so an
-    integer passes whatever its size; a float outside both windows tells no time and is a measurement the export keeps, the
+    integer a double can hold passes whatever its size; one it cannot hold (2**1024 - 2**970 and above) is null in any
+    fold's output and refused at the upload's parse (cli/perf_upload.py, _bounded_int), so it reaches this walk on no
+    road, and the two coarsenings this walk applies to a raw value, public_uptime and public_bound, are total over ints
+    since 2026-09-19 so that even a caller that hands one in gets a finding and never an OverflowError (the closing
+    check's HIGH 2 drove a 401-digit uptime through this walk to a traceback); a float outside both windows tells no
+    time and is a measurement the export keeps, the
     allocator's arena on a long-lived kernel among them, so it passes whatever its size; a float under a duration key, a
     name whose tokens carry `ms`, its own or an ancestor's (stages_ms names the measure and its leaves the stages), is a
     millisecond total, which the kernel's sums carry through the seconds window in weeks, so it passes too; a bound is
@@ -707,8 +791,9 @@ def denylist_problems(doc, under=(), skip=()):
                 value_problem("a bound not rounded to a power of two", v, here)
             return                          # a bound is judged as a bound alone, never as a stamp
         if isinstance(v, float) and any(lo <= v <= hi for lo, hi in STAMP_WINDOWS) and not any(duration_key(k) for k in here):
-            # a float alone, inside one of the epoch windows, and never with a duration key on its path: an integer is a total
-            # whatever its size, a float outside both windows is a measurement, and so is a float under a key that names a
+            # a float alone, inside one of the epoch windows, and never with a duration key on its path: an integer a double can
+            # hold is a total whatever its size (one it cannot hold reaches no walk: the parse refuses it, the fold nulls it), a
+            # float outside both windows is a measurement, and so is a float under a key that names a
             # millisecond measure, its own or any above it (STAMP_WINDOWS's comment); `here` ends in the leaf's own key, or in
             # its index when the leaf is a list element, and an index is never a duration key
             value_problem("a number the size of a clock stamp", v, here)

@@ -1873,7 +1873,45 @@ class StrictLoads(unittest.TestCase):
     that passed the scan, the paste walk and the denylist walk, and only the fold belt in read_export, which nulls a
     non-finite number and so finds the block differing from its fold, kept it off the wire: a belt load-bearing beyond
     its stated purpose, which a later relaxation would not have known. The refusal now lives in the parser (parse_float,
-    _finite_float), where the other strict-JSON rules are."""
+    _finite_float), where the other strict-JSON rules are. The closing check (2026-09-19, HIGH 2) found the integer side of
+    the same range open: parse_int was not hooked, so 10**400 parsed exactly and met math.isfinite in pp.public_uptime with a
+    traceback; parse_int (pu._bounded_int) now refuses every integer literal no double can hold with the same NonFinite."""
+
+    def test_an_integer_no_double_can_hold_is_not_strict_json_by_the_verbs_own_rule_whatever_its_length(self):
+        """pu.strict_loads refuses an integer literal float() cannot hold as pu.NonFinite with the fixed text: 401 digits,
+        its negative, the edge 2**1024 - 2**970 (309 digits, the first int float() refuses) and its negative, and 5001 digits,
+        which is past the interpreter's int() digit limit (4300 by default) and would be the interpreter's ValueError, with
+        its own text naming the limit, without pu._bounded_int's length pre-check, which refuses a literal over
+        pu.DOUBLE_DIGITS digits (309, the digit count of the largest double, derived from sys.float_info) before int() runs.
+        The refusal is the hook's, not json's: json.loads alone parses the 401-digit literal to 10**400. Within the double
+        an int parses as before: 1 followed by 308 zeros, 2**1024 - 2**970 - 1 and int(sys.float_info.max), all 309 digits,
+        so the edge is float()'s and not a digit count. Fails without parse_int (10**400 returned), without the pre-check
+        (the 5001-digit case raises the interpreter's ValueError, not NonFinite), and with the pre-check at 100 digits (the
+        309-digit values are refused)."""
+        fmax, edge = int(sys.float_info.max), 2 ** 1024 - 2 ** 970
+        for text, label in ((b'{"a": 1' + b"0" * 400 + b"}", "401 digits"), (b'{"a": -1' + b"0" * 400 + b"}", "-401 digits"),
+                            (('{"a": %d}' % edge).encode(), "the edge"), (('{"a": %d}' % -edge).encode(), "the negative edge"),
+                            (b'{"a": 1' + b"0" * 5000 + b"}", "5001 digits, past the interpreter's int() limit"),
+                            (b'{"a": [1, {"b": 1' + b"0" * 400 + b"}]}", "nested")):
+            with self.assertRaises(ValueError, msg=label) as cm:
+                pu.strict_loads(text)
+            self.assertIsInstance(cm.exception, pu.NonFinite, label)
+            self.assertEqual(str(cm.exception), "not strict JSON: a number outside the finite range", label)
+        self.assertEqual(pu.strict_loads(b'{"a": 1' + b"0" * 308 + b"}"), {"a": 10 ** 308}, "309 digits within the double: an int")
+        self.assertEqual(pu.strict_loads(('{"a": %d}' % (edge - 1)).encode()), {"a": edge - 1})
+        self.assertEqual(pu.strict_loads(('{"a": %d}' % fmax).encode()), {"a": fmax})
+        self.assertEqual(pu.strict_loads(('{"a": %d}' % (fmax + 1)).encode()), {"a": fmax + 1}, "rounds to the largest double: held")
+        self.assertEqual(pu.strict_loads(b'{"a": -12, "b": 0}'), {"a": -12, "b": 0})
+        self.assertEqual(json.loads('{"a": 1' + "0" * 400 + "}")["a"], 10 ** 400, "json.loads alone parses it: the refusal is the hook's")
+        self.assertEqual(pu.DOUBLE_DIGITS, 309)
+        self.assertEqual(pu.DOUBLE_DIGITS, len(str(fmax)))
+        self.assertEqual(pu._bounded_int("-7"), -7)
+        with self.assertRaises(pu.NonFinite):
+            pu._bounded_int("1" + "0" * 5000)          # by length, before int(): the interpreter's limit is never asked
+        if sys.get_int_max_str_digits():                 # the outcome the pre-check preempts, under the interpreter's default limit
+            with self.assertRaises(ValueError) as cm:
+                json.loads('{"a": 1' + "0" * 5000 + "}")
+            self.assertNotIsInstance(cm.exception, pu.NonFinite)
 
     def test_a_number_written_past_the_finite_range_is_not_strict_json_and_an_underflow_is_a_measurement(self):
         """1e999, -1e999 and 1E400 each raise pu.NonFinite, a ValueError, with the fixed text (no traceback out of the
@@ -2246,6 +2284,11 @@ class Answers(unittest.TestCase):
                   json.dumps({**ok, "av": ["ok"]}),
                   '{"receipt": "%s", "retention_days": NaN, "av": "ok"}' % RECEIPT,
                   '{"receipt": "%s", "retention_days": 1e999, "av": "ok"}' % RECEIPT,        # an overflow: the parser refuses it before the int check
+                  # an integer no double can hold, 401 digits, and one past the interpreter's int() limit, 5001: NonFinite through
+                  # parse_int (pu._bounded_int), the shape line here; before 2026-09-19 the 401-digit one passed the int check and
+                  # the success line printed it 401 digits wide (the closing check's HIGH 2 audit, receipt())
+                  '{"receipt": "%s", "retention_days": 1%s, "av": "ok"}' % (RECEIPT, "0" * 400),
+                  '{"receipt": "%s", "retention_days": 1%s, "av": "ok"}' % (RECEIPT, "0" * 5000),
                   json.dumps(ok) + json.dumps(ok), json.dumps(ok)[:-1], json.dumps({**ok, "note": "x" * (64 * 1024)}),
                   '{"receipt": "%s", "receipt": "%s", "retention_days": 180, "av": "ok"}' % (MARKER, RECEIPT),      # a repeated key
                   '{"receipt": "%s", "retention_days": 1, "retention_days": 180, "av": "ok"}' % RECEIPT]
@@ -2473,9 +2516,11 @@ class Docs(unittest.TestCase):
                       "letter a number spells is an exponent's e, so an entry in the alphabet such as 1e5 is counted by its spelling",
                       # finding 9: the reference says the advisory's silence is not a claim (the module's copy is pinned in the export module)
                       "the line reports the digit count only, and an entry it does not count is not thereby matchable in a number",
-                      # finding 6: the upload section's strict-JSON parenthetical names the overflow spelling the parser refuses
+                      # finding 6 of the re-run, widened by the closing check's HIGH 2: the upload section's strict-JSON parenthetical names
+                      # both spellings the parser refuses, the overflowing float and the integer no double can hold
                       "parses as strict JSON (no `NaN` or `Infinity`, whether spelled as a literal or reached by a number written past the "
-                      "double's range, such as 1e999; no key repeated within an object)"):
+                      "double's range, such as 1e999 or an integer past about 1.8e308, which a double reader makes an infinity; no key "
+                      "repeated within an object)"):
             self.assertTrue(words in text, "not in the reference: " + words)
         # the closing re-run's finding 3: the clause saying an entry outside the number alphabet "is a substring of no number"
         # was false by execution ((1234567), _1234567 and 1234567/ each refuse the number 1234567 by its digit groups); deleted.

@@ -866,6 +866,29 @@ class PublicForm(unittest.TestCase):
         self.assertEqual(r.stderr, refusal % ("the value at restarts/2/reason", "value"), "the string value, by the same expansion")
         self.assertEqual(r.stdout, "", "nothing printed")
 
+    def test_an_uptime_no_double_can_hold_from_the_kernels_version_answer_is_null_in_the_public_form_and_raises_nothing(self):
+        """The third road of the closing check's HIGH 2 (2026-09-19): live.kernel.uptimeS is GET /version's uptime_s
+        (kernel_live), public_form folds it through pp.public_uptime, and that function raised OverflowError on an int float()
+        cannot hold (math.isfinite, then the quotient). The shared fold now nulls such an int (pp.finite_number, the rule that
+        nulls a NaN) and the coarsening is total over ints, so the public form carries null and no traceback for 10**400,
+        -10**400 and 10**5000 (an int already, so the interpreter's digit limit on str-to-int is not in play), an int a double
+        holds is rounded exactly, and the folded document is the check's fixed point: perf_export.check_document over it at
+        the root, as the verb runs it before the print, finds nothing. This reader's other float-domain sites (float() over
+        ledger rows and the /version answer, the MB helpers) take the kernel's own ledgers and answer, never a file a person
+        names, and are listed in the closing check's audit with no fix beyond this shared one. Fails with finite_number's int
+        arm reverted (10**400 - 40 where None is asserted)."""
+        for label, v in (("10**400", 10 ** 400), ("-10**400", -(10 ** 400)), ("10**5000", 10 ** 5000), ("the edge", 2 ** 1024 - 2 ** 970)):
+            public = rm.public_form({"live": {"platform": "Linux", "kernel": {"uptimeS": v, "cpuS": 1.5}}})
+            self.assertIsNone(public["live"]["kernel"]["uptimeS"], label)
+            self.assertEqual(public["live"]["kernel"]["cpuS"], 1.5, label)
+            self.assertIs(public["public"], True, label)
+            with mock.patch.object(pp, "machine_probes", return_value=SYNTHETIC_PROBES):
+                self.assertIsNone(rm.perf_export.check_document(public, Path(tempfile.mkdtemp()), under=(), tail="nothing printed"), label)
+        fmax = int(sys.float_info.max)
+        held = rm.public_form({"live": {"kernel": {"uptimeS": fmax}}})["live"]["kernel"]["uptimeS"]
+        self.assertEqual(held, fmax - fmax % 60, "an int a double holds is rounded down to the minute, exactly")
+        self.assertEqual(rm.public_form({"live": {"kernel": {"uptimeS": 3725}}})["live"]["kernel"]["uptimeS"], 3720)
+
     def test_public_without_json_is_refused(self):
         err = io.StringIO()
         with mock.patch("sys.stderr", err):

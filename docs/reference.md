@@ -3872,10 +3872,12 @@ in a newline among them), an uptime not rounded to whole minutes, a bound not ro
 a power of two, or, under any other key, a float inside a clock stamp's epoch
 window, 1.5e9 to 2.0e9 for seconds or 1.5e12 to 2.0e12 for milliseconds, a
 number
-written with a point or an exponent as `time.time()` values are; an integer
-is a byte total or a count, which a long-lived kernel's lifetime totals carry
-into the window within hours, and passes whatever its size, and so does a
-float outside both windows, a measurement whatever its size (the allocator's
+written with a point or an exponent as `time.time()` values are; an integer a
+double can hold is a byte total or a count, which a long-lived kernel's lifetime
+totals carry into the window within hours, and passes whatever its size (one a
+double cannot hold, at about 1.8e308 and above, is null in the export's output,
+as a NaN is, and refused at the upload's parse), and so does a float outside
+both windows, a measurement whatever its size (the allocator's
 arena on a long-lived kernel passes 2.0e9), and a float inside a window under
 a duration key, a name that carries the token `ms` between underscores or
 camelCase boundaries (`cycle_cpu_ms_sum`, `wallMs`; `sendMax` and `startedAt`
@@ -3932,7 +3934,8 @@ appended to; a refused address is not echoed. The receiver is unauthenticated,
 so no credential exists for it: the verb reads no token and sends none. The
 file must be a regular file of at most 1 MiB that parses as strict JSON (no
 `NaN` or `Infinity`, whether spelled as a literal or reached by a number written
-past the double's range, such as 1e999; no key repeated within an object) with the
+past the double's range, such as 1e999 or an integer past about 1.8e308, which a
+double reader makes an infinity; no key repeated within an object) with the
 `romp-perf-export/1` schema line, nested at most 32 levels deep (a fresh export
 is about 7; the checks below recurse one level per frame and this is the one
 file romp reads that a person names, so a deeper file is refused in one line
@@ -3953,8 +3956,9 @@ with `kernel_commit` and `usage` optional; any other top-level key is refused
 naming the key alone, which the checks passed over), `exported_at` and
 `kernel_commit` must match the shapes the export writes them in, and the
 `perf` and `usage` blocks must each equal their own fold, or the verb refuses
-naming the block; the measurements the export keeps
-pass (an integer is a byte total or a count; a float outside both windows is a
+naming the block; the measurements the export keeps pass (an integer a double
+can hold is a byte total or a count, whatever its size; one past about 1.8e308
+is refused with the overflowing float, above; a float outside both windows is a
 measurement; a float inside a window under a duration key, a name carrying the
 token `ms`, its own or any key above it, is a millisecond total),
 so a fresh export passes whole and two
