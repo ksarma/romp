@@ -183,8 +183,14 @@ preset to 100 after setUp, 105 against 5, the bump adding a float, and `loads` d
 passed each). Four case-level tuples carried the writer door's counter and the store's call counters beside the walk's
 counter, on the two skip passes, the run pass and the state-gate case's first pass; the build's verifier pass after the round-2
 fixes reduced them to the walk's counter alone, reasoning that a counter moved with no recorded call reds _pass's reconciliation
-first and that on the run pass a non-hit makes the gate derive and its line fire first. The consolidation pass's tuple-elements
-lens found that reasoning true of the call keys only: a corrupt or unreadable_journal bump beside a goal_io loads bump with no
+first and that on the run pass a non-hit makes the gate derive and its line fire first. The gap that narrowing left on the run
+pass is forged-only: a genuine writer-door load on that pass is named by _pass's writer assertion and a genuine shared load by
+its recorders, so only a counter moved with no call through the door, the forged pair, could reach the case level. That was
+established and not assumed: the run pass was found to be the single pass taking shared loads whose tuple carried no
+writerLoads element (the first pass and the moved-transcript pass kept theirs), and the pair was then planted ahead of it, in
+_closer_settled and after the walk's read on a served look, to test whether it reached that line, rather than reasoning from the
+reconciliations that nothing could; it did, writerLoads 2 against 0 with the bound disabled (the states below). The
+consolidation pass's tuple-elements lens found that reasoning true of the call keys only: a corrupt or unreadable_journal bump beside a goal_io loads bump with no
 call through the door (a hand-off key that is not a call key) balanced both reconciliations, and at that head red nothing on
 the pass it was planted, only the moved-transcript tuple two passes later or nothing at all. Ruling 1 of the reviewer's rulings
 on the pre-emption restored the writer door's counter and the store's counters to the first skip pass, the run pass and the
@@ -300,7 +306,15 @@ add cases. The bare-name sample (extra5-1): the census's Name branch dropped red
 enumeration at F01, the bare from-import's call (2 failed, 15 passed of 17); a bare-name shared load as the first statement of
 the real jd._segs reds the replaced-helpers census naming jd._segs and the planted line (1 failed, 16 passed of 17); the same
 plant with the Name branch dropped escapes that census and is caught by the sample case and the enumeration alone (2 failed, 15
-passed of 17), the state that read 12 passed at the head of the build's verifier pass after the round-2 fixes.
+passed of 17), the state that read 12 passed at the head of the build's verifier pass after the round-2 fixes. The grammar table
+(the version demand): Call removed from _AST_CONCRETE reds the interpreter check naming Call and every census, the harness's
+setUp among them, since _walk refuses the first Call it meets (18 failed, 1 passed of 19); TypeIgnore removed, a class no parse
+here produces, reds the interpreter check alone, naming it (1 failed, 18 passed); a fake node class planted into the ast module
+at import reds the interpreter check naming Frobnicate (1 failed, 18 passed); _walk passing an unknown node instead of raising
+reds the refusal case, AssertionError not raised (1 failed, 18 passed); a census walking a tree outside _walk reds the refusal
+case's source pin, 2 spellings against 1 (1 failed, 18 passed); on 3.14t, TemplateStr and Interpolation removed red the
+interpreter check naming both and the enumeration at F61, where _walk refuses the TemplateStr (2 failed, 17 passed). The clean
+module with the table: 19 passed single-process on 3.10, 3.11, 3.12, 3.13 and 3.14t, and with four workers on 3.12.
 
 Drives the real pass (_auto_nudge_tick) over two alive sessions with real transcript files and real goal stores, on the
 suite's fake clock (the pass takes `now`). SYNTHETIC fixtures only; a PRIVATE synthetic sid pair (the goal-store fixture
@@ -383,6 +397,73 @@ REPLACED_JD = ("parsed_session", "_segs", "plan_units")
 JUDGE_FILE = os.path.basename(os.path.realpath(jd.__file__))
 _UNSET = object()
 
+# The grammar the census walkers read. The reviewer's version demand (review round 2, correctness-1: a census that cannot scan an
+# interpreter must fail loudly there, never scan less and pass), restated after round 3 for the AST readers: a walker that meets a
+# node it does not classify must fail naming the class, since a reader that cannot parse must not report absent. So every concrete
+# node class of Python's ast grammar on 3.10 through 3.14 is listed here by name with the version that adds it (None: all five),
+# _walk refuses a node of any other class, and TheGrammarIsTheOneTheWalkersClassify checks at test time that the running
+# interpreter defines no node class outside the three rosters, so a grammar that gains a node form reds naming the new class
+# instead of scanning less. The classification itself is the walkers': _loader_sites reads Name, Attribute and alias as sites and
+# every other class here as no site; _bump_sites reads AugAssign and its target; _pass_through_lines reads Call; _loader_births
+# reads Attribute, Name, alias, arg, keyword, the two def classes, Subscript and Call; a class outside this table is classified by
+# none of them and is refused before any of them answers.
+_AST_CONCRETE = {
+    # mod
+    "Module": None, "Interactive": None, "Expression": None, "FunctionType": None,
+    # stmt
+    "FunctionDef": None, "AsyncFunctionDef": None, "ClassDef": None, "Return": None, "Delete": None, "Assign": None,
+    "TypeAlias": (3, 12), "AugAssign": None, "AnnAssign": None, "For": None, "AsyncFor": None, "While": None, "If": None,
+    "With": None, "AsyncWith": None, "Match": None, "Raise": None, "Try": None, "TryStar": (3, 11), "Assert": None,
+    "Import": None, "ImportFrom": None, "Global": None, "Nonlocal": None, "Expr": None, "Pass": None, "Break": None,
+    "Continue": None,
+    # expr
+    "BoolOp": None, "NamedExpr": None, "BinOp": None, "UnaryOp": None, "Lambda": None, "IfExp": None, "Dict": None, "Set": None,
+    "ListComp": None, "SetComp": None, "DictComp": None, "GeneratorExp": None, "Await": None, "Yield": None, "YieldFrom": None,
+    "Compare": None, "Call": None, "FormattedValue": None, "Interpolation": (3, 14), "JoinedStr": None, "TemplateStr": (3, 14),
+    "Constant": None, "Attribute": None, "Subscript": None, "Starred": None, "Name": None, "List": None, "Tuple": None,
+    "Slice": None,
+    # expr_context, boolop, operator, unaryop, cmpop
+    "Load": None, "Store": None, "Del": None,
+    "And": None, "Or": None,
+    "Add": None, "Sub": None, "Mult": None, "MatMult": None, "Div": None, "Mod": None, "Pow": None, "LShift": None,
+    "RShift": None, "BitOr": None, "BitXor": None, "BitAnd": None, "FloorDiv": None,
+    "Invert": None, "Not": None, "UAdd": None, "USub": None,
+    "Eq": None, "NotEq": None, "Lt": None, "LtE": None, "Gt": None, "GtE": None, "Is": None, "IsNot": None, "In": None,
+    "NotIn": None,
+    # the product types
+    "comprehension": None, "ExceptHandler": None, "arguments": None, "arg": None, "keyword": None, "alias": None,
+    "withitem": None, "match_case": None,
+    # pattern
+    "MatchValue": None, "MatchSingleton": None, "MatchSequence": None, "MatchMapping": None, "MatchClass": None,
+    "MatchStar": None, "MatchAs": None, "MatchOr": None,
+    # type_ignore, type_param
+    "TypeIgnore": None, "TypeVar": (3, 12), "ParamSpec": (3, 12), "TypeVarTuple": (3, 12),
+}
+# The grammar's sum types, which the parser never instantiates: every node is an instance of a concrete subclass of one of these
+# or derives from AST itself (the product types); the version that adds one, as above.
+_AST_ABSTRACT = {"mod": None, "stmt": None, "expr": None, "expr_context": None, "boolop": None, "operator": None, "unaryop": None,
+                 "cmpop": None, "excepthandler": None, "type_ignore": None, "pattern": None, "type_param": (3, 12), "slice": None}
+# Classes the ast module keeps for compatibility that no parse produces: the constant classes of the grammar before 3.8 (module
+# attributes on 3.10 and 3.11, a private stand-in for Ellipsis on 3.12 and 3.13, gone on 3.14), the slice classes of the grammar
+# before 3.9 under their sum type, the two unused contexts, Param and Suite.
+_AST_COMPAT = frozenset(("Num", "Str", "Bytes", "NameConstant", "Ellipsis", "_ast_Ellipsis", "Index", "ExtSlice",
+                         "AugLoad", "AugStore", "Param", "Suite"))
+_AST_KNOWN = frozenset(getattr(ast, n) for n in _AST_CONCRETE if isinstance(getattr(ast, n, None), type))   # the classes, by identity
+
+
+def _walk(tree):
+    """ast.walk over `tree`, refusing a node whose class is not one of the grammar classes in _AST_CONCRETE, by name: the
+    reviewer's version demand for the AST readers. A census that passed over such a node would scan less and report a shorter
+    list, a site absent where it could not read; this raises instead, before any census answers, and the failure names the class
+    it met. The class is matched by identity against the ast module's own, so a stranger of a known name is refused too."""
+    for node in ast.walk(tree):
+        if type(node) not in _AST_KNOWN:
+            raise AssertionError("a node of class %s, which the census walkers of this module do not classify (not in _AST_CONCRETE, "
+                                 "or not the ast module's own class of that name): a reader that cannot classify a node must fail "
+                                 "naming it rather than scan less and report a site absent; list the class in _AST_CONCRETE with the "
+                                 "version that adds it and say in the table's comment how each walker reads it" % type(node).__name__)
+        yield node
+
 
 def _pass_through_lines(fn, callee):
     """(lines, calls): the line numbers, in `fn`'s file, of its calls to `callee`, and how many such calls there are. The calls
@@ -392,7 +473,7 @@ def _pass_through_lines(fn, callee):
     2, extra5-2: two hand-off calls written on one line are one line and were passed by a guard whose message said one call)."""
     src, start = inspect.getsourcelines(fn)
     tree = ast.parse(textwrap.dedent("".join(src)))
-    calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == callee]
+    calls = [node for node in _walk(tree) if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == callee]
     return frozenset(start - 1 + node.lineno for node in calls), len(calls)
 
 
@@ -434,8 +515,9 @@ def _loader_sites(obj, needle):
     variable, a parameter, a class or instance attribute when only the method is scanned): the same pin refuses every such birth
     in the kernel and the judge, where the alias is spelled. And the census reads the object it is handed: behind a decorator
     without functools.wraps that is the wrapper, so the replaced-helpers census checks each object is the named helper first.
-    Every form, counted and missed, is enumerated in TheCensusOverEveryForm. Two calls on one line are two sites. Read from the
-    tree and not from tokenised text
+    Every form, counted and missed, is enumerated in TheCensusOverEveryForm. Two calls on one line are two sites. A node of a class
+    outside _AST_CONCRETE is refused by name before the census answers (_walk, the reviewer's version demand), never passed over as
+    no site. Read from the tree and not from tokenised text
     (review round 2, correctness-1): the first cut blanked comments and strings token by token, and on 3.10 and 3.11 the
     tokenizer gives a whole f-string as one STRING token (3.12 and later split it into FSTRING_* parts), so a loader CALL
     written inside an f-string was blanked with the literal and invisible on two of the five CI interpreters; ast.walk reaches
@@ -443,7 +525,7 @@ def _loader_sites(obj, needle):
     src = textwrap.dedent(inspect.getsource(obj))
     lines = src.splitlines()
     out = []
-    for node in ast.walk(ast.parse(src)):
+    for node in _walk(ast.parse(src)):
         if isinstance(node, ast.Name):
             spelled = node.id
         elif isinstance(node, ast.Attribute):
@@ -466,7 +548,7 @@ def _bump_sites(obj):
     bump under a one-line `if` or `for` on the line after the load counts with its adjacency intact. The bump forms are
     enumerated in TheCensusOverEveryForm (the consolidation pass)."""
     tree = ast.parse(textwrap.dedent(inspect.getsource(obj)))
-    return [n.lineno - 1 for n in ast.walk(tree)
+    return [n.lineno - 1 for n in _walk(tree)
             if isinstance(n, ast.AugAssign) and isinstance(n.op, ast.Add) and isinstance(n.target, ast.Subscript)
             and isinstance(n.target.value, ast.Name) and n.target.value.id == "_NUDGE_WALK_STATS"
             and isinstance(n.target.slice, ast.Constant) and n.target.slice.value == "loads"]
@@ -497,7 +579,7 @@ def _loader_births(path, judge):
     doors' and not empty."""
     tree = ast.parse(path.read_text(encoding="utf-8"))
     parents = {}
-    for node in ast.walk(tree):
+    for node in _walk(tree):
         for child in ast.iter_child_nodes(node):
             parents[child] = node
 
@@ -506,7 +588,7 @@ def _loader_births(path, judge):
             node = parents.get(node)
         return node.name if node is not None else "<module>"
     born, called, defs, handoffs = [], {}, {}, []
-    for n in ast.walk(tree):
+    for n in _walk(tree):
         p = parents.get(n)
         as_callee = isinstance(p, ast.Call) and p.func is n
         if isinstance(n, ast.Attribute):
@@ -541,7 +623,7 @@ def _loader_births(path, judge):
             last = n.func.id if isinstance(n.func, ast.Name) else n.func.attr if isinstance(n.func, ast.Attribute) else ""
             if last in _DYNAMIC_LOOKUPS or last in _DICT_READS:
                 for a in list(n.args) + [k.value for k in n.keywords]:
-                    for sub in ast.walk(a):
+                    for sub in _walk(a):
                         if isinstance(sub, ast.Constant) and isinstance(sub.value, str) and "load_goals" in sub.value:
                             born.append((n.lineno, "a loader-naming string handed to %s in %s: %r" % (last, enclosing(n), sub.value[:48])))
     return sorted(born), called, defs, sorted(handoffs)
@@ -799,7 +881,10 @@ class _WalkHarness(unittest.TestCase):
         walk's per-sid ceiling, the gate's per-sid ceiling, the gate's general bound (checks never exceed derives) and its
         fixture equality (checks equal derives, because the harness's parsed_session records every parse) are asserted
         here too, on every pass, ahead of the cases' exact counts: a case pins each pass's dicts exactly, so a ceiling
-        placed after those pins could never be the line that fails. The recorders stand on the judge's two doors,
+        placed after those pins could never be the line that fails. The equality's failure message stays as it is (the
+        reviewer's word after round 3): it names the fixture invariant that makes checks equal derives, the harness's
+        parsed_session recording every parse in jd._PARSE_CACHE, and not condition 7's gate, whose rule is the bound beside it;
+        widened to speak for the gate it would claim what the bound's own message already claims. The recorders stand on the judge's two doors,
         `jd.load_goals_shared` and `jd.load_goals`, and attribute through its boundary frames by code identity, so a shared
         load from any other function the fixture executes during the pass fails here, named by function, file and line (the
         helpers the fixture replaces, REPLACED_KM, REPLACED_JD and Sessions.backend_for, are the source census's in
@@ -1257,7 +1342,7 @@ class TheCountersOneSite(unittest.TestCase):
         self.assertEqual((door.__code__.co_name, os.path.basename(os.path.realpath(door.__code__.co_filename))), ("load_goals_shared", JUDGE_FILE),
                          "the door read here is the judge's own (a harness case's recorder is gone by its cleanup)")
         bumps = []
-        for n in ast.walk(ast.parse(textwrap.dedent(inspect.getsource(door)))):
+        for n in _walk(ast.parse(textwrap.dedent(inspect.getsource(door)))):
             if (isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "_shared_bump" and n.args
                     and isinstance(n.args[0], ast.Constant)):
                 bumps.append((n.lineno, n.args[0].value))
@@ -1410,8 +1495,10 @@ class TheCountersOneSite(unittest.TestCase):
 # fails to compile below it, which the test checks), the sites _loader_sites answers for the needle "load_goals" as line indices
 # into the target's source, the site count for the needle "jd.load_goals_shared", and, for a form the census answers no site
 # for, the stated limit it falls under (_LIMITS). The expectations are the lens's, read on 3.10 through 3.13 and identical there
-# but for the three gated forms, plus four rows the pre-emption verifier's forms added (F07c, F07d, F07e, F30d: the string class
-# split by what the kernel-wide pin refuses); the bodies' `romp_judge` is the stub's name when loaded. For a form of the string or
+# but for the three gated forms, plus four rows a consolidation-pass verifier's forms added (F07c, F07d, F07e, F30d: the string
+# class split by what the kernel-wide pin refuses) and three rows the round-3 fixes added (F61, F62, F63: the t-string and the
+# type-parameter nodes that 3.14 and 3.12 add, so the grammar table's newest classes are read by the census and not only listed);
+# the bodies' `romp_judge` is the stub's name when loaded. For a form of the string or
 # the assembled class the enumeration also runs the kernel-wide pin, _loader_births, over the form's file and expects a birth from
 # the first and none from the second, so each class is held on the side it falls.
 _STUB_JUDGE, _STUB_KERNEL = "romp_judge_c7pin_stub", "romp_kernel_c7pin_stub"
@@ -1637,6 +1724,12 @@ _LOADER_FORMS = [
      'class C:\n    @staticmethod\n    def f(sid):\n        return jd.load_goals_shared(sid)\n', 'C.f', None, [2], 1, None),
     ('F60', 'loader referenced only via keyword default in a nested def, never called',
      'def f(sid):\n    def g(L=jd.load_goals_shared):\n        return L\n    return sid\n', 'f', None, [1], 1, None),
+    ('F61', "t-string interpolation t'{...}' (PEP 750, 3.14+: the TemplateStr and Interpolation nodes)",
+     "def f(sid):\n    return t'{jd.load_goals_shared(sid)}'\n", 'f', (3, 14), [1], 1, None),
+    ('F62', 'type parameter bound naming the loader, def f[T: jd.<loader>] (3.12+: the TypeVar node; a reference, not a call)',
+     'def f[T: jd.load_goals_shared](sid):\n    return sid\n', 'f', (3, 12), [0], 1, None),
+    ('F63', 'type parameter default naming the loader, def f[T = jd.<loader>] (3.13+)',
+     'def f[T = jd.load_goals_shared](sid):\n    return sid\n', 'f', (3, 13), [0], 1, None),
 ]
 # The bump forms: the statement placed on the line after the load in `def f(sid)`, the bump indices _bump_sites answers, and
 # whether the walk census's adjacency (one bump, one load, the bump on the line after) holds.
@@ -1720,8 +1813,9 @@ class TheCensusOverEveryForm(unittest.TestCase):
 
     def test_every_loader_form_is_a_site_where_the_table_says_or_a_stated_limit(self):
         here = sys.version.split()[0]
-        self.assertEqual(len(_LOADER_FORMS), 99, "the table carries the lens's 95 loader forms and the pre-emption verifier's four")
-        self.assertEqual(len({row[0] for row in _LOADER_FORMS}), 99, "with distinct ids")
+        self.assertEqual(len(_LOADER_FORMS), 102, "the table carries the lens's 95 loader forms, a consolidation-pass verifier's four and the "
+                                                  "round-3 fixes' three (a t-string interpolation, a type-parameter bound and a type-parameter default)")
+        self.assertEqual(len({row[0] for row in _LOADER_FORMS}), 102, "with distinct ids")
         counted, limits, gated = 0, {}, []
         for fid, form, body, dotted, needs, sites, jds, limit in _LOADER_FORMS:
             self.assertEqual(limit is None, bool(sites), "%s (%s): a form the census counts names no limit and a form it misses names one" % (fid, form))
@@ -1754,7 +1848,7 @@ class TheCensusOverEveryForm(unittest.TestCase):
                 counted += 1
             else:
                 limits[limit] = limits.get(limit, 0) + 1
-        self.assertEqual(counted + sum(limits.values()) + len(gated), 99, "every row was counted, a limit, or gated: %d, %r, %r" % (counted, limits, gated))
+        self.assertEqual(counted + sum(limits.values()) + len(gated), 102, "every row was counted, a limit, or gated: %d, %r, %r" % (counted, limits, gated))
         self.assertEqual(limits, {"string": 11, "assembled": 3, "outside": 9, "wrapper": 2, "none": 6},
                          "the missed forms by limit: the lens's classification with its string class split by what the kernel-wide pin refuses")
 
@@ -1782,6 +1876,66 @@ class TheCensusOverEveryForm(unittest.TestCase):
                              "hand-off spelled other than `loader(fsid)`, through __call__, a partial or a local alias, is no call here and "
                              "setUp's guard reds on it, conservatively; two on one line are two calls on one line)"
                              % (pid, form, sorted(lines), n, start, offsets, count))
+
+
+class TheGrammarIsTheOneTheWalkersClassify(unittest.TestCase):
+    """The reviewer's version demand (review round 2, correctness-1: a census that cannot scan an interpreter must fail loudly
+    there, never scan less and pass), restated after round 3 for the AST readers: a walker that meets a node it does not
+    classify must fail naming the class, since a reader that cannot parse must not report absent. Two halves. At test time the
+    running interpreter's ast module is read whole and every node class it defines must be in _AST_CONCRETE (the grammar the
+    walkers classify), _AST_ABSTRACT (the sum types the parser never instantiates) or _AST_COMPAT (the classes kept for
+    compatibility that no parse produces), so a grammar that gains a node form reds here naming the new class; and _walk, the one
+    walk every census in this module reads through, refuses a node of a class outside _AST_CONCRETE by name."""
+
+    def test_the_interpreter_defines_no_node_class_outside_the_table(self):
+        here, version = sys.version_info[:2], sys.version.split()[0]
+        classes = {n: c for n, c in vars(ast).items() if inspect.isclass(c) and issubclass(c, ast.AST) and c is not ast.AST}
+        outside = sorted(n for n in classes if n not in _AST_CONCRETE and n not in _AST_ABSTRACT and n not in _AST_COMPAT)
+        self.assertEqual(outside, [], "Python %s defines ast node classes this module's census walkers do not classify: %s. A census that "
+                                      "meets a node of one of them would scan less and report a site absent; list each in _AST_CONCRETE "
+                                      "with the version that adds it (or in _AST_ABSTRACT or _AST_COMPAT, with the reason) and say in the "
+                                      "table's comment how each walker reads it" % (version, ", ".join(outside)))
+        expected = {n for n, since in _AST_CONCRETE.items() if since is None or here >= since}
+        present = {n for n in _AST_CONCRETE if n in classes}
+        self.assertEqual(present, expected,
+                         "Python %s defines exactly the table's concrete classes at or below its version: missing %r (a name the table lists "
+                         "for this version that the interpreter lacks: a misspelling, or a gate set too low), early %r (a class the interpreter "
+                         "defines before the version the table says adds it)" % (version, sorted(expected - present), sorted(present - expected)))
+        self.assertEqual(_AST_KNOWN, frozenset(classes[n] for n in present), "the class set _walk refuses against is the same table, by identity")
+        for n in sorted(present):
+            subs = sorted(m for m, c in classes.items() if issubclass(c, classes[n]) and c is not classes[n])
+            self.assertLessEqual(set(subs), _AST_COMPAT, "%s is a leaf of the grammar but for the compatibility classes: %r" % (n, subs))
+            base = classes[n].__bases__[0].__name__
+            self.assertIn(base, set(_AST_ABSTRACT) | {"AST"}, "%s derives from a sum type or from AST itself, not from another concrete class: %s" % (n, base))
+        for n, since in sorted(_AST_ABSTRACT.items()):
+            if since is not None and here < since:
+                self.assertTrue(n not in classes, "the sum type %s is listed from %d.%d and Python %s defines it already" % (n, since[0], since[1], version))
+                continue
+            self.assertTrue(n in classes, "the sum type %s is defined on Python %s" % (n, version))
+            self.assertTrue(any(issubclass(c, classes[n]) and c is not classes[n] for c in classes.values()),
+                            "the sum type %s has subclasses on Python %s; one with none is a name that no longer means what the table says" % (n, version))
+
+    def test_a_walker_refuses_a_node_it_does_not_classify_by_name(self):
+        tree = ast.parse("def f(sid):\n    return jd.load_goals_shared(sid)\n")
+        self.assertEqual([type(n).__name__ for n in _walk(tree)], [type(n).__name__ for n in getattr(ast, "walk")(tree)],
+                         "over grammar nodes _walk is the standard walk, whole and in order")
+        stranger = type("Frobnicate", (ast.expr_context,), {"_fields": ()})       # a class no grammar version defines
+        tree.body[0].body[0].value.func.value.ctx = stranger()
+        with self.assertRaises(AssertionError) as cm:
+            list(_walk(tree))
+        self.assertIn("Frobnicate", str(cm.exception), "the refusal names the class it met: %s" % cm.exception)
+        namesake = type("Store", (ast.expr_context,), {"_fields": ()})           # a grammar name on a class that is not the ast module's
+        tree = ast.parse("x = 1")
+        tree.body[0].targets[0].ctx = namesake()
+        with self.assertRaises(AssertionError) as cm:
+            list(_walk(tree))
+        self.assertIn("Store", str(cm.exception), "a stranger of a known name is refused as well, by identity: %s" % cm.exception)
+        # every walker reads through _walk: the module's own source spells the standard walk once, in _walk's body
+        spelling = "ast." + "walk("
+        src = Path(os.path.realpath(__file__)).read_text(encoding="utf-8")
+        self.assertEqual(src.count(spelling), 1, "this module spells %s once, inside _walk; a census walking a tree by itself would pass a node "
+                                                 "the table does not classify as no site" % spelling)
+        self.assertIn(spelling, inspect.getsource(_walk), "and that one spelling is _walk's")
 
 
 class Docs(unittest.TestCase):
