@@ -2105,10 +2105,14 @@ class RoutingStatements(unittest.TestCase):
     def test_setupclass_records_a_missing_repository_instead_of_skipping_the_class(self):
         """setUpClass turns the lock path's SkipTest into a record, _no_repository, that _live_tree reads: raised from
         setUpClass it skipped all of the class as one line, the tests that need no repository included (round 2's
-        fresh-2). The record is restored FIRST, before the call, so a failure here cannot leave the class marked. A skip
-        that escapes setUpClass is caught and FAILED here: raised inside a test it would read as this test skipping,
-        the skipping-pin shape (the precedent's index_failure)."""
-        self.addCleanup(setattr, RoutingStatements, "_no_repository", None)
+        fresh-2). The record's PRIOR value is registered for restoring before the call, so a failure here cannot leave
+        the class marked and a checkout without a repository keeps its record: the first version restored None, and in
+        such a checkout the later live-tree tests of the same process lost the record, so the healer-composition test,
+        which runs the real setUpClass, failed instead of skipping (round 3, executed in an archive copy of the tree;
+        under xdist the two tests landed on different workers and the red did not show). A skip that escapes setUpClass
+        is caught and FAILED here: raised inside a test it would read as this test skipping, the skipping-pin shape (the
+        precedent's index_failure)."""
+        self.addCleanup(setattr, RoutingStatements, "_no_repository", RoutingStatements._no_repository)
         with mock.patch.object(RoutingStatements, "_lock_path", side_effect=unittest.SkipTest("no repo")):
             try:
                 RoutingStatements.setUpClass()
