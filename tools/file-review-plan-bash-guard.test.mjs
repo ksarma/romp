@@ -128,7 +128,7 @@ test('decision 47 states what passes, and the hook agrees: reads, opaque command
   // claims, the option clusters bash takes a word for, and the recursion caps
   assert.ok(d47.includes('a literal relative target after a `cd` the hook cannot follow') && hook.includes("{ kind: 'unknownDir', text: unknownWhy }") && hook.includes('function enterable(dir)'));
   assert.ok(d47.includes('a landing folder no project claims counts when an entry of it is or leads to a tracked file') && hook.includes('function guardedEntryIn(dir, memo)'));
-  assert.ok(d47.includes('an entry named by the process id in a folder outside every project that holds more than 2000 entries, which is not listed') && hook.includes('if (names.length > LANDING_SCAN_CAP) return out;'), 'the open scan is stated');
+  assert.ok(d47.includes('an entry named by the process id in a folder outside every project that holds more than 2000 entries, which is not listed') && hook.includes('if (!names || names.length > LANDING_SCAN_CAP) return out;'), 'the open scan is stated');
   assert.ok(d47.includes('`bash -O extglob -c') && hook.includes("(shell === 'bash' && (t === '-O' || t === '+O'))"));
   assert.ok(d47.includes('nested past 64 substitutions or brace lists') && hook.includes('const RECURSION_CAP = 64;') && hook.includes('const BRACE_DEPTH_CAP = 64;'));
   assert.ok(d47.includes('a `$(date)` in a log\'s name among them, a cost stated to the user rather than solved'), 'the residual false refusal is stated, not claimed solved');
@@ -229,12 +229,12 @@ test('the install guide, the hook\'s README row and the ledger entry say a name 
 test('decision 47 records round 4 and each class is tied to the hook function that implements it', () => {
   assert.ok(d47.includes('Round 4 (2026-09-19, a walk-around lens) closed eight more in-model roads'));
   assert.ok(d47.includes('read a per-writer option table (`COPY_OPT`)') && hook.includes('const COPY_OPT = {') && hook.includes('function parseCopyOptions(args, verb)'));
-  assert.ok(d47.includes('`commandOf` returns its `chdir`') && hook.includes('return { name, args: words.slice(k + 1), chdir, chdirFlag };'));
+  assert.ok(d47.includes('`commandOf` returns its `chdir`') && hook.includes('return { name, args: words.slice(k + 1), chdir, chdirFlag, wrapped };'));
   assert.ok(d47.includes('the `PREFIXES` set gained `setsid`, `flock`, `taskset`, `chrt` and `numactl`') && hook.includes("'setsid', 'flock', 'taskset', 'chrt', 'numactl'") && hook.includes('const PREFIX_LEAD_OPERANDS = { flock: 1, taskset: 1, chrt: 1 };'));
   assert.ok(d47.includes('the lexer marks a home expansion \'h\' and `extract` computes `homeAssigned`'));
   assert.ok(hook.includes("const home = (t) => { buf += t; marks += 'h'.repeat(t.length); };") && hook.includes('const homeAssigned = ctx.homeAssigned'));
   assert.ok(d47.includes('`parentTrackedRoots`') && hook.includes('function parentTrackedRoots(dir, segPrefix, memo)'));
-  assert.ok(d47.includes('`foldSegments` catches the stat error') && hook.includes('try { st = lstatOrNull(prefix); } catch { return { unresolvable: prefix }; }'));
+  assert.ok(d47.includes('`foldSegments` folds a `..`') && hook.includes('const st = lstatOrNull(prefix);') && hook.includes('class UnknownPath extends Error'));
   assert.ok(d47.includes('`recordSymlink`, `applyInCommandLinks`') && hook.includes('function applyInCommandLinks(abs, links)') && hook.includes('const recordSymlink = (args, cwd) => {'));
   assert.ok(d47.includes('best-effort against known write forms, its default on an unrecognised form is allow'));
 });
@@ -257,4 +257,27 @@ test('the best-effort contract and its unmodelled-writer list are stated identic
     assert.ok(n.includes(LIST), `${name} carries the identical unmodelled-writer list (a differing list fails here)`);
     assert.ok(n.includes('allows anything it does not recognise') || n.includes('allow') , `${name} says the default is allow`);
   }
+});
+
+// The walk-around lens second pass (2026-09-19): decision 47 records the six families and each is tied to the hook
+// function that implements it, so a family dropped from the code fails here by name.
+test('decision 47 records the walk-around lens second pass, each family tied to its hook function', () => {
+  assert.ok(d47.includes('The\n    walk-around lens second pass (2026-09-19) then closed six families') || d47.includes('walk-around lens second pass (2026-09-19) then closed six families'));
+  // (1) option tables and env -S
+  assert.ok(d47.includes('a glued short form\n    (`sort -oFILE`)') || d47.includes('a glued short form (`sort -oFILE`)'));
+  assert.ok(d47.includes('`env -S`/`--split-string` runs a shell string') && hook.includes("if (name === 'env' && (t === '-S' || t === '--split-string')) return { script"));
+  assert.ok(/else if \(\/\^-o\.\/\.test\(t\)\) add\(sliceWord\(args\[k\], 2\), 'sort -o'\)/.test(hook), 'sort reads a glued -o');
+  // (2) assignment forms
+  assert.ok(d47.includes('as an lvalue in any form the shells offer') && hook.includes('function assignsHome(segments)'));
+  // (3) in-command prefix mutations
+  assert.ok(d47.includes('IN-COMMAND PREFIX MUTATIONS') && hook.includes('const recordMutations = (name, args, cwd) =>') && hook.includes('const mutated = ctx.mutated || [];'));
+  // (4) stat errors refuse
+  assert.ok(d47.includes('STAT ERRORS\n    REFUSE') || d47.includes('STAT ERRORS REFUSE'));
+  assert.ok(hook.includes('class UnknownPath extends Error') && hook.includes('function statErrorRefusal(how, raw, e)') && hook.includes('function readConfigChecked(root)'));
+  // (5) nested markers
+  assert.ok(d47.includes('NESTED MARKERS') && hook.includes('function outerTrackingRoot(inner, file, closures)'));
+  // (6) a cd the guard cannot know
+  assert.ok(d47.includes('A cd THE GUARD CANNOT KNOW') && hook.includes('function commandOf(words)') && hook.includes('const cdFunctions = ctx.cdFunctions || new Set();'));
+  assert.ok(d47.includes('`env -C DIR` resolves its operand\n    physically') || d47.includes('`env -C DIR` resolves its operand physically'));
+  assert.ok(!/\u2014/.test(d47), 'no em dash in decision 47');
 });

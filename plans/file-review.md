@@ -3664,11 +3664,34 @@ document stands on its own, each with the reasoning it was given.
     read like `sh -c`); a same-command assignment to HOME makes `$HOME` and `~` unreadable (the lexer marks a home
     expansion 'h' and `extract` computes `homeAssigned`); a word whose literal head parents a tracked root
     (`parentTrackedRoots`) or sits under one (`ownProjectFor` returns the root without the landing gate) is refused
-    unless every expansion is numeric; a directory the hook cannot search before a `..` is unresolvable, not folded
-    (`foldSegments` catches the stat error); and a symlink an `ln -s` makes earlier in the command redirects a later
-    literal target (`recordSymlink`, `applyInCommandLinks`). The guard states its contract on the hook header, the
-    vendored skill, hooks/README.md and docs/install.md: it is best-effort against known write forms, its default on
-    an unrecognised form is allow, and the unmodelled writers that still reach a tracked file are listed.
+    unless every expansion is numeric; a directory the hook cannot search before a `..` is refused, not folded
+    (`foldSegments` folds a `..` through the real path and lets a stat error there propagate); and a symlink an `ln
+    -s` makes earlier in the command redirects a later literal target (`recordSymlink`, `applyInCommandLinks`). The
+    walk-around lens second pass (2026-09-19) then closed six families of in-model write the hook read yet let through,
+    each stated as one rule. (1) OPTION TABLES: the per-writer tables and `sort`'s `-o` accept a glued short form
+    (`sort -oFILE`), and `env -S`/`--split-string` runs a shell string, read like `flock -c`, not skipped as an operand
+    (`commandOf`). (2) ANY ASSIGNMENT FORM: HOME, the one variable the guard expands, as an lvalue in any form the
+    shells offer (`HOME=`, `HOME+=`, `export`/`declare`/`typeset`/`local`/`readonly HOME`, `read HOME`, `printf -v
+    HOME`, `mapfile`/`readarray HOME`, `env HOME=… cmd`, `getopts … HOME`, `for HOME in`) makes `$HOME` and `~`
+    unreadable for the whole command (`assignsHome`). (3) IN-COMMAND PREFIX MUTATIONS: an earlier `rm`/`rmdir`/`mv`/hard
+    `ln`/`cp -l`/`cp -s` that removes, renames or aliases a path makes every later word under that prefix unreadable
+    (`mutated`, `recordMutations`); the `ln -s` class-H rewrite is kept only when nothing else in the command touched
+    the link name or its source, and a relative link source resolves against the LINK's directory. (4) STAT ERRORS
+    REFUSE: a stat, lstat, realpath, readdir or config-read error other than ENOENT anywhere on a judged path (a
+    mode-000 parent, a mode-000 tracked folder or `.trackchanges`, the whole project mode 000) is an answer the hook
+    does not have, so it refuses from any cwd, naming the error and the path (`UnknownPath`, the class-G flip applied to
+    every judged path, since a directory it cannot search may itself be a tracked project; the cost, a false refusal of
+    a write under a directory the session may not search, is recoverable in one step). (5) NESTED MARKERS: a `.git`,
+    `.obsidian` or `.trackchanges` between a tracked project's root and the target refuses, naming both markers
+    (`outerTrackingRoot`); store-io's nearest-marker rule stays for the untracked case. (6) A cd THE GUARD CANNOT KNOW
+    leaves the directory unknown from that point (as `cd -` already did), so a later literal relative target refuses
+    with the construct named: a cd after `&&`/`||`, a cd in a pipeline or backgrounded, a cd under a wrapper, `pushd
+    -n` or a rotate, a physical cd (`cd -P`, after `set -P`, or an option not modelled), and a call of a function whose
+    body ran a cd; `env -C DIR` resolves its operand physically, as chdir(2) does. The guard states its contract on the
+    hook header, the vendored skill, hooks/README.md and docs/install.md: it is best-effort against known write forms,
+    its default on an unrecognised form is allow (deliberately not flipped, since flipping it would refuse almost all
+    normal work), the one class flipped to refuse is a path it cannot check (family 4), and the unmodelled writers that
+    still reach a tracked file are listed.
     Without ROMP_SID it exits 0 before reading stdin (decision 24). Cost: about 60 ms
     per Bash call when no target needs the link closure (a read, a literal target outside any project, an explicit
     hit on the project's tracked list, an empty list); a write to a file inside a tracking project that the list

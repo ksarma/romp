@@ -87,9 +87,10 @@
 // which the own-project step shares with a copy's landing folder); a segment that is nothing but an
 // expansion cancelled by a `..` (`<out>/$$/../x.md`) is not narrowed, since such a segment could be
 // empty at run time were the set ever widened, and the shell would climb one level higher than the
-// fold. Two things this rule does not see, stated: a link the same command creates, under or after
-// the numeric segment (a PreToolUse hook cannot resolve a link the command has not yet made; a
-// literal path just the same), and an entry named by the process id in a folder OUTSIDE every project
+// fold. Two things this rule does not see, stated: a link the same command creates under or after the
+// numeric segment (the pid-candidate scan reads only entries that exist when the hook runs; the class-H
+// rewrite that DOES follow a same-command `ln -s` with literal operands and an untouched name, below,
+// runs for a literal target, not for the numeric candidate scan), and an entry named by the process id in a folder OUTSIDE every project
 // that holds more than 2000 entries, which is not listed (a fail-closed cap there would refuse every
 // temp log in a large `/tmp` from a tracked cwd, round 1's false refusal; this box's `/tmp` held 2767
 // entries when measured on 2026-09-19). A variable of unknown content, a substitution and a bare
@@ -150,9 +151,37 @@
 // hook cannot search before a `..` is unresolvable, not folded lexically; and a symlink an `ln -s` makes earlier
 // in the same command redirects a later literal target to what it points at.
 //
+// The walk-around lens, second pass (2026-09-19) closed six FAMILIES of in-model write the hook read yet let through,
+// each stated here as one rule, not a list of cases. (1) OPTION TABLES: the per-writer tables and sort's `-o` accept a
+// glued short form (`sort -oFILE`), so the operand is recognised; `env -S`/`--split-string` runs a shell string and is
+// read like `flock -c`, not skipped as an operand. (2) ANY ASSIGNMENT FORM: HOME (the one variable the guard expands)
+// as an lvalue in any form the shells offer (`HOME=`, `HOME+=`, `export`/`declare`/`typeset`/`local`/`readonly HOME`,
+// `read HOME`, `printf -v HOME`, `mapfile`/`readarray HOME`, `env HOME=… cmd`, `getopts … HOME`, `for HOME in`)
+// makes `$HOME` and `~` unreadable for the whole command (assignsHome). (3) IN-COMMAND PREFIX MUTATIONS: an earlier
+// `rm`/`rmdir`/`mv`/hard `ln`/`cp -l`/`cp -s` that removes, renames or aliases a path makes every later word under
+// that prefix unreadable, since what it resolves to at run time is not what the hook sees (mutated/recordMutations);
+// the `ln -s` class-H rewrite is kept only when nothing else in the command touched the link name or its source, and
+// a relative link source resolves against the LINK's directory as the kernel does. (4) STAT ERRORS REFUSE: a stat,
+// lstat, realpath, readdir or config-read error other than ENOENT (a mode-000 parent, a mode-000 tracked folder or
+// `.trackchanges`, the whole project mode 000, EACCES, ELOOP, ENOTDIR) anywhere on a judged path is an answer the
+// hook does not have, so it REFUSES from any cwd, naming the error and the path (UnknownPath; the class-G flip applied
+// to the class, since a directory it cannot search may itself be a tracked project). (5) NESTED MARKERS: a `.git`,
+// `.obsidian` or `.trackchanges` found between a tracked project's root and the target refuses, naming both markers,
+// where store-io's nearest-marker rule would read the write as untracked (outerTrackingRoot); the nearest-marker rule
+// stays for the untracked case. (6) A cd THE GUARD CANNOT KNOW leaves the directory unknown from that point (as `cd -`
+// already does), so a later literal relative target refuses with the construct named: a cd after `&&`/`||` (its run
+// depends on the previous status), a cd in a pipeline or backgrounded (a subshell), a cd under a wrapper (an external
+// `cd` that does not exist), `pushd -n` or a pushd rotate, a physical cd (`cd -P`, after `set -P`, or an option the
+// guard does not model), and a call of a function whose body ran a cd (the body is modelled as not moving the shell,
+// the CALL as unknown). A plain unconditional cd in sequence keeps its handling; `env -C DIR` resolves its operand
+// physically, as chdir(2) does. Each family errs toward a false refusal, recoverable in one step, never a missed
+// overwrite; the costs are listed with the change.
+//
 // THE CONTRACT. This guard is BEST-EFFORT against known write forms: it refuses the shell writes it models and,
-// by design, ALLOWS anything it does not recognise, so it never blocks ordinary work it cannot read (the one
-// exception, flipped to refuse, is a directory it cannot search before a `..`, class G above). It is a backstop,
+// by design, ALLOWS anything it does not recognise, so it never blocks ordinary work it cannot read. The allow-by-
+// default for an UNMODELLED writer is deliberately not flipped: flipping it would refuse almost all normal work. The
+// one class flipped to refuse is a path the hook cannot check: a stat error other than ENOENT anywhere on a judged
+// path (family 4 above, the class-G flip applied to every judged path). It is a backstop,
 // not a complete boundary. These write forms are not modelled and still reach a tracked file: rsync; awk with a
 // redirect inside its program; ed; ex; make; find with -delete or -exec; a git subcommand that writes the working
 // tree (checkout, stash, apply, reset, rm, clean, mv); a computed path inside an interpreter (python3 -c, node -e);
@@ -360,7 +389,9 @@ function braceExpand(text, marks, depth = 0) {
   return [[text, marks]];
 }
 
-const newSegment = () => ({ words: [], redirects: [], heredocs: [], subs: [], op: '' });
+// `arith` holds the bodies of `(( ... ))` and `$(( ... ))`, which run in the current shell and can assign a name
+// (`(( HOME = 5 ))`), for the assignment scan (the walk-around lens second pass, 2026-09-19); they are never lexed as commands.
+const newSegment = () => ({ words: [], redirects: [], heredocs: [], subs: [], arith: [], op: '' });
 
 // `shell` is the name of the shell the command is a script of, when the call is a recursion into `sh -c '...'`,
 // `bash <<EOF` or a `$(...)` inside one (null for the Bash tool's own command): it decides whether `$'...'` is
@@ -433,7 +464,12 @@ export function lex(command, shell = null) {
     if (expect) expect = null;   // a redirect with no target: leave it
     inTest = false;
     seg.op = op;
-    if (seg.words.length || seg.redirects.length || seg.heredocs.length || seg.subs.length) segments.push(seg);
+    if (seg.words.length || seg.redirects.length || seg.heredocs.length || seg.subs.length || seg.arith.length) segments.push(seg);
+    else if (op && segments.length && segments[segments.length - 1].paren && !segments[segments.length - 1].op) {
+      // the operator after a `)` (`(cd a) && cd b`): the segment it would end is empty, so it is kept on the paren
+      // marker, and a later pass reading the operator before a `cd` sees it (the walk-around lens second pass, 2026-09-19; before, it was lost)
+      segments[segments.length - 1].op = op;
+    }
     seg = newSegment();
   };
   // After a newline, the bodies of every heredoc opened on the line just ended, each on the
@@ -458,12 +494,14 @@ export function lex(command, shell = null) {
   // (( ... )): arithmetic, no command and no redirection in it; skip to the matching )).
   const skipArithmetic = () => {
     let depth = 2;
+    const start = i;
     while (i < src.length && depth > 0) {
       if (src[i] === '(') depth++;
       else if (src[i] === ')') depth--;
       i++;
     }
     if (depth > 0) opaque = true;
+    seg.arith.push(src.slice(start, Math.max(start, i - 2)));
   };
   // Skip a $( ... ) or ${ ... } from just after its opener to its closer, quotes honoured;
   // returns the inner text. The word carrying it is not literal.
@@ -488,7 +526,13 @@ export function lex(command, shell = null) {
     return src.slice(start, Math.max(start, i - 1));
   };
   // A `$(...)` (or `$(` inside double quotes): the command inside runs, the word carries one NUL for it.
-  const substitution = () => { opaqueExpansion(); raw += '$('; i += 2; const inner = skipNested('(', ')'); raw += inner + ')'; seg.subs.push(inner); };
+  const substitution = () => {
+    opaqueExpansion(); raw += '$('; i += 2; const inner = skipNested('(', ')'); raw += inner + ')';
+    // `$(( ... ))` is arithmetic, run in the current shell (an assignment in it persists): kept for the assignment
+    // scan and not read as a command (the walk-around lens second pass, 2026-09-19); a `$( ... )` is a command in a subshell, as before
+    if (inner.startsWith('(') && inner.endsWith(')')) seg.arith.push(inner.slice(1, -1));
+    else seg.subs.push(inner);
+  };
   // A `${...}` of unknown content: the spelling stays in the word, marked as an expansion.
   const braceParameter = () => { raw += '${'; i += 2; const inner = skipNested('{', '}'); raw += inner + '}'; opaqueExpansion('${' + inner + '}'); };
   // A backtick command: as `$(...)`; unterminated, the rest of the command is opaque.
@@ -653,6 +697,54 @@ export function lex(command, shell = null) {
   return { segments, opaque };
 }
 
+// ── a path the hook could not check ───────────────────────────────
+//
+// The walk-around lens second pass (2026-09-19, the walk-around lens's second pass): a filesystem error other than ENOENT on a path the hook
+// judges (an lstat, a realpath or a listing that fails with EACCES, ELOOP, ENOTDIR or anything else) is an answer
+// the hook does not have, and it REFUSES the write, naming the error and the entry that blocked the check, where
+// before each such error unwound to a catch that read it as allow (`chmod 755 notes && cp base/report.md
+// notes/n1.md` with notes/ mode 000 at check time overwrote the tracked note; the whole project mode 000 from a cwd
+// outside it overwrote every tracked file; `.trackchanges` mode 000 read as a project that tracks nothing). The
+// class is the reviewer's flip of class G applied to every judged path, so it runs from ANY cwd: a directory the
+// hook cannot search may itself be a tracked project. The cost is a false refusal of a write under a directory the
+// session may not search (that write fails on its own, EACCES, unless a chmod earlier in the same command opens it,
+// which is the overwrite the class closes), recoverable in one step: make the entry readable in a command of its
+// own, or spell a path that does not pass through it. ENOENT stays what it was: a file that does not exist yet.
+class UnknownPath extends Error {
+  constructor(code, p, why = null) { super(`${code}: ${p}`); this.code = code; this.path = p; this.why = why; }
+}
+const isUnknownPath = (e) => e instanceof UnknownPath;
+// What an error code means, for the refusal.
+function describeError(code) {
+  return ({
+    EACCES: 'permission denied', EPERM: 'operation not permitted', ELOOP: 'a link that loops', ENOTDIR: 'a component is not a directory',
+    ENAMETOOLONG: 'the name is too long', EIO: 'an input/output error', EINVAL: 'not a readable value',
+  })[code] || `error ${code}`;
+}
+// The deepest entry on the way to `p` that the process can lstat: for an EACCES that is the folder whose mode blocks
+// the check, for an ELOOP the link that loops, for an ENOTDIR the file a later segment treats as a folder.
+function blockingEntry(p) {
+  let q = p;
+  for (let i = 0; i < 200; i++) {
+    const parent = path.dirname(q);
+    if (parent === q) return q;
+    q = parent;
+    try { fs.lstatSync(q); return q; } catch { /* keep climbing */ }
+  }
+  return q;
+}
+// A directory the hook must look into or through: an error other than ENOENT there is an UnknownPath.
+function checkSearchable(dir) {
+  try { fs.accessSync(dir, fs.constants.R_OK | fs.constants.X_OK); }
+  catch (e) { if (!e || e.code !== 'ENOENT') throw new UnknownPath((e && e.code) || 'EACCES', dir); }
+}
+// A listing the hook needs: null when the directory does not exist, the names when it can be read, and an
+// UnknownPath for any other failure (the walk-around lens second pass; before, every failure read as an empty or absent folder).
+function readdirOrNull(dir) {
+  try { return fs.readdirSync(dir); }
+  catch (e) { if (e && e.code === 'ENOENT') return null; throw new UnknownPath((e && e.code) || 'EACCES', dir); }
+}
+
 // ── paths as the kernel opens them ─────────────────────────────────
 
 // A path as segments between slashes, each { t, m } (text, and marks or null for literal text), empty ones
@@ -681,19 +773,36 @@ const wholeExpansion = (seg) => seg.m != null && seg.m.length > 0 && !/[^x]/.tes
 // climb one level higher than the fold; round 3, defence in depth).
 function foldSegments(segs) {
   const acc = [];
+  let hops = 0;
   for (const seg of segs) {
     if (seg.t === '.') continue;
-    if (seg.t !== '..') { acc.push(seg); continue; }
+    if (seg.t !== '..') {
+      acc.push(seg);
+      // class H (the walk-around lens second pass, 2026-09-19): a link this command makes earlier in the line is followed here, as the
+      // kernel will follow it once it exists, so `ln -s ../web/docs d && cp x d/../report.md` climbs from the link's
+      // TARGET; the prefix match on the unfolded spelling that round 4 used missed `./d`, `base/../d` and `d/../d`.
+      if (activeLinks && activeLinks.size && !acc.some(isExpansion)) {
+        for (let n = 0; n < 40; n++) {
+          const target = applyInCommandLinks(joinSegments(acc), activeLinks);
+          if (target == null) break;
+          if (++hops > 40) return { unresolvable: joinSegments(acc) };
+          acc.length = 0;
+          acc.push(...segmentsOf(target, null));
+        }
+      }
+      continue;
+    }
     if (!acc.length) continue;   // the root's parent is the root
     if (wholeExpansion(acc[acc.length - 1])) return { emptiable: true };
     if (!acc.some(isExpansion)) {
       const prefix = joinSegments(acc);
-      let st;
-      // class G (round 4, 2026-09-19): a directory the hook cannot search or stat before a `..` (mode 000 at
-      // check time, or another lstat error) is unresolvable, not folded lexically. lstatOrNull suppresses only
-      // ENOENT; an EACCES on `<mode-000>/inner` unwound to evaluate's catch, which read it as allow, and
-      // `chmod 755 locked && cp base/report.md locked/inner/../../docs/report.md` overwrote the tracked file.
-      try { st = lstatOrNull(prefix); } catch { return { unresolvable: prefix }; }
+      // class G (round 4, 2026-09-19) and the walk-around lens second pass: a directory the hook cannot stat or search before a `..` (mode 000
+      // at check time, a link that loops, a file where a directory is needed) is an UnknownPath, thrown from
+      // lstatOrNull or realPathOf and refused by evaluate with the error named, never folded lexically. Round 4 caught
+      // the error here and answered { unresolvable }, refused only while a project was in play; the same error on the
+      // target itself unwound to evaluate's catch, which read it as allow (`chmod 755 locked && cp base/report.md
+      // locked/lnk/report.md` overwrote the tracked file). A link chain deeper than realPathOf follows is unresolvable.
+      const st = lstatOrNull(prefix);
       if (st) {
         const real = realPathOf(prefix);
         if (real == null) return { unresolvable: prefix };
@@ -706,6 +815,9 @@ function foldSegments(segs) {
   }
   return { segs: acc };
 }
+// The links the command under judgment makes (class H), read by foldSegments while extract and evaluate run: an
+// absolute link path the command creates, mapped to the absolute path it points at.
+let activeLinks = null;
 
 // A literal target's path as the kernel would open it (foldSegments), resolved against `dir` when relative:
 // { path }, { unresolvable }, or null when the target is relative and no directory is known.
@@ -721,19 +833,16 @@ function literalPath(text, dir) {
   const r = resolveLiteral(text, dir);
   return r && r.path ? r.path : null;
 }
-// An absolute path rewritten through the symlinks the command creates before this word (class H,
-// 2026-09-19): `links` maps an absolute link path the command makes to the absolute path it points at,
-// so `ln -s docs mydocs && cp x mydocs/report.md` reads mydocs/report.md as docs/report.md. The longest
-// matching link prefix wins, applied until none matches (bounded), since one link can lead to another.
+// The path `abs` leads to through a symlink the command creates before this word (class H, 2026-09-19): `links`
+// maps an absolute link path the command makes to the absolute path it points at, so `ln -s docs mydocs && cp x
+// mydocs/report.md` reads mydocs/report.md as docs/report.md. Called by foldSegments on each prefix as it folds
+// (the walk-around lens second pass), so the match is on the folded path and a `..` after the link climbs from its target, as the kernel
+// does. Returns the rewritten path, or null when no recorded link is a prefix of `abs`.
 function applyInCommandLinks(abs, links) {
-  let p = abs.replace(/\/{2,}/g, '/');
-  for (let n = 0; n < 40 && links.size; n++) {
-    let best = null;
-    for (const dst of links.keys()) if ((p === dst || p.startsWith(dst + '/')) && (!best || dst.length > best.length)) best = dst;
-    if (best == null) break;
-    p = links.get(best) + p.slice(best.length);
-  }
-  return p;
+  const p = abs.replace(/\/{2,}/g, '/');
+  let best = null;
+  for (const dst of links.keys()) if ((p === dst || p.startsWith(dst + '/')) && (!best || dst.length > best.length)) best = dst;
+  return best == null ? null : links.get(best) + p.slice(best.length);
 }
 // The directory a `cd` names, as the shell resolves it: lexically (bash, zsh and dash fold `..` against the
 // spelling of the current directory, not its real path, unless told otherwise), so a `cd link/..` lands beside
@@ -872,7 +981,7 @@ function expandGlob(w, cwd) {
 // VAR`, `timeout -s KILL 5`, `exec -a NAME`); every other -option is skipped on its own.
 const PREFIX_OPERANDS = {
   sudo: new Set(['-u', '--user', '-g', '--group', '-h', '--host', '-p', '--prompt', '-C', '--close-from', '-D', '--chdir', '-r', '--role', '-t', '--type', '-T', '--command-timeout', '-U', '--other-user']),
-  env: new Set(['-u', '--unset', '-S', '--split-string']),
+  env: new Set(['-u', '--unset']),
   exec: new Set(['-a']),
   timeout: new Set(['-s', '--signal', '-k', '--kill-after']),
   nice: new Set(['-n', '--adjustment']),
@@ -901,12 +1010,14 @@ function commandOf(words) {
   let k = 0;
   let chdir = null;
   let chdirFlag = null;
+  let wrapped = false;   // the walk-around lens second pass (family 6): a wrapper prefix was peeled before the command
   for (;;) {
     while (k < words.length && RESERVED.has(words[k].text)) k++;
     while (k < words.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[k].raw)) k++;
     if (k >= words.length) return null;
     const name = path.basename(words[k].text);
-    if (!PREFIXES.has(name)) return { name, args: words.slice(k + 1), chdir, chdirFlag };
+    if (!PREFIXES.has(name)) return { name, args: words.slice(k + 1), chdir, chdirFlag, wrapped };
+    wrapped = true;
     k++;
     const operands = PREFIX_OPERANDS[name] || NO_OPERANDS;
     let lead = PREFIX_LEAD_OPERANDS[name] || 0;
@@ -918,6 +1029,11 @@ function commandOf(words) {
       if (name === 'sudo' && (t === '-D' || t === '--chdir')) { chdir = words[k + 1] || null; chdirFlag = `sudo ${t}`; k += 2; continue; }
       if (name === 'sudo' && t.startsWith('--chdir=')) { chdir = sliceWord(words[k], 8); chdirFlag = 'sudo --chdir'; k++; continue; }
       if (name === 'flock' && (t === '-c' || t === '--command')) return { script: words[k + 1] || null, scriptFlag: `flock ${t}` };
+      // env -S STRING / --split-string=STRING splits STRING into a command and runs it, like `sh -c`: read the string,
+      // never skip it as an operand (the walk-around lens second pass, family 1; before, `env -S'cp … <tracked>'` was skipped and the copy passed)
+      if (name === 'env' && (t === '-S' || t === '--split-string')) return { script: words[k + 1] || null, scriptFlag: `env ${t}` };
+      if (name === 'env' && /^-S./.test(t)) return { script: sliceWord(words[k], 2), scriptFlag: 'env -S' };
+      if (name === 'env' && t.startsWith('--split-string=')) return { script: sliceWord(words[k], 15), scriptFlag: 'env --split-string' };
       if (operands.has(t)) { k += 2; continue; }
       if (t.startsWith('-') && t.length > 1) { k++; continue; }
       if (name === 'timeout' && /^[0-9.]+[smhd]?$/.test(t)) { k++; continue; }   // the duration
@@ -945,7 +1061,9 @@ function mayHoldTracked(dir) {
     p = parent;
   }
   if (p === dir) return true;
-  const root = findVaultRoot(path.join(p, 'x'));   // findVaultRoot starts at the parent of the path given
+  let root = findVaultRoot(path.join(p, 'x'));   // findVaultRoot starts at the parent of the path given
+  // a nearest root whose list is empty may sit inside a project whose list is not (the walk-around lens second pass, family 5)
+  while (root && !trackedPaths(root).length) { const up = path.dirname(root); root = up === root ? null : findVaultRoot(path.join(up, 'x')); }
   return !!root && trackedPaths(root).length > 0;
 }
 
@@ -1322,11 +1440,35 @@ function shellScript(args, shell) {
 // the literal targets read before it with it (round 3: about 1100 nested `$(` made evaluate's catch
 // return allow on a command whose first word copied onto a tracked file).
 const RECURSION_CAP = 64;
+// The walk-around lens second pass (family 2, 2026-09-19): the guard EXPANDS one variable of the environment, HOME (for `~` and a leading
+// `$HOME`, marked 'h'); a command that assigns HOME before the write named a directory the guard did not read. Round 4
+// caught only `HOME=…` (an inline or leading assignment word); the shells offer more: `HOME+=`, `export`/`declare`/
+// `typeset`/`local`/`readonly HOME`, `read HOME`, `printf -v HOME`, `mapfile`/`readarray HOME`, `env HOME=…`, `getopts
+// … HOME`, `for HOME in …`. Any of them, anywhere in the command, makes an 'h'-marked word unreadable for the rest of
+// it. (PWD, OLDPWD and TMPDIR are named in the same class, but the guard does not expand them, so their `$…` is already
+// a word it cannot read; only HOME carries the 'h' mark an assignment would falsify.)
+const HOME_DECLARERS = /^(export|declare|typeset|local|readonly)$/;
+function assignsHome(segments) {
+  const namesHome = (w) => w && (w.text === 'HOME' || /^HOME\+?=/.test(w.text));
+  for (const s of segments) {
+    const words = s.words;
+    for (let i = 0; i < words.length; i++) {
+      if (/^HOME\+?=/.test(words[i].raw)) return true;   // HOME=…, HOME+=…, an env prefix `HOME=…`, an inline assignment
+      const t = words[i].text;
+      if (HOME_DECLARERS.test(t)) { for (let j = i + 1; j < words.length; j++) if (namesHome(words[j])) return true; }
+      if (t === 'read' || t === 'mapfile' || t === 'readarray' || t === 'getopts') { for (let j = i + 1; j < words.length; j++) if (words[j].text === 'HOME') return true; }
+      if (t === 'printf') { for (let j = i + 1; j + 1 < words.length; j++) if (words[j].text === '-v' && words[j + 1].text === 'HOME') return true; }
+      if (t === 'for' && words[i + 1] && words[i + 1].text === 'HOME') return true;
+    }
+  }
+  return false;
+}
 export function extractWriteTargets(command, cwd, shell = null) {
   return extract(command, { dir: cwd || null, unknownDir: !cwd, unknownWhy: cwd ? null : 'no working directory is known for it', shell, depth: 0 });
 }
 function extract(command, ctx) {
   const { shell, depth } = ctx;
+  const prevLinks = activeLinks;
   const { segments, opaque } = lex(command, shell);
   const targets = [];
   const unresolved = [];
@@ -1342,11 +1484,64 @@ function extract(command, ctx) {
   // `env HOME=... cmd`) lexes a word whose raw starts with `HOME=`; when any segment holds one, the
   // home the guard read is not the one the shell would use, so a word that expanded it (marked 'h') is a
   // target the hook cannot read for the rest of the command.
-  const homeAssigned = ctx.homeAssigned || segments.some((s) => s.words.some((w) => /^HOME=/.test(w.raw)));
-  // Class H (2026-09-19): symlinks the command makes before a later word. `links` maps an absolute link
-  // path to the absolute path it points at; add() rewrites a later literal target through it, since a
-  // PreToolUse hook cannot resolve a link the command has not yet created.
+  const homeAssigned = ctx.homeAssigned || assignsHome(segments);
+  // Class H (2026-09-19): a symlink an `ln -s` with literal operands and an untouched name makes before a later word,
+  // resolved as the kernel will resolve it once it exists. `links` maps an absolute link path to the absolute path it
+  // points at; foldSegments (in resolveLiteral) follows it as it folds a later literal target, so a `..` after the link
+  // climbs from its target. The walk-around lens second pass (2026-09-19) settled the one true statement: an `ln -s`
+  // with literal operands whose name and source no other command in the line touched is resolved; every OTHER
+  // same-command path change (a hard link, `cp -l`/`cp -s`, a non-literal `ln -s`, or a name/source an earlier
+  // rm/mv/ln mutated) is a family-3 mutation and refuses, since the hook cannot resolve it after the fact.
   const links = ctx.links || new Map();
+  // Class 'mutated' (the walk-around lens second pass, family 3, 2026-09-19): a command earlier in the line that REMOVES, RENAMES or makes a
+  // hard/symbolic LINK at a path changes what a later word under that path resolves to, so the hook's hook-time view is
+  // stale and a later literal target there is unreadable. `mutated` maps an absolute prefix to the verb that touched it.
+  // rm/rmdir/mv remove a path (mv also creates its destination from the source, which may alias a tracked file); ln,
+  // cp -l and cp -s create a link/alias. mkdir and a plain new directory are NOT recorded: a fresh empty directory
+  // hides no tracked file, and marking it would refuse the common `mkdir out && write out/x`.
+  const mutated = ctx.mutated || [];
+  const markMutated = (abs, verb) => { if (abs) mutated.push({ prefix: abs.replace(/\/+$/, ''), verb }); };
+  const underMutated = (abs) => mutated.find((m) => abs === m.prefix || abs.startsWith(m.prefix + '/')) || null;
+  // Record the paths a remove, rename or link command touches, resolved against the current dir (the walk-around lens second pass, family 3).
+  const recordMutations = (name, args, cwd) => {
+    if (!cwd) return;
+    const abs = (w) => (w && w.literal ? literalPath(w.text, cwd) : null);
+    if (name === 'rm' || name === 'rmdir' || name === 'unlink' || name === 'shred') {
+      for (const a of args) if (!(a.text.startsWith('-') && a.text.length > 1)) markMutated(abs(a), name);
+      return;
+    }
+    if (name === 'mv') {
+      const parsed = parseCopyOptions(args, 'mv');
+      if (parsed.unknown || parsed.installDir) return;
+      const ops = parsed.operands;
+      const destDir = parsed.targetDir;
+      if (destDir && destDir.literal) { for (const s of ops) { markMutated(abs(s), 'mv'); markMutated(literalPath(path.join(destDir.text, path.basename(s.text)), cwd), 'mv'); } return; }
+      for (const s of ops) markMutated(abs(s), 'mv');   // sources removed; the last, the destination, created
+      return;
+    }
+    if (name === 'ln') {
+      // a SYMBOLIC ln is class H (recordSymlink resolves the link for a later word); only a HARD link is a mutation
+      // here, since it aliases the source's inode and the hook cannot resolve it after the fact.
+      const symbolic = args.some((a) => a.literal && (a.text === '--symbolic' || (/^-[^-]/.test(a.text) && a.text.includes('s'))));
+      if (symbolic) return;
+      const parsed = parseCopyOptions(args, 'ln');
+      if (parsed.unknown || parsed.installDir) return;
+      if (parsed.targetDir && parsed.targetDir.literal) { for (const s of parsed.operands) markMutated(literalPath(path.join(parsed.targetDir.text, path.basename(s.text)), cwd), 'ln'); return; }
+      const ops = parsed.operands;
+      if (ops.length >= 2) markMutated(abs(ops[ops.length - 1]), 'ln');
+      else if (ops.length === 1) markMutated(literalPath(path.join(cwd, path.basename(ops[0].text)), cwd), 'ln');   // ln src -> ./basename
+      return;
+    }
+    if (name === 'cp') {
+      const linky = args.some((a) => a.literal && ((/^-[^-]/.test(a.text) && (a.text.includes('l') || a.text.includes('s'))) || a.text === '--link' || a.text === '--symbolic-link'));
+      if (!linky) return;
+      const parsed = parseCopyOptions(args, 'cp');
+      if (parsed.unknown || parsed.installDir) return;
+      if (parsed.targetDir && parsed.targetDir.literal) { for (const s of parsed.operands) markMutated(literalPath(path.join(parsed.targetDir.text, path.basename(s.text)), cwd), 'cp -l'); return; }
+      const ops = parsed.operands;
+      if (ops.length >= 2) markMutated(abs(ops[ops.length - 1]), 'cp -l');
+    }
+  };
   // Record the symlinks an `ln -s` makes when both operands are literal, so a later word through the link is
   // judged as the path it leads to (class H). A non-literal operand, or a link the hook cannot place, records
   // nothing (the write through it stays whatever the literal rule makes of the un-followed name).
@@ -1357,7 +1552,15 @@ function extract(command, ctx) {
     const parsed = parseCopyOptions(args, 'ln');
     if (parsed.unknown || parsed.installDir) return;
     if (parsed.operands.some((o) => !o.literal)) return;
-    const record = (srcText, dstAbs) => { const srcAbs = literalPath(srcText, cwd); if (dstAbs && srcAbs) links.set(dstAbs, srcAbs); };
+    // the source is relative to the link's OWN directory, not the cwd (a symlink target is `readlink`-relative): the walk-around lens second pass
+    // (family 3) after `ln -s ../docs sub/d` recorded `sub/d -> <cwd>/docs` and a write through it was judged outside.
+    const record = (srcText, dstAbs) => {
+      if (!dstAbs) return;
+      const srcAbs = path.isAbsolute(srcText) ? srcText : literalPath(srcText, path.dirname(dstAbs));
+      if (!srcAbs) return;
+      if (underMutated(dstAbs) || underMutated(srcAbs)) return;   // the walk-around lens second pass (family 3): a mutated name/source is not a trustworthy link
+      links.set(dstAbs, srcAbs);
+    };
     if (parsed.targetDir && parsed.targetDir.literal) {
       for (const s of parsed.operands) record(s.text, literalPath(path.join(parsed.targetDir.text, path.basename(s.text)), cwd));
       return;
@@ -1381,6 +1584,10 @@ function extract(command, ctx) {
     });
   };
   const add = (w, how) => {
+    try { addInner(w, how); }
+    catch (e) { if (isUnknownPath(e) && !(e.why && e.why.how)) e.why = { ...(e.why || {}), how, raw: w && w.raw ? w.raw : (w && w.text) || 'the path' }; throw e; }
+  };
+  const addInner = (w, how) => {
     if (!w) return;   // a word that is only an expansion (`"$(mktemp)"`) has no text after quote removal, and is still a target
     // class D: the command reassigned HOME, so a word that expanded it (marked 'h') is unreadable. Recorded by its
     // raw spelling with no marks, so the own-project step does not read the guard's home value and the cwd rule decides.
@@ -1399,19 +1606,16 @@ function extract(command, ctx) {
     // a literal relative target whose directory is not known is refused, not dropped (round 3): the same word
     // spelled absolute is judged, and one `cd` the hook could not follow turned a refused write into an allowed one
     if (!path.isAbsolute(w.text) && unknownDir) { cannotRead(w, how, { kind: 'unknownDir', text: unknownWhy }); return; }
-    // class H: rewrite the target through a symlink the command made earlier in the same line, when the target can
-    // be placed absolutely (it points at a real path the hook can then resolve).
-    if (links.size) {
-      const abs = path.isAbsolute(w.text) ? w.text : (dir ? dir + '/' + w.text : null);
-      if (abs != null) {
-        const redirected = applyInCommandLinks(abs, links);
-        if (redirected !== abs.replace(/\/{2,}/g, '/')) {
-          const pl = resolveLiteral(redirected, null);
-          if (pl && pl.unresolvable) { cannotRead(w, how, { kind: 'unresolvable', text: pl.unresolvable }); return; }
-          if (pl && pl.path) { targets.push({ path: pl.path, how }); return; }
-        }
-      }
+    // class 'mutated' (the walk-around lens second pass, family 3): a later literal target under a prefix an earlier rm/mv/ln/cp -l/cp -s touched
+    // is unreadable, since what it resolves to at run time is not what the hook sees now.
+    if (mutated.length && !unknownDir) {
+      const abs = path.isAbsolute(w.text) ? w.text : dir + '/' + w.text;
+      const m = underMutated(path.normalize(abs));
+      if (m) { cannotRead(w, how, { kind: 'mutated', verb: m.verb, prefix: m.prefix }); return; }
     }
+    // class H: foldSegments (in resolveLiteral) follows a symlink the command made earlier in the same line as it
+    // folds, so `mydocs/report.md` reads through `mydocs -> docs` and a `..` after the link climbs from its target
+    // (the walk-around lens second pass, 2026-09-19; before, a single-hop prefix match on the unfolded spelling missed `./mydocs`, `base/../mydocs`).
     const p = resolveLiteral(w.text, dir);
     if (!p) return;
     if (p.unresolvable) { cannotRead(w, how, { kind: 'unresolvable', text: p.unresolvable }); return; }
@@ -1422,7 +1626,7 @@ function extract(command, ctx) {
   // `$(...)` in this command runs in this command's shell, so it inherits `shell`, and the directory state.
   const recurse = (text, sh = shell) => {
     if (depth >= RECURSION_CAP) { sawOpaqueCommand = true; return; }
-    const sub = extract(text, { dir, unknownDir, unknownWhy, shell: sh, depth: depth + 1, homeAssigned, links });
+    const sub = extract(text, { dir, unknownDir, unknownWhy, shell: sh, depth: depth + 1, homeAssigned, links, physicalMode, cdFunctions, mutated });
     targets.push(...sub.targets);
     unresolved.push(...sub.unresolved);
     if (sub.opaque) sawOpaqueCommand = true;
@@ -1437,6 +1641,16 @@ function extract(command, ctx) {
   // Open scopes, innermost last: a subshell frame holds the dir to restore at its `)`; a function
   // frame (`f() { ... }`, a body defined, not run) holds the dir to restore at its closing brace;
   // a compound frame (if, while, until, for, case) records whether a cd ran in its body.
+  // The walk-around lens second pass (family 6): `set -P` / `set -o physical` (bash) or `setopt chase_links` (zsh) makes every later cd resolve
+  // `..` physically, and a function whose body moves the shell moves it when CALLED, which the guard does not follow.
+  let physicalMode = ctx.physicalMode || false;
+  const cdFunctions = ctx.cdFunctions || new Set();   // names of functions defined here whose body ran a cd/pushd/popd
+  const markFunctionBody = () => {
+    for (let j = frames.length - 1; j >= 0; j--) {
+      if (frames[j].kind === 'subshell') return;   // a cd in a subshell inside the body restores at its )
+      if (frames[j].kind === 'function') { frames[j].bodyMoved = true; return; }
+    }
+  };
   const frames = [];
   const CLOSERS = { fi: ['if'], done: ['while', 'until', 'for'], esac: ['case'] };
   const isScope = (f) => f.kind === 'subshell' || f.kind === 'function';
@@ -1458,6 +1672,7 @@ function extract(command, ctx) {
   const movedHere = () => {
     for (let j = frames.length - 1; j >= 0 && !isScope(frames[j]); j--) frames[j].moved = true;
   };
+  activeLinks = links;   // foldSegments follows these while this command's literal targets resolve (the walk-around lens second pass)
   // The braces of a function body: the frame closes, restoring the dir, when its depth returns to 0.
   const braces = (seg) => {
     const f = frames[frames.length - 1];
@@ -1467,7 +1682,7 @@ function extract(command, ctx) {
       if (w.text === '{') f.depth++;
       else if (w.text === '}') f.depth--;
     }
-    if (f.depth <= 0) { restore(f); frames.pop(); }
+    if (f.depth <= 0) { if (f.bodyMoved && f.name) cdFunctions.add(f.name); restore(f); frames.pop(); }
   };
   for (let idx = 0; idx < segments.length; idx++) {
     const seg = segments[idx];
@@ -1476,7 +1691,8 @@ function extract(command, ctx) {
       const prev = segments[idx - 1];
       const named = prev && prev.op === '(' && (prev.words.length === 1 || (prev.words.length === 2 && prev.words[0].text === 'function'));
       if (next && next.paren === ')' && named) {
-        frames.push({ kind: 'function', dir, unknownDir, unknownWhy, depth: 0 });   // name() ... : a definition, not a run
+        const fname = prev.words.length === 1 ? prev.words[0].text : prev.words[1].text;
+        frames.push({ kind: 'function', name: fname, bodyMoved: false, dir, unknownDir, unknownWhy, depth: 0 });   // name() ... : a definition, not a run
         idx++;
         continue;
       }
@@ -1506,27 +1722,56 @@ function extract(command, ctx) {
     // `cd`; a non-literal one, or one the command cannot enter, leaves the directory unknown, so the inner relative
     // targets are refused with the reason rather than dropped (round 4, 2026-09-19: `env -C DIR cp …` dropped the
     // whole segment and the copy landed on the tracked file).
+    // the walk-around lens second pass (family 6): a `set -P` / `set -o physical` / `setopt chase_links` makes later cds physical
+    if (name === 'set' && args.some((w) => w.text === '-P' || (w.text === '-o' && args.some((x) => x.text === 'physical')))) physicalMode = true;
+    if (name === 'setopt' && args.some((w) => /^(chase_links|chaselinks|chase_dots)$/.test(w.text))) physicalMode = true;
+    // the walk-around lens second pass (family 6): a call to a function whose body moved the shell moves the cwd, which the guard does not
+    // follow into the call, so the directory is unknown from here (the body was modelled as not moving the shell)
+    if (cdFunctions.has(name)) setUnknown(`an earlier call of the function \`${name}\` may change the directory, which I do not follow`);
     const chdirSaved = cmd.chdirFlag ? { dir, unknownDir, unknownWhy } : null;
     if (cmd.chdir) {
       const c = cmd.chdir;
       if (!c.literal) setUnknown(`an earlier \`${cmd.chdirFlag}\` names ${c.raw}, a directory the shell fills in when the command runs`);
       else {
-        const to = resolveAgainst(c.text, unknownDir ? null : dir);
-        if (to == null) setUnknown(`an earlier \`${cmd.chdirFlag}\` follows a directory I could not read`);
-        else if (!enterable(to)) { dir = to; setUnknown(`an earlier \`${cmd.chdirFlag} ${c.raw}\` names a directory the command cannot enter when I check it`); }
-        else setKnown(to);
+        // env's and sudo's chdir is chdir(2), which the kernel resolves (a `..` after a symlink climbs from its real
+        // target), so the operand is folded physically, not lexically (the walk-around lens second pass, family 6: `env -C lnout/.. cp …`).
+        const r = resolveLiteral(c.text, unknownDir ? null : dir);
+        if (r == null) setUnknown(`an earlier \`${cmd.chdirFlag}\` follows a directory I could not read`);
+        else if (r.unresolvable) setUnknown(`an earlier \`${cmd.chdirFlag} ${c.raw}\` follows a directory I cannot resolve`);
+        else if (!enterable(r.path)) { dir = r.path; setUnknown(`an earlier \`${cmd.chdirFlag} ${c.raw}\` names a directory the command cannot enter when I check it`); }
+        else setKnown(r.path);
       }
     } else if (cmd.chdirFlag) {
       setUnknown(`an earlier \`${cmd.chdirFlag}\` names no directory`);
     }
     switch (name) {
       case 'cd': case 'pushd': {
+        // The walk-around lens second pass (family 6): a `cd` the guard cannot know ran in THIS shell leaves the directory unknown. Whichever
+        // of these holds, the shell may not move where the guard would place it (or moves in a subshell, or physically),
+        // so a later literal relative target refuses with the construct named, as `cd -` and a non-literal cd already do.
+        // A construct is checked only when the cd would OTHERWISE cleanly move (enterable, literal), so the round-3
+        // "cannot enter" and non-literal reasons, which are more specific, keep their message (`mkdir -p x && cd x`).
+        const prevOp = idx > 0 ? segments[idx - 1].op : '';
+        const opts = args.filter((w) => w.literal && /^-/.test(w.text) && w.text !== '-' && w.text !== '--');
+        const rotate = name === 'pushd' && args.some((w) => w.literal && /^[-+]\d+$/.test(w.text));
+        const pushdN = name === 'pushd' && opts.some((w) => w.text === '-n');
+        const physical = physicalMode || opts.some((w) => /P/.test(w.text));
+        const unmodeled = opts.some((w) => !/^-[LPe@n]+$/.test(w.text)) && !rotate;
+        let block = null;
+        if (prevOp === '&&' || prevOp === '||') block = `an earlier \`${name}\` after \`${prevOp}\` may not run, so where it lands is not known (its move depends on the previous status)`;
+        else if (seg.op === '|' || prevOp === '|') block = `an earlier \`${name}\` is part of a pipeline, so it runs in a subshell and moves nothing in this shell`;
+        else if (seg.op === '&') block = `an earlier \`${name}\` is backgrounded, so it runs in a subshell and moves nothing in this shell`;
+        else if (cmd.wrapped) block = `an earlier \`${name}\` runs under a wrapper, an external \`${name}\` that does not exist, so the shell does not move`;
+        else if (pushdN) block = 'an earlier `pushd -n` pushes a directory without changing to it';
+        else if (rotate) block = 'an earlier `pushd` rotates the directory stack, so where it lands is not known';
+        else if (physical) block = `an earlier \`${name}\` resolves \`..\` physically (\`-P\`, \`set -P\`, or an option I do not model), so where it lands is not known`;
+        else if (unmodeled) block = `an earlier \`${name}\` carries an option I do not model, so where it lands is not known`;
         let a = args.find((w) => !w.text.startsWith('-') || w.text === '-');
         if (a && a.glob) {   // cd docs/*: one match is the directory; several, or none, leave it unknown
           const m = expandGlob(a, unknownDir ? null : dir);
           a = m && m.length === 1 ? m[0] : word(a.text, false, a.raw, { marks: a.marks });
         }
-        if (!a) setKnown(os.homedir());
+        if (!a) { if (block) setUnknown(block); else setKnown(os.homedir()); }
         else if (a.text === '-') setUnknown(`an earlier \`${name} -\` returns to a directory this command did not set`);
         else if (!a.literal) setUnknown(`an earlier \`${name}\` names ${a.raw}, a directory the shell fills in when the command runs`);
         else {
@@ -1538,14 +1783,26 @@ function extract(command, ctx) {
             // (round 3; the cost is stated in decision 47)
             dir = to;
             setUnknown(`an earlier \`${name} ${a.raw}\` names a directory the command cannot enter when I check it (it may be made first, or the cd may fail and the write land where the command started)`);
-          } else setKnown(to);
+          } else if (block) setUnknown(block);   // the walk-around lens second pass: a clean move the guard cannot rely on
+          else setKnown(to);
         }
         movedHere();
+        if (a && a.literal && a.text !== '-') markFunctionBody();   // a real cd in a function body moves it when called
         break;
       }
       case 'popd': setUnknown('an earlier `popd` returns to a directory this command did not set'); movedHere(); break;
       case 'cp': case 'mv': case 'install': case 'ln': {
-        const r = copyTargets(args, unknownDir ? null : dir, name);
+        // copyTargets stats the destination to see whether it is a directory, so a stat error there (the walk-around lens second pass, family 4)
+        // is an UnknownPath; attach the verb and the last operand's spelling for the refusal before it propagates.
+        let r;
+        try { r = copyTargets(args, unknownDir ? null : dir, name); }
+        catch (e) {
+          if (isUnknownPath(e) && !(e.why && e.why.how)) {
+            const ops = args.filter((a) => !(a.text.startsWith('-') && a.text.length > 1));
+            e.why = { ...(e.why || {}), how: name, raw: ops.length ? ops[ops.length - 1].raw : name };
+          }
+          throw e;
+        }
         if (r.unknown) cannotRead(word(r.unknown, false, r.unknown), name, { kind: 'unknownOption', option: r.unknown });
         else {
           for (const w of r.targets) add(w, name);
@@ -1569,8 +1826,10 @@ function extract(command, ctx) {
         break;
       case 'sort':
         for (let k = 0; k < args.length; k++) {
-          if (args[k].text === '-o' || args[k].text === '--output') add(args[k + 1], 'sort -o');
-          else if (args[k].text.startsWith('--output=')) add(word(args[k].text.slice(9), args[k].literal, args[k].raw, { glob: args[k].glob, marks: args[k].marks && args[k].marks.slice(9) }), 'sort -o');
+          const t = args[k].text;
+          if (t === '-o' || t === '--output') add(args[k + 1], 'sort -o');
+          else if (t.startsWith('--output=')) add(sliceWord(args[k], 9), 'sort -o');
+          else if (/^-o./.test(t)) add(sliceWord(args[k], 2), 'sort -o');   // the glued short form `-oFILE` (the walk-around lens second pass, family 1; shuf -o stays out of model, its writer contract)
         }
         break;
       case 'sed':
@@ -1618,7 +1877,11 @@ function extract(command, ctx) {
         }
     }
     if (chdirSaved) ({ dir, unknownDir, unknownWhy } = chdirSaved);   // env -C / sudo -D moved the cwd for this command only
+    // the walk-around lens second pass (family 3): record a remove/rename/link this segment made AFTER judging its own targets, so it changes
+    // the reading of LATER segments only, never this command's own write
+    recordMutations(name, args, unknownDir ? null : dir);
   }
+  activeLinks = prevLinks;
   return { targets, opaque: opaque || sawOpaqueCommand, unresolved };
 }
 
@@ -1641,11 +1904,30 @@ function memoFor(closures) {
   if (!m) { m = newMemo(closures); memos.set(closures, m); }
   return m;
 }
+// The two lists of `root`'s config. A config.json that exists but cannot be read (its folder or the file mode 000,
+// or a body that does not parse) is an UnknownPath, refused for every write under that root: store-io answers an
+// empty list for it, the vendored guard's posture (a guard that cannot read the config denies nothing), and the walk-around lens second pass
+// (2026-09-19) measured `chmod 755 .trackchanges && cp base/report.md docs/report.md` with `.trackchanges` mode 000 at
+// check time overwriting the tracked file through that answer. A config that is not there (ENOENT) tracks nothing.
+function readConfigChecked(root) {
+  const cfg = path.join(root, '.trackchanges', 'config.json');
+  let present = true;
+  try { fs.accessSync(cfg, fs.constants.R_OK); }
+  catch (e) { if (e && e.code === 'ENOENT') present = false; else throw new UnknownPath((e && e.code) || 'EACCES', cfg, { kind: 'config', root }); }
+  const tracked = readTrackedPaths(root);
+  const untracked = readUntrackedPaths(root);
+  if (present) {
+    let parsed = null;
+    try { parsed = JSON.parse(fs.readFileSync(cfg, 'utf8')); } catch (e) { throw new UnknownPath((e && e.code) || 'EINVAL', cfg, { kind: 'config', root }); }
+    if (!parsed || typeof parsed !== 'object') throw new UnknownPath('EINVAL', cfg, { kind: 'config', root });
+  }
+  return { tracked, untracked };
+}
 function configOf(root) {
   const m = activeMemo;
-  if (!m) return { tracked: readTrackedPaths(root), untracked: readUntrackedPaths(root) };
+  if (!m) return readConfigChecked(root);
   let c = m.configs.get(root);
-  if (!c) { c = { tracked: readTrackedPaths(root), untracked: readUntrackedPaths(root) }; m.configs.set(root, c); }
+  if (!c) { c = readConfigChecked(root); m.configs.set(root, c); }
   return c;
 }
 function trackedPaths(root) { return configOf(root).tracked; }
@@ -1683,10 +1965,20 @@ function trackedIn(root, file, closures) {
 // directory's real path (memoised per call) with the name appended, and a dangling link followed
 // to where its target would be. null when nothing of the path exists. One lstat for an absent
 // file, one more realpath for one that exists.
-const lstatOrNull = (file) => fs.lstatSync(file, { throwIfNoEntry: false }) || null;   // no exception for an absent file
+// No exception for an absent file (ENOENT is null); any other failure (EACCES on a parent, ELOOP, ENOTDIR) is an
+// UnknownPath the caller refuses (the walk-around lens second pass, 2026-09-19; before, it unwound to a catch that read it as allow).
+const lstatOrNull = (file) => {
+  try { return fs.lstatSync(file, { throwIfNoEntry: false }) || null; }
+  catch (e) { if (e && e.code === 'ENOENT') return null; throw new UnknownPath((e && e.code) || 'EACCES', file); }
+};
 function realPathOf(file, depth = 0, st = lstatOrNull(file)) {
   if (st) {
-    try { return fs.realpathSync.native(file); } catch { /* a dangling link */ }
+    // a dangling link is followed to where its target would be (ENOENT). A NON-symlink whose realpath fails for any
+    // other reason (a component the process may not search, a file where a directory is needed) is an UnknownPath the
+    // caller refuses (the walk-around lens second pass); a symlink falls through to the readlink walk below, so a link that loops resolves to
+    // null through the depth cap (unresolvable, its existing wording), never a thrown error.
+    try { return fs.realpathSync.native(file); }
+    catch (e) { if (!st.isSymbolicLink() && e && e.code !== 'ENOENT') throw new UnknownPath(e.code, file); }
     if (!st.isSymbolicLink() || depth >= 40) return null;
     let target;
     try { target = path.resolve(path.dirname(file), fs.readlinkSync(file)); } catch { return null; }
@@ -1710,9 +2002,36 @@ function guardedByName(file, closures, st = lstatOrNull(file)) {
   if (st && (st.isDirectory() || (st.isSymbolicLink() && (fs.statSync(file, { throwIfNoEntry: false }) || st).isDirectory()))) return false;
   const root = rootOf(file);
   if (!root) return false;
-  if (!(closures ? trackedIn(root, file, closures) : isTrackedFile(root, file))) return false;
+  if (!(closures ? trackedIn(root, file, closures) : isTrackedFile(root, file))) {
+    // the walk-around lens second pass (2026-09-19, family 5): the nearest marker is not the only one. A `.git`, `.obsidian` or `.trackchanges`
+    // made between a tracked project's root and the file (`mkdir docs/.git`, an empty `notes/.trackchanges`) makes the
+    // folder its own config-less root to store-io's nearest-marker search, and every write under it read as untracked
+    // while the outer list still names the file. Which project's rules apply is not known, so the write is refused,
+    // naming both markers; a file the outer list does not name, and the untracked case, keep the nearest root's answer.
+    if (!process.env.TRACKCHANGES_ROOT) {
+      const outer = outerTrackingRoot(root, file, closures);
+      if (outer) throw new UnknownPath('EMARKER', file, { kind: 'nestedMarker', outer, inner: root, marker: markerAt(root) });
+    }
+    return false;
+  }
   if (hasNulBytes(file)) return false;
   return true;
+}
+// The root marker store-io found `root` by (its own order), for the nested-marker refusal.
+function markerAt(root) {
+  for (const m of ['.obsidian', '.git', '.trackchanges']) { try { if (fs.existsSync(path.join(root, m))) return m; } catch { /* unreadable: the next */ } }
+  return '.trackchanges';
+}
+// The nearest root ABOVE `inner` whose list names `file` (by name, the folder prefix or the link closure), or null.
+function outerTrackingRoot(inner, file, closures) {
+  let dir = path.dirname(inner);
+  for (let i = 0; i < 40 && dir !== path.dirname(dir); i++) {
+    const r = findVaultRoot(path.join(dir, 'x'));   // findVaultRoot starts at the parent of the path given
+    if (!r) return null;
+    if (closures ? trackedIn(r, file, closures) : isTrackedFile(r, file)) return r;
+    dir = path.dirname(r);
+  }
+  return null;
 }
 
 // Whether a write to `file` (an absolute path) lands on a tracked text file: under the name given,
@@ -1729,7 +2048,10 @@ export function isGuardedPath(file, closures) {
     if (guardedByName(file, closures, st)) return true;
     const real = realPathOf(file, 0, st);
     return real != null && real !== file && guardedByName(real, closures);
-  } catch { return false; } finally { activeMemo = prev; }
+  } catch (e) {
+    if (isUnknownPath(e)) throw e;   // the walk-around lens second pass: an answer the hook does not have is the caller's to refuse, never a false
+    return false;
+  } finally { activeMemo = prev; }
 }
 
 // ── a target the hook could not read: which project is in play ─────
@@ -1766,9 +2088,10 @@ const closureFor = (root, memo) => {
 function tracksRefusable(root, memo) {
   if (memo.refusable.has(root)) return memo.refusable.get(root);
   let ok = false;
-  const list = readTrackedPaths(root);
+  const cfg = readConfigChecked(root);
+  const list = cfg.tracked;
   if (list.length) {
-    const live = refusableEntry(readUntrackedPaths(root));
+    const live = refusableEntry(cfg.untracked);
     ok = list.some(live);
     if (!ok) for (const rel of closureFor(root, memo)) if (live(rel)) { ok = true; break; }
   }
@@ -1795,11 +2118,19 @@ function trackingRootAt(dir, memo) {
   if (!dir) return null;
   if (memo.roots.has(dir)) return memo.roots.get(dir);
   let hit = null;
+  checkSearchable(dir);   // the walk-around lens second pass: a directory the hook may not search is an UnknownPath, not a directory in no project
   const real = realPathOf(dir);
   const env = process.env.TRACKCHANGES_ROOT ? path.resolve(process.env.TRACKCHANGES_ROOT) : null;
   for (const d of real && real !== dir ? [real, dir] : [dir]) {
     const fromEnv = !!env && !outside(d, env);
-    const root = fromEnv ? env : findVaultRoot(path.join(d, 'x'));   // findVaultRoot starts at the parent of the path given
+    let root = fromEnv ? env : findVaultRoot(path.join(d, 'x'));   // findVaultRoot starts at the parent of the path given
+    // the walk-around lens second pass (family 5): a nearest root that tracks nothing refusable (a nested `.git`, an empty `.trackchanges`) may
+    // sit inside a project that does; a word the hook cannot read under it is judged by that outer project, as class F
+    // judges any expansion under a tracked root (its value can carry a `../` into the tracked files)
+    while (root && !fromEnv && !tracksRefusable(root, memo)) {
+      const up = path.dirname(root);
+      root = up === root ? null : findVaultRoot(path.join(up, 'x'));
+    }
     if (root && tracksRefusable(root, memo)) { hit = { root, dir: d, fromEnv }; break; }
   }
   memo.roots.set(dir, hit);
@@ -1833,15 +2164,15 @@ function landingInPlay(hit, memo) {
   const { root, dir } = hit;
   const rel = relPathFor(root, dir).replace(/^\.?\//, '').replace(/\/+$/, '');
   const folder = rel === '' ? '' : rel + '/';
-  const live = refusableEntry(readUntrackedPaths(root));
-  for (const raw of readTrackedPaths(root)) {
+  const cfg = readConfigChecked(root);
+  const live = refusableEntry(cfg.untracked);
+  for (const raw of cfg.tracked) {
     if (!live(raw)) continue;
     const e = raw.replace(/^\.?\//, '');
     if (e.startsWith(folder)) return true;                        // an entry at or below the landing folder
     if (e.endsWith('/') && folder.startsWith(e)) return true;     // the landing folder sits in a tracked folder
   }
-  let names = null;
-  try { names = fs.readdirSync(dir); } catch { names = null; }   // absent or unreadable: nothing there to take the name of
+  const names = readdirOrNull(dir);   // absent: nothing there to take the name of; unreadable: an UnknownPath (the walk-around lens second pass)
   if (names) {
     if (names.length > LANDING_SCAN_CAP) return true;
     for (const n of names) if (isGuardedPath(path.join(dir, n), memo.closures)) return true;
@@ -1862,9 +2193,8 @@ function landingInPlay(hit, memo) {
 // folder on the machine would be the round-1 false refusal an order of magnitude wider; that residual is
 // stated with the PR.
 function guardedEntryIn(dir, memo) {
-  let names;
-  try { names = fs.readdirSync(dir); } catch { return null; }
-  if (names.length > LANDING_SCAN_CAP) return null;
+  const names = readdirOrNull(dir);
+  if (!names || names.length > LANDING_SCAN_CAP) return null;
   const env = process.env.TRACKCHANGES_ROOT ? path.resolve(process.env.TRACKCHANGES_ROOT) : null;
   for (const n of names) {
     const entry = path.join(dir, n);
@@ -1927,9 +2257,8 @@ function viewOf(segs, memo, budget) {
 function spelledCandidates(segs, idx, dir, memo, budget) {
   const out = [];
   const realDir = realPathOf(dir) || dir;
-  let names;
-  try { names = fs.readdirSync(realDir); } catch { return out; }
-  if (names.length > LANDING_SCAN_CAP) return out;
+  const names = readdirOrNull(realDir);
+  if (!names || names.length > LANDING_SCAN_CAP) return out;
   const seg = segs[idx];
   const tail = segs.slice(idx + 1);
   for (const n of names) {
@@ -2019,9 +2348,8 @@ function ownProjectFor(u, memo) {
 // head `segPrefix` is a prefix of the root's name), as { root, dir, fromEnv, parentOf: [names] }, or null (class E).
 // Bounded by LANDING_SCAN_CAP entries: a directory past it is not scanned (open there, as the outside-folder scans are).
 function parentTrackedRoots(dir, segPrefix, memo) {
-  let names;
-  try { names = fs.readdirSync(dir); } catch { return null; }
-  if (names.length > LANDING_SCAN_CAP) return null;
+  const names = readdirOrNull(dir);
+  if (!names || names.length > LANDING_SCAN_CAP) return null;
   const env = process.env.TRACKCHANGES_ROOT ? path.resolve(process.env.TRACKCHANGES_ROOT) : null;
   const found = [];
   let root = null;
@@ -2088,6 +2416,35 @@ function inPlayFor(u, cwd, memo) {
 
 const TRACK_EDIT = '  node ~/.claude/hooks/track-edit.mjs --file "<the file>" --old "<exact unique text>" --new "<replacement>"';
 
+// The walk-around lens second pass (2026-09-19): a filesystem error other than ENOENT on a path the hook judges
+// (an lstat, realpath, readdir or config read that fails with EACCES, ELOOP, ENOTDIR, EINVAL and the rest) is an
+// answer the hook does not have, so it REFUSES, naming the error and the entry that blocked the check, from any cwd
+// (the blocked directory may itself be a tracked project). `how` is the writing construct, `raw` the word as typed.
+function statErrorRefusal(how, raw, e) {
+  if (e.why && e.why.kind === 'nestedMarker') {
+    // family 5: a marker between a tracked root and the file makes which project's rules apply unknown
+    const { outer, inner, marker } = e.why;
+    return `This command is blocked here: its ${how} names ${raw}, which ${outer} tracks, but a \`${marker}\` at ${inner} `
+      + `between that project and the file makes ${inner} its own root, so I cannot tell which project's rules apply to `
+      + `the write, and a tracked file written with no change for me to accept or reject is what this guard prevents. `
+      + `Remove the ${marker} at ${inner}, or make the change with track-edit, which records it for me to accept or reject:
+${TRACK_EDIT}`;
+  }
+  if (e.why && e.why.kind === 'config') {
+    return `This command is blocked here: its ${how} names ${raw}, and I could not read the tracking config at ${e.path} `
+      + `(${describeError(e.code)}), so I cannot tell whether ${e.why.root} tracks the file it writes, and a tracked file `
+      + `written with no change for me to accept or reject is what this guard prevents. Make that config readable in a `
+      + `command of its own, or make the change with track-edit, which records it for me to accept or reject:
+${TRACK_EDIT}`;
+  }
+  const blocker = blockingEntry(e.path);
+  return `This command is blocked here: its ${how} names ${raw}, and I could not check ${blocker} on that path `
+    + `(${describeError(e.code)}), so I cannot tell whether the write lands on a tracked file, and a tracked file written `
+    + `with no change for me to accept or reject is what this guard prevents. Make ${blocker} readable in a command of its `
+    + `own, or write a path that does not pass through it: a tracked file then takes its change through track-edit:
+${TRACK_EDIT}`;
+}
+
 // Returns a block reason string when the command must be denied, or null to allow.
 export function evaluate(raw) {
   let payload;
@@ -2098,13 +2455,17 @@ export function evaluate(raw) {
   const cwd = typeof payload.cwd === 'string' && payload.cwd ? payload.cwd : process.cwd();
   let targets;
   let unresolved;
-  try { ({ targets, unresolved } = extractWriteTargets(command, cwd)); } catch { return null; }
+  try { ({ targets, unresolved } = extractWriteTargets(command, cwd)); }
+  catch (e) { return isUnknownPath(e) ? statErrorRefusal(e.why && e.why.how ? e.why.how : 'write', e.why && e.why.raw ? e.why.raw : 'the path', e) : null; }
   const seen = new Set();
   const closures = new Map();
   for (const t of targets) {
     if (seen.has(t.path)) continue;
     seen.add(t.path);
-    if (!isGuardedPath(t.path, closures)) continue;
+    let guarded;
+    try { guarded = isGuardedPath(t.path, closures); }
+    catch (e) { if (isUnknownPath(e)) return statErrorRefusal(t.how, t.path, e); throw e; }
+    if (!guarded) continue;
     return `Track-changes is ON for ${t.path}, so this command is blocked here `
       + `(its ${t.how} would write the file silently, with no change for me to accept or reject). `
       + `Make the change with track-edit instead, which records it for me to accept or reject:\n`
@@ -2121,7 +2482,8 @@ export function evaluate(raw) {
   const memo = { closures, roots: new Map(), refusable: new Map() };
   for (const u of unresolved) {
     let hit = null;
-    try { hit = inPlayFor(u, cwd, memo); } catch { hit = null; }
+    try { hit = inPlayFor(u, cwd, memo); }
+    catch (e) { if (isUnknownPath(e)) return statErrorRefusal(u.how, u.raw, e); hit = null; }
     if (!hit) continue;
     if (hit.literal) {
       // a numeric target whose fold leaves no expansion, or whose number could spell an entry that exists, lands on
@@ -2133,6 +2495,16 @@ export function evaluate(raw) {
         + `  node ~/.claude/hooks/track-edit.mjs --file "${hit.literal}" --old "<exact unique text>" --new "<replacement>"`;
     }
     const where = hit.fromEnv ? 'the project TRACKCHANGES_ROOT names' : hit.root;
+    if (u.why && u.why.kind === 'mutated') {
+      // family 3 (the walk-around lens second pass): an earlier rm/mv/ln/cp -l/cp -s in the same command touched a path prefix this write uses,
+      // so what it resolves to at run time is not what the hook sees; refuse, naming the verb and the path.
+      const acted = u.why.verb === 'rm' || u.why.verb === 'rmdir' ? 'removed' : (u.why.verb === 'mv' ? 'renamed' : 'linked');
+      return `This command is blocked here: its ${u.how} names ${u.raw}, and an earlier \`${u.why.verb}\` in the same command `
+        + `${acted} ${u.why.prefix}, so what that path resolves to when the command runs is not what I see now, and I cannot `
+        + `tell whether the write lands on a tracked file, and ${where} tracks files whose changes are recorded for me to `
+        + `accept or reject. Run the \`${u.why.verb}\` in a command of its own, or write a path that does not pass through `
+        + `${u.why.prefix}: a tracked file then takes its change through track-edit:\n${TRACK_EDIT}`;
+    }
     if (u.why && u.why.kind === 'unknownOption') {
       // class A (round 4): an option the writer's table does not know, so the operands cannot be placed and the
       // write target is unreadable. The remedy is the command without the option, or its long form the table knows.

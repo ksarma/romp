@@ -81,7 +81,19 @@ The guard also reads the common wrappers `setsid`, `flock`, `taskset`, `chrt` an
 `numactl` to the write inside them, runs `env -C DIR` and `sudo -D DIR` in DIR,
 refuses a `cp`/`mv`/`install`/`ln` option it does not know, treats `$HOME` and `~`
 as unreadable once the command reassigns HOME, and refuses a variable or
-substitution whose literal head is above or under a tracked project. But it is
+substitution whose literal head is above or under a tracked project. A second pass
+added six more: the tables accept a glued short form (`sort -oFILE`) and read `env
+-S` as a shell string; an assignment to HOME in any form (`HOME+=`, `read HOME`,
+`printf -v HOME`, `export`/`declare`/`local HOME`, `for HOME in`, and the rest)
+makes `$HOME` and `~` unreadable for the whole command; an earlier `rm`, `mv`, hard
+`ln`, `cp -l` or `cp -s` that removes, renames or aliases a path makes a later write
+under it unreadable; a stat or config-read error other than not-found anywhere on a
+path it checks (a mode-000 folder, `.trackchanges` or project) refuses from any
+working directory; a `.git` or `.trackchanges` between a tracked project and the
+file refuses; and a `cd` it cannot know ran in this shell (after `&&`/`||`, in a
+pipeline, backgrounded, under a wrapper, `pushd -n`, a physical `cd -P`, or a call
+of a function that cd's) leaves the directory unknown, so a later relative write
+refuses. But it is
 best-effort against known write forms: it refuses the shell writes it models and,
 by design, allows anything it does not recognise, so it never blocks ordinary work
 it cannot read; it is a backstop, not a complete boundary. These write forms are

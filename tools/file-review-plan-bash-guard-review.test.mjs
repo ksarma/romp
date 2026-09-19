@@ -100,7 +100,7 @@ test('the hook agrees: the closure comes after the veto and the explicit list, n
   assert.ok(veto >= 0 && explicit > veto && empty > explicit && memo > empty && walk > memo, 'the veto, the explicit list, the empty list, the memo, then the walk');
   const evaluateSrc = hook.slice(hook.indexOf('export function evaluate(raw)'), hook.indexOf('const invokedDirectly'));
   assert.ok(evaluateSrc.includes('const closures = new Map();'), 'one Map per call');
-  assert.ok(evaluateSrc.includes('if (!isGuardedPath(t.path, closures)) continue;'), 'handed to every target');
+  assert.ok(evaluateSrc.includes('try { guarded = isGuardedPath(t.path, closures); }') && evaluateSrc.includes('if (!guarded) continue;'), 'handed to every target, its stat error a refusal (family 4)');
   assert.ok(hook.includes('ONE walk of the project\'s markdown tree per call'), 'the hook\'s header states the same cost');
   // the walk is what the plan says it is: store-io lists every .md under the root and reads every tracked note
   const closure = storeIo.slice(storeIo.indexOf('export function trackedClosure(vaultRoot)'), storeIo.indexOf('export function isTrackedFile'));
