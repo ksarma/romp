@@ -2729,8 +2729,13 @@ class Disclosed(unittest.TestCase):
         public = pp.fold(snap)                                   # the projection on the wire (perf_export.export_document)
         usage = pp.fold(pe.usage_block(snap))                    # the fourth group, as the export writes it under --usage
         self.assertIn("pid", snap["process"], "the raw snapshot carries the pid the fold drops")
-        # finding 8: the count the bounds sentence spells is the fold's own, recomputed. Every leaf under a BOUND_KEYS
-        # name is collected; pusher/stageRingMax is a ring length, not a memory fraction, and is the one set aside
+        # finding 8 of the closing re-run: the count the bounds sentence spells is the fold's own, recomputed from every leaf
+        # under a BOUND_KEYS name. Finding 4 of the closing check at the re-run's head (2026-09-19): WHICH leaf is set aside is the
+        # module's classification (pp.MEMORY_FRACTION_BOUNDS, the ten fractions of MemTotal; pp.CONSTANT_BOUNDS, the one
+        # literal, memos.judgingBand.bound), never a path typed here. The set-aside before this named pusher.stageRingMax as
+        # the one non-fraction, a ring length, and so counted the constant as a fraction: both labels backwards, the errors
+        # cancelling to ten, and the next constant added under a bound key would have moved the paragraph to eleven while
+        # ten stayed true. The two labels are checked by execution against the kernel in the test named for them.
         bounds = set()
 
         def leaves(node, where):
@@ -2743,15 +2748,22 @@ class Disclosed(unittest.TestCase):
             elif where and where[-1] in pp.BOUND_KEYS:
                 bounds.add(where)
         leaves(public, ())
-        rings = {path for path in bounds if path[-1] == "stageRingMax"}
-        self.assertEqual(rings, {("pusher", "stageRingMax")}, "the one BOUND_KEYS leaf that is a ring length and not a memory fraction")
-        fractions = bounds - rings
+        classified = {p[2:] if p[:2] == ("judge", "child") else p for p in bounds}   # the judge child's copies of its tables carry the same keys
+        unknown = classified - pp.MEMORY_FRACTION_BOUNDS - pp.CONSTANT_BOUNDS
+        self.assertEqual(unknown, set(), "a bound-keyed leaf that cli/perf_public.py classifies as neither a memory fraction nor a "
+                         "constant; classify it there and, if it is a fraction, move the disclosure's count: %s" % sorted(unknown, key=repr))
+        fractions = classified & pp.MEMORY_FRACTION_BOUNDS
+        self.assertEqual(fractions, pp.MEMORY_FRACTION_BOUNDS,
+                         "a listed fraction not on the wire: %s" % sorted(pp.MEMORY_FRACTION_BOUNDS - fractions, key=repr))
+        constants = classified & pp.CONSTANT_BOUNDS
+        self.assertEqual(constants, pp.CONSTANT_BOUNDS,
+                         "a listed constant not on the wire: %s" % sorted(pp.CONSTANT_BOUNDS - constants, key=repr))
         self.assertIn(("heap", "hydrated", "capBytes"), fractions, "the paragraph names hydrated.capBytes as one of the bounds")
-        self.assertIn(len(fractions), self.SPELLED, "a count the sentence cannot spell: %s" % sorted(fractions))
+        self.assertIn(len(fractions), self.SPELLED, "a count the sentence cannot spell: %s" % sorted(fractions, key=repr))
         bounds_sentence = ("the %s memory-fraction bounds coarsened to a power of two (`hydrated.capBytes` among them)"
                            % self.SPELLED[len(fractions)])
-        self.assertIn(bounds_sentence, para, "the count the paragraph spells is not the fold's %d: %s" % (len(fractions), sorted(fractions)))
-        self.assertEqual(len(bounds), 11, "ten memory fractions and one ring length on 2026-09-19: %s" % sorted(bounds))
+        self.assertIn(bounds_sentence, para, "the count the paragraph spells is not the fold's %d: %s" % (len(fractions), sorted(fractions, key=repr)))
+        self.assertEqual(len(bounds), 11, "ten memory fractions and one constant on 2026-09-19: %s" % sorted(bounds, key=repr))
         # the four clauses, each from its "every leaf under" marker to an EXPLICIT end: process ends at heap's start, heap at
         # gc's, gc at the bounds sentence (so it and `hydrated.capBytes` sit outside every clause), usage at the kernel commit
         for block in self.BLOCKS:
