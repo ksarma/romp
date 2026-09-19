@@ -82,8 +82,8 @@ across a run, so they stay outside every witness here; the third has been refuse
 birth pin, whose called population names `_PJ.load_goals_shared` as a fifth loader spelling, so a second judge module is outside
 both execution witnesses and inside the static pin, which reds alone while every execution case stays green; and the alias
 control beside them reds the shared reconciliation on every harness case and the birth pin. Review round 3, correctness-2 and
-regression-2: this sentence had been written at the head of the build's verifier pass after the round-2 fixes, over eleven
-cases, said every case green of all three plants, and went stale as cases and the pin were added, so the count here is pinned by
+regression-2: this sentence had been written at the head of the build's verifier pass after the round-2 fixes, over that
+head's cases, said every case green of all three plants, and went stale as cases and the pin were added, so the count here is pinned by
 a Docs case against the loader's count of this module's cases, and the plants are re-taken whenever it moves). The two
 witnesses answer different questions: the recorders say
 who loaded, the delta says that something did. By the served counter: `memos.nudgeWalk.loads`, bumped at the walk's one call site, must
@@ -327,7 +327,7 @@ plants (correctness-2, regression-2), re-taken at this head of 20 cases, each la
 file itself, and the kernel calling jd._read_store_json, each per session in the pass loop, 20 passed each and no file changed
 across a run; a second judge module loaded under another name, rebound to the state and its shared door called per session,
 reds the kernel-wide birth pin alone, naming `_PJ.load_goals_shared` as a fifth loader spelling (1 failed, 19 passed; every case
-green at the heads before the pin, over eleven and over twelve cases); the alias control, the shared door bound at kernel import
+green at both earlier heads, before the pin); the alias control, the shared door bound at kernel import
 and called per session, 6 failed, 14 passed, the shared reconciliation on every harness case and the birth pin; and the count
 pin: the sentence's count set to a stale figure reds the Docs case naming both figures (1 failed, 19 passed).
 
@@ -2001,7 +2001,7 @@ class Docs(unittest.TestCase):
     def test_the_bypass_retake_sentence_counts_this_heads_cases(self):
         """The module docstring says the three bypass plants were re-taken at this head over its N cases (review round 3,
         correctness-2 and regression-2: the sentence was true when written and went stale nine commits and one case later, its count
-        reading eleven against a module of twelve). N is read here against the loader's count of this module's cases, so a case
+        one case behind the module's). N is read here against the loader's count of this module's cases, so a case
         added without a re-take reds this line and names the two figures, instead of leaving a count that reads true and is not."""
         doc = " ".join(sys.modules[__name__].__doc__.split())
         m = re.search(r"re-taken at this head, the head of the round-3 fixes, over its (\d+) cases", doc)
