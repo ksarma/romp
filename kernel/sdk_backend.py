@@ -5148,16 +5148,87 @@ def env_credential_names(environ) -> list:
     1Password's own names exactly as credentials.py draws them (is_op_env_name: the service-account and
     Connect tokens, the account and host beside them, and OP_SESSION_<account>, which `op signin` exports
     and which ends in neither suffix; the boot check refuses those names too, so the boot line and the
-    boot check agree on what an op name is). A name of another shape stays unnamed, and the boot line
-    says what shape it checked. Returns the names, sorted, for a one-line boot notice; values are tested
-    for emptiness only and never logged. The one exclusion is romp's own control token, which is not a
-    provider credential; no name the claim removes is excluded here, so a login token still present when
-    this runs did reach sessions and is named, and the call's place after the claim is what keeps it off
-    the line.
+    boot check agree on what an op name is). The two suffixes are compared on the upper-cased name, so a
+    lowercase or mixed-case spelling is the same shape (review round 1 of the spawn-spec fix, 2026-09-18:
+    the test was an exact, case-sensitive suffix, so a name like notes_api_token was never named here and,
+    once the spawn spec's writer reused this rule, would have been written to hosts/<sid>/spawn.json with
+    its value); the op names stay as credentials.py spells them, that being the classifier the boot check
+    refuses by. A name of another shape stays unnamed, and the boot line says what shape it checked.
+    Returns the names, sorted, for a one-line boot notice; values are tested for emptiness only and never
+    logged. The one exclusion is romp's own control token, which is not a provider credential (the exact
+    name romp reads, ROMP_SERVE_TOKEN; another spelling is not romp's token and is named like any other);
+    no name the claim removes is excluded here, so a login token still present when this runs did reach
+    sessions and is named, and the call's place after the claim is what keeps it off the line.
     """
+    def shaped(n) -> bool:
+        u = str(n).upper()
+        return u.endswith("_API_KEY") or u.endswith("_TOKEN") or _cred.is_op_env_name(n)
     return sorted(n for n in environ
-                  if n != "ROMP_SERVE_TOKEN" and (environ.get(n) or "").strip()
-                  and (n.endswith("_API_KEY") or n.endswith("_TOKEN") or _cred.is_op_env_name(n)))
+                  if n != "ROMP_SERVE_TOKEN" and (environ.get(n) or "").strip() and shaped(n))
+
+
+def _overlay_text(value) -> str:
+    """One env-overlay value as text: a str byte for byte, None as the empty string (the unset it means), any
+    other JSON-native value as str() of it. The coercion exists for the NAME decision only: spawn_env_secret_names
+    judges the shape rule over this view so that env_credential_names, which strips every value it is handed, can
+    read every value without raising, and split_spawn_secrets returns it for the names it moves, so the Popen(env=...)
+    that launches the host (_spawn_host) gets strings (review round 1 of the spawn-spec fix, 2026-09-18). It says
+    nothing about what the host later does with a non-string value left in the spec under a plain name: that
+    value stays in the file as it always did, and of the host's two transports only the pipe one
+    (session_host.py PipeCliTransport, the no-SDK road of the hermetic tests and CI) converts per value when it
+    lays the overlay over its environment; the SDK's transport, which every real install runs, merges the
+    overlay as it is and cannot spawn a CLI from a non-string value (pre-existing, unchanged, named in
+    split_spawn_secrets). Review round 2 (2026-09-18) restated the reason: round 1's docstring had credited the
+    pipe transport's conversion as the host's way, so the coercion read as matching the host when it only
+    serves the shape test."""
+    if isinstance(value, str):
+        return value
+    if value is None:
+        return ""
+    return str(value)
+
+
+def spawn_env_secret_names(env) -> list:
+    """The names a host spawn spec's env overlay must not carry into hosts/<sid>/spawn.json, for
+    split_spawn_secrets to move to the host's process environment: the three credential names (AUTH_ENV_NAMES,
+    whatever their value, as the pull-in's writer moved them) and every name env_credential_names flags over
+    the OVERLAY ITSELF, a non-empty value under a name ending _API_KEY or _TOKEN or one of 1Password's own. The
+    pull-in's writer stripped the three names alone, so a credential-shaped variable of any other name a compose
+    put in options.env was written to disk (the box admin's hazard review of the pull-in, 2026-09-16; fixed
+    2026-09-18), against the fork's rule that no credential is ever written to a file, and the rule for the
+    shape already existed for the boot notice (_note_env_credential_names), so the file and that notice now
+    agree on what a credential looks like. Judged over the overlay, never this process's environment: what the
+    file would carry is what is checked. An empty value stays in the overlay: it holds no secret, and there it
+    is the unset it was meant to be (a None stays as the JSON null it was; what a transport exports for it is the
+    transport's business, below). Sorted, names only, fit for a log line. [] for no overlay.
+
+    Two notes from review round 1 (2026-09-18). The shape rule is judged over a COERCED VIEW of the overlay
+    (_overlay_text per value), for the NAME decision only: env_credential_names strips every value it is handed,
+    so the first cut raised AttributeError on an overlay holding a non-string value anywhere in it, where the base
+    tree launched the session; the view keeps the test total and keeps a credential-shaped name moving whatever
+    its value's type (filtering the overlay to string values instead would have written an integer or a list under
+    a token-shaped name straight into the file, a verifier's probe showed). The view is the classification's alone:
+    a value the rule leaves in the overlay stays there as it was, non-string included, and what the host makes of
+    it is the transport's (review round 2, 2026-09-18: the pipe transport of the SDK-less tests exports str() of
+    it, the word None for a null; the SDK transport a real install runs cannot spawn from it at all; pre-existing
+    and unchanged here, see split_spawn_secrets). And the rule inherits env_credential_names' one
+    by-name exclusion, romp's own control token (ROMP_SERVE_TOKEN, not a provider credential, and already in an
+    owner-only file of the same state root): moot here, since no compose puts that name in options.env, so the
+    exclusion is stated and not undone, and the file and the boot notice keep one shape rule between them.
+
+    The shape is not widened past this (review round 1's addendum, 2026-09-18, which took a wording fix at
+    write_spawn_spec instead: that docstring and the change's title had claimed every credential-shaped name). A
+    password, a client secret, a private key, a cookie or a bare TOKEN under a name of another shape would stay in
+    the file, and no such name has a road into options.env today (its writers are _options' own: PATH, the identity
+    names, the scope limits, the fast-mode switches, the login tokens); a match on PASSWORD, SECRET, PRIVATE_KEY,
+    COOKIE or a bare _KEY would move a legitimate TOKEN_BUDGET, PRIVATE_KEY_PATH or SECRET_NAME out of the spec for
+    nothing, onto a road whose rank against the flag-settings layer is unverified (ENV_RESERVED_NAMES). So wherever
+    the file's omission is described, the shape is named rather than called every credential."""
+    if not isinstance(env, dict):
+        return []
+    names = set(n for n in AUTH_ENV_NAMES if n in env)
+    names.update(env_credential_names({k: _overlay_text(v) for k, v in env.items()}))
+    return sorted(names)
 
 
 def env_request_error(env, auth: str = "") -> str:
@@ -5458,18 +5529,39 @@ def startup_auth_env() -> dict:
 
 
 def split_spawn_secrets(spec: dict) -> dict:
-    """Move every credential-named variable (AUTH_ENV_NAMES) out of a host spawn spec's env overlay and
-    return them. The spec is written to hosts/<sid>/spawn.json, and a key or login token lives in the
-    process environment only, never in a file (the fork's rule, 2026-09-05; the pull-in review's item 1,
-    2026-09-16): the launch hands the returned variables to bin/romp-session-host through its process
-    environment instead (_spawn_host), and the host's CLI inherits them from there, so a stored login's
-    CLAUDE_CODE_OAUTH_TOKEN and the machine's boot-claimed login tokens reach the CLI exactly as they do
-    for a kernel child, with no file holding them. Every other field stays in the spec. The spec's env is
-    spawn_spec's own copy, so the options object the kernel-child road launches from is untouched."""
+    """Move the credential-shaped variables of a host spawn spec's env overlay out of it and return them
+    (spawn_env_secret_names' shape: AUTH_ENV_NAMES whatever their value, and a non-empty value under a name ending
+    _API_KEY or _TOKEN, in any letter case, or one of 1Password's; a name of another shape stays). The spec is
+    written to hosts/<sid>/spawn.json, and a key or login token lives in the process environment only, never
+    in a file (the fork's rule, 2026-09-05; the pull-in review's item 1, 2026-09-16): the launch hands the
+    returned variables to bin/romp-session-host through its process environment instead (_spawn_host), and
+    the host's CLI inherits them from there, so a stored login's CLAUDE_CODE_OAUTH_TOKEN and the machine's
+    boot-claimed login tokens reach the CLI exactly as they do for a kernel child, with no file holding them.
+    The file omits every other name of that shape in the overlay as well (the box admin's hazard review of
+    the pull-in, 2026-09-16, fixed 2026-09-18: the first cut moved the three names alone, so any other such
+    variable a compose put in options.env was written to disk): those take the same road, the host's
+    environment, with the overlay's precedence kept (_spawn_host lays them over the kernel's environment, as
+    the SDK lays options.env over it for a kernel child), so the session launches with them and only the file
+    is clean. Every other field stays in the spec. The spec's env is spawn_spec's own copy, so the options
+    object the kernel-child road launches from is untouched. The returned values are text (_overlay_text: a str
+    as it was, None as the empty string, any other value as str() of it), so the host's Popen(env=...) gets
+    strings whatever the overlay held, and a login name carrying None rides as the empty string, not the word
+    None (review round 1, 2026-09-18, beside the total name test in spawn_env_secret_names).
+
+    A residual, pre-existing and unchanged here (review round 2, 2026-09-18): a non-string value under a name the
+    shape rule leaves alone stays in the spec as it was, as the base tree wrote it, and that spec cannot launch a
+    real CLI. The host's SDK transport, the one every real install runs, merges the spec's overlay over its
+    environment as it is, with no per-value conversion, and a subprocess environment refuses a non-string value
+    (the round's verifiers spawned one through the real SDK transport: TypeError); only the pipe transport of the
+    SDK-less tests (session_host.py PipeCliTransport) converts per value, which is the road the non-string tests
+    in tests/test_session_host.py run. Those tests pin the value staying in the file as BASE behaviour, not as a
+    supported state. No writer of options.env produces a non-string value today (every value romp puts there is
+    a string), so the state has no live road, and a fix (refusing or converting the whole overlay at the write)
+    is a behavioural change with its own test and ruling, out of scope for a fix-tier change."""
     env = spec.get("env")
     if not isinstance(env, dict):
         return {}
-    return {name: env.pop(name) for name in AUTH_ENV_NAMES if name in env}
+    return {name: _overlay_text(env.pop(name)) for name in spawn_env_secret_names(env)}
 
 
 
@@ -12160,7 +12252,11 @@ class SdkBackend:
         provider's key there on purpose. Filed with problem=False explicitly, because _log's default
         classifies a line by whether an exception is being handled at the moment, and a boot that happens
         on a handler's retry path must not turn this line into a problem row. Names only, no value logged;
-        the copy says what shape was checked; nothing said on a box whose environment carries none."""
+        the copy says what shape was checked, the case fold included (review round 2 of the spawn-spec fix,
+        2026-09-18: round 1 folded case in env_credential_names and this copy still described exact-cased
+        suffixes, so a lowercase name was listed under a clause that excluded it; the fold is said between
+        the suffixes and the 1Password clause, whose names stay case-exact); nothing said on a box whose
+        environment carries none."""
         global _ENV_CRED_NAMES_SAID
         if _ENV_CRED_NAMES_SAID:
             return
@@ -12168,11 +12264,11 @@ class SdkBackend:
         if not names:
             return
         _ENV_CRED_NAMES_SAID = True
-        self._log("names in the kernel's own environment shaped like credentials (ending _API_KEY or _TOKEN, "
-                  "or 1Password's own OP_* names) reach every session's CLI and the shells it spawns (the SDK "
-                  "hands the CLI this process's environment): %s. Values are never logged; names of another "
-                  "shape are not checked. Move any that a session should not see out of the manager's "
-                  "environment (its service.env or service unit)." % ", ".join(names), problem=False)
+        self._log("names in the kernel's own environment shaped like credentials (ending _API_KEY or _TOKEN "
+                  "in any letter case, or 1Password's own OP_* names) reach every session's CLI and the shells "
+                  "it spawns (the SDK hands the CLI this process's environment): %s. Values are never logged; "
+                  "names of another shape are not checked. Move any that a session should not see out of the "
+                  "manager's environment (its service.env or service unit)." % ", ".join(names), problem=False)
 
     def _note_seed_skipped(self, side: str = "key", login_id: str = "") -> None:
         """Said ONCE per process and side, as a problem row: the remembered Billing default names a side this
@@ -12420,8 +12516,22 @@ class SdkBackend:
             spec["login"] = str(getattr(sess, "_options_login", "") or "")   # the login IDENTIFIER this launch bills, echoed
             #   in every hello as cli.login, so the kernel that first sees the CLI stamps the login the launch used (never a
             #   token or key: those ride the host's process environment, and the hello never carries them)
-            secrets = split_spawn_secrets(spec)    # the credential names leave the overlay BEFORE the file is written: a
-            #   login token rides the host's environment (_spawn_host), never spawn.json (the fork's secrets rule)
+            secrets = split_spawn_secrets(spec)    # the credential-shaped names (spawn_env_secret_names: a login name, and a
+            #   name ending _API_KEY or _TOKEN or one of 1Password's that carries a value) leave the overlay BEFORE the file
+            #   is written and ride the host's environment (_spawn_host), never spawn.json (the fork's secrets rule; the box
+            #   admin's hazard review, 2026-09-16; the shape named, not "every credential", since review round 1's addendum,
+            #   2026-09-18)
+            moved = [n for n in secrets if n not in AUTH_ENV_NAMES]
+            if moved:
+                # names only, never a value. The login names are routine (every login launch moves one) and go unsaid;
+                # a name beyond them means a compose put a credential-shaped variable in options.env, worth one line
+                # where the Log panel shows it. problem=False explicitly: _log's default classifies a line by whether an
+                # exception is being handled at that moment, and this routine line must stay routine from whatever road
+                # reaches it (no handler spans this call today; review round 1, 2026-09-18, which also pinned the kwarg
+                # and the login names' silence in tests/test_session_host.py; _note_env_credential_names files its line
+                # the same way).
+                self._log("host (%s): credential-shaped names in the launch's env overlay ride the host's environment, "
+                          "not spawn.json: %s" % (sess.name, ", ".join(moved)), problem=False)
             spec_path = ht.write_spawn_spec(self.state_dir, sess.sid, spec)
             sock = ht.host_sock(self.state_dir, sess.sid)
             try:
@@ -12464,9 +12574,11 @@ class SdkBackend:
         """Start bin/romp-session-host detached: in a transient scope of its own on Linux when scopes are on
         (outside the service cgroup, like the CLI's), a plain new-session child elsewhere. `secret_env` is the
         launch's credential overlay (split_spawn_secrets: a stored login's CLAUDE_CODE_OAUTH_TOKEN, the machine's
-        boot-claimed login tokens), handed to the host through its process environment and never through the
-        spec file or the command line: a scope runs its command as systemd-run's own child with this
-        environment, and both of the host's transports (session_host.py) build the CLI's environment from the
+        boot-claimed login tokens, and, since 2026-09-18, every other name of spawn_env_secret_names' shape in the
+        overlay that carries a value: one ending _API_KEY or _TOKEN, in any letter case, or one of 1Password's), handed
+        to the host through its process environment and never through the spec file or the command line: a scope runs
+        its command as systemd-run's own child with this environment, and both of the host's transports
+        (session_host.py) build the CLI's environment from the
         host's own with the spec's overlay on top, exactly as the SDK merges this process's environment for a
         kernel child. This process's environment carries no bearer (startup_auth_env claimed them at boot), so a
         key-billed launch's host inherits none."""

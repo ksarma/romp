@@ -1319,13 +1319,14 @@ a session can print, so there is no quiet fallback anywhere.
 
 At boot the kernel also names, once and as information rather than a problem,
 the variables in its own environment shaped like credentials (names ending
-`_API_KEY` or `_TOKEN`, and 1Password's own `OP_*` names) that reach every
-session's Claude process and the shells it spawns: the SDK hands each session
-the kernel's environment, and romp takes only the login tokens it claims at
-boot (see [The login](#the-login)) out of it. The line carries names only,
-never values, and a second provider's key placed there on purpose is nothing
-to act on. To keep a variable away from sessions, remove it from `service.env`
-or from the service unit's environment and restart the manager.
+`_API_KEY` or `_TOKEN` in any letter case, and 1Password's own `OP_*` names)
+that reach every session's Claude process and the shells it spawns: the SDK
+hands each session the kernel's environment, and romp takes only the login
+tokens it claims at boot (see [The login](#the-login)) out of it. The line
+carries names only, never values, and a second provider's key placed there on
+purpose is nothing to act on. To keep a variable away from sessions, remove it
+from `service.env` or from the service unit's environment and restart the
+manager.
 
 #### A key from a secret manager
 
@@ -2007,7 +2008,10 @@ crash resume, or the next kernel restart, which cuts a plain child's turn one
 last time); a new session is hosted at once. The host spawns the CLI from a
 spawn specification the kernel writes
 (`hosts/<sid>/spawn.json`, the plain fields of the SDK's options, at mode 0600
-in a 0700 directory, since it carries the environment overlay), through the
+in a 0700 directory, since it carries the environment overlay; a login token
+whatever its value, and any other name of that overlay carrying a value that
+ends `_API_KEY` or `_TOKEN`, in any letter case, or is one of 1Password's, is
+left out of the file and rides the host's process environment instead), through the
 SDK's own subprocess transport, so the command line and the environment are
 the SDK's byte for byte. It reads the CLI's stdout without pause and appends
 every message to an append-only journal (`hosts/<sid>/journal-<n>.jsonl`, one
