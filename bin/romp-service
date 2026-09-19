@@ -439,8 +439,11 @@ _unit_unichar() {   # $1 a code point from \uNNNN or \UNNNNNNNN, $2 the escape a
         # systemd refuses whole (String is not UTF-8 clean, refusal 4), so the escape is the only written form that reads back to the same
         # bytes and the writer has no re-encoding for it. The remedy is refusal 13's, not removing the escape: a rewrite proceeds only when
         # the path is this clone's, so the escape stands for a byte of the executable's real path, and the line without it names another place.
+        # The install it names does not restart a running manager (the preface's addendum, by a logged stub: daemon-reload, enable --now,
+        # which leaves an active unit as it is, three show calls and no restart; no road here calls restart), so the line says what the
+        # rewrite's own line says, that the manager keeps its old unit until its next restart, with the command.
         _W_EXEC_ERR="the escape $2, $what, which systemd decodes into bytes that are not UTF-8 by its rule and runs this unit with; a rewrite would have to write the decoded bytes raw, which systemd then refuses whole (String is not UTF-8 clean), so this reader does not carry the escape"
-        _W_EXEC_FIX="Move the clone to a path without such characters and run romp-service install from it, which writes the unit afresh and restarts the manager (the escape stands for a byte of the executable's real path, so the line without it names another place)."
+        _W_EXEC_FIX="Move the clone to a path without such characters (the escape stands for a byte of the executable's real path, so the line without it names another place) and run romp-service install from it, which writes the unit afresh; the running manager keeps its old unit until its next restart:  systemctl --user restart romp-manager"
         return 1
     fi
     _utf8_char "$1" _W_CH

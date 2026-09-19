@@ -4269,6 +4269,10 @@ EOF
     # Environment= twin's parenthetical (an assignment carrying them is dropped, that surface's consequence) and its remedy said to remove
     # the escape, which cannot be followed: a rewrite proceeds only when the path is this clone's, so the escape stands for a byte of the
     # executable's real path. Red under the old remedy restored (the _W_EXEC_ERR and _W_EXEC_FIX assignments dropped from _unit_unichar).
+    # The addendum to that commit (the lens on it): the remedy's clause that the install restarts the manager was false (a plain install
+    # runs daemon-reload and enable --now, which leaves an active unit as it is, and nothing in the reader calls restart: a logged stub
+    # counts 0 restart calls), so the remedy now says the running manager keeps its old unit until its next restart, with the command, as
+    # the rewrite's own line does, and the old clause is asserted absent; red under that clause restored.
     local unit="$ROMP_SYSTEMD_DIR/romp-manager.service" form esc rest what raw
     _old_unit "$unit"; cp "$unit" "$unit.clean"
     for form in '\uFFFE|a noncharacter|'$'\xef\xbf\xbe' '\uD800|a surrogate|'$'\xed\xa0\x80' '\uFDD0|a noncharacter|'$'\xef\xb7\x90' '\uDFFF|a surrogate|'$'\xed\xbf\xbf'; do
@@ -4280,7 +4284,8 @@ EOF
             "ExecStart's command has the escape $esc, $what, which systemd decodes into bytes that are not UTF-8 by its rule and runs this unit with; a rewrite would have to write the decoded bytes raw, which systemd then refuses whole (String is not UTF-8 clean), so this reader does not carry the escape" \
             "an Environment= assignment carrying them is dropped" "Remove the escape from" "this reader does not model that reading" "then systemctl --user daemon-reload"
         ROMP_MANAGER_BIN="$TEST_DIR/a${raw}b/romp-manager" _three_roads_refuse "$unit" \
-            "Move the clone to a path without such characters and run romp-service install from it, which writes the unit afresh and restarts the manager (the escape stands for a byte of the executable's real path, so the line without it names another place)."
+            "Move the clone to a path without such characters (the escape stands for a byte of the executable's real path, so the line without it names another place) and run romp-service install from it, which writes the unit afresh; the running manager keeps its old unit until its next restart:  systemctl --user restart romp-manager" \
+            "restarts the manager"
     done
     # the Environment= twin keeps its own consequence and remedy (the fold case above holds them; here the one phrase that tells the two apart)
     cp "$unit.clean" "$unit"; _svc_line "$unit" 'Environment=CLAUDE_CONFIG_DIR=/x/\uFFFE'

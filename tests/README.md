@@ -154,15 +154,19 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   verify runs at a time; `--list` prints the fixtures without running).
   A disagreement in the dangerous direction (the oracle reporting what
   systemd does not set, run or read: a value systemd leaves unset or sets to
-  something else, a unit systemd fails to load, as many commands or
+  something else, a unit systemd fails to load, a command systemd does not
+  run or a file it does not read, that is as many commands or
   EnvironmentFile paths as systemd's or more with a difference among them,
-  another exec path) is a defect in the oracle, and where the reader follows
-  the oracle, in the reader; the other direction (the oracle refusing or
-  leaving unset what systemd sets, or listing fewer commands or files) is a
-  false refusal. Until fork PR #778's round-5 preface the mark covered
-  systemd-unset-oracle-set, more commands and more files alone, so a value
-  both set and different, the direction's worst member since it is
-  confidently wrong, went unmarked.
+  or fewer with one that is not among systemd's, another exec path) is a
+  defect in the oracle, and where the reader follows the oracle, in the
+  reader; the other direction (the oracle refusing or leaving unset what
+  systemd sets, or listing fewer commands or files, every one among
+  systemd's) is a false refusal. Until fork PR #778's round-5 preface the
+  mark covered systemd-unset-oracle-set, more commands and more files alone,
+  so a value both set and different, the direction's worst member since it
+  is confidently wrong, went unmarked; until that commit's addendum a
+  shorter list carrying a command or a file systemd does not run or read
+  went unmarked too.
   Taken against `systemd 255 (255.4-1ubuntu8.17)` at the fold head
   (2026-09-19; 256 may move any class, and a different build prints a notice
   beside the counts):

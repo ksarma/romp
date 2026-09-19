@@ -29,11 +29,14 @@ not-modelled path, not a disagreement); DISAGREE. The direction that matters mos
 column: a disagreement where the oracle reports what systemd does not set, run or read. Its shapes: a value systemd
 leaves unset or sets to something else (both set and different is the oracle, and a reader following it, reporting a
 value systemd will not set, the direction's worst member since it is confidently wrong), a unit systemd fails to load
-reported as loaded, as many commands as systemd's or more with a difference among them, another exec->path, and as
-many EnvironmentFile paths or more with a difference. The other direction, the oracle refusing or leaving unset what
-systemd sets, or listing fewer commands or files, is a DISAGREE without the mark: a false refusal where the reader
-follows it. Until fork PR #778's round-5 preface the column marked systemd-unset-oracle-set, more commands and more
-files alone, so a both-set mismatch and a same-count argv difference went unmarked.
+reported as loaded, a command systemd does not run (as many commands as systemd's or more with a difference among
+them, or fewer with one that is not among systemd's), another exec->path, and a file systemd does not read (as many
+EnvironmentFile paths or more with a difference, or fewer with one not among systemd's). The other direction, the
+oracle refusing or leaving unset what systemd sets, or listing fewer commands or files, every one among systemd's, is
+a DISAGREE without the mark: a false refusal where the reader follows it. Until fork PR #778's round-5 preface the
+column marked systemd-unset-oracle-set, more commands and more files alone, so a both-set mismatch and a same-count
+argv difference went unmarked; until that commit's addendum a shorter list carrying a command or a file systemd does
+not run or read went unmarked too.
 
 Run:  python3 tests/romp-service-differential.py            (about ten seconds; four verify runs at a time)
       python3 tests/romp-service-differential.py --list    (the fixture ids and their [Service] lines, no runs)
@@ -327,10 +330,13 @@ def run_oracle(root, sd, path):
 # ---- the comparison -----------------------------------------------------------------------------------------------
 def compare(kind, sd, orc):
     """(verdict, detail, dangerous): verdict in agree / agree (both refuse) / REFUSES / DISAGREE; dangerous when the oracle reports
-    what systemd does not set, run or read: a value systemd leaves unset or sets to something else, a unit systemd fails to load, as
-    many commands as systemd's or more with a difference among them, another exec->path, as many EnvironmentFile paths or more with
-    a difference. The oracle refusing or leaving unset what systemd sets, or listing fewer commands or files, is unmarked (a false
-    refusal where the reader follows it). The round-5 preface of fork PR #778 added the both-set and same-count shapes."""
+    what systemd does not set, run or read: a value systemd leaves unset or sets to something else, a unit systemd fails to load, a
+    command systemd does not run (as many commands as systemd's or more with a difference among them, or fewer with one not among
+    systemd's), another exec->path, a file systemd does not read (as many EnvironmentFile paths or more with a difference, or fewer
+    with one not among systemd's). The oracle refusing or leaving unset what systemd sets, or listing fewer commands or files, every
+    one among systemd's, is unmarked (a false refusal where the reader follows it). The round-5 preface of fork PR #778 added the
+    both-set and same-count shapes; its addendum the shorter list carrying one systemd does not run or read (the lens's example: the
+    oracle reporting one command with another argument where systemd runs two; the count test alone left it unmarked)."""
     if "refuses" in orc: return "REFUSES", orc["refuses"], False
     if sd["fatal"] and orc["fatal"] is not None: return "agree (both refuse)", "", False
     if sd["fatal"]: return "DISAGREE", "systemd refuses the unit (%s); the oracle loads it" % "; ".join(sd["notes"])[:200], True
@@ -345,13 +351,13 @@ def compare(kind, sd, orc):
     sd_cmds, orc_cmds = sd["cmds"], [c["argv"] for c in orc["execs"]]
     if sd_cmds != orc_cmds:
         diffs.append("argv: systemd %r, oracle %r" % (sd_cmds, orc_cmds))
-        if len(orc_cmds) >= len(sd_cmds): dangerous = True     # more commands than systemd runs, or as many with other words
+        if len(orc_cmds) >= len(sd_cmds) or any(c not in sd_cmds for c in orc_cmds): dangerous = True   # more commands than systemd runs, as many with other words, or fewer with one systemd does not run
     if sd["path"] is not None and orc["execs"] and orc["execs"][0]["path"] != sd["path"]:
         diffs.append("exec->path: systemd %r, oracle %r" % (sd["path"], orc["execs"][0]["path"]))
         dangerous = True                                       # a path systemd does not run
     if sd["envfiles"] != orc["envfiles"]:
         diffs.append("EnvironmentFile: systemd %r, oracle %r" % (sd["envfiles"], orc["envfiles"]))
-        if len(orc["envfiles"]) >= len(sd["envfiles"]): dangerous = True   # more files than systemd reads, or as many with another path
+        if len(orc["envfiles"]) >= len(sd["envfiles"]) or any(f not in sd["envfiles"] for f in orc["envfiles"]): dangerous = True   # more files than systemd reads, as many with another path, or fewer with one systemd does not read
     if diffs: return "DISAGREE", "; ".join(diffs), dangerous
     return "agree", "", False
 
@@ -411,7 +417,7 @@ def main():
     print("%-6s %6d %6d %8d %9d %10d" % ("total", tot["cases"], tot["agree"], tot["refuses"], tot["disagree"], tot["dangerous"]))
     f = per.get("fold", {"cases": 0, "agree": 0, "refuses": 0, "disagree": 0, "dangerous": 0})
     print("fold batch: %d cases, %d agree, %d REFUSES, %d DISAGREE, %d dangerous" % (f["cases"], f["agree"], f["refuses"], f["disagree"], f["dangerous"]))
-    print("dangerous = a disagreement where the oracle reports what systemd does not set, run or read (a value unset or other to systemd, a unit it fails to load, as many commands or files or more with a difference, another exec->path)")
+    print("dangerous = a disagreement where the oracle reports what systemd does not set, run or read (a value unset or other to systemd, a unit it fails to load, as many commands or files or more with a difference or fewer with one systemd does not run or read, another exec->path)")
     bad = [r for r in rows if r[1] == "DISAGREE"]
     if bad:
         print("disagreements:")
