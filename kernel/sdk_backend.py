@@ -19650,7 +19650,10 @@ class SdkBackend:
         billing the login after `default` while every reader said it followed the default. No /auth chip: the session
         made no pick. False for a record that will not read, and for a record whose write is refused (the clear and its
         mirror as one unit, below; round 2 of the billing verb's review, its fresh-2), with the pick left standing and the
-        sentence for the caller left at pop_auth_refusal."""
+        sentence for the caller left at pop_auth_refusal. That slot is cleared at entry, before the read (the second pass
+        of that round): what a caller pops after a False is this call's own sentence or nothing, whatever an earlier caller
+        left unread there, so the door does not rest on the route being the one caller that pops on every refusal."""
+        self._auth_refusals.pop(str(sid), None)   # a sentence an earlier call left unread never answers for this one
         reg = read_reg(self.state_dir, sid)
         if not reg:
             return False
@@ -19724,15 +19727,17 @@ class SdkBackend:
         class only: the route hands it to a caller over HTTP, and an OSError's text carries the record's absolute path,
         which is this box's business (the problem row below keeps the masked text for the Log). Always False."""
         why = "%s's pick was not cleared: its record would not write (%s), so it keeps its own pick" % (name, type(e).__name__)
-        self._auth_refusals[sid] = why
+        self._auth_refusals[str(sid)] = why
         self._log("auth (%s): its own pick was NOT cleared: the record write failed (%s: %s); the pick stands and the session "
                   "bills as it did" % (name, type(e).__name__, _mask_ids(e)), problem=True)
         return False
 
     def pop_auth_refusal(self, sid: str) -> str:
         """The sentence the last refused billing write on `sid` left for its caller (a `default` clear whose record write
-        failed, _refuse_default_clear), popped: "" when none. Popped, and keyed by sid, so a caller never reads a refusal
-        another call or another session left (last_auth_refusal, set_auth's toast reason, is one slot and is not read here)."""
+        failed, _refuse_default_clear), popped: "" when none. Popped, keyed by sid, and cleared again when follow_default_auth
+        next enters for the sid (the second pass of round 2), so a caller never reads a refusal another call or another
+        session left, and a sentence a caller left unread is gone before the next call's own answer is decided
+        (last_auth_refusal, set_auth's toast reason, is one slot and is not read here)."""
         return str(self._auth_refusals.pop(str(sid), "") or "")
 
     def _follow_default_unlanded(self, s, label, because=None) -> None:
