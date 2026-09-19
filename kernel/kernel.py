@@ -1027,8 +1027,11 @@ class _PerfStats:
                                    subagentTree (the subagents directory tree memo the builds read,
                                    _subagent_tree_memo_report) -> hit / miss (trees vouched for by
                                    their directories' stats vs walked), evict (roots dropped as
-                                   unowned), dirStats, walkMs / validateMs and the gauges roots /
-                                   dirs; judgingBand (the timeline's judging band memo,
+                                   unowned), dirStats (the directory stats both validators paid:
+                                   the tree validation's lstats and the agent-file lookup's stamp
+                                   re-check; the lstat half alone before 2026-09-19, when a tree's
+                                   validation became once per pusher cycle and once per jobs pass),
+                                   walkMs / validateMs and the gauges roots / dirs; judgingBand (the timeline's judging band memo,
                                    _judging_band_report) -> builds / ms, rows_skipped /
                                    rows_visited, entries_reused / entries_minted, resets (a rotated
                                    log, an uncounted left prune, a horizon moved back),
@@ -35194,11 +35197,20 @@ SUBAGENT_STEPS_CAP = 200        # tool calls shipped on the Agent head (agentSte
 # per build from the feed, timeline and chat builds and the nudge walk, and a pusher stack sample put a tenth of its push-stage
 # samples inside that walk. Bounded by ownership, not by a count: _subagent_trees_forget drops every root no alive session's
 # transcript names, on every jobs pass (_interrupt_block_tick, audience-independent) and, as a belt, after each feed build
-# and from the tracking-off frame.
+# and from the tracking-off frame. Validated at most once per pusher cycle and once per jobs pass since 2026-09-19: the
+# thread's cycle scope (_subagent_scope_open, below _subagent_tree_charge) holds the validated pair for the cycle.
 _SUBAGENT_TREES = {}
 _SUBAGENT_TREE_STATS = {"hit": 0, "miss": 0, "evict": 0, "dirStats": 0, "walkMs": 0.0, "validateMs": 0.0}   # /perf memos.subagentTree;
 #                          advisory tallies, incremented without a lock as the neighbouring memos' are (a lost count under a race
-#                          is tolerated; the memo's own writes are single dict stores of immutable tuples)
+#                          is tolerated; the memo's own writes are single dict stores of immutable tuples). dirStats counts the
+#                          directory stats BOTH validators pay (2026-09-19): _subagent_tree's lstat per known directory and
+#                          _dir_stamp's os.stat per directory an agent-file lookup re-checks; before that day it counted the
+#                          lstat half alone, so the figure across that deploy is not one series
+_SUBAGENT_TREES_GEN = [0]       # moved when a root leaves _SUBAGENT_TREES (_subagent_trees_forget; _subagent_tree's missing or replaced
+#                                 root): a cycle scope opened under an older value empties itself before it serves (_subagent_scope),
+#                                 so no thread serves a tree memoized before an eviction. Advisory like the tallies, written without a
+#                                 lock: a bump lost under a race could let a thread serve one cycle's pair past a concurrent eviction,
+#                                 bounded by that cycle's end
 
 
 def _subagents_dir(path):
@@ -35225,6 +35237,63 @@ def _lstat_or_none(p):
 def _subagent_tree_charge(kind, t0):
     """Add the milliseconds since t0 to the memo's `kind` tally (walkMs or validateMs) for /perf."""
     _SUBAGENT_TREE_STATS[kind] += (time.monotonic() - t0) * 1000.0
+
+
+# THE CYCLE SCOPE (2026-09-19): a tree is validated at most once per pusher cycle and once per jobs pass. The walk memo made a
+# call cost one lstat per known directory instead of a listing, and _subagent_file's hit path re-stats every directory its walk
+# read, which for a nested or missing agent's file is the whole tree; so one _session_awaiting over A such agents paid (A+1) x D
+# directory stats with nothing changed, and it runs up to five times per session per pusher cycle (the chat, feed and timeline
+# builds and the chips) and once per jobs pass (the nudge look). Measured on the deployed kernel (py-spy, 2026-09-19):
+# _dir_stamp's one os.stat was 28% of the pusher's samples, and the memo's own counters showed 24.5 million validation lstats in
+# 6.8 hours over 1,294 directories (the user 2026-09-05, who wanted the one-core kernel investigated). The cycle and the pass
+# are the events a time window would have stood in for (the repo's design rule): the thread's slot opens at the cycle's start
+# and closes in its finally, the first reader of a tree in the cycle validates or walks it, and every later reader on that
+# thread in the cycle is served the pair, stat for stat what the first reader saw. A change on disk after that validation (a
+# workflow directory created, a sidecar or agent file landing, a tree removed) is seen by the NEXT cycle's first reader: one
+# cycle later at most, and the racy-stamp rule still decides what the cross-cycle memo may vouch for (a directory written
+# within the window is re-walked at the next cycle's first read, once per cycle instead of once per call). Thread-confined
+# like _live_scope's other slots, so the pusher's and the jobs thread's memos never meet; a handler thread (a WS or HTTP
+# build, the act-now nudge pass) holds no slot and reads per call as before. Nothing failed is held: a missing or replaced
+# root, a walk with a failed listing or child lstat and a failed _dir_stamp stat are answered as before and leave no entry.
+def _subagent_scope_open():
+    """Open this thread's cycle scope for the tree memos (see _subagent_scope): the pusher cycle's and the jobs pass's
+    prelude, beside the other per-cycle slots."""
+    _live_scope.subtrees = {"gen": _SUBAGENT_TREES_GEN[0], "trees": {}, "stamps": {}, "launches": {}}
+
+
+def _subagent_scope_close():
+    """Close it: the cycle's finally, beside the other slots."""
+    _live_scope.subtrees = None
+
+
+def _subagent_scope():
+    """This thread's open cycle scope, or None outside a cycle: `trees` (subagents root -> the (directories, stats) pair
+    _subagent_tree validated or cleanly walked this cycle), `stamps` (directory -> the (dir, mtime_ns) _dir_stamp answers,
+    indexed from every held tree and by _dir_stamp's own successful stats) and `launches` (_awaiting_nest's per-agent launch
+    ids, keyed (transcript, agentId)). A scope whose gen is behind _SUBAGENT_TREES_GEN (a root evicted since it opened, on
+    this thread or another) is emptied before it is served, so an eviction is honoured by the evicting thread at its next
+    lookup and by the other thread at its next lookup; the cost is one re-validation per tree per eviction event."""
+    sc = getattr(_live_scope, "subtrees", None)
+    if sc is None:
+        return None
+    gen = _SUBAGENT_TREES_GEN[0]
+    if sc["gen"] != gen:
+        sc["trees"].clear(); sc["stamps"].clear(); sc["launches"].clear()
+        sc["gen"] = gen
+    return sc
+
+
+def _subagent_scope_hold(sc, d, dirs, stats):
+    """Hold a validated or cleanly walked tree in the cycle scope `sc` (None: no scope open, nothing held): the pair under
+    its root `d` and each directory's stamp under its path, the shape _dir_stamp answers. The tree holds real directories
+    only (the root by lstat, each child by is_dir(follow_symlinks=False)), so a directory's os.stat and os.lstat agree and
+    the stamp _dir_stamp would take is the one indexed here."""
+    if sc is None:
+        return
+    sc["trees"][d] = (dirs, stats)
+    stamps = sc["stamps"]
+    for sd, st in zip(dirs, stats):
+        stamps[sd] = (sd, st.st_mtime_ns)
 
 
 def _subagent_tree(d):
@@ -35261,15 +35330,30 @@ def _subagent_tree(d):
     but cannot be listed (EACCES) stays in the list, where os.walk dropped it, unvouched, so the tree is walked on every
     call until it can be listed (today's cost, and the chmod that opens it is seen at once); no consumer's output changes
     (_subagent_meta_map's listing of it fails and is skipped, _find_agent_file finds no file in it, the feed key folds one
-    more identity)."""
+    more identity).
+
+    Inside a pusher cycle or a jobs pass (this thread's cycle scope, _subagent_scope; 2026-09-19) the validation itself
+    happens at most once per cycle: the pair a validated hit or a clean walk returned is held in the scope and every later
+    call for the root on that thread in the cycle is served it with no stat, and a change on disk after that validation is
+    seen by the next cycle's first call, one cycle later at most (the comment block above _subagent_scope_open). Not held:
+    a missing or replaced root (the two pop paths, which also move _SUBAGENT_TREES_GEN when they removed an entry, so every
+    open scope drops what it holds) and a walk with a failed listing or child lstat, which cost what they cost today per
+    call and never serve a failure."""
     d = str(d)
+    sc = _subagent_scope()
+    if sc is not None:
+        held = sc["trees"].get(d)
+        if held is not None:                              # validated or walked earlier this cycle on this thread: no stat
+            return held
     try:
         st = os.lstat(d)
     except OSError:                                       # nothing at the root: [] as ever, and the entry is forgotten
-        _SUBAGENT_TREES.pop(d, None)
+        if _SUBAGENT_TREES.pop(d, None) is not None:
+            _SUBAGENT_TREES_GEN[0] += 1                   # an eviction: every open cycle scope re-validates (_subagent_scope)
         return (), ()
     if not stat.S_ISDIR(st.st_mode):                      # a symlink (live or dangling) or a file in its place: not a tree
-        _SUBAGENT_TREES.pop(d, None)
+        if _SUBAGENT_TREES.pop(d, None) is not None:
+            _SUBAGENT_TREES_GEN[0] += 1
         return (), (st,)
     hit = _SUBAGENT_TREES.get(d)
     if hit is not None and None not in hit[1]:
@@ -35283,6 +35367,7 @@ def _subagent_tree(d):
         _subagent_tree_charge("validateMs", t0)
         if fresh == hit[1]:
             _SUBAGENT_TREE_STATS["hit"] += 1
+            _subagent_scope_hold(sc, d, hit[0], stats)    # the cycle's one validation of this tree
             return hit[0], stats
     _SUBAGENT_TREE_STATS["miss"] += 1
     t0 = time.monotonic()
@@ -35317,7 +35402,10 @@ def _subagent_tree(d):
                    for s, ok in zip(stats, clean))
     _SUBAGENT_TREES[d] = (tuple(dirs), idents)
     _subagent_tree_charge("walkMs", t0)
-    return tuple(dirs), stats
+    dirs = tuple(dirs)
+    if all(clean):                                        # a walk that listed and stat'd everything: the cycle's pair; a failed
+        _subagent_scope_hold(sc, d, dirs, stats)          #  listing or lstat is never held, so the next call this cycle re-walks
+    return dirs, stats
 
 
 def _subagent_dirs(d):
@@ -35339,15 +35427,26 @@ def _subagent_trees_forget(alive):
     builds, the WS handlers' viewer frames and the HTTP handlers at once, and a comprehension over the live dict raises
     RuntimeError under a concurrent insert (the _prov_ledger_memo_evict and _intr_marks_forget precedent)."""
     owned = {str(_subagents_dir(s["path"])) for s in alive if s.get("path")}
+    evicted = 0
     for d in list(_SUBAGENT_TREES):
         if d not in owned and _SUBAGENT_TREES.pop(d, None) is not None:
             _SUBAGENT_TREE_STATS["evict"] += 1
+            evicted += 1
+    if evicted:
+        _SUBAGENT_TREES_GEN[0] += 1                       # every open cycle scope (this thread's, the pusher's) drops what it
+        #                                                   holds at its next lookup, so no thread serves an evicted root's pair
 
 
 def _subagent_tree_memo_report():
     """/perf memos.subagentTree: hit and miss (trees served by validation against trees walked), evict (roots dropped as
-    unowned), dirStats (the lstats validations paid), walkMs and validateMs (the time in each, every thread), and the gauges
-    roots (entries) and dirs (directories held). Written from several threads; a resize under the sum is read again."""
+    unowned), dirStats (the directory stats both validators paid: the tree validation's lstat per known directory and the
+    agent-file lookup's os.stat per directory it re-checks, _dir_stamp; the lstat half alone before 2026-09-19), walkMs and
+    validateMs (the time in each, every thread), and the gauges roots (entries) and dirs (directories held). A validation
+    happens at most once per pusher cycle and once per jobs pass since 2026-09-19 (_subagent_scope), so dirStats per cycle
+    or pass is bounded by the directories held, not by the readers: about `dirs` less the roots in the common order (a tree
+    read before its agent-file lookups), up to twice that when a command row's lookup re-checks stamps before the tree is
+    read, plus the project and sibling directory stats an agent-file miss pays. Written from several threads; a resize
+    under the sum is read again."""
     for _ in range(3):
         try:
             dirs = sum(len(v[0]) for v in list(_SUBAGENT_TREES.values()))
@@ -35419,11 +35518,23 @@ def _subagent_meta_map(path):
 
 
 def _dir_stamp(sd):
-    """(dir, mtime_ns) for one directory, a stat (None when missing)."""
+    """(dir, mtime_ns) for one directory, a stat (None when missing). Inside a cycle scope (_subagent_scope, 2026-09-19) the
+    stamp is served from the scope when held (indexed from a tree validated this cycle, or taken by an earlier call on this
+    thread), else taken once and held; a stat that raises is answered (sd, None) and never held, so the next call stats
+    again. Each os.stat taken counts under memos.subagentTree dirStats beside _subagent_tree's validation lstats."""
+    sc = _subagent_scope()
+    if sc is not None:
+        held = sc["stamps"].get(sd)
+        if held is not None:
+            return held
     try:
-        return (sd, os.stat(sd).st_mtime_ns)
+        out = (sd, os.stat(sd).st_mtime_ns)
     except OSError:
-        return (sd, None)
+        return (sd, None)                                 # not held (a held entry would have been served above, so none stands)
+    _SUBAGENT_TREE_STATS["dirStats"] += 1
+    if sc is not None:
+        sc["stamps"][sd] = out
+    return out
 
 
 def _dir_stamps(dirs):
@@ -65261,6 +65372,8 @@ def _pusher_cycle():
     try:
         _live_scope.paths = {}                  # …and the cycle's sid→path memo (_path_of): the parked-op drain
         #                                         otherwise resolves a held sid's path once per gate per cycle
+        _subagent_scope_open()                  # …and the cycle's subagents-tree scope (_subagent_scope): a tree is
+        #                                         validated once per cycle, not once per reader (2026-09-19)
         _live_scope.sessions = {}               # …and the cycle's discover rows (_sessions, keyed (window,
         #                                         forks); the wide walk under ("wide", window)): ~35 sweeps
         #                                         per cycle became one
@@ -65279,6 +65392,7 @@ def _pusher_cycle():
         _live_scope.snapshot = None
         _live_scope.names = None
         _live_scope.paths = None
+        _subagent_scope_close()
         _live_scope.sessions = None
         _live_scope.msgsum = None
         _live_scope.auth = None
