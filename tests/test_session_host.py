@@ -1804,7 +1804,11 @@ class HostProcess(unittest.TestCase):
         record on disk and no host to land another). On the deadline the helper fails, and the message carries the four
         facts that tell a writer fault from a numbering mismatch: the count waited for, the count found, the offsets
         found and the timeout in seconds. Red on the helper before 2026-09-19, which returned the one record silently."""
-        j = sh.Journal(os.path.join(self.state, "hosts", SID))
+        d = os.path.join(self.state, "hosts", SID)
+        os.makedirs(d, mode=0o700)      # made here: Journal makes no parent since the socket-mode fix's round 2 (owner_only_dir,
+        #                                 2026-09-19), the host's directory existing before a host opens its journal; this case is
+        #                                 about the wait's message, not the directory
+        j = sh.Journal(d)
         j.append({"type": "assistant", "n": 0}); j.close()
         t0 = time.time()
         with self.assertRaises(AssertionError) as cm:
