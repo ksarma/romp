@@ -1312,9 +1312,13 @@ class Cli(unittest.TestCase):
         shape's block carries `sessions.parsedUnavailable`, the fixed string `predates-parses.perSession`, in place of the
         count, so a reader of two uploads can tell a count the export could not read from a kernel that parsed nothing; the
         upload's three walks and its fold belt pass the leaf (one token of the ident grammar, as `kernelUptime`'s bucket is)
-        and the recording receiver sees it. Fails with export_document writing usage unconditionally (the plain body carries
+        and the recording receiver sees it. The same snapshot with a perSession block whose sessions is a digit string, the
+        MALFORMED shape (the ruling of 2026-09-19 on the leaf), sent the same way: the leaf carries its own reason,
+        `perSession.sessions-not-a-number`, never the predates reason, since the block is there, and the digit string travels
+        under perf as the fold leaves it. Fails with export_document writing usage unconditionally (the plain body carries
         the block), with usage_block counting the per-sid table again (a parsed count no plain leaf gives), with the absence
-        leaf dropped or its reason reworded (the leaf is read at the receiver by name and value)."""
+        leaf dropped or either reason reworded (the leaf is read at the receiver by name and value), with the malformed
+        shape given the predates reason."""
         base = ["--yes", "--receiver", self.fake.url]
         snap = planted_snapshot()
         snap["http"].update({"GET /feed": {"count": 3, "ms": 30.0}, "GET /timeline": {"count": 2, "ms": 1.0},
@@ -1365,6 +1369,20 @@ class Cli(unittest.TestCase):
         self.assertNotIn(b"parsedUnavailable", raw[False], "a plain export carries no usage block and so no absence leaf")
         self.assertEqual(withu["usage"]["kernelUptime"], next(name for bound, name in pu.pe.UPTIME_BUCKETS if plain["perf"]["uptime_s"] < bound))
         self.assertEqual(set(withu["usage"]), {"actions", "views", "sessions", "kernelUptime"}, "every leaf of the block accounted for")
+        # the malformed shape on the wire: the per-sid table replaced by a perSession block whose count is a digit string
+        bad = dict(snap, parses=dict({k: v for k, v in snap["parses"].items() if k != "bySid"}, perSession={"sessions": "1", "max": 3}))
+        path = _export(self.xdg, self.state, usage=True, snap=bad, name="road-malformed.json")
+        r = _run([path] + base, self.state)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(len(self.fake.requests), 1)
+        raw_bad = self.fake.requests[0][2]
+        self.fake.requests.clear()
+        sent = json.loads(raw_bad)
+        self.assertEqual(sent["perf"]["parses"]["perSession"], {"sessions": "1", "max": 3}, "the garbage travels as the fold leaves it")
+        self.assertEqual(sent["usage"]["sessions"], {"chatBuilt": 1, "parsedUnavailable": "perSession.sessions-not-a-number"},
+                         "the block is there and carries no number: its own reason, never that the snapshot is old")
+        self.assertIn(b'"parsedUnavailable": "perSession.sessions-not-a-number"', raw_bad, "the line at the receiver, by name and value")
+        self.assertNotIn(b"predates-parses.perSession", raw_bad)
 
     def test_a_file_that_repeats_a_key_is_refused_before_the_scan_since_the_reader_must_not_choose_a_copy(self):
         """A key spelled twice in one object is refused as not strict JSON, at any depth and whatever the values. The reason
@@ -2729,10 +2747,13 @@ class Docs(unittest.TestCase):
                       "`usage` (the uptime's bucket `kernelUptime`, the `sessions` block's `parsed`, `chatBuilt` and `stamped`, each a copy or "
                       "a count of a leaf under perf that travels anyway",
                       # the second closing check (2026-09-19): the absence of the parsed count is stated in the document, by a leaf the
-                      # paragraph names with its fixed value; the wire's side is the road case above, the derivation is Disclosed's
-                      "or, for a snapshot saved before the kernel counted parsed sessions, `parsedUnavailable` in place of `parsed`, the "
-                      "fixed string predates-parses.perSession, so a count the export could not read is told from a kernel that parsed "
-                      "nothing",
+                      # paragraph names with its fixed value, and (the ruling of the same day on the leaf) one value per cause, each
+                      # true of the shape that carries it; the wire's side is the road case above, the derivation is Disclosed's
+                      "or, where the snapshot gives no parsed count, `parsedUnavailable` in place of `parsed` with one of two fixed "
+                      "strings, predates-parses.perSession for a snapshot saved before the kernel counted parsed sessions (no perSession "
+                      "block under parses) and perSession.sessions-not-a-number for a snapshot whose perSession block is there but "
+                      "carries no number under sessions, so a count the export could not read is told from a kernel that parsed "
+                      "nothing, and an old snapshot from a malformed one",
                       "the kernel commit",
                       "so two uploads from one kernel remain linkable by design",
                       # the closing re-run's finding 3, as its verification corrected it: the round's first replacement said an

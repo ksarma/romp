@@ -46,11 +46,15 @@ into the refusal. `--usage` adds a `usage` block, off by default: the session co
 served and one per pane route served, the http table's count for that route under the route's name, whoever made
 the requests, and the kernel's uptime bucket, all from keys the snapshot already carries and folded the same way; the
 `http` table itself, one row per route served with its request count and millisecond total, is in every export, so
-the block adds packaging and no number a plain export lacks (the closing check of 2026-09-19, HIGH 1). A snapshot saved
-by a kernel before it wrote `parses.perSession` has no parsed count to copy (its per-sid table is one the plain export
-drops), and the block says so in place of the count: `sessions.parsedUnavailable`, the fixed string
-`predates-parses.perSession`, present exactly when the count is absent, so a reader of two exports can tell a count this
-verb could not read from a kernel that parsed nothing (the second closing check, 2026-09-19).
+the block adds packaging and no number a plain export lacks (the closing check of 2026-09-19, HIGH 1). A snapshot with no
+number under `parses.perSession.sessions` has no parsed count to copy, and the block says so in place of the count:
+`sessions.parsedUnavailable`, one of two fixed strings, each true of the snapshot that carries it: `predates-parses.perSession`
+when the snapshot has no `parses.perSession` block at all (a kernel from before it wrote one saved it; its per-sid table is one
+the plain export drops), and `perSession.sessions-not-a-number` when the block is there and its `sessions` is not a number (a
+hand-made or edited snapshot's shape: the kernel writes a count there). The leaf is present exactly when the count is absent, so
+a reader of two exports can tell a count this verb could not read from a kernel that parsed nothing (the second closing check,
+2026-09-19), and an old snapshot from a malformed one (the ruling of the same day on the leaf, whose first cut gave both
+causes the first reason, false for the second).
 
 The file lands under the state directory as `perf-exports/perf-export-<YYYYMMDDTHHMM>.json`, mode 0600, or at
 --out (a write that fails partway removes the file rather than leave a truncated one); the path and the byte
@@ -98,16 +102,22 @@ VIEW_ROUTES = ("/chat", "/feed", "/timeline", "/fleet", "/waiting", "/analytics"
                "/usage/fleet", "/spend/detail", "/session-events", "/handoff", "/views", "/tunnels")
 UPTIME_BUCKETS = ((3600, "lt1h"), (86400, "1h-24h"), (7 * 86400, "1d-7d"), (float("inf"), "gt7d"))
 # The one leaf of the usage block that is neither a count nor a bucket: written under `sessions` in place of `parsed`, exactly
-# when the count is absent (a snapshot saved by a kernel before it wrote parses.perSession: its per-sid table is one the plain
-# export drops, pp.DENY_KEYS, so no count of it may travel and none can be read from what does), and absent when the count is
-# present. The value is a fixed string within the ident grammar (pp.IDENT: one token, at most 32 characters), so the fold
-# writes it as it is, the block equals its own fold, the belt `romp perf upload` holds it to, and the three walks pass it; it
-# carries no machine fact. The ruling of the second closing check (2026-09-19): a reader that cannot produce a value must say
-# so IN THE DOCUMENT, since a user comparing two uploads cannot otherwise tell a count the tool could not read from a kernel
-# that parsed nothing; the disclosure paragraph in docs/reference.md names the leaf and its value, and tests/test_perf_stats.py
-# (Disclosed) holds both the wording and the conditioning over both snapshot shapes.
+# when the count is absent, and absent when the count is present. Its value is one of two fixed strings, keyed on the SHAPE of
+# the snapshot so that each is true of the snapshot that carries it (the ruling of 2026-09-19 on the leaf: its first cut wrote
+# one reason over two causes, and the reason was false for one of them): PARSED_UNAVAILABLE_REASON when the snapshot has no
+# parses.perSession block at all (a kernel from before it wrote one saved it; its per-sid table is one the plain export drops,
+# pp.DENY_KEYS, so no count of it may travel and none can be read from what does), and PARSED_MALFORMED_REASON when the block is
+# there and its sessions is not a number (absent, a string, a bool, null, or a perSession that is not a block: a hand-made or
+# edited snapshot, since the kernel's collector writes len(by_sid) there). Both values are within the ident grammar (pp.IDENT:
+# one token, at most 32 characters; the second is exactly 32), so the fold writes each as it is, the block equals its own fold,
+# the belt `romp perf upload` holds it to, and the three walks pass it; neither carries a machine fact. The ruling of the second
+# closing check (2026-09-19): a reader that cannot produce a value must say so IN THE DOCUMENT, since a user comparing two
+# uploads cannot otherwise tell a count the tool could not read from a kernel that parsed nothing; the disclosure paragraph in
+# docs/reference.md names the leaf and both values with the condition of each, and tests/test_perf_stats.py (Disclosed) holds
+# the wording and the conditioning over the three snapshot shapes.
 PARSED_UNAVAILABLE = "parsedUnavailable"
 PARSED_UNAVAILABLE_REASON = "predates-parses.perSession"
+PARSED_MALFORMED_REASON = "perSession.sessions-not-a-number"
 
 
 def state_dir() -> Path:
@@ -252,19 +262,25 @@ def usage_block(snap: dict) -> dict:
     parsed (`parses.perSession.sessions`; a snapshot saved by a kernel before it wrote perSession has NO parsed count
     here, since its per-sid table is one the plain export drops, pp.DENY_KEYS, and until the closing check at the re-run's
     head, 2026-09-19, this block wrote that table's size, the one number --usage added that no leaf of the plain body
-    gave; in the count's place the block writes PARSED_UNAVAILABLE with the fixed string PARSED_UNAVAILABLE_REASON, present
-    exactly when the count is absent, so the absence is stated in the document and never reads as a kernel that parsed
-    nothing, the ruling of the second closing check the same day), the sessions with a chat build
+    gave; in the count's place the block writes PARSED_UNAVAILABLE, present exactly when the count is absent, so the
+    absence is stated in the document and never reads as a kernel that parsed nothing, the ruling of the second closing
+    check the same day, with the fixed string that is true of the snapshot's shape: PARSED_UNAVAILABLE_REASON when there is
+    no perSession block under parses, PARSED_MALFORMED_REASON when the block is there and carries no number under sessions,
+    the ruling of the same day on the leaf, whose first cut gave both shapes the first reason), the sessions with a chat build
     (`builds.chat.bySession`), the sessions stamped (`caches.session_stamp.entries`). Features: each POST route's count as an action (the kernel's own housekeeping posts
     left out) and each pane route's GET count as a view. Lifetime: the kernel's own uptime bucket. Per-session lifetimes
     are not in /perf (they are the sessions listing's), so the block has none."""
     out = {"sessions": {}, "actions": {}, "views": {}}
     parses = snap.get("parses") if isinstance(snap.get("parses"), dict) else {}
-    per = parses.get("perSession")
-    if isinstance(per, dict) and _num(per.get("sessions")) is not None:
-        out["sessions"]["parsed"] = per["sessions"]        # never len(parses.bySid): a table the plain export drops (the docstring)
+    if "perSession" not in parses:
+        out["sessions"][PARSED_UNAVAILABLE] = PARSED_UNAVAILABLE_REASON   # no block to read, so the snapshot predates it: not a zero, not a gap
     else:
-        out["sessions"][PARSED_UNAVAILABLE] = PARSED_UNAVAILABLE_REASON   # the absence stated, in the count's place: not a zero, not a gap
+        per = parses["perSession"]
+        count = _num(per.get("sessions")) if isinstance(per, dict) else None
+        if count is not None:
+            out["sessions"]["parsed"] = count              # never len(parses.bySid): a table the plain export drops (the docstring)
+        else:
+            out["sessions"][PARSED_UNAVAILABLE] = PARSED_MALFORMED_REASON   # the block is there and carries no number: say that, not that it is old
     builds = snap.get("builds") if isinstance(snap.get("builds"), dict) else {}
     chat = builds.get("chat") if isinstance(builds.get("chat"), dict) else {}
     if isinstance(chat.get("bySession"), list):

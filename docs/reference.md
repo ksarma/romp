@@ -4160,12 +4160,16 @@ written beside it. `--usage` adds a `usage` block, off by default: the session
 counts, one count per action route served and one per pane route served, each
 the http table's count for that route under the route's name, whoever made the
 requests, and the kernel's uptime bucket, all from leaves the plain export
-already carries, so the block adds packaging and no number. A snapshot saved by
-a kernel from before it counted parsed sessions (`parses.perSession`) has no
-parsed count to copy, and the block says so in place of the count:
-`sessions.parsedUnavailable`, the fixed string `predates-parses.perSession`,
-present exactly when the count is absent, so a reader comparing two exports can
-tell a count the export could not read from a kernel that parsed nothing. Before
+already carries, so the block adds packaging and no number. A snapshot that
+gives no parsed count has none for the block to copy, and the block says so in
+place of the count: `sessions.parsedUnavailable`, one of two fixed strings, each
+true of the snapshot that carries it: `predates-parses.perSession` when the
+snapshot has no `parses.perSession` block (saved by a kernel from before it
+counted parsed sessions), and `perSession.sessions-not-a-number` when the block
+is there and its `sessions` is not a number (absent, a string, a boolean or
+null). The leaf is present exactly when the count is absent, so a reader
+comparing two exports can tell a count the export could not read from a kernel
+that parsed nothing, and an old snapshot from a malformed one. Before
 writing, the document is searched,
 every key, string value and number (a number by the spelling the export
 writes and, when that spelling carries an exponent, by its plain decimal
@@ -4385,11 +4389,14 @@ counter records the route and the time and nothing about the client), and,
 only when `--usage` was given, the `usage` block, which adds no number a
 plain export lacks: every leaf under `usage` (the uptime's bucket
 `kernelUptime`, the `sessions` block's `parsed`, `chatBuilt` and `stamped`,
-each a copy or a count of a leaf under perf that travels anyway, or, for a
-snapshot saved before the kernel counted parsed sessions, `parsedUnavailable`
-in place of `parsed`, the fixed string predates-parses.perSession, so a count
-the export could not read is told from a kernel that parsed nothing, the
-`actions` block's one count per
+each a copy or a count of a leaf under perf that travels anyway, or, where the
+snapshot gives no parsed count, `parsedUnavailable` in place of `parsed` with
+one of two fixed strings, predates-parses.perSession for a snapshot saved
+before the kernel counted parsed sessions (no perSession block under parses)
+and perSession.sessions-not-a-number for a snapshot whose perSession block is
+there but carries no number under sessions, so a count the export could not
+read is told from a kernel that parsed nothing, and an old snapshot from a
+malformed one, the `actions` block's one count per
 action route served, the http row's count under the route's name, `color`,
 `compact`, `down`, `emoji`, `end`, `flag`, `fleet-restart`, `fork`,
 `fork-comment`, `fork-promote`, `group`, `interrupt`, `judge-settings`,

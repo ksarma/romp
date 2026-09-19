@@ -1330,31 +1330,41 @@ class Usage(unittest.TestCase):
         """The ruling of the second closing check (2026-09-19): the block dropped its count of an older snapshot's per-sid
         table (a table the plain export drops, so the count was the one number --usage added), and a --usage export of such a
         snapshot then had NO parsed count and nothing saying why, an absence a reader could not tell from a kernel that parsed
-        nothing. So `sessions` carries `parsedUnavailable`, the fixed string `predates-parses.perSession`, exactly when `parsed`
-        is absent: the older shape (parses.bySid, no perSession) and a snapshot with no parses block at all carry the leaf and
-        no count; the current shape carries the count and no leaf; a perSession whose sessions is not a number is the absence
-        too (the leaf is present exactly when the count is not, never both, never neither). The value is judged by the
-        machinery the block travels through: it fits the ident grammar, so pp.fold writes it as it is and the block equals its
-        own fold, the belt the upload holds it to, and the three walks pass it; a spelling with a space, the refused input,
-        would fold to `other` and be a denylist finding, which is why the reason is one token. Fails on: the leaf dropped; the
-        leaf written whatever the shape; the reason reworded; a reason outside the grammar."""
+        nothing. So `sessions` carries `parsedUnavailable` exactly when `parsed` is absent, with a fixed string that says WHY,
+        keyed on the snapshot's shape (the ruling of the same day on this leaf: its first cut wrote one reason over two causes,
+        and the reason was false for one of them): the older shape (parses.bySid, no perSession) and a snapshot with no parses
+        block at all carry `predates-parses.perSession`; a perSession block whose sessions is not a number carries
+        `perSession.sessions-not-a-number` (the next test drives every corner of that shape); the current shape carries the
+        count and no leaf. Never both, never neither. Each value is judged by the machinery the block travels through: it fits
+        the ident grammar, so pp.fold writes it as it is and the block equals its own fold, the belt the upload holds it to,
+        and the three walks pass it; a spelling with a space, the refused input, would fold to `other` and be a denylist
+        finding, which is why each reason is one token. Fails on: the leaf dropped; the leaf written whatever the shape; either
+        reason reworded, or the two spelled alike; a reason outside the grammar; the malformed shape given the predates
+        reason."""
         reason = "predates-parses.perSession"
+        malformed = "perSession.sessions-not-a-number"
         self.assertEqual((pe.PARSED_UNAVAILABLE, pe.PARSED_UNAVAILABLE_REASON), ("parsedUnavailable", reason))
+        self.assertEqual(pe.PARSED_MALFORMED_REASON, malformed)
         old = {"parses": {"kernel": 12, "hits": 30, "bySid": {SID: 3, SID2: 9}}}
         none = {"http": {"POST /send": {"count": 1}}}
         bad = {"parses": {"perSession": {"sessions": "9", "max": 2}}}
-        for snap in (old, none, bad):
+        for snap, why in ((old, reason), (none, reason), (bad, malformed)):
             sessions = pe.usage_block(snap)["sessions"]
-            self.assertEqual(sessions.get("parsedUnavailable"), reason, sorted(sessions))
+            self.assertEqual(sessions.get("parsedUnavailable"), why, sorted(sessions))
             self.assertNotIn("parsed", sessions, "never both")
         new = {"parses": {"kernel": 12, "hits": 30, "perSession": {"sessions": 5, "max": 9}}}
         sessions = pe.usage_block(new)["sessions"]
         self.assertEqual(sessions, {"parsed": 5}, "the count present, the absence leaf not")
         self.assertNotIn("parsedUnavailable", sessions)
-        # the value through the fold and the walks, as the export writes it and the upload re-checks it
-        self.assertTrue(pp.IDENT.fullmatch(reason), "the reason is one token of the ident grammar, so the fold keeps it")
-        block = pe.usage_block(old)
-        self.assertEqual(pp.fold(block), block, "the block is its own fold: the upload's belt passes it")
+        # the two values through the fold and the walks, as the export writes them and the upload re-checks them: distinct
+        # tokens of the ident grammar, each kept by the fold as it is
+        self.assertNotEqual(reason, malformed, "two causes, two reasons")
+        for why in (reason, malformed):
+            self.assertTrue(pp.IDENT.fullmatch(why), "the reason is one token of the ident grammar, so the fold keeps it: %r" % why)
+            self.assertEqual(pp.fold({"sessions": {"parsedUnavailable": why}}), {"sessions": {"parsedUnavailable": why}}, why)
+        for snap in (old, bad):
+            block = pe.usage_block(snap)
+            self.assertEqual(pp.fold(block), block, "the block is its own fold: the upload's belt passes it")
         doc = pe.export_document(dict(old, uptime_s=60, process={}, pusher={}, http={}), usage=True)
         self.assertEqual(doc["usage"]["sessions"]["parsedUnavailable"], reason)
         self.assertEqual(pp.paste_problems(doc, skip=("schema",), under=("perf",)), [])
@@ -1365,6 +1375,52 @@ class Usage(unittest.TestCase):
         self.assertEqual(pp.fold(spaced)["sessions"]["parsedUnavailable"], "other")
         self.assertEqual([p.kind for p in pp.paste_problems(spaced)], ["free text"])
         self.assertEqual([p.kind for p in pp.denylist_problems(spaced)], ["a string the fold would have folded"])
+
+    def test_a_per_session_block_whose_count_is_not_a_number_is_told_so_and_never_that_the_snapshot_is_old(self):
+        """The ruling of 2026-09-19 on the absence leaf: its first cut wrote `predates-parses.perSession` whenever no numeric
+        parses.perSession.sessions existed, one reason over two causes, and false for one of them: a snapshot whose perSession
+        block IS there but carries no number under sessions was told it was old when the field was present and garbage (no
+        kernel writes that shape: _PerfStats.snapshot writes len(by_sid) there, an int, so it is a hand-made or edited
+        snapshot's). So the arm is keyed on the SHAPE: no perSession block under parses (or no parses block) is the predates
+        reason; a perSession block, whatever is under sessions that is not a number, is `perSession.sessions-not-a-number`;
+        a number is the count. Every corner of the malformed shape here: sessions a digit string, a word, True, False, null, a
+        list, a dict, absent, and a perSession that is not a block at all (a number, a string, null); each carries the
+        malformed reason and no count. The accepting direction beside it: a genuine zero is `parsed` 0 and no leaf (a
+        kernel that parsed nothing is not an absence), a float count is kept as it is, and the two older shapes keep the
+        predates reason. Through the export: a malformed snapshot's document carries the new reason on its usage line, the
+        garbage leaf travels under perf as the fold leaves it (a digit string fits the ident grammar), and the three walks
+        pass both. Red before the second reason existed (every malformed corner read the predates reason). Fails on: the
+        malformed arm returning the predates reason (the defect ruled); the shape test inverted; the reason respelled; a
+        malformed corner counted (a bool as 1, a digit string parsed)."""
+        malformed, predates = pe.PARSED_MALFORMED_REASON, pe.PARSED_UNAVAILABLE_REASON
+        self.assertEqual(malformed, "perSession.sessions-not-a-number")
+        self.assertNotEqual(malformed, predates)
+        for bad in ("9", "nine", True, False, None, [], {}, [5], {"n": 5}):
+            snap = {"parses": {"kernel": 12, "hits": 30, "perSession": {"sessions": bad, "max": 2}}}
+            sessions = pe.usage_block(snap)["sessions"]
+            self.assertEqual(sessions, {"parsedUnavailable": malformed}, "sessions %r" % (bad,))
+        for per in ({"max": 2}, {}, 5, "five", None, [5]):
+            snap = {"parses": {"kernel": 12, "hits": 30, "perSession": per}}
+            sessions = pe.usage_block(snap)["sessions"]
+            self.assertEqual(sessions, {"parsedUnavailable": malformed}, "perSession %r" % (per,))
+        # the accepting direction: a number is the count, whatever its value
+        for n in (0, 5, 2.0):
+            sessions = pe.usage_block({"parses": {"perSession": {"sessions": n, "max": 9}}})["sessions"]
+            self.assertEqual(sessions, {"parsed": n}, "a count of %r is a count" % (n,))
+        # and the shape the predates reason is true of keeps it: no perSession block, or no parses block
+        for snap in ({"parses": {"kernel": 12, "hits": 30, "bySid": {SID: 3}}}, {"parses": {}}, {"parses": 7}, {}):
+            self.assertEqual(pe.usage_block(snap)["sessions"], {"parsedUnavailable": predates}, repr(snap))
+        # through the export: the document says what is wrong with the snapshot, and its walks pass the garbage as the
+        # fold leaves it (a digit string is one ident token; a bool and a null the fold keeps)
+        for bad in ("9", True, None):
+            snap = {"parses": {"kernel": 12, "hits": 30, "perSession": {"sessions": bad, "max": 2}}, "uptime_s": 60,
+                    "process": {}, "pusher": {}, "http": {}}
+            doc = pe.export_document(snap, usage=True)
+            self.assertEqual(doc["usage"]["sessions"], {"parsedUnavailable": malformed}, repr(bad))
+            self.assertEqual(doc["perf"]["parses"]["perSession"], {"sessions": bad, "max": 2}, "the garbage travels as it is: the fact the reason states")
+            self.assertEqual(pp.paste_problems(doc, skip=("schema",), under=("perf",)), [], repr(bad))
+            self.assertEqual(pp.denylist_problems(doc, under=("perf",), skip=("schema",)), [], repr(bad))
+            self.assertIn('"parsedUnavailable": "perSession.sessions-not-a-number"', pe.document_text(doc), "the line a reader of the file sees")
 
     def test_a_non_finite_uptime_fits_no_bucket_and_raises_nothing(self):
         # json.load accepts the NaN and Infinity literals, so a --from file can carry either; the bucket search used
@@ -1454,9 +1510,11 @@ class Cli(unittest.TestCase):
         carries `sessions.parsedUnavailable`, the fixed string `predates-parses.perSession`, and no `parsed`, beside the two
         counts the plain body gives, the verb exits 0 with nothing on stderr (its own three checks passed the leaf), and the
         per-sid table is in neither block. The same snapshot with the kernel's perSession in place of the table, the CURRENT
-        shape: `parsed` is the count and the absence leaf is not written. Red before the leaf existed: the older shape's
-        sessions block was the two counts and nothing said why the third was missing. Fails on: the leaf dropped; the leaf
-        written for the current shape too; the reason reworded."""
+        shape: `parsed` is the count and the absence leaf is not written. The same snapshot with its count replaced by a digit
+        string, the MALFORMED shape (the ruling of 2026-09-19 on the leaf): the leaf with `perSession.sessions-not-a-number`,
+        never the predates reason, since the block is there. Red before the leaf existed: the older shape's sessions block was
+        the two counts and nothing said why the third was missing. Fails on: the leaf dropped; the leaf written for the
+        current shape too; either reason reworded; the malformed shape given the predates reason."""
         reason = "predates-parses.perSession"
         out = os.path.join(self.xdg, "old.json")
         r = _run(["--public", "--from", self.src, "--usage", "--out", out], state=self.state)
@@ -1480,6 +1538,22 @@ class Cli(unittest.TestCase):
             doc = json.load(fh)
         self.assertEqual(doc["usage"]["sessions"], {"parsed": 2, "chatBuilt": 2, "stamped": 31}, "the count, and no absence leaf")
         self.assertEqual(doc["perf"]["parses"]["perSession"], {"sessions": 2, "max": 9}, "the leaf the count is a copy of travels")
+        # the MALFORMED shape (the ruling of 2026-09-19 on the leaf): a perSession block whose sessions is not a number is
+        # told so, in the file, with its own reason, never that the snapshot is old, and the garbage travels as it is
+        current["parses"]["perSession"]["sessions"] = "2"
+        src = os.path.join(self.xdg, "malformed.json")
+        with open(src, "w") as fh:
+            json.dump(current, fh)
+        out = os.path.join(self.xdg, "malformed-export.json")
+        r = _run(["--public", "--from", src, "--usage", "--out", out], state=self.state)
+        self.assertEqual((r.returncode, r.stderr), (0, ""), r.stderr)
+        with open(out, encoding="utf-8") as fh:
+            text = fh.read()
+        doc = json.loads(text)
+        self.assertEqual(doc["usage"]["sessions"], {"chatBuilt": 2, "stamped": 31, "parsedUnavailable": "perSession.sessions-not-a-number"},
+                         "the block is there and carries no number: the reason says that, not that the snapshot is old")
+        self.assertEqual(doc["perf"]["parses"]["perSession"], {"sessions": "2", "max": 9}, "the leaf the reason is about travels as it is")
+        self.assertIn('"parsedUnavailable": "perSession.sessions-not-a-number"', text, "the line in the file, as a reader sees it")
 
     def test_a_snapshot_with_a_nan_uptime_exports_under_usage_with_no_traceback(self):
         """The export road NULLS a number no double can hold and writes the file, one success line and no traceback: the NaN
@@ -2902,11 +2976,17 @@ class Docs(unittest.TestCase):
         self.assertTrue(sentence in text, "not in the reference: " + sentence)
         # the second closing check (2026-09-19): the export section says what the block writes in place of a count it cannot
         # read from an older snapshot, the leaf by name and its fixed value, and when (exactly when the count is absent)
-        absence = ("A snapshot saved by a kernel from before it counted parsed sessions (`parses.perSession`) has no parsed count to "
-                   "copy, and the block says so in place of the count: `sessions.parsedUnavailable`, the fixed string "
-                   "`predates-parses.perSession`, present exactly when the count is absent, so a reader comparing two exports can tell "
-                   "a count the export could not read from a kernel that parsed nothing.")
+        absence = ("A snapshot that gives no parsed count has none for the block to copy, and the block says so in place of the count: "
+                   "`sessions.parsedUnavailable`, one of two fixed strings, each true of the snapshot that carries it: "
+                   "`predates-parses.perSession` when the snapshot has no `parses.perSession` block (saved by a kernel from before it "
+                   "counted parsed sessions), and `perSession.sessions-not-a-number` when the block is there and its `sessions` is not a "
+                   "number (absent, a string, a boolean or null). The leaf is present exactly when the count is absent, so a reader "
+                   "comparing two exports can tell a count the export could not read from a kernel that parsed nothing, and an old "
+                   "snapshot from a malformed one.")
         self.assertTrue(absence in text, "not in the reference: " + absence)
+        # the ruling of 2026-09-19 on the leaf: the one-reason wording, false for the malformed shape, is gone
+        one_reason = "the fixed string `predates-parses.perSession`, present exactly when the count is absent"
+        self.assertFalse(one_reason in text, "the one-reason wording is back in the reference: " + one_reason)
         # the export section's denylist paragraph, narrowed by range with the integer rule (the closing check at the re-run's
         # head, HIGH 2): an integer a double can hold passes whatever its size, one it cannot hold is null in the export's output
         integer = ("an integer a double can hold is a byte total or a count, which a long-lived kernel's lifetime totals carry into the "
