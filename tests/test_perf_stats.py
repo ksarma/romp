@@ -551,14 +551,19 @@ class Collector(unittest.TestCase):
         fix, 2026-09-18); the CPU handed with a mark follows the wall: folded into stages_cpu_ms when the wall went to the
         flat row, dropped when the wall went to pusher.connectPush.stagesMs, pusher.cycleJobsMs or stagesForeign. So a
         stages_cpu_ms row is the same writer's CPU as the stages_ms row of its name and their difference is that row's
-        wait; a connect push's or a foreign writer's CPU has no row and is not kept. Five writers, each expectation read
+        wait; a connect push's or a foreign writer's CPU has no row and is not kept. Six writers, each expectation read
         off stage()'s body at the fix's round-1 head: the cycle owner's push.chat.sig under the "push" mark (the flat row,
         CPU kept), its cycle job (cycleJobsMs, no CPU row), a connect push (the connect table, no CPU row), a thread with
-        no cycle and no mark (stagesForeign, no CPU row), and a thread under the "push" mark that owns no cycle
-        (stagesForeign, no CPU row). The last is the case the round settled: it dropped the clause that took the mark
-        alone as the pusher's stand-in, so the mark says what _push was called for, not whose cycle it ran in. Before the
-        drop that writer's wall reached the flat row and its CPU the row of its name, and this test is red with the clause
-        restored (push.chat.build 2.0 in the flat row and {2.0, 1.0} in its CPU row, none of it under stagesForeign)."""
+        no cycle and no mark (stagesForeign, no CPU row), a thread under the "push" mark that owns no cycle
+        (stagesForeign, no CPU row), and a thread that owns the JOBS cycle writing a push stage (stagesForeign, no CPU
+        row). The fifth is the case the round settled: it dropped the clause that took the mark alone as the pusher's
+        stand-in, so the mark says what _push was called for, not whose cycle it ran in. Before the drop that writer's wall
+        reached the flat row and its CPU the row of its name, and this test is red with the clause restored
+        (push.chat.build 2.0 in the flat row and {2.0, 1.0} in its CPU row, none of it under stagesForeign). The sixth is
+        the WIDENING case (2026-09-19 review, kernel-2): the rule is `elif kind == "pusher"`, and a rule widened to any
+        cycle owner (`elif kind:`) left the five green, so the jobs owner's push.chat.send pins the other edge: red with
+        the rule widened (5.0 in the flat row and {3.0, 2.0} in its CPU row). Its thread stays alive until the snapshot is
+        read, so its owner ident is not recycled by another thread."""
         if km._RUSAGE_THREAD is None:
             self.skipTest("no per-thread rusage on this platform: the block is served empty")
         st = self.st
@@ -566,6 +571,16 @@ class Collector(unittest.TestCase):
         km._stage_marked("push")(lambda: st.stage("push.chat.sig", 0.004, cpu=(0.002, 0.001)))()   # the cycle owner's: flat
         st.stage("jobs.persistCheckpoints", 0.003, cpu=(0.003, 0.0))          # the pusher's cycle job: cycleJobsMs, no CPU row
         done = {}
+        wrote, release = threading.Event(), threading.Event()
+
+        def jobs_owner():                                                       # owns the JOBS cycle: a cycle owner, not the pusher
+            st.cycle_begin("jobs")
+            st.stage("push.chat.send", 0.005, cpu=(0.003, 0.002))              # stagesForeign, no CPU row (the widening case)
+            done["jobs"] = True
+            wrote.set()
+            release.wait(5)                                                     # alive until the snapshot below: the ident stays its own
+        th_jobs = threading.Thread(target=jobs_owner); th_jobs.start()
+        self.assertTrue(wrote.wait(5), "the jobs owner wrote")
 
         @km._stage_marked("connect")                                            # a reload's full push on its handler thread
         def connect_push():
@@ -582,18 +597,21 @@ class Collector(unittest.TestCase):
             done["marked"] = True
         for target in (connect_push, foreign_thread, marked_no_cycle):
             th = threading.Thread(target=target); th.start(); th.join(5)
-        self.assertEqual(done, {"connect": True, "foreign": True, "marked": True}, "all three threads wrote")
+        self.assertEqual(done, {"connect": True, "foreign": True, "marked": True, "jobs": True}, "all four threads wrote")
         st.stage("push", 0.006, cpu=(0.004, 0.001)); st.cycle(0.008)          # the container, the pusher's by its cycle
         snap = st.snapshot()
+        release.set(); th_jobs.join(5)
         self.assertAlmostEqual(snap["stages_ms"]["push.chat.sig"], 4.0, msg="the flat wall is the cycle owner's alone")
         self.assertEqual(snap["stages_cpu_ms"]["push.chat.sig"], {"user": 2.0, "sys": 1.0}, "and so is the CPU beside it")
         self.assertEqual(snap["stages_cpu_ms"]["push"], {"user": 4.0, "sys": 1.0})
         self.assertEqual(snap["pusher"]["connectPush"]["stagesMs"], {"push.chat.sig": 20.0}, "the connect push's wall, apart")
-        self.assertEqual(snap["stagesForeign"], {"push.chat.sig": 1.0, "push.chat.build": 2.0},
-                         "the foreign walls, apart: the unmarked thread's and the push-marked thread's, neither owning a cycle")
+        self.assertEqual(snap["stagesForeign"], {"push.chat.sig": 1.0, "push.chat.build": 2.0, "push.chat.send": 5.0},
+                         "the foreign walls, apart: the unmarked thread's, the push-marked thread's owning no cycle, and the jobs owner's")
         self.assertEqual(snap["stages_ms"]["push.chat.build"], 0.0, "the flat row takes nothing from the push-marked thread owning no cycle")
         self.assertEqual(snap["stages_cpu_ms"]["push.chat.build"], {"user": 0.0, "sys": 0.0},
                          "and its CPU row, listed at zero from the start, stays there: a wall routed to stagesForeign records no CPU")
+        self.assertEqual(snap["stages_ms"]["push.chat.send"], 0.0, "the flat row takes nothing from the jobs owner either: only the PUSHER's cycle is the flat row's")
+        self.assertEqual(snap["stages_cpu_ms"]["push.chat.send"], {"user": 0.0, "sys": 0.0}, "and no CPU row for a wall routed to stagesForeign")
         self.assertAlmostEqual(snap["pusher"]["cycleJobsMs"]["persistCheckpoints"], 3.0, msg="the cycle job's wall, apart")
         self.assertEqual(set(snap["stages_cpu_ms"]), set(km._PerfStats.CPU_STAGES),
                          "no CPU row appeared for the four routed marks, jobs.persistCheckpoints included")
