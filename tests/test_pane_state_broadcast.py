@@ -1078,7 +1078,8 @@ class PaneEnabledReader(unittest.TestCase):
 _LAZY_HARNESS = r"""
 'use strict';
 const STORE = {}, SETS = {}, LOG = [], POSTED = {}, LOADS = {}, TIMERS = [], MQL = [], MSGS = [], STORAGE = [], SOCKS = [], CLICKS = [];
-const MSG = { textContent: '' }, LOADEL = { addEventListener: (ev, f) => { if (ev === 'click') CLICKS.push(f); } };   // #pane-load-msg and #pane-load (the failed state's message and its tap-to-retry, review round 1)
+const MSG = { textContent: '', role: 'alert' }, LOADEL = { addEventListener: (ev, f) => { if (ev === 'click') CLICKS.push(f); } };   // #pane-load-msg and #pane-load (the failed state's message and its tap-to-retry, review round 1)
+const RETRY = { hidden: true, clicks: [], addEventListener: (ev, f) => { if (ev === 'click') RETRY.clicks.push(f); } };   // #pane-load-retry, the failed state's button (review round 3, ui-1): hidden until the failed paint
 let MATCHES = __PHONE__;
 const KEYS = __KEYS__;
 const attrsOf = (k) => ((k === 'chat') ? { src: '/' + k } : { 'data-src': '/' + k });   // the served markup: the chat alone ships src
@@ -1120,7 +1121,7 @@ global.document = {
   documentElement: { scrollTop: 0, style: { setProperty() {} } },
   body: { classList: cls(BODY_CLS), setAttribute: (a, v) => { if (a === 'data-tab') TAB = v; }, getAttribute: (a) => (a === 'data-tab' ? TAB : null) },
   querySelectorAll: (sel) => { if (sel === '.rail-btn[data-pane]') return KEYS.map((k) => BTNS[k]); if (sel === 'iframe') return KEYS.map((k) => frames['f-' + k]); const m = /data-pane=(\w+)/.exec(sel); return m && BTNS[m[1]] ? [BTNS[m[1]]] : []; },
-  getElementById: (id) => (id === 'mtabs' ? BAR : id === 'pane-load-msg' ? MSG : id === 'pane-load' ? LOADEL : (frames[id] || null)),
+  getElementById: (id) => (id === 'mtabs' ? BAR : id === 'pane-load-msg' ? MSG : id === 'pane-load' ? LOADEL : id === 'pane-load-retry' ? RETRY : (frames[id] || null)),
 };
 __SEED__
 """
@@ -1306,6 +1307,27 @@ frames['f-timeline'].contentDocument = null; (LOADS.timeline || []).forEach((f) 
 out.noneLoad = snapK('timeline');
 console.log(JSON.stringify(out));
 """
+# correctness-1 and ui-1 (review round 3, 2026-09-19): the failed copy is chosen by the failures of THIS episode (EPI, reset by a load), not the
+# page-life count the row carries (FAILS); and the retry is a real button, hidden while loading, shown in the failed state, whose click
+# retries. The second failure after a good load has no road in the shipped shell (a loaded pane's src is never reassigned, so promote()
+# refuses it; the round-2 refuter found the defect latent), so the load listener is fired by hand over a swapped document, the
+# refuter's reproduction, to pin the counter's meaning.
+_LAZY_EPISODE_DRIVER = _LAZY_TOOLS + r"""
+SOCKS.forEach((s) => { s.readyState = 1; s.onopen && s.onopen(); });
+shimUp('feed'); (LOADS.feed || []).forEach((f) => f());
+const snap = () => ({ src: src().waiting, div: divCls('waiting'), bodyFailed: BODY_CLS.has('pane-failed'), msg: MSG.textContent, retryHidden: RETRY.hidden, sets: Object.assign({}, SETS), rows: diagRows('pane-load-failed') });
+window.__rompMobileTab('waiting');
+out.loading = snap();   // the button is hidden while the document loads
+frames['f-waiting'].contentDocument = null; (LOADS.waiting || []).forEach((f) => f());   // the first failure
+out.failed1 = snap();
+RETRY.clicks.forEach((f) => f({ stopPropagation() {} }));   // the button's click: the retry (a real button runs it on Enter and Space too)
+out.retried = snap();
+shimUp('waiting'); (LOADS.waiting || []).forEach((f) => f());   // the good load: the episode ends
+out.loaded = snap();
+frames['f-waiting'].contentDocument = null; (LOADS.waiting || []).forEach((f) => f());   // a later failure on the same page (hand-fired: no shipped road re-navigates a loaded pane)
+out.failed2 = snap();
+console.log(JSON.stringify(out));
+"""
 # HIGH 2, review round 2 closeout: the per-promotion token (TOK). The iframe element keeps every promotion's load listener and
 # every promotion arms its own 30 s backstop, so a retry after a failure has the FIRST promotion's listener and backstop still
 # live beside its own. Each guard is proven by the input it refuses: the stale backstop fired over the loading retry (without
@@ -1486,7 +1508,7 @@ class LazyPanes(unittest.TestCase):
         self.assertEqual((f["src"], f["lazy"]), (None, "/waiting"), "the error page's load re-parks the pane: no src (promote's guard reads it), the url back where a first tap finds it")
         self.assertEqual(f["div"], ["failed"], "the div swaps loading for failed")
         self.assertEqual((f["bodyLoading"], f["bodyFailed"]), (False, True), "the shown tab's pane failed: body.pane-failed paints #pane-load with the message, the loader itself is down")
-        self.assertEqual(f["msg"], "Couldn't load this pane. Tap to try again.", "the first failure's copy")
+        self.assertEqual(f["msg"], "Couldn't load this pane.", "the first failure's copy (the affordance is the button's own text, review round 3, ui-2)")
         self.assertEqual(f["rows"], [{"pane": "waiting", "via": "load", "n": 1}], "one shell client-diag row names the pane, the detector and the count")
         self.assertEqual(f["sets"], {"feed": 1, "waiting": 1})
         r = o["retap"]
@@ -1494,7 +1516,7 @@ class LazyPanes(unittest.TestCase):
         self.assertEqual(r["sets"], {"feed": 1, "waiting": 2}, "a second src set (the one exception to a src never being reassigned: the first never became a document)")
         b = o["backstopFailed"]
         self.assertEqual((b["src"], b["lazy"], b["div"], b["bodyFailed"]), (None, "/waiting", ["failed"], True), "WebKit's road: no load event, the frame at about:blank when the 30 s backstop fires: re-parked and failed again")
-        self.assertEqual(b["msg"], "Still not loading. Tap to try again, or reload the page.", "the second failure's copy offers the page reload")
+        self.assertEqual(b["msg"], "Still not loading. Try again, or reload the page.", "the second failure's copy offers the page reload")
         self.assertEqual(b["rows"], [{"pane": "waiting", "via": "load", "n": 1}, {"pane": "waiting", "via": "backstop", "n": 2}], "a second row, via the backstop, counted")
         lt = o["loaderTap"]
         self.assertEqual((lt["src"], lt["div"], lt["bodyLoading"], lt["bodyFailed"], lt["sets"]), ("/waiting", ["loading"], True, False, {"feed": 1, "waiting": 3}), "a tap on the message retries as the tab's re-tap does")
@@ -1534,6 +1556,25 @@ class LazyPanes(unittest.TestCase):
         self.assertNotIn("function committed(", js, "the one-marker boolean is gone: no failure claim for a page the reader cannot classify")
         self.assertTrue({"pane", "via"} <= set(km.CLIENT_DIAG_KEYS["shell"]), "the row's keys survive the shell allowlist (its fixture row is test_client_diag_allowlist's)")
 
+    def test_the_failed_copy_counts_this_episode_and_the_retry_is_a_button_shown_in_the_failed_state_alone(self):
+        # correctness-1 (review round 3): FAILS, the page-life count, never resets, so a pane that failed, loaded and failed again read the
+        # second copy ("Still not loading… reload the page") about a pane that had worked a moment ago; EPI counts the failures since the last
+        # load and picks the copy, while the row keeps n from FAILS (docs/read-side.md pins its meaning). ui-1: the retry is a real button.
+        o = _lazy(self.seed, _LAZY_EPISODE_DRIVER)
+        self.assertEqual((o["loading"]["div"], o["loading"]["retryHidden"], o["loading"]["msg"]), (["loading"], True, ""), "while the document loads the button is hidden (no focusable control under the loader)")
+        f1 = o["failed1"]
+        self.assertEqual((f1["div"], f1["bodyFailed"], f1["retryHidden"]), (["failed"], True, False), "the failed state shows the button")
+        self.assertEqual(f1["msg"], "Couldn't load this pane.", "the first failure's copy")
+        self.assertEqual(f1["rows"], [{"pane": "waiting", "via": "load", "n": 1}])
+        r = o["retried"]
+        self.assertEqual((r["src"], r["div"], r["retryHidden"], r["sets"]["waiting"]), ("/waiting", ["loading"], True, 2), "the button's click retries: a second promotion, the button hidden again")
+        l = o["loaded"]
+        self.assertEqual((l["div"], l["bodyFailed"], l["msg"], l["retryHidden"]), ([], False, "", True), "the good load ends the episode")
+        f2 = o["failed2"]
+        self.assertEqual(f2["msg"], "Couldn't load this pane.", "a failure after a good load is this episode's FIRST: the first copy (before: the second, from the page-life count)")
+        self.assertEqual(f2["rows"], f1["rows"] + [{"pane": "waiting", "via": "load", "n": 2}], "…while the row's n keeps counting the page's failures (FAILS is untouched by the load)")
+        self.assertEqual((f2["div"], f2["retryHidden"]), (["failed"], False))
+
     def test_the_promotion_token_makes_a_stale_listener_and_a_stale_backstop_inert_across_a_retry(self):
         # HIGH 2, review round 2 closeout: the two `if(TOK[k]!==tok)return;` guards were unpinned (the failed-load case above reaches its
         # second failure through the backstop, whose loading guard masks a stale timer). Here the stale backstop fires over a retry that
@@ -1548,7 +1589,7 @@ class LazyPanes(unittest.TestCase):
         self.assertEqual((s["src"], s["lazy"], s["div"], s["rows"]), ("/waiting", None, ["loading"], f1["rows"]), "the first promotion's backstop fires over the still-loading retry (its document at about:blank): inert on its stale token; without the guard it re-parks the retry via backstop")
         s2 = o["secondFailure"]
         self.assertEqual(s2["rows"], [{"pane": "waiting", "via": "load", "n": 1}, {"pane": "waiting", "via": "load", "n": 2}], "the retry's failure fires BOTH listeners: one new row, n 2; without the guard the stale listener files a third row and n runs to 3")
-        self.assertEqual((s2["src"], s2["div"], s2["msg"]), (None, ["failed"], "Still not loading. Tap to try again, or reload the page."))
+        self.assertEqual((s2["src"], s2["div"], s2["msg"]), (None, ["failed"], "Still not loading. Try again, or reload the page."))
         g = o["goodLoad"]
         self.assertEqual((g["src"], g["div"], g["bodyFailed"], g["sets"]["waiting"], g["rows"], g["listeners"]), ("/waiting", [], False, 3, s2["rows"], f1["listeners"] + 2), "the third promotion's good load: three promotion listeners fire, the pane loads, no new row")
         self.assertEqual(o["mirror"], g, "every backstop armed so far fires over the loaded pane: nothing moves")

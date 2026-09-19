@@ -401,15 +401,28 @@ try {
       while (now() < failDeadline) {
         failedSeen = await page.evaluate((pane) => {
           if (!document.body.classList.contains("pane-failed")) return null;
-          const el = document.getElementById("pane-load"), f = document.getElementById("f-" + pane);
+          const el = document.getElementById("pane-load"), f = document.getElementById("f-" + pane), btn = document.getElementById("pane-load-retry"), msgEl = document.getElementById("pane-load-msg");
           return { display: getComputedStyle(el).display, loaderDisplay: getComputedStyle(el.querySelector(".rl-in")).display,
-                   msg: (document.getElementById("pane-load-msg") || {}).textContent || "", src: f.getAttribute("src"), lazy: f.getAttribute("data-lazy-src"),
-                   loading: document.body.classList.contains("pane-loading") };
+                   msg: (msgEl || {}).textContent || "", src: f.getAttribute("src"), lazy: f.getAttribute("data-lazy-src"),
+                   loading: document.body.classList.contains("pane-loading"),
+                   // ui-1 (review round 3): the retry button in the failed state: painted, named, in the tab order; the message announced
+                   retry: btn ? { display: getComputedStyle(btn).display, tabIndex: btn.tabIndex, hidden: btn.hidden, text: btn.textContent, role: msgEl ? msgEl.getAttribute("role") : null } : null };
         }, cfg.abortPane);
         if (failedSeen) break;
         await sleep(200);
       }
-      out.abort = { ms: failedSeen ? now() - out.t.tap : -1, mode: "abort", ...(failedSeen || {}) };
+      // the keyboard road (ui-1): from the body, Tab until the retry button is the active element (the overlay precedes the pane iframes in the
+      // document, and the rail is display:none on the phone); recorded as the presses it took, -1 when twelve did not reach it
+      let tabsToReach = -1;
+      if (failedSeen) {
+        await page.evaluate(() => { try { document.activeElement && document.activeElement.blur && document.activeElement.blur(); } catch (e) { /* nothing focused */ } });
+        for (let i = 1; i <= 12; i++) {
+          await page.keyboard.press("Tab");
+          const id = await page.evaluate(() => (document.activeElement && document.activeElement.id) || "");
+          if (id === "pane-load-retry") { tabsToReach = i; break; }
+        }
+      }
+      out.abort = { ms: failedSeen ? now() - out.t.tap : -1, mode: "abort", tabsToReach, ...(failedSeen || {}) };
       await page.unroute(isAbortUrl, aborter);
       out.t.retap = now();
       await page.click("#mtabs button[data-pane=" + cfg.tapPane + "]");   // the re-tap: the shell promotes the re-parked pane again, as a first tap would
@@ -438,7 +451,8 @@ try {
     out.loadingClearedMs = cleared ? now() - (out.t.retap || out.t.tap) : -1;
     out.loaderSeen = await page.evaluate(() => window.__labLoaderSeen || null);   // what the observer saw the moment the loader went up
     out.srcAfterTap = await page.evaluate(() => Object.fromEntries(Array.from(document.querySelectorAll("iframe[id^=f-]")).map((f) => [f.id.slice(2), f.getAttribute("src")])));
-    out.loadingAfterTap = await page.evaluate(() => ({ body: document.body.classList.contains("pane-loading"), failed: document.body.classList.contains("pane-failed"), panes: Array.from(document.querySelectorAll(".pane.loading")).map((d) => d.id), failedPanes: Array.from(document.querySelectorAll(".pane.failed")).map((d) => d.id) }));
+    out.loadingAfterTap = await page.evaluate(() => ({ body: document.body.classList.contains("pane-loading"), failed: document.body.classList.contains("pane-failed"), panes: Array.from(document.querySelectorAll(".pane.loading")).map((d) => d.id), failedPanes: Array.from(document.querySelectorAll(".pane.failed")).map((d) => d.id),
+      retryHidden: (function () { const b = document.getElementById("pane-load-retry"); return b ? b.hidden : null; })() }));
     await page.click("#mtabs button[data-pane=chat]");
     await sleep(Math.max(300, (cfg.settleMs || 1500) / 2));
     // the kernel's wsopen rows carry whole seconds and the measurement's return window opens one second early, so the tapped

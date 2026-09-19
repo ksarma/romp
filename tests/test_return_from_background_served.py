@@ -495,7 +495,13 @@ class ReturnFromBackground(unittest.TestCase):
         self.assertGreaterEqual(a.get("ms", -1), 0, where + "the shell said the pane failed (body.pane-failed) within the wait: %r" % (a,))
         self.assertEqual(a.get("display"), "flex", where + "#pane-load is painted in the failed state: %r" % (a,))
         self.assertEqual(a.get("loaderDisplay"), "none", where + "…with the loader itself down: %r" % (a,))
-        self.assertEqual(a.get("msg"), "Couldn't load this pane. Tap to try again.", where + "the first failure's copy: %r" % (a,))
+        self.assertEqual(a.get("msg"), "Couldn't load this pane.", where + "the first failure's copy (the affordance is the button's text, review round 3): %r" % (a,))
+        # ui-1 (review round 3): the retry is a real, keyboard-reachable button, painted in the failed state and hidden again once the re-tap loads
+        rb = a.get("retry") or {}
+        self.assertEqual((rb.get("text"), rb.get("hidden"), rb.get("role")), ("Try again", False, "alert"), where + "the button is shown with its name, and the message is announced: %r" % (rb,))
+        self.assertNotEqual(rb.get("display"), "none", where + "…painted: %r" % (rb,))
+        self.assertGreaterEqual(rb.get("tabIndex", -1), 0, where + "…in the tab order: %r" % (rb,))
+        self.assertGreaterEqual(a.get("tabsToReach", -1), 1, where + "…and reached from the body by the keyboard (Tab presses until document.activeElement is the button): %r" % (a.get("tabsToReach"),))
         self.assertEqual((a.get("src"), a.get("lazy")), (None, "/" + tap), where + "the pane is re-parked (no src, the url back under data-lazy-src): %r" % (a,))
         self.assertFalse(a.get("loading"), where + "the loading state is over: %r" % (a,))
         wid = r.get("wid") or ""
@@ -506,6 +512,7 @@ class ReturnFromBackground(unittest.TestCase):
         self.assertEqual(data.get("via"), "load" if engine == "chromium" else "backstop", where + "the detector per engine, as observed under the route's abort: Chromium commits an error page and fires load; Firefox and WebKit fire no load event the shell can act on (the frame keeps about:blank), so the 30 s backstop detects it navigation, so its load fires everywhere: %r" % (data,))
         la = r.get("loadingAfterTap") or {}
         self.assertFalse(la.get("failed"), where + "the re-tap cleared the failed state: %r" % (la,))
+        self.assertIs(la.get("retryHidden"), True, where + "…and the retry button is hidden again after the re-tap's load: %r" % (la,))
         self.assertEqual(la.get("failedPanes"), [], where + "no .pane carries `failed` after the re-tap: %r" % (la,))
         self.assertIn("/" + tap, r.get("frames") or [], where + "the re-tap loaded the pane's document (the frame at its url): %r" % (r.get("frames"),))
 

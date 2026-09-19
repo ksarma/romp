@@ -68443,20 +68443,25 @@ function filesCtlM(){try{var st=JSON.parse(localStorage.getItem('romp:settings')
 // failed() re-parks the pane (src removed, the url back under
 // data-lazy-src, so the next show() promotes it again as a first tap would), swaps the div's `loading` for `failed`, counts the
 // failures and files one shell client-diag row (`pane-load-failed` {pane, via, n}). The failed state is painted where the user
-// looks: body.pane-failed keeps #pane-load up with #pane-load-msg saying the pane did not load and a tap retries; the second
-// failure and later say so and offer the page reload. A tap on #pane-load or on the tab retries through show().
-var LAZY='data-lazy-src',LOAD_MS=30000,URLS={},FAILS={},TOK={};
-var MSG_FAILED="Couldn't load this pane. Tap to try again.",MSG_FAILED_AGAIN="Still not loading. Tap to try again, or reload the page.";
+// looks: body.pane-failed keeps #pane-load up with #pane-load-msg (role=alert, so it is announced) saying the pane did not load and the
+// #pane-load-retry button, a real button shown in the failed state alone (review round 3, ui-1: focusable and named for the keyboard
+// and a screen reader, the way #rail-api's row is; a tap anywhere on #pane-load retries too); the second failure and later of an
+// EPISODE say so and offer the page reload (EPI counts the failures since the pane last loaded and loaded() resets it, review round 3,
+// correctness-1: FAILS, the page-life count the row carries, never resets, and read for the copy it called a fresh failure the second).
+// The copy names no input (ui-2: "Try again" sits on the control), since the phone layout also serves a narrowed mouse window.
+var LAZY='data-lazy-src',LOAD_MS=30000,URLS={},FAILS={},EPI={},TOK={};
+var MSG_FAILED="Couldn't load this pane.",MSG_FAILED_AGAIN="Still not loading. Try again, or reload the page.";
 function paneDiv(f){try{var d=f&&f.parentNode;return (d&&d.classList&&typeof d.classList.contains==='function')?d:null;}catch(e){return null;}}
 function paintLoading(){try{var k=document.body.getAttribute('data-tab'),d=paneDiv(F[k]);document.body.classList.toggle('pane-loading',!!(d&&d.classList.contains('loading')));
 var bad=!!(d&&d.classList.contains('failed'));document.body.classList.toggle('pane-failed',bad);
-var msg=document.getElementById('pane-load-msg');if(msg)msg.textContent=bad?((FAILS[k]||0)>=2?MSG_FAILED_AGAIN:MSG_FAILED):'';}catch(e){}}
-function loaded(k){try{var d=paneDiv(F[k]);if(d){d.classList.remove('loading');d.classList.remove('failed');}}catch(e){}paintLoading();}
+var msg=document.getElementById('pane-load-msg');if(msg)msg.textContent=bad?((EPI[k]||0)>=2?MSG_FAILED_AGAIN:MSG_FAILED):'';   // the copy by this episode's count (EPI), not the page-life count (FAILS)
+var rb=document.getElementById('pane-load-retry');if(rb)rb.hidden=!bad;}catch(e){}}   // the retry button exists for the failed state alone: a focusable control under the loader would be wrong
+function loaded(k){EPI[k]=0;try{var d=paneDiv(F[k]);if(d){d.classList.remove('loading');d.classList.remove('failed');}}catch(e){}paintLoading();}   // a load ends the episode: the next failure's copy is a first failure's
 function docState(f){try{var d=f.contentDocument;if(!d)return 'none';var u=d.URL;if(!u||u==='about:blank')return 'blank';var w=f.contentWindow;return (w&&typeof w.__rompApp==='string')?'app':'doc';}catch(e){return 'none';}}   // the frame's document, classified (the comment above): none (a cross-origin error page), blank (the initial document, never committed), app (the pane's own, its shim run: window.__rompApp), doc (a same-origin document the origin served that this reader cannot classify: shown as served, said)
 function unmarked(k,via){loaded(k);try{shellDiag('pane-load-unmarked',{pane:k,via:via});}catch(e){}}   // a served document with no pane shim (a fallback page, the kernel's 403 line, a proxy's 502 body): shown as served, the loading state ended and the src kept, and said once (review round 3)
 function failed(k,via){var f=F[k];if(!f)return;try{f.removeAttribute('src');}catch(e){}try{if(URLS[k])f.setAttribute(LAZY,URLS[k]);}catch(e){}   // re-parked: promote()'s src guard reads nothing, the url is back where a first tap finds it
 try{var d=paneDiv(f);if(d){d.classList.remove('loading');d.classList.add('failed');}}catch(e){}
-FAILS[k]=(FAILS[k]||0)+1;try{shellDiag('pane-load-failed',{pane:k,via:via,n:FAILS[k]});}catch(e){}paintLoading();}
+FAILS[k]=(FAILS[k]||0)+1;EPI[k]=(EPI[k]||0)+1;try{shellDiag('pane-load-failed',{pane:k,via:via,n:FAILS[k]});}catch(e){}paintLoading();}   // FAILS: the page-life count the row carries (docs/read-side.md); EPI: this episode's, for the copy
 function promote(k){var f=F[k];if(!f)return false;var u=null;
 try{if(f.getAttribute('src'))return false;u=f.getAttribute('data-src')||f.getAttribute(LAZY);}catch(e){return false;}   // loaded already (a src is never reassigned: no reload of a live pane), or an element without attributes: nothing to do
 if(!u)return false;
@@ -68467,7 +68472,10 @@ if(mobileOn()){var tok=TOK[k]=(TOK[k]||0)+1;try{var d=paneDiv(f);if(d){d.classLi
 f.addEventListener('load',function(){if(TOK[k]!==tok)return;var s=docState(f);if(s==='blank')return;if(s==='app')loaded(k);else if(s==='doc')unmarked(k,'load');else failed(k,'load');});   // the initial about:blank's own load is not the page's (the gear opener's guard); the pane's own document loaded; a document the origin served with no shim is shown as served and said; an error page (no document) is a failure
 setTimeout(function(){if(TOK[k]!==tok)return;var dd=paneDiv(f);if(!dd||!dd.classList.contains('loading'))return;var s=docState(f);if(s==='app')loaded(k);else if(s==='doc')unmarked(k,'backstop');else failed(k,'backstop');},LOAD_MS);}   // still loading at the backstop: the pane's own document is a slow load (the loader clears, as before); a served document with no shim is shown and said; no document, or one never committed, is a failure (WebKit's road)
 f.setAttribute('src',u);paintLoading();return true;}
-try{var pl=document.getElementById('pane-load');if(pl)pl.addEventListener('click',function(){try{var k=document.body.getAttribute('data-tab');if(k&&paneDiv(F[k])&&paneDiv(F[k]).classList.contains('failed'))show(k);}catch(e){}});}catch(e){}   // the failed state's tap: retry the shown tab's pane (show() promotes a re-parked pane again)
+try{var pl=document.getElementById('pane-load'),prb=document.getElementById('pane-load-retry');
+var retry=function(){try{var k=document.body.getAttribute('data-tab');if(k&&paneDiv(F[k])&&paneDiv(F[k]).classList.contains('failed'))show(k);}catch(e){}};   // the failed state's retry: the shown tab's pane again (show() promotes a re-parked pane as a first tap would)
+if(pl)pl.addEventListener('click',retry);   // a tap anywhere on the overlay
+if(prb)prb.addEventListener('click',function(ev){try{ev.stopPropagation();}catch(e){}retry();});}catch(e){}   // the button: a real <button>, so Enter and Space run its click natively (no keydown copy); its click does not bubble into the overlay's
 function show(p){if(p==='files'&&!filesCtlM())p='chat';   // the Files tab is hidden while its control is off: the chat shows instead
 if(!F[p])return;for(var i=0;i<B.length;i++)if(B[i].getAttribute('data-pane')===p&&B[i].hidden)return;   // a tab the controller hid (its pane is off in the gear's Panes section) is not a place to go
 document.body.setAttribute('data-tab',p);for(var k in F)if(F[k])F[k].classList.toggle('m-on',k===p);   // a pane this shell lacks is skipped, never a TypeError
@@ -70925,6 +70933,11 @@ def _landing():
             "#mtabs{display:none}"
             "#pane-load{display:none}"   # the lazy pane loader (stage 0, 2026-09-18): hidden everywhere but the phone layout's loading state (the media block below)
             "#pane-load-msg{display:none;max-width:22em;padding:0 1.5em;text-align:center;font:14px/1.45 'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;color:#ccc}"   # the failed-load message (review round 1): shown by body.pane-failed inside the media block
+            # the retry button (review round 3, ui-1): a real button, shown by the failed paint alone (paintLoading drops its `hidden`), in the
+            # rail row's dress: a pill outline, the accent on keyboard focus
+            "#pane-load-retry[hidden]{display:none}"
+            "#pane-load-retry{font:14px/1.2 'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;padding:8px 18px;border-radius:999px;border:1px solid rgba(255,255,255,0.28);background:transparent;color:#ddd;cursor:pointer}"
+            "#pane-load-retry:focus-visible{outline:2px solid var(--accent,#9cd2ff);outline-offset:2px}"
             # narrow OR a touch device up to 1024px → one pane + bottom tabs; mouse desktops keep the grid
             # (_MOBILE_MQ: the same query the mobile script's __rompMobileOn probe answers by)
             "@media " + _MOBILE_MQ + "{"
@@ -71138,6 +71151,7 @@ def _landing():
             "body.theme-light #romp-boot{background:#F1EAE2}"
             "body.theme-light #pane-load{background:#F1EAE2}"   # the lazy pane loader's backdrop goes warm-light with the page (stage 0)
             "body.theme-light #pane-load-msg{color:#333}"
+            "body.theme-light #pane-load-retry{border-color:rgba(0,0,0,0.3);color:#222}"
             # (the loader dots' light rule rides in _LOADER_CSS, included below)
             # light cards: raised white over the warm page, dark warm text, hairline borders, soft shadows
             "body.theme-light #rerr-panel{background:#FFFFFF;border-color:rgba(0,0,0,0.12);color:#1F1E1D;"
@@ -71218,8 +71232,9 @@ def _landing():
             # shown tab's pane is loading its document (_LANDING_MOBILE_JS promote: body.pane-loading while the shown .pane wears
             # `loading`, from the promotion to the iframe's load event). One element for every pane: a .pane div is
             # display:contents on the phone and can host no box of its own. Its second child is the failed-load message
-            # (review round 1, 2026-09-19): empty and hidden until a pane's document fails to load (body.pane-failed).
-            "<div id=pane-load>" + _loader_inner() + "<div id=pane-load-msg></div></div>"
+            # (review round 1, 2026-09-19): empty and hidden until a pane's document fails to load (body.pane-failed), announced (role=alert);
+            # its third the retry button, hidden until the failed paint shows it (review round 3, ui-1: a keyboard-reachable, named control)
+            "<div id=pane-load>" + _loader_inner() + "<div id=pane-load-msg role=alert></div><button id=pane-load-retry type=button hidden>Try again</button></div>"
             # the bell popover (2026-09-05; driven by _LANDING_PUSH_JS): the two switches that ONE bell
             # tap used to flip together — the kernel-wide master and this device's push subscription —
             # as separate rows, plus the turn-finished switch and a test button that shows the push
