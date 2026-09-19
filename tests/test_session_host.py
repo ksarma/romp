@@ -664,7 +664,8 @@ class _PickSdk:
 class SocketMode(unittest.TestCase):
     """The control socket is owner-only from the moment `hosts/<sid8>.sock` exists, and a host that cannot publish it
     serves nothing and keeps nothing (2026-09-18, split out of PR 789's round 1, finding fresh-5, as its own fix; the
-    budget, umask, sweep and refusal cases from its own round 1, 2026-09-19). asyncio.start_unix_server binds AND
+    budget, umask, sweep and refusal cases from its own round 1, 2026-09-19, and the creation-moment, sweep-arm, bind-leg
+    and close-on-failure cases from that round's mutation pass, the same day). asyncio.start_unix_server binds AND
     listens at the umask's mode, and the old code's chmod one line later left the published path at that mode for the
     gap: the last member of the create-then-tighten class PR 789 closed for the kernel's credential files. A stat once
     the host is up passes on that code, so the mode cases capture the mode at CREATION: the mode the temp carries as
@@ -684,27 +685,28 @@ class SocketMode(unittest.TestCase):
                           "remove_lease": lambda sd, sid: (self.lease_calls.append("remove"), self.leases.pop(sid, None)) and True,
                           "proc_start": lambda pid: "1"}
 
-    def _spec_at(self, root):
+    def _spec_at(self, root, sid=SID):
         """hosts/<sid>/spawn.json under `root` as the kernel writes it (the session directory 0700); hosts/ itself at the
-        umask's mode here (0777 under the setUp umask), the shape an old install's kernel left: the host tightens it."""
+        umask's mode here (0777 under the setUp umask), the shape an old install's kernel left: the host tightens it.
+        `sid` is SID except in the bind-leg case, whose short sid gives the temp a name longer than the published one."""
         self.root = root
-        self.sdir = Path(root) / "hosts" / SID
+        self.sdir = Path(root) / "hosts" / sid
         self.sdir.mkdir(parents=True, mode=0o700)
-        spec = {"sid": SID, "name": "web", "version": "abc12345", "state_dir": root, "protocol": 1,
+        spec = {"sid": sid, "name": "web", "version": "abc12345", "state_dir": root, "protocol": 1,
                 "cli_path": FAKE, "cwd": root, "unattached_grace_s": 3600}
         (self.sdir / "spawn.json").write_text(json.dumps(spec))
         (self.sdir / "spawn.json").chmod(0o600)
-        self.pub = Path(root) / "hosts" / (SID[:8] + ".sock")
+        self.pub = Path(root) / "hosts" / (sid[:8] + ".sock")
 
-    def _reroot(self, total):
+    def _reroot(self, total, sid=SID):
         """Move the state root under a padded directory so hosts/<sid8>.sock is exactly `total` bytes long. Skips when this
         run's temp root is already too deep for that (the sweep's deepest xdist root puts the un-padded path at 107)."""
-        pad = total - len(os.path.join(self.state, "hosts", self.pub.name)) - 1
+        pad = total - len(os.path.join(self.state, "hosts", sid[:8] + ".sock")) - 1
         if pad < 1:
             self.skipTest("this run's temp root is already deeper than %d bytes allow; run under a shorter TMPDIR" % total)
         root = os.path.join(self.state, "p" * pad)
         os.mkdir(root)
-        self._spec_at(root)
+        self._spec_at(root, sid)
         self.assertEqual(len(os.fsencode(str(self.pub))), total, str(self.pub))
 
     class _NoCli:
@@ -820,6 +822,32 @@ class SocketMode(unittest.TestCase):
         self.assertEqual((ready["sock"], ready["pathLen"]), (self.pub.name, len(os.fsencode(str(self.pub)))))
         self._assert_temp_name(ready["tmp"])
 
+    def test_the_published_path_first_exists_at_the_rename_and_not_before_the_bind(self):
+        """The mode cases read the published path at its first SIGHTING, a poll between the loop's turns, so a placeholder
+        the prelude left at the published path (a touch, 0666 under this umask) from before the bind until the rename
+        replaced it passed every one of them: the rename lands in the same turn as the bind's one yield, ahead of the poll
+        (the mutation pass of round 1, 2026-09-19). Pinned at the two calls instead: nothing stands at the published path
+        when start_unix_server is called, and nothing stands there when os.rename is called, so the rename is the first
+        thing to put a path there, after the listen and at 0600, and the exists-before-listen gap the spawning kernel's
+        poll would otherwise fall into stays closed."""
+        seen = []
+        real_rename, real_start = os.rename, asyncio.start_unix_server
+
+        def rename(src, dst, *a, **k):
+            if Path(dst) == self.pub:
+                seen.append(("rename", os.path.lexists(dst)))
+            return real_rename(src, dst, *a, **k)
+
+        async def start(*a, **k):
+            seen.append(("bind", os.path.lexists(self.pub)))
+            return await real_start(*a, **k)
+        with mock.patch.object(os, "rename", rename), mock.patch.object(asyncio, "start_unix_server", start):
+            mode, rc = self._run_host()
+        self.assertEqual(rc, 0, self.host_log[-3:])
+        self.assertEqual(seen, [("bind", False), ("rename", False)],
+                         "nothing at the published name at the bind and nothing at the rename: the rename creates it")
+        self.assertEqual(mode, 0o600, "and 0600 at the first sighting")
+
     def _temp_mode_at_its_chmod(self):
         """Run the host under the umask already set and return (the temp's mode as stat read it the instant before its
         chmod, the published path's mode at its first sighting): the measured facts, not the calls made."""
@@ -886,6 +914,54 @@ class SocketMode(unittest.TestCase):
                          "the dead owner's temp is swept; a live owner's and a foreign name are left")
         self.assertFalse(self.pub.exists(), "and run()'s exit removed the published path")
 
+    def test_a_dead_hosts_published_socket_is_gone_at_the_bind_and_not_left_standing_by_a_refusal(self):
+        """The prelude's unlink of a dead host's published socket, pinned where it acts (the mutation pass of round 1,
+        2026-09-19: on the success road the rename replaces a stale socket whether or not the prelude removed it, so the
+        replacement case above held with the unlink deleted). Two moments the rename cannot supply. At the bind, the
+        published path is already clear. And when the publish fails after the prelude (here the temp's chmod, refused with
+        EACCES, which also names the `chmod` step in the row), the refusal leaves nothing at the published path: not this
+        host's socket, which it never published, and not the dead host's, which a kernel probing the path would otherwise
+        find there refusing every connect."""
+        stale = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        stale.bind(str(self.pub))
+        stale.close()
+        at_bind = []
+        real_start, real_chmod = asyncio.start_unix_server, os.chmod
+
+        async def start(*a, **k):
+            at_bind.append(os.path.lexists(self.pub))
+            return await real_start(*a, **k)
+
+        def chmod(path, mode, *a, **k):
+            if Path(path).parent == self.pub.parent and Path(path).name.endswith(".tmp"):
+                raise PermissionError(errno.EACCES, "the temp's chmod, refused for the test")
+            return real_chmod(path, mode, *a, **k)
+        with mock.patch.object(asyncio, "start_unix_server", start), mock.patch.object(os, "chmod", chmod):
+            mode, rc = self._run_host(ready=lambda: False)
+        self.assertEqual(at_bind, [False], "the dead host's socket is gone before the bind")
+        self._assert_refused(rc, "chmod", "PermissionError", errno.EACCES, at="test_session_host.py:")
+        self.assertFalse(os.path.lexists(self.pub), "the refusal leaves the published path clear: the dead host's socket is not left standing")
+
+    def test_a_temp_whose_live_owner_is_another_uids_process_is_left_alone(self):
+        """The sweep's third arm (the mutation pass of round 1, 2026-09-19: the dead, live and stray cases above leave it
+        unreached). Signal 0 at a live process of another uid is refused with EPERM, a PermissionError and not a
+        ProcessLookupError, and a temp whose owner answers that way is not ours to judge: the owner is alive, mid-bind for
+        all this host can tell, so the temp is left. The probe is real: pid 1 is the process every pid namespace has, and
+        below root it refuses our signal 0 (a run as root, where it does not, skips)."""
+        try:
+            os.kill(1, 0)
+        except PermissionError:
+            pass
+        else:
+            self.skipTest("pid 1 takes this process's signal 0 (running as root?): no live owner of another uid to probe with")
+        foreign = sh._b32(1, 5) + "0000.tmp"
+        (self.pub.parent / foreign).write_text("a temp")
+        self.assertEqual(sh.temp_owner_pid(foreign), 1)
+        mode, rc = self._run_host()
+        self.assertEqual(rc, 0, self.host_log[-3:])
+        self.assertEqual(mode, 0o600, "the host published regardless")
+        self.assertEqual(self._temps(), [foreign], "the foreign owner's temp is left: alive, and not ours to judge")
+
     def test_the_temp_name_is_writer_unique_and_the_published_names_length(self):
         """The length proof and the identity proof (the review of this fix, 2026-09-18 and 2026-09-19): the socket path
         budget is sun_path (SOCK_PATH_MAX, 107 usable bytes on Linux), the published path IS that budget on the sweep's
@@ -932,15 +1008,17 @@ class SocketMode(unittest.TestCase):
         self.assertEqual(stat.S_IMODE(os.stat(hosts).st_mode), 0o700, "and stays so after the host's exit")
         self.assertEqual(stat.S_IMODE(os.stat(self.sdir).st_mode), 0o700, "hosts/<sid>/ untouched at 0700")
 
-    def _assert_refused(self, rc, step, error, errno_=None):
+    def _assert_refused(self, rc, step, error, errno_=None, at="session_host.py:"):
         """The loud road, whole: the row names the step, nothing is bound or published, the lease the spawn wrote is
-        gone, the CLI stand-in was closed, and no temp is left in hosts/."""
+        gone, the CLI stand-in was closed, and no temp is left in hosts/. `at` is the file the row's frame names: the
+        raiser's (_where reads the innermost frame), so session_host.py for the checks of our own, asyncio's
+        unix_events.py for the bind's, and this file's for a failure a test's stand-in raised."""
         self.assertIsInstance(rc, OSError, (rc, self.host_log[-3:]))
         self.assertIn("socket-bind-failed", self.rows, self.host_log)
         row = self.rows["socket-bind-failed"]
         self.assertEqual((row["step"], row["error"], row.get("errno")), (step, error, errno_), row)
         self.assertEqual((row["pathLen"], row["limit"]), (len(os.fsencode(str(self.pub))), sh.SOCK_PATH_MAX), row)
-        self.assertTrue(row["at"].startswith("session_host.py:"), row)
+        self.assertTrue(row["at"].startswith(at), row)
         self.assertNotIn("text", row, "the error's text, which carries the path, is never logged")
         self.assertNotIn("socket-ready", self.rows)
         self.assertFalse(self.pub.exists() and not self.pub.is_dir(), "no socket at the published path")
@@ -996,6 +1074,32 @@ class SocketMode(unittest.TestCase):
         self.assertLessEqual(len(ready_row["tmp"]), len(ready_row["sock"]), ready_row)
         self.assertNotIn("socket-bind-failed", self.rows)
 
+    def test_a_temp_over_the_budget_fails_the_bind_and_the_row_names_that_step(self):
+        """The bind's own failure, reached for real, and the step the row names for it (the mutation pass of round 1,
+        2026-09-19: every refusal case failed before the bind or after it, so a bind failure reported under the prelude's
+        name passed them all). sock_names gives a sid shorter than eight characters a temp longer than its published
+        name (13 bytes against `web.sock`'s 8; not a shape the kernel mints, as its docstring says), so with the published
+        path at exactly SOCK_PATH_MAX the budget check passes and the bind refuses the temp: CPython's "AF_UNIX path too
+        long", an OSError with no errno. The row says `bind` with the published path's length within the limit, which is
+        what tells a reader the temp overran and not the path the kernel connects to; the loud road runs whole."""
+        self._reroot(sh.SOCK_PATH_MAX, sid="web")
+        binds = []
+        real = asyncio.start_unix_server
+
+        async def start(*a, **k):
+            binds.append(k.get("path"))
+            return await real(*a, **k)
+        with mock.patch.object(asyncio, "start_unix_server", start):
+            mode, rc = self._run_host()
+        self.assertIsNone(mode)
+        self.assertEqual(len(binds), 1, "the bind was attempted: the published path passed the budget check")
+        tmp = Path(binds[0])
+        self.assertEqual((tmp.parent, sh.temp_owner_pid(tmp.name)), (self.pub.parent, os.getpid()), tmp)
+        self.assertGreater(len(os.fsencode(str(tmp))), sh.SOCK_PATH_MAX, "the temp overran the budget; the published path did not")
+        self._assert_refused(rc, "bind", "OSError", None, at="unix_events.py:")
+        self.assertIn("too long", str(rc), "the bind's own refusal, not a check of ours")
+        self.assertIn("create_unix_server", self.rows["socket-bind-failed"]["at"], "the frame is asyncio's bind, a basename and no path")
+
     def test_a_hosts_that_is_a_symlink_is_refused_before_the_bind(self):
         """hosts_dir's lstat (the judge scratch precedent, taken whole in round 1): a symlink planted at hosts/ is refused
         with the row's step hosts-dir, and its target's mode is not touched through the link."""
@@ -1018,6 +1122,30 @@ class SocketMode(unittest.TestCase):
             mode, rc = self._run_host()
         self._assert_refused(rc, "hosts-dir", "OSError")
         self.assertEqual(stat.S_IMODE(os.stat(hosts).st_mode), 0o777, "still loose, and the host said so rather than binding")
+
+    def test_a_failed_publish_closes_the_listening_socket_it_bound(self):
+        """The except arm's server.close() (the mutation pass of round 1, 2026-09-19: the rename-failure case below checks
+        the rows, the temp, the lease and the CLI, and a listening socket left open behind an unlinked temp is invisible
+        to all four). The server is captured as start_unix_server returns it, the rename is made to fail (a non-empty
+        directory at the published path, that case's shape), and afterwards the server is not serving and its listening
+        descriptor is closed: a host that could not publish holds no socket, not even one bound to a name that is gone."""
+        self.pub.mkdir()
+        (self.pub / "keep").write_text("not a socket")
+        servers = []
+        real = asyncio.start_unix_server
+
+        async def start(*a, **k):
+            server = await real(*a, **k)
+            servers.append((server, server.sockets[0]))          # the listening descriptor, held so its close can be read
+            return server
+        with mock.patch.object(asyncio, "start_unix_server", start):
+            mode, rc = self._run_host(ready=lambda: False)
+        self.assertEqual(len(servers), 1)
+        server, listening = servers[0]
+        self.assertFalse(server.is_serving(), "the server the bind returned is closed on the failure")
+        self.assertEqual(listening.fileno(), -1, "and its listening descriptor with it")
+        self._assert_refused(rc, "rename", "IsADirectoryError", errno.EISDIR)
+        self.assertTrue(self.pub.is_dir(), "the planted directory is left")
 
     def test_a_bind_failure_writes_no_path_into_host_log_through_either_row(self):
         """host.log carries no spec field, and the state root is one: the first cut's socket-bind-failed row logged the
@@ -1122,6 +1250,58 @@ class HostsDir(unittest.TestCase):
         with mock.patch.object(os, "lstat", lstat):
             sh.hosts_dir(self.root)
         self.assertEqual(reads, [0o775, 0o700], "the mode read before the chmod and read back after it")
+
+    def test_a_fresh_hosts_is_0700_by_its_mkdir_and_no_chmod_is_needed(self):
+        """The creation mode is the mkdir's own (the mutation pass of round 1, 2026-09-19: with the mode dropped from the
+        mkdir, a fresh hosts/ under a 000 umask was born 0777 and repaired to 0700 by the chmod a line later, and every
+        case that read the final mode passed; that create-then-tighten window is the shape this fix closes for the socket,
+        so the directory is pinned at its creation too). Read where it shows: the first lstat after the mkdir reads 0700,
+        no chmod is made, and on a second fresh root with os.chmod a no-op the directory is still made and still 0700."""
+        chmods, reads = [], []
+        real_chmod, real_lstat = os.chmod, os.lstat
+
+        def chmod(p, mode, *a, **k):
+            chmods.append((Path(p), mode))
+            return real_chmod(p, mode, *a, **k)
+
+        def lstat(p, *a, **k):
+            st = real_lstat(p, *a, **k)
+            if Path(p) == self.hosts:
+                reads.append(stat.S_IMODE(st.st_mode))
+            return st
+        with mock.patch.object(os, "chmod", chmod), mock.patch.object(os, "lstat", lstat):
+            self.assertEqual(sh.hosts_dir(self.root), self.hosts)
+        self.assertEqual(reads, [0o700], "0700 at the first read after the mkdir, under a 000 umask: the mkdir's mode")
+        self.assertEqual(chmods, [], "nothing to repair on a directory born owner-only")
+        other = tempfile.mkdtemp(prefix="hd-")
+        self.addCleanup(shutil.rmtree, other, True)
+        with mock.patch.object(os, "chmod", lambda *a, **k: None):
+            self.assertEqual(sh.hosts_dir(other), Path(other) / "hosts")
+        self.assertEqual(stat.S_IMODE(os.lstat(Path(other) / "hosts").st_mode), 0o700, "made 0700 with no chmod to lean on")
+
+    def test_an_owner_only_hosts_is_read_and_left_and_only_a_loose_one_is_chmodded(self):
+        """chmod only when loose (the mutation pass of round 1, 2026-09-19: a chmod on every call reads back the same
+        mode, so nothing pinned the condition). hosts_dir runs on every host's bind and every kernel spawn, over the one
+        directory every session's socket lives in; a 0700 hosts/ we own is read and left as it is, and the chmod is the
+        repair for a loose one, made once and read back."""
+        sh.hosts_dir(self.root)
+        self.assertEqual(stat.S_IMODE(os.lstat(self.hosts).st_mode), 0o700)
+        chmods = []
+        real_chmod = os.chmod
+
+        def chmod(p, mode, *a, **k):
+            chmods.append((Path(p), mode))
+            return real_chmod(p, mode, *a, **k)
+        with mock.patch.object(os, "chmod", chmod):
+            sh.hosts_dir(self.root)
+            sh.hosts_dir(self.root)
+        self.assertEqual(chmods, [], "two calls over an owner-only hosts/: no chmod")
+        os.chmod(self.hosts, 0o750)                     # loose by the group's read and search bits alone
+        with mock.patch.object(os, "chmod", chmod):
+            sh.hosts_dir(self.root)
+            sh.hosts_dir(self.root)
+        self.assertEqual(chmods, [(self.hosts, 0o700)], "one chmod, for the loose one, and none on the call after it")
+        self.assertEqual(stat.S_IMODE(os.lstat(self.hosts).st_mode), 0o700)
 
     def test_a_symlink_at_hosts_is_refused_and_its_target_untouched(self):
         target = Path(self.root) / "elsewhere"
