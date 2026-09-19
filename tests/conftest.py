@@ -545,20 +545,33 @@ def restore_env(name, prior):
 #     if it has one, so the test runs and its own transition is still judged (the first form failed the
 #     setup, and one test per worker lost its run whenever a leak escaped every window). The same report,
 #     at the worker's FIRST test window only, covers a real backend over a directory that stands but is not
-#     jd.STATE, and only when that backend IS the object the module's own start read found (_SDK_MODULE_START,
-#     compared by identity, never by state_dir or class): at that window only import-time code and any fixture
-#     of a scope wider than the function has run (pytest collects every module before the first test runs; a
-#     session- or package-scoped fixture sets up before the module boundary's start read, and setUpModule,
-#     setUpClass and a module- or class-scoped fixture after it, the order a scratch run showed), so a
-#     singleton over another root that the start read saw is import-time code's or such a fixture's build over
-#     a root that is not the run's, or its move of jd.STATE after the build, left in place (the wording names
-#     both causes and both shapes), while one the start read did NOT see was installed by the module's or a
-#     class's own setup and is left unnamed here, so the boundary that brackets the install judges it, names
-#     the scope and prints the sandbox remedy. Before the identity term the report fired on that object too,
-#     blamed import-time code, gave no remedy, and its naming silenced the boundary that would have been right.
-#     A missing module start read refuses the report. Later windows do not apply that test: a legitimate first
-#     build followed by a STATE move the judge fixture names leaves the same picture, and a test window or a
-#     boundary made it, where it was judged.
+#     jd.STATE AS THE MODULE BOUNDARY'S START READ RECORDED IT, and only when that backend IS the object that read
+#     found (_SDK_MODULE_START, compared by identity, never by state_dir or class). The premise holds at that
+#     START READ, not at the window: when the module boundary reads, only import-time code and any fixture of a
+#     scope wider than the function has run (pytest collects every module before the first test runs; a session-
+#     or package-scoped fixture sets up before the module boundary's start read, and setUpModule, setUpClass and
+#     a module- or class-scoped fixture after it, the order a scratch run showed), so the identity term and the
+#     start read's reference make the window's report a statement about that read: a singleton the start read
+#     saw over a root other than the jd.STATE it recorded is import-time code's or such a fixture's build over a
+#     root that is not the run's, or its move of jd.STATE after the build, left in place (the wording names both
+#     causes and both shapes), while one the start read did NOT see was installed by the module's or a class's
+#     own setup and is left unnamed here, so the boundary that brackets the install judges it, names the scope
+#     and prints the sandbox remedy; and a jd.STATE the window finds moved from the start read's is a scope
+#     setup's move for its tests (K.One's shape), not a leak, so the window's own jd.STATE is never the reference
+#     (compared against it, the kernel's own import-time build over the run root got the report, blaming import-time
+#     code for a build or a move that did not happen, whenever setUpModule or setUpClass moved jd.STATE for its
+#     tests). Before the identity term the report fired on the setup's object too, blamed import-time code, gave
+#     no remedy, and its naming silenced the boundary that would have been right. A missing module start read
+#     refuses the report. Later windows do not apply that test: a legitimate first build followed by a STATE move
+#     the judge fixture names leaves the same picture, and a test window or a boundary made it, where it was
+#     judged. STATED LIMIT: the first window consumes the flag whether or not it takes the report, so an
+#     import-time (or wider-scoped fixture's) build over a kept root whose worker's first window belongs to a
+#     class that swapped the singleton out around its tests (K.Two's shape: saved, reset, put back) is met, as
+#     that object, only at a later window, where the report is not taken, and the leak goes unreported (the
+#     fixture's tests pin it as behaviour, S7, beside S6, the same leak with no swapping class, reported). The
+#     closure would record the candidate at the worker's first module start read (a real object over a root
+#     other than that read's jd.STATE) and raise it at the first window whose before object is that object,
+#     with the wording's "before any test in this worker has run" reworded; not taken here.
 # Two module-level lists of STRONG references (identity membership; strong so an id is never reused by a
 # later object) keep the two kinds of naming apart. Every object a VERDICT names (a test's own, a boundary's)
 # goes on _SDK_NAMED, the list the boundary's quiet-on-a-named-object rule consults. Every object the
@@ -696,10 +709,12 @@ _SdkWindow = collections.namedtuple("_SdkWindow", "seq before after ref")
 _SDK_LAST = _SdkRead(None, None, None, None, None)     # the last read anywhere in this worker (the boundary's L)
 _SDK_READS = 0                                         # reads so far in this worker; a scope keeps the count at its start read
 _SDK_WINDOWS = []                                      # the test windows that changed the slot since the module started
-_SDK_FIRST_WINDOW = True                               # no test window has run yet in this worker: only import-time code and any
-                                                       # fixture of a scope wider than the function has
-_SDK_MODULE_START = None                               # the current module boundary's start read (_SdkRead); the first-window
-                                                       # kept-root report is taken only for the object it found
+_SDK_FIRST_WINDOW = True                               # no test window has run yet in this worker; the kept-root report is taken
+                                                       # at this window only, and only for the module start read's object, against
+                                                       # the jd.STATE that read recorded (at that read only import-time code and
+                                                       # any fixture of a scope wider than the function has run)
+_SDK_MODULE_START = None                               # the current module boundary's start read (_SdkRead): the first-window
+                                                       # kept-root report's object and reference root
 _SDK_NAMED = []                                        # strong references to every object a verdict named (a test's own, a boundary's)
 _SDK_REPORTED = []                                     # strong references to every object the inherited report named
 _SDK_REAL = ("romp_sdk_backend", "SdkBackend")
@@ -785,13 +800,17 @@ _SDK_INHERITED_TAIL = ("This test did not make it: %s, outside every window the 
                        "transition is judged too), and the tests after it that inherit the same object are not accused.")
 
 
-def _sdk_inherited(before, first):
+def _sdk_inherited(before, start):
     """The once-per-worker report on a singleton state no window made, or None: a real backend over a directory that is
-    gone, at any test; or, with `first` (the worker's FIRST test window, AND the object is the one the module's own
-    start read found), a real backend over a directory other than jd.STATE, which only import-time code or a fixture
-    of a scope wider than the function could have made: at that window nothing else has run, and an object the start
-    read did not see was installed by the module's or a class's own setup, which that scope's boundary judges. Silent
-    on an object either list has named (_sdk_named, _sdk_reported)."""
+    gone, at any test; or, with `start` (the module boundary's start read, passed only at the worker's FIRST test window
+    AND when the object is the one that read found, else None), a real backend over a directory other than jd.STATE AS
+    THAT READ RECORDED IT, which only import-time code or a fixture of a scope wider than the function could have made:
+    at the start read nothing else has run, and the identity term with the start read's reference make the window's
+    report a statement about that read (jd.STATE at the window itself may have been moved since by setUpModule,
+    setUpClass or a module- or class-scoped fixture, which is no leak; compared against the window's jd.STATE, a
+    legitimate import-time build over the run root got the report whenever a scope setup moved jd.STATE for its tests);
+    an object the start read did not see was installed by the module's or a class's own setup, which that scope's
+    boundary judges. Silent on an object either list has named (_sdk_named, _sdk_reported)."""
     be = before.be
     if not _sdk_is_real(be) or _sdk_named(be) or _sdk_reported(be):
         return None
@@ -799,10 +818,10 @@ def _sdk_inherited(before, first):
         return ("starts under the kernel's backend singleton (km._sdk_backend) over a directory that no longer exists: %s. %s"
                 % (_sdk_singleton_text(be),
                    _SDK_INHERITED_TAIL % "an earlier test, a class or module setup or teardown, or import-time code did"))
-    if first and before.sd != before.jd_state:
+    if start is not None and before.sd != start.jd_state:
         return ("starts under the kernel's backend singleton (km._sdk_backend) over a directory that is not jd.STATE, before "
-                "any test in this worker has run: %s, jd.STATE %s. %s"
-                % (_sdk_singleton_text(be), before.jd_state,
+                "any test in this worker has run: %s, jd.STATE %s at this module's start read. %s"
+                % (_sdk_singleton_text(be), start.jd_state,
                    _SDK_INHERITED_TAIL % "import-time code did, or a session- or package-scoped fixture did (one that set up "
                    "before this module's own reads), building the singleton over a root that is not the run's, or moving "
                    "jd.STATE after the build and leaving it there"))
@@ -910,10 +929,11 @@ def _sdk_judge_scope(start, last, end, windows):
 def _sdk_singleton_restored(request):
     global _SDK_FIRST_WINDOW
     before = _sdk_read()
-    # The kept-root report at the first window is taken only for the object the module's own start read found (identity):
-    # a value installed after that read is the module's or a class's own setup, judged at that scope's boundary.
+    # The kept-root report at the first window is taken only for the object the module's own start read found (identity)
+    # and against the jd.STATE that read recorded: a value installed after that read is the module's or a class's own
+    # setup, judged at that scope's boundary, and a jd.STATE moved after it is a scope setup's move for its tests.
     first = _SDK_FIRST_WINDOW and _SDK_MODULE_START is not None and before.be is _SDK_MODULE_START.be
-    inherited = _sdk_inherited(before, first)
+    inherited = _sdk_inherited(before, _SDK_MODULE_START if first else None)
     _SDK_FIRST_WINDOW = False
     if inherited is not None:
         _sdk_report(before.be)             # reported now, so the tests after this one that inherit the object are quiet
@@ -958,7 +978,7 @@ def _sdk_singleton_class_boundary(request):
 def _sdk_singleton_module_boundary(request):
     global _SDK_MODULE_START
     start = _sdk_read()
-    _SDK_MODULE_START = start              # the first-window report's reference object (_sdk_singleton_restored)
+    _SDK_MODULE_START = start              # the first-window report's object and reference root (_sdk_singleton_restored)
     reads_at_start = _SDK_READS
     yield
     try:
