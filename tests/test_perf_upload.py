@@ -522,8 +522,13 @@ class ReceiverSetting(unittest.TestCase):
         try:
             sock.bind(setting)
         except OSError:                                   # the path is too long for a socket address: bind short and link to it
-            short = tempfile.mkdtemp(dir="/tmp")
-            self.addCleanup(shutil.rmtree, short, True)
+            # The short dir goes under the system temp dir the tests package recorded (ROMP_TESTS_SYSTEM_TMPDIR), outside
+            # the run's private root, so the AF_UNIX path fits sun_path under xdist nesting; a literal system path here
+            # would bypass the redirect, which tests/test_tempdir_hygiene.py refuses. Outside the root is outside the
+            # exit sweep's scope, so the dir is removed here, when its test is (the shape is tests/test_host_transport.py's
+            # two socket dirs, TransportOverSocket._path and BackendHostRules._be).
+            short = tempfile.mkdtemp(dir=os.environ.get("ROMP_TESTS_SYSTEM_TMPDIR") or None)
+            self.addCleanup(shutil.rmtree, short, ignore_errors=True)
             sock.bind(os.path.join(short, "s"))
             os.symlink(os.path.join(short, "s"), setting)
         self.assertEqual(unit(), named, "a socket: the open itself fails (ENXIO) and the file is named")
