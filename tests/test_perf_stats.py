@@ -12,6 +12,7 @@ increments on the hot paths and no formatting until a read.
 Drives the REAL Handler over HTTP and the REAL _push with stubbed builders (the test_color_route.py
 and test_tab_meta_push.py patterns). Synthetic fixtures only: placeholder UUIDs, invented names."""
 import base64
+import codecs
 import collections
 import concurrent.futures
 import copy
@@ -1586,8 +1587,11 @@ class RoutingStatements(unittest.TestCase):
 
     The tree is every text file git tracks or would track (PR 797's closing check, 2026-09-19): `git ls-files --cached
     --others --exclude-standard` at the repo root, so an untracked file is swept before it is committed, no directory
-    excluded, symlinks skipped (bin/romp-kernel points at the kernel), a file read as text when its first 8 KiB hold no
-    NUL byte and it decodes as UTF-8. The eight-directory walk this replaced (kernel, bin, cli, docs, upstream, tests,
+    excluded, symlinks skipped (bin/romp-kernel points at the kernel). A file is text when its first PROBE bytes (8 KiB)
+    hold no NUL and the whole of it decodes as UTF-8; it is read in CHUNK-byte pieces through an incremental decoder,
+    and only a file that names a block is read whole, so the scan holds at most one piece, raw and decoded, for a file
+    that names none, whatever its size, and about twice the text of each file that does (the PLACES files); no size
+    limit is needed and none is applied. The eight-directory walk this replaced (kernel, bin, cli, docs, upstream, tests,
     scripts, ui/webview) omitted every other directory and the root files, 373 tracked files at 639043a31 (tools/ 143,
     vscode-extension/ 70, ui/ outside ui/webview 40, plans/ 35, vendor/ 28, assets/ 18, the 14 root files, .github/ 8,
     hooks/ 8, claude/ 4, overrides/ 2, postal/ 2, .githooks/ 1), and inside its eight roots it read only a suffix
@@ -1624,6 +1628,15 @@ class RoutingStatements(unittest.TestCase):
               "tests/test_jobs_thread_split.py", "tests/test_perf_stats.py", "upstream/2026-09-18-stage-attribution.md"}
     PROBE = 8192                                  # the bytes read first from every file; a NUL among them ends the read, so a png, a
     #                                               font or a recording costs its header and nothing more
+    CHUNK = 8 * PROBE                             # the bytes read per piece after the probe. A piece is held raw and decoded at once,
+    #                                               so the text pin's 128 x PROBE bound needs CHUNK well under it: the pin measures
+    #                                               the scan's delta each run, a few times CHUNK on 3.12 and more on the free-threaded
+    #                                               3.14t, whose allocator books more per call; a piece of 128 x PROBE cannot meet
+    #                                               the bound (round 2's refuters, who corrected the ruled 1 MiB piece)
+    OVERLAP = 32                                  # characters of the previous piece searched with the start of the next, so a block
+    #                                               name across a piece boundary is found: more than the longest BLOCKS alternative
+    #                                               (connectPush.stagesMs, 20 characters). The retired-wording regex runs over the
+    #                                               whole text of a matched file and needs no overlap.
 
     @classmethod
     def setUpClass(cls):
@@ -1710,15 +1723,34 @@ class RoutingStatements(unittest.TestCase):
                     head = fh.read(self.PROBE)
                     if b"\0" in head:                 # a binary: its header is all that was read
                         continue
-                    raw = head + fh.read()            # bytes, so a character straddling byte 8192 decodes whole below
+                    # The text rule is decided in pieces (the probe, then CHUNK bytes at a time) through an incremental
+                    # decoder, which holds a character straddling a piece boundary until its bytes arrive, so a file that
+                    # names no block costs one piece raw and decoded whatever its size. A block name straddling a boundary
+                    # is found on the seam: the last OVERLAP characters of the previous piece joined to the first OVERLAP
+                    # of this one. Only a matched file is read whole, since the pins need its text.
+                    decoder = codecs.getincrementaldecoder("utf-8")()
+                    tail, chunk, matched = "", head, False
+                    while chunk:
+                        try:
+                            text = decoder.decode(chunk)
+                        except UnicodeDecodeError:      # not UTF-8: skipped, as a whole-file decode failure skips it
+                            break
+                        if self.BLOCKS.search(text) or self.BLOCKS.search(tail + text[:self.OVERLAP]):
+                            matched = True
+                            break
+                        tail = (tail + text)[-self.OVERLAP:]
+                        chunk = fh.read(self.CHUNK)
+                    if not matched:                   # skipped either way, so the decoder needs no final flush
+                        continue
+                    fh.seek(0)
+                    raw = fh.read()
             except OSError:                           # in the index, gone from the working tree (the open is what raises)
                 continue
             try:
-                text = raw.decode()
+                text = raw.decode()                   # the rule stays: the WHOLE file decodes, or the file is skipped
             except UnicodeDecodeError:
                 continue
-            if self.BLOCKS.search(text):
-                found[rel] = text
+            found[rel] = text
         return found
 
     def _places(self):
@@ -1845,6 +1877,27 @@ class RoutingStatements(unittest.TestCase):
         self.assertNotIn("blob.bin", sorted(found), "a NUL in the first bytes rejects the file")
         #                            the paths, not the dict: a failure would otherwise print the decoded blob, 64 MiB of it
         self.assertLess(delta, 128 * self.PROBE, "the scan read the blob past its first bytes: delta %d bytes" % delta)
+
+    def test_a_large_text_file_that_names_no_block_costs_a_chunk_not_its_size(self):
+        """The text road of the same bound: a 64 MiB untracked, unignored text file that names no block (plain ASCII lines,
+        so it passes the probe and decodes) costs the scan one piece, not its size. The tracemalloc delta during the scan
+        (the tests/test_reader_stream_peak.py idiom, as in the blob pin above) stays under 128 x PROBE, recomputed every
+        run and printed on failure; a scan that read the file whole and decoded it whole held the bytes and the text
+        both, about twice the file (round 2's Cluster C, the half of round 1's size-bound ruling that had not landed)."""
+        d, env = _scratch_repo(self)
+        (d / "control.md").write_text("a control note naming stagesForeign\n")    # so the absence below cannot pass vacuously
+        line = b"a line of plain text that names no routed block\n"
+        piece = (line * (2**20 // len(line) + 1))[:2**20]                          # exactly 1 MiB, written 64 times
+        with open(d / "big.txt", "wb") as fh:
+            for _ in range(64):
+                fh.write(piece)
+        self.assertEqual((d / "big.txt").stat().st_size, 64 * 2**20)
+        found, delta = _traced_delta(lambda: self._scan(d, env=env))
+        listed = os.fsdecode(_git_bytes(d, "ls-files", "-z", "--others", "--exclude-standard", env=env)).split("\0")
+        self.assertIn("big.txt", listed, "git lists the file, so the scan met it (a machine-wide ignore of .txt would hide it)")
+        self.assertIn("control.md", sorted(found))
+        self.assertNotIn("big.txt", sorted(found), "a file naming no block is not in the result")
+        self.assertLess(delta, 128 * self.PROBE, "the scan held more than a piece of a file that names no block: delta %d bytes" % delta)
 
     def test_a_path_whose_name_is_not_utf8_is_read_and_named(self):
         """One listed path whose NAME is not valid UTF-8 (git ls-files -z emits the raw bytes) used to error every test
@@ -2029,8 +2082,11 @@ class RoutingStatements(unittest.TestCase):
         """The text rule's other edges, each stated in the class docstring and, before round 2, pinned by nothing: an
         ignored file naming a block is not read (--exclude-standard); a NUL at byte PROBE-1 rejects a file and a NUL at
         byte PROBE does not (the file is read whole and found, the case the docstring says grep -I hides); content that
-        is not UTF-8 is skipped, never read with a replacement character. In a scratch repo, so the live tree holds
-        none of it."""
+        is not UTF-8 is skipped, never read with a replacement character. Round 3's chunked read adds its seams: a block
+        name across byte PROBE (the probe's end) and one across byte PROBE + CHUNK (the first piece's end) are both
+        found, and a file whose match sits in the first piece with a byte that is not UTF-8 two pieces later is skipped,
+        because the rule is that the WHOLE file decodes, not the part read up to the match. In a scratch repo, so the
+        live tree holds none of it."""
         d, env = _scratch_repo(self)
         (d / ".gitignore").write_text("ignored.md\n")
         (d / "ignored.md").write_text("an ignored note naming stagesForeign\n")
@@ -2038,10 +2094,17 @@ class RoutingStatements(unittest.TestCase):
         (d / "edge-nul.md").write_bytes(prefix + b"x" * (self.PROBE - 1 - len(prefix)) + b"\0\n")   # NUL at index PROBE-1
         (d / "late-nul.md").write_bytes(prefix + b"x" * (self.PROBE - len(prefix)) + b"\0\n")       # NUL at index PROBE
         (d / "latin1.md").write_bytes(b"caf\xe9 naming stagesForeign\n")
+        (d / "seam-head.md").write_bytes(b"x" * (self.PROBE - 5) + b"stagesForeign\n")              # 'stage' | 'sForeign' at PROBE
+        (d / "seam-chunk.md").write_bytes(b"x" * (self.PROBE + self.CHUNK - 5) + b"stagesForeign\n")   # the same at PROBE + CHUNK
+        (d / "latin1-late.md").write_bytes(prefix + b"x" * (self.PROBE + 2 * self.CHUNK) + b"caf\xe9\n")
         self.assertEqual((d / "edge-nul.md").read_bytes().index(b"\0"), self.PROBE - 1)
         self.assertEqual((d / "late-nul.md").read_bytes().index(b"\0"), self.PROBE)
-        self.assertEqual(sorted(self._scan(d, env=env)), ["late-nul.md"],
-                         "ignored, NUL-in-probe and non-UTF-8 files are skipped; a NUL past the probe is read")
+        self.assertEqual((d / "seam-head.md").read_bytes().index(b"stagesForeign"), self.PROBE - 5)
+        self.assertEqual((d / "seam-chunk.md").read_bytes().index(b"stagesForeign"), self.PROBE + self.CHUNK - 5)
+        self.assertGreater((d / "latin1-late.md").read_bytes().index(b"\xe9"), self.PROBE + 2 * self.CHUNK)
+        self.assertEqual(sorted(self._scan(d, env=env)), ["late-nul.md", "seam-chunk.md", "seam-head.md"],
+                         "ignored, NUL-in-probe and non-UTF-8 files are skipped, a NUL past the probe is read, a block name "
+                         "across either seam is found, and a bad byte after a match still skips the file")
 
     def test_the_wording_pin_needs_whitespace_between_the_words(self):
         """The pattern's other edge: two words of a retired phrase run together are not the phrase. The plant test pins
