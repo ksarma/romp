@@ -170,6 +170,7 @@ These are for scripting and for agents rather than daily use:
 | `romp compact <session> [--wait] [--timeout <s>]` | Compact a session's context in place (Claude's `/compact`: summarize the history, keep the session's name, id, mailbox, and watches): the alternative to ending and recreating a long-lived session, and the external hand a session needs since it cannot `/compact` itself mid-turn. Quiet session → compacts now; open turn → queued, fires alone the moment the turn ends (the same safe path the chat's compact button uses). `--wait` blocks until the compaction has started and cleared, polling the kernel's own `compacting` signal on the `/sessions` rows (also the field to point a `romp watch` predicate at for scripted recycling); exits 1 honestly on timeout. A remote session's compaction is requested on its own kernel; `--wait` can't follow it from here and says so |
 | `romp end <session>\|self [--now\|--when-idle]` | End a session, at once by default. `--when-idle` ends it once its current turn settles, so the closing reply lands first; a session an attached machine runs, addressed by the name that machine lists or by its id, is ended by that machine's kernel, and `--when-idle` waits on the session's settle there. `self` names the calling session (from inside a session) and defaults to `--when-idle`, which `--now` overrides. An unknown session is refused with the kernel's reason and exit 1; a kernel that took the request but answered late is exit 3 (it may already have acted: do not retry blindly) |
 | `romp move <session> <dir>` | Move a session's working directory to `<dir>` (the folder must already exist); the conversation, name, mail and history stay with the session. Quiet session → moves now; open turn → queued, fires when the turn ends. See [Moving a session to another folder](#moving-a-session-to-another-folder) |
+| `romp billing <session> [<pick> [--now]] \| --all-following <pick>` | A Claude Code session's billing from the shell (see [Per-session billing](#per-session-billing-login-vs-api-key)). With a session alone it prints three lines: the side the running CLI launched on and what the CLI reports it bills (or that it has not reported yet: a launch retires the last report, and a resumed session's CLI reports at its first turn; with no CLI up under this kernel, the side its CLI last reported), the session's own pick or that it follows the machine default, and the machine default (the explicit default the user set and, when this machine cannot bill it, the side a follower bills instead with the reason). With a pick (`key`, `login`, `login:<id>` for a stored login, or `default` to follow the machine default again) it posts the same change the dashboard's Billing menu posts: the session reconnects to apply it at its next quiet moment, at once when it is quiet, and the output says which, or that the outcome waits on a connect in progress; `--now` cuts the turn in flight and reconnects at once (live subagents and background tasks still hold the pick until they finish, and the output says so); while the session compacts or moves, `--now` is refused (exit 1): run it without `--now` to queue the pick behind the compaction or the move (`default` never queues, so it is refused during a move too). A pick queued earlier for the session is dropped by `--now` and by `default`, and the output says so. `--all-following <pick>` writes the pick on every running session on this machine that follows the machine default, so they stop following it, and prints the names moved and which of them reconnect (a session already running the side needs none; the relaunches take turns on the spawn budget the default's walk uses, each CLI serving until its turn), the names skipped for a pick of their own, any whose record would not read, and any whose step failed (left following the default, the fault in the Log). A session an attached machine runs is changed by that machine's kernel; a kernel there from a release before these routes answers `the kernel on <host> predates romp billing's routes`. An unknown session is refused with the kernel's reason and exit 1; a kernel that took the request but answered late is exit 3 (it may already have acted: do not retry blindly) |
 | `romp emoji <session> [<emoji>\|--clear]` | Put one emoji before the session's name on its tab; `--clear` removes it, and an empty argument is a usage error, not a clear; with no argument, print the current one (an empty line when there is none). Exactly one emoji is accepted; a refusal prints the kernel's reason. A live session is named by name or id, a dormant one by id, for setting, clearing and reading alike. A read by an id that has a record on this machine comes from the names registry and works with the kernel stopped; any other read (a name, or the id of a session an attached machine owns) goes through the kernel's `GET /emoji?target=`, which forwards to the owning machine as the set does. See [A session's tab emoji](#a-sessions-tab-emoji) |
 | `romp checkin <host>` / `romp checkout <host>` | Publish this machine to an attached hub, or withdraw it. The hub files this machine under the name it declares only when that name is a machine name (letters, digits, dots, hyphens or underscores, starting with a letter or digit, at most 128 characters). Any other declared name is refused with a 400 that states the rule and echoes nothing, is recorded nowhere, and is said once on both machines: on the hub, one stderr line and one Log entry under the `refused` kind, naming the value as a clipped repr; on this machine, one stderr line, one dial-log record and one Log entry carrying the hub's reason, after which the same name is not re-sent until it, or the hub's kernel, changes. A hub's `POST /tunnels/trust` for a host it has never seen (the remembered-hosts entry that tiers relayed mail by origin) holds the wider rule that registry's writers share, a machine name or an ssh alias (letters, digits, dots, hyphens, underscores, at-signs, colons or square brackets, not starting with a hyphen, at most 255 characters), because a hub keys an attached peer by its ssh alias and carries that alias when you set trust between two of your machines; anything else is refused the same way, on the hub, with nothing recorded. `ROMP_HOST_NAME` (the kernel) and `ROMP_POSTAL_HOST` (the postal bus) override the declared name only when they clear the same rule; an unusable value (a space, an at-sign, a trailing newline) is set aside once, on stderr or in the bus log, and the derived name (the short hostname, else the platform's machine name, else a minted id) is used |
 | `romp default-dir [PATH]` | The default working directory for new sessions; no argument prints it, `""` clears it |
@@ -711,6 +712,45 @@ launch does. The flyout places itself to the right of its row, to the left
 when the right would clip and the left has room, below the row when neither
 side has room, above it when below does not fit, and only then clamped inside
 the window; it never covers its row while a place beside or beyond it exists.
+
+The same changes are made from the shell with `romp billing` (the user
+2026-09-18, who wanted to change a session's billing without the dashboard,
+even when that restarts its CLI). `romp billing <session>` prints three
+lines: the side the running CLI launched on and what it reports it bills,
+the session's own pick or that it follows the machine default, and the
+machine default. `romp billing <session> <pick>` posts the same change the
+Billing menu posts, with `key`, `login` or `login:<id>` as the pick, so the
+session reconnects at its next quiet moment, at once when it is quiet; the
+output says which, and says when live work holds the pick. `--now` cuts the
+turn in flight so the reconnect follows at once; while the session compacts
+or moves, `--now` is refused (exit 1), and the same command without `--now`
+queues the pick behind the compaction or the move. A pick queued earlier for
+the session (the dashboard's, mid-turn, or a plain `romp billing` that
+queued) is dropped by `--now` and by `default`, since it would otherwise
+apply over the newer pick at the session's next quiet moment, and the output
+says so. The
+pick `default` has no Billing menu counterpart: it clears the session's own
+pick, so the session follows the machine default again and reconnects when
+it runs the other side, at its turn on the spawn budget the default's walk
+uses (its CLI keeps serving until then, and the output says so); it never
+queues, so during a move it is refused. `romp
+billing --all-following <pick>` writes the pick on every running session
+that follows the machine default, with the roster and filter of the walk
+that reconnects the followers when the default changes and a per-session
+pick's own schedule; those sessions then carry their own pick and stop
+following the default, and the output names the ones moved and which of
+them reconnect (one already running the side needs none; one whose CLI no
+landing has stamped yet is left to that landing, and one attached to a
+surviving CLI that has not reported which side it bills is left to that
+CLI's first report; the relaunches take turns on the same spawn budget the
+default's walk uses, each CLI serving until its turn), the ones skipped for a
+pick of their own, any whose record would not read (nothing was written
+for those), and any whose step failed (one session's fault leaves the walk
+to the rest; that session keeps following the default with no change, and
+the Log names the fault). A session an attached machine runs is changed by that machine's
+kernel, and the walk covers this machine's sessions only; a kernel there
+from a release before these routes answers `the kernel on <host> predates
+romp billing's routes`, with the remedy.
 
 On a one-auth box the picker never chooses the missing side. A remembered
 default that names the side this box cannot bill is set aside at spawn and the

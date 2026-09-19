@@ -8950,10 +8950,21 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
                                  "_arm_rewind": [None], "_complete_rewind_wait": [None],
                                  "_note_auth_source": [None],    # upstream's wrong-landing reconnect onto the fallback side
                                  #                                 (T346, the 2026-09-15 pull-in): a mechanism's reconnect, no pick
-                                 "_follow_default": ["auth"]})   # the machine default's per-follower step (2026-09-18: the walk,
-        #                                                          and since round 1 of the review the attach landing) asks as
-        #                                                          set_auth asks, its pick named, so a request that raced the
-        #                                                          landing is served by the landed process the same way
+                                 "_follow_default": ["auth"],    # the machine default's per-follower step (2026-09-18: the walk,
+                                 #                                  and since round 1 of the review the attach landing) asks as
+                                 #                                  set_auth asks, its pick named, so a request that raced the
+                                 #                                  landing is served by the landed process the same way
+                                 "_follow_default_unlanded": ["auth"],    # `romp billing <session> default` on a session with no
+                                 #                                          running side while a connect composed from the OLD pick
+                                 #                                          is in flight (round 1 of the billing verb's review,
+                                 #                                          2026-09-18): the same ask, so its arm rides after
+                                 #                                          that connect lands
+                                 "_ask_parked_pick": ["auth"]})   # the re-ask for a PICK left to the deciding event (round 2 of the
+        #                                                          billing verb's review, 2026-09-18): set_auth writes a pick on an
+        #                                                          object no landing has stamped with no request, and the landing
+        #                                                          that stamps the truth (or, after a cannot-tell attach, the CLI's
+        #                                                          first init, _decide_parked_pick) and finds the pick unserved with
+        #                                                          no arm standing asks there, the picked mirror of _follow_default
 
     def test_y6_a_pick_the_composed_connect_serves_rides_it_and_keeps_its_flag_until_the_landing(self):
         # the served check's in-progress branch moves the names it discards into the riding set, so a pick that landed

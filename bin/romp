@@ -85,6 +85,7 @@ EOF
     _romp_cmd "romp login add|list|remove <label>" -    "The stored Claude logins a session can be billed to beside the machine's own: add records a COMMAND that prints the login's setup-token on demand (--cmd '<shell line>'; how the token is kept is the user's); list and remove print labels only, never a token"
     _romp_cmd "romp watch --cmd '<pred>' [...]" -       "One mail when the command exits 0 (or the timeout passes) — kernel-owned like watch-pr, for ANY background wait (--every Ns --timeout Ns --note '...' | --list | --cancel <id>)"
     _romp_cmd "romp card --key <key> --title <text> [...]" - "Post a NOTICE CARD to the feed for a session (no judge): the key is the card's stable name (a second post under it is a revision); --body/--body-file, --attach <path>, --needs-you, --expires <s>, --producer; the card moves only on your dismissal, a new revision or its expiry; a session shows at most fifty live cards, the oldest superseded past that"
+    _romp_cmd "romp billing <session> [<pick> [--now]] | --all-following <pick>" - "Read or change which account a Claude Code session bills: alone, three lines (the side its CLI launched on, its pick or that it follows the machine default, the machine default); with a pick (key, login, login:<id>, default) the dashboard's own change, applied by a reconnect at the session's next quiet moment; --now cuts the turn in flight and reconnects at once; --all-following <pick> writes the pick on every running session that follows the default; an unknown session is refused with the kernel's reason, exit 1"
     _romp_cmd "romp mail ..."              romp-postal-service  "Romp Postal Service: send <to> <text> | inbox | agents | remote"
     _romp_cmd "romp send <session> [--tag <label>] <text>" - "Hand a session a message; scripts/cron SHOULD pass --tag so it renders machine-sent, not as your typed words; an unknown session is refused with the kernel's reason, exit 1; a known session that is not running is refused the same way (not delivered, exit 1); a kernel that took the request but answered late is exit 3 (the message may already have landed: do not retry blindly)"
     _romp_cmd "romp compact <session> [--wait]" -       "Compact a session's context in place (Claude's /compact) — queued safely if a turn is open; --wait blocks until it finishes (--timeout <s>, default 600)"
@@ -2171,6 +2172,297 @@ print(json.dumps(d))' "$_who" "$_when")"
     _r_err="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("error") or sys.argv[1])' "$_resp" 2>/dev/null || printf '%s' "$_resp")"
     echo "romp $_verb: refused — $_r_err" >&2
     exit 1
+fi
+
+# `romp billing <session> [<pick> [--now]] | --all-following <pick>` (the user 2026-09-18: a session's billing from
+# the shell, even when that restarts its CLI; until this only the dashboard could change it). The kernel's /billing
+# routes: the POST mirrors the dashboard's Billing menu op exactly, the GET reads what the status rows read. The
+# session is sent raw and the kernel resolves a name, an id or an attached host's `host:name`. Exit 0 on the
+# kernel's ok with what will happen said on stdout; a refusal prints the kernel's reason on stderr, exit 1;
+# misuse is the usage line on stderr, exit 2; a kernel that took the request but answered late is exit 3, the
+# end verb's contract (it may already have acted).
+if [[ "${1:-}" == "billing" ]]; then
+    shift
+    _bl_usage="usage: romp billing <session> [<pick> [--now]] | --all-following <pick>"
+    case "${1:-}" in
+        -h|--help)
+            echo "$_bl_usage"
+            echo "  read or change which account a Claude Code session bills, through the kernel. With a session"
+            echo "  alone: three lines, the side the running CLI launched on (and what it reports it bills), the"
+            echo "  session's own pick or that it follows the machine default, and the machine default. With a"
+            echo "  pick (key, login, login:<id> for a stored login, or default to follow the machine default"
+            echo "  again): the same change the dashboard's Billing menu makes; the session reconnects to apply it"
+            echo "  at its next quiet moment, at once when it is quiet, and the output says when. --now cuts the"
+            echo "  turn in flight and reconnects at once; while the session compacts or moves, --now is refused"
+            echo "  (exit 1): run it without --now to queue the pick behind the compaction or the move. A pick"
+            echo "  queued earlier for the session is dropped by --now and by default, and the output says so. Live"
+            echo "  subagents and background tasks still hold the pick until they finish, and the output says so."
+            echo "  --all-following <pick> writes the pick on every running session that follows the machine"
+            echo "  default (they stop following it) and prints the names moved, which of them reconnect (each"
+            echo "  relaunch waits its turn on the machine's spawn budget, the CLI serving until then), the names"
+            echo "  skipped for a pick of their own, any whose record would not read, and any whose step failed."
+            echo "  An unknown session name exits 1 with the kernel's reason."
+            exit 0 ;;
+    esac
+    if [[ $# -eq 0 ]]; then echo "$_bl_usage" >&2; exit 2; fi
+    _kport="${ROMP_KERNEL_PORT:-29855}"
+    # the serve token is read AFTER each arm has checked its arguments (round 1 of the review, 2026-09-18): read first,
+    # every misuse below answered "the kernel isn't running" with exit 1 whenever no kernel was up, against the exit-2
+    # usage contract this verb's siblings keep (move, color, emoji check arity before any network)
+    _bl_need_token() {
+        _tok="$(_romp_token)"
+        if [[ -z "$_tok" ]]; then
+            echo "romp billing: the kernel isn't running (no serve token). Start romp (the login service, or \`romp up\`) first." >&2
+            exit 1
+        fi
+    }
+    # a 404 whose body is no JSON object is a kernel from before this verb's routes (its catch-all; the resolver's 404
+    # for an unknown session carries a JSON error object): name the cause and the remedy, as the emoji verb's read arm
+    # does (round 1 of the review, 2026-09-18: both arms printed "HTTP 404: not found" with neither). For a session an
+    # attached host runs, the local kernel's relay names the same case for the FAR kernel in a JSON error this verb
+    # prints as it prints every kernel refusal (round 2 of the review; kernel _billing_far_answer). $1 = status, $2 = body
+    _bl_pre_route() {
+        if [[ "$1" == 404 ]] && python3 -c 'import json, sys
+try:
+    sys.exit(1 if isinstance(json.loads(sys.argv[1]), dict) else 0)
+except ValueError:
+    sys.exit(0)' "$2" 2>/dev/null; then
+            echo "romp billing: the kernel on :$_kport predates romp billing's routes (GET and POST /billing); restart romp so the kernel matches this command" >&2
+            exit 1
+        fi
+    }
+    # the three POST outcomes _romp_post reports (the send/end verbs' arms, one copy here)
+    _bl_posted() {   # $1 = _romp_post's exit code
+        if [[ $1 -eq 3 ]]; then
+            echo "romp billing: the kernel on :$_kport took the request but did not answer within ${_pcap}s" \
+                 "(mid-restart or under load); it may already have acted on it; do not retry blindly" \
+                 "(ROMP_KERNEL_HTTP_TIMEOUT_S widens the wait)" >&2; exit 3
+        fi
+        if [[ $1 -eq 2 ]]; then echo "romp billing: kernel not reachable on :$_kport (is romp running?) [curl exit $_pcurl]" >&2; exit 1; fi
+        if [[ $1 -ne 0 ]]; then _bl_pre_route "$_pcode" "$_pbody"; echo "romp billing: $_perr" >&2; exit 1; fi
+    }
+    if [[ "$1" == "--all-following" ]]; then
+        if [[ $# -ne 2 || -z "$2" || "$2" == -* ]]; then echo "$_bl_usage" >&2; exit 2; fi
+        _bl_need_token
+        _payload="$(python3 -c 'import json,sys; print(json.dumps({"pick": sys.argv[1], "allFollowing": True}))' "$2")"
+        _rc=0
+        _romp_post billing "$_payload" || _rc=$?
+        _bl_posted $_rc
+        python3 - "$_pbody" <<'PY' || exit 1
+import json, sys
+r = json.loads(sys.argv[1])
+if not r.get("ok"):
+    sys.stderr.write("romp billing: refused: %s\n" % (r.get("error") or sys.argv[1])); sys.exit(1)
+def words(p):
+    return {"key": "the API key", "login": "the login"}.get(p) or ('the login "%s"' % p[6:] if p.startswith("login:") else p)
+moved, skipped = r.get("sessions") or [], r.get("skippedSessions") or []
+unwritten = r.get("unwrittenSessions") or []   # absent from an older kernel's answer: nothing to say
+failed = r.get("failedSessions") or []         # the walk's per-session try (2026-09-18): a step that raised, the session left a follower
+outlooks = r.get("outlooks")                   # per moved name, the kernel's reconnect word; absent from an older kernel's answer
+n = len(moved)
+def one(c):
+    return c == 1
+if moved:
+    # the write it is (round 1 of the review, 2026-09-18): the walk writes the pick and asks a reconnect where the side
+    # differs; "now bill" claimed the sessions already bill it, and misconjugated for one. The reconnect clause comes from
+    # the kernel's per-session outlook (round 2 of the review): the head said every moved session reconnects at its next
+    # quiet moment, and a walk onto the side every follower already ran promised switching dots that never came. An older
+    # kernel's answer carries no outlooks: the write alone is said, with no moment promised
+    head = "%d session%s following the default now carr%s %s own pick, %s (%s)" % (
+        n, "" if one(n) else "s", "ies" if one(n) else "y", "its" if one(n) else "their", words(r.get("pick") or ""), ", ".join(moved))
+    if isinstance(outlooks, dict):
+        # one clause per bucket, in this order; every word the kernel answers falls in one (kernel.py's _BILLING_WORDS: the
+        # four named here, else a reconnect that arms now or at the next quiet moment). Each clause is a function of its
+        # subject (the pronoun when one bucket holds every moved session, else the names) and whether it is plural
+        def reconnecting(s, p): return "%s reconnect%s at %s next quiet moment" % (s, "" if p else "s", "their" if p else "its")
+        def already(s, p): return "%s already bill%s it, no reconnect" % (s, "" if p else "s")
+        def next_launch(s, p): return "%s appl%s it at %s next launch" % (s, "y" if p else "ies", "their" if p else "its")
+        def landing(s, p): return "%s wait%s for %s connect in progress to land, which decides whether to reconnect" % (s, "" if p else "s", "their" if p else "its")
+        def held(s, p): return "%s wait%s for live work to finish, then reconnect%s" % (s, "" if p else "s", "" if p else "s")
+        # the relaunch waits for its slot on the machine's spawn budget with the CLI still serving (the reviewer's round 1,
+        # 2026-09-18): "at its next quiet moment" promised the moment the stagger delays
+        def staggered(s, p): return "%s reconnect%s at %s turn in the spawn stagger, %s CLI serving until then" % (s, "" if p else "s", "their" if p else "its", "each" if p else "its")
+        # the connect landed and could not tell what the surviving CLI bills (no report yet): its first report decides
+        def report(s, p): return "%s wait%s for %s CLI's first report of which side it bills, which decides whether to reconnect" % (s, "" if p else "s", "their" if p else "its")
+        buckets = [("none needed", already), ("at its next launch", next_launch), ("when its connect lands", landing),
+                   ("when its CLI first reports its billing", report), ("at its turn in the spawn stagger", staggered),
+                   ("held for live work", held)]
+        named = {w for w, _ in buckets}
+        groups = [(reconnecting, sorted(m for m in moved if outlooks.get(m) not in named))]
+        groups += [(say, sorted(m for m in moved if outlooks.get(m) == w)) for w, say in buckets]
+        groups = [(say, names) for say, names in groups if names]
+        for say, names in groups:
+            plural = len(names) > 1
+            subject = (", ".join(names)) if len(groups) > 1 else ("they" if plural else "it")
+            head += "; " + say(subject, plural)
+elif unwritten:
+    # followers were reached and none was written (round 2 of the review): the tail says why, and the head must not deny them
+    head = "no follower moved to %s" % words(r.get("pick") or "")
+else:
+    head = "no running session follows the machine default, so none moved to %s" % words(r.get("pick") or "")
+if r.get("superseded"):
+    # a pick queued earlier for a moved session would have fired over the walk's write (round 2 of the review): dropped
+    head += "; %d earlier queued pick%s dropped" % (r["superseded"], " was" if one(r["superseded"]) else "s were")
+if not skipped:
+    tail = "0 skipped"
+elif len(skipped) == 1:
+    tail = "1 skipped (%s): it has its own pick" % skipped[0]
+else:
+    tail = "%d skipped (%s): they have their own picks" % (len(skipped), ", ".join(skipped))
+if unwritten:
+    # a record that would not read: nothing was written, and it is not a pick of that session's own (round 1 of the review)
+    tail += "; %d not written (%s): %s" % (len(unwritten), ", ".join(unwritten),
+                                           "its record would not read" if len(unwritten) == 1 else "their records would not read")
+if failed:
+    # one follower's step raised and the walk went on (the rebase follow-up, 2026-09-18): that session keeps following the
+    # default with no change and no ask, and the kernel's Log names the fault
+    tail += "; %d failed (%s): %s the default unchanged, the kernel's Log names the fault" % (
+        len(failed), ", ".join(failed), "it keeps following" if len(failed) == 1 else "they keep following")
+print("romp billing: %s; %s" % (head, tail))
+PY
+        exit 0
+    fi
+    _who="$1"; shift
+    case "$_who" in --*) echo "$_bl_usage" >&2; exit 2 ;; esac   # a flag in the session slot (`romp billing --now web login`)
+    # an empty session (a script's unset variable) is misuse, exit 2 before any network, as `romp end ""` is (round 2 of the
+    # review, 2026-09-18: it passed the arity check as one argument and reached the kernel's 400, or "the kernel isn't running")
+    if [[ -z "$_who" ]]; then echo "$_bl_usage" >&2; exit 2; fi
+    if [[ $# -eq 0 ]]; then
+        # the READ: GET /billing?target=, the status the kernel's own rows carry, three lines for a glance or a script
+        _bl_need_token
+        _bl_target="$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$_who")"
+        _bl_out="$(_romp_token_cfg | curl -s -m 10 --config - -w '\n%{http_code}' "http://127.0.0.1:$_kport/billing?target=$_bl_target")" \
+            || { echo "romp billing: kernel not reachable on :$_kport (is romp running?)" >&2; exit 1; }
+        _bl_code="${_bl_out##*$'\n'}"
+        _bl_body="${_bl_out%$'\n'*}"
+        _bl_pre_route "$_bl_code" "$_bl_body"
+        python3 - "$_bl_body" "$_bl_code" <<'PY' || exit 1
+import json, sys
+body, code = sys.argv[1], sys.argv[2]
+try:
+    r = json.loads(body)
+except ValueError:
+    r = None
+if not isinstance(r, dict) or not r.get("ok"):
+    err = r.get("error") if isinstance(r, dict) else None
+    sys.stderr.write("romp billing: %s\n" % (err or "the kernel answered HTTP %s: %s" % (code, body))); sys.exit(1)
+def words(side, login_id="", label=""):
+    if side == "key":
+        return "API key"
+    if side == "login":
+        # the label whenever the kernel supplies one (round 1 of the review, 2026-09-18): a plain login default carries the
+        # machine login's display name, which the read dropped for want of a stored-login id
+        name = label or login_id
+        return ('login "%s"' % name) if name else "login"
+    return side or "unknown"
+if r.get("launched") is None and r.get("cannotTell"):
+    # a client is up whose landing attached a surviving CLI with no report on record (the reviewer's cannot-tell class,
+    # 2026-09-18; the rebase follow-up): a process runs, and what it bills is its first init's to say, which a resumed
+    # session streams at its first turn; "no CLI is up" was false for it
+    launched = "launched: a surviving CLI is attached that has not reported which side it bills; its first turn's report says"
+elif r.get("launched") is None:
+    # no landed launch stands under this kernel: a dormant session, a client torn down, or a connect composed and not landed
+    # (round 2 of the review, 2026-09-18: "no CLI process running" claimed a process fact the kernel does not know, since
+    # a dormant session's CLI can serve under its host and a connect in flight is a process; and the report the kernel
+    # kept for it, the reg's last apiKeyAuth, was dropped from the line)
+    launched = "launched: no CLI is up under this kernel"
+    if r.get("live"):
+        launched += "; the CLI last reported: " + words(r["live"])
+else:
+    launched = "launched: " + words(r["launched"], r.get("launchedLogin") or "", r.get("launchedLabel") or "")
+    if r.get("live"):
+        launched += "; the CLI reports: " + words(r["live"])
+    else:
+        # a launch retires the CLI's report (2026-09-18): a fresh launch has none until the CLI's first init frame, which a
+        # resumed session streams at its first turn, so the line says so rather than leaving the launched side to read as one
+        launched += "; the CLI has not reported yet"
+pick = r.get("pick") or {}
+line2 = ("pick: " + words(pick.get("auth"), pick.get("login") or "", pick.get("label") or "")) if pick.get("explicit") \
+    else "pick: follows the machine default"
+if r.get("held"):
+    line2 += " (reconnect held for live work)"
+elif r.get("pending"):
+    line2 += " (reconnect pending)"
+d = r.get("default") or {}
+resolved = words(d.get("auth"), d.get("login") or "", d.get("label") or "")
+if not d.get("explicit"):
+    how = "the helper rule"
+else:
+    # the kernel's default names what a follower BILLS (fallback_auth, which falls to the other side when this machine cannot
+    # bill the explicit default) and carries the pick the user set beside it (explicitPick, round 2 of the review, 2026-09-18):
+    # the line said "set explicitly" of the fallen-to side, so an explicit login default on a machine with no login read as
+    # an explicit key. Compared as pick values: an explicit stored login whose record is gone resolves to the machine's own
+    # login, the same side word. An older kernel's answer has no explicitPick and prints as before
+    raw = d.get("explicitPick")
+    value = ("login:" + d["login"]) if d.get("auth") == "login" and d.get("login") else (d.get("auth") or "")
+    if raw is None or raw == value:
+        how = "set explicitly"
+    else:
+        side, _, lid = raw.partition(":")
+        how = "%s set explicitly, but %s" % (words(side, lid), d.get("explicitWhy") or "this machine cannot bill it")
+line3 = "machine default: %s (%s)" % (resolved, how)
+print(launched); print(line2); print(line3)
+PY
+        exit 0
+    fi
+    _pick="$1"; shift
+    if [[ -z "$_pick" || "$_pick" == -* ]]; then echo "$_bl_usage" >&2; exit 2; fi
+    _now=0
+    for _a in "$@"; do
+        case "$_a" in --now) _now=1 ;; *) echo "$_bl_usage" >&2; exit 2 ;; esac
+    done
+    _bl_need_token
+    _payload="$(python3 -c 'import json,sys; print(json.dumps({"target": sys.argv[1], "pick": sys.argv[2], "now": sys.argv[3] == "1"}))' "$_who" "$_pick" "$_now")"
+    _rc=0
+    _romp_post billing "$_payload" || _rc=$?
+    _bl_posted $_rc
+    python3 - "$_pbody" "$_who" <<'PY' || exit 1
+import json, sys
+r = json.loads(sys.argv[1])
+if not r.get("ok"):
+    sys.stderr.write("romp billing: refused: %s\n" % (r.get("error") or sys.argv[1])); sys.exit(1)
+def words(p):
+    return {"key": "the API key", "login": "the login"}.get(p) or ('the login "%s"' % p[6:] if p.startswith("login:") else p)
+name, pick, when = r.get("session") or sys.argv[2], r.get("pick") or "", r.get("reconnect") or ""
+if pick == "default":
+    d = r.get("default") or ""
+    lead = "%s follows the machine default again%s" % (name, (" (%s)" % words(d)[4:]) if d else "")
+    lead_now, lead_none = lead, lead
+else:
+    lead = "%s will bill %s" % (name, words(pick))
+    lead_now = "%s bills %s from now" % (name, words(pick))
+    lead_none = "%s bills %s already" % (name, words(pick))
+# one line per word the kernel answers (kernel.py's _BILLING_WORDS and _BILLING_PARK_WORDS): --now is offered only where
+# a turn is open to cut (round 1 of the review, 2026-09-18: a text waiting with no turn open, and every park reason, used
+# to read "at the next quiet moment" with the cut offered)
+tails = {"now": (lead_now, "the session is reconnecting to apply it"),
+         "none needed": (lead_none, "the CLI already runs on that side, so no reconnect is needed"),
+         "at the end of the open turn": (lead, "the session reconnects when its open turn ends (--now cuts the turn and reconnects at once)"),
+         "at the next quiet moment": (lead, "a message waits to run first, so the session reconnects at its next quiet moment"),
+         "after the compaction": (lead, "the pick is queued behind the compaction, and the session reconnects when it ends"),
+         "after the work queued ahead of it": (lead, "the pick is queued behind the work ahead of it, and the session reconnects once that has run"),
+         "after the move finishes": (lead, "the pick waits for the move in flight to finish, then the session reconnects"),
+         "when the usage hold lifts": (lead, "the account cannot serve a request yet, so the pick waits behind the usage hold, and the session reconnects when it lifts"),
+         "held for live work": (lead, "the pick waits for the session's live work (subagents, background tasks) to finish, then it reconnects"),
+         "at its next launch": (lead, "no CLI process is running, so it applies at the session's next launch"),
+         # no request stands (round 2 of the review, 2026-09-18): the pending was written on a session no landing of this
+         # kernel has stamped, and the connect in progress or to come decides it; "reconnecting to apply it" promised a
+         # reconnect nothing had asked for
+         "when its connect lands": (lead, "no reconnect was asked: a connect is in progress or about to start, and its landing decides whether the session must reconnect to apply it"),
+         # the connect landed and could not tell what the surviving CLI bills (no report on record; the reviewer's cannot-tell
+         # class, 2026-09-18): the CLI's first report decides, and nothing was asked yet
+         "when its CLI first reports its billing": (lead, "no reconnect was asked: the CLI attached has not reported which side it bills, and its first report decides whether the session must reconnect to apply it"),
+         # the arm waits for its slot on the machine's spawn budget with the CLI still serving (the reviewer's round 1): the
+         # `default` road takes the follower walk's bounded step, so its relaunch is staggered as the walk's are
+         "at its turn in the spawn stagger": (lead, "the session reconnects at its turn in the machine's spawn stagger; its CLI serves until then")}
+head, tail = tails.get(when) or (lead, "the session reconnects %s" % when)
+cut = "the in-flight turn was cut; " if r.get("cut") else ""
+# a pick queued earlier for this session would have fired over this one at the next quiet cycle (round 2 of the review):
+# --now and default drop it, and the kernel counts what went
+dropped = ("; %d earlier queued pick%s dropped" % (r["superseded"], " was" if r["superseded"] == 1 else "s were")) if r.get("superseded") else ""
+print("romp billing: %s%s; %s%s" % (cut, head, tail, dropped))
+PY
+    exit 0
 fi
 
 # `romp default-dir [PATH]` — the default working directory for NEW sessions (what the picker prefills).
