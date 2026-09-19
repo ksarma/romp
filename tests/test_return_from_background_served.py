@@ -554,6 +554,12 @@ class ReturnFromBackground(unittest.TestCase):
     def test_phone_opened_on_the_feed_tab_arms_the_chain_when_chat_is_shown(self):
         self._leg("phone", "hung", 12, tap="chat", boot_tab="feed")   # stage 0, review round 1 (F1): the chat display:none at boot asks nothing; its show arms the idle prefetch
 
+    def test_firefox_phone_opened_on_the_feed_tab_arms_the_chain_when_chat_is_shown(self):
+        self._leg("phone", "hung", 12, engine="firefox", tap="chat", boot_tab="feed")   # the F1 arm off Chromium: Firefox's observer over an iframe hidden since load, and the panes-word belt (review round 2)
+
+    def test_webkit_phone_opened_on_the_feed_tab_arms_the_chain_when_chat_is_shown(self):
+        self._leg("phone", "hung", 12, engine="webkit", tap="chat", boot_tab="feed")   # …and Safari's engine, where requestIdleCallback is absent and the chain runs on the 16 ms fallback
+
     def test_phone_refused_30s_slow(self):
         self._leg("phone", "refused", 30)
 
