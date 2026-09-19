@@ -318,6 +318,7 @@ class UpdateCheck(Fresh):
         self.assertEqual(ns[0].get("kind"), "refused")
         self.assertIn("v0.7.0", ns[0]["text"])
         self.assertIn("No space left on device", ns[0]["text"])
+        self.assertLessEqual(len(ns[0]["text"]), km.SYNC_NOTICE_FIT, "the Log shows the notice whole (round 6 of fork PR #778, kernel-2)")
         # a refused launch after a write that failed removes no marker: there is none of this pass's to remove, and an older
         # tag's is left standing
         km._UPDATE_AVAIL[0] = ""
@@ -3197,8 +3198,12 @@ class AssembledUpdateRoad(Fresh):
         with open(os.path.join(remote, "bin", "romp-service"), "w") as f:
             f.write("#!/usr/bin/env bash\necho \"$*\" >> \"$ROMP_TEST_SVC_LOG\"\n"
                     "if [ \"$1 $2\" = 'rewrite --check' ] && [ \"${ROMP_TEST_CHECK_RC:-0}\" -ne 0 ]; then\n"
-                    "  echo 'romp-service: the login unit on disk and this environment disagree; nothing was rewritten:' >&2\n"
-                    "  echo '  ROMP_KERNEL_PORT: the file carries 29866, this environment carries 31855' >&2\n"
+                    "  if [ \"${ROMP_TEST_CHECK_MSG:-}\" = form ]; then\n"    # a form refusal, exit 5 too (round 6 of fork PR #778, kernel-3)
+                    "    echo 'romp-service: the login service unit (/x/romp-manager.service) is in a form this rewrite does not read whole (line 9: it ends in a backslash, a continuation systemd joins to the next line); nothing was rewritten.' >&2\n"
+                    "  else\n"
+                    "    echo 'romp-service: the login unit on disk and this environment disagree; nothing was rewritten:' >&2\n"
+                    "    echo '  ROMP_KERNEL_PORT: the file carries 29866, this environment carries 31855' >&2\n"
+                    "  fi\n"
                     "  exit \"$ROMP_TEST_CHECK_RC\"\nfi\nexit 0\n")
         os.chmod(os.path.join(remote, "install.sh"), 0o755)
         os.chmod(os.path.join(remote, "bin", "romp-service"), 0o755)
@@ -3268,8 +3273,29 @@ class AssembledUpdateRoad(Fresh):
             self.assertIn("nothing was restarted", ns[0]["text"])
             self.assertIn("the checkout did not move", ns[0]["text"])
 
+    def test_a_form_refusal_of_the_preflight_is_reported_without_naming_a_disagreement(self):
+        # round 6 of fork PR #778 (kernel-3): exit 5 is every no-write refusal of rewrite --check (the identity, an ExecStart path systemd
+        # refuses, a form the reader does not read whole), and the report named the identity class for all of them, so the banner told the
+        # user their environment and clone disagreed with the unit when a continuation line was the reason; the report now says the rewrite
+        # would be refused and where the reason is, claiming nothing about which values were named (install.sh's two exit-5 arms since round 4)
+        with tempfile.TemporaryDirectory() as tmp:
+            clone, base, tag_sha, g = self._clone(tmp)
+            r, env = self._run(clone, {"ROMP_TEST_CHECK_RC": str(self.IDENTITY_REFUSED), "ROMP_TEST_CHECK_MSG": "form"})
+            self.assertEqual(g(clone, "rev-parse", "HEAD"), base, "the checkout did not move")
+            rep = self._report()
+            self.assertFalse(rep["ok"])
+            self.assertIn("would be refused", rep["why"])
+            self.assertIn("the checkout did not move", rep["why"])
+            self.assertIn("say why", rep["why"], "the report points at the script's own lines")
+            self.assertNotIn("disagree", rep["why"], "the report claims nothing about which refusal it was")
+            self.assertNotIn("identity", rep["why"])
+            log = (jd.STATE / "update.log").read_text()
+            self.assertIn("is in a form this rewrite does not read whole", log, "the script's own reason is in update.log")
+            self.assertNotIn("this environment disagree", log)
+
     def test_an_install_that_fails_after_the_tree_moved_says_so_and_withholds_the_auto_marker(self):
-        # the preflight covers the identity class alone; a failure after advance() is still possible (the SDK venv,
+        # the preflight covers every exit-5 refusal of rewrite --check (the identity, a form the reader does not read whole; round 6 of
+        # fork PR #778, kernel-3); a failure after advance() is still possible (the SDK venv,
         # the dashboard build), and the report used to say only that the fetch, fast-forward or install failed
         with tempfile.TemporaryDirectory() as tmp:
             clone, base, tag_sha, g = self._clone(tmp)

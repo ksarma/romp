@@ -410,8 +410,12 @@ SH
     [[ "$output" == *"$TEST_DIR/romp-service install"* ]]
     # what the route does on each platform (the round-5 preface's fourth commit of fork PR #778: the line said the install
     # restarts the manager, and this pin held that clause, which is false of the Linux install: daemon-reload, enable --now,
-    # no restart, by the logged stub in the running-manager case below). The whole clause, and the old one absent
-    [[ "$output" == *"On Linux that writes the unit afresh, reloads systemd and runs enable --now, which starts an inactive unit and leaves a running one as it is, so the running manager keeps its old unit until its next restart:  systemctl --user restart romp-manager. On macOS the install's bootout and bootstrap restart it."* ]]
+    # no restart, by the logged stub in the running-manager case below). The whole clause, and the old one absent; the line ends at
+    # the command, the macOS sentence ahead of it (round 6 of fork PR #778, extra7-2: a period after the command made the copyable text
+    # name a unit systemd does not find, romp-manager..service)
+    [[ "$output" == *"On macOS the install's bootout and bootstrap restart it; on Linux that writes the unit afresh, reloads systemd and runs enable --now, which starts an inactive unit and leaves a running one as it is, so the running manager keeps its old unit until its next restart:  systemctl --user restart romp-manager"* ]]
+    [ "${lines[-1]##*romp-manager}" = "" ] || [[ "$output" == *"restart romp-manager"$'\n'* ]]   # the command ends its line: nothing after it
+    [[ "$output" != *"restart romp-manager."* ]]
     [[ "$output" != *"restarts the manager"* ]]
     [[ "$output" != *"Retry by hand"* ]]
     [[ "$output" != *"rewrite FAILED"* ]]

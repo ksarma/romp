@@ -418,7 +418,11 @@ if [[ -z "${ROMP_NO_SERVICE:-}" ]]; then
         # preface's fourth commit of fork PR #778: the line said the install restarts the manager, which the
         # Linux install does not: it writes the unit afresh, reloads systemd and runs enable --now, which
         # starts an inactive unit and leaves a running one as it is, so the manager keeps its old unit until
-        # systemctl --user restart romp-manager; on macOS the bootout and bootstrap restart it).
+        # systemctl --user restart romp-manager; on macOS the bootout and bootstrap restart it). The line ENDS at
+        # that command, the macOS sentence ahead of it (round 6 of fork PR #778, extra7-2: a period after the
+        # command made the copyable text  systemctl --user restart romp-manager.  which systemd reads as the unit
+        # romp-manager..service, not found; every other command this file and bin/romp-service introduce with two
+        # spaces ends its line).
         # The convention these arms follow (round 2, so the next reader finds a decision): a service step
         # that FAILED (a failed install, a failed or refused rewrite) ends the run here, before the
         # closing report and the dashboard link, since capability banners and a tokened link over a
@@ -433,7 +437,7 @@ if [[ -z "${ROMP_NO_SERVICE:-}" ]]; then
             case "$_svc_rc" in
               0) ;;
               3)
-                echo "install.sh: romp-manager is running, but no login service unit is at the path romp-service writes (its line above), so this release's unit was not written and nothing was changed. romp is serving, and this run goes on. To install the unit, run  $_svc install  from the shell and clone that should own the service. On Linux that writes the unit afresh, reloads systemd and runs enable --now, which starts an inactive unit and leaves a running one as it is, so the running manager keeps its old unit until its next restart:  systemctl --user restart romp-manager. On macOS the install's bootout and bootstrap restart it." >&2 ;;
+                echo "install.sh: romp-manager is running, but no login service unit is at the path romp-service writes (its line above), so this release's unit was not written and nothing was changed. romp is serving, and this run goes on. To install the unit, run  $_svc install  from the shell and clone that should own the service. On macOS the install's bootout and bootstrap restart it; on Linux that writes the unit afresh, reloads systemd and runs enable --now, which starts an inactive unit and leaves a running one as it is, so the running manager keeps its old unit until its next restart:  systemctl --user restart romp-manager" >&2 ;;
               5)
                 echo "install.sh: romp-service rewrite refused (the reason is printed above): romp-manager is still running on the definition it started under, and the login service on disk was not rewritten." >&2
                 exit 1 ;;

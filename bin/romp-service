@@ -288,8 +288,15 @@ _unit_env_line() { printf 'Environment=%s' "$(_unit_word "$1=$2" "${3:-}")"; }  
 # and on rewrite, from _unit_scan for a hand line and from _exec_path_refuse for the path this clone would write. The
 # same characters in Environment= values and in EnvironmentFile= are fine to systemd and stay accepted. Linux only:
 # launchd puts no such rule on a program path.
-_exec_path_unsafe() {   # $1 a decoded command path: exit 0 when systemd refuses it as an executable name
-    [[ "$1" == *[\"\'\\]* || "$1" == *[[:cntrl:]]* ]]
+_exec_path_unsafe() {   # $1 a decoded command path, or a section header's name (one predicate for _exec_path_refuse and _unit_scan's ExecStart
+                        # and header sites): exit 0 when systemd refuses it. The control set is spelled out, 0x01 to 0x1F and DEL, as _ALNUM
+                        # spells its letters, so no locale widens it (round 6 of fork PR #778, extra8-1: bash's [[:cntrl:]] is the locale's
+                        # class, and under a UTF-8 locale it takes in the C1 controls and U+2028 and U+2029, which systemd's string_is_safe,
+                        # a byte test, accepts; so a manager path holding U+0085 was refused from a UTF-8 shell, C.UTF-8 among them, and
+                        # written from a C one. Verified on 255.4: U+0085 and U+2028 in a path or a header load, U+0001 is Executable name
+                        # contains special characters or Bad characters in section header). Each byte in its own $'...': a \x7f outside one
+                        # is the three characters x, 7 and f.
+    [[ "$1" == *[\"\'\\]* || "$1" == *[$'\x01'-$'\x1f'$'\x7f']* ]]
 }
 _exec_path_refuse() {   # exit 1 (the callers exit EXIT_IDENTITY) when the manager's path this clone would write is one systemd refuses
     _exec_path_unsafe "$MANAGER" || return 0
@@ -319,7 +326,10 @@ _unit_env_file_line() {   # EnvironmentFile=: the whole rvalue is the path, read
 # (so `Environment=X=/a b` reads /a, the lens's U16, and the shell carrying what systemd handed the manager agrees: D6); a later
 # assignment of a name replaces an earlier one; an empty rvalue resets what was read so far. ExecStart's command is the rvalue's
 # first word; EnvironmentFile's path is its whole rvalue after a leading -, with %% undone, and a path that is not absolute is no
-# file, as systemd reads it with a warning (round 4: it read as a path).
+# file, as systemd reads it with a warning (round 4: it read as a path). The first UTF-8 byte order mark at the raw start of a line,
+# wherever in the file, comes off, after the comment test and before the continuation count, and no other mark does (systemd's one latch
+# per file, verified on 255.4; round 6 of fork PR #778, correctness-1 and extra5-1: line 1 alone had it, so a kept line behind a later
+# mark read as absent and the rewrite wrote this clone's value at exit 0, and a mark before [Service] refused a unit systemd loads).
 # The RULE (the addendum): a form this reader cannot read WHOLE is REFUSED, EXIT_IDENTITY through the callers, nothing written, the
 # line, the form and the remedy named; it is never read in part and never replayed. Refused, one item per _unit_refuse call site in
 # _unit_scan, in the order the scan meets them (the definition of this list: the call sites; round 4, extra8-1, counted them):
@@ -378,6 +388,11 @@ _unit_env_file_line() {   # EnvironmentFile=: the whole rvalue is the path, read
 # under romp-manager.service.d are NOT read: the file alone is, and when any exist the rewrite says so on stderr at exit 0
 # (_dropin_advisory; round 4, extra6-2, where the refuters showed that reading them or refusing on them would refuse a live deploy
 # whose drop-in resets ExecStart through a shell wrapper).
+# One refusal of the scan is about this reader, not the file's form, and is no _unit_refuse call site (so it is not in the list): a
+# line that is not plain ASCII when neither iconv nor python3 is on PATH, where the reader cannot check the encoding as systemd does;
+# it says so and names what to put on PATH (round 6 of fork PR #778, correctness-3: it reported not-UTF-8 for a line it had not
+# decoded, refusing an ASCII unit with a remedy that could not clear it; an ASCII line is UTF-8 by definition and is decided with no
+# decoder, so a unit romp wrote deploys on a box with neither).
 _U_SCANNED=""; _U_KEYS=(); _U_VALS=(); _U_LINES=(); _U_EXEC=""; _U_ENVFILE=""; _U_ENVFILE_PREFIX=""
 _W_WORD=""; _W_REST=""; _W_ERR=""; _W_KIND=""; _W_CH=""
 _W_FIX=""; _W_FIX_TAIL=""   # for a `carry` refusal: the remedy's verb phrase, ending in its preposition (the call site adds `the value` or
@@ -400,14 +415,32 @@ _unit_refuse() {   # $1 the line number, $2 the form, $3 the remedy; $4 non-empt
     fi
     return 1
 }
+_UTF8_DECODER=""     # resolved once per run by _unit_utf8: iconv, python3, or none
+_UTF8_UNCHECKED=""   # set by _unit_utf8 when it returned 1 WITHOUT deciding: a line with a byte at or above 0x80 and no decoder on PATH
 _unit_utf8() {   # $1 text: exit 0 when it is UTF-8 to systemd's utf8_is_valid, which refuses the whole file on a line that is not: the encoding
-                 # first (iconv is on every Linux and mac, python3 the fallback; both refuse a surrogate), then the code points, since systemd's
-                 # check applies unichar_is_valid to each and so refuses a noncharacter (U+FDD0 to U+FDEF, and the last two code points of every
-                 # plane) that iconv and python's decoder both pass (the fold, class C, 2026-09-19: a noncharacter written raw in a value was
-                 # read on and written back where systemd loads nothing from the file; verified on 255.4: String is not UTF-8 clean, the load
-                 # fails). The byte patterns are the UTF-8 forms of those code points, matched under the C locale.
-    if command -v iconv >/dev/null 2>&1; then printf '%s' "$1" | iconv -f UTF-8 -t UTF-8 >/dev/null 2>&1 || return 1
-    else printf '%s' "$1" | python3 -c 'import sys; sys.stdin.buffer.read().decode("utf-8")' >/dev/null 2>&1 || return 1; fi
+                 # first (iconv, else python3; both refuse a surrogate), then the code points, since systemd's check applies unichar_is_valid to
+                 # each and so refuses a noncharacter (U+FDD0 to U+FDEF, and the last two code points of every plane) that iconv and python's
+                 # decoder both pass (the fold, class C, 2026-09-19: a noncharacter written raw in a value was read on and written back where
+                 # systemd loads nothing from the file; verified on 255.4: String is not UTF-8 clean, the load fails). The byte patterns are
+                 # the UTF-8 forms of those code points, matched under the C locale. A line of plain ASCII is UTF-8 by definition and carries
+                 # no noncharacter, so it is decided here with no decoder; a line with a byte at or above 0x80 needs one, and when neither is
+                 # on PATH the answer is 1 with _UTF8_UNCHECKED set, never a verdict on bytes it did not decode (round 6 of fork PR #778,
+                 # correctness-3: a missing python3's exit 127 read as the decoder's rejection, so an ASCII unit was refused as not UTF-8
+                 # with a remedy that could not clear it). The decoder is resolved once, as _plist_readable resolves plutil.
+    local rc=0
+    _UTF8_UNCHECKED=""
+    LC_ALL=C grep -q $'[\x80-\xff]' <<< "$1" || rc=$?
+    (( rc != 1 )) || return 0
+    if [[ -z "$_UTF8_DECODER" ]]; then
+        if command -v iconv >/dev/null 2>&1; then _UTF8_DECODER=iconv
+        elif command -v python3 >/dev/null 2>&1; then _UTF8_DECODER=python3
+        else _UTF8_DECODER=none; fi
+    fi
+    case "$_UTF8_DECODER" in
+        iconv) printf '%s' "$1" | iconv -f UTF-8 -t UTF-8 >/dev/null 2>&1 || return 1 ;;
+        python3) printf '%s' "$1" | python3 -c 'import sys; sys.stdin.buffer.read().decode("utf-8")' >/dev/null 2>&1 || return 1 ;;
+        *) _UTF8_UNCHECKED=1; return 1 ;;
+    esac
     ! LC_ALL=C grep -qE $'\xef\xb7[\x90-\xaf]|\xef\xbf[\xbe\xbf]|[\xf0-\xf4][\x8f\x9f\xaf\xbf]\xbf[\xbe\xbf]' <<< "$1"
 }
 _unit_byte() {   # $1 a byte value from \xNN or \NNN, $2 the escape as written: _W_CH the byte; 1 (and _W_ERR, _W_KIND) for one not carried
@@ -526,7 +559,7 @@ _unit_specifiers() {   # $1 a word: _W_WORD with its %% undone; 1 (and _W_ERR th
 _unit_scan() {
     [[ -z "$_U_SCANNED" ]] || return 0
     _U_KEYS=(); _U_VALS=(); _U_LINES=(); _U_EXEC=""; _U_ENVFILE=""; _U_ENVFILE_PREFIX=""
-    local raw t line sec="" lv rv n=0 c w v k kept rest items i j found execs=0 envfiles=0 pfx total=0
+    local raw t line sec="" lv rv n=0 c w v k kept rest items i j found execs=0 envfiles=0 pfx total=0 bom=""
     local -a ls=()
     [[ -f "$UNIT" ]] || { _U_SCANNED=1; return 0; }
     # The line ending, before anything else (round 4, 2026-09-19): systemd's read_line ends a line at LF, CR, CRLF, LFCR (the CR taken
@@ -546,14 +579,22 @@ _unit_scan() {
     while (( n < total )); do
         raw="${ls[$n]}"
         n=$((n + 1))
-        t="$raw"
-        (( n > 1 )) || t="${t#$'\xef\xbb\xbf'}"      # a UTF-8 byte order mark on the first line, which systemd skips
-        t="${t%$'\r'}"
+        t="${raw%$'\r'}"
         if [[ "$t" == *$'\r'* ]]; then _unit_refuse "$n" "it carries a carriage return before its end, which systemd reads as a line end and this reader does not (a unit with CR line endings reads as one line here)" "Save the unit with LF or CRLF line endings"; return 1; fi
         # the comment test before the continuation test, as systemd orders them (inside an open continuation too): a comment ending in
         # a backslash joins nothing, and round 4 found the count running first, refusing every deploy on the box over such a line
         line="${t#"${t%%[!$_WS]*}"}"
         case "$line" in \#*|\;*) continue ;; esac
+        # the byte order mark AFTER the comment test, as systemd orders them, and the FIRST one at the raw start of a line anywhere in the
+        # file, never another (round 6 of fork PR #778, correctness-1 and extra5-1; every shape run against systemd-analyze --user verify
+        # on 255.4): config_parse tests the line as read for a comment, then strips the mark from a line beginning with it, once per file.
+        # So a marked line is no comment, whatever follows the mark, and takes the one strip (a marked `# c` is then a line with no =,
+        # ignored; a marked `# c\` a continuation that joins the next line; a mark alone an empty line); the second mark in a file is
+        # text, an unknown key name to systemd, so the line is nothing to it; and a mark after a blank is text. Round 4 stripped line 1's
+        # alone: a kept line behind a later mark read as absent here, so the rewrite wrote this clone's value at exit 0 (ExecStart
+        # re-pointed, a CLAUDE_CONFIG_DIR line dropped: the D4 class on the success path), and a mark before [Service] refused a unit
+        # systemd loads.
+        if [[ -z "$bom" && "$t" == $'\xef\xbb\xbf'* ]]; then t="${t#$'\xef\xbb\xbf'}"; bom=1; line="${t#"${t%%[!$_WS]*}"}"; fi
         # the count on the line as read, its CR off, not the blank-stripped one: systemd does not join when a blank follows the
         # backslash, and that form is the word reader's refusal below, with its own true text
         c=0; w="$t"
@@ -567,9 +608,12 @@ _unit_scan() {
             # is the join, refused below: this reader would read the two lines as two.
             i=$n; w=""
             while (( i < total )); do
-                v="${ls[$i]}"; v="${v%$'\r'}"; v="${v#"${v%%[!$_WS]*}"}"
-                case "$v" in \#*|\;*) i=$((i + 1)); continue ;; esac
-                [[ -z "$v" ]] || w=1
+                v="${ls[$i]}"; v="${v%$'\r'}"; k="${v#"${v%%[!$_WS]*}"}"
+                case "$k" in \#*|\;*) i=$((i + 1)); continue ;; esac
+                # a marked line is no comment, so with the latch free it is this line the mark comes off, as it does when the loop reaches
+                # it: a mark alone is then the blank that closes the continuation, as it is to systemd; a mark the latch is spent on is text
+                if [[ -z "$bom" && "$v" == $'\xef\xbb\xbf'* ]]; then v="${v#$'\xef\xbb\xbf'}"; k="${v#"${v%%[!$_WS]*}"}"; fi
+                [[ -z "$k" ]] || w=1
                 break
             done
             if [[ -z "$w" ]]; then t="${t%\\}"; line="${t#"${t%%[!$_WS]*}"}"
@@ -577,7 +621,17 @@ _unit_scan() {
         fi
         line="${line%"${line##*[!$_WS]}"}"
         [[ -n "$line" ]] || continue
-        if ! _unit_utf8 "$line"; then _unit_refuse "$n" "it is not valid UTF-8, on which systemd refuses the whole file (String is not UTF-8 clean) and loads nothing from it" "Write the line in UTF-8"; return 1; fi
+        if ! _unit_utf8 "$line"; then
+            if [[ -n "$_UTF8_UNCHECKED" ]]; then
+                # about this reader, not the file: not a form refusal and not through _unit_refuse, whose line-numbered form and shared
+                # tail would name a remedy this box cannot follow (a fresh install meets the same missing decoder). EXIT_IDENTITY through
+                # the callers, as every no-write refusal is (round 6 of fork PR #778, correctness-3).
+                echo "romp-service: the $_SVC_NOUN ($UNIT) has a line that is not plain ASCII (the first is line $n), and this reader cannot check that it is UTF-8 as systemd checks it: neither iconv nor python3 is on PATH; nothing was rewritten." >&2
+                echo "  Put iconv or python3 on PATH and run the deploy again (a fresh romp-service install from this shell would meet the same missing decoder; the plain ASCII lines of the file are not in question)." >&2
+                return 1
+            fi
+            _unit_refuse "$n" "it is not valid UTF-8, on which systemd refuses the whole file (String is not UTF-8 clean) and loads nothing from it" "Write the line in UTF-8"; return 1
+        fi
         if [[ "$line" == \[* ]]; then
             # a section header: the name runs from [ to the last character, which must be ]; systemd refuses the WHOLE file, loading nothing,
             # on a header not ending in ] (Invalid section header: `[Instal`, `[Service]x`, `[Install]   # comment`) or whose name carries a
@@ -749,9 +803,31 @@ _same_path() {   # $1 $2: the same path as written, or the same place once resol
 # read as an absent ExecStart and was re-pointed at the deploying clone. An EMPTY <string></string> is a value (the
 # entry set to the empty string): _file_present says so, and the writers keep it.
 _PLIST_READ=""; _PLIST_EXEC=""; _PLIST_EXEC_SET=""
-_PLUTIL_NL=""    # set by _plist_readable: non-empty when this plutil ends a raw extract with a line end of its own (calibrated on Label)
+_PLUTIL_NL=""    # set by _plutil_calibrate: non-empty when this plutil ends a raw extract with a line end of its own (learned on a scratch plist)
 _PLIST_STRING_KEYS=(ROMP_SUPERVISED PATH ROMP_DIR ROMP_SERVICE_ENV_FILE StandardOutPath StandardErrorPath)
 _plist_route() { echo "  To write it afresh in romp's form, run romp-service install from the shell and clone that should own the service (the header says what it bakes); that restarts the manager." >&2; }
+_plutil_calibrate() {   # _PLUTIL_NL from a scratch plist this reader writes under a temp dir and removes: whether this plutil ends a raw extract
+                        # with a line end of its own, learned on a Label whose bytes are known (round 6 of fork PR #778, regression-1). Exit 1,
+                        # the reason on stderr, when the scratch cannot be made or plutil does not read it back as the value alone with or
+                        # without one line end; never a fall-back to the file's own Label, whose bytes are the question.
+    local d out
+    if ! d="$(mktemp -d "${TMPDIR:-/tmp}/romp-service-plutil.XXXXXX" 2>/dev/null)"; then
+        echo "romp-service: the $_SVC_NOUN's plist ($PLIST) was not read: this reader learns how $PLUTIL ends a raw extract on a scratch plist of its own, and no scratch directory could be made under ${TMPDIR:-/tmp}; nothing was rewritten." >&2
+        return 1
+    fi
+    if ! printf '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0">\n<dict>\n  <key>Label</key><string>romp.calibrate</string>\n</dict>\n</plist>\n' > "$d/c.plist" 2>/dev/null; then
+        rm -rf "$d"
+        echo "romp-service: the $_SVC_NOUN's plist ($PLIST) was not read: this reader learns how $PLUTIL ends a raw extract on a scratch plist of its own, and the scratch could not be written under ${TMPDIR:-/tmp}; nothing was rewritten." >&2
+        return 1
+    fi
+    out="$("$PLUTIL" -extract Label raw -o - "$d/c.plist" 2>/dev/null && printf x)" || out=""
+    rm -rf "$d"
+    case "$out" in
+        romp.calibratex) _PLUTIL_NL="" ;;
+        romp.calibrate$'\n'x) _PLUTIL_NL=1 ;;
+        *) echo "romp-service: the $_SVC_NOUN's plist ($PLIST) was not read: $PLUTIL did not read this reader's scratch plist back as its Label alone (with or without one line end of its own), so how it ends a raw extract is unknown and no value of the file can be read whole; nothing was rewritten." >&2; return 1 ;;
+    esac
+}
 _plutil_raw() {   # $1 a key path, $2 a variable: set to plutil's raw extract with the value's own bytes kept (read with a sentinel, so no command
                   # substitution strips a trailing newline; plutil's own line end, when it writes one, taken off); 1 when nothing extracts
     local _pr
@@ -791,13 +867,18 @@ _plist_readable() {
     _PLIST_EXEC=""; _PLIST_EXEC_SET=""
     if command -v "$PLUTIL" >/dev/null 2>&1; then
         _PLIST_READ=plutil
-        # read once with a sentinel: whether THIS plutil ends a raw extract with a line end is learned here, on Label, whose value
-        # has none, so _plutil_raw can take exactly that off and keep a value's own trailing newline for _plist_values_whole (round 4)
+        # whether THIS plutil ends a raw extract with a line end of its own is learned on a value whose every byte this reader knows, the
+        # Label of a scratch plist it writes (_plutil_calibrate), never the file's, so _plutil_raw takes exactly that off and a value's own
+        # trailing newline reaches _plist_values_whole. Round 4 calibrated on the file's Label, taking its value to have none (round 6 of
+        # fork PR #778, regression-1): on a plutil writing no line end, a Label ending in a newline read as the line end, so a newline came
+        # off every value, the not-romp's gate below opened on a Label launchd reads with the newline, _plist_values_whole never fired, and
+        # the rewrite wrote every value a newline short at exit 0, the silent value change the round names as one class with the unit
+        # reader's mark. The Label is then compared whole, a trailing newline of its own included (rendered as \n in the refusal).
+        _plutil_calibrate || return 1
         label="$("$PLUTIL" -extract Label raw -o - "$PLIST" 2>/dev/null && printf x)" || label=""
-        _PLUTIL_NL=""; [[ "$label" != *$'\n'x ]] || _PLUTIL_NL=1
-        label="${label%x}"; label="${label%$'\n'}"
+        label="${label%x}"; [[ -z "$_PLUTIL_NL" ]] || label="${label%$'\n'}"
         if [[ -n "$label" && "$label" != "$LABEL" ]]; then
-            echo "romp-service: the $_SVC_NOUN's plist ($PLIST) is not romp's: $PLUTIL reads its Label as $label, not $LABEL; nothing was rewritten." >&2
+            echo "romp-service: the $_SVC_NOUN's plist ($PLIST) is not romp's: $PLUTIL reads its Label as ${label//$'\n'/\\n}, not $LABEL; nothing was rewritten." >&2
             _plist_route; return 1
         elif [[ -z "$label" ]]; then
             echo "romp-service: the $_SVC_NOUN's plist ($PLIST) is not one this rewrite can read: $PLUTIL could not extract its Label entry (not a plist launchd would load, or one with no Label); nothing was rewritten." >&2

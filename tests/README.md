@@ -143,33 +143,65 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   set on six, the ExecStart forms) plus a small batch the fold added and its
   addendum added to (the accepted side of each refused Unicode range, the last
   plane's noncharacters, the 255-byte name and component, the continuation
-  shapes a comment, a blank or a whitespace-only line follows). It needs
+  shapes a comment, a blank or a whitespace-only line follows; round 6 of
+  fork PR #778 added the UTF-8 byte order mark's shapes, both sides of
+  systemd's one latch per file, and Restart= beside Type=oneshot, both sides
+  of service_verify's rule). It needs
   a `systemd-analyze` on PATH and exits 2 saying so when there is none; it
   never skips, and it is not a bats case because its counts are a claim about
   one systemd build (a mac has no systemd-analyze, and a runner's build may
   differ from the one below), so a case that must fail loudly without one
   would fail every mac run and go red on a build change with no change here.
+  The dangerous mark's own check needs no systemd and runs first: `MARK_CASES`,
+  20 synthetic (systemd, oracle) pairs with one on each side of every shape
+  the column marks, the fatal shapes, the not-modelled row and the loud skip,
+  printed as one line (`mark self-check: 20 of 20 ...`) and exiting 1 on a
+  mismatch; `tests/test_romp_service_differential_mark.py` pins the same
+  table in the suite, so an edit to `compare()` is caught where the recipe
+  is not run (round 6, tests-2: no real fixture at an agreeing head reaches
+  the mark, so a dead mark printed the same table with the tag alone gone).
   Run it when the oracle or the reader in `bin/romp-service` changes:
   `python3 tests/romp-service-differential.py` (about ten seconds, four
   verify runs at a time; `--list` prints the fixtures without running).
   A disagreement in the dangerous direction (the oracle reporting what
   systemd does not set, run or read: a value systemd leaves unset or sets to
   something else, a unit systemd fails to load, a command systemd does not
-  run or a file it does not read, that is as many commands or
-  EnvironmentFile paths as systemd's or more with a difference among them,
-  or fewer with one that is not among systemd's, another exec path) is a
+  run, that is as many commands as systemd's or more with a difference among
+  them, fewer with one that is not among systemd's, or a first command that
+  is not systemd's first, another exec path for the first command, or a
+  file systemd does not read, that is as many EnvironmentFile paths or more
+  with a difference, or fewer with one not among systemd's) is a
   defect in the oracle, and where the reader follows the oracle, in the
-  reader; the other direction (the oracle refusing or leaving unset what
-  systemd sets, or listing fewer commands or files, every one among
-  systemd's) is a false refusal. Until fork PR #778's round-5 preface the
+  reader. The other direction is unmarked and is two things where the reader
+  follows the oracle: the oracle REFUSING what systemd loads is a false
+  refusal, which the operator sees; the oracle leaving UNSET what systemd sets
+  (a variable, an EnvironmentFile), or listing fewer commands or files every
+  one among systemd's with the first kept, is the D4 class, since the reader
+  does not refuse on an absence: it writes this clone's value (ExecStart,
+  ROMP_DIR, the service.env default) or omits the line (PATH, an instance
+  variable) at exit 0. That half stays unmarked on purpose, since the column
+  means the ORACLE reporting what systemd does not do; every such row is a
+  DISAGREE printed in full, and this sentence is what a reader triaging one
+  must hold (round 6, correctness-2: the prose called that half a false
+  refusal). The exec path is compared for the FIRST command alone and by
+  position, since that is the one path systemd prints, and only when it
+  printed one: for a first command under the `-` prefix systemd skips the
+  executable check that prints it, so the field is uncompared and the row is
+  REFUSES with the reason, never agree (round 6, extra6-1: six fixtures agreed
+  with the field skipped in silence); a non-first command's path is never
+  printed and never compared. A shorter oracle list is unmarked only while it
+  keeps systemd's first command (round 6, extra6-2: the exec-path branch
+  marked a dropped first command by accident, and the prose here placed it on
+  the unmarked side; it is a named shape of the argv branch now). Until fork
+  PR #778's round-5 preface the
   mark covered systemd-unset-oracle-set, more commands and more files alone,
   so a value both set and different, the direction's worst member since it
   is confidently wrong, went unmarked; until that commit's addendum a
   shorter list carrying a command or a file systemd does not run or read
   went unmarked too.
-  Taken against `systemd 255 (255.4-1ubuntu8.17)` at the fold head
-  (2026-09-19; 256 may move any class, and a different build prints a notice
-  beside the counts):
+  Taken against `systemd 255 (255.4-1ubuntu8.17)` at fork PR #778's round-6
+  head (2026-09-19; 256 may move any class, and a different build prints a
+  notice beside the counts):
 
   | class | cases | agree | REFUSES | DISAGREE |
   |---|---|---|---|---|
@@ -178,28 +210,43 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   | C (\u noncharacter escapes) | 8 | 8 | 0 | 0 |
   | D (\U surrogate or noncharacter escapes) | 42 | 42 | 0 | 0 |
   | E (a trailing backslash on the last line) | 2 | 2 | 0 | 0 |
-  | F (the @ prefix's argv) | 7 | 7 | 0 | 0 |
+  | F (the @ prefix's argv) | 7 | 5 | 2 | 0 |
   | G (repeated or conflicting prefixes) | 8 | 8 | 0 | 0 |
   | H (a quoted or escaped ; argument) | 3 | 3 | 0 | 0 |
   | I (filename and path validity) | 4 | 4 | 0 | 0 |
   | J (the simplified exec path) | 3 | 3 | 0 | 0 |
   | K (the - prefix's downgrade) | 8 | 8 | 0 | 0 |
-  | (none) | 559 | 421 | 138 | 0 |
-  | total | 684 | 537 | 147 | 0 |
+  | (none) | 559 | 417 | 142 | 0 |
+  | total | 684 | 531 | 153 | 0 |
 
   REFUSES is the oracle raising NotImplementedError on a form it does not
   model (a specifier whose value is the host's, the cgroup's or the unit
-  path's), not a disagreement; the fold batch agreed 10 of 10 at the fold
-  head, 27 of 27 with the addendum's 17, and 35 of 35 with the round-5
-  preface's 8 EnvironmentFile forms (a doubled slash, a `.` component, a
-  trailing slash with and without the `-` prefix, a trailing `.` component,
-  `//`, and a `..` component in two places, which systemd ignores as not
-  normalized; the oracle models `path_simplify_and_warn` for
+  path's), not a disagreement, or, since round 6, a comparison the harness
+  cannot make: the six fixtures whose first command is under the `-` prefix
+  (`form-pre-dash`, `form-pre-dashat`, `form-pre-atdash`,
+  `form-pre-dashbangbang`, `form-pre-dash-quoted`, `form-pre-dash-dqpath`,
+  listed from the run) have their exec path uncompared, since systemd prints
+  none for them, and moved from agree to REFUSES with that reason (F 7 to 5
+  agree, none 421 to 417, total 537 to 531). The fold batch agreed 10 of 10
+  at the fold head, 27 of 27 with the addendum's 17, 35 of 35 with the
+  round-5 preface's 8 EnvironmentFile forms (a doubled slash, a `.`
+  component, a trailing slash with and without the `-` prefix, a trailing `.`
+  component, `//`, and a `..` component in two places, which systemd ignores
+  as not normalized; the oracle models `path_simplify_and_warn` for
   `EnvironmentFile=` since that commit, where it raised on a doubled slash,
   `/./` and a trailing slash and, unguarded, read `/x/env/.` as written and a
-  `..` path as a file: 3 dangerous rows against the previous oracle). Pasted
-  from its run: `fold batch: 35 cases, 35 agree, 0 REFUSES, 0 DISAGREE, 0
-  dangerous`; the dangerous-direction count is 0. Before the fold the lens
+  `..` path as a file: 3 dangerous rows against the previous oracle), and 52
+  of 52 with round 6's 11 byte order mark shapes and 6 Restart= shapes.
+  Against the round-5 oracle the same 52 read `fold batch: 52 cases, 45
+  agree, 0 REFUSES, 7 DISAGREE, 4 dangerous`: `fold-bom-service` and
+  `fold-bom-exec` (the oracle refuses a unit systemd loads), `fold-bom-env`
+  (`A: systemd '1', oracle unset`), the three unmarked, the D4 class where the
+  reader follows it, which the reader did; and the four Restart= shapes
+  systemd refuses (`always`, `on-success`, an empty and an unknown value
+  after `always`) read by the oracle as loaded, marked dangerous. Pasted from
+  the round-6 run: `fold batch: 52 cases, 52 agree, 0 REFUSES, 0 DISAGREE, 0
+  dangerous` and `total     684    531      153         0          0`; the
+  dangerous-direction count is 0. Before the fold the lens
   counted 421 agree, 138 REFUSES and 125 DISAGREE over the same 684.
 - **node suites** — live beside their sources in `ui/webview/*.test.ts` and
   `vscode-extension/src/*.test.ts`, run with `npm test` from

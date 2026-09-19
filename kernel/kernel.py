@@ -12103,7 +12103,9 @@ _UPDATE_CHILD_SCRUB = ("ROMP_SERVE_PORT", "ROMP_KERNEL_PORT", "ROMP_POSTAL_PORT"
 # bakes what their shell sets. Unmarked, the scrubbed child re-baked the unit from its own environment on that road:
 # the four ports and the Claude config dir dropped, the state root rewritten from the caller, exit 0, nothing said.
 _UPDATE_CHILD_MARK = ("ROMP_UPDATE_CHILD", "1")
-# The identity refusal's exit code (bin/romp-service EXIT_IDENTITY): the one exit the update's preflight aborts on.
+# bin/romp-service's EXIT_IDENTITY, the code of EVERY no-write refusal there (the identity, an ExecStart path systemd refuses, a
+# form the reader does not read whole, a reader that cannot check the file): the one exit the update's preflight aborts on. The
+# name keeps the script's constant's name; the report claims nothing about which refusal it was (round 6 of fork PR #778, kernel-3).
 _SERVICE_IDENTITY_REFUSED = 5
 
 
@@ -12218,8 +12220,10 @@ def _run_update(tag):
     # AFTER advance() had put the checkout on the release: the tree on the new release, the kernel and manager on
     # the old code, no restart, a report naming only "the fetch, fast-forward or install", and the auto mode's one
     # try spent. Nothing inside install.sh can help, since advance() runs here, before it; so the same check runs
-    # here first, `rewrite --check` (the checks alone, nothing written, reloaded or journaled), and the identity
-    # refusal ends the run while the tree still holds the release the running code came from. Exit 3 (no unit at
+    # here first, `rewrite --check` (the checks alone, nothing written, reloaded or journaled), and its exit 5, which
+    # is every no-write refusal of the script (the identity, a form the reader does not read whole, a path systemd
+    # refuses; round 6 of fork PR #778, kernel-3), ends the run while the tree still holds the release the running code
+    # came from. Exit 3 (no unit at
     # the path: install.sh takes its install road, or says so) and any other exit are install.sh's to handle
     # after the tree moves, as before; only the refusal is known to be a deterministic no. ROMP_NO_SERVICE skips
     # the service step, so it skips the preflight; ROMP_SERVICE_BIN is honoured as install.sh honours it.
@@ -12255,9 +12259,8 @@ def _run_update(tag):
         + "else\n"
         + "  case \"$step\" in\n"
         + "    preflight) " + report({"ok": False, "tag": tag,
-                                      "why": "the login service on disk and this kernel's environment or clone disagree, so "
-                                             "the deploy's unit rewrite would be refused (romp-service rewrite --check; "
-                                             "its lines are in update.log): nothing was fetched and the checkout did not move"})
+                                      "why": "the deploy's unit rewrite would be refused (romp-service rewrite --check; its lines "
+                                             "in update.log say why): nothing was fetched and the checkout did not move"})
         + "    ;;\n"
         + "    fetch) " + report({"ok": False, "tag": tag,
                                   "why": "the fetch of %s failed; the checkout did not move" % tag})
@@ -12500,9 +12503,9 @@ def _update_check():
                 _atomic_write(marker, json.dumps({"tag": latest, "t": int(time.time())}))
                 wrote = True
             except OSError as e:
-                _sync_notice("the once-only marker for the automatic update to %s (%s under the state root) could not be "
-                             "written: %s; the update runs anyway, and a run that does not land may be tried again at the "
-                             "next check" % (latest, marker.name, _errno_text(e)), ok=False, kind="refused")
+                # built to the bell's SYNC_NOTICE_FIT (round 6 of fork PR #778, kernel-2: 248 characters with ENOSPC, cut mid-word in the Log)
+                _sync_notice("the automatic update to %s runs, but its once-only marker (%s) could not be written: %s; a run "
+                             "that does not land may be tried again" % (latest, marker.name, _errno_text(e)), ok=False, kind="refused")
         if not _run_update(latest):
             # a refused launch is not an attempt: nothing ran, so the once-only marker is not
             # kept (a marker standing for a launch that never happened spent the version's one
