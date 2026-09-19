@@ -3322,7 +3322,8 @@ CLIENT_DIAG_KEYS = {
     "reload-core": frozenset(("reason", "detail", "hold", "ageMs")),
     "shell": frozenset(("sidAttached", "host", "why", "tabs", "status", "via", "boot", "hasSid", "hasCard", "hasPid", "controlled", "dup",
                         "sub", "rows", "err", "getNotifications", "displayed", "vanished", "superseded", "sid8", "ageS", "shape", "kind", "sw",
-                        "decision", "hiddenMs", "quietMs", "attempts", "firstFailMs", "ms")),                    # D3 (2026-09-18): the shell socket's return-probe row (all fixed identifiers / enum members)
+                        "decision", "hiddenMs", "quietMs", "attempts", "firstFailMs", "ms",                      # D3 (2026-09-18): the shell socket's return-probe row (all fixed identifiers / enum members)
+                        "pane", "n")),                                                                            # pane-load-failed (2026-09-19): a lazy pane's document failed to load (pane key, via 'load' or 'backstop', the failure count)
     "federation": frozenset(("host", "ev", "why", "quietMs", "foreground", "msgType", "rs", "flushed", "held", "unread", "endedUnread",
                              "code", "clean", "detached", "pendingDropped", "buildId", "counts", "gt", "superseded")),
     "chat": frozenset(("sid", "error", "held", "got", "distVer", "path", "mdLen", "queuedLeft", "ids", "n", "active", "ts", "len", "route",
@@ -65398,6 +65399,20 @@ function parentLink(){try{return (window.parent!==window&&typeof window.parent._
 // byte for byte. The shell is present when its probe exists, window.parent.__rompMobileOn is a function, as parentLink()'s
 // gate reads the link; undefined off a shell (standalone, VS Code, an older shell): parks nothing.
 function parentMobile(){try{return (window.parent!==window&&typeof window.parent.__rompMobileOn==="function")?!!window.parent.__rompMobileOn():undefined;}catch(e){return undefined;}}
+// [fork] stage 0 (2026-09-18, the user's decision of that day): the phone's FIRST chat dial takes the skeleton diet. The kernel
+// then serves the strip with a skeleton list, ONE full for the tab the page shows (its ?active= hint, the state blob's activeId)
+// and a ~400 B status per other tab (_resolve_reconnect), where a fresh dial was served every tab whole (17 frames / 9 MB on the
+// measured board); the page's idle prefetch loads the rest one tab at a time once the visible tab's full has applied (render.ts,
+// skeleton-tabs.ts's gate). The dial line below reads RESTART_DIET for the first dial (everConnected false) and nothing after it,
+// so setting the reload diet's flag here gives the phone the same shape with the URL line left as upstream wrote it; a redial
+// carries the diet through reconnect=1 as today, and a redial after a socket that died before the bundle's ready was answered
+// dials as a fresh page, as the reload diet does. The main chat pane alone: a column is SKEL already, a standalone page or the
+// VS Code webview has no shell (parentMobile undefined), the desktop's grid shows several panes and keeps the whole push. The
+// shell's probe is defined in its head, before any iframe (_landing), so this read at the shim's load cannot race the shell's
+// body scripts. A blob with no activeId (a first-ever open) dials the term too and the kernel keeps its fail-safe whole push
+// for a local page with no hint (_resolve_reconnect); a stored tab that has ended matches no session and every tab is skeleton,
+// which the page's strip gate loads in the kernel's order.
+if(APP==="chat"&&!COL&&!SKEL&&parentMobile()===true)RESTART_DIET=true;
 // [fork] D2: park this pane's socket. abandon()'s teardown (the four handlers detached, close, ws nulled, so the watchdog tick
 // is inert on !ws and no onclose timer can arm) and its quiet-stale rule, but ONE state word to the shell, "parked", never
 // abandon()'s "down": a parked pane is not a broken one, so the shell's connection log stays silent and its cue dark
@@ -66161,6 +66176,13 @@ def _pane_spin(cid, ignore_id=""):
             # pane that has content — the kernel's connect-time push landing is. So it waits for
             # romp:wsfresh, the shim's first real frame after the reconnect.
             "window.addEventListener('romp:wsup',function(){hide();});"
+            # [fork] review round 2 (2026-09-19, D3): while a pane's FIRST paint is held off screen (the feed on the phone,
+            # paint-gate.ts firstPaintHeld) nobody can see the sheet, so it stands with no timer (a failsafe firing then
+            # faded it over the still-empty list, and the tap revealed a blank pane); the release render re-arms the 30 s
+            # backstop, and its first child retires the sheet through the observer above. Both events are the bundle's
+            # (feed.ts), dispatched once per hold.
+            "window.addEventListener('romp:firstpaintheld',function(){clearTimeout(fail);});"
+            "window.addEventListener('romp:firstpaintreleased',function(){arm();});"
             "window.addEventListener('romp:wsfresh',function(){badge(false);});})();</script>")
 
 
@@ -68296,6 +68318,7 @@ if(m.romp==='viewFile'&&m.pane==='pane'){var ff=document.getElementById('f-files
     if(cur!=='files'){window.__rompFilesTabFrom=cur;window.__rompMobileTab&&window.__rompMobileTab('files');}}}catch(e){}
   var fwd=function(){try{ff&&ff.contentWindow&&ff.contentWindow.postMessage({romp:'viewFile',path:m.path,sid:m.sid,identity:m.identity||null,todoId:m.todoId||null,at:m.at||null,frag:m.frag||null},'*');}catch(e){}};
   var rd='';try{rd=(ff&&ff.contentDocument)?ff.contentDocument.readyState:'';}catch(e){}
+  try{if(ff&&ff.contentDocument&&ff.contentDocument.URL==='about:blank')rd='loading';}catch(e){}   // [fork] stage 0 (2026-09-18): a LAZY Files pane the tab switch above just promoted still holds its initial about:blank (readyState complete) until the page commits; a forward into it would be lost, so it waits for the page's load below (the gear opener's own guard)
   if(ff&&rd!=='complete'){var once=function(){ff.removeEventListener('load',once);fwd();};ff.addEventListener('load',once);}else fwd();}
 // the Files pane's viewer closed (files.ts posts it on the close edge: nothing left up in the pane): on a
 // phone, where the arm above switched tabs to show it, go back to the tab the click came from; on desktop
@@ -68321,6 +68344,7 @@ if(m.romp==='browseFiles'&&(m.pane==='pane'||!feedHere())){var fb=document.getEl
     if(curb!=='files'){window.__rompFilesTabFrom=curb;window.__rompMobileTab&&window.__rompMobileTab('files');}}}catch(e){}
   var fwdb=function(){try{fb&&fb.contentWindow&&fb.contentWindow.postMessage({romp:'browseFiles',path:m.path,sid:m.sid,identity:m.identity||null},'*');}catch(e){}};
   var rdb='';try{rdb=(fb&&fb.contentDocument)?fb.contentDocument.readyState:'';}catch(e){}
+  try{if(fb&&fb.contentDocument&&fb.contentDocument.URL==='about:blank')rdb='loading';}catch(e){}   // [fork] stage 0: the same wait for a just-promoted lazy Files pane (the viewFile arm above says why)
   if(fb&&rdb!=='complete'){var onceb=function(){fb.removeEventListener('load',onceb);fwdb();};fb.addEventListener('load',onceb);}else fwdb();}
 // A browse ask naming no pane surfaces the FILE BROWSER in the FEED pane, which is a different
 // document — so the shell relays it. If the feed pane is toggled off we turn it on for the duration
@@ -69083,6 +69107,19 @@ refresh();   // self-schedules (fast while attaching, slow keep-alive otherwise)
 # to 1024px, is one pane at a time with bottom tabs; mouse desktops keep the grid.
 _MOBILE_MQ = "(max-width:820px),(pointer:coarse) and (max-width:1024px)"
 
+# [fork] stage 0 (review round 1, 2026-09-19, regression-5): the DESKTOP promotion of the Waiting and Files panes. Both are
+# served with data-src (lazy on the phone since 2026-09-18) and have no gear row, so the pane controller's list
+# (_LANDING_COLLAPSE_JS reconcile) does not carry them; on the desktop grid they load at boot, here. Its own <script>, like
+# every shell behaviour (test_kernel_mobile's count pin): a throw in the mobile script must not strand a desktop pane
+# (before this the promotion was the mobile script's last line, behind an early return and 295 lines that can throw). It
+# reads the layout from the media query itself, never from window.__rompMobileOn, which the script assumed to have thrown
+# defines, and never from the controller's list (the gear-optional panes; a Waiting row there would change togglePane).
+# Spliced before the mobile script. A phone layout returns at once: there the mobile script promotes a pane on its tap.
+_LANDING_DESKTOP_PANES_JS = """
+(function(){var MQ=null;try{MQ=window.matchMedia&&matchMedia(""" + json.dumps(_MOBILE_MQ) + """);}catch(e){}if(MQ&&MQ.matches)return;
+['f-waiting','f-files'].forEach(function(id){try{var f=document.getElementById(id);if(f&&!f.getAttribute('src')&&f.getAttribute('data-src'))f.setAttribute('src',f.getAttribute('data-src'));}catch(e){}});})();
+"""
+
 _LANDING_MOBILE_JS = """
 (function(){
 // The shell's own client-diag rows (2026-09-08): the bell's and the tap-landing scripts record what they saw
@@ -69185,11 +69222,72 @@ var F={chat:document.getElementById('f-chat'),fleet:document.getElementById('f-f
 // slash rule keys on, until the next paint event. A tab or a reveal decides which pane shows, nothing else.
 var B=bar.querySelectorAll('button[data-pane]'),KT='romp-mobile-tab';
 function filesCtlM(){try{var st=JSON.parse(localStorage.getItem('romp:settings')||'null');return !!(st&&st.showFilesControl===true);}catch(e){return false;}}   // the gear's Files-control setting (T317; off by default since T317b: shown only when the store holds the literal true under the fresh key, never the T317-era filesControl a whole-object save merged in): the same read the pane controller makes, which parses after this script
+// [fork] stage 0 (2026-09-18): LAZY PANES on the phone (the user's decision of 2026-09-18: a pane nobody is looking at costs
+// nothing until its tap). The served markup gives every pane but the chat a data-src (the optional panes since 2026-09-10;
+// the Waiting and Files panes since this change), and on the desktop the pane controller (_LANDING_COLLAPSE_JS reconcile)
+// copies it to src at boot for every optional pane the gear shows, as before, while the Waiting and Files panes, which have
+// no gear row and so are not in the controller's list, are promoted at boot by their own script (_LANDING_DESKTOP_PANES_JS,
+// spliced before this one; review round 1: a throw here must not strand a desktop pane). On the phone layout only the chat, the feed
+// (exempt: its socket carries the card-trouble entries the shell's bell mirrors, the parking rule's exemption) and the stored
+// tab load at boot; every other pane loads on its FIRST show (a tap, a reveal, a relay's switch), so a cold open costs their
+// documents, sockets and connect pushes nothing. The controller's boot promotion reads data-src, so before it parses (this
+// script runs first) the lazy panes' data-src is parked under data-lazy-src, an attribute the controller does not read, and
+// promote() reads either: the controller's own lines stay upstream's text, byte for byte. A layout flip to the desktop (a
+// rotation across the breakpoint) promotes every lazy pane, since the grid shows them without a tap. A promoted pane's
+// document hears the panes word on its own load (the controller's load hook) and dials as any pane does; from its first show
+// on it is a pane like any other (a return while it is off screen parks it, the shim's D2 rule). The measure of the saving is
+// the pane's absence from the timing rows: a never-tapped pane files none.
+// The loading state (ui/CLAUDE.md, loading states): from the promotion until the iframe's load event the pane's .pane div
+// carries the `loading` class, and while the SHOWN tab's div carries it the body carries `pane-loading`, which paints the
+// shell's #pane-load, the romp loader over the pane area (the .pane div is display:contents on the phone, so it can host no
+// box of its own: one shell element, painted for the tab in view). Event-based, with a 30 s backstop so it can never trap the
+// user; the pane's own loader (_pane_spin) takes over the instant its document paints, with the same backdrop and loader, so
+// the hand-over is not visible.
+// A FAILED load (review round 1, 2026-09-19, HIGH 2): a src is never reassigned, and promote()'s first guard reads it, so a
+// document fetch that failed at the first tap left the pane blank for the life of the page, the backstop clearing the loader
+// over nothing. The detector is committed(): a good load reads the pane's OWN document, same-origin at the pane's url with the
+// pane shim run in its window (window.__rompApp); an HTTP error body at that url (a proxy's 502 during a kernel restart) is
+// same-origin too and has no shim, so it fails like an error page (review round 2 closeout: before, any committed document counted
+// as loaded, and the 502 kept its src for the page's life with no retry road). The iframe's
+// `error` event never fires for a failed navigation in any engine; Chromium commits an error page (cross-origin, contentDocument
+// null) and fires `load`; Firefox and WebKit keep about:blank with no load event to act on (observed under an aborted route, the
+// served leg), so the load listener and the 30 s backstop both read committed() and a document that has not committed by the
+// backstop is a failure too (a pane document without a load event by then is a slow load: the loader clears, as before).
+// failed() re-parks the pane (src removed, the url back under
+// data-lazy-src, so the next show() promotes it again as a first tap would), swaps the div's `loading` for `failed`, counts the
+// failures and files one shell client-diag row (`pane-load-failed` {pane, via, n}). The failed state is painted where the user
+// looks: body.pane-failed keeps #pane-load up with #pane-load-msg saying the pane did not load and a tap retries; the second
+// failure and later say so and offer the page reload. A tap on #pane-load or on the tab retries through show().
+var LAZY='data-lazy-src',LOAD_MS=30000,URLS={},FAILS={},TOK={};
+var MSG_FAILED="Couldn't load this pane. Tap to try again.",MSG_FAILED_AGAIN="Still not loading. Tap to try again, or reload the page.";
+function paneDiv(f){try{var d=f&&f.parentNode;return (d&&d.classList&&typeof d.classList.contains==='function')?d:null;}catch(e){return null;}}
+function paintLoading(){try{var k=document.body.getAttribute('data-tab'),d=paneDiv(F[k]);document.body.classList.toggle('pane-loading',!!(d&&d.classList.contains('loading')));
+var bad=!!(d&&d.classList.contains('failed'));document.body.classList.toggle('pane-failed',bad);
+var msg=document.getElementById('pane-load-msg');if(msg)msg.textContent=bad?((FAILS[k]||0)>=2?MSG_FAILED_AGAIN:MSG_FAILED):'';}catch(e){}}
+function loaded(k){try{var d=paneDiv(F[k]);if(d){d.classList.remove('loading');d.classList.remove('failed');}}catch(e){}paintLoading();}
+function committed(f){try{var d=f.contentDocument,w=f.contentWindow;return !!(d&&d.URL&&d.URL!=='about:blank'&&w&&typeof w.__rompApp==='string');}catch(e){return false;}}   // the pane's OWN document: same-origin at a url other than about:blank, with the pane shim run in its window (window.__rompApp, set as the shim parses, ahead of the bundle and the load event). An HTTP error body (a proxy's 502 while the kernel restarts) is same-origin at the pane's url too and carries no shim, so it is a failure (review round 2 closeout); an error page is cross-origin and reads null; a never-committed frame keeps about:blank
+function failed(k,via){var f=F[k];if(!f)return;try{f.removeAttribute('src');}catch(e){}try{if(URLS[k])f.setAttribute(LAZY,URLS[k]);}catch(e){}   // re-parked: promote()'s src guard reads nothing, the url is back where a first tap finds it
+try{var d=paneDiv(f);if(d){d.classList.remove('loading');d.classList.add('failed');}}catch(e){}
+FAILS[k]=(FAILS[k]||0)+1;try{shellDiag('pane-load-failed',{pane:k,via:via,n:FAILS[k]});}catch(e){}paintLoading();}
+function promote(k){var f=F[k];if(!f)return false;var u=null;
+try{if(f.getAttribute('src'))return false;u=f.getAttribute('data-src')||f.getAttribute(LAZY);}catch(e){return false;}   // loaded already (a src is never reassigned: no reload of a live pane), or an element without attributes: nothing to do
+if(!u)return false;
+if(window.__rompPaneEnabled&&!window.__rompPaneEnabled(k))return false;   // off in the gear's Panes section: not in this dashboard at all (the controller's rule, read through the head's one reader)
+try{f.removeAttribute(LAZY);}catch(e){}
+URLS[k]=u;
+if(mobileOn()){var tok=TOK[k]=(TOK[k]||0)+1;try{var d=paneDiv(f);if(d){d.classList.add('loading');d.classList.remove('failed');}}catch(e){}   // tok: this promotion's; a listener or backstop of an earlier promotion (a retry after a failure) is inert
+f.addEventListener('load',function(){if(TOK[k]!==tok)return;try{if(f.contentDocument&&f.contentDocument.URL==='about:blank')return;}catch(e){}if(committed(f))loaded(k);else failed(k,'load');});   // the empty document's own load, not the page's (the gear opener's guard); a load that committed no pane document (an error page, an HTTP error body) is a failure
+setTimeout(function(){if(TOK[k]!==tok)return;var dd=paneDiv(f);if(!dd||!dd.classList.contains('loading'))return;if(committed(f))loaded(k);else failed(k,'backstop');},LOAD_MS);}   // still loading at the backstop: a pane document is slow (the loader clears, as before); none, or one without the shim, is a failure (WebKit's road)
+f.setAttribute('src',u);paintLoading();return true;}
+try{var pl=document.getElementById('pane-load');if(pl)pl.addEventListener('click',function(){try{var k=document.body.getAttribute('data-tab');if(k&&paneDiv(F[k])&&paneDiv(F[k]).classList.contains('failed'))show(k);}catch(e){}});}catch(e){}   // the failed state's tap: retry the shown tab's pane (show() promotes a re-parked pane again)
+window.__rompPanePromote=promote;   // the one road a pane's src is set by on the phone (the tests drive it; a relay that must post into a lazy pane would promote first)
 function show(p){if(p==='files'&&!filesCtlM())p='chat';   // the Files tab is hidden while its control is off: the chat shows instead
 if(!F[p])return;for(var i=0;i<B.length;i++)if(B[i].getAttribute('data-pane')===p&&B[i].hidden)return;   // a tab the controller hid (its pane is off in the gear's Panes section) is not a place to go
 document.body.setAttribute('data-tab',p);for(var k in F)if(F[k])F[k].classList.toggle('m-on',k===p);   // a pane this shell lacks is skipped, never a TypeError
+try{var pw=F[p]&&F[p].contentWindow;if(mobileOn()&&pw&&pw.__rompPaneShown)pw.__rompPaneShown();}catch(e){}   // [fork] review round 2 (2026-09-19, D3): the shown pane's own synchronous show hook (same origin; the feed's paints its held first board in THIS task, before the compositor can show the empty pane); the re-tell below still carries the word for a document that has none, or loaded after the show
 for(var i=0;i<B.length;i++)B[i].classList.toggle('on',B[i].getAttribute('data-pane')===p);
 try{localStorage.setItem(KT,p);}catch(e){}
+try{if(mobileOn()){promote(p);paintLoading();}}catch(e){}   // [fork] stage 0: a lazy pane loads on its first show, BEFORE the re-tell below (the pane hears the word on its own load; a word posted into a document not yet there is dropped); the loader paints for a tab whose pane is still loading, and clears for one that is not
 // a tab switch changes what is on screen: re-tell the panes (the collapse script's broadcast; absent only
 // before that script parses, and its boot apply then tells them)
 try{window.__rompPanesTell&&window.__rompPanesTell();}catch(e){}}
@@ -69198,6 +69296,17 @@ window.__rompMobileTab=show;   // the shell's relays bring a pane's tab forward 
 // and no tab switch: the media query's own change event IS that flip, so re-tell the panes on it
 var retell=function(){try{window.__rompPanesTell&&window.__rompPanesTell();}catch(e){}};
 if(MQ){if(MQ.addEventListener)MQ.addEventListener('change',retell);else if(MQ.addListener)MQ.addListener(retell);}
+// [fork] stage 0: the desktop grid shows every pane the rail has on without a tap, so a flip TO the desktop layout hands
+// every parked pane back to the controller's attribute (data-src) and promotes the ones the gear shows; a pane the gear has
+// off keeps its data-src for the controller's later enable (review round 1, 2026-09-19: parked with no data-src, a pane
+// turned on in the gear after a rotation showed an empty column until a reload). A flip BACK to the phone layout parks
+// every pane still unloaded (no src) but the chat and the feed again, as the boot does, so a later gear enable on the phone
+// loads nothing off screen (review round 2: after a rotation there and back a gear-off pane sat on data-src and the
+// controller's enable loaded it hidden). Its own listener on the same media query, beside the re-tell's.
+var lazyFlip=function(){try{if(!mobileOn()){for(var lk in F){var lf2=F[lk],lz=null;try{lz=lf2&&lf2.getAttribute(LAZY);}catch(e){}
+if(lz){try{lf2.setAttribute('data-src',lz);lf2.removeAttribute(LAZY);}catch(e){}}promote(lk);}}
+else{for(var lk3 in F){var lf3=F[lk3];if(!lf3||lk3==='chat'||lk3==='feed')continue;var lu3=null;try{lu3=lf3.getAttribute('data-src');if(lu3&&!lf3.getAttribute('src')){lf3.setAttribute(LAZY,lu3);lf3.removeAttribute('data-src');}}catch(e){}}}}catch(e){}};
+if(MQ){if(MQ.addEventListener)MQ.addEventListener('change',lazyFlip);else if(MQ.addListener)MQ.addListener(lazyFlip);}
 // A REVEAL un-hides a desktop-toggled-off pane before the mobile tab switch (the user 2026-08-13: a feed
 // click that jumps into a CLOSED chat used to land invisibly — the hidden iframe's WS stays live, so the
 // scroll ran under display:none and nothing appeared to happen). Same __rompPaneToggle(…, true) the Log
@@ -69322,6 +69431,15 @@ shReturnProbe={decision:(!shWs||shWs.readyState!==1)?'redial-closed':'redial-sta
 shFailed=0;shFirstFailT=0;
 shAbandon();shellWS();});
 shellWS();
+// [fork] stage 0: the lazy panes' boot. On the phone every pane's data-src but the chat's (it ships src) and the feed's (exempt)
+// is parked under data-lazy-src before the pane controller parses, so its boot promotion leaves them alone; the feed is
+// promoted here (the gear's word respected) and the stored tab by show(last) below, which reads the parked attribute too, so
+// an enabled stored tab boots as before while a stored tab the gear has off stays parked (review round 1, 2026-09-19: skipped
+// by the parking, it kept its data-src and a later gear enable loaded it off screen). On the desktop the controller's eager
+// boot stands, and the Waiting and Files panes, outside its list, are promoted by _LANDING_DESKTOP_PANES_JS (its own script).
+try{if(mobileOn()){for(var lk2 in F){var lf=F[lk2];if(!lf||lk2==='chat'||lk2==='feed')continue;
+var lu=lf.getAttribute('data-src');if(lu&&!lf.getAttribute('src')){lf.setAttribute(LAZY,lu);lf.removeAttribute('data-src');}}
+promote('feed');}}catch(e){}
 var last='chat';try{var s=localStorage.getItem(KT);if(s&&F[s])last=s;}catch(e){}show(last);
 })();
 """
@@ -70916,6 +71034,12 @@ def _landing():
             # script lands a deep link at its own boot). A corrupt store reads as every pane shown, like reconcile.
             "window.__rompPaneEnabled=function(k){try{var s=JSON.parse(localStorage.getItem('romp:settings')||'{}'),p=s&&s.panes;"
             "return !(p&&typeof p==='object'&&p[k]===false);}catch(e){return true;}};"
+            # [fork] stage 0 (2026-09-18): the phone LAYOUT probe, defined in the head too, before any iframe, so a pane's shim can
+            # read window.parent.__rompMobileOn at its own load (the chat pane's first dial takes the skeleton diet on the phone,
+            # _shim). The mobile script (_LANDING_MOBILE_JS) defines the same probe over its cached media-query list and replaces
+            # this one when it parses, at the body's end, which on a fast origin can be after the chat document's inline shim has
+            # run (the wid mint above moved here for the same race). One constant, _MOBILE_MQ, so the two answers cannot differ.
+            "window.__rompMobileOn=function(){try{return !!(window.matchMedia&&matchMedia(" + json.dumps(_MOBILE_MQ) + ").matches);}catch(e){return false;}};"
             "if(navigator.standalone){document.documentElement.className+=' ios-standalone';"
             "var _vp=document.querySelector('meta[name=viewport]');"
             "_vp.setAttribute('content',_vp.getAttribute('content')+',viewport-fit=cover');}"
@@ -71596,6 +71720,8 @@ def _landing():
             ".pane.pane-focused.split-v::after{display:none}"
             ".pane.pane-focused.split-v.focus-top>iframe,.pane.pane-focused.split-v.focus-bottom>.chat-sub{outline:2px solid rgba(156,210,255,0.55);outline-offset:-2px}"
             "#mtabs{display:none}"
+            "#pane-load{display:none}"   # the lazy pane loader (stage 0, 2026-09-18): hidden everywhere but the phone layout's loading state (the media block below)
+            "#pane-load-msg{display:none;max-width:22em;padding:0 1.5em;text-align:center;font:14px/1.45 'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;color:#ccc}"   # the failed-load message (review round 1): shown by body.pane-failed inside the media block
             # narrow OR a touch device up to 1024px → one pane + bottom tabs; mouse desktops keep the grid
             # (_MOBILE_MQ: the same query the mobile script's __rompMobileOn probe answers by)
             "@media " + _MOBILE_MQ + "{"
@@ -71635,6 +71761,16 @@ def _landing():
             "iframe{position:static;display:none;width:100%;height:100%;border:0}"
             "#f-chat.m-on,#f-fleet.m-on,#f-feed.m-on,#f-waiting.m-on,#f-files.m-on{display:block}"
             "#f-timeline{flex:1 1 auto;min-height:0}#f-timeline.m-on{display:block}"
+            # the lazy pane loader (stage 0, 2026-09-18): while the shown tab's pane is loading its document the shell paints the
+            # romp loader over the pane area, above the pane's iframe and below the tab bar (z 20; the bar stays tappable, the
+            # loader stops at its reserved height), with the pane loader's backdrop and loader (_pane_spin), so the hand-over is not visible
+            "#pane-load{position:fixed;left:0;right:0;top:0;bottom:var(--mtabs-h,2.6em);z-index:15;align-items:center;justify-content:center;background:#1e1e1e}"
+            "body.pane-loading #pane-load{display:flex}"
+            # the FAILED state (review round 1, 2026-09-19): the same element stays up over a pane whose document did not load, the
+            # loader gone and the message in its place; a tap anywhere on it retries (_LANDING_MOBILE_JS failed / the #pane-load click)
+            "body.pane-failed #pane-load{display:flex;flex-direction:column;gap:14px;cursor:pointer}"
+            "body.pane-failed #pane-load>.rl-in{display:none}"
+            "body.pane-failed #pane-load-msg{display:block}"
             "body[data-tab=timeline] .row{display:none}"    # timeline tab active → collapse the chat/feed row so the band fills
             # compact text-only switcher, FIXED to the visible viewport bottom so nothing can sit below it.
             # NO safe-area padding-bottom in the BROWSER: without viewport-fit=cover the viewport already sits
@@ -71797,6 +71933,8 @@ def _landing():
             "body.theme-light .gv:hover::after,body.theme-light .gh:hover::after{background:var(--accent)}"
             "body.theme-light .pane.pane-focused::after{box-shadow:inset 0 0 0 2px rgba(194,65,12,0.55)}"
             "body.theme-light #romp-boot{background:#F1EAE2}"
+            "body.theme-light #pane-load{background:#F1EAE2}"   # the lazy pane loader's backdrop goes warm-light with the page (stage 0)
+            "body.theme-light #pane-load-msg{color:#333}"
             # (the loader dots' light rule rides in _LOADER_CSS, included below)
             # light cards: raised white over the warm page, dark warm text, hairline borders, soft shadows
             "body.theme-light #rerr-panel{background:#FFFFFF;border-color:rgba(0,0,0,0.12);color:#1F1E1D;"
@@ -71873,6 +72011,12 @@ def _landing():
             "</style></head><body class='po-chat po-feed po-timeline'>"
             + _THEME_READER +
             "<div id=romp-boot>" + _loader_inner() + "</div>"
+            # the LAZY PANE loader (stage 0, 2026-09-18): the same loader, painted over the pane area on the phone while the
+            # shown tab's pane is loading its document (_LANDING_MOBILE_JS promote: body.pane-loading while the shown .pane wears
+            # `loading`, from the promotion to the iframe's load event). One element for every pane: a .pane div is
+            # display:contents on the phone and can host no box of its own. Its second child is the failed-load message
+            # (review round 1, 2026-09-19): empty and hidden until a pane's document fails to load (body.pane-failed).
+            "<div id=pane-load>" + _loader_inner() + "<div id=pane-load-msg></div></div>"
             # the bell popover (2026-09-05; driven by _LANDING_PUSH_JS): the two switches that ONE bell
             # tap used to flip together — the kernel-wide master and this device's push subscription —
             # as separate rows, plus the turn-finished switch and a test button that shows the push
@@ -71932,11 +72076,17 @@ def _landing():
             # "Waiting on you" (2026-09-03): every session's open user todos in one place — the far-right
             # column, OFF by default like the Outline (the feature itself is off by default)
             "<div class=gv id=gv-c></div>"
-            "<div class=pane id=waiting-pane><iframe id=f-waiting src=/waiting></iframe></div>"
+            # data-src since stage 0 (2026-09-18): on the phone the pane loads on its first tap (_LANDING_MOBILE_JS, the lazy
+            # panes); on the desktop the mobile script promotes it at boot, so the column loads as it always did. The chat keeps
+            # its src (the shell's reveal landing reads its document); the Files pane below is data-src too.
+            "<div class=pane id=waiting-pane><iframe id=f-waiting data-src=/waiting></iframe></div>"
             # "Files" (2026-09-03): the file viewer as its own column, far right, OFF by default — the
             # shell's viewFile relay brings it forward when a chat file-link click routes here
             "<div class=gv id=gv-d></div>"
-            "<div class=pane id=files-pane><iframe id=f-files src=/files></iframe></div>"
+            # data-src since stage 0 (2026-09-18): the one upstream markup token this fork changes (src -> data-src). On the phone
+            # the pane loads on its first tap; on the desktop the mobile script promotes it at boot, so the column loads as it
+            # always did (its rail toggle is off by default and it has no gear row, so the controller's list does not carry it).
+            "<div class=pane id=files-pane><iframe id=f-files data-src=/files></iframe></div>"
             "</div>"
             "<div id=gv-ghost></div>"   # the divider drag's landing line (position:fixed; gutter() in _LANDING_JS moves it)
             "<div id=col-ghost></div>"   # a tab drag's provisional rectangle: the right half of the rightmost chat column (position:fixed; _LANDING_SPLIT_JS places it)
@@ -72159,6 +72309,7 @@ def _landing():
                          .replace("__ROMP_BOOT__", json.dumps(_BOOT_ID))
                          .replace("__ROMP_LOADER__", json.dumps(_loader_inner())) + "</script>"
             "<script>" + _LANDING_REMOTES_JS + "</script>"
+            "<script>" + _LANDING_DESKTOP_PANES_JS + "</script>"   # the desktop's Waiting and Files promotion, its own element so a throw in the mobile script cannot strand a pane (review round 1, 2026-09-19)
             "<script>" + _LANDING_MOBILE_JS + "</script>"
             "<script>" + _LANDING_PUSH_JS + "</script>"
             "<script>" + _LANDING_REVEAL_JS + "</script>"

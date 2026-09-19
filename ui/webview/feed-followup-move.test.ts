@@ -37,7 +37,7 @@ test("a predicted card is kept in Working at render, styled like the kernel's re
   assert.ok(gateEnd > 0, "applyFollowMove(asks) follows the list lookup");
   const between = head.slice(0, gateEnd);
   assert.ok(between.split("\n").length <= 16, "only the paint gate, its observer install and pruneTip may sit before it");
-  assert.match(between, /paintHeld\(document\.hidden, feedIntersecting, list\.childElementCount > 0\)/, "the gate");
+  assert.match(between, /paintHeld\(document\.hidden, seenNow\(\), list\.childElementCount > 0\)/, "the gate (its measure is seenNow(), the observer's word or the show override, since review round 2 of the lazy panes, 2026-09-19; feed-hidden-paint.test.ts pins the line whole)");
   assert.match(between, /pruneTip\(\);[^\n]*\n\s*$/, "pruneTip immediately precedes it");
   // the removed drag machinery must not creep back in front of it
   assert.doesNotMatch(FEED, /dragAskId|DRAG_CARDS_ENABLED|fdrop-slot/);

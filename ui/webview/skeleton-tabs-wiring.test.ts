@@ -28,7 +28,7 @@ const fn = (name: string): string => {
 };
 
 test("render.ts holds ONE skeleton set, declared beside tabMeta, and reads the active session through liveSession", () => {
-  assert.match(RENDER, /import \{ newSkeletonState, applyTabOrderSkeleton, onStatus, holdStatus, onFull, onDismiss, onSocketUp, nextPrefetch, renderKind \} from "\.\/skeleton-tabs";/);
+  assert.match(RENDER, /import \{ newSkeletonState, applyTabOrderSkeleton, onStatus, holdStatus, onFull, onDismiss, onSocketUp, nextPrefetch, renderKind, gateOnFrame, gateOnStrip, gateOnShow \} from "\.\/skeleton-tabs";/);   // gateOnFrame, gateOnStrip, gateOnShow: the idle prefetch's start gate (stage 0, 2026-09-18; the show half 2026-09-19)
   // beside tabMeta / closingTabs / pendingTabMeta (below them: tab-close-optimistic.test.ts wants closingTabs within
   // 900 characters of tabMeta) — renderTabs reads it and can run before the module finishes evaluating
   assert.match(RENDER, /const pendingTabMeta = new Map<string, PendingTabMeta>\(\);\n(?:\/\/[^\n]*\n)*const skeletonTabs = newSkeletonState\(\);/);
@@ -46,7 +46,7 @@ test("the tabOrder frame applies the skeleton list BEFORE applyTabOrder, so its 
   assert.match(note, /const changed = applyTabOrderSkeleton\(skeletonTabs, m\.skeleton, kernelOrder\);/);
   // one client-diag row per reconnect that produced a set: armed by the socket opening, spent by the first strip
   assert.match(note, /if \(skeletonDiagArmed && Array\.isArray\(m\.skeleton\) && skeletonTabs\.ids\.size\) \{\s*\n\s*skeletonDiagArmed = false;\s*\n\s*vscodeApi\?\.postMessage\(\{ type: "clientDiag", surface: "chat", what: "skeleton", data: \{ n: skeletonTabs\.ids\.size, active: activeId \} \}\);/);
-  assert.match(RENDER, /else if \(m\.type === "wsup"\) \{ onSocketUp\(skeletonTabs\); skeletonDiagArmed = true; \}/,
+  assert.match(RENDER, /else if \(m\.type === "wsup"\) \{ onSocketUp\(skeletonTabs, phoneShell\(\)\); skeletonDiagArmed = true; \}/,   // the layout argument since the owner's return rule (2026-09-19)
     "a new socket forgets which fulls the dead one delivered and re-arms the row");
   // the tab we are ON became a skeleton (a click in the redial gap, a stale active hint) → re-show, keyed on change
   assert.match(note, /if \(changed && activeId && skeletonTabs\.ids\.has\(activeId\)\) showActive\(\);/);
@@ -422,4 +422,57 @@ test("run: a column's own session, listed by the strip but not among its skeleto
   // …the neighbouring skeleton still asks on its pick: the gate is the set, not the missing session
   w.api.set({ activeId: "B" }); w.api.showActive();
   assert.deepEqual(w.HOOKS.fulls, ["skeleton-click:B"]);
+});
+
+test("the idle prefetch's START GATE (stage 0, 2026-09-18): upsert reads the shown tab before the adoption and opens the gate on its frame; the local strip opens it when it lists no such tab; the click road is not gated", () => {
+  const up = fn("upsert");
+  // the want is read at the head of upsert, before the frame's own adoption (the `adopted` block moves activeId and clears wantActive)
+  assert.match(up, /^function upsert\(msg: any\) \{\s*\n\s*retryCmtCreates\(String\(msg\.id \|\| ""\)\);[^\n]*\n\s*const gateWant = activeId \|\| wantActive;/,
+    "the tab the strip shows as active, or the one awaited after a reload, read before this frame can move either");
+  assert.ok(up.indexOf("const gateWant = activeId || wantActive;") < up.indexOf("const wouldAdopt = "), "…ahead of the adoption");
+  // the frame half sits right before upsert's arm, so the arm runs the chain the moment the gate opens
+  assert.match(up, /\n\s*gateOnFrame\(skeletonTabs, msg\.id, \[gateWant, activeId\]\);\s*\n\s*schedulePrebuild\(\); \/\/ startup \+ new content/,
+    "the visible tab's frame (the want read above, or the active tab this very frame adopted) opens the gate, then the arm; anchored at a line start, so a commented-out call cannot satisfy it (review round 1, 2026-09-19)");
+  assert.equal((RENDER.match(/^\s*(?:if \()?gateOnFrame\(/gm) || []).length, 1, "one frame site: upsert (a line-start count, a bare call or an `if (` guard: a commented call is not a site, a second guarded site is; review round 2)");
+  // the strip half: the LOCAL kernel's strip alone (a re-emission is empty on a fresh page), keyed on the same want
+  const ato = RENDER.slice(RENDER.indexOf("\nfunction applyTabOrder("), RENDER.indexOf("\nfunction syncTabKeysWithStrip("));
+  assert.match(ato, /else if \(!activeId\) showActive\(\);[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*if \(localStrip\(report\) && gateOnStrip\(skeletonTabs, kernelOrder, activeId \|\| wantActive\)\) schedulePrebuild\(\);\n(?:\s*\/\/[^\n]*\n)*\s*const stripFrom = stripHost\(report\);/,
+    "the local strip that lists no shown or awaited tab opens the gate and arms the chain at once: after the restore, ahead of the strip's render (chat-split.test.ts pins the stripFrom / tabOrderSeen / renderTabs run as adjacent)");
+  assert.equal(RENDER.split("gateOnStrip(").length - 1, 1, "one strip site: applyTabOrder");
+  // the click road stays ungated: showActive asks for a skeleton active with no gate read in front of it
+  const sa = fn("showActive");
+  assert.match(sa, /if \(skeleton\) requestFullSession\(activeId, "skeleton-click"\);/);
+  assert.doesNotMatch(sa, /skeletonTabs\.gate|gateOnFrame|gateOnStrip/, "a tap loads at once whatever the gate says");
+  // the socket flip closes the gate inside onSocketUp (skeleton-tabs.ts), which the wsup frame already calls; since the owner's
+  // decision of 2026-09-19 the arm passes the shell's layout, so a redial on the phone holds the chain (returnHold)
+  assert.match(RENDER, /else if \(m\.type === "wsup"\) \{ onSocketUp\(skeletonTabs, phoneShell\(\)\); skeletonDiagArmed = true; \}/);
+  assert.match(fn("phoneShell"), /window\.parent !== window && typeof p\.__rompMobileOn === "function" && !!\(p\.__rompMobileOn as \(\) => unknown\)\(\)/, "the layout is the shell's probe off window.parent, the way paneHidden reads the shell's word");
+  assert.equal((RENDER.match(/phoneShell\(\)[^:]/g) || []).length, 1, "ONE layout read for the chain: the redial's wsup arm (the definition's `phoneShell(): boolean` is not a call)");
+  const SK = fs.readFileSync(path.join(WEBVIEW, "skeleton-tabs.ts"), "utf8");
+  assert.match(SK, /export function onSocketUp\(st: SkeletonState, phone\?: boolean\): void \{\s*\n\s*st\.loaded\.clear\(\);\s*\n\s*st\.gate = false;[^\n]*\n\s*st\.returnHold = phone === true;/, "a new socket closes the gate, and on the phone holds the chain for the socket's life");
+  for (const opener of ["gateOnFrame", "gateOnStrip", "gateOnShow"]) assert.match(SK, new RegExp("export function " + opener + "\\([^\\n]*\\n\\s*if \\(st\\.gate \\|\\| st\\.returnHold"), opener + " opens nothing while the return hold stands");
+  assert.match(SK, /if \(hidden \|\| !st\.gate\) return null;/, "nextPrefetch is null while the gate is closed: no background ask leaves");
+  assert.match(SK, /return \{ ids: new Set\(\), order: \[\], status: new Map\(\), loaded: new Set\(\), gate: false, returnHold: false \};/, "a fresh state's gate is closed and nothing is held (the boot dial sends no wsup)");
+});
+
+test("review round 1 (2026-09-19): the gate's show half, the chat pane's show re-arms the chain, and the gate reads no layout", () => {
+  // F8: gateOnShow at the two activation sites, never in showActive (the click road stays ungated)
+  assert.equal((RENDER.match(/^\s*(?:if \()?gateOnShow\(/gm) || []).length, 2, "two show sites: setActive and silentActivate");
+  assert.match(fn("setActive"), /\n  activeId = id;\n  gateOnShow\(skeletonTabs, id\);/, "setActive: right after the active moves; the tail's schedulePrebuild arms");
+  assert.match(fn("silentActivate"), /\n  activeId = id;\n  if \(gateOnShow\(skeletonTabs, id\)\) schedulePrebuild\(\);/, "silentActivate arms itself when the gate opens (its tail does not)");
+  assert.doesNotMatch(fn("showActive"), /gateOnShow/);
+  // F1: the chat pane's show is the event paneHidden() flips on; the visibility publisher's hook re-arms, and the shell's word is the belt
+  assert.match(RENDER, /^watchChatVisibility\(document\.body, browserChatVisibilityDeps\(\), schedulePrebuild\);/m, "the hidden word's true-to-false flip re-arms the idle chain (chat-visibility.ts onShown)");
+  assert.match(RENDER, /const wasChatOff = panesOn\.chat === false;[^\n]*\n\s*const on: Record<string, boolean> = \{\};\n\s*for \(const k of Object\.keys\(m\.on\)\) on\[k\] = m\.on\[k\] === true;\n\s*panesOn = on;\n\s*if \(wasChatOff && on\.chat === true\) schedulePrebuild\(\);/,
+    "the panes word that brings the chat on screen re-arms too, keyed on the previous word (the desktop's chat is never off)");
+  // F6 (the coordinator's ruling: chain-wide): no layout read in the gate's code or at its START sites. Narrowed on 2026-09-19 by
+  // the owner's rule for returns: the RETURN is layout-aware (the wsup arm passes phoneShell() to onSocketUp, pinned above), the
+  // start gate stays layout-free, and skeleton-tabs.ts takes the layout as a boolean and reads none itself
+  const SK = fs.readFileSync(path.join(WEBVIEW, "skeleton-tabs.ts"), "utf8");
+  assert.doesNotMatch(SK, /phoneLayout|parentMobile|phoneShell|__rompMobileOn|matchMedia/, "skeleton-tabs.ts reads no layout: the gate runs on every layout");
+  const gateLines = RENDER.split("\n").filter((l) => /gateOnFrame\(|gateOnStrip\(|gateOnShow\(/.test(l));
+  assert.ok(gateLines.length >= 4, "the gate's opener sites were found (a filter that matched nothing would assert nothing below): " + gateLines.length);
+  for (const line of gateLines) {
+    assert.doesNotMatch(line, /phoneLayout|parentMobile|phoneShell|__rompMobileOn/, "no layout read at a gate opener site: " + line.trim().slice(0, 80));
+  }
 });

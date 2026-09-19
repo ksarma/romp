@@ -39,7 +39,9 @@ test("revealCard unfolds a collapsed thread before looking for the card (no sile
   assert.match(KERNEL, /if\(pc&&!\/\^\[A-Za-z0-9_\.:-\]\{1,128\}\$\/\.test\(pc\)\)pc='';/, "a non-id push-card is dropped before it lands");
   assert.match(SRC, /function revealCards\(keys: Set<string>\) \{\n  unfoldThreadsFor\(keys\);/);
   // and the existing fallback stands: a card gone from the feed still opens its session
-  assert.match(SRC, /\} else if \(m\.sid\) \{\n      frameGesture = !!m\.gesture;[^\n]*\n      try \{ vscodeApi\?\.postMessage\(\{ type: "openSession", id: String\(m\.sid\) \}\); \} finally \{ frameGesture = false; \}/,
+  // the arm opens on paint-gate.ts's revealDecision (`open`: the card gone from a painted board, or absent from the model, with a sid named;
+  // stage 0 review round 1, 2026-09-19), where it read `m.sid` alone before
+  assert.match(SRC, /\} else if \(decision === "open"\) \{\n      frameGesture = !!m\.gesture;[^\n]*\n      try \{ vscodeApi\?\.postMessage\(\{ type: "openSession", id: String\(m\.sid\) \}\); \} finally \{ frameGesture = false; \}/,
     "the fallback still posts openSession for the sid; since T416 it carries the reader's gesture the shell marked on the frame, for that one post");
 });
 

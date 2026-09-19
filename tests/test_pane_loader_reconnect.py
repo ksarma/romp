@@ -24,7 +24,10 @@ that ends "romp is reconnecting". Staleness of what's on screen is the shell's r
 
 Source-pinning, like the other _pane_spin tests (this JS has no jsdom harness).
 """
+import json
 import os
+import shutil
+import subprocess
 import unittest
 from romp_load import load_source
 import tempfile
@@ -93,6 +96,78 @@ class PaneLoaderReconnect(unittest.TestCase):
         self.assertIn('new Event("romp:wsup")', km._timeline_page())
         self.assertNotIn("window.addEventListener('romp:wsup',function(){hide();});", km._timeline_page(),
                          "the timeline still owns no _pane_spin overlay")
+
+
+# The loader's script, executed (review round 2 of the lazy panes, 2026-09-19): the sheet's failsafe timer under the pane
+# bundle's two first-paint events. A fake document (the sheet with a class list, an empty content container), a fake
+# MutationObserver, recording timers and a window that keeps its listeners; the script is the <script> body _pane_spin returns.
+_SPIN_HARNESS = r"""
+'use strict';
+const TIMERS = [], LISTENERS = {}, CLS = new Set();
+let nextId = 1;
+global.setTimeout = (fn, ms) => { const id = nextId++; TIMERS.push({ id, fn, ms, live: true }); return id; };
+global.clearTimeout = (id) => { for (const t of TIMERS) if (t.id === id) t.live = false; };
+global.MutationObserver = class { constructor(cb) { this.cb = cb; } observe() {} };
+const SHEET = { classList: { add: (c) => CLS.add(c), remove: (c) => CLS.delete(c), contains: (c) => CLS.has(c) } };
+const CONTENT = { children: [] };
+global.document = { getElementById: (id) => (id === 'pane-spin' ? SHEET : id === '__CID__' ? CONTENT : null) };
+global.window = global;
+global.addEventListener = (type, fn) => { (LISTENERS[type] = LISTENERS[type] || []).push(fn); };
+const fire = (type) => (LISTENERS[type] || []).forEach((fn) => fn({ type }));
+const live30 = () => TIMERS.filter((t) => t.live && t.ms === 30000).length;
+"""
+_SPIN_DRIVER = r"""
+const out = {};
+out.boot = { live30: live30(), gone: CLS.has('gone'), listeners: Object.keys(LISTENERS).sort() };
+fire('romp:firstpaintheld');   // the bundle's first frame applied off screen: the first paint is held
+out.held = { live30: live30(), gone: CLS.has('gone') };
+TIMERS.forEach((t) => { if (t.live && t.ms === 30000) { t.live = false; t.fn(); } });   // 30 s pass: every LIVE 30 s timer fires (a cleared one never does)
+out.after30 = { gone: CLS.has('gone') };
+fire('romp:firstpaintreleased');   // the show's release render painted
+out.released = { live30: live30(), gone: CLS.has('gone') };
+fire('romp:firstpaintheld');
+out.heldAgain = { live30: live30() };
+console.log(JSON.stringify(out));
+"""
+
+
+class PaneLoaderFirstPaintHold(unittest.TestCase):
+    """D3 (review round 2 of the lazy panes, 2026-09-19): on the phone an off-screen feed applies its first frame without painting
+    (paint-gate.ts firstPaintHeld), so the sheet's 30 s failsafe used to fade it over the still-empty list and the tap revealed a
+    blank pane. The bundle now tells the loader `romp:firstpaintheld` once per hold (the sheet stands with no timer: nobody can see
+    it) and `romp:firstpaintreleased` once the release render has painted (the backstop resumes; the render's first child retires
+    the sheet through the observer). Executed over the script _pane_spin returns."""
+
+    def _run(self):
+        node = shutil.which("node")
+        if not node:
+            raise unittest.SkipTest("node not installed")
+        js = km._pane_spin("feed-list")
+        script = js[js.index("<script>") + len("<script>"):js.index("</script>")]
+        fx = tempfile.mkdtemp()
+        path = os.path.join(fx, "spin.js")
+        with open(path, "w") as f:
+            f.write(_SPIN_HARNESS.replace("__CID__", "feed-list") + script + "\n" + _SPIN_DRIVER)
+        r = subprocess.run([node, path], capture_output=True, text=True, timeout=30)
+        shutil.rmtree(fx, ignore_errors=True)
+        self.assertEqual(r.returncode, 0, "the loader script threw: " + r.stderr[:800])
+        return json.loads(r.stdout.strip().splitlines()[-1])
+
+    def test_the_held_first_paint_stands_the_sheet_down_from_its_timer_and_the_release_re_arms_it(self):
+        o = self._run()
+        self.assertEqual(o["boot"], {"live30": 1, "gone": False, "listeners": ["romp:firstpaintheld", "romp:firstpaintreleased", "romp:wsdown", "romp:wsfresh", "romp:wsup"]},
+                         "at load the sheet is up with its 30 s failsafe armed, and the two hold events are listened for beside the socket's")
+        self.assertEqual(o["held"], {"live30": 0, "gone": False}, "the hold clears the failsafe: the sheet stands with no timer")
+        self.assertFalse(o["after30"]["gone"], "30 s later the sheet is still up (before this the failsafe faded it over the empty list, and the tap revealed a blank pane)")
+        self.assertEqual(o["released"], {"live30": 1, "gone": False}, "the release re-arms the 30 s backstop; the render's first child, not this event, retires the sheet (the observer)")
+        self.assertEqual(o["heldAgain"]["live30"], 0, "a second hold word stands it down again (the bundle sends one per hold)")
+
+    def test_the_two_listener_lines_are_inserted_beside_the_socket_ones(self):
+        js = km._pane_spin("feed-list")
+        self.assertIn("window.addEventListener('romp:firstpaintheld',function(){clearTimeout(fail);});", js)
+        self.assertIn("window.addEventListener('romp:firstpaintreleased',function(){arm();});", js)
+        self.assertLess(js.index("window.addEventListener('romp:wsup',function(){hide();});"), js.index("romp:firstpaintheld"), "after the wsup line")
+        self.assertLess(js.index("romp:firstpaintreleased"), js.index("window.addEventListener('romp:wsfresh'"), "before the wsfresh line: the upstream lines are inserted around, not changed")
 
 
 if __name__ == "__main__":

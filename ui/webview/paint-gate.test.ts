@@ -3,7 +3,8 @@
 // ordering run executably; feed-hidden-paint.test.ts and outline-visibility.test.ts pin the wiring.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
-import { paintHeld, paintReleased, publishPaneHidden, type PaneHiddenHost } from "./paint-gate";
+import { paintHeld, paintReleased, publishPaneHidden, firstPaintHeld, viewportHiddenSinceLoad, revealDecision, type PaneHiddenHost } from "./paint-gate";
+import { hideEdges } from "../test-dom-shim";   // the fake-DOM rule (ui/test-dom-shim.test.ts): a window stand-in with a parent edge enumerates its primitives alone
 
 test("the first content always paints through, whatever the visibility (the pane loader retires on it)", () => {
   assert.equal(paintHeld(true, true, false), false, "hidden tab, empty list");
@@ -84,4 +85,41 @@ test("the observer's word is null until it speaks: the paint gate reads null as 
   assert.equal(publishPaneHidden(false, false, w), true, "the observer's first word publishes");
   assert.equal(publishPaneHidden(false, true, w), false);
   assert.equal(publishPaneHidden(true, true, w), true, "and the tab's arms publish once it has spoken");
+});
+
+test("the FIRST paint on the phone (stage 0, 2026-09-18): held while the pane is off screen, by the shell's word first, else the probe or the observer; never with content, never off the phone", () => {
+  // off the phone nothing changes: the first content paints through as paintHeld lets it
+  assert.equal(firstPaintHeld(false, undefined, false, true, false), false, "no shell probe (standalone, VS Code): the first paint goes through");
+  assert.equal(firstPaintHeld(false, false, false, true, false), false, "the desktop grid: goes through");
+  // on the phone, the shell's word when one has arrived
+  assert.equal(firstPaintHeld(false, true, false, false, null), true, "the shell says the pane is off screen: held, whatever the probe and the observer say");
+  assert.equal(firstPaintHeld(false, true, true, true, false), false, "the shell says on screen: paints, whatever the probe and the observer say (the word is the newer measure)");
+  // no word yet: the shim's zero-viewport probe (a frame hidden since load) or the observer's word
+  assert.equal(firstPaintHeld(false, true, undefined, true, null), true, "hidden since load, observer silent: held by the probe");
+  assert.equal(firstPaintHeld(false, true, undefined, false, false), true, "a viewport, the observer says off screen: held");
+  assert.equal(firstPaintHeld(false, true, undefined, false, null), false, "a viewport and no word from anyone: the pane is the shown tab, paint");
+  assert.equal(firstPaintHeld(false, true, undefined, false, true), false, "the observer says on screen: paint");
+  // with content the rule is paintHeld's alone
+  assert.equal(firstPaintHeld(true, true, false, true, false), false, "a painted board is the standing gate's business");
+});
+
+test("the zero-viewport probe off a window: a framed pane at 0 by 0 has been hidden since load; a shown frame or a top-level page never reads hidden", () => {
+  const framed = (w: number, h: number) => { const win: any = { innerWidth: w, innerHeight: h }; win.parent = {}; return hideEdges(win); };
+  const top = (w: number, h: number) => { const win: any = { innerWidth: w, innerHeight: h }; win.parent = win; return hideEdges(win); };
+  assert.equal(viewportHiddenSinceLoad(framed(0, 0)), true, "a framed pane never shown");
+  assert.equal(viewportHiddenSinceLoad(framed(390, 0)), true, "either dimension");
+  assert.equal(viewportHiddenSinceLoad(framed(390, 700)), false, "a shown frame has its size");
+  assert.equal(viewportHiddenSinceLoad(top(0, 0)), false, "a top-level page is its own parent: the probe never applies");
+});
+
+test("a reveal's decision (review round 1 F2, executed since round 2): a found card is jumped to; a card the paint will stamp under an owed paint is parked, never opened; a card it will not stamp, or a gone one, opens its session when one is named", () => {
+  assert.equal(revealDecision(true, false, true, true), "jump", "the painted board has the card");
+  assert.equal(revealDecision(true, true, true, true), "jump", "found wins whatever else is true");
+  assert.equal(revealDecision(false, true, true, true), "park", "the phone's first-paint hold: unpainted, and the paint will stamp it");
+  assert.equal(revealDecision(false, true, true, false), "park", "…with or without a session named");
+  assert.equal(revealDecision(false, true, false, true), "open", "unpainted and the paint will NOT stamp it under this key (review round 2, 2026-09-19: a satellite, a filtered or lens-hidden card, a turn-group member, a gone card): open its session at the tap, the base's road");
+  assert.equal(revealDecision(false, false, true, true), "open", "painted, not found, though the plan would stamp it (unfolded a beat late): the base's fallback");
+  assert.equal(revealDecision(false, false, false, true), "open", "gone from a painted board");
+  assert.equal(revealDecision(false, false, false, false), "none", "gone and no session named: nothing");
+  assert.equal(revealDecision(false, true, false, false), "none");
 });

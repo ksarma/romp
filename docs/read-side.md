@@ -258,7 +258,18 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   answers the show carries `parked: true` too, with `ms` and `linkUpMs`
   counted from the show word rather than the return. A return in a shell that
   told a word and did not park says `parked: false`; a standalone page's row
-  carries no `parked` field.
+  carries no `parked` field. On the phone layout the Outline, the Sessions
+  band, the Waiting pane and the Files pane load on their first tap (since
+  2026-09-18; the chat, the feed and the tab the phone was left on load at
+  boot, the last unless the gear has that pane off), so a pane the phone never
+  showed has no document and files no rows of any kind: its absence from the
+  rows is the saving, not a field. A lazy pane whose document fails to load
+  (the load event over an error page or over an HTTP error body at the pane's
+  url, which the pane shim's marker in the frame's window tells from the pane's
+  own document, or no such document by the 30 s backstop) is
+  put back where a tap finds it, says so over the pane area with a tap to retry,
+  and files one `pane-load-failed` row (surface `shell`: `pane`, `via` `load`
+  or `backstop`, `n` the failures for that pane on this page).
   A redial declares itself (`reconnect=1` on the `/ws` URL) once the kernel's
   caps frame has answered the bundle's ready; before that, with the ready still
   queued, or after a socket that died before the caps frame came back, it dials
@@ -268,7 +279,29 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   other session as a `skeleton` on the tab strip with one small `status` frame
   each, and the chat pane loads a skeleton on click or one at a time in idle,
   never while the tab is hidden; one `skeleton` client-diag row (count, active)
-  records the regime.
+  records the regime. On the phone layout the chat pane's first dial declares
+  `skeleton=1` too (since 2026-09-18), so a cold open there is served the same
+  way: the strip, one full for the stored tab and a status per other tab, and
+  the `skeleton` row records it. The idle chain's start gate runs on every
+  layout (the desktop's panes and dial are unchanged; a desktop redial's first
+  background ask follows the active tab's full instead of the strip's paint):
+  the chain starts from the moment the stored tab's full has applied, from a tap
+  onto a tab already served whole, or from the local strip when it lists no such
+  local tab, because the stored tab ended while the phone was away or because it
+  is another host's, whose full arrives on that host's relay socket and is not
+  waited for (as before). On the phone the chain also waits for the chat pane to
+  be on screen: a phone opened on another tab arms it when the Chat tab is shown.
+  A return on the phone (the redial that follows a socket the background left
+  dead; the owner's decision of 2026-09-19) reloads the visible tab alone: the
+  kernel re-skeletons the other tabs on the new socket as before, and each of
+  them loads when tapped. The hold lasts the socket's life (decided
+  2026-09-19): a tap loads the tapped tab and nothing else, and the chain does
+  not resume after the first tap, because the owner's answer was that the
+  other tabs reload only when tapped. It covers every phone redial after the
+  first connection, a kernel restart and a dropped link while the app is in
+  the foreground included, because the phone cannot tell a return's redial
+  from a restart's, and a tab that loads when tapped costs nothing on either.
+  The desktop's redial keeps today's chain.
 - **The Outline pane's ages run on the kernel's clock.** Its timestamps are the
   kernel's, so the pane never reads the browser's clock against them: it anchors
   on the frame's `now` paired with the moment that frame arrived from the wire

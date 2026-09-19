@@ -20,6 +20,47 @@ export function paintHeld(docHidden: boolean, intersecting: boolean | null, hasC
   return docHidden || intersecting === false;
 }
 
+// THE FIRST PAINT ON THE PHONE (stage 0 of the reconnect design, 2026-09-18). paintHeld lets the first content through
+// whatever the visibility, for the pane loader's sake. On the phone shell a pane off screen at its first frame has nobody to
+// show the loader to either: the feed pane loads at boot behind the chat tab (its socket feeds the shell's bell, the parking
+// rule's exemption), applies its first frame, and painted a board of hundreds of cards into a display:none iframe, work the
+// visible chat's main thread paid for. So on the phone (the shell's layout probe, window.parent.__rompMobileOn, read by the
+// pane as the shim reads it) the first paint is held too while the pane is off screen: by the shell's panes word when one has
+// arrived (on[app] false; the shell posts it on the pane's load and on every tab switch), else by the shim's zero-viewport
+// probe (a frame hidden since load reads 0 in every browser) or the observer's word. The frame is APPLIED all the same (the
+// badge mirror rings the bell from it); the shell's word on the pane's show releases the paint (feed.ts treats the word as the
+// observer's, the revealCard precedent), as does the observer's own callback when the iframe shows. Off the phone (undefined,
+// false: the desktop grid, a standalone page, the VS Code webview) nothing changes.
+export function firstPaintHeld(hasContent: boolean, phone: boolean | undefined, shellOn: boolean | undefined, probeHidden: boolean, intersecting: boolean | null): boolean {
+  if (hasContent || phone !== true) return false;
+  if (shellOn !== undefined) return !shellOn;
+  return probeHidden || intersecting === false;
+}
+
+// A REVEAL into the board (a bell-row tap, a notification tap; feed.ts's revealCard handler), decided after the handler's
+// release attempt. The card's element found: jump to it. Not found while a paint is still owed (the hold above re-held, so
+// the board is applied but unpainted) and the paint WILL stamp the card under the reveal's key (`willPaint`: the render's
+// own plan, feed.ts paintedKeyOf, not membership in the model; review round 2, 2026-09-19): park the jump for the paint
+// that lands; never the card-gone fallback for it (review round 1: the lookup over the empty DOM took the fallback and
+// posted openSession for an existing card). Otherwise the card is gone from the board, or will never be painted under
+// that key (a delegation satellite, a card the session filter, the search box or the tag lens hides, a turn-group member):
+// open its session when one is named, else nothing, the base's road at the base's moment, the tap. Pure, so the test's
+// world and feed.ts decide by the same function.
+export type RevealDecision = "jump" | "park" | "open" | "none";
+export function revealDecision(targetFound: boolean, paintDirty: boolean, willPaint: boolean, hasSid: boolean): RevealDecision {
+  if (targetFound) return "jump";
+  if (paintDirty && willPaint) return "park";
+  return hasSid ? "open" : "none";
+}
+
+// The shim's zero-viewport probe, read off a window: a framed pane whose viewport is 0 by 0 has been hidden since load (every
+// browser lays a shown frame out, so a shown pane never reads 0). The first-paint hold's fallback above, before the shell's
+// word or the observer has spoken, and nothing else's: a pane hidden AFTER a first show keeps its size in Chromium, which is
+// why the standing gate reads the observer's word and never this (feed-age.test.ts pins feed.ts to carry no probe of its own).
+export function viewportHiddenSinceLoad(w: { parent: unknown; innerWidth: number; innerHeight: number }): boolean {
+  try { return w.parent !== w && (w.innerWidth === 0 || w.innerHeight === 0); } catch { return false; }
+}
+
 // The release events' shared decision: a paint is owed (dirty) AND both measures now say the pane can be
 // seen. visibilitychange→visible on a pane that is still display:none waits for the observer; an observer
 // callback inside a hidden tab (a resize while away) waits for the tab. The caller paints SYNCHRONOUSLY on

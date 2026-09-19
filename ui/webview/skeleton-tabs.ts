@@ -14,16 +14,69 @@
 // (the eventual full then takes upsert's append path, so the DOM and the reader's scroll survive). What a
 // skeleton id must never do is DISPLAY that stale copy as current — so render.ts asks this set before every
 // active-tab display path (`liveSession`) and before drawing a tab (`renderKind`).
+import { hostOf } from "./host-prefix";   // the start gate reads a want's host: a tab on another kernel is served over its relay socket, not this chain's (gateOnStrip)
 
 export interface SkeletonState {
   ids: Set<string>;            // the tabs this page holds no CURRENT copy of (the kernel is withholding them)
   order: string[];             // the kernel's list order — ascending transcript size, the prefetch order
   status: Map<string, any>;    // the last kernel-sent status per skeleton id (the chip reads ONLY this)
   loaded: Set<string>;         // ids whose full `session` frame arrived on THIS socket (see applyTabOrderSkeleton)
+  // The idle prefetch's START GATE (stage 0 of the reconnect design, 2026-09-18). Closed for every new socket (the boot dial, and
+  // each redial: onSocketUp) and opened by ONE of three events: the first full frame applied for the tab the strip shows as
+  // active (gateOnFrame: the pane's active tab, or the tab it awaits after a reload, the kernel's one full under the diet); a
+  // strip from the local kernel that lists no such LOCAL tab (gateOnStrip: the stored tab ended while the page was away, a
+  // fresh profile with none, or a stored tab on another host, whose full comes over that host's relay socket and is not this
+  // chain's to wait for; the kernel's list is the event that says no full is coming for one from this kernel); or a tab shown
+  // as active whose full already applied on this socket (gateOnShow: a tap onto a whole tab before the diet's one full lands).
+  // nextPrefetch is null while it is closed; the click road (a tap on a skeleton asks at once, render.ts showActive) is never
+  // gated. The gate reads no layout: it runs on every layout, ordering the chain behind the active tab's first full (on the
+  // desktop that costs the redial's first background ask that one full's latency and nothing else). Before this the chain armed
+  // from the strip's first paint, which the kernel sends before it builds anything, so the first background full could leave
+  // ahead of the visible tab's, and on a phone link the visible session waited behind a tab nobody was looking at.
+  gate: boolean;
+  // THE RETURN HOLD (the owner's decision, 2026-09-19): on the phone a redial reloads the VISIBLE tab alone, and the other chat
+  // tabs reload only when tapped (the click road, which no gate touches), for the socket's life. A return from the background
+  // redials with reconnect=1 and the kernel re-skeletons every other tab; before this the chain then re-downloaded them all (17 to
+  // 22 MB on the owner's board) for tabs nobody had asked for. Set by onSocketUp when the pane's shell is the phone layout (the one
+  // layout read, at render.ts's wsup arm, the redial's frame); while it stands no opener (gateOnFrame, gateOnStrip, gateOnShow) opens
+  // the gate. The boot dial sends no wsup, so a cold open's chain is untouched; the desktop passes false and keeps its chain.
+  returnHold: boolean;
 }
 
 export function newSkeletonState(): SkeletonState {
-  return { ids: new Set(), order: [], status: new Map(), loaded: new Set() };
+  return { ids: new Set(), order: [], status: new Map(), loaded: new Set(), gate: false, returnHold: false };
+}
+
+/** A full `session` frame applied (render.ts upsert). Opens the gate when `id` is one of `wants`, the tab the strip shows as
+ *  active (render.ts passes the active tab and the tab awaited after a reload, read before the frame's own adoption moved
+ *  them). Returns whether it opened NOW, so a caller can arm the chain on the event; an open gate stays open. */
+export function gateOnFrame(st: SkeletonState, id: string, wants: ReadonlyArray<string | null | undefined>): boolean {
+  if (st.gate || st.returnHold || !id) return false;
+  if (!wants.some((w) => w === id)) return false;
+  st.gate = true;
+  return true;
+}
+
+/** The local kernel's strip landed (render.ts applyTabOrder, localStrip). When it lists no LOCAL tab the pane shows or awaits as
+ *  active (`want` null; an id the strip does not carry: an ended session; or a want on another host, `host:uuid`, whose full is
+ *  served over that host's relay socket and is not this chain's to wait for) no full is coming for one from this kernel, so the
+ *  gate opens here and the chain loads the tabs in the kernel's order. A strip that does list a local want leaves the gate to
+ *  the frame. Returns whether it opened NOW. */
+export function gateOnStrip(st: SkeletonState, order: readonly string[], want: string | null | undefined): boolean {
+  if (st.gate || st.returnHold) return false;
+  if (want && !hostOf(want) && order.includes(want)) return false;
+  st.gate = true;
+  return true;
+}
+
+/** A tab shown as active (render.ts setActive, silentActivate) whose full already applied on THIS socket (`st.loaded`): the
+ *  visible tab has its frame, so the chain may start. A tap onto a tab served whole ahead of the diet's one full (a
+ *  transcript-less session is never a skeleton) would otherwise leave the gate to that full's re-post. Never keyed on the
+ *  session map, which after a redial holds stale copies of every tab. Returns whether it opened NOW. */
+export function gateOnShow(st: SkeletonState, id: string): boolean {
+  if (st.gate || st.returnHold || !st.loaded.has(id)) return false;
+  st.gate = true;
+  return true;
 }
 
 /** A tabOrder frame landed. An ARRAY is the kernel's authoritative set → REPLACE (a second reconnect while
@@ -113,19 +166,23 @@ export function onDismiss(st: SkeletonState, id: string): void {
 }
 
 /** A new socket opened: every earlier full was delivered on a socket that is gone, so the next list the
- *  kernel sends may legitimately re-list those tabs (they are stale after the outage). */
-export function onSocketUp(st: SkeletonState): void {
+ *  kernel sends may legitimately re-list those tabs (they are stale after the outage). `phone`: the pane's shell is the
+ *  phone layout (render.ts reads it at the wsup arm), so the redial holds the chain for the socket's life (returnHold). */
+export function onSocketUp(st: SkeletonState, phone?: boolean): void {
   st.loaded.clear();
+  st.gate = false;   // …and the chain waits again for the active tab's first frame on the new socket (stage 0): a redial re-skeletons every other tab, and the visible one's full comes first
+  st.returnHold = phone === true;   // …and on the phone it does not run again on this socket: the other tabs reload when tapped (the owner's decision, 2026-09-19)
 }
 
 /** The one skeleton to fetch in this idle callback, or null. Null while the page is hidden (bytes and work
  *  nobody sees — the very regime this exists to spare), while ANY skeleton id is already in flight (one at a
  *  time: a 1 MB full ahead of the active tab's 2 KB tail on a slow link delays that tail; one bounds it), and
  *  when nothing is left. Otherwise the first id of the kernel's order still held, not the active tab (its own
- *  click path asks), and in the current view (a view-hidden tab loads on click instead). */
+ *  click path asks), and in the current view (a view-hidden tab loads on click instead). Null too while the start gate is
+ *  closed (`st.gate`, stage 0): the visible tab's first frame has not applied on this socket and the strip lists it. */
 export function nextPrefetch(st: SkeletonState, activeId: string | null, inFlight: ReadonlySet<string>,
                              hidden: boolean, inView: (id: string) => boolean): string | null {
-  if (hidden) return null;
+  if (hidden || !st.gate) return null;
   for (const id of st.ids) if (inFlight.has(id)) return null;
   for (const id of st.order) {
     if (!st.ids.has(id) || id === activeId) continue;

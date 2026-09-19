@@ -89,7 +89,7 @@ test("no observer, or no body: nothing is installed and nothing published; the s
 // ── the source pins ──
 test("render.ts installs the publisher once, at top level, over the page's body, and gates no paint; the module reads the frame's own visibility", () => {
   assert.match(RENDER, /^import \{ watchChatVisibility, browserChatVisibilityDeps \} from "\.\/chat-visibility";/m);
-  assert.match(RENDER, /^watchChatVisibility\(document\.body, browserChatVisibilityDeps\(\)\);/m, "top level, so it runs when the bundle loads (the script sits at the end of the body)");
+  assert.match(RENDER, /^watchChatVisibility\(document\.body, browserChatVisibilityDeps\(\), schedulePrebuild\);/m, "top level, so it runs when the bundle loads (the script sits at the end of the body); the idle prefetch's arm is the show hook (stage 0, review round 1)");
   assert.equal(RENDER.split("watchChatVisibility(").length - 1, 1, "once");
   assert.ok(!RENDER.includes("paintHeld(") && !RENDER.includes("paintReleased("), "the chat gates no paint: every frame paints");
   assert.ok(!SRC.includes("__rompPaneHidden"), "the flag's name lives in paint-gate.ts: one publisher shape for every pane");
@@ -272,3 +272,32 @@ for (const name of ["chromium", "firefox", "webkit"]) for (const [shell, how] of
     } finally { await browser.close(); }
   });
 }
+
+test("onShown (stage 0, review round 1, 2026-09-19): called on the published word's flip from hidden to shown, never on the first word, a repeat or a flip to hidden", () => {
+  const w = world();
+  let shown = 0;
+  watchChatVisibility({} as Element, w.deps, () => { shown++; });
+  w.entry(true);
+  assert.equal(shown, 0, "the first word (on screen) is no flip: the phone opened on the Chat tab needs no re-arm");
+  w.entry(false);
+  assert.equal(shown, 0, "a flip to hidden calls nothing");
+  w.entry(true);
+  assert.equal(shown, 1, "hidden to shown: the phone's Chat tab tapped after a boot on another tab (the chat iframe display:none since load) re-arms the idle chain");
+  w.entry(true);
+  assert.equal(shown, 1, "a repeat word is no flip");
+  w.tab("hidden");
+  assert.equal(shown, 1);
+  w.tab("visible");
+  assert.equal(shown, 2, "the tab's return with the pane on screen is a flip too (the chain also re-arms on visibilitychange in render.ts; schedulePrebuild is idempotent)");
+  const first = world();
+  let firstShown = 0;
+  watchChatVisibility({} as Element, first.deps, () => { firstShown++; });
+  first.entry(false);
+  assert.equal(firstShown, 0, "a first word of hidden (the phone booted on another tab) calls nothing");
+  first.entry(true);
+  assert.equal(firstShown, 1, "…and its show does");
+  const none = world();
+  watchChatVisibility({} as Element, none.deps);
+  none.entry(false); none.entry(true);
+  assert.equal(none.host.__rompPaneHidden, false, "no hook: the publisher alone, as before");
+});
