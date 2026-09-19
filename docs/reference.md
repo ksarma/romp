@@ -3718,33 +3718,39 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   the pusher's size estimate counts them (the per-card strings minus their
   tints, the per-ledger strings and the remainder), so it sits under the
   served body by the key names, separators and tints it does not count.
-  `cards`, `ledgers` and `rest` are its three parts, and `cardCount` and
-  `ledgerCount` their counts. `by` splits `rest` by top-level field, each row
-  the field's quoted name, its
-  separators and its value, and publishes rows drawn from a fixed list: the
-  flag and count fields (`userTodosOn`, `dismissedCount`, `showDismissed`,
-  `canUndoClear`, `off`: the checked-in list `FEED_BY_ROWS` in
-  `kernel/kernel.py`), the off frame's four empty federation lists (`items`,
-  `hosts`, `pendingHosts`, `pendingDead`) and `other`. Every field whose
-  value can carry a string (`selfHost`, `working`, `awaiting`,
-  `stateUnknown`, `order`, `sessions`, `userTodos`, `userTodoRows`, `views`,
-  `viewsFault`, `judgeLimit`, `bgServices`, `clearedForeign`,
-  `clearNotices`, `sdkNotices` and `syncNotices`: the checked-in list
-  `FEED_BY_FOLDED` beside it) is folded into `other` when the block is
-  reported, and a key outside `FEED_FRAME_FIELDS` and the off frame's lists
-  is counted under `other` when the table is built. A row of its own for one
-  of the folded fields would have been the length of one string (the
-  machine's hostname under `selfHost`, a session name under `working`, a
-  todo's text under `userTodoRows`); `other` mixes them, and `other` is
-  present on every non-empty published table. On a board with no session, no
-  open todo, no tag and no notice it is a constant plus the hostname's length
-  and the digit width of `views.seq`, which the frame's whole length on
-  `push.send` and the served body has always carried; with a session it is
-  the sum of that session's name and id, the pips, the tag names and the
-  notices, and no published number or difference of published numbers is one
-  of those alone (the `projected` rule below). `rest` is the exact sum of the
-  published rows, in `last` and in `lifetime`, because the fold regroups
-  bytes and drops none. `apps` has one row per
+  `cards` and `rest` are its two parts: the per-card strings, and the frame
+  outside the cards (the per-ledger strings and the remainder). The card
+  count and the ledger count are measured and withheld: a count published
+  beside a sum discloses the single-object case, because a sum over one
+  object is that object's measurement and the count says when, so the sums
+  are aggregates only while their counts are unpublished, here or anywhere
+  else in the export. The ledgers have no row of their own for the same
+  reason: their count is the chat tab count, which `/perf` publishes whatever
+  this block does (`heap.builtChat.tabs`, `caches.built_chat.entries`,
+  `memos.chatLedger.entries` and the length of `builds.chat.bySession` are
+  each that count on a steady board), so a ledgers sum beside it was one
+  session's whole ledger row on a one-session board; the ledgers are folded
+  into `other` below and counted in `rest`. `by` splits `rest` by top-level
+  field, each row the field's quoted name, its separators and its value, and
+  publishes rows drawn from a fixed list: the flag and count fields
+  (`userTodosOn`, `dismissedCount`, `showDismissed`, `canUndoClear`, `off`:
+  the checked-in list `FEED_BY_ROWS` in `kernel/kernel.py`), the off frame's
+  four empty federation lists (`items`, `hosts`, `pendingHosts`,
+  `pendingDead`) and `other`. Every field whose value can carry a string
+  (`ledgers`, `selfHost`, `working`, `awaiting`, `stateUnknown`, `order`,
+  `sessions`, `userTodos`, `userTodoRows`, `views`, `viewsFault`,
+  `judgeLimit`, `bgServices`, `clearedForeign`, `clearNotices`, `sdkNotices`
+  and `syncNotices`: the checked-in list `FEED_BY_FOLDED` beside it) is
+  folded into `other` when the block is reported, and a key outside
+  `FEED_FRAME_FIELDS` and the off frame's lists is counted under `other` when
+  the table is built. A row of its own for one of the folded fields would
+  have been the length of one string (the machine's hostname under
+  `selfHost`, a session name under `working`, a todo's text under
+  `userTodoRows`, a session's ledger under `ledgers`); `other` mixes them,
+  and `other` is present on every non-empty published table. `frame` is
+  `cards` plus `rest`, and `rest` is the exact sum of the published rows, in
+  `last` and in `lifetime`, because the fold regroups bytes and drops none.
+  `apps` has one row per
   consuming app and one projection row, `phoneFace`: `today`, the whole frame
   it receives, beside `projected`, the bytes of the fields its bundle reads,
   from the checked-in table `FEED_APP_FIELDS` in `kernel/kernel.py`, which a
@@ -3752,17 +3758,22 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   reads `clearedForeign` off the local frame for the feed pane and the Outline
   (it drops the remote cards and strikes the remote ledger tops the local
   ledger cleared), so those two rows carry it. `projected` counts the folded
-  fields as one: an app that reads any of them is credited with all of
-  `other`, and only the flag and count rows it reads are added by name, so
-  every `projected` figure is a sum of published rows (the feed row is
-  `cards` plus `other` plus the flag rows but `userTodosOn`, which is `frame`
-  minus `ledgers` minus `userTodosOn`; the Outline's row is its card-field
-  estimate plus `ledgers` plus `other` plus `off`; the Waiting-on-you row is
-  `other` plus `userTodosOn`) and no difference of published numbers is one
-  folded field's bytes. A per-field sum published here re-derived two folded
-  rows by subtraction (the todo rows and the session list), so the rows
-  over-count the fields an app reads by the rest of `other`, at most the
-  remainder minus the flag rows, about 16 KB against an 8.8 MB frame. One
+  fields as one, the ledgers among them: an app that reads any of them is
+  credited with all of `other`, and only the flag and count rows it reads
+  are added by name, so every `projected` figure is a sum of published rows
+  (the feed row is `cards` plus `other` plus the flag rows but `userTodosOn`,
+  which is `frame` minus `userTodosOn` on a built frame and `frame` minus
+  `userTodosOn` minus the four federation lists on the off frame; the
+  Outline's row is its card-field estimate plus `other` plus `off`; the
+  Waiting-on-you row is `other` plus `userTodosOn`) and no difference of
+  published numbers is one folded field's bytes. A per-field sum published
+  here re-derived two folded rows by subtraction (the todo rows and the
+  session list), and a feed row credited with the remainder but not the
+  ledgers re-derived the ledgers (`frame` minus the feed row minus
+  `userTodosOn`), so the rows over-count the fields an app reads by the rest
+  of `other`: the ledgers, which the feed and Waiting-on-you panes do not
+  read, and the text-bearing fields the app does not read, about 16 KB of
+  remainder against an 8.8 MB frame. One
   figure is estimated, not bounded: the
   Outline reads a few fields of each card, not the card, and those fields
   are sized from their text lengths, never re-encoded, so the figure
@@ -3779,13 +3790,29 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   for every row (a phone's feed page dials as `feed` and its Outline as
   `fleet`), so the row reads as the saving the face would bring. No bundle
   reads such a frame, so the test's pin against the bundles skips the row.
-  The card figures are outside the fold: `cards` is the whole per-card
-  strings, and the two card-field estimates (the Outline's row minus
-  `ledgers`, `other` and `off`; the `phoneFace` row) are sums of a few
-  fields' lengths over the cards, so on a board with one active card the
-  `phoneFace` row is a constant plus that card's title length, and the
-  Outline's estimate that card's title, name, summary and background
-  lengths: sub-sums of the `cards` figure the block publishes whole.
+  Two residuals remain, stated here in the words of the kernel's
+  `FEED_COMPOSITION_RESIDUALS` and of the ledger entry (a test holds the
+  three equal). First: On a board with no session, no open todo, no tag and
+  no notice `other` is a constant plus the hostname's length and the digit
+  width of `views.seq`, which the frame's whole length on `push.send` and
+  the served body has always carried; with a session it is the sum of that
+  session's name and id, its ledger row when the ledgers are attached, the
+  pips, the tag names and the notices, and no published number or difference
+  of published numbers is one of those alone. Second, for the user's ruling:
+  The card figures are aggregates over the cards, whose count is withheld
+  and published nowhere else on /perf: `cards` is the whole per-card strings,
+  and the two card-field estimates (the Outline's row minus `other` and
+  `off`; the `phoneFace` row) are sums of a few fields' lengths over the
+  cards, so on a board with one card `cards` is that card's string and the
+  Outline's estimate its title, name, summary and background lengths, and on
+  a board with one active card the `phoneFace` row is a constant plus that
+  card's title length. A reader bounds the count from the size of `cards` (a
+  card's fixed keys are several hundred bytes), from the `phoneFace` row's
+  group rows (61 bytes per session holding fewer than ten cards, so the
+  number of sessions with a card is exact when no card is active) and from
+  `wire.bytes` minus `frame` (the key names, the separators and one tint per
+  card and per tree node, about twenty bytes each), so a board whose one
+  card has no tree shows as one card.
   `wire` is the served body as the kernel holds it now: `bytes`, its length,
   and `exact`, 1 once a whole frame has gone out and the body's text is
   held, 0 while the length is the size estimate. A delta client never needs
