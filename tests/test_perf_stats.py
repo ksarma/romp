@@ -1265,6 +1265,52 @@ class PushRowsByPurpose(unittest.TestCase):
         self.assertEqual(snap["stagesForeign"], {"push.feed": 2.0, "push": 2.0}, "both counted apart, under their names")
         self.assertEqual(snap["pusher"]["connectPush"]["stagesMs"], {})
 
+    # The two cells below are what the routing sentences in the reference, the ledger entry, bin/romp and this module are
+    # checked against (2026-09-19 review): ownership is a thread's registration in _owners, made by cycle_begin and left
+    # standing by cycle(), not the interval a cycle is open, so the same push stage closed in the gap between two cycles
+    # lands in the flat rows from the registered thread and under stagesForeign from a thread that registered nothing.
+    def test_a_push_stage_the_pushers_thread_closes_between_two_cycles_is_the_flat_rows(self):
+        """The pusher's thread opens a cycle, closes it, and then closes a push stage under _push's "push" mark and its `push`
+        container outside it before the next cycle opens: both land in the flat rows, nothing under stagesForeign, and the
+        gap's writes reach no split (the next cycle_begin empties the open split, so they belong to no cycle's rows)."""
+        st = km._PerfStats()
+        st.cycle_begin()                                              # this thread is the pusher
+        km._stage_marked("push")(lambda: st.stage("push.chat", 0.005))()
+        st.stage("push", 0.005); st.cycle(0.005)                     # the first cycle closes
+        self.assertEqual(st._mine(), "pusher", "premise: the close of a cycle leaves the thread registered as the owner")
+        km._stage_marked("push")(lambda: st.stage("push.feed", 0.003))()   # between the cycles, under _push's mark
+        st.stage("push", 0.002)                                       # and outside it
+        st.cycle_begin(); st.cycle(0.001)                             # the second cycle, with nothing written inside it
+        snap = st.snapshot()
+        self.assertAlmostEqual(snap["stages_ms"]["push.feed"], 3.0, msg="the gap's stage is the flat row's: the thread owns the pusher's cycle")
+        self.assertAlmostEqual(snap["stages_ms"]["push"], 7.0, msg="the gap's container too")
+        self.assertEqual(snap["stagesForeign"], {}, "nothing foreign: the writer is the registered owner")
+        self.assertEqual(snap["pusher"]["connectPush"]["stagesMs"], {})
+        ring = snap["pusher"]["stageRing"]
+        self.assertEqual(len(ring), 2)
+        self.assertEqual(sorted(ring[0]["stages"]), ["push", "push.chat"], "the first cycle's split holds its own writes")
+        self.assertEqual(ring[1]["stages"], {}, "the gap's writes are in no split: the second opening emptied them")
+
+    def test_a_push_stage_from_a_thread_owning_nothing_is_foreign_while_the_owner_sits_between_cycles(self):
+        """At the same instant, the pusher's thread between two cycles and a thread that opened no cycle each close push.feed,
+        the second under the "push" mark and bare: the owner's write is the flat row's and both of the other's count under
+        stagesForeign. Neither writer is inside an open cycle; the registration is what separates them."""
+        st = km._PerfStats()
+        st.cycle_begin(); st.stage("push", 0.001); st.cycle(0.001)  # one cycle, closed: this thread stays registered
+        done = {}
+
+        def owns_nothing():
+            km._stage_marked("push")(lambda: st.stage("push.feed", 0.004))()
+            st.stage("push.feed", 0.001)
+            done["written"] = True
+        th = threading.Thread(target=owns_nothing); th.start(); th.join(5)
+        self.assertTrue(done.get("written"))
+        km._stage_marked("push")(lambda: st.stage("push.feed", 0.002))()   # the owner's, in the same gap
+        snap = st.snapshot()
+        self.assertEqual(snap["stagesForeign"], {"push.feed": 5.0}, "the thread owning nothing: counted apart, marked or not")
+        self.assertAlmostEqual(snap["stages_ms"]["push.feed"], 2.0, msg="the flat row is the registered owner's write alone")
+        self.assertEqual(snap["pusher"]["connectPush"]["stagesMs"], {})
+
     def test_a_fresh_snapshot_seeds_no_connect_stage_row_and_reset_empties_the_table(self):
         """No seed, and the docstring says so: a seeded push.warm or `push` row would be one a connect push can never move (the
         warm runs for the pusher alone, and _push_one closes no container), reading as time connect pushes never spend

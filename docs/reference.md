@@ -3118,8 +3118,10 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   against `stages_ms.jobs`, and the `romp perf` shares against the cycle
   time, which `cycle_ms_sum` takes after both containers close). A push
   stage from a thread that neither owns the pusher's cycle nor carries a
-  connect push's mark (neither the pusher inside its cycle nor a connect
-  push) is counted under `stagesForeign`.
+  connect push's mark is counted under `stagesForeign`; a thread owns the
+  pusher's cycle from the cycle's opening on that thread, the cycle's close
+  included, so a push stage the pusher's thread closes between two cycles
+  lands in the flat rows.
   Two discontinuities, both on 2026-09-18, for anyone comparing a capture
   from before that day with one from after it. The nine cycle jobs the
   pusher runs (`beginCheckpointCycle`, `sessionsListing`, `applyPendingOps`,
