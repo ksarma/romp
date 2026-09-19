@@ -577,7 +577,9 @@ def paste_problems(doc, planted=(), ident=IDENT, skip=(), under=(), stacks_key=S
 # the token ms exempts every float beneath it, however deep; it is an accident belt for a stamp typed under a new key, not
 # an adversarial control, and an editor who wants a stamp through can spell it as an integer or a quoted string under any
 # key (the upload's third review round, 2026-09-18: a narrowing to the leaf's key or its parent would not close that road,
-# would refuse the kernel's own stages_ms leaves, and is not taken).
+# nor the finding's own case, a float directly under an invented ms-named key, which is then the parent; a checked-in
+# list of duration parents would bring back the false refusals the ancestor rule exists to avoid; so neither is taken.
+# The kernel's own stages_ms is a flat dict of stage names, so its leaves stay exempt under either rule).
 STAMP_WINDOWS = ((1.5e9, 2.0e9), (1.5e12, 2.0e12))   # (floor, ceiling) pairs, both ends in: epoch seconds, epoch milliseconds
 
 # A DURATION KEY: a name that, split into tokens on underscores and camelCase boundaries, carries the token `ms` in any case.

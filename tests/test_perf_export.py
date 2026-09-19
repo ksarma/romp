@@ -792,8 +792,10 @@ class FoldInvariant(unittest.TestCase):
         # under an invented ancestor carrying the token (ms_x) is NOT a finding, and the same float under a plain ancestor (x)
         # at the same depth IS one. The belt catches a stamp typed under a new key by accident and is not an adversarial
         # control (an editor can spell a stamp as an integer or a quoted string under any key); a narrowing to the leaf's key
-        # or its parent would not close that road and would refuse the kernel's own stages_ms leaves, so it is not taken, and
-        # this pin documents the accepted case rather than leaving it to be rediscovered
+        # or its parent would not close that road, nor the finding's own case (a float directly under an invented ms-named
+        # key, which is then the parent), and a checked-in list of duration parents would bring back the false refusals the
+        # ancestor rule exists to avoid, so it is not taken (the kernel's stages_ms is a flat dict, so its leaves stay exempt
+        # under either rule), and this pin documents the accepted case rather than leaving it to be rediscovered
         for ancestor, findings in (("ms_x", []), ("x", [("a number the size of a clock stamp", "perf/x/a/b")])):
             doc = pe.export_document(leak_snapshot())
             doc["perf"][ancestor] = {"a": {"b": 1.7e9}}
