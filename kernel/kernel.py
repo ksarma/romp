@@ -68260,6 +68260,19 @@ refresh();   // self-schedules (fast while attaching, slow keep-alive otherwise)
 # to 1024px, is one pane at a time with bottom tabs; mouse desktops keep the grid.
 _MOBILE_MQ = "(max-width:820px),(pointer:coarse) and (max-width:1024px)"
 
+# [fork] stage 0 (review round 1, 2026-09-19, regression-5): the DESKTOP promotion of the Waiting and Files panes. Both are
+# served with data-src (lazy on the phone since 2026-09-18) and have no gear row, so the pane controller's list
+# (_LANDING_COLLAPSE_JS reconcile) does not carry them; on the desktop grid they load at boot, here. Its own <script>, like
+# every shell behaviour (test_kernel_mobile's count pin): a throw in the mobile script must not strand a desktop pane
+# (before this the promotion was the mobile script's last line, behind an early return and 295 lines that can throw). It
+# reads the layout from the media query itself, never from window.__rompMobileOn, which the script assumed to have thrown
+# defines, and never from the controller's list (the gear-optional panes; a Waiting row there would change togglePane).
+# Spliced before the mobile script. A phone layout returns at once: there the mobile script promotes a pane on its tap.
+_LANDING_DESKTOP_PANES_JS = """
+(function(){var MQ=null;try{MQ=window.matchMedia&&matchMedia(""" + json.dumps(_MOBILE_MQ) + """);}catch(e){}if(MQ&&MQ.matches)return;
+['f-waiting','f-files'].forEach(function(id){try{var f=document.getElementById(id);if(f&&!f.getAttribute('src')&&f.getAttribute('data-src'))f.setAttribute('src',f.getAttribute('data-src'));}catch(e){}});})();
+"""
+
 _LANDING_MOBILE_JS = """
 (function(){
 // The shell's own client-diag rows (2026-09-08): the bell's and the tap-landing scripts record what they saw
@@ -68366,7 +68379,8 @@ function filesCtlM(){try{var st=JSON.parse(localStorage.getItem('romp:settings')
 // nothing until its tap). The served markup gives every pane but the chat a data-src (the optional panes since 2026-09-10;
 // the Waiting and Files panes since this change), and on the desktop the pane controller (_LANDING_COLLAPSE_JS reconcile)
 // copies it to src at boot for every optional pane the gear shows, as before, while the Waiting and Files panes, which have
-// no gear row and so are not in the controller's list, are promoted at boot below. On the phone layout only the chat, the feed
+// no gear row and so are not in the controller's list, are promoted at boot by their own script (_LANDING_DESKTOP_PANES_JS,
+// spliced before this one; review round 1: a throw here must not strand a desktop pane). On the phone layout only the chat, the feed
 // (exempt: its socket carries the card-trouble entries the shell's bell mirrors, the parking rule's exemption) and the stored
 // tab load at boot; every other pane loads on its FIRST show (a tap, a reveal, a relay's switch), so a cold open costs their
 // documents, sockets and connect pushes nothing. The controller's boot promotion reads data-src, so before it parses (this
@@ -68572,11 +68586,10 @@ shellWS();
 // promoted here (the gear's word respected) and the stored tab by show(last) below, which reads the parked attribute too, so
 // an enabled stored tab boots as before while a stored tab the gear has off stays parked (review round 1, 2026-09-19: skipped
 // by the parking, it kept its data-src and a later gear enable loaded it off screen). On the desktop the controller's eager
-// boot stands, and the Waiting and Files panes, outside its list, are promoted here.
+// boot stands, and the Waiting and Files panes, outside its list, are promoted by _LANDING_DESKTOP_PANES_JS (its own script).
 try{if(mobileOn()){for(var lk2 in F){var lf=F[lk2];if(!lf||lk2==='chat'||lk2==='feed')continue;
 var lu=lf.getAttribute('data-src');if(lu&&!lf.getAttribute('src')){lf.setAttribute(LAZY,lu);lf.removeAttribute('data-src');}}
-promote('feed');}
-else{promote('waiting');promote('files');}}catch(e){}
+promote('feed');}}catch(e){}
 var last='chat';try{var s=localStorage.getItem(KT);if(s&&F[s])last=s;}catch(e){}show(last);
 })();
 """
@@ -71446,6 +71459,7 @@ def _landing():
                          .replace("__ROMP_BOOT__", json.dumps(_BOOT_ID))
                          .replace("__ROMP_LOADER__", json.dumps(_loader_inner())) + "</script>"
             "<script>" + _LANDING_REMOTES_JS + "</script>"
+            "<script>" + _LANDING_DESKTOP_PANES_JS + "</script>"   # the desktop's Waiting and Files promotion, its own element so a throw in the mobile script cannot strand a pane (review round 1, 2026-09-19)
             "<script>" + _LANDING_MOBILE_JS + "</script>"
             "<script>" + _LANDING_PUSH_JS + "</script>"
             "<script>" + _LANDING_REVEAL_JS + "</script>"

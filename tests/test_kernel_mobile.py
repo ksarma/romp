@@ -199,7 +199,14 @@ class LandingShell(unittest.TestCase):
         self.assertIn("body.theme-light #pane-load{background:#F1EAE2}", html)
         self.assertLess(html.index("@media " + km._MOBILE_MQ + "{"), html.index("body.pane-loading #pane-load{display:flex}"), "the paint lives inside the phone media block")
         self.assertLess(html.index("#pane-load{display:none}"), html.index("@media " + km._MOBILE_MQ + "{"), "hidden by default, outside it")
-        self.assertEqual(html.count("<script>"), 21, "no new script element: the mobile script carries the lazy panes")
+        self.assertEqual(html.count("<script>"), 22, "+1 2026-09-19: the desktop promotion of the Waiting and Files panes (_LANDING_DESKTOP_PANES_JS), its own script so a throw in the mobile script cannot strand a desktop pane (review round 1); the mobile script carries the lazy panes")
+        # D7 (review round 1, regression-5): the desktop promotion is its own element, spliced BEFORE the mobile script, reading the media query itself
+        self.assertEqual(html.count("<script>" + km._LANDING_DESKTOP_PANES_JS + "</script>"), 1)
+        self.assertLess(html.index(km._LANDING_DESKTOP_PANES_JS), html.index("var LAZY='data-lazy-src'"), "the desktop promotion runs before the mobile script")
+        self.assertIn("matchMedia(" + json.dumps(km._MOBILE_MQ) + ")", km._LANDING_DESKTOP_PANES_JS, "it reads the layout from the shared media query, not from the mobile script's probe")
+        self.assertNotIn("__rompMobileOn", km._LANDING_DESKTOP_PANES_JS)
+        self.assertIn("['f-waiting','f-files'].forEach(", km._LANDING_DESKTOP_PANES_JS)
+        self.assertNotIn("else{promote('waiting');promote('files');}", js, "the mobile script's boot block no longer carries the desktop promotion")
         # show(): the promotion sits between the persist and the re-tell (upstream's lines on both sides), so the pane hears the word on its load
         self.assertIn("try{localStorage.setItem(KT,p);}catch(e){}\ntry{if(mobileOn()){promote(p);paintLoading();}}catch(e){}", js)
         # D3 (review round 2, 2026-09-19): the shown pane's synchronous show hook, inserted right after the m-on toggle (upstream's line) and before the button loop
@@ -243,7 +250,9 @@ class LandingShell(unittest.TestCase):
         # registers as its refused fallback — its own script so a banner throw cannot take the reload with it
         # +1: the bottom bar's API health cell (_LANDING_APIH_JS), after the usage script whose backdrop it shares
         # +1 2026-09-08: the chat split columns (_LANDING_SPLIT_JS), after the pane controller it leans on
-        self.assertEqual(html.count("<script>"), 21)
+        # +1 2026-09-19: the desktop promotion of the Waiting and Files panes (_LANDING_DESKTOP_PANES_JS), its own script so a
+        # throw in the mobile script cannot strand a desktop pane (review round 1 of the lazy panes)
+        self.assertEqual(html.count("<script>"), 22)
 
     def test_bottom_bar_is_text_only_and_compact(self):
         html = km._landing()

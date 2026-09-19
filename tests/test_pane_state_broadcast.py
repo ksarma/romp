@@ -1013,8 +1013,9 @@ class PaneEnabledReader(unittest.TestCase):
         self.assertEqual(html.count(HELPER), 1)
         self.assertLess(html.index(HELPER), html.index("<iframe"), "defined in the head, before the first iframe")
         self.assertLess(html.index(HELPER), html.index("<body"))
-        self.assertEqual(html.count("<script>"), 21, "the head's existing script carries it: no new script element "
-                         "(main's 20 + the chat split's own script, tests/test_chat_split.py — 2026-09-11)")
+        self.assertEqual(html.count("<script>"), 22, "the head's existing script carries it: no new script element "
+                         "(main's 20 + the chat split's own script, tests/test_chat_split.py — 2026-09-11; +1 2026-09-19: the desktop promotion of the "
+                         "Waiting and Files panes, _LANDING_DESKTOP_PANES_JS, its own script so a throw in the mobile script cannot strand a desktop pane, review round 1 of the lazy panes)")
         for js in (km._LANDING_ERRS_JS, km._LANDING_MOBILE_JS, km._LANDING_REVEAL_JS, km._LANDING_SETTINGS_JS):
             self.assertIn("window.__rompPaneEnabled&&!window.__rompPaneEnabled('feed')", js, "absent helper = every pane shown")
 
@@ -1188,6 +1189,12 @@ window.__rompMobileTab('feed');
 out.desktopShow = { log: LOG.slice() };
 console.log(JSON.stringify(out));
 """
+# D7 (review round 1, 2026-09-19, regression-5): the mobile script throws before its last line; the desktop panes still load
+_LAZY_ABORT_DRIVER = _LAZY_TOOLS + r"""
+out.threw = global.__labThrew || null;
+out.boot = { src: src(), sets: Object.assign({}, SETS), mobileTab: typeof window.__rompMobileTab };
+console.log(JSON.stringify(out));
+"""
 _LAZY_DESKTOP_DRIVER = _LAZY_TOOLS + r"""
 out.boot = { tab: TAB, src: src(), lazy: lazy(), sets: Object.assign({}, SETS), loading: loading(), bodyLoading: BODY_CLS.has('pane-loading') };
 window.__rompMobileTab('waiting');
@@ -1232,10 +1239,14 @@ console.log(JSON.stringify(out));
 """
 
 
-def _lazy(seed, driver, phone=True):
+def _lazy(seed, driver, phone=True, abort_mobile=False):
+    """The three shell scripts in the served order: the desktop promotion (_LANDING_DESKTOP_PANES_JS, review round 1), the mobile
+    script, the pane controller. `abort_mobile` wraps the mobile script in a try so the harness's seed can make it throw partway
+    (BAR.querySelectorAll) and the test reads what the other two scripts still did; the throw is recorded in global.__labThrew."""
     keys = [k for k, _ in km._PANE_ORDER]
     harness = _LAZY_HARNESS.replace("__KEYS__", json.dumps(keys)).replace("__PHONE__", "true" if phone else "false").replace("__SEED__", seed)
-    return _run(harness + km._LANDING_MOBILE_JS + km._LANDING_COLLAPSE_JS + driver)
+    mobile = ("try{" + km._LANDING_MOBILE_JS + "}catch(e){global.__labThrew=String(e);}") if abort_mobile else km._LANDING_MOBILE_JS
+    return _run(harness + km._LANDING_DESKTOP_PANES_JS + mobile + km._LANDING_COLLAPSE_JS + driver)
 
 
 class LazyPanes(unittest.TestCase):
@@ -1408,9 +1419,20 @@ class LazyPanes(unittest.TestCase):
         b = o["boot"]
         self.assertEqual(b["src"], {k: "/" + k for k in b["src"]}, "every pane has its document at boot on the desktop")
         self.assertEqual(b["lazy"], {k: None for k in b["lazy"]}, "nothing is parked")
-        self.assertEqual(b["sets"], {"waiting": 1, "files": 1, "timeline": 1, "fleet": 1, "feed": 1}, "the mobile script promotes the Waiting and Files panes (no gear row), the controller the three optional panes")
+        self.assertEqual(b["sets"], {"waiting": 1, "files": 1, "timeline": 1, "fleet": 1, "feed": 1}, "the desktop-panes script promotes the Waiting and Files panes (no gear row; its own script since review round 1), the controller the three optional panes")
         self.assertEqual(b["loading"], []); self.assertFalse(b["bodyLoading"])
         self.assertEqual(o["tap"], {"sets": b["sets"], "loading": [], "bodyLoading": False}, "a switch on the desktop layout promotes nothing and paints no loader")
+
+    def test_the_desktop_promotion_of_waiting_and_files_survives_a_throw_in_the_mobile_script(self):
+        # D7 (review round 1, 2026-09-19, regression-5): before, the promotion was the mobile script's last line, so a throw anywhere in
+        # its 295 lines (here the tab bar's button lookup) left both panes with no src on the desktop. The seed makes the bar's
+        # querySelectorAll throw; the isolation is proven by the recorded throw, not by a run that happened to reach the end.
+        o = _lazy("STORE['romp:settings'] = JSON.stringify({ showFilesControl: true }); BAR.querySelectorAll = () => { throw new Error('lab abort'); };",
+                  _LAZY_ABORT_DRIVER, phone=False, abort_mobile=True)
+        self.assertIn("lab abort", o["threw"] or "", "the mobile script threw before its last line (the seed's abort took)")
+        self.assertEqual(o["boot"]["mobileTab"], "undefined", "…and never reached show(): its exports are absent")
+        self.assertEqual((o["boot"]["src"]["waiting"], o["boot"]["src"]["files"]), ("/waiting", "/files"), "the Waiting and Files panes load all the same: their promotion is its own script")
+        self.assertEqual(o["boot"]["sets"], {"waiting": 1, "files": 1, "timeline": 1, "fleet": 1, "feed": 1}, "…and the controller's three optional panes load through its own line")
 
     def test_a_flip_to_the_desktop_layout_promotes_every_lazy_pane(self):
         o = _lazy("STORE['romp:settings'] = JSON.stringify({ showFilesControl: true }); STORE['romp-mobile-tab'] = 'chat';", _LAZY_FLIP_DRIVER)
