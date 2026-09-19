@@ -70,12 +70,13 @@ let viewerBundle: string | null = null;
  *  message and on romp:wsup, so a leg can put the chat page's own retry of a failed figure under the viewer, as the figure
  *  label's leg does; nothing installs it unless a leg calls it; and anchor-map's rawRows and rawRowForOffset, the verified Raw row
  *  map the seam's scrollToOffset reads since Slice 7 of plans/markdown-viewer.md, item 7, so the raw-rows leg can ask the map
- *  itself whether the rows it sees match the file's text). */
+ *  itself whether the rows it sees match the file's text; and file-print.ts's setPrintSettleMs and printSettleMs, the print wait's
+ *  deadline seam, which file-print-browser.test.ts shortens for a picture whose route never answers and restores). */
 export function bundleViewer(): string {
   if (viewerBundle) return viewerBundle;
   const esbuild = requireCjs("esbuild");
   const r = esbuild.buildSync({
-    stdin: { contents: 'export { initFileView, openFileView, openUrlView, closeFileView, registerFileViewAction } from "./file-view"; export { TRIM_STATS, rawRows, rawRowForOffset } from "./anchor-map"; export { installMdImgHeal, retryFailedPreviews, refreshSettledPreviews } from "./preview";', resolveDir: UI, loader: "ts", sourcefile: "real-viewer-leg.ts" },
+    stdin: { contents: 'export { initFileView, openFileView, openUrlView, closeFileView, registerFileViewAction } from "./file-view"; export { TRIM_STATS, rawRows, rawRowForOffset } from "./anchor-map"; export { installMdImgHeal, retryFailedPreviews, refreshSettledPreviews } from "./preview"; export { setPrintSettleMs, printSettleMs } from "./file-print";', resolveDir: UI, loader: "ts", sourcefile: "real-viewer-leg.ts" },
     bundle: true, write: false, format: "iife", globalName: "FV", platform: "browser", target: "es2020",
     nodePaths: [path.join(EXT, "node_modules")], external: ["*.png", "*.svg", "*.woff", "*.ttf", "../media/*.woff2"], logLevel: "silent",
   });
