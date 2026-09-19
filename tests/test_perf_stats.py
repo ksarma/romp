@@ -1746,15 +1746,16 @@ class RoutingStatements(unittest.TestCase):
 
     @classmethod
     @contextlib.contextmanager
-    def _tree_lock(cls, exclusive):
+    def _tree_lock(cls, exclusive, root=None):
         """The repo root, held under a file lock that lives in the checkout's git dir (one per linked worktree), shared
         by every process over this tree whatever its TMPDIR, and outside the scanned tree; flock, so a process that
         dies drops it. A checkout without git metadata skips the tests that read the live tree, each with the lock
         path's reason (the listing's skip, no git or no repository, met here first, in setUpClass, and recorded there;
         pytest reports the skips per test, so no test is lost), while the scratch-repo, mock and wording tests still
         run. A tree nested inside another repository is not that case and does not skip: rev-parse resolves the
-        enclosing repository's git dir."""
-        root = Path(HERE).parent
+        enclosing repository's git dir. `root` is the live checkout unless a test passes a scratch repo, to pin the
+        lock file's creation there rather than read the live one, which whichever runner came first created."""
+        root = Path(HERE).parent if root is None else root
         lock = cls._lock_path(root)
         # The lock file is permanent and zero bytes: created once, by the first runner, under their umask (0o666 before
         # it), and never removed, because removing a lock file races its next taker (a process holding the old inode
@@ -2207,6 +2208,27 @@ class RoutingStatements(unittest.TestCase):
             self.assertEqual(held, root)
         with self._tree_lock(exclusive=False) as held:
             self.assertEqual(held, root)
+
+    def test_the_lock_file_is_created_without_execute_bits_and_off_the_scanned_tree(self):
+        """Two properties of the lock file stated in the comments and pinned by nothing before round 3. The explicit
+        mode: os.open creates it 0o666 before the umask, so whatever the umask it has no execute bit and its owner can
+        read it (with the mode dropped, os.open's default 0o777 mints it executable under any umask that leaves a read
+        bit). The placement: the lock sits in the git dir, off the tree the scan lists, so `git ls-files --cached
+        --others --exclude-standard` over the checkout never lists it (inside the tree it would be an untracked,
+        unignored file this scan reads, the trap the _lock_path comment names). In a scratch repo, whose git dir has no
+        lock yet, so the creation is this test's own; the live checkout's lock was created by whichever runner came
+        first and says nothing about the code as it is now."""
+        d, env = _scratch_repo(self)
+        lock = RoutingStatements._lock_path(d)
+        self.assertFalse(lock.exists(), "a fresh scratch repo has no lock file yet, so the open below creates it")
+        with RoutingStatements._tree_lock(exclusive=True, root=d) as held:
+            self.assertEqual(held, d)
+        mode = stat.S_IMODE(os.stat(lock).st_mode)
+        self.assertEqual(mode & 0o111, 0, "no execute bit, whatever the umask: mode %o" % mode)
+        self.assertTrue(mode & 0o400, "readable by its owner: mode %o" % mode)
+        listed = _git_bytes(d, "ls-files", "-z", "--cached", "--others", "--exclude-standard", env=env).split(b"\0")
+        self.assertFalse(any(lock.name.encode() in entry for entry in listed),
+                         "the lock file is off the tree the scan lists: %r" % [os.fsdecode(e) for e in listed if lock.name.encode() in e])
 
     def test_places_scans_while_holding_the_shared_lock(self):
         """The composition, not its halves: _places reads the tree INSIDE its shared hold. The lock test above pins the
