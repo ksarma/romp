@@ -1321,11 +1321,14 @@ class Cli(unittest.TestCase):
         """The depth rule is the verb's own (the fork review of the second round, 2026-09-18): a file nested deeper than
         MAX_DEPTH (32) is refused before any check walks it, in one stderr line that names the file's depth and the bound,
         exit 1, nothing sent, on every Python. Before the bound the verb let the walks decide by running out of stack, which
-        they do at about 990 levels on every build (the recursion limit); what differs by build is the PARSER's reach, and
-        CI's free-threaded 3.14t cell alone admitted a 100,000-level document every other cell's parser refused as not strict
-        JSON, so the walks overflowed there and nowhere else (the fourth review round corrected the comment at MAX_DEPTH, which
-        had put the variance on the walks). A bound derived from the interpreter's limit would sit near the walks' own reach
-        and stop nothing a deeper parser admits, so the bound is a fixed number well inside every build. The three documents
+        the three walks do at about 990 levels on every build for either shape (the recursion limit), and the fold at about
+        990 too except over LIST nesting on 3.10 and 3.11, where it spends two frames per level and gives out near 500, every
+        one of them at least fifteen times the bound; the reach that differs by orders of magnitude between builds is the
+        PARSER's, and CI's free-threaded 3.14t cell alone admitted a 100,000-level document every other cell's parser refused
+        as not strict JSON, so the walks overflowed there and nowhere else (the fourth review round corrected the comment at
+        MAX_DEPTH, which had put the variance on the walks). A bound derived from the interpreter's limit would sit within a
+        few frames of the walks' reach and would have to follow the fold's list reach on 3.10 and 3.11, so it would move with
+        the build; the bound is a fixed number well inside every build. The three documents
         here are fixed: 33 levels, one past the bound, refused; 32, at the bound,
         sent; and the 100000-level file in the case beside this one meets whichever refusal its build's parser leaves it:
         a parser that gives up on the document refuses it as not strict JSON, one that admits it hands it to the depth
