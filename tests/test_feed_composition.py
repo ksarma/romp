@@ -35,8 +35,9 @@ and `other`; the `by` table as the flag and count rows (FEED_BY_ROWS), the off f
 field can carry, never a byte floor), folded at report time on the last and the lifetime tables alike, so no
 published row is the length of one string, while frame equals cards plus rest and rest the sum of the published
 table; the per-app projections read the stored tables but count the folded set as ONE atom (an app that reads any
-folded field is credited with all of `other`, the ledgers included), so every published number is a sum of published
-rows and no difference of published numbers is one folded field's bytes or the ledgers: a one-character step in any
+folded field is credited with all of `other`, the ledgers included), so the invariant holds in the scoped form the
+kernel's FEED_COMPOSITION_INVARIANT states (every published number but the Outline's row is a sum of published rows,
+and no published number or difference says which folded field a byte belongs to): a one-character step in any
 folded field, a ledger's text among them, moves the same leaves by the same amounts, and on a one-session board with
 a ledger attached no published number or difference of two is that ledger row's length; a key outside the checked-in
 names is counted under `other` at build time; the stored tables keep the counts and the ledgers apart; the reference
@@ -478,7 +479,8 @@ class ServedBlock(unittest.TestCase):
             self.assertLess(last["apps"]["phoneFace"]["projected"], last["apps"]["fleet"]["projected"])
             self.assertLess(last["apps"]["waiting"]["projected"], last["rest"],
                             "the Waiting-on-you row is `other` plus the switch, under the remainder by the count and flag rows")
-            # every projected figure is a sum of the published rows (fails before: the feed row was the frame minus the
+            # every projected figure but the Outline's is a sum of the published rows, and the Outline's is one plus its
+            # card-field estimate (fails before: the feed row was the frame minus the
             # ledgers minus the two fields the pane never reads, one of them folded, so the difference published that
             # field's bytes; and, before the third round, the frame minus the ledgers minus the switch, so the
             # difference published the ledgers): the feed row is the cards, `other` and the flag rows the pane reads,
@@ -772,7 +774,8 @@ class SyntheticBuild(unittest.TestCase):
                          "the Outline reads the ledgers, a few fields of each card and three folded fields (the views, "
                          "the session list, the viewer's foreign clears), the ledgers and the three credited as the "
                          "whole of `other`; no `off` here")
-        # every projected figure is a sum of published rows (fails before: the projections were exact per-field sums
+        # every projected figure but the Outline's is a sum of published rows, and the Outline's is one plus its
+        # card-field estimate (fails before: the projections were exact per-field sums
         # over the stored table, so frame - ledgers - feed.projected - userTodosOn was the userTodoRows row, and
         # waiting.projected minus that minus userTodosOn the sessions row, on every board)
         pub = last["by"]
@@ -1178,8 +1181,9 @@ class PublishedTable(unittest.TestCase):
     The projections read the stored table and count the folded set as ONE atom (an app that reads any folded field is
     credited with all of `other`): with per-field partial sums published beside the frame, the ledgers and the flag
     rows, the userTodoRows and sessions rows were re-derivable by subtraction on every board. So every published
-    number is a sum of published rows, and a one-character step in any folded field moves the same published leaves
-    by the same amounts, whichever field took it: the perturbation below checks every integer leaf of the report.
+    number but the Outline's row is a sum of published rows, and a one-character step in any folded field moves the
+    same published leaves by the same amounts, whichever field took it: the perturbation below checks every integer
+    leaf of the report, and the invariant's wording is pinned in its scoped form (FEED_COMPOSITION_INVARIANT).
     The third round (2026-09-19) put the ledgers in the fold and withheld the two counts: `ledgers` beside
     `ledgerCount` was one session's whole ledger row on a one-session board, and the ledger count is the chat tab
     count, which /perf publishes elsewhere, so the sum was never an aggregate from the reader's side; a ledger's text
@@ -1317,7 +1321,8 @@ class PublishedTable(unittest.TestCase):
         were it again (fails before, the third round): now no published integer leaf and no difference of two is the
         row's length. Six one-character steps (the hostname, the session's name in the session list, its name in the
         working pips, a session id in the order, the ledger's working note, the ledger's session name) have one
-        signature over every integer leaf; each projected row is a sum of published rows; and the candidate the
+        signature over every integer leaf; each projected row but the Outline's is a sum of published rows, and the
+        Outline's is `other` alone here (no card, so its estimate is zero); and the candidate the
         re-derivation used for the hostname row (the feed row's remainder share minus twice the sessions estimate,
         plus a constant read from the source) moves the wrong way under a hostname step, so no constant makes it the
         hostname row for two hostnames of different length."""
@@ -1576,6 +1581,49 @@ class PublishedTable(unittest.TestCase):
         self.assertEqual(rep["last"]["apps"]["feed"]["projected"] - rep2["last"]["apps"]["feed"]["projected"], leds)
         self.assertEqual(rep["last"]["apps"]["phoneFace"]["projected"], rep2["last"]["apps"]["phoneFace"]["projected"])
 
+    def test_the_invariant_is_stated_in_its_scoped_form_everywhere_and_holds_by_execution(self):
+        """The invariant the block's safety is read from (fresh-1 of the second round): the universal claim, every
+        published number is a sum of published rows, is false for the Outline's row, which adds its card-field
+        estimate, a figure published nowhere else and not publishable as a row (on a one-card board it is that card's
+        field lengths). So the claim is stated in its scoped form, FEED_COMPOSITION_INVARIANT, verbatim in the
+        reference and the ledger entry, and no document, the kernel's source included, states the universal form
+        without the exception (fails before: all three did). By execution, on the populated fixture and on the
+        one-card board: frame, rest, every `today`, the feed row and the Waiting-on-you row are each a sum of other
+        published integer leaves, and the Outline's row minus `other` and `off` is the card-field estimate and no
+        published leaf."""
+        inv = km.FEED_COMPOSITION_INVARIANT
+        self.assertTrue(inv.startswith("Every published number is a sum of published rows, except the Outline's row"))
+        ref = open(os.path.join(ROOT, "docs", "reference.md"), encoding="utf-8").read()
+        para = ref[ref.index("  `feedComposition` says what the feed frame is made of"):]
+        para = para[:para.index("\n- `judge`:")]
+        ledger = open(os.path.join(ROOT, "upstream", "2026-09-18-feed-composition-perf.md"), encoding="utf-8").read()
+        kernel = open(os.path.join(ROOT, "kernel", "kernel.py"), encoding="utf-8").read()
+        k0, k1 = kernel.index("# What the block PUBLISHES of the `by` table"), kernel.index("def _feed_sig(parts):")
+        for name, text in (("the reference", para), ("the ledger", ledger), ("the kernel", kernel[k0:k1])):
+            flat = " ".join(text.split())
+            if name != "the kernel":
+                self.assertEqual(flat.count(inv), 1, "%s states the invariant in the kernel's words, once" % name)
+            loose = [m.start() for m in re.finditer(r"sum of published rows(?!, except the Outline's row)", flat)]
+            loose = [i for i in loose if not re.search(r"(but the Outline's row|plus, for the Outline|the Outline's plus its card-field estimate)",
+                                                        flat[max(0, i - 80):i + 130])]
+            self.assertEqual(loose, [], "%s: the universal claim without its exception at %r"
+                             % (name, [flat[max(0, i - 60):i + 60] for i in loose]))
+        for frame in (_populated(), _feed(n=1, asks=[_card(0)], ledgers=[_ledger(tops=1)])):
+            rep = _report(_fresh_pass(frame))
+            for t in (rep["last"], rep["lifetime"]):
+                pub, apps = t["by"], t["apps"]
+                flags = sum(pub[f] for f in ("dismissedCount", "showDismissed", "canUndoClear", "off") if f in pub)
+                self.assertEqual(t["frame"], t["cards"] + t["rest"])
+                self.assertEqual(t["rest"], sum(pub.values()))
+                self.assertEqual(apps["feed"]["projected"], t["cards"] + pub["other"] + flags)
+                self.assertEqual(apps["waiting"]["projected"], pub["other"] + pub["userTodosOn"])
+                self.assertTrue(all(row["today"] == t["frame"] for row in apps.values()))
+                est = apps["fleet"]["projected"] - pub["other"] - pub.get("off", 0)
+                self.assertEqual(est, km._ask_fields_est(frame["asks"], km._FEED_APP_ASK_FIELDS["fleet"]))
+                leaves = {v for p, v in _leaves(t) if isinstance(v, int) and not p.endswith("apps.fleet.projected")}
+                self.assertNotIn(est, leaves, "the Outline's estimate is no published leaf: the one exception")
+                self.assertNotIn(est, {a - b for a in leaves for b in leaves}, "nor a difference of two")
+
     def test_the_reference_and_the_ledger_state_the_published_shape_and_the_residuals(self):
         """docs/reference.md's memos.feedComposition entry and the ledger entry describe the block the kernel publishes:
         the published rows and the folded list by name (each set equal to the kernel's constant, so a reclassified
@@ -1600,7 +1648,7 @@ class PublishedTable(unittest.TestCase):
         for text, phrase in (("the reference", para), ("the ledger", ledger)):
             flat = flats[text] = " ".join(phrase.split())
             for needle in ("the folded fields as one", "credited with all of `other`", "report",
-                           "no difference of published numbers", "hostname", "`phoneFace`", "title",
+                           "difference of published numbers", "hostname", "`phoneFace`", "title",
                            "withheld", "single-object case", "chat tab count", "builtChat.tabs", "Two residuals remain"):
                 self.assertIn(needle, flat, "%s: %r" % (text, needle))
             for stale in ("tells the reader nothing", "forty percent under", "`cardCount`", "`ledgerCount`",

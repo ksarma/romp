@@ -3760,13 +3760,19 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   ledger cleared), so those two rows carry it. `projected` counts the folded
   fields as one, the ledgers among them: an app that reads any of them is
   credited with all of `other`, and only the flag and count rows it reads
-  are added by name, so every `projected` figure is a sum of published rows
-  (the feed row is `cards` plus `other` plus the flag rows but `userTodosOn`,
-  which is `frame` minus `userTodosOn` on a built frame and `frame` minus
-  `userTodosOn` minus the four federation lists on the off frame; the
-  Outline's row is its card-field estimate plus `other` plus `off`; the
-  Waiting-on-you row is `other` plus `userTodosOn`) and no difference of
-  published numbers is one folded field's bytes. A per-field sum published
+  are added by name. The feed row is `cards` plus `other` plus the flag rows
+  but `userTodosOn`, which is `frame` minus `userTodosOn` on a built frame
+  and `frame` minus `userTodosOn` minus the four federation lists on the off
+  frame; the Outline's row is its card-field estimate plus `other` plus
+  `off`; the Waiting-on-you row is `other` plus `userTodosOn`. The invariant,
+  in the words of the kernel's `FEED_COMPOSITION_INVARIANT` and of the
+  ledger entry (a test holds the three equal): Every published number is a
+  sum of published rows, except the Outline's row, which adds its card-field
+  estimate, a figure published nowhere else; and a one-character step in any
+  folded field, the ledgers among them, moves the same published leaves by
+  the same amounts, whichever field took it, so no published number or
+  difference of published numbers says which folded field a byte belongs to.
+  A per-field sum published
   here re-derived two folded rows by subtraction (the todo rows and the
   session list), and a feed row credited with the remainder but not the
   ledgers re-derived the ledgers (`frame` minus the feed row minus
