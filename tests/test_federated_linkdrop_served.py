@@ -1005,6 +1005,21 @@ class _LinkDrop(unittest.TestCase):
             self.assertEqual(f["t"], "feed", "the new %s relay socket's first feed-family frame is the remote's WHOLE feed, never a patch or a feedDelta onto a base this socket never held: %r" % (app, self._kinds(s)))
             self.assertIsNotNone(f.get("asks"), "…keyed (an asks list rides it): %r" % (f,))
 
+    def _assert_every_opened_relay_socket_was_served_whole_first(self):
+        """Every relay socket that OPENED at any point in the drive, the two lab-caused redials and any spontaneous churn
+        alike, received a whole keyed feed as its first feed-family frame (the remote's client dict is per socket: it
+        holds nothing to patch, so a patch first would be a patch onto a base the socket never held). A socket that
+        opened and had received no feed-family frame when the record ended (a churned socket closing at once, the last
+        socket at the drive's end) is counted, not judged. Derived: every page opened at least one socket that received
+        a frame (round 1, fresh-2)."""
+        for app in self.apps:
+            opened = [s for s in self._relay_socks(app) if s["openAt"]]
+            with_frame = [(s, self._first_feed_family(s)) for s in opened if self._first_feed_family(s) is not None]
+            self.assertTrue(with_frame, "the %s page opened a relay socket that received a feed-family frame: %r" % (app, [(s["i"], s["openAt"], self._kinds(s)) for s in opened]))
+            bad = [(s["i"], f["t"], f["slot"], self._kinds(s)) for s, f in with_frame if not (f["t"] == "feed" and f.get("asks") is not None)]
+            self.assertEqual(bad, [], "every relay socket the %s page opened was served a WHOLE keyed feed first (%d opened, %d received a frame; a patch "
+                                      "or feedDelta first is a patch onto a base the socket never held): %r" % (app, len(opened), len(with_frame), bad))
+
     def _assert_seen(self, seen, want_cards, todo=None, prompt=None, what=""):
         self.assertEqual(seen.get("cards"), [want_cards] * len(seen.get("cards") or []), "%s: the notice cards on the hub's feed page (per card, in posting order): %r" % (what, seen))
         self.assertTrue(seen.get("cards"), "%s: cards were posted" % what)
@@ -1103,6 +1118,9 @@ class LinkDropBothNew(_LinkDrop):
     def test_nothing_stranded_no_row_no_ask(self):
         self._assert_nothing_stranded()
         self.assertEqual(self.remote_wire.get("feed_slot_split"), 0, "the remote never re-encoded through the slot path: %r" % (self.remote_wire,))
+
+    def test_every_relay_socket_that_opened_was_served_whole_first(self):
+        self._assert_every_opened_relay_socket_was_served_whole_first()
 
     def test_a_change_due_while_the_link_was_down_crossed_nothing_and_the_return_carried_it_whole(self):
         """Phase D (cards, a todo, an appended pair) posted with the row down: absent from every page while down, no row,
@@ -1239,6 +1257,11 @@ class LinkDropOldLocal(_LinkDrop):
             C = self._phase("C")
             self._assert_seen(C["seenB"], True, what="phase B's cards still shown after the local restart's redial")
             self._assert_seen(C["seen"], True, what="phase C's cards after the local restart's redial")
+
+    def test_every_relay_socket_that_opened_was_served_whole_first(self):
+        """The old bundle churns its remote socket every few seconds; every socket that opened, churned or lab-caused, was
+        served a whole keyed feed first."""
+        self._assert_every_opened_relay_socket_was_served_whole_first()
 
     def test_a_change_due_while_the_link_was_down_crossed_nothing_and_the_return_carried_it_whole(self):
         """The gate's own leg on the old bundle: phase D's cards, posted with the row down, reach no page and file no row
