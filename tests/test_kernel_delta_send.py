@@ -863,11 +863,12 @@ class ByteIdenticalFrames(unittest.TestCase):
         the kernel's, not that it counts: a marker-carrying wrapper that delegates to the builtin, or one that counts
         twice, passes the marker half and would red the equality with two numbers and no reason (the closing check,
         2026-09-19). A peer module that displaced one and never restored it, or restored the builtin, leaves the kernel
-        counting a subset of what
-        the interceptor sees: with os.stat, os.lstat or posix.stat displaced by its builtin the equality would be the
-        first to say so, reading the kernel's count short of the interceptor's, two numbers and no reason; with
-        posix.lstat displaced the count does not move (observed at the closing check, three repeats), so for it this
-        premise is the only detector and the equality would say nothing."""
+        counting a subset of what the interceptor sees: with os.stat, os.lstat or posix.stat displaced by its builtin
+        the equality would be the first to say so, reading the kernel's count short of the interceptor's, two numbers
+        and no reason; with posix.lstat displaced the count does not move (shown by deleting this premise loop in a
+        scratch copy and displacing posix.lstat by its __wrapped__ around the exactness test: it stays green, where the
+        same displacement of os.stat reds the equality; the closing check, 2026-09-19, and the follow-up after it), so
+        for it this premise is the only detector and the equality would say nothing."""
         ps = km._PERF_STATS
         cfg = tempfile.TemporaryDirectory(); self.addCleanup(cfg.cleanup)
         if shutil.which("git") is None:
@@ -1087,6 +1088,9 @@ class ByteIdenticalFrames(unittest.TestCase):
         self.assertEqual(d["post"], b1["built"] - b0["built"], "one post-build signature per build")
         seen = {"stat": ic.stat, "posix": ic.posix_stat, "lstat": ic.lstat, "dirent": ic.dirent, "dirent_by_dir": ic.dirent_by_dir}
         channels = {"stat": ic.stat, "posix": ic.posix_stat, "lstat": ic.lstat, "dirent": ic.dirent}
+        # the count is recomputed, never copied: a single-test run's exceeds a whole-module run's, since the first
+        # signature completed in a process pays the codex backend's lazy load (load_source inside _codex: importlib
+        # stats and a realpath's lstats, one per path component) that an earlier test in the module has paid already
         print("[live] exactness: counted=%d intercepted=%d signatures=%d per_signature=%.1f registry=%d sig_cpu_ms_per_sig=%s "
               "sig_wall_ms_per_sig=%.3f channels=%r"
               % (d["stats"], ic.total, n_sigs, (ic.total / n_sigs) if n_sigs else float("nan"), ic.dirent_by_dir.get(str(sdk), 0),
@@ -1168,9 +1172,10 @@ class ByteIdenticalFrames(unittest.TestCase):
         kernel's counting wrappers stand on os.stat, os.lstat, posix.stat and posix.lstat. A peer module that patched one
         and never restored it, or restored the builtin, leaves the kernel counting a subset of what the interceptor
         sees: with os.stat, os.lstat or posix.stat displaced by its builtin the equality reads the kernel's count short
-        of the interceptor's, two numbers and no reason; with posix.lstat displaced the count does not move (observed at
-        the closing check over three repeats, and reproduced when this docstring was written: with the premise loop
-        removed and posix.lstat displaced, the exactness test stays green), so for it the premise is the only detector
+        of the interceptor's, two numbers and no reason; with posix.lstat displaced the count does not move (the run
+        behind it: in a scratch copy with the premise loop removed, displace posix.lstat by its __wrapped__ around the
+        exactness test, which stays green; the closing check, 2026-09-19, and the follow-up after it), so for it the
+        premise is the only detector
         and the equality would say nothing. The world refuses to run over such a process: an AssertionError naming the
         displaced wrapper, raised before any signature runs, and not the equality. Removing the premise loop from
         _stats_world reds every leg here with no AssertionError raised: the world runs to its end and returns, since the
