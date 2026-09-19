@@ -626,9 +626,9 @@ def restore_env(name, prior):
 # the innocent test that made the allowed rebuild (2026-09-19). K.One is the counter-case: its build's
 # reference is the class root setUpClass moved jd.STATE to, not S's, so the class stays the author. The
 # module end runs after the class end, so a class-end verdict names the object and the module end is
-# quiet on it. Cost: two dict reads, two getattr and one isdir per read; five reads per test at most (the
-# test's two, and the scope reads spread over a class and a module), plus one list scan per boundary over
-# the module's changing windows (a handful in any module: net changes of the slot are rare).
+# quiet on it. Cost: four dict lookups (the kernel module, its slot, its marker, its jd), two getattr and
+# one isdir per read; two reads per test, two per class and two per module, plus one list scan per
+# boundary over the module's changing windows (a handful in any module: net changes of the slot are rare).
 _SdkRead = collections.namedtuple("_SdkRead", "be marker sd isdir jd_state")
 _SdkWindow = collections.namedtuple("_SdkWindow", "seq before after ref")
 _SDK_LAST = _SdkRead(None, None, None, None, None)     # the last read anywhere in this worker (the boundary's L)
