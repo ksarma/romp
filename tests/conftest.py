@@ -512,6 +512,18 @@ def restore_env(name, prior):
 # none of the five: an earlier first builder in every worker made their builds cache hits. A green suite run
 # is therefore no evidence a module is clean; the module-alone sweep is the measurement, and the review
 # round that found the four ran the modules that way.
+# THE ROAD EACH FIGURE WAS TAKEN ON, since the two families came from opposite roads. Every module-alone
+# figure above (the 316-module first sweep, the 364-module sweep and "every one of the 364 is green alone",
+# and the per-module triage counts behind them) was taken module alone, on the missing road, which is CI's:
+# the test venv's interpreter has no claude_agent_sdk, and a module run alone does not import
+# tests/test_host_transport.py; that module is the one exception in the union, since it puts the venv on
+# sys.path itself. Every full-run figure above (the two full -n 4 census runs and their 237-module set, and
+# "the full-suite census saw none of the five") was taken on the SDK-importable road: when claude_agent_sdk
+# is not importable, tests/test_host_transport.py puts the box's SDK venv on sys.path at import, and every
+# xdist worker imports every collected module, so a full run here takes that road; CI never does (its install
+# has no SDK), and the green CI run at the round-3 head is the missing-road full-suite datum. The figures in
+# this fixture's own tests (tests/test_sdk_singleton_ratchet.py) carry no inherited road: each scratch head
+# forces its road.
 #
 # THE TRANSITION MODEL. The fixtures below read the singleton at fixed moments and judge what changed
 # between two reads, never the after value on its own: an absolute read of the after value (the first form
@@ -593,8 +605,8 @@ def restore_env(name, prior):
 # path is not a directory, and a remedy of its own, _SDK_REMEDY_C, put the state_dir back), or its
 # directory was present at the before read and is not at the after read, the test having removed the
 # directory under the singleton it found. A removal never changes the text, so the two are disjoint and the
-# text comparison comes first. A different value is a leak, with TWO allowances derived from the transition, never from a
-# list of test names. (1) None before and, after, the kernel's own class (type module romp_sdk_backend,
+# text comparison comes first. A different value is a leak, with TWO allowances derived from the transition,
+# never from a list of test names. (1) None before and, after, the kernel's own class (type module romp_sdk_backend,
 # qualname SdkBackend: NOT isinstance, which a shared-name reload of sdk_backend.py breaks, since
 # load_source re-executes into the same module name and the class object changes while a backend built
 # before the reload keeps the old one; 11 test modules load romp_sdk_backend under the shared name) whose
