@@ -21,6 +21,18 @@
 //     whose pictures never reach the paper are never asked, and the PDF Chromium prints holds exactly two pictures.
 //     Before this every placeholder in the body was counted and every host it named was asked, so "with them" fetched
 //     from three hosts for pictures that were not on the paper.
+// (D) the printable rule's UNKNOWN side, a census (the round-2 review, 2026-09-19): the walk knows two hidings, a closed
+//     <details> and the `hidden` attribute, and before this answered printable for every other, so a placeholder the
+//     browser never renders (inside a ruby's <rp>, a <canvas>'s fallback content, a `popover` not shown, all kept by the
+//     sanitizer) or one whose figure it never renders (an <img hidden> inside the placeholder, an svg with display none,
+//     visibility hidden or opacity 0) was counted, named and, on "Print with them", fetched for a print that never shows
+//     it. Now the walk's answer is joined by the browser's own (checkVisibility and a client rect, on the placeholder and
+//     on the figure it wraps), so the unknown side falls to NOT printable. The census renders one gated picture per
+//     wrapper over every tag of DOMPurify's html profile the sanitizer keeps (the void elements aside), the svg
+//     containers inside an svg, and the kept attributes that hide (`popover`, `inert`, `hidden` in both spellings, `open`,
+//     an svg's `display`, `visibility` and `opacity`), presses Print, reads which hosts the title names, and holds that
+//     every host named is one whose placeholder and figure the browser renders, that the shapes above are not named,
+//     and that "Print with them" then asks exactly the named hosts. Each shape's row is printed as a diagnostic.
 // Under node first: the machine's `recount` event, the ownership predicate over stand-ins, and the printable predicate over
 // stand-in trees. Then headless Chromium over the real viewer through real-viewer-leg.ts, the way
 // file-print-driver-browser.test.ts drives it. Skips loudly without a browser. Synthetic values only: an invented note,
@@ -28,8 +40,10 @@
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as zlib from "node:zlib";
+import { hideEdges } from "../test-dom-shim";
 import { inBrowser, openViewer, openPanel, frames, REPORT, ORIGIN, MT2, type Mode } from "./real-viewer-leg";
 import { step, RESTING, DISABLED, ownsEscape, printable, OWN_ESCAPE_SEL, OPEN_POPUP_SEL, WITHOUT_TITLE, type PrintState, type PrintableNode } from "./file-print";
+import { MD_FORBID_TAGS } from "./md-sanitize";
 
 const SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="8" height="8" fill="black"/></svg>';
 const QUICK = "fig.svg";                       // a local picture the route answers at once
@@ -163,7 +177,7 @@ test("ownsEscape: the keyboard inside a menu or a dialog; an open popup's trigge
 });
 
 /** A stand-in node: its name, its attributes and its parent. */
-const node = (localName: string, attrs: string[] = [], parent: PrintableNode | null = null): PrintableNode => ({ localName, parentElement: parent, hasAttribute: (n) => attrs.includes(n) });
+const node = (localName: string, attrs: string[] = [], parent: PrintableNode | null = null): PrintableNode => hideEdges({ localName, parentElement: parent, hasAttribute: (n) => attrs.includes(n) });   // hideEdges: the stand-in's parent edge is non-enumerable, as the shared module's rule asks of every fake node (ui/test-dom-shim.test.ts's ratchet)
 
 test("printable: a placeholder reaches the paper unless a closed details holds it outside its own summary, or an ancestor (or it) carries hidden, whatever its value", () => {
   const body = node("div");
@@ -364,6 +378,114 @@ test("(C) five gated pictures on five hosts: only the two that reach the paper a
     await frames(page, 1);
     assert.equal((await bar(page)).phase, null, "the bar rested");
     assert.deepEqual(s.errors, [], "no script error");
+    await page.close();
+  });
+});
+
+// ── (D) the printable rule's unknown side: a census over the sanitizer's kept tags and hiding attributes ───────────────
+
+/** DOMPurify's html profile (its `html` tag list, dompurify 3.x) less the void elements, which hold no picture. The sanitizer's
+ *  own forbid list (MD_FORBID_TAGS) is taken off below, so the census renders the tags a note keeps; a tag the sanitizer drops
+ *  anyway leaves its picture in the open body, which the row records by the wrapper the placeholder ends up in. */
+const HTML_TAGS = ["a", "abbr", "acronym", "address", "article", "aside", "audio", "b", "bdi", "bdo", "big", "blink", "blockquote", "button", "canvas", "caption", "center", "cite", "code", "colgroup", "content", "data", "datalist", "dd", "decorator", "del", "details", "dfn", "dialog", "dir", "div", "dl", "dt", "element", "em", "fieldset", "figcaption", "figure", "font", "footer", "form", "h1", "h2", "h3", "h4", "h5", "h6", "header", "hgroup", "i", "ins", "kbd", "label", "legend", "li", "main", "mark", "marquee", "menu", "meter", "nav", "nobr", "ol", "optgroup", "option", "output", "p", "picture", "pre", "progress", "q", "rp", "rt", "ruby", "s", "samp", "search", "section", "select", "shadow", "slot", "small", "spacer", "span", "strike", "strong", "sub", "summary", "sup", "table", "tbody", "td", "template", "textarea", "tfoot", "th", "thead", "time", "tr", "tt", "u", "ul", "var", "video"];
+/** The svg containers of DOMPurify's svg profile that can hold an <image>, each wrapped in an svg of its own. */
+const SVG_TAGS = ["a", "clipPath", "defs", "desc", "filter", "g", "linearGradient", "marker", "mask", "metadata", "pattern", "radialGradient", "switch", "symbol", "text", "textPath", "title", "tspan", "view"];
+type Shape = { name: string; block: (host: string) => string };
+/** Every shape the census renders: a wrapper tag around a gated <img>, the kept hiding attributes on a wrapper or on the picture
+ *  itself, and an svg with each kept attribute that hides it. */
+function censusShapes(): Shape[] {
+  const out: Shape[] = [];
+  for (const tag of HTML_TAGS) if (!MD_FORBID_TAGS.includes(tag)) out.push({ name: "tag:" + tag, block: (h) => "<" + tag + "><img src=\"https://" + h + "/p.svg\" alt=\"\"></" + tag + ">" });
+  for (const tag of SVG_TAGS) out.push({ name: "svg:" + tag, block: (h) => "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"8\" height=\"8\"><" + tag + "><image href=\"https://" + h + "/p.svg\" width=\"8\" height=\"8\"/></" + tag + "></svg>" });
+  const attr = (name: string, open: string): Shape => ({ name, block: (h) => "<div " + open + "><img src=\"https://" + h + "/p.svg\" alt=\"\"></div>" });
+  out.push(attr("attr:popover", "popover"), attr("attr:inert", "inert"), attr("attr:hidden", "hidden"), attr("attr:hidden-until-found", "hidden=\"until-found\""));
+  out.push({ name: "attr:details-closed", block: (h) => "<details><summary>s</summary><img src=\"https://" + h + "/p.svg\" alt=\"\"></details>" });
+  out.push({ name: "attr:details-open", block: (h) => "<details open><summary>s</summary><img src=\"https://" + h + "/p.svg\" alt=\"\"></details>" });
+  out.push({ name: "img:hidden", block: (h) => "<img hidden src=\"https://" + h + "/p.svg\" alt=\"\">" });
+  out.push({ name: "img:hidden-until-found", block: (h) => "<img hidden=\"until-found\" src=\"https://" + h + "/p.svg\" alt=\"\">" });
+  out.push({ name: "img:plain", block: (h) => "<img src=\"https://" + h + "/p.svg\" alt=\"\">" });
+  for (const [name, a] of [["svg:display-none", "display=\"none\""], ["svg:visibility-hidden", "visibility=\"hidden\""], ["svg:opacity-0", "opacity=\"0\""], ["svg:plain", ""]]) {
+    out.push({ name, block: (h) => "<svg xmlns=\"http://www.w3.org/2000/svg\" " + a + " width=\"8\" height=\"8\"><image href=\"https://" + h + "/p.svg\" width=\"8\" height=\"8\"/></svg>" });
+  }
+  return out;
+}
+/** The shapes the browser renders no placeholder or no figure for: not counted, not named, never asked by Print with them.
+ *  FAILS BEFORE for those the walk does not know: rp, canvas, popover (the placeholder has no box), img:hidden and
+ *  img:hidden-until-found (the picture inside the placeholder has none, or carries hidden), and the three svg attributes. */
+const NOT_ON_PAPER = ["tag:rp", "tag:canvas", "attr:popover", "attr:hidden", "attr:hidden-until-found", "attr:details-closed", "img:hidden", "img:hidden-until-found", "svg:display-none", "svg:visibility-hidden", "svg:opacity-0"];
+/** The hosts the with-button's title names, read back from its words. */
+function titleHosts(title: string): string[] {
+  const m = /^Load the pictures from (.*), then print$/.exec(title);
+  if (!m) return [];
+  if (m[1] === "those hosts") return [];
+  return m[1].split(/, | and /).filter(Boolean);
+}
+type Row = { name: string; host: string; placeholders: number; wrapper: string; rendered: boolean | null; figure: string; askedAtRender: number };
+/** The kept attributes on a figure itself that leave it off the paper once restored, as the flow reads them (file-print.ts
+ *  figureHidden): `hidden` and `popover` on any element, and an svg's `display`, `visibility` and `opacity`. The browser
+ *  cannot be asked about the figure while it is gated (the sheet hides every child of a placeholder but its label), so
+ *  this half of the rule is an enumeration, and the census lists what each figure carries. */
+const FIGURE_ATTRS = ["hidden", "popover", "display", "visibility", "opacity"];
+
+test("(D) the census of the printable rule's unknown side: over every kept tag of the sanitizer's profile and every kept attribute that hides, Print's title names a host only when the browser renders its placeholder and the figure it wraps; a placeholder inside a ruby's rp, a canvas's fallback content or a popover, an <img hidden> inside its placeholder and an svg with display none, visibility hidden or opacity 0 are not named (FAILS BEFORE: the walk alone named them), and Print with them asks exactly the named hosts", { timeout: 180000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const shapes = censusShapes();
+    const hostOf = (i: number): string => "c" + i + "-" + shapes[i].name.replace(/[^a-z0-9]+/gi, "-").toLowerCase() + ".test";
+    const note = "# Census\n\n" + shapes.map((s, i) => s.block(hostOf(i))).join("\n\n") + "\n\nLast line.\n";
+    const requests: string[] = [];
+    const { page, errors } = await openViewer(browser, "pane", 900, 700, {
+      docs: { [REPORT]: note },
+      before: async (pg: any) => {
+        pg.on("request", (r: any) => { requests.push(r.url()); });
+        await pg.route((u: URL) => u.origin !== ORIGIN && u.hostname.endsWith(".test"), async (route: any) => { await new Promise((r) => setTimeout(r, 60)); await route.fulfill({ status: 200, contentType: "image/svg+xml", body: SVG }); });
+        await pg.evaluate(PAGE_PROBES);
+      },
+    });
+    await page.waitForFunction(() => !!document.querySelector("#romp-fileview .fileview-md") && (document.querySelector("#romp-fileview .fileview-md")!.textContent || "").includes("Last line."), null, { timeout: 15000 });
+    await frames(page, 3);
+    const hostsBefore = hostsAsked(requests);
+    const askedAtRender = (h: string): number => requests.filter((u) => u.startsWith("https://" + h + "/")).length;
+    // every placeholder's host, wrapper, and the browser's own rendering of it and of the figure it wraps
+    const seen: Array<{ host: string; wrapper: string; rendered: boolean; figure: string }> = await page.evaluate((attrs: string[]) => {
+      const renders = (e: Element): boolean => (e as any).checkVisibility({ visibilityProperty: true, opacityProperty: true }) && e.getClientRects().length > 0;
+      const carries = (e: Element | null): string => e === null ? "-" : attrs.filter((k) => e.hasAttribute(k)).map((k) => k + "=" + e.getAttribute(k)).join(",");
+      return Array.from(document.querySelectorAll('#romp-fileview .fileview-md [data-act="fv-load"]')).map((g) => ({ host: g.getAttribute("data-fv-hosts") || "", wrapper: g.parentElement ? g.parentElement.localName : "-", rendered: renders(g), figure: carries(g.firstElementChild) }));
+    }, FIGURE_ATTRS);
+    const byHost = new Map<string, typeof seen>();
+    for (const s of seen) byHost.set(s.host, [...(byHost.get(s.host) || []), s]);
+    await page.click(PRINT_BTN);
+    const b = await bar(page);
+    assert.equal(b.phase, "armed", "the press armed over the census's placeholders");
+    const named = titleHosts(b.titles[0]);
+    assert.ok(named.length > 50, "the title names the rendered placeholders' hosts (" + named.length + ")");
+    const rows: Row[] = shapes.map((s, i) => { const h = hostOf(i); const g = byHost.get(h) || []; return { name: s.name, host: h, placeholders: g.length, wrapper: g.map((x) => x.wrapper).join("+") || "-", rendered: g.length ? g.every((x) => x.rendered) : null, figure: g.map((x) => x.figure).join("+"), askedAtRender: askedAtRender(h) }; });
+    for (const r of rows) t.diagnostic("census | " + r.name + " | placeholders=" + r.placeholders + " | wrapper=" + r.wrapper + " | rendered=" + r.rendered + " | figure=" + (r.figure || "-") + " | counted=" + named.includes(r.host) + " | askedAtRender=" + r.askedAtRender);
+    // (a) every host the title names has a placeholder the browser renders, wrapping a figure that carries none of the attributes that hide it
+    const misjudged = rows.filter((r) => named.includes(r.host) && !(r.rendered === true && r.figure === "")).map((r) => r.name + (r.figure ? "[" + r.figure + "]" : ""));
+    assert.deepEqual(misjudged, [], "FAILS BEFORE: a host named for a placeholder the browser does not render, or for a figure that carries a hiding attribute");
+    // (b) the shapes that never reach the paper are not named
+    const namedOffPaper = rows.filter((r) => NOT_ON_PAPER.includes(r.name) && named.includes(r.host)).map((r) => r.name);
+    assert.deepEqual(namedOffPaper, [], "FAILS BEFORE: rp, canvas, popover, the hidden picture inside its placeholder and the hidden svgs were named");
+    for (const name of NOT_ON_PAPER) assert.equal(rows.find((r) => r.name === name)!.placeholders, 1, name + " renders one placeholder (the shape is in the census, gated)");
+    // (c) the shapes in the open body are named: a plain picture, an open details, an inert wrapper, and the tags that render inline or as blocks
+    for (const name of ["img:plain", "attr:details-open", "attr:inert", "svg:plain", "tag:div", "tag:p", "tag:span", "tag:marquee", "tag:table", "tag:rt", "tag:summary", "tag:figure"]) assert.ok(named.includes(rows.find((r) => r.name === name)!.host), name + " is named");
+    // (d) a template's picture is inert content the DOM never reaches: no placeholder, nothing asked at the render
+    const tpl = rows.find((r) => r.name === "tag:template")!;
+    assert.equal(tpl.placeholders, 0, "no placeholder inside a template"); assert.equal(tpl.askedAtRender, 0, "and nothing fetched");
+    // (e) Print with them asks exactly the named hosts, once each, and none of the others
+    const mark = requests.length;
+    await page.click(WITH_BTN);
+    await printsReach(page, 1);
+    await frames(page, 6);
+    await new Promise((r) => setTimeout(r, 300));
+    const asked = requests.slice(mark).filter((u) => !u.startsWith(ORIGIN)).map((u) => new URL(u).host);
+    assert.deepEqual(Array.from(new Set(asked)).sort(), named.slice().sort(), "FAILS BEFORE: the hosts asked by Print with them are exactly the hosts the title named");
+    for (const h of named) assert.equal(asked.filter((x) => x === h).length, 1, h + " asked once");
+    for (const name of NOT_ON_PAPER) assert.equal(asked.includes(rows.find((r) => r.name === name)!.host), false, name + "'s host never asked");
+    const p = await prints(page);
+    assert.equal(p.length, 1, "one print");
+    t.diagnostic("census | named " + named.length + " of " + seen.length + " placeholders over " + shapes.length + " shapes; hosts asked at the render (the gate's own, before any press): " + (hostsBefore.length ? hostsBefore.join(" ") : "none"));
+    assert.deepEqual(errors, [], "no script error");
     await page.close();
   });
 });

@@ -7,9 +7,10 @@ import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { step, RESTING, DISABLED, armedWords, preparingWords, stalledWords, isPrintChord, settlePictures, collectPictures, bodyReady, PRINT_SETTLE_MS, setPrintSettleMs, printSettleMs,
-  WITH_WORDS, WITHOUT_WORDS, ANYWAY_WORDS, KEEP_WORDS, TAB_WORDS, NO_TAB_WORDS, pdfFrameWindow, READY_ROOTS, NOT_READY_ROOTS, LINE_ROOTS,
-  type PrintState, type Picture, type Timers, type BodyLike, type PrintableNode } from "./file-print";
+import { hideEdges } from "../test-dom-shim";   // every stand-in below that carries a tree edge (parentElement, children, childNodes, firstElementChild) hides it, the shared module's rule (ui/test-dom-shim.test.ts's ratchet)
+import { step, RESTING, DISABLED, armedWords, preparingWords, stalledWords, isPrintChord, isPrintKeys, settlePictures, collectPictures, bodyReady, rootKind, PRINT_SETTLE_MS, setPrintSettleMs, printSettleMs,
+  WITH_WORDS, WITHOUT_WORDS, ANYWAY_WORDS, KEEP_WORDS, TAB_WORDS, NO_TAB_WORDS, pdfFrameWindow, READY_ROOTS, NOT_READY_ROOTS, LINE_ROOTS, PDF_LOADER_ROOT, printable, figurePrintable, figureHidden, rendered,
+  type PrintState, type Picture, type Timers, type BodyLike, type PrintableNode, type FigureNode } from "./file-print";
 
 // ── the machine ─────────────────────────────────────────────────────────────────────────────────────
 
@@ -89,7 +90,7 @@ test("the words: one picture and many, for the armed line, the wait and the ask;
 
 // ── the deadline's ask (the stalled phase) ──────────────────────────────────────────────────────────
 
-test("the wait's verdict carries why and the count still loading: settled prints; the deadline with pictures still loading asks instead of printing; the deadline with nothing pending is a settle in effect and prints; Print anyway prints; Keep waiting resumes through the driver's prepare, into an open-ended wait or a print with nothing left; Escape or a second press disarms; a repaint under the ask counts again or prints over none", () => {
+test("the wait's verdict carries why and the count still loading: settled prints; the deadline with pictures still loading asks instead of printing; the deadline with nothing pending is a settle in effect and prints; Print anyway prints; Keep waiting resumes through the driver's prepare, into an open-ended wait or a print with nothing left; Escape or a second press disarms; a repaint under the ask counts again or rests over none, and never prints", () => {
   const preparing: PrintState = { phase: "preparing", gated: 0, pending: 2 };
   const settled = step(preparing, { kind: "ready", why: "settled", pending: 0 });
   assert.equal(settled.act, "print", "every picture settled: the print");
@@ -120,7 +121,9 @@ test("the wait's verdict carries why and the count still loading: settled prints
   const again = step(asked.state, { kind: "stalled", pending: 1 });
   assert.equal(again.act, "stall", "a repaint under the ask with one still loading: the ask again, the driver rewriting the count");
   assert.deepEqual(again.state, { phase: "stalled", gated: 0, pending: 1 });
-  assert.equal(step(asked.state, { kind: "stalled", pending: 0 }).act, "print", "a repaint under the ask with nothing loading prints: the question is moot and the wait's condition is met");
+  const moot = step(asked.state, { kind: "stalled", pending: 0 });
+  assert.equal(moot.act, "disarm", "FAILS BEFORE: a repaint under the ask with nothing loading is no answer to the ask, so the question is moot and the flow rests (the line goes; the person may press again); before this the zero count was read as the print act and window.print ran with neither button pressed");
+  assert.equal(moot.state.phase, "resting", "at rest, not printing");
   assert.equal(step(asked.state, { kind: "ready", why: "deadline", pending: 1 }).act, "none", "no wait runs under the ask, so a wait's verdict there changes nothing");
   for (const ev of [{ kind: "ready", why: "settled", pending: 0 }, { kind: "printed" }, { kind: "choose", withGated: true }, { kind: "recount", gated: 1 }, { kind: "body", in: true }] as const) {
     const r = step(asked.state, ev);
@@ -300,9 +303,10 @@ function fakeBody(filed: Record<string, FakeEl[]>): ParentNode {
   return { querySelectorAll: (sel: string) => (filed[sel] || []) as unknown as NodeListOf<Element> } as unknown as ParentNode;
 }
 /** An ancestor stand-in for the printable walk: its name, the attributes it carries and its parent. */
-const node = (localName: string, attrs: string[] = [], parentElement: PrintableNode | null = null): PrintableNode => ({ localName, parentElement, hasAttribute: (k) => attrs.includes(k) });
+const node = (localName: string, attrs: string[] = [], parentElement: PrintableNode | null = null): PrintableNode => hideEdges({ localName, parentElement, hasAttribute: (k) => attrs.includes(k) });
 /** A picture stand-in: its attributes (read by getAttribute and by the printable walk's hasAttribute), its parent for that walk (none: in the open body) and its name (an img unless said). */
-const elm = (attrs: Record<string, string>, complete = false, loading?: string, parentElement: PrintableNode | null = null, localName = "img"): FakeEl => ({ localName, parentElement, hasAttribute: (k) => k in attrs, complete, getAttribute: (k) => (k in attrs ? attrs[k] : null), addEventListener() {}, removeEventListener() {}, ...(loading === undefined ? {} : { loading }) });
+const elm = (attrs: Record<string, string>, complete = false, loading?: string, parentElement: PrintableNode | null = null, localName = "img", seenBy?: { cv: boolean; rects: number }): FakeEl => hideEdges({ localName, parentElement, hasAttribute: (k) => k in attrs, complete, getAttribute: (k) => (k in attrs ? attrs[k] : null), addEventListener() {}, removeEventListener() {},
+  ...(loading === undefined ? {} : { loading }), ...(seenBy === undefined ? {} : { checkVisibility: () => seenBy.cv, getClientRects: () => ({ length: seenBy.rects }) }) });   // seenBy: the browser's own answers, where the stand-in offers them
 
 test("collectPictures: every img as itself; a poster and an svg image through a probe at the resolved URL; a gated poster or href (moved aside) and an unparseable value probe nothing", () => {
   const probed: string[] = [];
@@ -345,6 +349,92 @@ test("collectPictures reads the printable rule the placeholders are counted by (
   assert.equal(inHidden.loading, "lazy", "a hidden lazy picture keeps its attribute: no fetch is started for a picture that is not on the paper");
 });
 
+// ── the printable rule's unknown side ──────────────────────────────────────────────────────────────
+/** A node stand-in with the browser's own answers: `cv` for checkVisibility, `rects` for getClientRects's count. */
+const seen = (localName: string, cv: boolean, rects: number, parentElement: PrintableNode | null = null, attrs: string[] = []): PrintableNode =>
+  hideEdges({ localName, parentElement, hasAttribute: (k) => attrs.includes(k), checkVisibility: () => cv, getClientRects: () => ({ length: rects }) });
+
+test("rendered: the browser's own answer where it can be asked (checkVisibility with visibility and opacity read, and at least one client rect), null where it cannot (a stand-in under node, an old engine); printable reads it after the walk, so a hiding the walk does not know falls to NOT printable: FAILS BEFORE, the walk alone answered printable for a placeholder inside a ruby's rp, a canvas's fallback content or a popover not shown", () => {
+  assert.equal(rendered(node("span")), null, "no API: the browser cannot be asked");
+  assert.equal(rendered(seen("span", true, 1)), true);
+  assert.equal(rendered(seen("span", false, 0)), false, "no box: display none somewhere above (a popover not shown, a ruby's rp, a canvas's or a video's fallback content, a class the sheets hide)");
+  assert.equal(rendered(seen("span", false, 1)), false, "a box the browser skips: a closed fold's content, a hidden=until-found ancestor (content-visibility hidden keeps the rects)");
+  assert.equal(rendered(seen("image", true, 0)), false, "a layout object and no rect: an svg image inside defs, a symbol, a clipPath, a mask, a pattern or a marker");
+  assert.equal(printable(seen("span", true, 1)), true, "in the open body, rendered: printable");
+  assert.equal(printable(seen("span", false, 0)), false, "FAILS BEFORE: the walk finds no closed details and no hidden, and the browser says the element is not rendered");
+  assert.equal(printable(seen("span", true, 1, node("details"))), false, "the walk's own answer stands whatever the browser says (a closed details holds it)");
+  assert.equal(printable(seen("span", true, 1, null, ["hidden"])), false, "hidden on the element: the walk");
+  const opts: Array<Record<string, boolean>> = [];
+  const asked: PrintableNode = hideEdges({ localName: "span", parentElement: null, hasAttribute: () => false, checkVisibility: (o) => { opts.push(o || {}); return true; }, getClientRects: () => ({ length: 1 }) });
+  printable(asked);
+  assert.deepEqual(opts, [{ visibilityProperty: true, opacityProperty: true }], "checkVisibility is asked with visibility and opacity read (an svg's visibility=hidden or opacity=0, kept attributes, leave nothing on the paper) and content-visibility auto left alone (the sheets use none, and a picture far below the fold is on the paper)");
+});
+
+/** A figure stand-in inside a placeholder: its own attributes, by name and value. */
+const media = (localName: string, attrs: Record<string, string> = {}): FigureNode => ({ localName, hasAttribute: (k) => k in attrs, getAttribute: (k) => (k in attrs ? attrs[k] : null) });
+test("figureHidden enumerates the kept attributes that leave a figure off the paper once restored: hidden (any value) and popover on any element, and an svg's display none, visibility hidden or collapse, and opacity 0; every other attribute, and every other value, leaves it on the paper (the browser cannot be asked about a gated figure: the sheet hides every child of a placeholder but its label)", () => {
+  assert.equal(figureHidden(media("img")), false, "a plain picture");
+  assert.equal(figureHidden(media("img", { hidden: "" })), true, "hidden");
+  assert.equal(figureHidden(media("img", { hidden: "until-found" })), true, "hidden=until-found: skipped until a find reveals it");
+  assert.equal(figureHidden(media("img", { popover: "" })), true, "a popover is shown by a call alone, which a note cannot make");
+  assert.equal(figureHidden(media("img", { popover: "manual" })), true);
+  assert.equal(figureHidden(media("svg", { display: "none" })), true, "an svg's display none");
+  assert.equal(figureHidden(media("svg", { display: "NONE" })), true, "the keyword read case-insensitively, as CSS does");
+  assert.equal(figureHidden(media("svg", { display: " none " })), true, "with the spaces the attribute may carry");
+  assert.equal(figureHidden(media("svg", { display: "inline" })), false, "another display value: on the paper");
+  assert.equal(figureHidden(media("svg", { visibility: "hidden" })), true);
+  assert.equal(figureHidden(media("svg", { visibility: "collapse" })), true, "collapse hides as hidden does outside a table");
+  assert.equal(figureHidden(media("svg", { visibility: "visible" })), false);
+  assert.equal(figureHidden(media("svg", { opacity: "0" })), true);
+  assert.equal(figureHidden(media("svg", { opacity: "0.0" })), true); assert.equal(figureHidden(media("svg", { opacity: "0%" })), true, "a zero percentage");
+  assert.equal(figureHidden(media("svg", { opacity: "0.5" })), false, "a faint figure is on the paper"); assert.equal(figureHidden(media("svg", { opacity: "1" })), false);
+  assert.equal(figureHidden(media("img", { display: "none" })), false, "display is no HTML attribute: on an img it styles nothing (the style attribute keeps colour alone), so the picture is on the paper");
+  assert.equal(figureHidden(media("video", { poster: "x", width: "0" })), false, "a zero size is a degenerate picture the browser still draws: on the paper as far as the flow reads");
+  assert.equal(figureHidden(media("picture", { inert: "" })), false, "inert renders");
+});
+
+test("figurePrintable: a placeholder reaches the paper when it does (printable: the walk and the browser) and the figure it wraps carries none of the attributes that would hide it once restored (figureHidden); FAILS BEFORE: an <img hidden> inside its placeholder, or a gated svg with display none, had the placeholder counted and its figure fetched by Print with them for a print that never shows it; no media child leaves the placeholder's own answer", () => {
+  // a placeholder stand-in around `figure`: hideEdges makes a node's methods non-enumerable, so a spread of one copies nothing; the fields are named
+  const around = (base: PrintableNode, figure: FigureNode | null): PrintableNode & { firstElementChild: FigureNode | null } =>
+    hideEdges({ localName: base.localName, parentElement: base.parentElement, hasAttribute: (k: string) => base.hasAttribute(k), checkVisibility: base.checkVisibility, getClientRects: base.getClientRects, firstElementChild: figure });
+  const wrap = (cv: boolean, rects: number, figure: FigureNode | null): PrintableNode & { firstElementChild: FigureNode | null } => around(seen("span", cv, rects), figure);
+  assert.equal(figurePrintable(wrap(true, 1, media("img"))), true, "the placeholder rendered and its picture plain");
+  assert.equal(figurePrintable(wrap(true, 1, media("img", { hidden: "" }))), false, "FAILS BEFORE: the placeholder's label is rendered while the picture it wraps carries hidden");
+  assert.equal(figurePrintable(wrap(true, 1, media("svg", { display: "none" }))), false, "FAILS BEFORE: an svg with display none");
+  assert.equal(figurePrintable(wrap(true, 1, media("svg", { visibility: "hidden" }))), false); assert.equal(figurePrintable(wrap(true, 1, media("svg", { opacity: "0" }))), false);
+  assert.equal(figurePrintable(wrap(false, 0, media("img"))), false, "the placeholder itself not rendered (a popover, a ruby's rp, a canvas's fallback content)");
+  assert.equal(figurePrintable(wrap(true, 1, null)), true, "no media child (the placeholder alone): its own answer");
+  assert.equal(figurePrintable(around(node("span"), media("img"))), true, "no browser to ask: the walk alone on the placeholder, the attributes on the figure");
+  assert.equal(figurePrintable(around(node("span", [], node("details")), media("img"))), false, "the walk on the placeholder: a closed details");
+  const sheetHidden: FigureNode & PrintableNode = hideEdges({ localName: "img", hasAttribute: () => false, getAttribute: () => null, parentElement: null, checkVisibility: () => false, getClientRects: () => ({ length: 0 }) });
+  assert.equal(figurePrintable(wrap(true, 1, sheetHidden)), true, "the browser's answer for the gated figure is not read: the sheet hides every child of a placeholder but its label, so it would say hidden for every figure");
+});
+
+test("collectPictures reads the browser's answer through printable too: a picture with no box (a ruby's rp, a canvas's fallback content, a popover not shown) or without a rect (an svg image inside defs) is not collected, not set eager and not probed", () => {
+  const probed: string[] = [];
+  const probe = (url: string): Picture => { probed.push(url); return new FakePic(); };
+  const shown = elm({}, false, "lazy", null, "img", { cv: true, rects: 1 });
+  const unshown = elm({}, false, "lazy", null, "img", { cv: false, rects: 0 });
+  const defsImage = elm({ href: "defs-d.svg" }, false, undefined, null, "image", { cv: true, rects: 0 });
+  const pics = collectPictures(fakeBody({ img: [shown, unshown], "video[poster]": [], image: [defsImage, elm({ href: "open-d.svg" }, false, undefined, null, "image")] }), "http://notes-api.test/files", probe);
+  assert.equal(pics.length, 2, "the shown picture and the open diagram's probe");
+  assert.equal(pics[0], shown);
+  assert.equal(shown.loading, "eager", "the shown lazy picture is set eager");
+  assert.equal(unshown.loading, "lazy", "the unshown one keeps its attribute: no fetch is started for a picture the browser does not render");
+  assert.deepEqual(probed, ["http://notes-api.test/open-d.svg"], "no probe for the image inside defs");
+});
+
+test("isPrintKeys enumerates the chord's keys and answers false for every other key or modifier set (the flow prevents no key it does not know; the browser's default stands for the rest): Ctrl or Meta with p or P, no Shift, no Alt; a repeat is the keys (isPrintChord alone refuses it)", () => {
+  assert.equal(isPrintKeys({ key: "p", ctrlKey: true }), true); assert.equal(isPrintKeys({ key: "P", metaKey: true }), true);
+  assert.equal(isPrintKeys({ key: "p", ctrlKey: true, repeat: true }), true, "a held chord's repeat is the keys");
+  assert.equal(isPrintChord({ key: "p", ctrlKey: true, repeat: true }), false, "and not a press");
+  for (const e of [{ key: "q", ctrlKey: true }, { key: "Enter", ctrlKey: true }, { key: "F12", metaKey: true }, { key: "Escape" }, { key: "p" }, { key: "p", shiftKey: true }, { key: "p", altKey: true },
+    { key: "p", ctrlKey: true, shiftKey: true }, { key: "p", metaKey: true, altKey: true }, { key: "p", ctrlKey: true, metaKey: true, shiftKey: true }, { ctrlKey: true }, { key: undefined, ctrlKey: true }, { key: "pp", ctrlKey: true }, { key: "π", ctrlKey: true }, {}]) {
+    assert.equal(isPrintKeys(e), false, JSON.stringify(e) + " is not the chord's keys");
+    assert.equal(isPrintChord(e), false, JSON.stringify(e) + " is not the chord");
+  }
+});
+
 // ── the PDF kind (P4) ───────────────────────────────────────────────────────────────────────────────
 
 test("the PDF kind: a press at rest prints the document itself, whatever the counts; printed rests; a document's press is the flow above; the two lines' words", () => {
@@ -381,17 +471,29 @@ test("pdfFrameWindow: the frame's window when it holds the PDF and can print; nu
   assert.equal(pdfFrameWindow(frameBody({ contentWindow: win(BLOB, "application/pdf", null), src: BLOB })), null, "print is no function");
   const throwing: FakeWin = { print: () => {}, get location(): { href: string } { throw new Error("cross-origin"); }, document: null };
   assert.equal(pdfFrameWindow(frameBody({ contentWindow: throwing, src: BLOB })), null, "a window that withholds its location");
+  // the unknown side: a document of a kind the flow does not know, at a URL that is not the frame's own, is not the PDF, and the
+  // press falls to the /file tab (the safe side: a print of that window would print whatever it holds)
+  assert.equal(pdfFrameWindow(frameBody({ contentWindow: win("http://notes-api.test/other.html", "text/html"), src: BLOB })), null, "an HTML document at another URL: not the PDF, the tab");
+  assert.equal(pdfFrameWindow(frameBody({ contentWindow: win("http://notes-api.test/bytes", "application/octet-stream"), src: BLOB })), null, "a document of an unknown type at another URL: the tab");
+  const elsewhere = win("http://notes-api.test/bytes", "application/pdf");
+  assert.equal(pdfFrameWindow(frameBody({ contentWindow: elsewhere, src: BLOB })), elsewhere, "a PDF document at another URL is the PDF (the type decides)");
+  const kinds = [["application/pdf", true], ["text/html", false], ["application/octet-stream", false], ["image/svg+xml", false], ["", false]] as Array<[string, boolean]>;
+  for (const [type, holds] of kinds) assert.equal(pdfFrameWindow(frameBody({ contentWindow: win("http://notes-api.test/elsewhere", type), src: BLOB })) !== null, holds, "a document of type " + JSON.stringify(type) + " at another URL " + (holds ? "is the PDF" : "is not: the tab"));
 });
 
 // ── the body not in (P7) ────────────────────────────────────────────────────────────────────────────
 
-/** A body stand-in whose children are `kids`, each "name.class1.class2" (the viewer's own paints, spelled as the DOM would read them). */
-const bodyOf = (...kids: string[]): BodyLike => ({ children: kids.map((k) => { const [localName, ...classes] = k.split("."); return { localName, classList: { contains: (c: string) => classes.includes(c) } }; }) });
+/** A child stand-in for the readiness test: "name.class1.class2" (the viewer's own paints, spelled as the DOM reads them). */
+const kidOf = (k: string): { localName: string; classList: { contains(name: string): boolean } } => { const [localName, ...classes] = k.split("."); return { localName, classList: { contains: (c: string) => classes.includes(c) } }; };
+/** A body stand-in whose element children are `kids` (the DOM's `children`). */
+const bodyOf = (...kids: string[]): BodyLike => hideEdges({ children: kids.map(kidOf) });
+/** A body stand-in with `childNodes` alone, or with both lists, or with neither. */
+const bodyLike = (b: BodyLike): BodyLike => hideEdges(b);
 
-test("bodyReady reads the body's children: the loader as content, the plain fallback editor and a failure line alone are not in; a rendered root, code, a picture's box, a PDF frame's column (a loader inside it aside), the pages' host, the CodeMirror mount and a line over content are in; an empty body is not", () => {
+test("bodyReady reads the body's element children against three closed lists: a rendered root, code, a picture's box, a PDF frame's column (a loader inside it aside), the pages' host, the CodeMirror mount and a line over content are in; the loader, the plain fallback editor and a failure line alone are not; an empty body is not; a child none of the lists names is NOT in, whatever stands beside it (FAILS BEFORE: it read as content); for the PDF kind alone the pages attempt's loader reads as content", () => {
   assert.equal(bodyReady(bodyOf()), false, "an empty body (the URL viewer's before its loader)");
   assert.equal(bodyReady(bodyOf("div.fileview-load")), false, "the open's loader, the editor's chunk wait");
-  assert.equal(bodyReady(bodyOf("div.fileview-load", "div.fileview-pdfhost")), false, "the Comments panel's PDF pages before page 1 is drawn, with no frame to keep: the loader and the empty host");
+  assert.equal(bodyReady(bodyOf("div.fileview-load", "div.fileview-pdfhost")), false, "a document's body holding a loader and a host: not in (the kind unknown or a document's)");
   assert.equal(bodyReady(bodyOf("textarea.fileview-editor")), false, "the plain fallback editor: a print of it is one clipped page");
   assert.equal(bodyReady(bodyOf("div.fileview-err")), false, "a failure pane alone: the fetch's, imgFailed's, the URL viewer's");
   assert.equal(bodyReady(bodyOf("div.fileview-md")), true, "a rendered note");
@@ -403,6 +505,44 @@ test("bodyReady reads the body's children: the loader as content, the plain fall
   assert.equal(bodyReady(bodyOf("div.fileview-pdfhost")), true, "the panel's pages once page 1 is drawn (the loader gone)");
   assert.equal(bodyReady(bodyOf("div.fileview-cm")), true, "the CodeMirror mount, which prints the whole file");
   assert.equal(bodyReady(bodyOf("div.fileview-md", "div.fileview-load")), false, "a loader anywhere among the children is the body loading, whatever else stands");
+  // the unknown side: not in (the round-2 review, 2026-09-19: the first derivation read every child it had not seen as content)
+  assert.equal(bodyReady(bodyOf("div.fileview-unlisted")), false, "FAILS BEFORE: a root none of the lists names is not in; the button stays dead rather than printing what stands");
+  assert.equal(bodyReady(bodyOf("div.fileview-md", "div.fileview-unlisted")), false, "an unlisted child beside content: not in, since the flow cannot say what the press would print");
+  assert.equal(bodyReady(bodyOf("span.fileview-md")), false, "the class alone is not the root: a span wearing the rendered root's class is unlisted");
+  assert.equal(bodyReady(bodyOf("div.fileview-md.fv-wide")), true, "a root's element may carry more classes than its own");
+  assert.equal(bodyReady(bodyOf("div")), false, "a bare div is unlisted");
+  // the PDF kind: the PDF road reads nothing from the body, so the pages attempt's loader is content there (the press prints
+  // through the frame or opens the /file tab), while the plain editor, a failure pane alone and an empty body stay not in
+  assert.equal(bodyReady(bodyOf("div.fileview-load", "div.fileview-pdfhost"), "pdf"), true, "FAILS BEFORE: the Comments panel's pages attempt with no frame kept, the kind known to be a PDF: in (the press opens the tab, as it did before the derivation)");
+  assert.equal(bodyReady(bodyOf("div.fileview-load"), "pdf"), true, "the loader alone under the PDF kind: in");
+  assert.equal(bodyReady(bodyOf("div.fileview-pdffall"), "pdf"), true, "the frame's column: in for a PDF as for a document");
+  assert.equal(bodyReady(bodyOf("div.fileview-err"), "pdf"), false, "a failure pane alone stays not in for a PDF: a reload of the PDF that failed");
+  assert.equal(bodyReady(bodyOf("textarea.fileview-editor"), "pdf"), false, "the plain editor stays not in whatever the kind");
+  assert.equal(bodyReady(bodyOf(), "pdf"), false, "an empty body stays not in");
+  assert.equal(bodyReady(bodyOf("div.fileview-unlisted"), "pdf"), false, "an unlisted root stays not in whatever the kind");
+  assert.equal(bodyReady(bodyOf("div.fileview-load", "div.fileview-pdfhost"), "document"), false, "a document's kind, spelled: the loader is a wait");
+  assert.equal(PDF_LOADER_ROOT, "div.fileview-load", "the one wait root the PDF kind reads as content is the loader");
+});
+
+test("rootKind classes one child by its `<tag>.<class>` against the three lists: content, wait, line, else unknown; the tag and the class are both read", () => {
+  for (const r of READY_ROOTS) assert.equal(rootKind(kidOf(r)), "content", r);
+  for (const r of NOT_READY_ROOTS) assert.equal(rootKind(kidOf(r)), "wait", r);
+  for (const r of LINE_ROOTS) assert.equal(rootKind(kidOf(r)), "line", r);
+  assert.equal(rootKind(kidOf("div.fileview-unlisted")), "unknown");
+  assert.equal(rootKind(kidOf("p.fileview-md")), "unknown", "the rendered root's class on another tag");
+  assert.equal(rootKind(kidOf("div")), "unknown", "no class");
+  assert.equal(rootKind({ localName: undefined as unknown as string, classList: { contains: () => true } }), "unknown", "a child with no localName (a stand-in under node) is unknown, so a stand-in body is never in by accident");
+});
+
+test("bodyReady reads the element children through `children`, else through `childNodes` filtered to elements (the DOM stand-ins of the node suites, which drive the real viewer over bodies with childNodes alone: FAILS BEFORE, Array.from(undefined) threw at every open), and a body with neither is not in", () => {
+  const text = { nodeType: 3 };
+  const viaNodes = bodyLike({ childNodes: [text, { nodeType: 1, ...kidOf("div.fileview-md") }, text] });
+  assert.equal(bodyReady(viaNodes), true, "the rendered root among text nodes, read through childNodes");
+  assert.equal(bodyReady(bodyLike({ childNodes: [text, { nodeType: 1, ...kidOf("div.fileview-load") }] })), false, "the loader through childNodes: not in");
+  assert.equal(bodyReady(bodyLike({ childNodes: [text] })), false, "text alone: no element child, not in");
+  assert.equal(bodyReady(bodyLike({ childNodes: [{ nodeType: 1, tagName: "DIV", classList: { contains: () => true } } as unknown as { nodeType: number }] })), false, "a stand-in element without localName is unknown: not in");
+  assert.equal(bodyReady(bodyLike({})), false, "a body that reports neither children nor childNodes cannot be read: not in (the safe side; a DOM body always has both)");
+  assert.equal(bodyReady(bodyLike({ children: [kidOf("div.fileview-md")], childNodes: [text] })), true, "children wins when both stand: it is the DOM's own element list");
 });
 
 // ── the census of the body's roots (P7) ────────────────────────────────────────────────────────────
@@ -484,7 +624,7 @@ function rootsOf(expr: string, before: number): string[] {
   throw new Error("a seated expression the census cannot resolve: " + e);
 }
 
-test("the census of the body's roots: every element file-view.ts seats in the body resolves to a root the flow lists (READY_ROOTS, NOT_READY_ROOTS or LINE_ROOTS), every listed root is seated, no root is in two lists, bodyReady answers over each root as its list says, and an unlisted child reads as content, the fallthrough the lists guard", (t) => {
+test("the census of the body's roots: every element file-view.ts seats in the body resolves to a root the flow lists (READY_ROOTS, NOT_READY_ROOTS or LINE_ROOTS), every listed root is seated, no root is in two lists, bodyReady answers over each root as its list says, an unlisted child is NOT in (the safe side, so a root the viewer gains fails here until it is listed), and under the PDF kind the loader alone of the wait roots reads as content", (t) => {
   const sites = [...VIEWER_SRC.matchAll(/(?<!document\.)\bbody\.(replaceChildren|prepend|appendChild)\(/g)];
   assert.ok(sites.length >= 10, "the seating sites are found in file-view.ts: " + sites.length);
   const seated = new Map<string, number[]>();
@@ -508,7 +648,11 @@ test("the census of the body's roots: every element file-view.ts seats in the bo
     assert.equal(bodyReady(bodyOf(r)), false, r + " alone: not in");
     for (const c of READY_ROOTS) assert.equal(bodyReady(bodyOf(r, c)), true, r + " over " + c + ": a line over content, in");
   }
-  assert.equal(bodyReady(bodyOf("div.fileview-unlisted")), true, "a child none of the lists names reads as content: the fallthrough this census guards");
+  assert.equal(bodyReady(bodyOf("div.fileview-unlisted")), false, "FAILS BEFORE: a child none of the lists names is not in; this census is what turns a new root into a red test rather than a dead button");
+  for (const c of READY_ROOTS) assert.equal(bodyReady(bodyOf(c, "div.fileview-unlisted")), false, "an unlisted child beside " + c + ": not in");
+  for (const r of NOT_READY_ROOTS) assert.equal(bodyReady(bodyOf(r), "pdf"), r === PDF_LOADER_ROOT, r + " alone under the PDF kind: " + (r === PDF_LOADER_ROOT ? "in (the pages attempt's loader; the PDF road reads nothing from the body)" : "not in"));
+  assert.ok(NOT_READY_ROOTS.includes(PDF_LOADER_ROOT), "the PDF kind's exception is one of the wait roots");
+  for (const r of LINE_ROOTS) assert.equal(bodyReady(bodyOf(r), "pdf"), false, r + " alone under the PDF kind: not in");
 });
 
 test("disabled until the body is in: the driver's start, where a press (the button's or the chord's), an Escape, a choice, a prepare, a ready and a printed change nothing; the body arriving rests; the body going out from rest, armed, the wait or the print disarms and disables; the body's arrival elsewhere changes nothing", () => {

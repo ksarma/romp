@@ -34,7 +34,15 @@
 // (12) the settle's re-aim under the press's deadline (the fourth review's correction of tests-2, 2026-09-19): a second
 //     parked picture inserted inside the rendered root mid-wait, a grandchild of the body, so the observer of the body's
 //     children is silent and no repaint re-aim runs; the first picture released settles the wait, and the settle's re-aim
-//     finds the second; the ask comes at the PRESS's deadline, not one restarted at the settle.
+//     finds the second; the ask comes at the PRESS's deadline, not one restarted at the settle;
+// (13) a repaint under the deadline's ask (the round-2 review's regression-1 and tests-1, 2026-09-19): a Reload landing a
+//     body with nothing loading, or a Raw pick, is no answer to the ask, so it never prints: with nothing left loading the
+//     question is moot and the flow rests (the line goes, and the next press prints at once); with pictures still loading
+//     the ask stands and its count follows in place. Before this the driver's recount fed the machine a zero count that
+//     was read as the print act, and window.print ran with neither button pressed, over the Raw view in one case;
+// (14) the press-time read of the body (the round-2 review's tests-5): a press reads the body's children itself before it
+//     acts, so a swap in the press's own task, before the observer has run, is seen: the loader swapped in and a press in
+//     one task prints nothing and disables; content swapped in over the open's loader and a press in one task prints.
 // Each re-aim's deadline is executed by its own case: the repaint's in case (3c), a Reload landing mid-wait whose picture
 // is parked too, and the ask at the PRESS's deadline, not one restarted at the landing (the third review's tests-2: the
 // record's claim was pinned by a source-text census alone, and a re-aim restarting the full deadline left every leg
@@ -53,6 +61,7 @@ const SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect 
 const QUICK = "fig.svg";                       // a local picture the route answers at once
 const SLOW = "slow.svg";                       // a local picture whose route is parked until the test releases it
 const SLOW2 = "slow2.svg";                     // a second one, brought by a reload
+const SLOW3 = "slow3.svg";                     // a third, brought beside the second by a reload under the ask (case 13)
 const POSTER = "clip.svg";                     // a <video poster>, parked
 const IMAGE = "d.svg";                         // an svg <image href>, parked
 const LAZY = "lazy.svg";                       // an <img loading="lazy"> far below the fold, parked
@@ -63,6 +72,8 @@ const GATED_NOTE = "# Figures\n\nA local picture ![](" + QUICK + ") and a slow o
 const PLAIN_NOTE = "# Plain\n\nOne local picture ![](" + QUICK + ") and text.\n\nLast line.\n";
 const SLOW_NOTE = "# Slow\n\nA local picture ![](" + QUICK + ") and a slow one ![](" + SLOW + ").\n\nLast line.\n";
 const SLOW2_NOTE = "# Slow\n\nA local picture ![](" + QUICK + ") and a slower one ![](" + SLOW2 + ").\n\nA session appended a figure.\n";
+const NOPIC_NOTE = "# Plain\n\nText alone, no picture.\n\nLast line.\n";
+const TWO_SLOW_NOTE = "# Slow\n\nTwo slow ones ![](" + SLOW2 + ") and ![](" + SLOW3 + ").\n\nA session appended two figures.\n";
 const MEDIA_NOTE = "# Media\n\nA clip:\n\n<video poster=\"" + POSTER + "\" controls></video>\n\nA diagram:\n\n<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"8\" height=\"8\"><image href=\"" + IMAGE + "\" width=\"8\" height=\"8\"/></svg>\n\nLast line.\n";
 const HEADED_GATED = "# Title\n\n## One\n\nA remote picture ![](" + REMOTE + ").\n\n## Two\n\nMore text.\n\n## Three\n\nLast line.\n";
 const TWO_HOST_NOTE = "# Two hosts\n\n<picture><source srcset=\"https://a.test/p.svg\" type=\"image/svg+xml\"><img src=\"https://b.test/p.svg\" alt=\"\"></picture>\n\nLast line.\n";
@@ -833,6 +844,159 @@ test("(12) the settle's re-aim runs under the press's deadline, never a restarte
     await page.evaluate(() => { (window as any).FV.setPrintSettleMs(null); });
     assert.equal(await page.evaluate(() => (window as any).FV.printSettleMs()), 8000, "the seam restored");
     assert.deepEqual(s.errors, [], "no script error");
+    await page.close();
+  });
+});
+
+// ── (13) a repaint under the deadline's ask ────────────────────────────────────────────────────────
+
+const STALLED_ONE = "1 picture has not loaded.";
+const STALLED_TWO = "2 pictures have not loaded.";
+const askReached = (page: any): Promise<unknown> => page.waitForFunction((w: string) => (document.getElementById("fileview-print-line")?.firstChild?.textContent || "") === w, STALLED_ONE, { timeout: 6000 });
+const markLine = (page: any): Promise<void> => page.evaluate(() => { document.getElementById("fileview-print-line")!.setAttribute("data-probe", "1"); });
+const lineMarked = (page: any): Promise<boolean> => page.evaluate(() => document.getElementById("fileview-print-line")?.getAttribute("data-probe") === "1");
+
+test("(13) a repaint under the deadline's ask never prints: a Reload landing a body with nothing to wait on makes the question moot and the flow rests, nothing printed (FAILS BEFORE: window.print ran with neither button pressed), and the next press prints at once; a landing with two pictures still loading keeps the ask, its count rewritten in place to two; a Raw pick under the ask rests too, nothing printed (FAILS BEFORE: it printed the Raw view)", { timeout: 180000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    // a: the landing has no picture at all (a landing whose picture merely loads fast is still loading when the observer runs)
+    let s = await scene(browser, "pane", SLOW_NOTE, { held: [SLOW] });
+    let { page } = s;
+    await parked(s, [SLOW]);
+    await page.evaluate(() => { (window as any).FV.setPrintSettleMs(600); });
+    await page.click(PRINT_BTN);
+    await askReached(page);
+    let b = await bar(page);
+    assert.equal(b.phase, "stalled"); assert.deepEqual(b.buttons, [ANYWAY_WORDS, KEEP_WORDS]); assert.equal((await prints(page)).length, 0, "the ask stands, nothing printed");
+    await reloadTo(page, NOPIC_NOTE);
+    await page.waitForFunction(() => !document.getElementById("fileview-save-err") && !!document.querySelector("#romp-fileview .fileview-md > p") && document.querySelectorAll("#romp-fileview .fileview-body img").length === 0, null, { timeout: 10000 });
+    await frames(page, 3);
+    b = await bar(page);
+    assert.equal((await prints(page)).length, 0, "FAILS BEFORE: the landing under the ask printed with neither button pressed; a repaint is no answer");
+    assert.equal(b.phase, null, "the question is moot: the flow rests"); assert.equal(b.line, null, "the line went"); assert.equal(b.cardUp, true);
+    const printed = await page.evaluate(() => { (document.querySelector("#romp-fileview .fileview-print") as HTMLButtonElement).click(); return (window as any).__prints.length; });
+    assert.equal(printed, 1, "the next press prints at once: nothing to wait on");
+    await s.release([SLOW]);
+    await frames(page, 6);
+    assert.equal((await prints(page)).length, 1, "the old body's picture landing prints nothing more");
+    await page.evaluate(() => { (window as any).FV.setPrintSettleMs(null); });
+    assert.deepEqual(s.errors, [], "no script error");
+    await page.close();
+    // b: the landing brings two parked pictures: the ask stands with its count rewritten in place
+    s = await scene(browser, "pane", SLOW_NOTE, { held: [SLOW, SLOW2, SLOW3] });
+    page = s.page;
+    await parked(s, [SLOW]);
+    await page.evaluate(() => { (window as any).FV.setPrintSettleMs(600); });
+    await page.click(PRINT_BTN);
+    await askReached(page);
+    await markLine(page);
+    await reloadTo(page, TWO_SLOW_NOTE);
+    for (let i = 0; i < 100 && (s.heldCount(SLOW2) === 0 || s.heldCount(SLOW3) === 0); i++) await frames(page, 1);
+    assert.equal(s.heldCount(SLOW2) + s.heldCount(SLOW3), 2, "the landing's two pictures are requested and parked");
+    await page.waitForFunction((w: string) => (document.getElementById("fileview-print-line")?.firstChild?.textContent || "") === w, STALLED_TWO, { timeout: 6000 });
+    b = await bar(page);
+    assert.equal(b.phase, "stalled", "the ask stands"); assert.equal(b.line, STALLED_TWO, "the count follows the landing"); assert.equal(b.lines, 1, "one line");
+    assert.equal(await lineMarked(page), true, "the same row: the words rewritten in place, not the line rebuilt");
+    assert.deepEqual(b.buttons, [ANYWAY_WORDS, KEEP_WORDS]);
+    assert.equal((await prints(page)).length, 0, "nothing printed by the landing");
+    await page.keyboard.press("Escape");
+    await frames(page, 1);
+    b = await bar(page);
+    assert.equal(b.phase, null, "Escape under the ask disarms"); assert.equal(b.line, null); assert.equal(b.cardUp, true, "the card stays up");
+    await s.release([SLOW, SLOW2, SLOW3]);
+    await frames(page, 6);
+    assert.equal((await prints(page)).length, 0, "the pictures landing after the disarm print nothing: nothing waits");
+    await page.evaluate(() => { (window as any).FV.setPrintSettleMs(null); });
+    assert.deepEqual(s.errors, [], "no script error");
+    await page.close();
+    // c: a Raw pick under the ask (the chat modal, whose bar carries the Rendered/Raw pair): the rows hold no picture, so the
+    // question is moot and the flow rests; the Raw view is not printed
+    s = await scene(browser, "chat", SLOW_NOTE, { held: [SLOW] });
+    page = s.page;
+    await parked(s, [SLOW]);
+    await page.evaluate(() => { (window as any).FV.setPrintSettleMs(600); });
+    await page.click(PRINT_BTN);
+    await askReached(page);
+    await page.click('#romp-fileview .fileview-seg button:has-text("Raw")');
+    await page.waitForFunction(() => !!document.querySelector("#romp-fileview .fileview-body .fv-cl"), null, { timeout: 10000 });
+    await frames(page, 3);
+    b = await bar(page);
+    assert.equal((await prints(page)).length, 0, "FAILS BEFORE: the Raw pick under the ask printed the Raw view with neither button pressed");
+    assert.equal(b.phase, null, "the flow rests"); assert.equal(b.line, null); assert.equal(b.cardUp, true);
+    await page.evaluate(() => { (window as any).FV.setPrintSettleMs(null); });
+    assert.equal(await page.evaluate(() => (window as any).FV.printSettleMs()), 8000, "the seam restored");
+    assert.deepEqual(s.errors, [], "no script error");
+    await page.close();
+  });
+});
+
+// ── (14) the press reads the body itself ───────────────────────────────────────────────────────────
+
+test("(14) a press reads the body's children before it acts, so a swap in the press's own task is seen before the observer runs: the loader swapped in and a press in one task prints nothing and the button reads disabled; the content put back and a press in one task prints; over the open's own loader, content swapped in and a press in one task prints", { timeout: 120000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    // a: content out, the loader in, and the press, in one task
+    let s = await scene(browser, "pane", NOPIC_NOTE);
+    let { page } = s;
+    assert.equal((await bar(page)).phase, null, "live over the note");
+    let r: { printed: number; phase: string | null; ariaDisabled: string | null } = await page.evaluate(() => {
+      const body = document.querySelector("#romp-fileview .fileview-body")!;
+      const kept = Array.from(body.children);
+      const load = document.createElement("div"); load.className = "fileview-load";
+      body.replaceChildren(load);
+      (document.querySelector("#romp-fileview .fileview-print") as HTMLButtonElement).click();
+      const b = document.querySelector("#romp-fileview .fileview-print") as HTMLButtonElement;
+      const out = { printed: (window as any).__prints.length, phase: b.dataset.print || null, ariaDisabled: b.getAttribute("aria-disabled") };
+      body.replaceChildren(...kept);
+      return out;
+    });
+    assert.deepEqual(r, { printed: 0, phase: "disabled", ariaDisabled: "true" }, "the press read the loader before the observer ran: nothing printed, the button disabled in the press's own task");
+    await frames(page, 2);
+    assert.equal((await bar(page)).phase, null, "the content back: live again once the observer ran");
+    r = await page.evaluate(() => {
+      const body = document.querySelector("#romp-fileview .fileview-body")!;
+      const kept = Array.from(body.children);
+      const load = document.createElement("div"); load.className = "fileview-load";
+      body.replaceChildren(load);
+      body.replaceChildren(...kept);   // out and back in one task: the observer sees one change list, the press sees content
+      (document.querySelector("#romp-fileview .fileview-print") as HTMLButtonElement).click();
+      const b = document.querySelector("#romp-fileview .fileview-print") as HTMLButtonElement;
+      return { printed: (window as any).__prints.length, phase: b.dataset.print || null, ariaDisabled: b.getAttribute("aria-disabled") };
+    });
+    assert.equal(r.printed, 1, "content in the body at the press: printed at once");
+    assert.deepEqual(s.errors, [], "no script error");
+    await page.close();
+    // b: the open's loader up (the report's answer parked), content swapped in by hand and the press, in one task
+    const opened = await openViewer(browser, "pane", 900, 700, {
+      docs: { [REPORT]: NOPIC_NOTE },
+      waitFor: "#romp-fileview .fileview-body .fileview-load",
+      before: async (pg: any) => {
+        await pg.evaluate(() => {
+          const w = window as any; const prev = w.fetch;
+          const gate = new Promise<void>((r2) => { w.__release = r2; });
+          w.fetch = async function (url: unknown, init: any) {
+            const m = /[?&]path=([^&]*)/.exec(String(url));
+            if (m && /\/report\.md$/.test(decodeURIComponent(m[1])) && !(init && init.method === "HEAD")) await gate;
+            return prev(url, init);
+          };
+        });
+        await pg.evaluate(PAGE_PROBES);
+      },
+    });
+    page = opened.page;
+    assert.equal((await bar(page)).phase, "disabled", "disabled over the open's loader");
+    r = await page.evaluate(() => {
+      const body = document.querySelector("#romp-fileview .fileview-body")!;
+      const md = document.createElement("div"); md.className = "fileview-md"; md.innerHTML = "<p>seated by the test</p>";
+      body.replaceChildren(md);
+      (document.querySelector("#romp-fileview .fileview-print") as HTMLButtonElement).click();
+      const b = document.querySelector("#romp-fileview .fileview-print") as HTMLButtonElement;
+      return { printed: (window as any).__prints.length, phase: b.dataset.print || null, ariaDisabled: b.getAttribute("aria-disabled") };
+    });
+    assert.deepEqual(r, { printed: 1, phase: null, ariaDisabled: null }, "the press read the content before the observer ran: printed in the press's own task, the button live");
+    await page.evaluate(() => { (window as any).__release(); });
+    await page.waitForFunction(() => (document.querySelector("#romp-fileview .fileview-md > p")?.textContent || "") === "Text alone, no picture.", null, { timeout: 10000 });
+    await frames(page, 2);
+    assert.equal((await bar(page)).phase, null, "the real paint landed: live");
+    assert.deepEqual(opened.errors, [], "no script error");
     await page.close();
   });
 });

@@ -435,11 +435,28 @@ export function regateFigures(doc: ParentNode): void {
     else if (hosts[0] !== wrap.getAttribute("data-fv-host")) labelGate(wrap as HTMLElement, hosts);
   });
 }
-/** The click: the host joins the document's loaded set and every placeholder waiting on it (alone) is restored. */
+/** The click: the host joins the document's loaded set and every placeholder waiting on it (alone) is restored. A click on a
+ *  placeholder keeps this host-wide, page-life meaning (the ruling: for the session); the print's one-time restore is
+ *  loadGatedFigure below. */
 export function loadGatedHost(host: string, doc: ParentNode = document): void {
   if (!host) return;
   loadedHosts.add(host.toLowerCase());
   regateFigures(doc);
+}
+/** Restore ONE placeholder for a one-time act, the print's "Print with them" (file-print.ts): its figure's moved attributes
+ *  back under their names and the media element back in the placeholder's place, as a click's restore does for each
+ *  placeholder of a host (restore), WITHOUT adding any host to the document's loaded set. The grant is this placeholder's
+ *  alone: every other placeholder naming the host, one inside a closed fold among them, stands as it is, and the next paint
+ *  of the page (a reload, a Rendered or Raw pick) gates the host's figures again, since every paint reads the loaded set.
+ *  A click on a placeholder keeps its host-wide, page-life meaning (loadGatedHost). True when `wrap` was a placeholder
+ *  (found by the delegated action, as gateOf and regateFigures find one, never by the class) and was restored; false, and
+ *  nothing touched, for any other element. Before the round-2 review (2026-09-19) the print restored by host through
+ *  loadGatedHost, so a host one printable and one folded placeholder shared had both restored and the folded picture
+ *  fetched for a print that never shows it. */
+export function loadGatedFigure(wrap: Element): boolean {
+  if (wrap.getAttribute("data-act") !== GATE_ACT) return false;
+  restore(wrap);
+  return true;
 }
 /** The placeholder a click or a key landed in, if any: for the viewer's body listeners. */
 export function gateOf(target: EventTarget | null, within: Element): HTMLElement | null {

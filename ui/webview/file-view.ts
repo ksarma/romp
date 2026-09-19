@@ -2269,13 +2269,19 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // uses, and the line says to print from there; a picture opened directly (imgBlock) is a document whose one picture is
   // awaited, and the print block fits it to the page. The button is disabled until the body is in (P7), and the flow reads
   // that off the body itself (file-print.ts bodyReady: a MutationObserver over this body's children, read again at each
-  // press), so no paint here reports anything: the loader as the body's content (the open's, put up above; enterEdit's chunk
-  // wait; showPdfPages's pages loader before page 1 is drawn), the plain fallback editor (enterFallback's textarea, of which
-  // a print shows one clipped page) and a failure pane alone (the fetch chain's, imgFailed's) disable it, and every other
-  // paint, the CodeMirror mount included, leaves it live. Before the third review (2026-09-19) each paint here reported the
-  // body in or out by hand, and the roads nobody wired were wrong: the pages flow's paints reported nothing, so the button
-  // was live over its loader, and the plain fallback reported in. The flow hands the keyboard through takeKeyboard when the
-  // body goes out while a word button of its line holds it (dropDiskBar's hand-over), since its button is not enabled then.
+  // press, each child classed against the flow's closed lists of the roots seated here), so no paint here reports anything:
+  // the loader as the body's content (the open's, put up above; enterEdit's chunk wait), the plain fallback editor
+  // (enterFallback's textarea, of which a print shows one clipped page), a failure pane alone (the fetch chain's,
+  // imgFailed's) and a root the flow's lists do not name disable it, and every other paint, the CodeMirror mount included,
+  // leaves it live. The PDF is the exception for the loader: with `kind` reading pdf, showPdfPages's pages loader before
+  // page 1 is drawn (no frame kept) leaves the button live, and a press takes the PDF road, the /file tab, since that road
+  // reads nothing from the body (the round-2 review, 2026-09-19: the derived readiness had disabled it there, where the
+  // earlier build opened the tab). Before the third review (2026-09-19) each paint here reported the body in or out by
+  // hand, and the roads nobody wired were wrong: the plain fallback reported in and printed one clipped page. A root added
+  // to this file's body paints must join the flow's lists (file-print.ts READY_ROOTS, NOT_READY_ROOTS, LINE_ROOTS), or
+  // file-print.test.ts's census over this file's seating sites fails. The flow hands the keyboard through takeKeyboard when
+  // the body goes out while a word button of its line holds it (dropDiskBar's hand-over), since its button is not enabled
+  // then.
   const print = installFilePrint({ card: box, bar, body, typing: typingHere, onClose: (cb) => { closeHooks.push(cb); },
     kind: () => (isPdf ? "pdf" : "document"), openTab: () => openFileTab(path, sid), takeKeyboard: () => takeKeyboard() });
   fileGroup.appendChild(print.button);
@@ -3729,7 +3735,8 @@ export function openUrlView(href: string): void {
   // Print, before Copy URL (the local viewer's button stands beside Download): the same flow over this viewer's body, the
   // line under this bar, the chord through the driver's one keydown listener, dropped by the close hooks (file-print.ts);
   // disabled until renderBody seats the document and again over fail's pane, read off this body's children by the flow itself
-  // (file-print.ts bodyReady, P7: the loader below and a `.fileview-err` pane alone are not in; the document's root is)
+  // (file-print.ts bodyReady, P7: the loader below and a `.fileview-err` pane alone are not in; the document's root is; a
+  // root the flow's lists do not name is not in either, and its census reads this file's seating sites)
   const print = installFilePrint({ card: box, bar, body, typing: typingHere, onClose: (cb) => { closeHooks.push(cb); } });
   acts.insertBefore(print.button, copy);
   // In-document links land on their heading (mdBlock's fv-anchor stamp): one delegated listener, the

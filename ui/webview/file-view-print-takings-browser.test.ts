@@ -27,13 +27,16 @@
 // printing nothing. (5) the Comments panel's PDF pages flow on the pane, the chunk stubbed with a render the test releases:
 // the attempt over a kept frame leaves the button live (the frame stands under the loader inside its column) and a press
 // takes the PDF road (no frame window in the headless shell, so the /file tab); page 1 mounted, live, the same road; a
-// reload with the pages up puts the loader alone in the body, and the button DISABLES until page 1 is drawn again, a
-// press and the chord opening nothing meanwhile (before: live, and a press opened the tab over the loader). FAILS BEFORE
-// (the code before the third review): case 1's `disabled` property read true and the keyboard landed on the document's
-// body; case 2's plain fallback read live and a press printed; case 5's reload left the button live over the loader and
-// the press opened the tab. Checked red against the viewer with one report removed while the first version of this leg
-// was written (the fetch pane's report: case 1 fails at the standing line; imgFailed's: case 3 at the live button over the
-// pane; the chunk wait's: case 2 at the standing line). Skips loudly without a browser. Synthetic values only.
+// reload with the pages up puts the loader alone in the body with the kind known to be a PDF, and the button stays LIVE:
+// a press and the chord take the PDF road (the /file tab) at once, since that road reads nothing from the body (the
+// round-2 review, 2026-09-19: the derived readiness had closed it, disabling Print and swallowing the chord over the
+// pages loader where the earlier build opened the tab; the loader-means-not-ready rule is the document kinds'). FAILS
+// BEFORE (the code before the third review): case 1's `disabled` property read true and the keyboard landed on the
+// document's body; case 2's plain fallback read live and a press printed; and, at the round-2 head, case 5's reload left
+// the button disabled over the pages loader and the press opened no tab. Checked red against the viewer with one report
+// removed while the first version of this leg was written (the fetch pane's report: case 1 fails at the standing line;
+// imgFailed's: case 3 at the live button over the pane; the chunk wait's: case 2 at the standing line). Skips loudly
+// without a browser. Synthetic values only.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import { inBrowser, openViewer, openPanel, frames, REPORT, ROOT, ORIGIN, SID } from "./real-viewer-leg";
@@ -369,7 +372,7 @@ test("case 4: the URL viewer over a document that fails to load: the button stan
  *  wrapper with its canvas) into the host, answering the handle the viewer expects; dispose removes the root. */
 const PDF_CHUNK_JS = "window.__rompPdf = { render: function (bytes, host, opts) { var gate = window.__pdfGate || Promise.resolve(); return gate.then(function () { var root = document.createElement('div'); root.className = 'fileview-pdf'; var wrap = document.createElement('div'); wrap.className = 'fileview-pdf-page'; var c = document.createElement('canvas'); c.className = 'fileview-pdf-canvas'; c.width = 200; c.height = 260; wrap.appendChild(c); root.appendChild(wrap); host.appendChild(root); window.__pdfRenders = (window.__pdfRenders || 0) + 1; return { pages: 1, dispose: function () { root.remove(); } }; }); } };";
 
-test("case 5: the Comments panel's PDF pages flow. The attempt over a kept frame leaves the button live and a press takes the PDF road (the /file tab); page 1 mounted, live and the same road; a reload with the pages up puts the loader alone in the body and the button disables until page 1 is drawn again, a press and the chord opening nothing meanwhile (FAILS BEFORE: live over the loader, and the press opened the tab)", { timeout: 120000 }, async (t) => {
+test("case 5: the Comments panel's PDF pages flow. The attempt over a kept frame leaves the button live and a press takes the PDF road (the /file tab); page 1 mounted, live and the same road; a reload with the pages up puts the loader alone in the body with the kind known to be a PDF: the button stays live, and a press and the chord each open the tab at once (FAILS BEFORE, at the round-2 head: disabled over the pages loader, the chord swallowed and no tab)", { timeout: 120000 }, async (t) => {
   await inBrowser(t, async (browser) => {
     const { page, errors } = await openViewer(browser, "pane", 900, 700, {
       docs: { [REPORT]: SHORT },
@@ -418,29 +421,34 @@ test("case 5: the Comments panel's PDF pages flow. The attempt over a kept frame
     await pressPrint();
     b = await bar(page);
     assert.equal(b.opens, 2, "the press over the pages took the PDF road again"); assert.equal(b.line, TAB_WORDS);
-    // a reload with the pages up: no frame to keep, so the loader alone holds the body until page 1 is drawn again; the button
-    // disables meanwhile and a press or the chord opens nothing
+    // a reload with the pages up: no frame to keep, so the loader and the empty host hold the body until page 1 is drawn again;
+    // the kind is known to be a PDF, so the button stays live and a press or the chord takes the PDF road at once (the tab: no
+    // frame stands to print through), as the build before the derived readiness did
     await gate();
     await page.evaluate((mt: string) => { const w = window as any; w.__mtime = mt; w.__seam.reload(); }, MT_E);
     await page.waitForFunction(() => !!document.querySelector("#romp-fileview .fileview-body > .fileview-load") && !document.querySelector("#romp-fileview iframe.fileview-frame"), null, { timeout: 10000 });
     await frames(page, 1);
     b = await bar(page);
-    assertDisabled(b, "the pages loader alone in the body (FAILS BEFORE: live)");
+    assert.equal(b.ariaDisabled, null, "the pages loader in the body with the kind a PDF: live (FAILS BEFORE: disabled)"); assert.equal(b.disabled, false); assert.equal(b.phase, null, "at rest");
+    assert.equal(b.line, TAB_WORDS, "the last press's notice stands until the next press");
     assert.equal(b.bodyLoader, true, "the loader is the body's content"); assert.equal(await renders(), 1, "page 1 of the reload is not drawn yet");
-    await pressHard(page);
-    let k = await chord(page);
-    assert.equal(k.open, true); assert.equal(k.prevented, true, "the chord over the loader is prevented");
+    await pressPrint();
     b = await bar(page);
-    assert.equal(b.opens, 2, "FAILS BEFORE: no tab opened over the loader (the press opened one)"); assert.equal((await prints(page)).length, 0);
-    assertDisabled(b, "after the presses over the loader");
+    assert.equal(b.opens, 3, "FAILS BEFORE: the press over the pages loader took the PDF road and opened the tab"); assert.equal(b.line, TAB_WORDS); assert.equal(b.phase, null);
+    let k = await chord(page);
+    assert.equal(k.open, true); assert.equal(k.prevented, true, "the chord over the loader is prevented (the browser's raw print would print the loader page)");
+    b = await bar(page);
+    assert.equal(b.opens, 4, "FAILS BEFORE: the chord over the pages loader opened the tab too"); assert.equal((await prints(page)).length, 0, "the page's own print never runs for a PDF");
+    assert.equal(b.line, TAB_WORDS); assert.equal(b.phase, null); assert.equal(b.ariaDisabled, null, "still live");
     // page 1 drawn again: live, and the PDF road
     await release();
     await page.waitForFunction(() => (window as any).__pdfRenders === 2 && !document.querySelector("#romp-fileview .fileview-body > .fileview-load"), null, { timeout: 10000 });
     await frames(page, 2);
-    assertLive(await bar(page), "page 1 drawn again");
+    b = await bar(page);
+    assert.equal(b.ariaDisabled, null, "page 1 drawn again: live"); assert.equal(b.phase, null); assert.equal(b.line, TAB_WORDS, "the last press's notice stands until the next press");
     await pressPrint();
     b = await bar(page);
-    assert.equal(b.opens, 3, "the press took the PDF road"); assert.equal(b.line, TAB_WORDS);
+    assert.equal(b.opens, 5, "the press took the PDF road"); assert.equal(b.line, TAB_WORDS);
     assert.equal((await prints(page)).length, 0, "the page's own print never ran");
     assert.deepEqual(errors, [], "no script error");
     await page.close();

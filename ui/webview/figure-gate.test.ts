@@ -1,10 +1,13 @@
 // The figure gate's pure parts (figure-gate.ts; decision 8 of plans/markdown-viewer.md), executed under node: the srcset
 // parse and its serialization, which host a source fetches from against a page's base (the kernel's own route and the
 // data: and blob: schemes are nobody's host; a protocol-relative URL is), the allowed set from the setting, the loaded
-// set and a document's own host, and the setting's normaliser in settings.ts. The DOM half (the placeholder, the click,
-// the restore, the regate on a settings change) runs over the real Files bundle in file-view-figures-gate-browser.test.ts.
+// set and a document's own host, and the setting's normaliser in settings.ts; and the print's one-placeholder restore
+// (loadGatedFigure) over a stand-in, for what it leaves alone: the loaded set and every other placeholder. The DOM half (the
+// placeholder, the click, the restore, the regate on a settings change) runs over the real Files bundle in
+// file-view-figures-gate-browser.test.ts, and the print's restore over the real viewer in file-print-egress-browser.test.ts.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
+import { hideEdges } from "../test-dom-shim";
 
 // localStorage before the settings module is read (settings.ts reads it at call time)
 const store: Record<string, string> = {};
@@ -13,7 +16,7 @@ const store: Record<string, string> = {};
   setItem: (k: string, v: string) => { store[k] = v; },
   removeItem: (k: string) => { delete store[k]; },
 };
-import { parseSrcset, serializeSrcset, remoteHost, allowedFigureHosts, forgetLoadedHosts, loadGatedHost, FIGURE_SEL, GATE_ACT, GATE_CLASS } from "./figure-gate";
+import { parseSrcset, serializeSrcset, remoteHost, allowedFigureHosts, forgetLoadedHosts, loadGatedHost, loadGatedFigure, FIGURE_SEL, GATE_ACT, GATE_CLASS } from "./figure-gate";
 import { FIGURE_HOSTS_DEFAULT, figureHosts } from "./settings";
 
 test("parseSrcset: HTML's own parse, a URL to whitespace, a glued comma ending a candidate, descriptors to the next top-level comma, a comma inside a URL kept; serializeSrcset the inverse", () => {
@@ -104,6 +107,63 @@ test("the allowed set: the setting's hosts (the default list before any change),
   forgetLoadedHosts();
   assert.ok(!allowedFigureHosts().has("loaded.test"));
   delete store["romp:settings"];
+});
+
+/** An element stand-in for the restore: attributes by name, element children, a parent, and the two DOM writes restore makes
+ *  (replaceWith on the placeholder, the attribute moves on the figure and its descendants). hideEdges hides the tree edges. */
+class Fake {
+  attrs = new Map<string, string>();
+  kids: Fake[] = [];
+  parent: Fake | null = null;
+  replacedBy: Fake | null = null;
+  constructor(public localName: string, attrs: Record<string, string> = {}) { for (const [k, v] of Object.entries(attrs)) this.attrs.set(k, v); hideEdges(this); }
+  get attributes(): Array<{ name: string; value: string }> { return Array.from(this.attrs, ([name, value]) => ({ name, value })); }
+  get firstElementChild(): Fake | null { return this.kids[0] || null; }
+  getAttribute(k: string): string | null { return this.attrs.has(k) ? this.attrs.get(k)! : null; }
+  setAttribute(k: string, v: string): void { this.attrs.set(k, v); }
+  removeAttribute(k: string): void { this.attrs.delete(k); }
+  append(...ks: Fake[]): Fake { for (const k of ks) { k.parent = this; this.kids.push(k); } return this; }
+  querySelectorAll(sel: string): Fake[] { assert.equal(sel, "*", "the restore walks every descendant"); const out: Fake[] = []; const walk = (n: Fake) => { for (const k of n.kids) { out.push(k); walk(k); } }; walk(this); return out; }
+  replaceWith(n: Fake): void { this.replacedBy = n; if (this.parent) { const i = this.parent.kids.indexOf(this); this.parent.kids[i] = n; n.parent = this.parent; this.parent = null; } }
+  remove(): void { this.replacedBy = null; if (this.parent) { this.parent.kids.splice(this.parent.kids.indexOf(this), 1); this.parent = null; } }
+  /** The attributes as one sorted line, for a plain comparison. */
+  line(): string { return Array.from(this.attrs, ([k, v]) => k + "=" + v).sort().join(" "); }
+}
+/** A stand-in handed to the gate as the Element it reads. */
+const asEl = (f: Fake): Element => f as unknown as Element;
+/** A placeholder stand-in around `media`, naming `host`, as gate() builds one: the action, the hosts, and a label after the media. */
+const placeholder = (host: string, media: Fake): Fake => new Fake("span", { class: GATE_CLASS, "data-act": GATE_ACT, "data-fv-hosts": host, "data-fv-host": host }).append(media, new Fake("span", { "data-fv-label": "" }));
+
+test("loadGatedFigure restores ONE placeholder and grants nothing for the page: the figure's moved attributes come back under their names (src, srcset, poster, an svg image's href, data-fv-src) on it and on its descendants, the figure takes the placeholder's place, the host does NOT join the loaded set, and a second placeholder naming the same host stands untouched; an element that is no placeholder is left alone and answers false", () => {
+  forgetLoadedHosts();
+  const body = new Fake("div");
+  const img = new Fake("img", { alt: "", "data-fv-gated-src": "https://remote.test/a.png", "data-fv-gated-srcset": "https://remote.test/a2.png 2x", "data-fv-gated-fv-src": "1", loading: "lazy" });
+  const open = placeholder("remote.test", img);
+  const source = new Fake("source", { "data-fv-gated-srcset": "https://remote.test/c.webm", type: "video/webm" });
+  const video = new Fake("video", { controls: "", "data-fv-gated-poster": "https://remote.test/p.png" }).append(source);
+  const folded = placeholder("remote.test", video);
+  body.append(open, new Fake("details").append(folded));
+  assert.equal(loadGatedFigure(asEl(open)), true, "a placeholder: restored");
+  assert.equal(img.line(), "alt= data-fv-src=1 loading=lazy src=https://remote.test/a.png srcset=https://remote.test/a2.png 2x", "every moved attribute back under its name, the others as they were, no data-fv-gated- left");
+  assert.equal(open.replacedBy, img, "the figure took the placeholder's place");
+  assert.equal(body.kids[0], img, "…in the body");
+  assert.equal(allowedFigureHosts().has("remote.test"), false, "FAILS BEFORE the per-placeholder restore: the host joined the loaded set for the page; here nothing is granted");
+  assert.equal(folded.replacedBy, null, "the second placeholder naming the same host stands");
+  assert.equal(video.line(), "controls= data-fv-gated-poster=https://remote.test/p.png", "…its figure's attributes still moved aside");
+  assert.equal(source.getAttribute("data-fv-gated-srcset"), "https://remote.test/c.webm", "…and its descendant's");
+  // the folded one restored on its own turn: the descendant's attribute comes back too
+  assert.equal(loadGatedFigure(asEl(folded)), true);
+  assert.equal(video.line(), "controls= poster=https://remote.test/p.png"); assert.equal(source.line(), "srcset=https://remote.test/c.webm type=video/webm");
+  assert.equal(allowedFigureHosts().has("remote.test"), false, "still nothing granted");
+  // not a placeholder: an author's span wearing the class, a bare img
+  const authored = new Fake("span", { class: GATE_CLASS }).append(new Fake("img", { "data-fv-gated-src": "https://x.test/p.png" }));
+  assert.equal(loadGatedFigure(asEl(authored)), false, "the class is not the mark: an author can type it");
+  assert.equal(authored.replacedBy, null); assert.equal(authored.kids[0].getAttribute("data-fv-gated-src"), "https://x.test/p.png", "nothing touched");
+  assert.equal(loadGatedFigure(asEl(new Fake("img", { src: "x" }))), false);
+  // the click's road, for contrast: the host joins the set
+  loadGatedHost("remote.test", { querySelectorAll: () => [] as Element[] } as unknown as ParentNode);
+  assert.equal(allowedFigureHosts().has("remote.test"), true, "a click grants the host for the page");
+  forgetLoadedHosts();
 });
 
 test("settings.ts: figureHosts normalises to a fresh list of trimmed lower-case names, the default list for anything else; the default names github.com, its image hosts, localhost and 127.0.0.1 and no wildcard", () => {

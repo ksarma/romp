@@ -37,13 +37,19 @@
 // Playwright ships here, the URLs printed in full beside the count; a browser update moves these two numbers and nothing
 // else in this leg) and prints through the frame's own window, then takes the tab once print is taken from that window.
 // (6) a host two placeholders share, one in the open body and one inside a closed <details>, the folded picture's route
-// parked: "Print with them" restores both by host (the gate loads by host) and the host is asked once per URL, while the
-// wait counts the open picture alone and prints at its load, the folded picture still parked and no ask (the shared-host
-// probe, 2026-09-19: before this the wait read every picture in the body, so the line counted two, the deadline asked
-// about the folded picture, one the print never shows, and nothing printed until the person answered).
+// parked: "Print with them" restores the printable placeholder alone (the gate's one-placeholder restore, loadGatedFigure)
+// and asks the host for its URL once; the folded placeholder stands and its URL is never asked, so its parked route holds
+// nothing; the wait counts the open picture and prints at its load, under the deadline, with no ask. (7) the same page
+// with both routes answering, the per-host and the per-placeholder counts read apart: the host is asked once, for one of
+// its two placeholders; the folded placeholder stands at the print; and a Reload of the same note afterwards shows both
+// placeholders again with nothing asked, since a print grants a host nothing for the page (a click does: decision 8).
+// Before the round-2 review (2026-09-19) "with them" loaded by HOST through the click's road, so on such a page the folded
+// URL was asked too, for a picture the print never shows, and every page in this leg gave each placeholder a host of its
+// own, so no road could see it; the shared-host probe before that found the wait counting the folded picture as well
+// (the line read two, the deadline asked about the folded one, nothing printed until the person answered).
 // The counts this leg holds are the third review's target: one request per URL per press, and none for a host the
-// person did not choose. Skips loudly without a browser. Synthetic values only: an invented note, /repo/notes-api paths,
-// invented hosts under .test.
+// person did not choose, nor for a placeholder that does not reach the paper. Skips loudly without a browser. Synthetic
+// values only: an invented note, /repo/notes-api paths, invented hosts under .test.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import { inBrowser, openViewer, frames, requireCjs, REPORT, ROOT, ORIGIN, SID, MT2, type Mode } from "./real-viewer-leg";
@@ -541,15 +547,15 @@ test("(5b) a PDF under the two launches: the open asks the origin for nothing (t
 
 // ── (6) a host two placeholders share, the folded picture's route parked ───────────────────────────
 
-test("(6) two placeholders on one host, one in the open body and one inside a closed <details>, the folded picture's route parked: Print with them restores both by host and asks the host once per URL; the wait counts the open picture alone and prints at its load, under the deadline, with the folded picture still parked and no ask (FAILS BEFORE: the line read two pictures, the deadline asked about the folded one, and nothing printed)", { timeout: 120000 }, async (t) => {
+test("(6) two placeholders on one host, one in the open body and one inside a closed <details>, the folded picture's route parked: Print with them restores the open placeholder alone and asks the host for its URL once; the folded placeholder stands, its URL never asked, so the parked route holds nothing; the wait counts the open picture and prints at its load, under the deadline, with no ask (FAILS BEFORE the per-placeholder restore: the host was loaded whole and the folded URL asked and parked; before the printable filter the line read two pictures, the deadline asked about the folded one, and nothing printed)", { timeout: 120000 }, async (t) => {
   await inBrowser(t, async (browser) => {
     const s = await scene(t, browser, "pane", SHARED_NOTE, { heldThird: [SHARED_FOLDED], open: { local: { ...PAGE_LOCAL } } });
     const { page } = s;
     await waitGates(page, 2);
     const placed = await page.evaluate(() => Array.from(document.querySelectorAll('#romp-fileview [data-act="fv-load"]')).map((g) => { const d = g.closest("details"); return (g.getAttribute("data-fv-hosts") || "") + ":" + (d ? (d.hasAttribute("open") ? "open-details" : "closed-details") : "body"); }));
     assert.deepEqual(placed, [HOST_SHARED + ":body", HOST_SHARED + ":closed-details"], "two placeholders naming one host: one in the open body, one inside a closed details");
-    await page.evaluate(() => { (window as any).FV.setPrintSettleMs(2000); });   // a deadline the road can reach: the print is bound to come well before it, and the module before the fix asked at it
-    await road(s, "press, then Print with them over the shared host (the folded picture's route parked)", { third: { [HOST_SHARED + SHARED_OPEN]: 1, [HOST_SHARED + SHARED_FOLDED]: 1 }, printed: "window.print x1" }, async () => {
+    await page.evaluate(() => { (window as any).FV.setPrintSettleMs(2000); });   // a deadline the road can reach: the print is bound to come well before it, and the module before the printable filter asked at it
+    await road(s, "press, then Print with them over the shared host (the folded picture's route parked)", { third: { [HOST_SHARED + SHARED_OPEN]: 1 }, printed: "window.print x1" }, async () => {
       await page.click(PRINT_BTN);
       const armed = await bar(page);
       assert.equal(armed.phase, "armed"); assert.equal(armed.line, ARMED_ONE, "the open placeholder alone is counted");
@@ -564,12 +570,46 @@ test("(6) two placeholders on one host, one in the open body and one inside a cl
       const p = await prints(page);
       const outcome = { afterClick, prints: p.length, phase: end.phase, line: end.line, foldedParked: s.heldCount(SHARED_FOLDED),
         printedUnderDeadline: p.length ? p[0].at - clickAt < 1500 : null, gates: p.length ? p[0].gates : null, incomplete: p.length ? p[0].incomplete : null };
-      assert.deepEqual(outcome, { afterClick: PREPARING_ONE, prints: 1, phase: null, line: null, foldedParked: 1, printedUnderDeadline: true, gates: 0, incomplete: ["https://" + HOST_SHARED + SHARED_FOLDED] },
-        "the wait counted the open picture alone, printed at its load under the deadline with the folded picture still parked (incomplete at the print, both placeholders restored by the host's load), and never asked");
+      assert.deepEqual(outcome, { afterClick: PREPARING_ONE, prints: 1, phase: null, line: null, foldedParked: 0, printedUnderDeadline: true, gates: 1, incomplete: [] },
+        "FAILS BEFORE: the wait counted the open picture alone and printed at its load under the deadline; the folded placeholder stands at the print (gates 1), its route was never asked (nothing parked), and every <img> in the body is complete");
     });
-    assert.deepEqual(hostsAsked(s), [HOST_SHARED], "the one host was asked, twice: once per URL, by the gate's load of the host");
+    assert.deepEqual(hostsAsked(s), [HOST_SHARED], "the one host was asked, once: for the open placeholder's URL");
+    assert.equal(s.requests.filter((u) => u === "https://" + HOST_SHARED + SHARED_FOLDED).length, 0, "the folded placeholder's URL was never asked");
     await page.evaluate(() => { (window as any).FV.setPrintSettleMs(null); });
     assert.equal(await page.evaluate(() => (window as any).FV.printSettleMs()), 8000, "the seam restored");
     await tail(s, "(6)");
+  });
+});
+
+test("(7) two placeholders on one host, one in the open body and one inside a closed <details>, both routes answering: Print with them asks the host ONCE, for the open placeholder's URL alone (per host: 1 host asked, 1 request; per placeholder: 1 of 2 restored), the folded placeholder standing at the print; a Reload of the same note then shows both placeholders again and asks nothing, since the print granted the host nothing for the page (FAILS BEFORE: the host was loaded whole, both URLs asked, and the Reload showed no placeholder)", { timeout: 120000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const s = await scene(t, browser, "pane", SHARED_NOTE, { open: { local: { ...PAGE_LOCAL } } });
+    const { page } = s;
+    await waitGates(page, 2);
+    const gatesNow = (): Promise<string[]> => page.evaluate(() => Array.from(document.querySelectorAll('#romp-fileview [data-act="fv-load"]')).map((g) => (g.getAttribute("data-fv-hosts") || "") + ":" + (g.closest("details") ? "closed-details" : "body")));
+    assert.deepEqual(await gatesNow(), [HOST_SHARED + ":body", HOST_SHARED + ":closed-details"], "two placeholders naming one host");
+    await road(s, "press, then Print with them over the shared host (both routes answering)", { third: { [HOST_SHARED + SHARED_OPEN]: 1 }, printed: "window.print x1" }, async () => {
+      await page.click(PRINT_BTN);
+      const armed = await bar(page);
+      assert.equal(armed.line, ARMED_ONE, "the open placeholder alone is counted");
+      assert.deepEqual(armed.titles.slice(0, 1), ["Load the pictures from " + HOST_SHARED + ", then print"]);
+      await page.click(WITH_BTN);
+      await printsReach(page, 1);
+      const p = await prints(page);
+      assert.deepEqual({ gates: p[0].gates, incomplete: p[0].incomplete }, { gates: 1, incomplete: [] }, "FAILS BEFORE: the folded placeholder stands at the print (one of the two restored) and the open picture is complete");
+      assert.deepEqual(await gatesNow(), [HOST_SHARED + ":closed-details"], "per placeholder: the open one restored, the folded one standing");
+    });
+    // per host and per placeholder, read apart over the page so far
+    const perHost = { hosts: hostsAsked(s), requests: s.requests.filter((u) => u.startsWith("https://" + HOST_SHARED + "/")).length };
+    const perPlaceholder = { open: s.requests.filter((u) => u === "https://" + HOST_SHARED + SHARED_OPEN).length, folded: s.requests.filter((u) => u === "https://" + HOST_SHARED + SHARED_FOLDED).length };
+    assert.deepEqual(perHost, { hosts: [HOST_SHARED], requests: 1 }, "per host: one host asked, one request");
+    assert.deepEqual(perPlaceholder, { open: 1, folded: 0 }, "FAILS BEFORE: per placeholder, the open one's URL once and the folded one's never");
+    // a later render of the same host in the same page: no page-life grant, so both figures are gated again and nothing is asked
+    await road(s, "a Reload of the same note after the print", { printed: "none" }, async () => {
+      await reloadTo(page, SHARED_NOTE);
+      await waitGates(page, 2);
+      assert.deepEqual(await gatesNow(), [HOST_SHARED + ":body", HOST_SHARED + ":closed-details"], "FAILS BEFORE: both placeholders are back (the host was granted for the page, and the Reload showed the pictures)");
+    });
+    await tail(s, "(7)");
   });
 });
