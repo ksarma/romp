@@ -6837,8 +6837,14 @@ def _atomic_write(path, text, mode=None):
     secret), the push ledger, the notified-cards snapshot (notify-prev.json, through _write_state_json), the
     parked-ops mirror (pending-ops.json, _save_pending_ops) and the alias migration's reg rewrite
     (_model_alias_boot_pass). The registry's own writer (sdk_backend.write_reg) does not call this helper; it
-    sets 0600 on its own descriptor the same way. `grep -n "_atomic_write(.*mode" kernel/` is the list's
-    source of truth: the list drifted once (review round 1 of PR 789, 2026-09-18).
+    sets 0600 on its own descriptor the same way. Mode-bearing callers, by enclosing function: _vapid_keys,
+    _remotes_save, _registry_set_aside, _save_push_subs, _save_push_ledger, _write_state_json, _save_pending_ops,
+    _model_alias_boot_pass. That line is maintained by hand and pinned by tests/test_kernel_remotes_perms.py
+    (TheModeBearingCallerList), which re-derives it with an ast walk over this file, every `_atomic_write(...)`
+    call carrying a mode (the keyword or a third positional argument) by enclosing function, and fails when the
+    line drifts. A text search is a sample, not the source of truth: the grep this docstring offered until review
+    round 2 (2026-09-19) missed the parked-ops mirror, whose mode= sits on the third line of a wrapped call, and
+    matched two lines with no mode in the call. The list drifted once before (review round 1, 2026-09-18).
 
     History. Until 2026-09-18 the mode was a chmod AFTER write_text, which left the temp at the umask's mode,
     with the text in it, between the two calls (PR 776's review round, kernel-1 and extra5-2, deferred to its
@@ -6847,10 +6853,12 @@ def _atomic_write(path, text, mode=None):
     review round 1 (2026-09-18) moved the mode onto the descriptor, the shape cli/perf_export.py's write_file
     and kernel/codex_backend.py's registry lock already use. No boot-time walk re-modes files across the
     state root (the reviewer's call, round 1): a file this helper has not rewritten since keeps its older
-    mode until its next write, and the owner-only state root (kernel/judge.py chmods it on import) is what
-    makes that interim safe. tests/test_kernel_remotes_perms.py pins the shape: one fchmod on the descriptor
-    while the temp is still empty, no chmod on any path, the requested mode published exactly under a
-    permissive and a restrictive umask, and a leftover temp overwritten rather than refused."""
+    mode until its next write, and the owner-only state root is what makes that interim safe: kernel/judge.py
+    chmods it 0700 on import and, since review round 2 (2026-09-19), reads the mode back and says so once on
+    stderr when it is not 0700, so that premise is checked rather than assumed. tests/test_kernel_remotes_perms.py
+    pins the shape: one fchmod on the descriptor while the temp is still empty, no chmod on any path, the
+    requested mode published exactly under a permissive and a restrictive umask, a leftover temp overwritten
+    rather than refused, and a raising fchmod closing the descriptor and leaving no temp."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with _atomic_lock:
@@ -6862,9 +6870,20 @@ def _atomic_write(path, text, mode=None):
             tmp.write_text(text)
         else:
             fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
-            os.fchmod(fd, mode)                          # on the descriptor, BEFORE the first write: the exact mode, not
-            #                                              the umask's, and no window with the text at a wider one; also
-            #                                              what re-modes a leftover temp O_TRUNC reopened (round 1, 2026-09-18)
+            try:
+                os.fchmod(fd, mode)                      # on the descriptor, BEFORE the first write: the exact mode, not
+                #                                          the umask's, and no window with the text at a wider one; also
+                #                                          what re-modes a leftover temp O_TRUNC reopened (round 1, 2026-09-18)
+            except BaseException:
+                # A raising fchmod (EPERM on an inode this uid does not own, ENOTSUP on a filesystem that refuses it after
+                # a successful open) left the descriptor open until review round 2 of PR 789 (2026-09-19): os.fdopen
+                # below was the only close, and _save_pending_ops swallows the error and re-saves on every park or
+                # delivery, so there the leak was unbounded. The two precedents this shape copies (cli/perf_export.py
+                # write_file, the Codex registry lock) close the fd on this road. An except that closes and re-raises,
+                # not a finally: on the success road the file object owns the descriptor and closes it, so a finally
+                # would close it a second time.
+                os.close(fd)
+                raise
             with os.fdopen(fd, "w") as f:
                 f.write(text)
         os.replace(tmp, path)                            # atomic publish (overwrites; cross-platform)
@@ -39367,7 +39386,9 @@ def _save_pending_ops():
             # until this change; it re-saves on every park or delivery, so it tightens at the first mutation after
             # the deploy, and no boot-time re-mode is added (the reviewer's call, round 1, 2026-09-18). Defence in
             # depth behind the owner-only root, like the reg (write_reg): PR 776's review round (extra5-2) asked
-            # for it and the reviewer deferred it to its own fix (2026-09-18).
+            # for it and the reviewer deferred it to its own fix (2026-09-18). A failed save is swallowed below and
+            # retried at the next mutation, which is why a descriptor the helper left open on a raising fchmod leaked
+            # here without bound until review round 2 closed that road (2026-09-19).
             _atomic_write(_PENDING_OPS_FILE,
                           json.dumps({k: [list(o) for o in v] for k, v in _pending_ops.items() if v}),
                           mode=0o600)

@@ -3320,11 +3320,21 @@ def write_reg(state_dir: Path, sid: str, reg: dict) -> None:
         # that interim safe. Round 1 also replaced the first cut's exclusive create, which would have refused a
         # leftover temp at the same name and put the mode through the umask. Every reader (the kernel, bin/romp
         # and the CLI tools it execs, the judges, the postal service) is the same uid, so 0600 shuts nobody out.
-        # Defence in depth behind the 0700 state root (kernel/judge.py chmods it and says why), not a live fix:
+        # Defence in depth behind the 0700 state root (kernel/judge.py chmods it at import, says why, and since review
+        # round 2, 2026-09-19, reads the mode back and says so on stderr when it is not 0700), not a live fix:
         # PR 776's review round asked for it (kernel-1, extra5-2) and the reviewer deferred it to its own fix
         # (2026-09-18). The value still lives in a file; the mode is a mitigation, not the never-in-a-file rule.
         fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        os.fchmod(fd, 0o600)
+        try:
+            os.fchmod(fd, 0o600)
+        except BaseException:
+            # A raising fchmod (EPERM on an inode this uid does not own, ENOTSUP on a filesystem that refuses it after a
+            # successful open) left the descriptor open until review round 2 of PR 789 (2026-09-19): os.fdopen below was
+            # the only close. Closed and re-raised, not a finally: on the success road the file object owns the
+            # descriptor and closes it, so a finally would close it a second time. The precedents this shape copies
+            # (cli/perf_export.py write_file, the Codex registry lock) close on this road too.
+            os.close(fd)
+            raise
         with os.fdopen(fd, "w") as f:
             f.write(json.dumps(reg))
         os.replace(tmp, p)
@@ -5340,9 +5350,19 @@ def flag_settings_path(state_dir, sid: str, *, ultracode: bool = False, fast: bo
         # a pre-existing file keeps its old mode through O_CREAT|O_TRUNC, and the trailing chmod this had until
         # 2026-09-18 tightened it only after the env block was already in it (PR 789, review round 1: the same
         # write-then-tighten window the reg and the parked-ops mirror lost, here for a file created before the
-        # 0600 open of 2026-09-03). fchmod is exact under any umask, so nothing follows the write.
+        # 0600 open of 2026-09-03). fchmod is exact under any umask, so nothing follows the write. The published inode
+        # is rewritten in place (O_TRUNC on the path; no temp, no os.replace, unlike write_reg), so the tightening is
+        # not retroactive for a descriptor another uid opened while the file sat at its old looser mode: it reads the
+        # new block through it. The 0700 state root is what closes that road today (review round 2, 2026-09-19).
         fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        os.fchmod(fd, 0o600)
+        try:
+            os.fchmod(fd, 0o600)
+        except BaseException:
+            # Review round 2 (2026-09-19): a raising fchmod left the descriptor open (os.fdopen below was the only
+            # close), once per launch or reconnect for as long as it failed. Closed and re-raised, not a finally: the
+            # file object closes it on the success road.
+            os.close(fd)
+            raise
         with os.fdopen(fd, "w") as f:
             f.write(json.dumps(keys) + "\n")
     except OSError as e:

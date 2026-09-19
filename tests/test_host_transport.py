@@ -180,6 +180,34 @@ class SpawnSpec(unittest.TestCase):
         self.assertEqual(os.stat(p.parent).st_mode & 0o777, 0o700, "the directory's chmod is unchanged")
         self.assertEqual(json.loads(p.read_text())["env"]["FEATURE_FLAG"], "1", "and the overlay landed")
 
+    def test_a_raising_fchmod_closes_the_descriptor(self):
+        # Review round 2 of PR 789 (2026-09-19): round 1 put the fchmod between os.open and os.fdopen with nothing closing
+        # the descriptor when it raised; os.fdopen was the only close. The error propagates (this writer has no swallow
+        # road), the descriptor os.open returned reaches os.close (a real close, recorded), and the directory's chmod
+        # stays real.
+        import errno
+        d = tempfile.mkdtemp()
+        opened, closed = [], []
+        real_open, real_close = os.open, os.close
+
+        def open_probe(*a, **k):
+            fd = real_open(*a, **k)
+            opened.append(fd)
+            return fd
+
+        def fchmod_refused(fd, mode):
+            raise PermissionError(errno.EPERM, "fchmod refused (interposed)")
+
+        def close_probe(fd):
+            closed.append(fd)
+            return real_close(fd)
+        with mock.patch.object(os, "open", open_probe), mock.patch.object(os, "fchmod", fchmod_refused), \
+                mock.patch.object(os, "close", close_probe), self.assertRaises(PermissionError):
+            ht.write_spawn_spec(d, SID, {"env": {"FEATURE_FLAG": "1"}, "sid": SID})
+        self.assertEqual(len(opened), 1, "one descriptor, spawn.json's")
+        self.assertEqual(closed, opened, "closed on the failure road")
+        self.assertEqual(os.stat(ht.host_dir(d, SID)).st_mode & 0o777, 0o700, "the directory's chmod ran")
+
     @unittest.skipUnless(SDK, "the SDK is not importable here")
     def test_the_spec_fields_track_what_the_sdk_transport_reads(self):
         import claude_agent_sdk._internal.transport.subprocess_cli as scli

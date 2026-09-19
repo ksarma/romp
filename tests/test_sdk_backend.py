@@ -11198,6 +11198,37 @@ class RegistryFileIsOwnerOnly(unittest.TestCase):
         self.assertEqual(self._mode(), 0o600, "the descriptor's mode, not the leftover's 0644")
         self.assertFalse(stale.exists(), "the leftover became the temp and moved")
 
+    def test_a_raising_fchmod_closes_the_descriptor_and_leaves_no_temp_and_no_reg(self):
+        # Review round 2 of PR 789 (2026-09-19): round 1 put the fchmod between os.open and os.fdopen with nothing closing
+        # the descriptor when it raised (EPERM on an inode this uid does not own, ENOTSUP on a filesystem that refuses
+        # fchmod after a successful open); os.fdopen was the only close, so every failure leaked one. The descriptor
+        # os.open returned reaches os.close (a real close, recorded), the error propagates (this writer has no swallow
+        # road), the finally removes the temp, no reg is published and the table's revision does not move.
+        import errno
+        opened, closed = [], []
+        real_open, real_close = os.open, os.close
+
+        def open_probe(*a, **k):
+            fd = real_open(*a, **k)
+            opened.append(fd)
+            return fd
+
+        def fchmod_refused(fd, mode):
+            raise PermissionError(errno.EPERM, "fchmod refused (interposed)")
+
+        def close_probe(fd):
+            closed.append(fd)
+            return real_close(fd)
+        rev = sb.REG_REV[0]
+        with mock.patch.object(os, "open", open_probe), mock.patch.object(os, "fchmod", fchmod_refused), \
+                mock.patch.object(os, "close", close_probe), self.assertRaises(PermissionError):
+            sb.write_reg(self.d, self.SID, self.reg)
+        self.assertEqual(len(opened), 1, "one descriptor, the temp's")
+        self.assertEqual(closed, opened, "closed on the failure road")
+        self.assertEqual(sorted(p.name for p in sb._reg_path(self.d, self.SID).parent.iterdir()), [],
+                         "no temp left, no reg published")
+        self.assertEqual(sb.REG_REV[0], rev, "the table did not move")
+
 
 if __name__ == "__main__":
     unittest.main()

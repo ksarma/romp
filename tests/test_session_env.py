@@ -574,6 +574,37 @@ class EnvSecretsStayPrivate(unittest.TestCase):
         self.assertEqual(chmods, [], "no chmod on the path after the write")
         self.assertEqual(json.loads(p.read_text()), {"env": {"FEATURE_FLAG": "1"}}, "and the env block landed")
 
+    def test_a_raising_fchmod_closes_the_descriptor_and_the_launch_goes_without_the_keys(self):
+        # Review round 2 of PR 789 (2026-09-19): round 1 put the fchmod between os.open and os.fdopen with nothing closing
+        # the descriptor when it raised. This writer catches the OSError, logs it and returns "" (the session launches
+        # without the keys, said loudly), and it runs on every launch and reconnect, so the leak repeated for as long
+        # as the failure lasted. The descriptor os.open returned reaches os.close (a real close, recorded), and the
+        # log line stands.
+        import errno
+        d = tempfile.mkdtemp()
+        opened, closed, logged = [], [], []
+        real_open, real_close = os.open, os.close
+
+        def open_probe(*a, **k):
+            fd = real_open(*a, **k)
+            opened.append(fd)
+            return fd
+
+        def fchmod_refused(fd, mode):
+            raise PermissionError(errno.EPERM, "fchmod refused (interposed)")
+
+        def close_probe(fd):
+            closed.append(fd)
+            return real_close(fd)
+        with mock.patch.object(os, "open", open_probe), mock.patch.object(os, "fchmod", fchmod_refused), \
+                mock.patch.object(os, "close", close_probe):
+            out = sb.flag_settings_path(d, PARENT, env={"FEATURE_FLAG": "1"}, log=lambda m, **k: logged.append(m))
+        self.assertEqual(out, "", "no settings file: the launch goes without the keys")
+        self.assertEqual(len(opened), 1, "one descriptor, the published file's")
+        self.assertEqual(closed, opened, "closed on the failure road")
+        self.assertEqual(len(logged), 1, logged)
+        self.assertIn("unwritable", logged[0])
+
     def test_the_parked_chip_names_the_vars_but_never_their_values(self):
         km = load_source("romp_kernel", os.path.join(BIN, "romp-kernel"))
         md = km._parked_md(("env", {"B_TOKEN": "s3cret", "A_FLAG": "1"}))

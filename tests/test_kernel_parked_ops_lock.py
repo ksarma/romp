@@ -23,6 +23,7 @@ unchanged: a raise during a sid's pass drops that sid's queue once, logged.
 
 SYNTHETIC fixtures only: placeholder uuids, invented texts.
 """
+import errno
 import io
 import os
 import contextlib
@@ -695,6 +696,45 @@ class TheMirrorIsOwnerOnly(_Drain):
         self.assertEqual(fchmods, [(0o600, 0)], "one fchmod, on the descriptor, while the temp is still empty")
         self.assertEqual(chmods, [], "no chmod on a path after the write: nothing tightens later")
         self.assertEqual(self._mode(), 0o600)
+
+    def test_a_raising_fchmod_on_the_swallowed_save_road_leaks_no_descriptor_across_repeated_saves(self):
+        # Review round 2 of PR 789 (2026-09-19). _save_pending_ops swallows a failed save (the stderr line) and the mirror
+        # is re-saved on every park or delivery, so a descriptor left open by a raising fchmod in _atomic_write (round 1
+        # put the fchmod between os.open and os.fdopen with no close on that road) leaked once per mutation for as long
+        # as the failure lasted: unbounded, toward EMFILE. Five failed saves: five lines said, every descriptor os.open
+        # returned reaches os.close (a real close, recorded), the process holds no new descriptor, no temp is left.
+        km._pending_ops[SID] = [("env", {"NOTES_API_TOKEN": self.val})]
+        opened, closed = [], []
+        real_open, real_close = os.open, os.close
+
+        def open_probe(*a, **k):
+            fd = real_open(*a, **k)
+            opened.append(fd)
+            return fd
+
+        def fchmod_refused(fd, mode):
+            raise PermissionError(errno.EPERM, "fchmod refused (interposed)")
+
+        def close_probe(fd):
+            closed.append(fd)
+            return real_close(fd)
+
+        def fds():
+            return set(os.listdir("/proc/self/fd")) if os.path.isdir("/proc/self/fd") else None
+        err = io.StringIO()
+        with mock.patch.object(os, "open", open_probe), mock.patch.object(os, "fchmod", fchmod_refused), \
+                mock.patch.object(os, "close", close_probe):
+            before = fds()
+            with redirect_stderr(err):
+                for _ in range(5):
+                    km._save_pending_ops()             # swallows the error and says so; the next mutation retries
+            after = fds()
+        self.assertEqual(err.getvalue().count("pending-ops save:"), 5, "each failed save is said, none raises")
+        self.assertEqual(len(opened), 5, "one descriptor per save, the temp's")
+        self.assertEqual(closed, opened, "each closed on the failure road")
+        self.assertEqual(after, before, "five failed saves, no descriptor kept")
+        self.assertFalse(km._PENDING_OPS_FILE.exists(), "nothing published")
+        self.assertEqual(list(km._PENDING_OPS_FILE.parent.glob(km._PENDING_OPS_FILE.name + ".tmp.*")), [], "no temp left")
 
 
 
