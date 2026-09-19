@@ -23,6 +23,7 @@ import os
 import re
 import sys
 import tempfile
+import tracemalloc
 import threading
 import time
 import unittest
@@ -1526,6 +1527,21 @@ def _git_bytes(root, *args):
     return proc.stdout
 
 
+def _scratch_repo(test):
+    """A git repository of its own under the run's temp root (removed with the test, and swept with the root either way)
+    for a pin that needs a listed file the live tree must not hold: a file placed in it is untracked and unignored, so
+    `git ls-files --others --exclude-standard` lists it and RoutingStatements._scan reads it, with no lock taken and no
+    write into the checkout. Its git init runs with every GIT_* variable scrubbed but GIT_TEST_* and reads no global or
+    system config (the ScratchCheckout shape in tests/test_entrypoints_executable.py, whose env() says why: a hook's
+    GIT_INDEX_FILE would otherwise send the scratch repo's operations into this checkout's index)."""
+    d = Path(tempfile.mkdtemp())
+    test.addCleanup(shutil.rmtree, d, ignore_errors=True)
+    env = {name: value for name, value in os.environ.items() if not name.startswith("GIT_") or name.startswith("GIT_TEST_")}
+    env.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
+    subprocess.run(["git", "init", "-q", str(d)], env=env, check=True, capture_output=True, timeout=60)
+    return d
+
+
 class RoutingStatements(unittest.TestCase):
     """Every place in the tree that names a routed block (stagesForeign, pusher.cycleJobsMs, pusher.connectPush.stagesMs, or
     their attributes) is where a sentence about the routing can live, and two review rounds found such a sentence wrong
@@ -1562,7 +1578,8 @@ class RoutingStatements(unittest.TestCase):
     # the places a routing sentence lives today; a file added here has been read against the measured cells
     PLACES = {"bin/romp", "docs/reference.md", "kernel/kernel.py", "tests/test_first_cycle_stage_split.py",
               "tests/test_jobs_thread_split.py", "tests/test_perf_stats.py", "upstream/2026-09-18-stage-attribution.md"}
-    PROBE = 8192                                  # bytes read for the NUL probe: a png, a font, a recording fails it in its header
+    PROBE = 8192                                  # the bytes read first from every file; a NUL among them ends the read, so a png, a
+    #                                               font or a recording costs its header and nothing more
 
     @classmethod
     def setUpClass(cls):
@@ -1616,10 +1633,12 @@ class RoutingStatements(unittest.TestCase):
             if not rel or path.is_symlink():
                 continue
             try:
-                raw = path.read_bytes()
-            except OSError:                           # in the index, gone from the working tree
-                continue
-            if b"\0" in raw[:self.PROBE]:
+                with open(path, "rb") as fh:
+                    head = fh.read(self.PROBE)
+                    if b"\0" in head:                 # a binary: its header is all that was read
+                        continue
+                    raw = head + fh.read()            # bytes, so a character straddling byte 8192 decodes whole below
+            except OSError:                           # in the index, gone from the working tree (the open is what raises)
                 continue
             try:
                 text = raw.decode()
@@ -1637,11 +1656,15 @@ class RoutingStatements(unittest.TestCase):
         self.assertEqual(set(found), self.PLACES, "a file names a routed block and is not in the sweep (or left it): %r" % sorted(set(found) ^ self.PLACES))
 
     def _pin_no_retired_wording(self, found):
+        # One pattern per phrase: its words in order with any run of whitespace between them, newlines and tabs included,
+        # which is what collapsing the text with " ".join(text.split()) matched before, at the cost of a second copy of
+        # every matched file's words; the regex reads the text in place. re.escape keeps a phrase's punctuation literal
+        # (one of them carries an underscore; the phrase itself is not written here, since this file is swept too).
+        patterns = {key: re.compile(r"\s+".join(re.escape(word) for word in phrase.split())) for key, phrase in RETIRED_WORDINGS.items()}
         for rel, text in sorted(found.items()):
-            joined = " ".join(text.split())
             for key, phrase in sorted(RETIRED_WORDINGS.items()):
-                self.assertFalse(phrase in joined, "%s carries a wording a review round retired (%s): %r" % (rel, key, phrase))
-                #                                    not assertNotIn: its failure message would print the whole file
+                self.assertIsNone(patterns[key].search(text), "%s carries a wording a review round retired (%s): %r" % (rel, key, phrase))
+                #                                                 not assertNotIn: its failure message would print the whole file
 
     def test_the_files_that_name_a_routed_block_are_the_swept_set(self):
         self._pin_swept_set(self._places())
@@ -1661,7 +1684,8 @@ class RoutingStatements(unittest.TestCase):
             plant = root / "plans" / ("routing-sweep-plant-%d-%s.md" % (os.getpid(), os.urandom(4).hex()))
             rel = str(plant.relative_to(root))
             try:
-                plant.write_text("A planted note naming stagesForeign, " + RETIRED_WORDINGS["push-inside-cycle"] + ".\n")
+                plant.write_text("A planted note naming stagesForeign, " + RETIRED_WORDINGS["push-inside-cycle"].replace(" ", "\n  ", 1) + ".\n")
+                #                the phrase broken across a line, so the whitespace-flexible match is exercised, not only the single-space form
                 planted = self._scan(root)
                 self.assertIn(rel, sorted(planted), "the scan reads the tree, untracked files included: the plant is found")
                 #                    the paths, not the dict: a failure would otherwise print seven files' text
@@ -1698,6 +1722,33 @@ class RoutingStatements(unittest.TestCase):
         self.assertIn("with cls._tree_lock(exclusive=True)", source, "the healer runs under the exclusive lock")
         self.assertIn("cls._remove_stale_plants(root)", source, "and is called from setUpClass, before any test here scans")
         #             the call forms, not the names: a comment in setUpClass naming the helper must not satisfy this pin
+
+    def test_a_binary_file_is_rejected_on_its_first_bytes_not_read_whole(self):
+        """A 64 MiB sparse file whose first bytes hold a NUL and a block name after it (a probe-less scan would list it)
+        costs the scan its header and nothing more: the peak allocation during the scan stays under 16 x PROBE. Measured
+        with tracemalloc per call, not ru_maxrss: that is a process high-water mark an earlier test can already have
+        raised past 64 MiB, which would let a scan that reads the blob whole pass."""
+        d = _scratch_repo(self)
+        (d / "control.md").write_text("a control note naming stagesForeign\n")    # so the absence below cannot pass vacuously
+        with open(d / "blob.bin", "wb") as fh:
+            fh.write(b"\0" * 16 + b"stagesForeign")
+            fh.truncate(64 * 2**20)
+        tracing = tracemalloc.is_tracing()                                          # a tracer already running is used as is
+        if not tracing:
+            tracemalloc.start()
+        try:
+            tracemalloc.reset_peak()
+            found = self._scan(d)
+            peak = tracemalloc.get_traced_memory()[1]
+        finally:
+            if not tracing:
+                tracemalloc.stop()
+        listed = os.fsdecode(_git_bytes(d, "ls-files", "-z", "--others", "--exclude-standard")).split("\0")
+        self.assertIn("blob.bin", listed, "git lists the blob, so the scan met it (a machine-wide ignore of .bin would hide it)")
+        self.assertIn("control.md", sorted(found))
+        self.assertNotIn("blob.bin", sorted(found), "a NUL in the first bytes rejects the file")
+        #                            the paths, not the dict: a failure would otherwise print the decoded blob, 64 MiB of it
+        self.assertLess(peak, 16 * self.PROBE, "the scan read the blob past its first bytes: peak %d" % peak)
 
     def test_the_lock_is_one_file_for_every_process_of_this_tree(self):
         """A second process over this checkout with its own TMPDIR and no record of this run's system temp dir (the
