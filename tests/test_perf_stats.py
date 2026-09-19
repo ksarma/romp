@@ -1614,9 +1614,12 @@ class RoutingStatements(unittest.TestCase):
     --others --exclude-standard` at the repo root, so an untracked file is swept before it is committed, no directory
     excluded, symlinks skipped (bin/romp-kernel points at the kernel). A file is text when its first PROBE bytes (8 KiB)
     hold no NUL and the whole of it decodes as UTF-8; it is read in CHUNK-byte pieces through an incremental decoder,
-    and only a file that names a block is read whole, so the scan holds at most one piece, raw and decoded, for a file
-    that names none, whatever its size, and about twice the text of each file that does (the PLACES files); no size
-    limit is needed and none is applied. The eight-directory walk this replaced omitted every other directory and the
+    and only a file that names a block is read whole, so for a file that names none the scan holds a few pieces at
+    most, raw and decoded, whatever its size (the CHUNK comment has the shape, and the text pin measures it each run
+    over the widest content), and for each file that does (the PLACES files) its bytes plus its decoded text, which
+    Python holds at one, two or four bytes a character by the widest character in the file (a file holding a character
+    outside the Basic Multilingual Plane decodes at four), so up to five times its bytes; only the unmatched-file cost
+    is pinned. No size limit is needed and none is applied. The eight-directory walk this replaced omitted every other directory and the
     root files (when this was written: tools/, vscode-extension/, ui/ outside ui/webview, plans/, vendor/, assets/, the
     root files, .github/, hooks/, claude/, overrides/, postal/, .githooks/), and inside its eight roots it read only a
     suffix allowlist and pruned named directories (docs/assets, and the .json, .bash, .csv and .svg files among the
@@ -1661,14 +1664,22 @@ class RoutingStatements(unittest.TestCase):
     PROBE = 8192                                  # the bytes read first from every file; a NUL among them ends the read, so a png, a
     #                                               font or a recording costs its header and nothing more
     CHUNK = 8 * PROBE                             # the bytes read per piece after the probe. A piece is held raw and decoded at once,
-    #                                               so the text pin's 128 x PROBE bound needs CHUNK well under it: the pin measures
-    #                                               the scan's delta each run, a few times CHUNK on 3.12 and more on the free-threaded
-    #                                               3.14t, whose allocator books more per call; a piece of 128 x PROBE cannot meet
-    #                                               the bound (round 2's refuters, who corrected the ruled 1 MiB piece)
+    #                                               its text at one, two or four bytes a character by the widest character in it,
+    #                                               and its bytes twice for a moment as the next piece is read, so a piece can cost
+    #                                               several times CHUNK and the text pin's 128 x PROBE bound needs CHUNK well under
+    #                                               it: the pin measures the scan's delta each run over a file with a character
+    #                                               outside the Basic Multilingual Plane in every piece, the widest content, a few
+    #                                               times CHUNK on 3.12 and more on the free-threaded 3.14t, whose allocator books
+    #                                               more per call; a piece of 128 x PROBE cannot meet the bound (round 2's refuters,
+    #                                               who corrected the ruled 1 MiB piece)
     OVERLAP = 32                                  # characters of the previous piece searched with the start of the next, so a block
-    #                                               name across a piece boundary is found: more than the longest BLOCKS alternative
-    #                                               (connectPush.stagesMs, 20 characters). The retired-wording regex runs over the
-    #                                               whole text of a matched file and needs no overlap.
+    #                                               name across a piece boundary is found. A name split across a boundary leaves at
+    #                                               most all but one of its characters on one side, so the overlap must be at least
+    #                                               one less than the longest BLOCKS alternative (connectPush.stagesMs, 20 characters);
+    #                                               the constants test derives that length from BLOCKS and pins this value and this
+    #                                               spelling against it, and the edges test splits the longest alternative at both
+    #                                               extremes across both seams. The retired-wording regex runs over the whole text
+    #                                               of a matched file and needs no overlap.
 
     @classmethod
     def setUpClass(cls):
@@ -1807,9 +1818,11 @@ class RoutingStatements(unittest.TestCase):
                         continue
                     # The text rule is decided in pieces (the probe, then CHUNK bytes at a time) through an incremental
                     # decoder, which holds a character straddling a piece boundary until its bytes arrive, so a file that
-                    # names no block costs one piece raw and decoded whatever its size. A block name straddling a boundary
-                    # is found on the seam: the last OVERLAP characters of the previous piece joined to the first OVERLAP
-                    # of this one. Only a matched file is read whole, since the pins need its text.
+                    # names no block costs a few pieces raw and decoded whatever its size (the CHUNK comment has the
+                    # shape). A block name straddling a boundary is found on the seam: the last OVERLAP characters of the
+                    # previous piece joined to the first OVERLAP of this one. A piece's text is let go once its seam is
+                    # kept, before the next piece is read and decoded, so one decoded piece is held at a time rather than
+                    # two. Only a matched file is read whole, since the pins need its text.
                     decoder = codecs.getincrementaldecoder("utf-8")()
                     tail, chunk, matched = "", head, False
                     while chunk:
@@ -1820,7 +1833,8 @@ class RoutingStatements(unittest.TestCase):
                         if self.BLOCKS.search(text) or self.BLOCKS.search(tail + text[:self.OVERLAP]):
                             matched = True
                             break
-                        tail = (tail + text)[-self.OVERLAP:]
+                        tail = text[-self.OVERLAP:] if len(text) >= self.OVERLAP else (tail + text)[-self.OVERLAP:]
+                        text = None
                         chunk = fh.read(self.CHUNK)
                     if not matched:                   # skipped either way, so the decoder needs no final flush
                         continue
@@ -1966,17 +1980,23 @@ class RoutingStatements(unittest.TestCase):
         self.assertLess(delta, 128 * self.PROBE, "the scan read the blob past its first bytes: delta %d bytes" % delta)
 
     def test_a_large_text_file_that_names_no_block_costs_a_chunk_not_its_size(self):
-        """The text road of the same bound: a 64 MiB untracked, unignored text file that names no block (plain ASCII lines,
-        so it passes the probe and decodes) costs the scan one piece, not its size. The tracemalloc delta during the scan
-        (the tests/test_reader_stream_peak.py idiom, as in the blob pin above) stays under 128 x PROBE, recomputed every
-        run and printed on failure; a scan that read the file whole and decoded it whole held the bytes and the text
-        both, about twice the file (round 2's Cluster C, the half of round 1's size-bound ruling that had not landed)."""
+        """The text road of the same bound: a 64 MiB untracked, unignored text file that names no block costs the scan a
+        few pieces, not its size. Its content is the widest the decoder produces (lines of plain text with one character
+        outside the Basic Multilingual Plane in every CHUNK bytes, so every piece the scan decodes holds one and is a
+        str of four bytes a character; round 3, after a pin over plain ASCII was found to measure the easiest content,
+        which a wider CHUNK could pass while such a file broke the bound). The tracemalloc delta during the scan (the
+        tests/test_reader_stream_peak.py idiom, as in the blob pin above) stays under 128 x PROBE, recomputed every run
+        and printed on failure; a scan that read the file whole and decoded it whole held the bytes and the text both
+        (round 2's Cluster C, the half of round 1's size-bound ruling that had not landed)."""
         d, env = _scratch_repo(self)
         (d / "control.md").write_text("a control note naming stagesForeign\n")    # so the absence below cannot pass vacuously
         line = b"a line of plain text that names no routed block\n"
-        piece = (line * (2**20 // len(line) + 1))[:2**20]                          # exactly 1 MiB, written 64 times
+        piece = (line * (self.CHUNK // len(line) + 1))[:self.CHUNK]                # exactly CHUNK bytes, written 64 MiB's worth of times
+        piece = "\U0001F5BC".encode() + piece[4:]                                  # the one astral character per piece, four bytes of UTF-8
+        self.assertEqual(len(piece), self.CHUNK)
+        self.assertGreater(max(map(ord, piece.decode())), 0xFFFF, "a piece holds a character outside the Basic Multilingual Plane")
         with open(d / "big.txt", "wb") as fh:
-            for _ in range(64):
+            for _ in range(64 * 2**20 // self.CHUNK):
                 fh.write(piece)
         self.assertEqual((d / "big.txt").stat().st_size, 64 * 2**20)
         found, delta = _traced_delta(lambda: self._scan(d, env=env))
@@ -2353,25 +2373,28 @@ class RoutingStatements(unittest.TestCase):
         """The text rule's other edges, each stated in the class docstring and, before round 2, pinned by nothing: an
         ignored file naming a block is not read (--exclude-standard); a NUL at byte PROBE-1 rejects a file and a NUL at
         byte PROBE does not (the file is read whole and found, the case the docstring says grep -I hides); content that
-        is not UTF-8 is skipped, never read with a replacement character. Round 3's chunked read adds its seams: a block
-        name across byte PROBE (the probe's end) and one across byte PROBE + CHUNK (the first piece's end) are both
-        found, and a file whose match sits in the first piece with a byte that is not UTF-8 two pieces later is skipped,
-        because the rule is that the WHOLE file decodes, not the part read up to the match. In a scratch repo, so the
-        live tree holds none of it."""
+        is not UTF-8 is skipped, never read with a replacement character. Round 3's chunked read adds its seams: the
+        longest BLOCKS alternative split at both extremes, all but its last character before byte PROBE (the probe's
+        end) and its first character alone before byte PROBE + CHUNK (the first piece's end), is found across both, so
+        an overlap one character short of what the longest name needs reds here (the first fixtures split a shorter
+        name near its middle and stayed green at an overlap the longest name outgrew); and a file whose match sits in
+        the first piece with a byte that is not UTF-8 two pieces later is skipped, because the rule is that the WHOLE
+        file decodes, not the part read up to the match. In a scratch repo, so the live tree holds none of it."""
         d, env = _scratch_repo(self)
         (d / ".gitignore").write_text("ignored.md\n")
         (d / "ignored.md").write_text("an ignored note naming stagesForeign\n")
         prefix = b"a note naming stagesForeign\n"
+        name = max((a.replace("\\", "") for a in self.BLOCKS.pattern.split("|")), key=len).encode()   # the longest alternative
         (d / "edge-nul.md").write_bytes(prefix + b"x" * (self.PROBE - 1 - len(prefix)) + b"\0\n")   # NUL at index PROBE-1
         (d / "late-nul.md").write_bytes(prefix + b"x" * (self.PROBE - len(prefix)) + b"\0\n")       # NUL at index PROBE
         (d / "latin1.md").write_bytes(b"caf\xe9 naming stagesForeign\n")
-        (d / "seam-head.md").write_bytes(b"x" * (self.PROBE - 5) + b"stagesForeign\n")              # 'stage' | 'sForeign' at PROBE
-        (d / "seam-chunk.md").write_bytes(b"x" * (self.PROBE + self.CHUNK - 5) + b"stagesForeign\n")   # the same at PROBE + CHUNK
+        (d / "seam-head.md").write_bytes(b"x" * (self.PROBE - len(name) + 1) + name + b"\n")        # all but its last character before PROBE
+        (d / "seam-chunk.md").write_bytes(b"x" * (self.PROBE + self.CHUNK - 1) + name + b"\n")      # its first character before PROBE + CHUNK
         (d / "latin1-late.md").write_bytes(prefix + b"x" * (self.PROBE + 2 * self.CHUNK) + b"caf\xe9\n")
         self.assertEqual((d / "edge-nul.md").read_bytes().index(b"\0"), self.PROBE - 1)
         self.assertEqual((d / "late-nul.md").read_bytes().index(b"\0"), self.PROBE)
-        self.assertEqual((d / "seam-head.md").read_bytes().index(b"stagesForeign"), self.PROBE - 5)
-        self.assertEqual((d / "seam-chunk.md").read_bytes().index(b"stagesForeign"), self.PROBE + self.CHUNK - 5)
+        self.assertEqual((d / "seam-head.md").read_bytes().index(name), self.PROBE - len(name) + 1)
+        self.assertEqual((d / "seam-chunk.md").read_bytes().index(name), self.PROBE + self.CHUNK - 1)
         self.assertGreater((d / "latin1-late.md").read_bytes().index(b"\xe9"), self.PROBE + 2 * self.CHUNK)
         self.assertEqual(sorted(self._scan(d, env=env)), ["late-nul.md", "seam-chunk.md", "seam-head.md"],
                          "ignored, NUL-in-probe and non-UTF-8 files are skipped, a NUL past the probe is read, a block name "
@@ -2408,6 +2431,27 @@ class RoutingStatements(unittest.TestCase):
         self.assertTrue("one-directional proxy" in RoutingStatements.__doc__,          # assertTrue, not assertIn: a failure
                         "the class docstring says the block-name regex finds the files that NAME a block and no other "
                         "prose (round 1's fresh-2)")                                       # would otherwise print the whole docstring
+
+    def test_overlap_covers_the_longest_block_name_and_the_comment_spells_it(self):
+        """OVERLAP's WIDTH, pinned by nothing before round 3: the first seam fixtures split a shorter name near its middle,
+        so an overlap the longest alternative had outgrown left every test green while the scan missed that name across
+        a seam (Cluster D's one-direction shape, on the overlap). A name split across a piece boundary leaves at most all
+        but one of its characters on one side, and the seam search joins the last OVERLAP characters of the previous
+        piece to the first OVERLAP of the next, so OVERLAP must be at least one less than the longest alternative's
+        length. The length is derived from BLOCKS, which this pin first requires to be a flat alternation of literals
+        (the split on | and the unescape assume that; a group or a class added to it needs this derivation rewritten),
+        and the OVERLAP comment's '(<name>, <n> characters)' spelling is checked against both, so a longer alternative
+        added to BLOCKS reds here until the overlap and the comment follow it."""
+        alternatives = [a.replace("\\", "") for a in RoutingStatements.BLOCKS.pattern.split("|")]
+        self.assertEqual("|".join(re.escape(a) for a in alternatives), RoutingStatements.BLOCKS.pattern,
+                         "BLOCKS is a flat alternation of literals, which the derivation below assumes")
+        longest = max(alternatives, key=len)
+        self.assertGreaterEqual(RoutingStatements.OVERLAP, len(longest) - 1,
+                                "the overlap covers the longest block name split one character short of a piece boundary")
+        source = inspect.getsource(RoutingStatements)
+        hits = re.findall(r"\(([\w.]+), (\d+) characters\)", source)
+        self.assertEqual(hits, [(longest, str(len(longest)))],
+                         "the OVERLAP comment spells the longest alternative and its length, once, and they are BLOCKS's")
 
 
 class ProcessStatsFallback(unittest.TestCase):
