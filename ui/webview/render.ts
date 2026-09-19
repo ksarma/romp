@@ -20258,12 +20258,18 @@ listenForFrames(perfFrameHandler("chat", (m) => vscodeApi?.postMessage(m), (e: M
     panesAvail = avail;
     return;
   }
-  // [fork] D3 (2026-09-18, review round 2): the shell's link word ({romp:'link', link}), posted to every iframe outside the six
-  // pane frames on the shell socket's open, close and abandon (kernel.py _LANDING_COLLAPSE_JS tellLink), so a split chat
-  // column's pane shim can end its return await on it. The shim reads it on window itself; this handler has nothing to do with
-  // it, and it is not a kernel message: without this return a link-DOWN word fell through to retryFailedPreviews below, and
-  // each split column re-fetched its failed previews on a path the shell had just declared down.
-  if (m.romp === "link") return;
+  // [fork] D3 (2026-09-18, review round 2): the shell's link word ({romp:'link', link, mob}), posted to every iframe outside the six
+  // pane frames on the shell socket's open, close and abandon and on every tab switch and layout flip (kernel.py _LANDING_COLLAPSE_JS
+  // tellLink), so a split chat column's pane shim can end its return await on it. The shim reads the link on window itself; the one
+  // thing this handler takes from the word is the LAYOUT (review round 4, 2026-09-19, kernel-3): a split column hears no panes word,
+  // so before this a return hold it armed on the phone outlived a flip to the desktop for the socket's life, against skeleton-tabs.ts's
+  // "never outlives the layout"; the arm is the panes branch's expression, character for character (a lift over an open gate arms too:
+  // review round 4, verdict 1). Not a kernel message: without the return a link-DOWN word fell through to retryFailedPreviews below,
+  // and each split column re-fetched its failed previews on a path the shell had just declared down.
+  if (m.romp === "link") {
+    if (typeof m.mob === "boolean" && onLayoutWord(skeletonTabs, m.mob) && ((activeId && gateOnShow(skeletonTabs, activeId)) || skeletonTabs.gate)) schedulePrebuild();   // the layout word on the link word (kernel-3): the same arm as the panes branch above
+    return;
+  }
   // the pipe's down edge is the VS Code twin of the shim's romp:wsdown: unconfirmed sends say so (markPendingLost), and it
   // clears awaitingFull (an ask lost with the pipe must not suppress the re-ask after the reconnect's resync; see
   // requestFullSession; onWireDown clears the chat wire's window asks, not this set)

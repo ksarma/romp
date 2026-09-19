@@ -82,11 +82,13 @@ test("the shell's panes word, the other post it makes, heals nothing either (its
   assert.equal(h.calls.retryFailedPreviews, 0);
 });
 
-test("at source: the link branch sits right after the panes branch and before the heal, a return with no action", () => {
+test("at source: the link branch sits right after the panes branch and before the heal, and returns after the layout word alone", () => {
   const at = RENDER.indexOf(HEAD);
   const panes = RENDER.indexOf('if (m.romp === "panes") {', at);
-  const link = RENDER.indexOf('if (m.romp === "link") return;', at);
+  const link = RENDER.indexOf('if (m.romp === "link") {', at);
   const heal = RENDER.indexOf("retryFailedPreviews();", at);
-  assert.ok(panes > 0 && link > panes && heal > link, "panes branch, then the link return, then the heal");
+  assert.ok(panes > 0 && link > panes && heal > link, "panes branch, then the link block, then the heal");
   assert.equal(RENDER.slice(at, heal).split('m.romp === "link"').length, 2, "one link branch in the handler");
+  const block = RENDER.slice(link, RENDER.indexOf("\n  }\n", link));
+  assert.match(block, /onLayoutWord\(skeletonTabs, m\.mob\)[^\n]*schedulePrebuild\(\);[^\n]*\n\s*return;$/, "the block reads the layout word (review round 4, kernel-3: a split column's hold follows the layout) and returns; nothing else in it");
 });

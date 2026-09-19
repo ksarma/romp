@@ -452,7 +452,8 @@ test("the idle prefetch's START GATE (stage 0, 2026-09-18): upsert reads the sho
   // shell's own layout word in the panes handler (m.mob, re-told on every media-query flip), which re-decides the hold so a flip inside the
   // socket's life does not leave the arm's sample standing over the wrong layout
   assert.equal((RENDER.match(/phoneShell\(\)[^:]/g) || []).length, 1, "one phoneShell() call: the redial's wsup arm (the definition's `phoneShell(): boolean` is not a call)");
-  assert.equal((RENDER.match(/onLayoutWord\(/g) || []).length, 1, "one layout-word site: the panes handler");
+  assert.equal((RENDER.match(/onLayoutWord\(/g) || []).length, 2, "two layout-word sites: the panes handler (a pane frame's word) and the link handler (a split column's, review round 4, kernel-3)");
+  assert.equal((RENDER.match(/if \(typeof m\.mob === "boolean" && onLayoutWord\(skeletonTabs, m\.mob\) && \(\(activeId && gateOnShow\(skeletonTabs, activeId\)\) \|\| skeletonTabs\.gate\)\) schedulePrebuild\(\);/g) || []).length, 2, "the arm expression is the same at both sites, character for character (a second spelling would reproduce the lift-arms-nothing bug at one of them)");
   assert.match(RENDER, /if \(typeof m\.mob === "boolean" && onLayoutWord\(skeletonTabs, m\.mob\) && \(\(activeId && gateOnShow\(skeletonTabs, activeId\)\) \|\| skeletonTabs\.gate\)\) schedulePrebuild\(\);/, "the word re-decides the hold; a lifted hold arms the chain when the gate is open for it: opened now for the shown tab whose full applied on this socket, or open already (review round 4, verdict 1: gateOnShow refuses an open gate, so the gate itself is the second read; the executed case at the end of this file drives both roads)");
   const SK = fs.readFileSync(path.join(WEBVIEW, "skeleton-tabs.ts"), "utf8");
   assert.match(SK, /export function onSocketUp\(st: SkeletonState, phone\?: boolean\): void \{\s*\n\s*st\.loaded\.clear\(\);\s*\n\s*st\.gate = false;[^\n]*\n\s*st\.returnHold = phone === true;/, "a new socket closes the gate, and on the phone holds the chain for the socket's life");
@@ -539,6 +540,51 @@ test("review round 3 (2026-09-19, extra9-1): the panes-word BELT, executed: the 
   assert.deepEqual(r.layoutWords, [], "only a boolean is a layout word");
   r = run({ romp: "panes", on: { chat: true, feed: false }, mob: false }, { panesOn: { chat: false, feed: true }, lifts: true, opens: true });
   assert.equal(r.armed, 2, "the belt and the lifted hold each arm once on a word that carries both (schedulePrebuild coalesces)");
+});
+
+/** The link handler's block, lifted from render.ts the way liftedPanesOnBlock lifts the panes handler's `on` block, and run over the same
+ *  stand-ins (review round 4, kernel-3): the shell's link word is what a split chat column hears, so the layout must reach onLayoutWord from
+ *  this branch too, or a column's hold outlives the layout. */
+function liftedLinkBlock(): (m: unknown, st: PanesWordState) => PanesWordResult {
+  const start = RENDER.indexOf('  if (m.romp === "link") {');
+  assert.ok(start > 0, "the chat frame handler's link branch was found (a block, not the round-2 bare return)");
+  const end = RENDER.indexOf("\n    return;\n  }\n", start);
+  assert.ok(end > start && end - start < 1200, "the link block ends in its return: " + [start, end].join(","));
+  const block = RENDER.slice(start, end + "\n    return;\n  }\n".length);
+  assert.match(block, /schedulePrebuild\(\)/, "the slice carries the arm (or the mutation removed it)");
+  const js = requireCjs("esbuild").transformSync(block, { loader: "ts" }).code;
+  return new Function("m", "state", "let panesOn = state.panesOn; let armed = 0, layoutWords = [], gateAsks = 0; const schedulePrebuild = () => { armed++; }; const skeletonTabs = state.skeletonTabs || {}; const activeId = state.activeId === undefined ? \"A\" : state.activeId; const onLayoutWord = (st, phone) => { layoutWords.push(phone); return state.onLayoutWord ? state.onLayoutWord(st, phone) : !!state.lifts; }; const gateOnShow = (st, id) => { gateAsks++; return state.gateOnShow ? state.gateOnShow(st, id) : !!state.opens; };\n(() => {" + js + "})();\nreturn { panesOn, armed, layoutWords, gateAsks };") as
+    (m: unknown, st: PanesWordState) => PanesWordResult;
+}
+
+test("review round 4 (2026-09-19, kernel-3): the LINK word carries the layout to a split chat column, which hears no panes word, so its return hold is lifted by a flip to the desktop too", () => {
+  // A split column redialed on the phone layout arms the hold (phoneShell() at its wsup arm). The shell re-tells its link word on every flip
+  // (kernel.py tellLink runs from __rompPanesTell), and before this render.ts's link branch returned without reading it, so the column's
+  // hold stood for the socket's life after a flip to the desktop while the pane frame's hold lifted on the panes word. The lifted link block
+  // runs over the REAL state machine (the round-4 verdict-1 case's shape). Synthetic ids.
+  const A = "11111111-2222-3333-4444-aaaaaaaaaaaa", B = "11111111-2222-3333-4444-bbbbbbbbbbbb", C = "11111111-2222-3333-4444-cccccccccccc";
+  const none = new Set<string>(), all = () => true;
+  const run = liftedLinkBlock();
+  const st = newSkeletonState();
+  applyTabOrderSkeleton(st, [B, C], [A, B, C]);
+  onSocketUp(st, true);   // the column's wsup arm on the phone layout: held
+  onFull(st, A);
+  assert.equal(gateOnFrame(st, A, [A]), false, "held: the phone redial's full opens nothing");
+  assert.equal(nextPrefetch(st, A, none, false, all), null, "the chain is dormant under the hold");
+  const real: PanesWordState = { panesOn: { chat: true }, activeId: A, skeletonTabs: st, onLayoutWord, gateOnShow };
+  let r = run({ romp: "link", link: "up" }, real);
+  assert.deepEqual([r.layoutWords, r.gateAsks, r.armed, st.returnHold], [[], 0, 0, true], "a link word with no layout term (an older shell, or the socket's own re-tell shape) reaches nothing: the hold stands");
+  r = run({ romp: "link", link: "up", mob: false }, real);
+  assert.deepEqual([r.layoutWords, st.returnHold, st.gate, r.gateAsks, r.armed], [[false], false, true, 1, 1], "the desktop's link word lifts the column's hold: gateOnShow opens the gate for the shown tab and the chain arms once (before: the branch returned first, colWordsWithMob 0, the hold stood for the socket's life)");
+  assert.equal(nextPrefetch(st, A, none, false, all), B, "the column's chain runs on the desktop");
+  r = run({ romp: "link", link: "up", mob: true }, real);
+  assert.deepEqual([r.layoutWords, st.returnHold, r.armed], [[true], true, 0], "the phone's link word after the redial sets the hold again and arms nothing");
+  assert.equal(nextPrefetch(st, A, none, false, all), null);
+  r = run({ romp: "link", link: "down", mob: false }, real);
+  assert.equal(r.armed, 1, "the flip back lifts again over the open gate and arms once (the same arm as the panes branch: verdict 1's open-gate road)");
+  r = run({ romp: "link", link: "up", mob: "phone" as unknown as boolean }, real);
+  assert.deepEqual(r.layoutWords, [], "only a boolean is a layout word");
+  assert.deepEqual(r.panesOn, { chat: true }, "the link word touches no pane set (a column's routing set stays its own)");
 });
 
 test("review round 4 (2026-09-19, verdict 1): a lift that finds the prefetch gate already open arms the chain, once per lift, through the real state machine", () => {

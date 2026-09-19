@@ -69186,13 +69186,13 @@ _LANDING_COLLAPSE_JS = """
   function tell(f,m){try{f&&f.contentWindow&&f.contentWindow.postMessage(m,'*');}catch(e){}}
   // [fork] D3 (2026-09-18): the page's link reaches EVERY shim-bearing iframe, not the six pane frames alone. The pane
   // frames hear it as the panes word's link field; the others (the settings frame, a split chat column: every iframe
-  // in this document runs the shim) hear a link word of their own, {romp:'link',link}, because a panes word would
+  // in this document runs the shim) hear a link word of their own, {romp:'link',link,mob}, because a panes word would
   // replace a chat column's pane set wholesale (render.ts). The shim's await ends on either word (kernel.py _shim).
   // Review round 1: before this a split column or the settings frame ended its await on the shim's 5 s backstop poll.
   // broadcast (the boot and toggle apply) stays the pane frames' word; the re-tell the shell and the mobile script call
   // (__rompPanesTell) is the one that carries a CHANGED link, so it is the one that reaches every iframe.
   function broadcast(){var m=panesMsg();KEYS.forEach(function(k){tell(document.getElementById('f-'+k),m);});}
-  function linkMsg(){return {romp:'link',link:panesMsg().link};}
+  function linkMsg(){var m=panesMsg();return {romp:'link',link:m.link,mob:m.mob};}   // mob (review round 4, 2026-09-19, kernel-3): the LAYOUT word rides the link word too, so a split chat column, which hears no panes word, re-decides its return hold on every flip as the pane frames do (render.ts's link branch runs onLayoutWord on it); before this a column that armed the hold on the phone kept it for the socket's life after a flip to the desktop
   function tellLink(){var m=linkMsg(),pane={};KEYS.forEach(function(k){pane['f-'+k]=true;});
     Array.prototype.forEach.call(document.querySelectorAll('iframe'),function(f){if(!pane[f.id])tell(f,m);});}
   function broadcastAll(){broadcast();tellLink();}

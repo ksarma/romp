@@ -385,14 +385,14 @@ class LinkReachesEveryIframe(unittest.TestCase):
         self.assertEqual(u["chat"]["link"], "up", "a pane frame hears the panes word with the link up")
         self.assertEqual(u["chat"]["romp"], "panes")
         self.assertEqual(u["counts"], {k: 2 for k in self.keys}, "one word per pane frame per re-tell: the panes word, not a second link word")
-        self.assertEqual(u["settings"], [{"romp": "link", "link": "up"}], "the settings frame hears a link word of its own, once")
-        self.assertEqual(u["chat2"], [{"romp": "link", "link": "up"}], "a split chat column too (no pane set on it: its routing set stays its own)")
+        self.assertEqual(u["settings"], [{"romp": "link", "link": "up", "mob": False}], "the settings frame hears a link word of its own, once; it carries the layout too (review round 4, kernel-3), the desktop here")
+        self.assertEqual(u["chat2"], [{"romp": "link", "link": "up", "mob": False}], "a split chat column too (no pane set on it: its routing set stays its own; the layout term is what its render.ts reads for the return hold)")
         d = self.out["down"]
-        self.assertEqual([d["settings"], d["chat2"], d["chatLink"]], [{"romp": "link", "link": "down"}, {"romp": "link", "link": "down"}, "down"], "the close's re-tell reads down everywhere")
+        self.assertEqual([d["settings"], d["chat2"], d["chatLink"]], [{"romp": "link", "link": "down", "mob": False}, {"romp": "link", "link": "down", "mob": False}, "down"], "the close's re-tell reads down everywhere")
 
     def test_the_settings_frame_and_a_column_made_later_hear_the_link_when_they_load(self):
-        self.assertEqual(self.out["settingsLoad"], {"romp": "link", "link": "down"}, "the settings frame's load hook tells it the link as it stands")
-        self.assertEqual(self.out["col3"], [{"romp": "link", "link": "up"}], "a column the split script made after boot is wired by romp-chat-cols and hears the link at its load")
+        self.assertEqual(self.out["settingsLoad"], {"romp": "link", "link": "down", "mob": False}, "the settings frame's load hook tells it the link as it stands")
+        self.assertEqual(self.out["col3"], [{"romp": "link", "link": "up", "mob": False}], "a column the split script made after boot is wired by romp-chat-cols and hears the link at its load")
         self.assertEqual(self.out["hooks"], {"settings": 1, "col3": 1}, "one load hook each; a column close (no frame) wires nothing")
 
 

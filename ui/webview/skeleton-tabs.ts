@@ -42,9 +42,10 @@ export interface SkeletonState {
   // render.ts's wsup arm, the redial's frame); while it stands no opener (gateOnFrame, gateOnStrip, gateOnShow) opens
   // the gate. The boot dial sends no wsup, so a cold open's chain is untouched; the desktop passes false and keeps its chain.
   // RE-DECIDED ON THE LAYOUT WORD (review round 3, 2026-09-19, extra8-1): the shell re-tells its panes word on every media-query flip
-  // with the layout in it (kernel panesMsg `mob`), and onLayoutWord below sets the hold from that word and the redial record, so a
-  // flip to the desktop inside the socket's life lifts the hold (the grid gets its chain) and a flip to the phone after a redial sets
-  // it; before this the layout was sampled once at the wsup arm and the hold outlived it in both directions.
+  // with the layout in it (kernel panesMsg `mob`), and its link word to the iframes outside the pane frames with the same term (a split
+  // chat column hears the link word alone; review round 4, kernel-3), and onLayoutWord below sets the hold from that word and the
+  // redial record, so a flip to the desktop inside the socket's life lifts the hold (the grid gets its chain) and a flip to the phone
+  // after a redial sets it; before this the layout was sampled once at the wsup arm and the hold outlived it in both directions.
   returnHold: boolean;
   redialed: boolean;   // a wsup has arrived on this page (onSocketUp ran): the hold's precondition, since a cold open's chain is never held
 }
@@ -181,7 +182,8 @@ export function onSocketUp(st: SkeletonState, phone?: boolean): void {
   st.redialed = true;   // the hold's precondition for a later layout word (onLayoutWord)
 }
 
-/** The shell's LAYOUT word (kernel panesMsg `mob`, re-told on every media-query flip; render.ts's panes handler passes it): the hold is
+/** The shell's LAYOUT word (kernel panesMsg `mob`, re-told on every media-query flip; render.ts's panes handler passes it for a pane frame
+ *  and its link handler for a split chat column, which hears the link word alone: review round 4, kernel-3): the hold is
  *  re-decided from it and the redial record, so it never outlives the layout (review round 3, 2026-09-19, extra8-1). `phone` true after
  *  a redial holds (a flip to the phone inside the socket's life: the other tabs reload when tapped, as a phone redial's do); false lifts
  *  (a flip to the desktop: the grid gets its chain back). Before any redial nothing is held whatever the word (a cold open's chain is

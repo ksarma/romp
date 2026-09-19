@@ -315,9 +315,10 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   word is exact for the two named cases only.
   The desktop's redial keeps today's chain, and the hold follows the layout
   (since 2026-09-19): the shell re-tells its panes word with the layout on every
-  flip across the phone breakpoint, so a rotation to the desktop inside the
-  socket's life lifts the hold and the grid gets its chain, and a rotation to the
-  phone after a redial sets it.
+  flip across the phone breakpoint, and its link word, the one a split chat
+  column hears, carries the same layout term, so a rotation to the desktop
+  inside the socket's life lifts the hold in every chat document and the grid
+  gets its chain, and a rotation to the phone after a redial sets it.
 - **The Outline pane's ages run on the kernel's clock.** Its timestamps are the
   kernel's, so the pane never reads the browser's clock against them: it anchors
   on the frame's `now` paired with the moment that frame arrived from the wire
