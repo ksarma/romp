@@ -23,7 +23,12 @@ take a road to a root change (a jd.STATE assignment, a jd._rebind_state call, a 
 that changed), the 94 that load the kernel under its shared name, the 272 whose text assigns jd.STATE or calls
 _rebind_state in process (the private-kernel modules among them included: a private name isolates the kernel's
 globals and not jd's, so they move the shared jd.STATE, and their own singletons are outside this fixture by the
-stated limit), and the 316 the first sweep ran; 364 modules in all. The first sweep, over its 316 at the base, found
+stated limit; unprotected is a private-name kernel's dangling backend over a removed directory that a sibling file
+reads and gets the silent empty-registry answer this fixture exists to stop, live today on romp_kernel_mc, which
+tests/test_kernel_interrupt_machine_cut.py leaves dangling and two of the three files that load it read, that one and
+tests/test_kernel_msgcaption.py; the loop cannot land here because the private-kernel harnesses carry 90 or more
+pre-existing teardown leaks, so their save-and-restore product code lands first, then the ratchet's private-kernel
+arm), and the 316 the first sweep ran; 364 modules in all. The first sweep, over its 316 at the base, found
 the 4 red on these leaks and 1 red for an unrelated pre-existing reason (tests/test_sdk_rate_limit_usage.py, an
 unrestored ROMP_SERVE_TOKEN setdefault the judge fixture's environment check names; identical with the ratchet off);
 at this head every one of the 364 is green alone except that one. The full-suite census saw none of the five, because
@@ -1087,6 +1092,45 @@ class NestedSummaryMatcher(unittest.TestCase):
             self.assertIsNotNone(problem, repr(out))
             self.assertIn("no pytest summary line", problem)
             self.assertIn("3 errors expected", problem)
+
+
+LIMIT_UNPROTECTED = ("a private-name kernel's dangling backend over a removed directory that a sibling file reads and gets the "
+                     "silent empty-registry answer this fixture exists to stop")
+LIMIT_BLOCKER = "the loop cannot land here because the private-kernel harnesses carry 90 or more pre-existing teardown leaks"
+LIMIT_ORDER = "so their save-and-restore product code lands first, then the ratchet's private-kernel arm"
+LIMIT_READERS = ("two of the three", "tests/test_kernel_interrupt_machine_cut.py", "tests/test_kernel_msgcaption.py")
+
+
+def conftest_comment_text():
+    """tests/conftest.py's comment lines, the hash stripped, joined by one space with whitespace collapsed, so a needle
+    reads across the wrapped lines of a paragraph."""
+    lines = []
+    with open(os.path.join(HERE, "conftest.py")) as f:
+        for line in f:
+            s = line.strip()
+            if s.startswith("#"):
+                lines.append(s[1:].strip())
+    return re.sub(r"\s+", " ", " ".join(lines))
+
+
+class TheStatedLimitIsWorded(unittest.TestCase):
+    """The stated limit (a private kernel's own dangling singleton is outside the fixture) is worded, in the conftest
+    comment and in this module's docstring, with what it leaves unprotected, the two files that read the dangling
+    object today, and the blocker in its order (the harness fixes first, then the private-kernel arm); an edit that
+    drops any of them reds here."""
+
+    def _assert_worded(self, text, where):
+        for needle in (LIMIT_UNPROTECTED, LIMIT_BLOCKER, LIMIT_ORDER) + LIMIT_READERS:
+            self.assertIn(needle, text, "%s does not say: %s" % (where, needle))
+        self.assertLess(text.index(LIMIT_UNPROTECTED), text.index(LIMIT_BLOCKER),
+                        "%s: what is unprotected is said before the blocker" % where)
+        self.assertLess(text.index(LIMIT_BLOCKER), text.index(LIMIT_ORDER), "%s: the blocker before the order" % where)
+
+    def test_the_conftest_comment_says_what_is_unprotected_and_names_the_blocker_in_order(self):
+        self._assert_worded(conftest_comment_text(), "tests/conftest.py")
+
+    def test_this_modules_docstring_says_the_same(self):
+        self._assert_worded(re.sub(r"\s+", " ", __doc__), "the module docstring")
 
 
 class ClassTeardownRemovesTheDirectory(_NestedRun, unittest.TestCase):

@@ -554,7 +554,21 @@ def restore_env(name, prior):
 # private name isolates the kernel's globals and NOT jd's, since judge.py loads under its shared name
 # even when the kernel is private, so a test that assigns jd.STATE through a private kernel handle is
 # moving the shared judge state (_shared_state_restored's concern, not this one's). A private kernel's own
-# dangling singleton is outside this fixture, a stated limit.
+# dangling singleton is outside this fixture, a stated limit, and what it leaves unprotected is this fixture's
+# own defect class on a private name: a private-name kernel's dangling backend over a removed directory that
+# a sibling file reads and gets the silent empty-registry answer this fixture exists to stop. It is live
+# today: romp_kernel_mc is loaded by three files (tests/test_kernel_interrupt_machine_cut.py,
+# tests/test_kernel_msgcaption.py and tests/test_model_catalog.py), the first file's _FeedHarness leaves its
+# backend over a removed TemporaryDirectory, and two of the three read the dangling object, the machine-cut
+# file's own later tests and the caption file's timeline builds (build_timeline's fork_children, the reader
+# the incident above names); measured 2026-09-19 over the three files in one run, 90 of 108 teardowns end
+# with that one object over a removed root (33, 5 and 52 by file) and the catalog file reads it zero times;
+# eight private names are shared by two or three files each. The blocker, and the order: the same rule
+# looped over every sys.modules name starting with romp_kernel (round 1's proposed fix) is the arm that would
+# cover it, and the loop cannot land here because the private-kernel harnesses carry 90 or more pre-existing
+# teardown leaks (the 90 above are one name's; the round-1 refuters counted 574 would-fail outcomes over the
+# 18 files that share a private name), so their save-and-restore product code lands first, then the
+# ratchet's private-kernel arm.
 #
 # THE JUDGMENT (_sdk_judge), same marker: the same object is a pass, unless its directory was present at
 # the before read and is not at the after read, the test having removed the directory under the singleton
