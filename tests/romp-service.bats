@@ -1185,7 +1185,7 @@ EOF
     unset ROMP_SERVICE_NO_LOAD
     local unit="$ROMP_SYSTEMD_DIR/romp-manager.service"
     _old_unit "$unit"
-    printf 'Environment=ADMIN_LOCAL_KNOB=1\n' >> "$unit"
+    _svc_line "$unit" 'Environment=ADMIN_LOCAL_KNOB=1'
     mkdir -p "$unit.d"
     printf '[Service]\nEnvironment=FROM_DROPIN=1\n' > "$unit.d/local.conf"
     cp "$unit.d/local.conf" "$TEST_DIR/local.conf.copy"
@@ -1466,8 +1466,9 @@ EOF
     run grep -F "$TEST_DIR/markerbin" "$unit"
     [ "$status" -ne 0 ]
     grep -q '^Environment=ROMP_DIR=' "$unit"                             # the rest of the block is intact
-    # the quoted form
-    printf 'Environment="PATH=/quoted/bin:/usr/bin"\n' >> "$unit"
+    # the quoted form (in [Service], where systemd reads it: appended after [Install] it is a line systemd ignores, which the
+    # addendum to round 3 refuses for a kept variable)
+    _svc_line "$unit" 'Environment="PATH=/quoted/bin:/usr/bin"'
     PATH="$TEST_DIR/markerbin:$PATH" ROMP_SYSTEMCTL="$stub" ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite
     [ "$status" -eq 0 ]
     grep -qxF 'Environment="PATH=/quoted/bin:/usr/bin"' "$unit"          # kept, quotes and all
@@ -1741,17 +1742,123 @@ for part in sys.argv[2].split("."):
 print(d)
 PY
 }
-_unit_env_value() {   # $1 the unit, $2 a name: the value systemd reads for it from the unit's Environment= lines (systemd.syntax(7) quoting: quotes off, \\ and \" undone; the specifier's %% undone)
-    python3 - "$1" "$2" <<'PY'
-import shlex, sys
-name = sys.argv[2]
-for line in open(sys.argv[1]):
-    if line.startswith("Environment="):
-        for item in shlex.split(line[len("Environment="):]):
-            k, _, v = item.partition("=")
-            if k == name:
-                print(v.replace("%%", "%"))
+_svc_line() {   # $1 the unit, $@ lines: inserted into [Service], before [Install] (a line appended after [Install], which the tests here
+                # once did, is one systemd does not read: the read-write lens's harness had the same fault, 2026-09-19)
+    local unit="$1" l; shift
+    for l in "$@"; do printf '%s\n' "$l"; done > "$unit.ins"
+    awk -v ins="$unit.ins" 'BEGIN { while ((getline line < ins) > 0) buf = buf line "\n" } /^\[Install\]/ && !done { printf "%s", buf; done = 1 } { print }' "$unit" > "$unit.new"
+    mv -f "$unit.new" "$unit"; rm -f "$unit.ins"
+}
+_sd() {   # the oracle: a python that reads a unit the way systemd v255 does (conf-parser and config_parse_environ, config_parse_exec,
+          # config_parse_unit_env_file), written once under $TEST_DIR; prints its path. Comments and sections; a backslash continuation
+          # joined with the backslash replaced by a blank; key and value stripped of blanks around the first =; a word extracted as
+          # extract_first_word does with EXTRACT_UNQUOTE|EXTRACT_CUNESCAPE (either quote opens a quote anywhere in the word, C escapes
+          # undone, an unbalanced quote or an unknown escape drops the whole line as invalid syntax); %% undone and %h expanded, an
+          # unknown specifier dropping the item; an item kept when NAME=VALUE with a name of letters, digits and underscores; a later
+          # assignment replacing an earlier one; an empty rvalue resetting the list. ExecStart's first word loses its prefix characters.
+          # systemd-analyze --user verify on this box corroborates the ignoring warnings the table in the lens's report lists.
+    local py="$TEST_DIR/sd.py"
+    [ -f "$py" ] || cat > "$py" <<'PY'
+import os, re, sys
+WS = " \t\n\r"
+ESC = {"\\": "\\", '"': '"', "'": "'", "s": " ", "n": "\n", "t": "\t", "r": "\r", "a": "\a", "b": "\b", "f": "\f", "v": "\v"}
+def words(rv):
+    out, i, n = [], 0, len(rv)
+    while True:
+        while i < n and rv[i] in WS: i += 1
+        if i >= n: return out
+        w, q = "", None
+        while i < n:
+            c = rv[i]
+            if q is None and c in WS: break
+            if c == "\\":
+                i += 1
+                if i >= n: raise ValueError("trailing backslash")
+                e = rv[i]
+                if e in ESC: w += ESC[e]
+                elif e == "x" and re.match(r"[0-9A-Fa-f]{2}", rv[i + 1:i + 3]): w += chr(int(rv[i + 1:i + 3], 16)); i += 2
+                elif e in "01234567" and re.match(r"[0-7]{3}", rv[i:i + 3]): w += chr(int(rv[i:i + 3], 8)); i += 2
+                else: raise ValueError("unknown escape")
+                i += 1; continue
+            if q is None and c in "\"'": q = c; i += 1; continue
+            if q is not None and c == q: q = None; i += 1; continue
+            w += c; i += 1
+        if q is not None: raise ValueError("unbalanced quote")
+        out.append(w)
+KNOWN = set("aAbBCEfghHiIjJlLmMnNopPsStTuUvVwW")   # systemd.unit(5) specifiers; %h is the one this expands
+def specifiers(w):
+    out, i, n = "", 0, len(w)
+    while i < n:
+        c = w[i]
+        if c == "%":
+            if i + 1 >= n: out += "%"; i += 1; continue           # a stray trailing % is a %
+            d = w[i + 1]
+            if d == "%": out += "%"
+            elif d == "h": out += os.environ.get("HOME", "")
+            elif d in KNOWN: out += "<%" + d + ">"
+            else: return None                                      # EBADSLT: the item is dropped
+            i += 2; continue
+        out += c; i += 1
+    return out
+def parse(path):
+    sec, env, execs, envfiles, cont = None, {}, [], [], None
+    for raw in open(path).read().split("\n"):
+        l = raw
+        if cont is None and l.lstrip(" \t")[:1] in ("#", ";"): continue
+        p = (cont + l) if cont is not None else l
+        esc = False
+        for ch in p:
+            if esc: esc = False
+            elif ch == "\\": esc = True
+        if esc: cont = p[:-1] + " "; continue
+        cont = None
+        s = p.strip(WS)
+        if not s or s[0] in "#;": continue
+        if s[0] == "[": sec = s[1:s.index("]")] if "]" in s else s[1:]; continue
+        if "=" not in s: continue
+        lv, rv = s.split("=", 1); lv, rv = lv.strip(WS), rv.strip(WS)
+        if sec != "Service": continue
+        if lv == "Environment":
+            if rv == "": env = {}; continue
+            try: ws = words(rv)
+            except ValueError: continue
+            for w in ws:
+                r = specifiers(w)
+                if r is None: continue
+                k, sep, v = r.partition("=")
+                if sep and re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", k): env[k] = v
+        elif lv == "ExecStart":
+            if rv == "": execs = []; continue
+            try: ws = words(rv)
+            except ValueError: continue
+            if not ws: continue
+            f = ws[0]
+            while f and f[0] in "-@:+!|": f = f[1:]
+            argv = [specifiers(f)]
+            for w in ws[1:]:
+                if w == ";": break
+                argv.append(specifiers(w))
+            execs.append(argv)
+        elif lv == "EnvironmentFile":
+            if rv == "": envfiles = []; continue
+            r = specifiers(rv)
+            if r is not None: envfiles.append(r[1:] if r.startswith("-") else r)
+    return env, execs, envfiles
+env, execs, envfiles = parse(sys.argv[1])
+what = sys.argv[2]
+if what == "env": print(env.get(sys.argv[3], ""))
+elif what == "exec0": print(execs[0][0] if execs else "")
+elif what == "execn": print(len(execs[0]) if execs else 0)
+elif what == "execs": print(len(execs))
+elif what == "envfile": print(envfiles[0] if envfiles else "")
 PY
+    printf '%s' "$py"
+}
+_sd_read() {   # $1 the unit, $2 env NAME | exec0 | execn | execs | envfile: what systemd reads, through the oracle
+    python3 "$(_sd)" "$@"
+}
+_unit_env_value() {   # $1 the unit, $2 a name: the value systemd reads for it (the oracle above; the shlex of round 3 was not systemd's reading)
+    _sd_read "$1" env "$2"
 }
 
 @test "rewrite (macOS): a plist re-saved in canonical XML or as binary is read through plutil when one is on PATH: its identity, PATH, instance entries, service.env path and log paths survive, and another clone or a differing value is still refused" {
@@ -1927,20 +2034,20 @@ PY
     [ "$status" -ne 0 ]                                                                    # not under this shell's root
 }
 
-@test "rewrite (Linux): a hand-quoted instance line with whitespace goes back as written and reads back whole; an install writes a value with whitespace, a % or a backslash in the quoted form systemd reads whole, a plain one unquoted as before" {
+@test "rewrite (Linux): a hand-quoted instance line with whitespace goes back in the writer's form, the same bytes, and reads back whole; an install writes a value with whitespace, a % or a backslash in the quoted form systemd reads whole, a plain one unquoted as before" {
     # Round 3 (extra6-2): round 2 taught the reader to MATCH a quoted Environment= line for every key, and only PATH was
     # written back verbatim; an instance value read out of a quoted line was re-emitted unquoted, and systemd cuts an
     # unquoted item at whitespace (systemd.exec(5) Environment=, systemd.syntax(7) Quoting). The written line is parsed
-    # here the way systemd parses it (_unit_env_value).
+    # here the way systemd parses it (_unit_env_value, the oracle). The addendum to round 3 (2026-09-19) writes the value
+    # back through the one writer instead of replaying the line; for these lines that is the same bytes.
     unset ROMP_SERVICE_NO_LOAD
     local unit="$ROMP_SYSTEMD_DIR/romp-manager.service" cc="$TEST_DIR/claude cfg dir" st="$TEST_DIR/pct%dir"
     _old_unit "$unit"
-    printf 'Environment="CLAUDE_CONFIG_DIR=%s"\n' "$cc" >> "$unit"
-    printf 'Environment="ROMP_STATE_DIR=%s"\n' "$TEST_DIR/pct%%dir" >> "$unit"          # hand-quoted, with the doubled % systemd wants
+    _svc_line "$unit" 'Environment="CLAUDE_CONFIG_DIR='"$cc"'"' 'Environment="ROMP_STATE_DIR='"$TEST_DIR"'/pct%%dir"'   # hand-quoted, the doubled % systemd wants
     local stub; stub="$(_systemctl_stub active)"
     ROMP_SYSTEMCTL="$stub" ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite                      # the clean shell
     [ "$status" -eq 0 ]
-    grep -qxF 'Environment="CLAUDE_CONFIG_DIR='"$cc"'"' "$unit"                           # as written, quotes and all
+    grep -qxF 'Environment="CLAUDE_CONFIG_DIR='"$cc"'"' "$unit"                           # the writer's form: quoted, the same bytes
     grep -qxF 'Environment="ROMP_STATE_DIR='"$TEST_DIR"'/pct%%dir"' "$unit"
     [ "$(grep -cE '^Environment="?CLAUDE_CONFIG_DIR=' "$unit")" -eq 1 ]
     [ "$(_unit_env_value "$unit" CLAUDE_CONFIG_DIR)" = "$cc" ]                             # what systemd reads: the whole value
@@ -1972,9 +2079,10 @@ PY
 
 # ─── the mutation pass over round 3 (2026-09-19): the pins the reviewer's mutation lens found missing ───────────
 # Each case reds under one mutation of bin/romp-service that the round-3 cases left green: the plutil reader's branch
-# for a Label that does not extract returning 0, _xml_unescape undoing &amp; first, the unit's instance line
-# re-encoded instead of replayed, and the ROMP_PLUTIL knob ignored (this host has no plutil, so the knob and the
-# default resolved the same reader in every round-3 case).
+# for a Label that does not extract returning 0, _xml_unescape decoding a reference twice, and the ROMP_PLUTIL knob
+# ignored (this host has no plutil, so the knob and the default resolved the same reader in every round-3 case). The
+# pass's fourth case, an unquoted %h specifier replayed as written, is retired by the addendum to round 3 below, which
+# refuses a specifier as a form the reader does not read whole.
 
 @test "rewrite (macOS): through plutil, a plist from which no Label extracts (no Label entry, or not a plist at all) is refused, exit 5 and byte for byte, nothing read out of it, on rewrite, rewrite --check and the marked child's install" {
     # Mutation pass (2026-09-19): the round-3 cases drove the plutil reader with a Label present (romp's, or another
@@ -2090,31 +2198,374 @@ PY
     cmp -s "$plist" "$plist.once"
 }
 
-@test "rewrite (Linux): an unquoted instance line carrying a % an administrator wrote for a specifier goes back as written; re-encoded, the % would be doubled" {
-    # Mutation pass (2026-09-19): the round-3 quoting case replayed hand-quoted lines whose re-encoding gives the same
-    # bytes (a %% decoded to % is doubled back; whitespace is quoted back), so the replay branch could fall through to
-    # _unit_env_line with the case green. An unquoted %h, written for systemd to expand, is the value the replay is
-    # for: decoded it is still %h, and re-encoded it becomes a quoted %%h, which systemd reads as a literal.
+# ─── the addendum to round 3 (2026-09-19): the readers refuse what they cannot read whole, every written value reads back ───
+# Two pre-run lenses over the round-3 head. The plist-road lens: a one-line plist with ONE entry split across two lines passed
+# the two-marker form check and read that entry as absent (its medium); the fallback's ExecStart read took the line before
+# <string>up</string> whatever it was (its low). The read-write trace, D1 to D8: ROMP_DIR and ExecStart written bare, the
+# single quote unquoted, a specifier taken literally, `Key = Value` read as absent, a continuation replayed, the compare
+# decoding unlike systemd, a numeric character reference kept as text. The rule the cases below pin, stated in
+# bin/romp-service's header and docs/reference.md: a reader that cannot read a form WHOLE refuses it (exit 5, nothing
+# written, the form and the remedy named); a value the reader accepts is written back in a form systemd or launchd reads
+# IDENTICALLY, which these cases verify by parsing the written file the way the daemon does (_sd_read, _plist_get).
+
+@test "rewrite (macOS): without plutil, romp's own plist with ONE entry split across two lines by hand (PATH, StandardOutPath, an instance entry) is refused, exit 5 and byte for byte with no audit row, on rewrite, rewrite --check and the marked child's install; through the plutil stand-in the split entry reads exactly" {
+    # the plist-road lens's medium: round 3's assertion was two markers (Label, ROMP_SUPERVISED), so an editor's split of any
+    # OTHER entry passed it and that entry read as absent: PATH dropped, the log paths moved to the caller's HOME at exit 0 with
+    # the success line, --check blessing it first. The reader now asserts every entry it reads is on one line with its <string>.
     unset ROMP_SERVICE_NO_LOAD
-    local unit="$ROMP_SYSTEMD_DIR/romp-manager.service"
-    _old_unit "$unit"
-    printf 'Environment=CLAUDE_CONFIG_DIR=%%h/.claude-romp\n' >> "$unit"                 # unquoted, a specifier for systemd
-    local stub; stub="$(_systemctl_stub active)"
-    ROMP_SYSTEMCTL="$stub" ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite                      # the clean shell
+    local plist="$ROMP_LAUNCHD_DIR/com.romp.manager.plist" none="$TEST_DIR/no-plutil-here" k
+    mkdir -p "$TEST_DIR/pathbin" "$TEST_DIR/xdg"
+    PATH="$TEST_DIR/pathbin:$PATH" XDG_STATE_HOME="$TEST_DIR/xdg" ROMP_KERNEL_PORT=29866 ROMP_OS_OVERRIDE=Darwin ROMP_SERVICE_NO_LOAD=1 "$SVC" install >/dev/null
+    cp "$plist" "$plist.romp"
+    local path_v; path_v="$(_plist_get "$plist" EnvironmentVariables.PATH)"
+    [ "$(_plist_get "$plist" StandardOutPath)" = "$TEST_DIR/xdg/romp/manager.log" ]     # not the caller's HOME default
+    for k in PATH StandardOutPath ROMP_KERNEL_PORT; do
+        awk -v k="$k" '{ t = "<key>" k "</key>"; if (index($0, t "<string>") > 0) { i = index($0, t) + length(t); print substr($0, 1, i - 1); print "    " substr($0, i) } else print }' "$plist.romp" > "$plist"
+        grep -qx "  *<key>$k</key>" "$plist"                                            # the hand form: key alone on its line
+        [ "$(_plist_get "$plist" EnvironmentVariables.ROMP_KERNEL_PORT)" = 29866 ]     # launchd still reads every entry
+        cp "$plist" "$plist.split"
+        ROMP_PLUTIL="$none" ROMP_OS_OVERRIDE=Darwin run "$SVC" rewrite
+        [ "$status" -eq 5 ]
+        [[ "$output" == *"its $k entry is split across lines"* ]]
+        [[ "$output" == *"reads an entry whole or not at all"* ]]
+        [[ "$output" == *"nothing was rewritten"* ]]
+        [[ "$output" != *"Rewrote"* ]]
+        cmp -s "$plist" "$plist.split"
+        [ ! -e "$plist.tmp" ]
+        run grep -c '"action": "service-rewrite"' "$TEST_DIR/xdg/romp/restart-audit.jsonl" "$XDG_STATE_HOME/romp/restart-audit.jsonl"
+        [ "$status" -ne 0 ]                                                             # nothing journaled, under either root
+        [ ! -e "$XDG_STATE_HOME/romp/manager.log" ]                                     # and the log paths never moved here
+        ROMP_PLUTIL="$none" ROMP_OS_OVERRIDE=Darwin run "$SVC" rewrite --check
+        [ "$status" -eq 5 ]
+        [[ "$output" == *"its $k entry is split across lines"* ]]
+        cmp -s "$plist" "$plist.split"
+        run env -i HOME="$HOME" PATH="$PATH" ROMP_UPDATE_CHILD=1 ROMP_PLUTIL="$none" ROMP_OS_OVERRIDE=Darwin ROMP_SERVICE_NO_LOAD=1 ROMP_NO_NODE_COPY=1 \
+            ROMP_LAUNCHD_DIR="$ROMP_LAUNCHD_DIR" ROMP_MANAGER_BIN="$ROMP_MANAGER_BIN" "$SVC" install
+        [ "$status" -eq 5 ]
+        [[ "$output" == *"its $k entry is split across lines"* ]]
+        cmp -s "$plist" "$plist.split"
+        # through plutil the split entry is an entry: read exactly, kept, the log paths where they were
+        _plutil_stub
+        PATH="$TEST_DIR/plutil-bin:$PATH" ROMP_OS_OVERRIDE=Darwin run "$SVC" rewrite
+        [ "$status" -eq 0 ]
+        [ "$(_plist_get "$plist" EnvironmentVariables.PATH)" = "$path_v" ]
+        [ "$(_plist_get "$plist" EnvironmentVariables.ROMP_KERNEL_PORT)" = 29866 ]
+        [ "$(_plist_get "$plist" StandardOutPath)" = "$TEST_DIR/xdg/romp/manager.log" ]
+        grep -qF "<key>$k</key><string>" "$plist"                                       # written back in romp's one-line form
+    done
+}
+
+@test "rewrite (macOS): without plutil, a ProgramArguments array collapsed onto one line is refused as a form not read whole, exit 5 and byte for byte on all three roads, never as another clone; through the plutil stand-in the manager's path reads exactly" {
+    # the plist-road lens's low: the fallback's ExecStart read printed the line before <string>up</string> whatever it was, so
+    # the collapsed array yielded `<key>ProgramArguments</key>` as the manager's path and the OWNING clone was refused as
+    # another clone, the operator sent to re-run from the clone they were in. Safe (nothing written) and wrong on both counts.
+    unset ROMP_SERVICE_NO_LOAD
+    local plist="$ROMP_LAUNCHD_DIR/com.romp.manager.plist" none="$TEST_DIR/no-plutil-here"
+    ROMP_KERNEL_PORT=29866 ROMP_OS_OVERRIDE=Darwin ROMP_SERVICE_NO_LOAD=1 "$SVC" install >/dev/null
+    awk 'BEGIN { a = 0 } /^[[:space:]]*<array>/ { a = 1; buf = $0; next } a == 1 { sub(/^[[:space:]]*/, ""); buf = buf $0; if ($0 ~ /<\/array>/) { print buf; a = 0 }; next } { print }' "$plist" > "$plist.new"
+    mv -f "$plist.new" "$plist"
+    grep -qE '^ *<array><string>.*<string>up</string></array>$' "$plist"                 # the hand form, one line
+    [ "$(_plist_get "$plist" ProgramArguments.1)" = "$ROMP_MANAGER_BIN" ]               # which launchd reads whole
+    cp "$plist" "$plist.array"
+    ROMP_PLUTIL="$none" ROMP_OS_OVERRIDE=Darwin run "$SVC" rewrite
+    [ "$status" -eq 5 ]
+    [[ "$output" == *"its ProgramArguments array is not one <string> a line ending in <string>up</string>"* ]]
+    [[ "$output" == *"reads the array whole or not at all"* ]]
+    [[ "$output" != *"this clone would write"* ]]                                       # not a false other-clone diagnosis
+    [[ "$output" != *"ProgramArguments</key>, this clone"* ]]
+    cmp -s "$plist" "$plist.array"
+    run grep -c '"action": "service-rewrite"' "$XDG_STATE_HOME/romp/restart-audit.jsonl"
+    [ "$status" -ne 0 ]
+    ROMP_PLUTIL="$none" ROMP_OS_OVERRIDE=Darwin run "$SVC" rewrite --check
+    [ "$status" -eq 5 ]
+    [[ "$output" == *"ProgramArguments array is not one <string> a line"* ]]
+    cmp -s "$plist" "$plist.array"
+    run env -i HOME="$HOME" PATH="$PATH" ROMP_UPDATE_CHILD=1 ROMP_PLUTIL="$none" ROMP_OS_OVERRIDE=Darwin ROMP_SERVICE_NO_LOAD=1 ROMP_NO_NODE_COPY=1 \
+        ROMP_LAUNCHD_DIR="$ROMP_LAUNCHD_DIR" ROMP_MANAGER_BIN="$ROMP_MANAGER_BIN" "$SVC" install
+    [ "$status" -eq 5 ]
+    [[ "$output" == *"ProgramArguments array is not one <string> a line"* ]]
+    cmp -s "$plist" "$plist.array"
+    # a plist with no <string>up</string> line at all is the same refusal, never an absent ExecStart re-pointed at this clone
+    sed 's|<string>up</string>|<string>start</string>|' "$plist.array" > "$plist"
+    ROMP_PLUTIL="$none" ROMP_OS_OVERRIDE=Darwin run "$SVC" rewrite
+    [ "$status" -eq 5 ]
+    [[ "$output" == *"ProgramArguments array is not one <string> a line"* ]]
+    # through plutil the collapsed array reads: the owning clone is accepted and the path written back one string a line
+    cp "$plist.array" "$plist"
+    _plutil_stub
+    PATH="$TEST_DIR/plutil-bin:$PATH" ROMP_OS_OVERRIDE=Darwin run "$SVC" rewrite
     [ "$status" -eq 0 ]
-    grep -qxF 'Environment=CLAUDE_CONFIG_DIR=%h/.claude-romp' "$unit"                     # as written: unquoted, one %
-    [ "$(grep -cE '^Environment="?CLAUDE_CONFIG_DIR=' "$unit")" -eq 1 ]
-    run grep -F '%%h' "$unit"
-    [ "$status" -ne 0 ]                                                                    # never doubled
-    grep -q '^Environment=MALLOC_ARENA_MAX=2$' "$unit"                                      # the release's line arrived beside it
-    # a second rewrite leaves it as it is, and the compare reads the value as the file carries it
+    [ "$(_plist_get "$plist" ProgramArguments.1)" = "$ROMP_MANAGER_BIN" ]
+    grep -qx "    <string>$ROMP_MANAGER_BIN</string>" "$plist"
+    ROMP_MANAGER_BIN="$TEST_DIR/other/romp-manager" PATH="$TEST_DIR/plutil-bin:$PATH" ROMP_OS_OVERRIDE=Darwin run "$SVC" rewrite
+    [ "$status" -eq 5 ]
+    [[ "$output" == *"ExecStart: the file runs $TEST_DIR/romp-manager, this clone would write $TEST_DIR/other/romp-manager"* ]]
+}
+
+@test "unit: every value systemd word-splits is written in the form it reads back as that value, on the install road and the rewrite road: a space, a double quote, a single quote, a backslash, a percent and a leading dash in ROMP_DIR, ExecStart, an instance variable and the service.env path; a hand-quoted ROMP_DIR line and ExecStart are accepted and written in the writer's form" {
+    # the read-write lens, D1, D2 and D7: ROMP_DIR was written bare on both roads (a hand-quoted line that systemd read whole was
+    # decoded, agreed, and written back bare, which systemd cut at the space, %-expanded or dropped), the install road's quoting
+    # class missed the single quote (systemd dropped the whole line as unbalanced), and ExecStart's path went bare on every road.
+    # One writer now, _unit_word; the oracle (_sd_read) parses the written file as systemd does.
+    unset ROMP_SERVICE_NO_LOAD
+    local odd="$TEST_DIR/o sp\"q 'a' b\\s 100% -d" unit="$ROMP_SYSTEMD_DIR/romp-manager.service"
+    local svc2="$odd/bin/romp-service" mgr="$odd/mgr/romp-manager" cc="$odd/claude" envf="$odd/service.env"
+    mkdir -p "$odd/bin" "$odd/mgr" "$cc"
+    cp "$SVC" "$svc2"                                                                     # ROMP_DIR is the clone the script runs from
+    ROMP_MANAGER_BIN="$mgr" CLAUDE_CONFIG_DIR="$cc" ROMP_SERVICE_ENV_FILE="$envf" ROMP_KERNEL_PORT=29866 ROMP_OS_OVERRIDE=Linux ROMP_SERVICE_NO_LOAD=1 "$svc2" install >/dev/null
+    [ "$(_sd_read "$unit" env ROMP_DIR)" = "$odd" ]
+    [ "$(_sd_read "$unit" env CLAUDE_CONFIG_DIR)" = "$cc" ]
+    [ "$(_sd_read "$unit" env ROMP_SERVICE_ENV_FILE)" = "$envf" ]
+    [ "$(_sd_read "$unit" envfile)" = "$envf" ]
+    [ "$(_sd_read "$unit" exec0)" = "$mgr" ]
+    [ "$(_sd_read "$unit" execn)" = 2 ]                                                   # the path and `up`, nothing split off
+    [ "$(_sd_read "$unit" env ROMP_KERNEL_PORT)" = 29866 ]
+    grep -qxF 'Environment=ROMP_KERNEL_PORT=29866' "$unit"                                # a plain value stays bare, as before
+    grep -qxF 'Environment=ROMP_SUPERVISED=1' "$unit"
+    grep -q '^ExecStart="' "$unit"                                                        # the quoted form where it is needed
+    grep -q '^Environment="ROMP_DIR=' "$unit"
+    cp "$unit" "$unit.installed"
+    # the rewrite road from a clean shell: the same values read back, the file byte for byte the install's
+    local stub; stub="$(_systemctl_stub active)"
+    ROMP_MANAGER_BIN="$mgr" ROMP_SYSTEMCTL="$stub" ROMP_OS_OVERRIDE=Linux run "$svc2" rewrite
+    [ "$status" -eq 0 ]
+    cmp -s "$unit" "$unit.installed"
+    ROMP_MANAGER_BIN="$mgr" CLAUDE_CONFIG_DIR="$cc" ROMP_SERVICE_ENV_FILE="$envf" ROMP_KERNEL_PORT=29866 ROMP_SYSTEMCTL="$stub" ROMP_OS_OVERRIDE=Linux run "$svc2" rewrite
+    [ "$status" -eq 0 ]                                                                   # the owning shell agrees
+    # the marked update child's install road over the file: the same bytes
+    run env -i HOME="$HOME" PATH="$PATH" ROMP_UPDATE_CHILD=1 ROMP_MANAGER_BIN="$mgr" ROMP_OS_OVERRIDE=Linux ROMP_SERVICE_NO_LOAD=1 \
+        ROMP_SYSTEMD_DIR="$ROMP_SYSTEMD_DIR" XDG_STATE_HOME="$XDG_STATE_HOME" "$svc2" install
+    [ "$status" -eq 0 ]
+    cmp -s "$unit" "$unit.installed"
+    # a hand-quoted ROMP_DIR line and ExecStart in systemd's other form (single quotes, \' and \\ escapes, %%), which systemd
+    # reads whole: accepted as the owning clone, written back in the writer's form, and read back as the same value
+    local hq="${odd//\\/\\\\}"; hq="${hq//\'/\\\'}"; hq="${hq//%/%%}"
+    local hm="${mgr//\\/\\\\}"; hm="${hm//\'/\\\'}"; hm="${hm//%/%%}"
+    grep -v -e '^Environment="ROMP_DIR=' -e '^ExecStart=' "$unit" > "$unit.new" && mv -f "$unit.new" "$unit"
+    _svc_line "$unit" "Environment='ROMP_DIR=$hq'" "ExecStart='$hm' up"
+    [ "$(_sd_read "$unit" env ROMP_DIR)" = "$odd" ]                                       # the hand form reads whole to systemd
+    [ "$(_sd_read "$unit" exec0)" = "$mgr" ]
+    ROMP_MANAGER_BIN="$mgr" ROMP_SYSTEMCTL="$stub" ROMP_OS_OVERRIDE=Linux run "$svc2" rewrite
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"this clone would write"* ]]
+    cmp -s "$unit" "$unit.installed"                                                      # the writer's form again
+    [ "$(_sd_read "$unit" env ROMP_DIR)" = "$odd" ]
+    [ "$(_sd_read "$unit" exec0)" = "$mgr" ]
+}
+
+@test "rewrite (Linux): systemd's blank-padded form, Environment = X=y and ExecStart = /p up, is read as systemd reads it: an ExecStart naming another clone is refused and never re-pointed, and the owning clone's padded lines are accepted with the port kept" {
+    # the read-write lens, D4: `Key = Value` read as absent to round 3's anchored regexes, so the port line was dropped and an
+    # ExecStart naming another clone was silently re-pointed at this one, past the identity guard.
+    unset ROMP_SERVICE_NO_LOAD
+    local unit="$ROMP_SYSTEMD_DIR/romp-manager.service" road
+    _old_unit "$unit"
+    sed "s|^ExecStart=\(.*\)\$|ExecStart = \1|" "$unit" > "$unit.new" && mv -f "$unit.new" "$unit"
+    _svc_line "$unit" "Environment = ROMP_KERNEL_PORT=31855"
+    [ "$(_sd_read "$unit" env ROMP_KERNEL_PORT)" = 31855 ]                                # systemd's reading of the padded form
+    [ "$(_sd_read "$unit" exec0)" = "$ROMP_MANAGER_BIN" ]
+    local stub; stub="$(_systemctl_stub active)"
+    ROMP_SYSTEMCTL="$stub" ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite --check
+    [ "$status" -eq 0 ]
+    ROMP_KERNEL_PORT=29866 ROMP_SYSTEMCTL="$stub" ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite
+    [ "$status" -eq 5 ]                                                                   # the padded line's value is compared
+    [[ "$output" == *"ROMP_KERNEL_PORT: the file carries 31855, this environment carries 29866"* ]]
     ROMP_SYSTEMCTL="$stub" ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite
     [ "$status" -eq 0 ]
-    grep -qxF 'Environment=CLAUDE_CONFIG_DIR=%h/.claude-romp' "$unit"
-    CLAUDE_CONFIG_DIR="$TEST_DIR/other" ROMP_SYSTEMCTL="$stub" ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite
+    [ "$(_sd_read "$unit" env ROMP_KERNEL_PORT)" = 31855 ]                                # kept, in the writer's form
+    grep -qxF 'Environment=ROMP_KERNEL_PORT=31855' "$unit"
+    grep -qxF "ExecStart=$ROMP_MANAGER_BIN up" "$unit"
+    # another clone's ExecStart, padded: refused on every road, the file untouched
+    mkdir -p "$TEST_DIR/other"
+    sed "s|^ExecStart=.*\$|ExecStart = $TEST_DIR/other/romp-manager up|" "$unit" > "$unit.new" && mv -f "$unit.new" "$unit"
+    [ "$(_sd_read "$unit" exec0)" = "$TEST_DIR/other/romp-manager" ]
+    cp "$unit" "$unit.other"
+    ROMP_SYSTEMCTL="$stub" ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite
     [ "$status" -eq 5 ]
-    [[ "$output" == *"CLAUDE_CONFIG_DIR: the file carries %h/.claude-romp, this environment carries $TEST_DIR/other"* ]]
-    grep -qxF 'Environment=CLAUDE_CONFIG_DIR=%h/.claude-romp' "$unit"
+    [[ "$output" == *"ExecStart: the file runs $TEST_DIR/other/romp-manager, this clone would write $ROMP_MANAGER_BIN"* ]]
+    cmp -s "$unit" "$unit.other"
+    ROMP_SYSTEMCTL="$stub" ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite --check
+    [ "$status" -eq 5 ]
+    cmp -s "$unit" "$unit.other"
+    run env -i HOME="$HOME" PATH="$PATH" ROMP_UPDATE_CHILD=1 ROMP_OS_OVERRIDE=Linux ROMP_SERVICE_NO_LOAD=1 ROMP_SYSTEMD_DIR="$ROMP_SYSTEMD_DIR" \
+        ROMP_MANAGER_BIN="$ROMP_MANAGER_BIN" XDG_STATE_HOME="$XDG_STATE_HOME" "$SVC" install
+    [ "$status" -eq 5 ]
+    [[ "$output" == *"ExecStart: the file runs $TEST_DIR/other/romp-manager"* ]]
+    cmp -s "$unit" "$unit.other"
+}
+
+@test "rewrite (Linux): a specifier written by hand (%h in an instance line, in ExecStart, in EnvironmentFile) is a form the reader does not read whole: refused, exit 5, the line and the specifier named, nothing written or journaled, on rewrite, rewrite --check and the marked child's install; %% is a literal % and reads" {
+    # the read-write lens, D3: systemd expands %h before the manager sees the value, and round 3's reader took the text literally
+    # (a state root under a relative %h/ in the caller's working directory, an EnvironmentFile re-doubled into a path that is
+    # not absolute, the shell carrying the expanded value refused). The mutation pass had pinned the opposite for an instance
+    # line, replaying it as written; a replay keeps the text and not the reading, so the form is refused under the rule.
+    unset ROMP_SERVICE_NO_LOAD
+    cd "$TEST_DIR"                                                                        # where a literal %h/ would have been created
+    local unit="$ROMP_SYSTEMD_DIR/romp-manager.service" form stub rows; stub="$(_systemctl_stub active)"
+    _old_unit "$unit"; cp "$unit" "$unit.clean"
+    rows="$(grep -c '"action": "service-install"' "$XDG_STATE_HOME/romp/restart-audit.jsonl")"   # _old_unit's own install journaled one
+    for form in 'Environment=ROMP_STATE_DIR=%h/.local/state/romp' 'Environment="CLAUDE_CONFIG_DIR=%h/.claude-romp"' 'EnvironmentFile=-%h/.config/romp/service.env' 'ExecStart=%h/bin/romp-manager up'; do
+        cp "$unit.clean" "$unit"
+        case "$form" in EnvironmentFile=*|ExecStart=*) grep -v "^${form%%=*}=" "$unit" > "$unit.new" && mv -f "$unit.new" "$unit" ;; esac
+        _svc_line "$unit" "$form"
+        cp "$unit" "$unit.hand"
+        ROMP_SYSTEMCTL="$stub" ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite
+        [ "$status" -eq 5 ]
+        [[ "$output" == *"is in a form this rewrite does not read whole"* ]]
+        [[ "$output" == *"specifier %h"* ]]
+        [[ "$output" == *"nothing was rewritten"* ]]
+        [[ "$output" == *"Write the absolute path in its place"* ]]
+        [[ "$output" != *"this clone would write"* ]]
+        cmp -s "$unit" "$unit.hand"
+        [ ! -e "$unit.tmp" ]
+        [ ! -e "$TEST_DIR/%h" ]
+        run grep -c '"action": "service-rewrite"' "$XDG_STATE_HOME/romp/restart-audit.jsonl"
+        [ "$status" -ne 0 ]
+        ROMP_SYSTEMCTL="$stub" ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite --check
+        [ "$status" -eq 5 ]
+        [[ "$output" == *"specifier %h"* ]]
+        cmp -s "$unit" "$unit.hand"
+        run env -i HOME="$HOME" PATH="$PATH" ROMP_UPDATE_CHILD=1 ROMP_OS_OVERRIDE=Linux ROMP_SERVICE_NO_LOAD=1 ROMP_SYSTEMD_DIR="$ROMP_SYSTEMD_DIR" \
+            ROMP_MANAGER_BIN="$ROMP_MANAGER_BIN" XDG_STATE_HOME="$XDG_STATE_HOME" "$SVC" install
+        [ "$status" -eq 5 ]
+        [[ "$output" == *"specifier %h"* ]]
+        cmp -s "$unit" "$unit.hand"
+        [ "$(grep -c '"action": "service-install"' "$XDG_STATE_HOME/romp/restart-audit.jsonl")" = "$rows" ]   # the refused install journaled nothing
+    done
+    # %% is a literal % to systemd and to the reader: read, and written back doubled in the quoted form
+    cp "$unit.clean" "$unit"
+    _svc_line "$unit" 'Environment=CLAUDE_CONFIG_DIR=/x/pct%%dir'
+    ROMP_SYSTEMCTL="$stub" ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite
+    [ "$status" -eq 0 ]
+    [ "$(_sd_read "$unit" env CLAUDE_CONFIG_DIR)" = "/x/pct%dir" ]
+    grep -qxF 'Environment="CLAUDE_CONFIG_DIR=/x/pct%%dir"' "$unit"
+    CLAUDE_CONFIG_DIR=/x/pct%dir ROMP_SYSTEMCTL="$stub" ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite
+    [ "$status" -eq 0 ]                                                                   # the shell carrying the decoded value agrees
+}
+
+@test "rewrite (Linux): a continuation line (a trailing backslash), two assignments on one Environment= line, and a kept line under [Install] are forms the reader does not read whole: refused, the line and the form named, nothing written, on all three roads" {
+    # the read-write lens, D5: the reader took the physical line, so the trailing backslash was replayed and joined to the
+    # next WRITTEN line, which it swallowed (ROMP_MANAGER_PORT dropped, ROMP_STATE_DIR turned into a variable named
+    # Environment). The other two are the same class: a second assignment on the line the writer writes one item to, and a
+    # line under [Install], which systemd does not read Environment= in and round 3 replayed under [Service].
+    unset ROMP_SERVICE_NO_LOAD
+    local unit="$ROMP_SYSTEMD_DIR/romp-manager.service" stub; stub="$(_systemctl_stub active)"
+    _old_unit "$unit"; cp "$unit" "$unit.clean"
+    # A: the continuation, which systemd reads whole (the oracle: both ports), and which a replay would not preserve
+    _svc_line "$unit" 'Environment=ROMP_KERNEL_PORT=31855 \' '    ROMP_MANAGER_PORT=7433' "Environment=ROMP_STATE_DIR=$TEST_DIR/st"
+    [ "$(_sd_read "$unit" env ROMP_KERNEL_PORT)" = 31855 ]
+    [ "$(_sd_read "$unit" env ROMP_MANAGER_PORT)" = 7433 ]
+    cp "$unit" "$unit.A"
+    # B: two assignments on one line
+    cp "$unit.clean" "$unit.B"; _svc_line "$unit.B" 'Environment=ROMP_KERNEL_PORT=31855 ROMP_MANAGER_PORT=7433'
+    # C: a PATH line under [Install]
+    cp "$unit.clean" "$unit.C"; printf 'Environment=PATH=/hand/bin:/usr/bin\n' >> "$unit.C"
+    local f expect
+    for f in A B C; do
+        cp "$unit.$f" "$unit"
+        case "$f" in
+            A) expect="ends in a backslash, a continuation" ;;
+            B) expect="ROMP_KERNEL_PORT is assigned beside another assignment on one line" ;;
+            C) expect="Environment under [Install], a section systemd does not read it in" ;;
+        esac
+        ROMP_SYSTEMCTL="$stub" ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite
+        [ "$status" -eq 5 ]
+        [[ "$output" == *"is in a form this rewrite does not read whole (line "* ]]
+        [[ "$output" == *"$expect"* ]]
+        [[ "$output" == *"nothing was rewritten"* ]]
+        cmp -s "$unit" "$unit.$f"
+        [ ! -e "$unit.tmp" ]
+        run grep -c '"action": "service-rewrite"' "$XDG_STATE_HOME/romp/restart-audit.jsonl"
+        [ "$status" -ne 0 ]
+        ROMP_SYSTEMCTL="$stub" ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite --check
+        [ "$status" -eq 5 ]
+        [[ "$output" == *"$expect"* ]]
+        cmp -s "$unit" "$unit.$f"
+        run env -i HOME="$HOME" PATH="$PATH" ROMP_UPDATE_CHILD=1 ROMP_OS_OVERRIDE=Linux ROMP_SERVICE_NO_LOAD=1 ROMP_SYSTEMD_DIR="$ROMP_SYSTEMD_DIR" \
+            ROMP_MANAGER_BIN="$ROMP_MANAGER_BIN" XDG_STATE_HOME="$XDG_STATE_HOME" "$SVC" install
+        [ "$status" -eq 5 ]
+        [[ "$output" == *"$expect"* ]]
+        cmp -s "$unit" "$unit.$f"
+    done
+    # the control: one assignment a line, each in [Service], reads and rewrites, both ports kept
+    cp "$unit.clean" "$unit"; _svc_line "$unit" 'Environment=ROMP_KERNEL_PORT=31855' 'Environment=ROMP_MANAGER_PORT=7433'
+    ROMP_SYSTEMCTL="$stub" ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite
+    [ "$status" -eq 0 ]
+    [ "$(_sd_read "$unit" env ROMP_KERNEL_PORT)" = 31855 ]
+    [ "$(_sd_read "$unit" env ROMP_MANAGER_PORT)" = 7433 ]
+    # and a hand key under [Install], which systemd ignores and this rewrite keeps nothing of, is no refusal
+    cp "$unit.clean" "$unit"; printf 'Environment=ADMIN_LOCAL_KNOB=1\n' >> "$unit"
+    ROMP_SYSTEMCTL="$stub" ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite
+    [ "$status" -eq 0 ]
+}
+
+@test "rewrite (Linux): the compare decodes as systemd does: blanks after a closing quote are stripped, and a bare value with whitespace is its first word, so the shell carrying what systemd handed the manager is not refused; the written line reads the same to systemd" {
+    # the read-write lens, D6 (U13, U16): the decoded value kept the closing quote and the trailing blanks (systemd strips the
+    # rvalue first), and a bare value with a space decoded as the whole tail where systemd reads the first word and drops the
+    # rest as an invalid assignment; both refused the update child's own environment, exit 5.
+    unset ROMP_SERVICE_NO_LOAD
+    local unit="$ROMP_SYSTEMD_DIR/romp-manager.service" stub; stub="$(_systemctl_stub active)"
+    _old_unit "$unit"; cp "$unit" "$unit.clean"
+    mkdir -p "$TEST_DIR/cc dir" "$TEST_DIR/a"
+    # U13: trailing blanks after the closing quote
+    _svc_line "$unit" 'Environment="CLAUDE_CONFIG_DIR='"$TEST_DIR"'/cc dir"  '
+    [ "$(_sd_read "$unit" env CLAUDE_CONFIG_DIR)" = "$TEST_DIR/cc dir" ]
+    CLAUDE_CONFIG_DIR="$TEST_DIR/cc dir" ROMP_SYSTEMCTL="$stub" ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite --check
+    [ "$status" -eq 0 ]
+    CLAUDE_CONFIG_DIR="$TEST_DIR/cc dir" ROMP_SYSTEMCTL="$stub" ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite
+    [ "$status" -eq 0 ]
+    [ "$(_sd_read "$unit" env CLAUDE_CONFIG_DIR)" = "$TEST_DIR/cc dir" ]
+    grep -qxF 'Environment="CLAUDE_CONFIG_DIR='"$TEST_DIR"'/cc dir"' "$unit"                # the writer's form, the blanks gone
+    # U16: a bare value with whitespace, the form an install before round 3 wrote
+    cp "$unit.clean" "$unit"
+    _svc_line "$unit" "Environment=CLAUDE_CONFIG_DIR=$TEST_DIR/a b"
+    [ "$(_sd_read "$unit" env CLAUDE_CONFIG_DIR)" = "$TEST_DIR/a" ]                       # what systemd hands the manager
+    CLAUDE_CONFIG_DIR="$TEST_DIR/a" ROMP_SYSTEMCTL="$stub" ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite --check
+    [ "$status" -eq 0 ]
+    CLAUDE_CONFIG_DIR="$TEST_DIR/a b" ROMP_SYSTEMCTL="$stub" ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite
+    [ "$status" -eq 5 ]                                                                   # the whole tail is not what systemd reads
+    [[ "$output" == *"CLAUDE_CONFIG_DIR: the file carries $TEST_DIR/a, this environment carries $TEST_DIR/a b"* ]]
+    CLAUDE_CONFIG_DIR="$TEST_DIR/a" ROMP_SYSTEMCTL="$stub" ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite
+    [ "$status" -eq 0 ]
+    [ "$(_sd_read "$unit" env CLAUDE_CONFIG_DIR)" = "$TEST_DIR/a" ]                       # the same reading after the rewrite
+    grep -qxF "Environment=CLAUDE_CONFIG_DIR=$TEST_DIR/a" "$unit"
+}
+
+@test "rewrite (macOS): the one-line reader decodes a numeric character reference (&#38; decimal, &#x26; hexadecimal) as launchd does: the owning shell agrees, the value is written back as the named entity, and plistlib reads the same value before and after" {
+    # the read-write lens, D8: round 3's reader decoded the five named entities only, so a numeric reference was kept as text and
+    # re-escaped to &amp;#38;, launchd then reading the literal &#38; and the owning shell refused (the fallback reader alone;
+    # plutil decodes it). One left-to-right pass now decodes each reference once.
+    unset ROMP_SERVICE_NO_LOAD
+    local plist="$ROMP_LAUNCHD_DIR/com.romp.manager.plist" none="$TEST_DIR/no-plutil-here"
+    local cc="$TEST_DIR/amp & dir" envf="$TEST_DIR/hex & dir/service.env"
+    mkdir -p "$cc" "$TEST_DIR/hex & dir"
+    ROMP_PLUTIL="$none" CLAUDE_CONFIG_DIR="$cc" ROMP_SERVICE_ENV_FILE="$envf" ROMP_OS_OVERRIDE=Darwin ROMP_SERVICE_NO_LOAD=1 "$SVC" install >/dev/null
+    cp "$plist" "$plist.named"
+    sed -e '/<key>CLAUDE_CONFIG_DIR<\/key>/ s|&amp;|\&#38;|' -e '/<key>ROMP_SERVICE_ENV_FILE<\/key>/ s|&amp;|\&#x26;|' "$plist.named" > "$plist"
+    grep -qF '<key>CLAUDE_CONFIG_DIR</key><string>'"$TEST_DIR"'/amp &#38; dir</string>' "$plist"
+    grep -qF '<key>ROMP_SERVICE_ENV_FILE</key><string>'"$TEST_DIR"'/hex &#x26; dir/service.env</string>' "$plist"
+    [ "$(_plist_get "$plist" EnvironmentVariables.CLAUDE_CONFIG_DIR)" = "$cc" ]          # launchd's reading of the hand form
+    [ "$(_plist_get "$plist" EnvironmentVariables.ROMP_SERVICE_ENV_FILE)" = "$envf" ]
+    ROMP_PLUTIL="$none" CLAUDE_CONFIG_DIR="$cc" ROMP_SERVICE_ENV_FILE="$envf" ROMP_OS_OVERRIDE=Darwin run "$SVC" rewrite --check
+    [ "$status" -eq 0 ]                                                                   # the owning shell agrees
+    ROMP_PLUTIL="$none" CLAUDE_CONFIG_DIR="$cc" ROMP_SERVICE_ENV_FILE="$envf" ROMP_OS_OVERRIDE=Darwin run "$SVC" rewrite
+    [ "$status" -eq 0 ]
+    run grep -F '&#' "$plist"
+    [ "$status" -ne 0 ]                                                                   # written back named
+    cmp -s "$plist" "$plist.named"
+    [ "$(_plist_get "$plist" EnvironmentVariables.CLAUDE_CONFIG_DIR)" = "$cc" ]
+    [ "$(_plist_get "$plist" EnvironmentVariables.ROMP_SERVICE_ENV_FILE)" = "$envf" ]
+    # a differing shell is refused naming the decoded value
+    ROMP_PLUTIL="$none" CLAUDE_CONFIG_DIR="$TEST_DIR/other" ROMP_OS_OVERRIDE=Darwin run "$SVC" rewrite
+    [ "$status" -eq 5 ]
+    [[ "$output" == *"CLAUDE_CONFIG_DIR: the file carries $cc, this environment carries $TEST_DIR/other"* ]]
+    # a & that opens no reference, and a reference to a non-ASCII character, both read as launchd reads them
+    sed -e '/<key>CLAUDE_CONFIG_DIR<\/key>/ s|&amp;|\&amp;#38;|' "$plist.named" > "$plist"    # the literal text &#38;, escaped as launchd wants it
+    [ "$(_plist_get "$plist" EnvironmentVariables.CLAUDE_CONFIG_DIR)" = "$TEST_DIR/amp &#38; dir" ]
+    ROMP_PLUTIL="$none" CLAUDE_CONFIG_DIR="$TEST_DIR/amp &#38; dir" ROMP_OS_OVERRIDE=Darwin run "$SVC" rewrite --check
+    [ "$status" -eq 0 ]
+    sed -e '/<key>CLAUDE_CONFIG_DIR<\/key>/ s|&amp;|\&#x00e9;|' "$plist.named" > "$plist"    # é, two UTF-8 bytes
+    ROMP_PLUTIL="$none" CLAUDE_CONFIG_DIR="$TEST_DIR/amp é dir" ROMP_OS_OVERRIDE=Darwin run "$SVC" rewrite --check
+    [ "$status" -eq 0 ]
 }
 
 

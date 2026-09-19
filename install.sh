@@ -396,7 +396,10 @@ if [[ -z "${ROMP_NO_SERVICE:-}" ]]; then
         # the refusal back to the command that had just refused it. Exit 1 is a reload that failed, which
         # a retry from the same shell can fix, so that arm keeps its retry line. The same code comes back
         # from a plist the rewrite cannot read (re-saved by another tool, no plutil to parse it: round 3,
-        # 2026-09-19), and the same arm handles it: romp-service's lines name the form and the route. The
+        # 2026-09-19) and, since the addendum to round 3, from a unit or plist in any form romp-service's
+        # readers cannot read whole (a hand-split plist entry, a continuation line, a specifier, two
+        # assignments on one line), and the same arm handles it: romp-service's lines name the form and
+        # the remedy. The
         # install road below branches on 5 the same way (round 3): the marked update child's install keeps
         # an installed file's identity too, so that road refuses with the same code.
         # Exit 3 under a running manager (round 2): status says `running` (systemd reports the service

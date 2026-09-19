@@ -1137,7 +1137,11 @@ only when the deploying shell set `ROMP_SERVICE_ENV_FILE` or
 `ROMP_SERVICE_ENV` (otherwise the unit's line stands, and a unit with no line
 reads the kernel's default), and the state root the rewrite journals under is
 the file's `ROMP_STATE_DIR` line, else (macOS) the directory of the plist's
-`StandardOutPath`, else the default under `$HOME`.
+`StandardOutPath`, else the default under `$HOME`. The rule the rewrite's
+readers follow: a form they cannot read whole is refused (exit 5, nothing
+written, the form and the remedy named), and a value they accept is written
+back in a form systemd or launchd reads as the same value; the paragraph on
+the service below says which forms are refused.
 `romp-service install` is the way to change them.
 
 ### The manager's control port
@@ -1563,14 +1567,43 @@ other form (re-saved by `plutil -convert`, PlistBuddy, `defaults write` or
 Xcode) is refused with exit 5 rather than read as a plist with no entries,
 since a reader that cannot parse a file must not report its values as absent;
 `romp-service install` from the owning shell and clone writes it afresh.
-Every value the plist carries is XML-escaped once on write and decoded once
-on read, so a path with `&`, `<`, `>` or `"` compares equal to the shell that
-installed it and is unchanged by any number of rewrites. On Linux an instance
-`Environment=` line the unit carries goes back as written, quoted or not, and
-an install writes a value with whitespace, a `%`, a backslash or a double
-quote in systemd's quoted form (`Environment="KEY=..."`, the backslash and
-the quote escaped, `%` doubled), so systemd reads the value whole where an
-unquoted one ends at the first space. After the reload, on the install road
+Without `plutil` the reader also refuses romp's own form with any one entry
+it reads split across two lines (`<key>` on one, `<string>` on the next,
+which a text editor does), or with the `ProgramArguments` array not laid out
+one `<string>` a line ending in `up`, naming the entry: a reader that cannot
+read an entry whole must not read it as absent, and the two-marker check
+before 2026-09-19 let a split `PATH` entry drop and a split `StandardOutPath`
+move the log paths to the deploying shell's `$HOME`. Every value the plist
+carries is XML-escaped once on write and decoded once on read, the named
+entities and the numeric character references (`&#38;`, `&#x26;`) alike, so
+a path with `&`, `<`, `>` or `"` compares equal to the shell that installed
+it and is unchanged by any number of rewrites. On Linux the unit is read the
+way systemd reads it, once, as a whole: blanks around the `=` are stripped
+(`Environment = X=y` is a line), only `[Service]` counts, an `Environment=`
+value is word-split and unquoted as systemd.syntax(7) describes (either
+quote character, the `\\`, `\"`, `\'`, `\s`, `\n`, `\t` and `\r` escapes,
+`%%` a literal `%`), a bare value with whitespace is its first word and the
+rest dropped as systemd drops it, and a later assignment of a name replaces
+an earlier one; the compare reads what systemd hands the manager, so the
+update child's own environment is never refused over the file's spelling. A
+form the reader cannot read whole is refused, exit 5, nothing written, with
+the line, the form and the remedy named: a line ending in a backslash (a
+continuation), a specifier (`%h`, `%d` and the like outside a doubled `%%`;
+the remedy is the absolute path), an unbalanced quote or an escape the
+reader does not decode, a second assignment on a line that assigns a value
+the rewrite keeps (one assignment a line), a second `ExecStart=` or
+`EnvironmentFile=` line, an `ExecStart` whose command carries a prefix
+character or whose arguments are not `up` alone, and a kept line under a
+section systemd does not read it in. Every value the rewrite or the install
+writes that systemd word-splits, `ExecStart`'s command, `ROMP_DIR`, the
+instance variables and the `service.env` override, goes through one writer:
+a plain value bare, a value with whitespace, a double quote, a single quote,
+a backslash or a `%` in systemd's quoted form (`Environment="KEY=..."`, the
+backslash and the quote escaped, `%` doubled), so systemd reads the value
+whole where a bare one ends at the first space or drops the line at an
+apostrophe; `EnvironmentFile=`'s path has its `%` doubled and nothing else,
+which is how systemd reads that line. The tests parse each written file the
+way the daemon does. After the reload, on the install road
 and the rewrite road alike, `romp-service` reads systemd's
 `NeedDaemonReload` flag back and the `FragmentPath` systemd loads the unit
 from, and says on stderr, at exit 0, when systemd still holds an older
