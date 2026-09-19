@@ -1,7 +1,7 @@
 ---
 title: Setting the machine default billing moves the sessions that follow it
 status: candidate
-where: kernel/sdk_backend.py (set_auth_default, _reconnect_default_followers, _follow_default_guarded, _follow_default, _connect_landed, the relaunch slot, the seeded live work and its reconcile against the Stop hook's report with the shared per-type absence predicate report_absence_decides, the Stop hook's report-first order, the loop top's retry guard, the session-gone path's detached hold); kernel/kernel.py (the sdk-slot thread kind); docs/reference.md; tests/test_sdk_backend.py, tests/test_expected_auth.py, tests/test_session_auth.py, tests/test_kernel_effort_reconnect.py
+where: kernel/sdk_backend.py (set_auth_default, _reconnect_default_followers, _follow_default_guarded, _follow_default, _connect_landed, the relaunch slot, the seeded live work and its reconcile against the Stop hook's report with the shared per-type absence predicate report_absence_decides, the Stop hook's report-first order, the loop top's retry guard, the session-gone path's detached hold); kernel/kernel.py (the sdk-slot thread kind); docs/reference.md; tests/test_sdk_backend.py, tests/test_expected_auth.py, tests/test_session_auth.py, tests/test_kernel_effort_reconnect.py, tests/test_bg_ledger.py (the adopted-shell spelling ruled like a launched one)
 added: 2026-09-18
 pr:
 tier: fix
