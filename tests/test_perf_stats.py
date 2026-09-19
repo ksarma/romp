@@ -2969,7 +2969,12 @@ class StacksField(unittest.TestCase):
     def test_two_threads_outside_the_register_are_two_entries_keyed_other(self):
         """2026-09-18: two threads whose names the register does not hold (a library's watchdog named with a test path, a worker
         named with an id) both read `other` and stay two rows, the ident half of the key keeping them apart; neither name
-        reaches the sample."""
+        reaches the sample. No frame is pinned (2026-09-19): a thread parked on an Event is sampled at wait, at the lock acquire
+        inside it (Condition.__enter__ on the way into Event.wait), at a helper wait calls (_release_save, _is_owned), or in run
+        before wait, and the test never waits for the threads to reach any of them. The pin that stood here read the innermost
+        frame as `wait (` and went red on the free-threaded 3.14 build in three module runs of ten. What each row must show is
+        that it is a stack sample of a live thread other than the sampler: at least one frame, each in the sampler's
+        "function (file:line)" form, every file one the standard library or this repo ships, self false and no stage mark."""
         gate = threading.Event()
         names = ("pytest_timeout tests/test_perf_stats.py::StacksField::test_x", "worker 11111111-2222-3333-4444-555555555555")
         ths = [threading.Thread(target=gate.wait, name=n, daemon=True) for n in names]
@@ -2981,11 +2986,21 @@ class StacksField(unittest.TestCase):
             gate.set()
             for t in ths:
                 t.join(timeout=5)
-        keys = ["%d other" % t.ident for t in ths]
-        self.assertEqual(len(set(keys)), 2, keys)
+        idents = {str(t.ident) for t in ths}
+        keys = sorted(k for k in rows if k.split()[0] in idents)                     # the entries whose ident half is a planted thread's
+        self.assertEqual(len(keys), 2, "two threads, two entries: %s" % sorted(rows))
+        self.assertEqual(keys, sorted("%s other" % i for i in idents), "each keyed by its own ident and `other`")
+        stdlib = os.path.dirname(threading.__file__)
+        kernel_dir = os.path.join(os.path.dirname(HERE), "kernel")
         for k in keys:
-            self.assertIn(k, rows, sorted(rows))
-            self.assertTrue(rows[k]["frames"][-1].startswith("wait ("), rows[k]["frames"])
+            row = rows[k]
+            self.assertIs(row["self"], False, row); self.assertIsNone(row["stage"], row)
+            self.assertTrue(row["frames"], row)
+            for f in row["frames"]:
+                m = re.fullmatch(r"\S+ \((.+):\d+\)", f)
+                self.assertTrue(m, "function (file:line): %r" % f)
+                self.assertTrue(os.path.exists(os.path.join(stdlib, m.group(1))) or os.path.exists(os.path.join(kernel_dir, m.group(1))),
+                                "a file the standard library or this repo ships: %r" % f)
         text = json.dumps(rows)
         self.assertFalse(any(n in text for n in names), "no planted name in the sample")
 
