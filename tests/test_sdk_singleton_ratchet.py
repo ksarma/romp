@@ -376,6 +376,21 @@ SCRATCH_K = SCRATCH_HEAD + textwrap.dedent('''\
 
         def test_a_builds_over_the_class_root(self):
             assert km._sdk().state_dir == Two.root
+
+    class Three(unittest.TestCase):
+        @classmethod
+        def setUpClass(cls):
+            cls.saved_state = jd.STATE
+            cls.root = sandbox()
+            jd.STATE = cls.root                       # moved for the tests; the singleton Two put back stays over the run root
+
+        @classmethod
+        def tearDownClass(cls):
+            jd.STATE = cls.saved_state
+            shutil.rmtree(cls.root)
+
+        def test_a_does_nothing_under_a_singleton_over_the_run_root(self):
+            assert km._sdk_backend is not None and km._sdk_backend.state_dir != jd.STATE
 ''')
 
 SCRATCH_L = SCRATCH_HEAD + textwrap.dedent('''\
@@ -482,6 +497,7 @@ SCRATCH_J = SCRATCH_HEAD + textwrap.dedent('''\
             assert km._sdk().state_dir == jd.STATE
 ''')
 
+
 SCRATCH_N = SCRATCH_HEAD + textwrap.dedent("""\
 
     class One(unittest.TestCase):
@@ -514,7 +530,16 @@ SCRATCH_N = SCRATCH_HEAD + textwrap.dedent("""\
             assert km._sdk_backend is False
             km._sdk_backend = None
 
-        def test_b_the_lazy_rebuild_the_next_module_inherits(self):
+        def test_b_the_lazy_rebuild(self):
+            assert km._sdk().state_dir == jd.STATE
+
+    class Six(unittest.TestCase):
+        @classmethod
+        def setUpClass(cls):
+            km._sdk_backend = None                    # the class drops the object it found; a test then rebuilds over the same root
+
+        def test_a_the_lazy_rebuild_the_next_module_inherits(self):
+            assert km._sdk_backend is None
             assert km._sdk().state_dir == jd.STATE
 """)
 
@@ -965,6 +990,13 @@ class ClassScopedRoot(_NestedRun, unittest.TestCase):
         self.assertIsNone(boundary(self.out, "::Two"), self.out)
         self.assertIsNone(boundary(self.out, ""), "the module end is quiet on the object the class end named: %s" % self.out)
 
+    def test_a_class_that_moves_jd_state_and_never_builds_is_quiet(self):
+        # Three's tests run under a singleton whose state_dir is not jd.STATE, a picture the first-window report would
+        # name only at the worker's first window; here a test window made it, judged there, and Three is quiet.
+        self.assertRatchetPassed("Three", "test_a_does_nothing_under_a_singleton_over_the_run_root")
+        self.assertIsNone(inherited(self.out, "Three", "test_a_does_nothing_under_a_singleton_over_the_run_root", head=INHERITED_KEPT))
+        self.assertIsNone(boundary(self.out, "::Three"), self.out)
+
 
 class ModuleTeardownRemovesTheDirectory(_NestedRun, unittest.TestCase):
     SCRATCH = SCRATCH_L
@@ -1066,7 +1098,7 @@ class FirstBuildWithJdStateLeftAtTheSandbox(_NestedRun, unittest.TestCase):
 class BoundaryYieldsToTheTestsOwnWindows(_NestedRun, unittest.TestCase):
     SCRATCH = SCRATCH_N
     FOLLOWER = SCRATCH_N2
-    ERRORS = 5
+    ERRORS = 6
 
     def test_each_accused_test_is_named_once_on_the_object_road(self):
         for cls, method, after in (("Two", "test_a_leaves_none", ", after None (not built)"),
@@ -1083,15 +1115,24 @@ class BoundaryYieldsToTheTestsOwnWindows(_NestedRun, unittest.TestCase):
     def test_the_allowed_rebuild_after_an_accused_reset_passes_alone(self):
         self.assertRatchetPassed("Two", "test_b_the_lazy_rebuild_over_the_run_root_after_the_accused_reset")
         self.assertRatchetPassed("Four", "test_a_the_lazy_rebuild")
-        self.assertRatchetPassed("Five", "test_b_the_lazy_rebuild_the_next_module_inherits")
+        self.assertRatchetPassed("Five", "test_b_the_lazy_rebuild")
 
     def test_no_class_or_module_boundary_is_accused_of_what_its_tests_did(self):
         for scope in ("::One", "::Two", "::Three", "::Four", "::Five", ""):
             self.assertIsNone(boundary(self.out, scope), "a boundary that did nothing is accused: %s" % self.out)
         self.assertIsNone(boundary(self.out, "::Follow", module="test_scratch2.py"), self.out)
         self.assertIsNone(boundary(self.out, "", module="test_scratch2.py"), self.out)
-        self.assertNotIn(BOUNDARY, self.out, "no boundary text anywhere in the run: %s" % self.out)
+        self.assertEqual(self.out.count(BOUNDARY), 1, "the one boundary text in the run is Six's: %s" % self.out)
         self.assertNotIn("sub-exceptions", self.out, "no verdict folds into another's teardown report: %s" % self.out)
+
+    def test_a_class_that_dropped_the_object_it_found_before_its_tests_rebuild_stays_the_author(self):
+        # The first window inside Six started from None, not from the object Six found (Five.b's build), so the yield
+        # does not apply and the class is named for the rebuild over the same root; the test itself passes alone.
+        text = self.assertBoundaryFailed("::Six", "Six.test_a_the_lazy_rebuild_the_next_module_inherits", remedy=REMEDY_B)
+        self.assertTrue(text.startswith("changed after its teardown: before SdkBackend over "), text)
+        self.assertTrue(text.endswith(", " + REBUILT), text)
+        self.assertIsNone(boundary(self.out, ""), "the module end is quiet on the object the class end named: %s" % self.out)
+
 
 class ImportTimeLeakOverAKeptSandboxIsInheritedOnce(_NestedRun, unittest.TestCase):
     SCRATCH = SCRATCH_S6
@@ -1110,6 +1151,7 @@ class ImportTimeLeakOverAKeptSandboxIsInheritedOnce(_NestedRun, unittest.TestCas
         self.assertRatchetPassed("Cases", "test_b_does_nothing")
         self.assertIsNone(boundary(self.out, "::Cases"), self.out)
         self.assertIsNone(boundary(self.out, ""), self.out)
+
 
 class ClassTeardownInstallsAValue(_NestedRun, unittest.TestCase):
     SCRATCH = SCRATCH_M
@@ -1139,6 +1181,7 @@ class ClassTeardownInstallsAValue(_NestedRun, unittest.TestCase):
         self.assertIsNone(boundary(self.out, "::Six"), self.out)
         self.assertIsNone(boundary(self.out, ""), "the module end is quiet on the object the class end named: %s" % self.out)
 
+
 class ClassTeardownPutsBackAnObjectWhoseDirectoryItRemoved(_NestedRun, unittest.TestCase):
     SCRATCH = SCRATCH_P
     ERRORS = 2
@@ -1160,6 +1203,7 @@ class ClassTeardownPutsBackAnObjectWhoseDirectoryItRemoved(_NestedRun, unittest.
         self.assertIsNone(boundary(self.out, "::Three"), self.out)
         self.assertIsNone(boundary(self.out, ""), self.out)
 
+
 class ValuesOnTheOtherRoads(_NestedRun, unittest.TestCase):
     SCRATCH = SCRATCH_G
     ERRORS = 2
@@ -1178,6 +1222,7 @@ class ValuesOnTheOtherRoads(_NestedRun, unittest.TestCase):
         self.assertIsNone(boundary(self.out, "::Cases"), self.out)
         self.assertIsNone(boundary(self.out, ""), self.out)
 
+
 class FirstBuildThenTheRunRootRemoved(_NestedRun, unittest.TestCase):
     SCRATCH = SCRATCH_R1
     ERRORS = 1
@@ -1194,6 +1239,7 @@ class FirstBuildThenTheRunRootRemoved(_NestedRun, unittest.TestCase):
     def test_the_class_and_module_ends_are_quiet_on_the_named_object(self):
         self.assertIsNone(boundary(self.out, "::Cases"), self.out)
         self.assertIsNone(boundary(self.out, ""), self.out)
+
 
 class ReexecutionThenTheRunRootRemoved(_NestedRun, unittest.TestCase):
     SCRATCH = SCRATCH_R2
