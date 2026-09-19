@@ -78,7 +78,7 @@ counters that the recorders do not wrap, or through a reference to a real door t
 even though it cannot be named. Outside both witnesses: a reader below the judge's loaders or beside its module, the
 kernel opening and parsing the store file itself, the kernel calling the judge's own file reader (`jd._read_store_json`,
 below the loaders) or a second judge module loaded under another name with a cache and counters of its own (three plants,
-each per session in the pass loop, re-taken at this head, the head of the round-3 fixes, over its 20 cases, one at a time with
+each per session in the pass loop, re-taken at this head, the head of the round-4 fixes, over its 22 cases, one at a time with
 the kernel, the judge and this module hashed before and after each run: the first two leave every case green with no file changed
 across a run, so they stay outside every witness here; the third has been refused since the consolidation pass by the kernel-wide
 birth pin, whose called population names `_PJ.load_goals_shared` as a fifth loader spelling, so a second judge module is outside
@@ -375,8 +375,8 @@ naming the removal as the third cause (2 failed, 20 passed). The staleness (corr
 figures are labelled with the count they read against and its clean line with its head by role, and the clean module at the head of
 the round-4 fixes is pinned by the Docs case beside the bypass count, the line's figures summed against the loader's count; that
 clean figure set one below reds the Docs case at the clean line naming both figures (1 failed, 21 passed, the case red at the other
-line when the figure is right). The clean module at this head, the head of the round-4 fixes: 21 passed, 1 failed (the Docs count
-pin, its bypass sentence's count one re-take behind) single-process on 3.10, 3.11, 3.12, 3.13 and 3.14t.
+line when the figure is right). The clean module at this head, the head of the round-4 fixes: 22 passed single-process on 3.10, 3.11,
+3.12, 3.13 and 3.14t, and with two workers on 3.12.
 
 Drives the real pass (_auto_nudge_tick) over two alive sessions with real transcript files and real goal stores, on the
 suite's fake clock (the pass takes `now`). SYNTHETIC fixtures only; a PRIVATE synthetic sid pair (the goal-store fixture
@@ -2551,10 +2551,10 @@ class Docs(unittest.TestCase):
         loader's count of this module's cases, so a case added without a re-take reds this line naming the two figures, instead of
         leaving a count that reads true and is not. The round-4 paragraph's clean line (review round 4, correctness-2 and
         regression-4: the round-3 paragraph's clean line read 19 passed at a head of 20 cases, and this pin read the bypass sentence
-        alone, so the same staleness class survived one sentence away): its figures, passed and, while the bypass count awaits its
-        re-take, failed, must sum to the case count; the earlier paragraphs' clean lines name their heads by role and their counts and
-        do not match this regex. The bypass sentence (review round 3, correctness-2 and regression-2: the sentence was true when
-        written and went stale nine commits and one case later, its count one case behind the module's): the three bypass plants were
+        alone, so the same staleness class survived one sentence away): its figures, passed and any failed the line records (a
+        head at which another count was one re-take behind), must sum to the case count; the earlier paragraphs' clean lines name their
+        heads by role and their counts and do not match this regex. The bypass sentence (review round 3, correctness-2 and regression-2: the sentence was true when
+        written and went stale nine commits and one case later, its count one case behind the module's): the three bypass plants and the alias control were
         re-taken at this head over its N cases."""
         doc = " ".join(sys.modules[__name__].__doc__.split())
         n = unittest.defaultTestLoader.loadTestsFromModule(sys.modules[__name__]).countTestCases()
@@ -2565,7 +2565,7 @@ class Docs(unittest.TestCase):
         self.assertEqual(passed + failed, n, "the clean line's figures, %d passed and %d failed, sum to %d and this module has %d cases: the "
                                              "line was written at another head; re-take the five-interpreter run at this head and write its "
                                              "figures" % (passed, failed, passed + failed, n))
-        m = re.search(r"re-taken at this head, the head of the round-3 fixes, over its (\d+) cases", doc)
+        m = re.search(r"re-taken at this head, the head of the round-4 fixes, over its (\d+) cases", doc)
         self.assertIsNotNone(m, "the docstring's bypass sentence names the head by role and the count of cases it was re-taken over")
         self.assertEqual(int(m.group(1)), n, "the sentence's count of cases, %s, is this module's, %d: a case was added since the plants "
                                              "were re-taken, so re-take them (the three bypass plants and the alias control, each landed "
