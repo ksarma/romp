@@ -482,6 +482,59 @@ def _walk(tree):
         yield node
 
 
+# The ast module's four traversal names, assembled at run time so this module's text spells none of them where the walker pin
+# reads it (the pin is structural and a literal here would be no reference, but the names are kept out of the text all the same):
+# every reference to one of them, in any form, must sit inside _walk (TheGrammarIsTheOneTheWalkersClassify).
+_TRAVERSAL = tuple("".join(p) for p in (("wal", "k"), ("iter_child", "_nodes"), ("Node", "Visitor"), ("Node", "Transformer")))
+_WALK, _ITER_CHILD_NODES, _NODE_VISITOR, _NODE_TRANSFORMER = _TRAVERSAL
+# Every reference to a traversal name outside _walk, keyed (enclosing def, name) with the reason it walks nothing around _walk. The
+# pin asserts each row is used (a stale row reds) and that nothing else refers to one; a new legitimate reference gets a row here.
+_WALK_EXEMPT = {
+    ("_loader_births", _ITER_CHILD_NODES):
+        "lists a node's direct children to build the parent map and traverses nothing: every child is yielded by _walk on the next "
+        "level, where it is classified or refused",
+    ("TheGrammarIsTheOneTheWalkersClassify.test_a_walker_refuses_a_node_it_does_not_classify_by_name", _WALK):
+        "the control the refusal case compares _walk against, over a tree of grammar nodes only",
+}
+
+
+def _traversal_references(tree):
+    """Every reference in `tree` to one of the ast module's traversal names (_TRAVERSAL), as sorted (line, name, form, spelling,
+    owner) tuples, in four forms: `attribute`, an Attribute of the ast module or of any name it is imported under (`ast.walk`,
+    `_a.walk` after `import ast as _a`; a NodeVisitor or NodeTransformer base is spelled this way too); `from-import`, `from ast
+    import walk`, with or without `as`, and `from ast import *`, a reference to every name, reported as `*`; and `getattr`, a
+    getattr on the module with a string constant. `owner` is the enclosing top-level def, `Class.method` for a method, `Class`
+    for a class body, `<module>` otherwise, found by walking each module-body def's subtree (through _walk, as every reader here
+    walks). Outside these forms: a name assembled at run time or read from vars(ast) or ast.__dict__."""
+    aliases = {a.asname or a.name for n in _walk(tree) if isinstance(n, ast.Import) for a in n.names if a.name == "ast"}
+    owners = {}
+    for stmt in tree.body:
+        if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for n in _walk(stmt):
+                owners[id(n)] = stmt.name
+        elif isinstance(stmt, ast.ClassDef):
+            for n in _walk(stmt):
+                owners[id(n)] = stmt.name
+            for item in stmt.body:
+                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    for n in _walk(item):
+                        owners[id(n)] = stmt.name + "." + item.name
+    out = []
+    for n in _walk(tree):
+        owner = owners.get(id(n), "<module>")
+        if isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name) and n.value.id in aliases and n.attr in _TRAVERSAL:
+            out.append((n.lineno, n.attr, "attribute", "%s.%s" % (n.value.id, n.attr), owner))
+        elif isinstance(n, ast.ImportFrom) and n.module == "ast":
+            for a in n.names:
+                if a.name in _TRAVERSAL or a.name == "*":
+                    out.append((n.lineno, a.name, "from-import", "from ast import %s%s" % (a.name, " as " + a.asname if a.asname else ""), owner))
+        elif (isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "getattr" and len(n.args) >= 2
+              and isinstance(n.args[0], ast.Name) and n.args[0].id in aliases and isinstance(n.args[1], ast.Constant)
+              and n.args[1].value in _TRAVERSAL):
+            out.append((n.lineno, n.args[1].value, "getattr", "getattr(%s, %r)" % (n.args[0].id, n.args[1].value), owner))
+    return sorted(out)
+
+
 def _pass_through_lines(fn, callee):
     """(lines, calls): the line numbers, in `fn`'s file, of its calls to `callee`, and how many such calls there are. The calls
     are the boundary wrapper's hand-off of the read (`loader(fsid)` in _or_fault, `_or_fault(...)` in the two outer wrappers),
@@ -2014,7 +2067,9 @@ class TheGrammarIsTheOneTheWalkersClassify(unittest.TestCase):
     running interpreter's ast module is read whole and every node class it defines must be in _AST_CONCRETE (the grammar the
     walkers classify), _AST_ABSTRACT (the sum types the parser never instantiates) or _AST_COMPAT (the classes kept for
     compatibility that no parse produces), so a grammar that gains a node form reds here naming the new class; and _walk, the one
-    walk every census in this module reads through, refuses a node of a class outside _AST_CONCRETE by name."""
+    walk every census in this module reads through, refuses a node of a class outside _AST_CONCRETE by name. A third case holds the
+    "one walk" itself: no reference to an ast traversal name sits outside _walk, read from this module's own AST in every form
+    (review round 4, regression-3 and extra7-1: a count of one spelling held it before)."""
 
     def test_the_interpreter_defines_no_node_class_outside_the_table(self):
         here, version = sys.version_info[:2], sys.version.split()[0]
@@ -2046,8 +2101,8 @@ class TheGrammarIsTheOneTheWalkersClassify(unittest.TestCase):
 
     def test_a_walker_refuses_a_node_it_does_not_classify_by_name(self):
         tree = ast.parse("def f(sid):\n    return jd.load_goals_shared(sid)\n")
-        self.assertEqual([type(n).__name__ for n in _walk(tree)], [type(n).__name__ for n in getattr(ast, "walk")(tree)],
-                         "over grammar nodes _walk is the standard walk, whole and in order")
+        self.assertEqual([type(n).__name__ for n in _walk(tree)], [type(n).__name__ for n in ast.walk(tree)],   # the control: a
+                         "over grammar nodes _walk is the standard walk, whole and in order")                   # _WALK_EXEMPT row
         stranger = type("Frobnicate", (ast.expr_context,), {"_fields": ()})       # a class no grammar version defines
         tree.body[0].body[0].value.func.value.ctx = stranger()
         with self.assertRaises(AssertionError) as cm:
@@ -2059,12 +2114,49 @@ class TheGrammarIsTheOneTheWalkersClassify(unittest.TestCase):
         with self.assertRaises(AssertionError) as cm:
             list(_walk(tree))
         self.assertIn("Store", str(cm.exception), "a stranger of a known name is refused as well, by identity: %s" % cm.exception)
-        # every walker reads through _walk: the module's own source spells the standard walk once, in _walk's body
-        spelling = "ast." + "walk("
-        src = Path(os.path.realpath(__file__)).read_text(encoding="utf-8")
-        self.assertEqual(src.count(spelling), 1, "this module spells %s once, inside _walk; a census walking a tree by itself would pass a node "
-                                                 "the table does not classify as no site" % spelling)
-        self.assertIn(spelling, inspect.getsource(_walk), "and that one spelling is _walk's")
+        # that every walker reads through _walk is the next case's, over this module's AST (a count of one spelling before round 4)
+
+    def test_no_tree_walk_happens_except_through_walk(self):
+        """Every walker reads through _walk, asserted over this module's own AST and not by counting one spelling (review round 4,
+        regression-3 and extra7-1: the round-3 guard counted the text of one call spelling once, so a census written as a
+        NodeVisitor subclass, an iter_child_nodes recursion, a from-import of the walk, a module alias walking or a getattr with
+        the name in a string walked a tree without _walk, met a node the table does not classify, reported no site and left the
+        guard green; a one-spelling contract is a list of length one). _traversal_references reads every reference to the four
+        traversal names in four forms: an attribute of the ast module or of any name it is imported under (which is how a
+        NodeVisitor base is spelled too), a from-import with or without `as` (a star import from ast counts as every name), and
+        getattr on the module with a string constant; the names are assembled at run time (_TRAVERSAL), so this case's text holds
+        none. Every reference sits inside _walk but for the rows of _WALK_EXEMPT, each with its reason, and every row is used, so a
+        stale exemption reds too; _walk itself holds exactly one, the standard walk by attribute. The four forms are also run over
+        synthetic sources built from the assembled names, so the refused inputs are pinned here and not only by the plants the
+        history paragraphs record. Outside these forms: a traversal name assembled at run time or read from vars(ast) or
+        ast.__dict__; the interpreter check beside this case scans vars(ast) for every node class and reds by name on a new one
+        with no walker involved, so the version demand does not rest on this pin alone."""
+        refs = _traversal_references(ast.parse(Path(os.path.realpath(__file__)).read_text(encoding="utf-8")))
+        outside = [r for r in refs if r[4] != "_walk"]
+        stray = [r for r in outside if (r[4], r[1]) not in _WALK_EXEMPT]
+        self.assertEqual(stray, [], "a reference to an ast traversal name outside _walk and outside _WALK_EXEMPT, by line, name, form, spelling "
+                                    "and enclosing def: %s. A census that walks a tree by itself passes a node the table does not classify as no "
+                                    "site; read through _walk, or add an exemption row with the reason the reference traverses nothing"
+                                    % "; ".join("line %d, %s, the %s form (%s) in %s" % r for r in stray))
+        stale = sorted(k for k in _WALK_EXEMPT if not any((r[4], r[1]) == k for r in outside))
+        self.assertEqual(stale, [], "an exemption with no reference: %r (the row outlived the code it excused; remove it)" % stale)
+        self.assertEqual([(r[1], r[2]) for r in refs if r[4] == "_walk"], [(_WALK, "attribute")],
+                         "_walk holds exactly one traversal reference, the standard walk by attribute: %r" % [r for r in refs if r[4] == "_walk"])
+        # the refused inputs, one synthetic source per form (and per name for the two the module never spells in code)
+        samples = (
+            ("import ast\nclass _V(ast.%s):\n    pass\n" % _NODE_VISITOR, (2, _NODE_VISITOR, "attribute", "ast." + _NODE_VISITOR, "_V")),
+            ("import ast\nclass _T(ast.%s):\n    def visit(self, n):\n        return n\n" % _NODE_TRANSFORMER,
+             (2, _NODE_TRANSFORMER, "attribute", "ast." + _NODE_TRANSFORMER, "_T")),
+            ("import ast\ndef kids(n):\n    return list(ast.%s(n))\n" % _ITER_CHILD_NODES, (3, _ITER_CHILD_NODES, "attribute", "ast." + _ITER_CHILD_NODES, "kids")),
+            ("from ast import %s as _w\ndef census(t):\n    return list(_w(t))\n" % _WALK, (1, _WALK, "from-import", "from ast import %s as _w" % _WALK, "<module>")),
+            ("from ast import *\n", (1, "*", "from-import", "from ast import *", "<module>")),
+            ("import ast as _a\ndef census(t):\n    return list(_a.%s(t))\n" % _WALK, (3, _WALK, "attribute", "_a." + _WALK, "census")),
+            ("import ast\ndef census(t):\n    return list(getattr(ast, %r)(t))\n" % _WALK, (3, _WALK, "getattr", "getattr(ast, %r)" % _WALK, "census")),
+            ("import ast\nclass C:\n    def m(self, t):\n        return list(ast.%s(t))\n" % _WALK, (4, _WALK, "attribute", "ast." + _WALK, "C.m")),
+        )
+        for source, expected in samples:
+            got = _traversal_references(ast.parse(source))
+            self.assertEqual(got, [expected], "the finder reads %r as one reference, %r, and answers %r" % (source, expected, got))
 
 
 class Docs(unittest.TestCase):
