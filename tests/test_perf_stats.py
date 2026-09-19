@@ -88,6 +88,23 @@ def _doc_row(doc, name):
     return doc[m.start():nxt.start() if nxt else len(doc)]
 
 
+_ONES = ("zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve",
+         "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen")
+_TENS = ("", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety")
+
+
+def _number_word(n):
+    """The English word for a count under one hundred, spelled as the docs spell one ("nineteen"): the docs' count of the
+    pass jobs' rows is derived from len(_PerfStats.PASS_JOBS) through this, never typed a second time (2026-09-19 review),
+    so a job added to the list turns the sentence that counts them red."""
+    if not 0 <= n < 100:
+        raise ValueError("no word for %r" % (n,))
+    if n < 20:
+        return _ONES[n]
+    tens, ones = divmod(n, 10)
+    return _TENS[tens] + ("-" + _ONES[ones] if ones else "")
+
+
 def _burn_cpu(seconds):
     """Spin this thread for `seconds` of its own CPU time (thread_time, so a descheduled thread still burns
     the asked amount rather than merely waiting it out)."""
@@ -1141,6 +1158,16 @@ class JobRowsByOwner(unittest.TestCase):
         self.assertNotIn("count every push", para, "the fold sentence is gone")
         for j in km._PerfStats.CYCLE_JOBS:
             self.assertIn("`%s`" % j, para, "the nine are named: %s" % j)
+        # The rows that keep their values are the pass jobs' container rows, counted from PASS_JOBS, with the reason (the
+        # act-now pass closes no `jobs.<job>` container) and the clause that a job's part rows narrow under stagesForeign
+        # (2026-09-19 review: round one corrected the sentence and nothing held the correction; the unscoped wording,
+        # every remaining `jobs.<job>` row keeping its value, is false of the part rows and is refused here by shape).
+        n_pass = _number_word(len(km._PerfStats.PASS_JOBS))
+        self.assertRegex(para, r"%s remaining `jobs\.<job>` container rows \(the pass jobs\) keep their names and their values" % n_pass,
+                         "the rows that keep their values are the pass jobs' %s container rows" % n_pass)
+        self.assertRegex(para, r"closes no `jobs\.<job>` container", "the reason: the act-now pass closes no job container")
+        self.assertRegex(para, r"`jobs\.autoNudge\.<part>` rows shed.{0,80}`stagesForeign`", "and a job's part rows narrow, under stagesForeign")
+        self.assertNotRegex(para, r"`jobs\.<job>` rows keep their names", "round one's unscoped sentence (no `container`) is gone")
         self.assertIn("- `stagesForeign`:", doc, "the foreign block is documented as a top-level block")
         foreign_para = doc[doc.index("- `stagesForeign`:"):]
         foreign_para = " ".join(foreign_para[:foreign_para.index("\n- `")].split())
@@ -1153,6 +1180,21 @@ class JobRowsByOwner(unittest.TestCase):
         self.assertIn("`cycleJobsMs`", pusher_para)
         self.assertIn("`stagesMs`", pusher_para, "the connect table is listed under connectPush")
         self.assertIn("`pusher.connectPush.stagesMs`", pusher_para, "the firstCycle sentence sends a connect push there, not to stages_ms")
+
+    def test_the_ledger_entry_gives_the_measured_reason_for_the_rows_that_keep_their_values(self):
+        """upstream/2026-09-18-stage-attribution.md states the jobs rows' meaning change with the same load-bearing words as the
+        reference: the pass jobs' container rows, counted from PASS_JOBS, keep their values because the act-now path closes no
+        `jobs.<job>` container, and a job's part rows shed that pass's share under stagesForeign. Round one replaced the
+        entry's reason (that the housekeeping jobs already ran on the jobs thread alone, which the act-now test in
+        tests/test_jobs_thread_split.py falsifies) and nothing held the replacement (2026-09-19 review)."""
+        entry = " ".join(Path(HERE).parent.joinpath("upstream", "2026-09-18-stage-attribution.md").read_text().split())
+        n_pass = _number_word(len(km._PerfStats.PASS_JOBS))
+        self.assertRegex(entry, r"the %s `jobs\.<job>` container rows keep their names and their values because" % n_pass,
+                         "the rows that keep their values are the pass jobs' %s container rows, with a reason" % n_pass)
+        self.assertRegex(entry, r"closes no `jobs\.<job>` container", "the reason: the act-now path closes no job container")
+        self.assertRegex(entry, r"`jobs\.autoNudge\.<part>` rows shed.{0,60}`stagesForeign`", "the part rows narrow, under stagesForeign")
+        self.assertNotIn("already ran on the jobs thread alone", entry, "round one's false reason is gone")
+        self.assertNotRegex(entry, r"those rows keep their names and their values, since", "and its unscoped sentence with it")
 
 
 class PushRowsByPurpose(unittest.TestCase):
