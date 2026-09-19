@@ -1460,6 +1460,68 @@ class Cli(unittest.TestCase):
         self.assertEqual(_hits({"a": {"n": 911111111}}, [("session id", "11111111")]), [("session id", "the value at a/n")],
                          "an all-digit id prefix a counter carries is a hit, the rare cost the docstring names")
 
+    def test_a_listed_digit_run_under_seven_digits_is_not_applied_to_a_number_and_one_of_seven_is_with_its_list_line(self):
+        """THE NUMERIC FLOOR (2026-09-19, the comment at pp.NUMERIC_PROBE_MIN_DIGITS): identifier_hits applies a listed private
+        string to a number's wire spelling only when the entry carries a digit run of at least seven digits, because a
+        shorter run collides with some number of a real export by coincidence too often for a match to be evidence (measured
+        on a real export of 3,770 numbers: a listed four-digit run matched some number about one export in four, a
+        seven-digit run about one in 7,000). The boundary is pinned by execution with literals, never the constant: a
+        six-digit listed run is no hit in any number that carries it (whole, inside a longer one, as a float, a negative, an
+        exponent spelling, a fraction, a list element) and stays a hit in a key and in a string value; a seven-digit listed
+        run is a hit as an integer, a float, a negative, an exponent spelling that canonicalises to it, inside a longer run
+        and as a fraction, at the value's path, and the Hit carries the entry's LIST LINE (Probe.line) and never its text. A
+        word probe keeps today's token-run match over numbers and an all-digit session-id prefix, eight digits, is above the
+        floor, so the floor's one effect is on the list. A floor of eight turns the seven-digit assertions red; a floor of
+        six turns the six-digit ones red."""
+        six = [pp.Probe(pp.PRIVATE_KIND, "424242", 4)]
+        for value in (424242, 1424242, 424242.0, -424242, 4.24242e5, 0.424242, [424242]):
+            self.assertEqual(pp.identifier_hits({"a": {"n": value}}, six), [], "a six-digit listed run is not applied to a number: %r" % (value,))
+        self.assertEqual(_hits({"a": {"n": "x424242"}}, six), [(pp.PRIVATE_KIND, "the value at a/n")], "a string value is checked as before")
+        self.assertEqual(_hits({"a": {"424242": 1}}, six), [(pp.PRIVATE_KIND, "a key under a")], "a key is checked as before")
+        seven = [pp.Probe(pp.PRIVATE_KIND, "4242424", 3)]
+        for value in (4242424, 4242424.0, -4242424, 4.242424e6, 14242424, 0.4242424, 4242424.5):
+            self.assertEqual(json.dumps(value).count("4242424"), 1, repr(value))
+            hits = pp.identifier_hits({"a": {"n": value}}, seven)
+            self.assertEqual(hits, [pp.Hit(pp.PRIVATE_KIND, False, "a/n", 2, 3)], "a seven-digit listed run is a hit in a number: %r" % (value,))
+            self.assertEqual(hits[0].line, 3, "the Hit carries the entry's list line")
+            self.assertNotIn("4242424", repr(hits), "and never its text")
+        self.assertEqual(pp.identifier_hits({"a": {"n": 4242424}}, [(pp.PRIVATE_KIND, "4242424")])[0].line, None, "a plain tuple probe has no line")
+        self.assertEqual([pp.longest_digit_run(s) for s in ("424242", "4242424", "zz12345678zz.9", "1234.5678", "abc", "")], [6, 7, 8, 4, 0, 0])
+        self.assertEqual(_hits({"a": {"n": 4242}}, [("hostname", "4242")]), [("hostname", "the value at a/n")], "a word probe over a number is as before")
+        self.assertEqual(_hits({"a": {"n": 911111111}}, [("session id", "11111111")]), [("session id", "the value at a/n")],
+                         "an eight-digit id prefix is above the floor")
+
+    def test_the_stderr_line_counts_the_listed_entries_under_the_numeric_floor_once_and_names_none(self):
+        """machine_probes says once on stderr how many listed entries are checked in keys and string values but not in numbers
+        (pp.LIST_UNDER_NUMERIC_FLOOR): the entries that carry digits, all in runs shorter than the floor, so that a reader
+        whose private value is a short digit run knows the numeric arm does not protect it and can list more of its digits
+        or accept that. Over a list of a comment, a word, a six-digit run, a word with two digits and a seven-digit run: two
+        of four, the line's exact text, no entry in it, and each probe carries its file line, the comment counting. A list
+        whose every digit run is at or over the floor, or that carries no digit, says nothing. Removing the line turns this
+        red; so does a floor of eight (three of four) or of six (one of four)."""
+        listed = os.path.join(self.state, "list.txt")
+        with open(listed, "w", encoding="utf-8") as fh:
+            fh.write("# a comment on line 1\nzzcoinedzz\n424242\nabc12\n4242424\n")
+        env = {"HOME": HOME, "USER": "tester", "ROMP_PRIVATE_STRINGS": listed}
+        err = io.StringIO()
+        with mock.patch.object(pp.socket, "gethostname", return_value="TESTHOST.example"), contextlib.redirect_stderr(err):
+            probes = pp.machine_probes(None, env=env)
+        self.assertEqual(err.getvalue(), ("romp: 2 of 4 private-strings entries are checked in keys and string values but not in numbers (their digit "
+                         "runs are shorter than 7); a value that must be found in a number needs 7 or more of its digits listed\n"))
+        self.assertEqual(err.getvalue().count("romp:"), 1, "said once")
+        for entry in ("zzcoinedzz", "424242", "abc12", "4242424"):
+            self.assertNotIn(entry, err.getvalue(), "the line names no entry")
+        self.assertEqual([(p.text, p.line) for p in probes if p.kind == pp.PRIVATE_KIND],
+                         [("zzcoinedzz", 2), ("424242", 3), ("abc12", 4), ("4242424", 5)], "each probe carries the file's line, the comment counting")
+        self.assertTrue(all(p.line is None for p in probes if p.kind != pp.PRIVATE_KIND), "a machine string has no line")
+        for content in ("zzcoinedzz\nsecond-coined\n", "4242424\n12345678\n", ""):
+            with open(listed, "w", encoding="utf-8") as fh:
+                fh.write(content)
+            err = io.StringIO()
+            with mock.patch.object(pp.socket, "gethostname", return_value="TESTHOST.example"), contextlib.redirect_stderr(err):
+                pp.machine_probes(None, env=env)
+            self.assertEqual(err.getvalue(), "", "nothing under the floor, nothing said: %r" % content)
+
     def test_the_private_strings_list_feeds_the_probes_when_present_and_is_a_no_op_absent(self):
         """The machine-local list the repository's pre-push hook reads (~/.config/romp/private-strings.txt: one string per
         line, `#` comments, blanks) is the maintainer's own list of what must never be published, a coined project nickname
@@ -1659,6 +1721,61 @@ class Cli(unittest.TestCase):
                                        "perf/pusher/cycles; edit line 1 of the private-strings list or that value; nothing written\n", repr(value))
             self.assertNotIn("4242424242", r.stdout + r.stderr, repr(value))
             self.assertFalse(os.path.exists(os.path.join(self.state, "perf-exports")), repr(value))
+        r = _run(["--public", "--from", self.src], state=self.state)
+        self.assertEqual(r.returncode, 0, r.stderr + " (without the list, the counter is a number like any other)")
+
+    def test_a_listed_six_digit_run_inside_a_byte_total_exports_with_the_stderr_line_and_a_seven_digit_run_refuses_naming_the_list_line(self):
+        """The floor by the export child (2026-09-19). With a list of a comment, a word, a blank and a six-digit run (line 4), a
+        snapshot whose rss_kb carries the run inside a byte total (9424242) exports, exit 0, the file written with the number
+        in it, and stderr is exactly the one line saying 1 of 2 entries are checked in keys and string values but not in
+        numbers; the same run as a KEY is refused as before, naming line 4, the loud line before the refusal. With the run
+        lengthened to seven digits on the same line 4, a counter that spells it, as an integer, a float, a negative and an
+        exponent spelling, and a byte total that carries it, is refused naming the kind, the value's path and line 4 of the
+        list with the remedy, the run in no output, nothing written, and stderr is that one line, since no entry is under
+        the floor. The boundary is by execution with literals: 424242 passes, 4242424 refuses. Fails before: the six-digit run
+        refused the export, exit 1, and no refusal named a line."""
+        listed = os.path.join(self.xdg, "private-strings.txt")
+        loud = ("romp: 1 of 2 private-strings entries are checked in keys and string values but not in numbers (their digit "
+                "runs are shorter than 7); a value that must be found in a number needs 7 or more of its digits listed\n")
+        with open(listed, "w", encoding="utf-8") as fh:
+            fh.write("# strings that must never be published\nzzcoinedzz\n\n424242\n")
+        snap = leak_snapshot()
+        snap["process"]["rss_kb"] = 9424242
+        with open(self.src, "w") as fh:
+            json.dump(snap, fh)
+        r = _run(["--public", "--from", self.src], env_extra={"ROMP_PRIVATE_STRINGS": listed}, state=self.state)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(r.stderr, loud)
+        written = os.listdir(os.path.join(self.state, "perf-exports"))
+        self.assertEqual(len(written), 1)
+        with open(os.path.join(self.state, "perf-exports", written[0]), encoding="utf-8") as fh:
+            self.assertIn('"rss_kb": 9424242', fh.read(), "the byte total carrying the six-digit run is written")
+        shutil.rmtree(os.path.join(self.state, "perf-exports"))
+        snap = leak_snapshot()
+        snap["pusher"]["connectPush"]["byApp"]["424242"] = {"count": 1}
+        with open(self.src, "w") as fh:
+            json.dump(snap, fh)
+        r = _run(["--public", "--from", self.src], env_extra={"ROMP_PRIVATE_STRINGS": listed}, state=self.state)
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertEqual(r.stderr, loud + "romp perf export: refused: a string this machine knows (private string) survives as a key under "
+                                          "perf/pusher/connectPush/byApp; edit line 4 of the private-strings list or that key; nothing written\n")
+        self.assertFalse(os.path.exists(os.path.join(self.state, "perf-exports")))
+        with open(listed, "w", encoding="utf-8") as fh:
+            fh.write("# strings that must never be published\nzzcoinedzz\n\n4242424\n")
+        for plant, path in (({"pusher": {"cycles": 4242424}}, "perf/pusher/cycles"), ({"pusher": {"cycles": 4242424.0}}, "perf/pusher/cycles"),
+                            ({"pusher": {"cycles": -4242424}}, "perf/pusher/cycles"), ({"pusher": {"cycles": 4.242424e6}}, "perf/pusher/cycles"),
+                            ({"process": {"rss_kb": 94242424}}, "perf/process/rss_kb")):
+            snap = leak_snapshot()
+            for block, leaf in plant.items():
+                snap[block].update(leaf)
+            with open(self.src, "w") as fh:
+                json.dump(snap, fh)
+            r = _run(["--public", "--from", self.src], env_extra={"ROMP_PRIVATE_STRINGS": listed}, state=self.state)
+            self.assertEqual(r.returncode, 1, repr(plant) + "\n" + r.stdout + r.stderr)
+            self.assertEqual(r.stderr, "romp perf export: refused: a string this machine knows (private string) survives as the value at "
+                                       "%s; edit line 4 of the private-strings list or that value; nothing written\n" % path, repr(plant))
+            self.assertNotIn("4242424", r.stdout + r.stderr, repr(plant))
+            self.assertFalse(os.path.exists(os.path.join(self.state, "perf-exports")), repr(plant))
         r = _run(["--public", "--from", self.src], state=self.state)
         self.assertEqual(r.returncode, 0, r.stderr + " (without the list, the counter is a number like any other)")
 

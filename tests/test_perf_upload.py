@@ -1246,6 +1246,57 @@ class Cli(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr + " (without the list, no probe is a digit run and the number passes)")
         self.assertIn(b'"zzratio": 4242424242', self.fake.requests[0][2])
 
+    def test_a_listed_six_digit_run_in_a_number_travels_with_the_stderr_line_and_a_seven_digit_run_is_refused_naming_the_list_line(self):
+        """The floor by the upload child (2026-09-19, the comment at pp.NUMERIC_PROBE_MIN_DIGITS). With a list of a comment, a
+        word, a blank and a six-digit run (line 4) under the child's HOME, an export edited to carry the run as a NUMBER in
+        five spellings (whole, inside a byte total, a float, a negative, an exponent form) is sent, exit 0, the number on
+        the wire, and stderr is exactly the one line saying 1 of 2 entries are checked in keys and string values but not in
+        numbers; the same run in QUOTES is refused as before, naming line 4 and the remedy, the loud line before the
+        refusal. With the run lengthened to seven digits on the same line, five numeric spellings are each refused in one
+        stderr line naming the kind, the value's path and line 4 of the list, the run in no output, nothing sent. The
+        boundary is by execution with literals: 424242 travels, 4242424 does not. Fails before: every six-digit spelling was
+        refused and no refusal named a line."""
+        base = ["--yes", "--receiver", self.fake.url]
+        text = self.data.decode("utf-8")
+        anchor = '"uptime_s": 60'
+        self.assertEqual(text.count(anchor), 1)
+        self.assertNotIn("424242", text, "the fresh export carries neither run")
+        edited = os.path.join(self.xdg, "edited.json")
+        os.makedirs(os.path.join(self.home, ".config", "romp"))
+        listed = os.path.join(self.home, ".config", "romp", "private-strings.txt")
+        with open(listed, "w", encoding="utf-8") as fh:
+            fh.write("# strings that must never be published\nzzcoinedzz\n\n424242\n")
+        loud = ("romp: 1 of 2 private-strings entries are checked in keys and string values but not in numbers (their digit "
+                "runs are shorter than 7); a value that must be found in a number needs 7 or more of its digits listed\n")
+        for literal in ("424242", "9424242", "424242.0", "-424242", "4.24242e5"):
+            with open(edited, "w", encoding="utf-8") as fh:
+                fh.write(text.replace(anchor, anchor + ', "zzratio": ' + literal))
+            self.fake.reset()
+            r = _run([edited] + base, self.state, home=self.home)
+            self.assertEqual(r.returncode, 0, literal + ": " + r.stdout + r.stderr)
+            self.assertEqual(r.stderr, loud, literal)
+            self.assertEqual(len(self.fake.requests), 1, literal)
+            self.assertIn(('"zzratio": ' + json.dumps(json.loads(literal))).encode(), self.fake.requests[0][2], "the number travelled: " + literal)
+        with open(edited, "w", encoding="utf-8") as fh:
+            fh.write(text.replace(anchor, anchor + ', "zzratio": "424242"'))
+        self.fake.reset()
+        r = _run([edited] + base, self.state, home=self.home)
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertEqual(r.stderr, loud + "romp perf upload: refused: a string this machine knows (private string) survives as the value at "
+                                          "perf/zzratio; edit line 4 of the private-strings list or that value; nothing sent\n")
+        self.assertEqual(self.fake.requests, [], "the quoted run is refused as before")
+        with open(listed, "w", encoding="utf-8") as fh:
+            fh.write("# strings that must never be published\nzzcoinedzz\n\n4242424\n")
+        for literal in ("4242424", "94242424", "4242424.0", "-4242424", "4.242424e6"):
+            with open(edited, "w", encoding="utf-8") as fh:
+                fh.write(text.replace(anchor, anchor + ', "zzratio": ' + literal))
+            r = self._refused(_run([edited] + base, self.state, home=self.home), 1,
+                              "refused: a string this machine knows (private string) survives as the value at perf/zzratio; "
+                              "edit line 4 of the private-strings list or that value; nothing sent")
+            self.assertNotIn("4242424", r.stdout + r.stderr, literal)
+            self.assertEqual(r.stdout, "", literal)
+        self.assertEqual(self.fake.requests, [], "no seven-digit spelling was sent")
+
     def test_an_edited_file_the_fold_would_have_changed_is_refused_by_kind_and_key_path_and_never_sent(self):
         """The re-check holds the file to the export's FOLD, not to the walk's shapes alone (the upload's second review
         round, 2026-09-18). Three edits the walk passed and the fold would have written differently, each POSTed at the
