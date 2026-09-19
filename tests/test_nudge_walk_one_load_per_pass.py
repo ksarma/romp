@@ -37,16 +37,20 @@ source census in TheCountersOneSite instead, one level deep (the helper's own so
 `_auto_nudge_tick` call (the records are cleared before it and read after it), so a load elsewhere in the process (a
 builder, a handler, the perf snapshot the test reads after its last pass) is outside the window and is not this test's
 claim. By the store's own counters, a witness keyed on the store rather than on a list of doors, one per door. The shared
-door: every call that reaches the shared cache's branch moves exactly one of hit, miss, compare_miss, absent and fallback
-in `jd.shared_store_stats()`, so per pass the delta of those five must equal the walk's, the gate's and the sweep's
-recorded calls together. The writer door: every `load_goals` call bumps `loads` in `jd.goal_io_stats()` at the loader's
+door: every call that reaches the shared cache's branch and returns moves exactly one of hit, miss, compare_miss, absent
+and fallback in `jd.shared_store_stats()` (a call whose open or read raises moves none, and reds as a recorded call that
+took no read), so per pass the delta of those five must equal the walk's, the gate's and the sweep's recorded calls
+together. The writer door: every `load_goals` call bumps `loads` in `jd.goal_io_stats()` at the loader's
 first line, and the shared door hands a read to `load_goals` on exactly the absent, fallback, corrupt and
 unreadable_journal counters (SHARED_HANDOFF_KEYS), so per pass the delta of `loads` must equal the recorded writer calls
 plus those hand-offs (review round 2: until then the writer door was a recorder on one name, and a `load_goals` through a
 reference bound before the recorder stood, or written inside the shared door's own body where the fallback skip takes it
-for the hand-off, left every witness green). Through either door, a load the recorders do not wrap, or through a reference
-to the real door taken before a recorder stood, is noticed even though it cannot be named. The two witnesses answer
-different questions: the recorders say who loaded, the delta says that something did. By the served counter: `memos.nudgeWalk.loads`, bumped at the walk's one call site, must
+for the hand-off, left every witness green). So a load through a door of this judge module onto its cache or its
+counters that the recorders do not wrap, or through a reference to a real door taken before a recorder stood, is noticed
+even though it cannot be named. Outside both witnesses: a reader that bypasses the kernel's judge module, the kernel
+opening the store file itself or a second judge module loaded under another name with a cache and counters of its own
+(review round 2 planted both; neither moved a witness). The two witnesses answer different questions: the recorders say
+who loaded, the delta says that something did. By the served counter: `memos.nudgeWalk.loads`, bumped at the walk's one call site, must
 move by the walk's count per pass. A skipped look repeats its verdict and writes nothing (the wake-only memo of PR 784),
 so it needs no data: the recorder sees no call from either.
 
@@ -374,12 +378,16 @@ class _WalkHarness(unittest.TestCase):
         shared-loader calls per mechanism and sid (`walk`: the look's decision read; `gate`: the placement gate's currency
         check; `sweep`: the wake sweep's read per owned record, over every sid seen; never a total), the writer loads, and
         the sids parsed. The recorders stand on the judge's two doors, `jd.load_goals_shared` and `jd.load_goals`, and
-        attribute through its boundary frames by code identity, so a shared load from any other function during the pass
-        fails here, named by function, file and line, and the sweep is held to its bound per sid; the writer door's list is
-        asserted empty after every pass, separately, each entry named the same way; a reader below the doors is outside
-        the claim. The shared cache's call counters are reconciled against the recorded calls (`shared`, the
-        delta over SHARED_CALL_KEYS), so a load through a door the recorders do not wrap is noticed, unnamed. `calls`
-        carries the shared records (sid, function, file, line) for a case's own assertions."""
+        attribute through its boundary frames by code identity, so a shared load from any other function the fixture
+        executes during the pass fails here, named by function, file and line (the helpers the fixture replaces, REPLACED_KM,
+        REPLACED_JD and Sessions.backend_for, are the source census's in TheCountersOneSite, not this witness's), and the
+        sweep is held to its bound per sid; the writer door's list is asserted empty after every pass, separately, each
+        entry named the same way; a reader below the doors is outside the claim. The store's counters are reconciled
+        against the recorded calls per door (`shared`, the delta over SHARED_CALL_KEYS, against the walk's, the gate's and
+        the sweep's; `writerLoads`, the delta of goal_io loads, against the writer records plus the shared door's hand-offs
+        over SHARED_HANDOFF_KEYS), so a load through a door of the judge module the recorders do not wrap is noticed,
+        unnamed; a reader that bypasses the module is outside both. `calls` carries the shared records (sid, function, file,
+        line) for a case's own assertions."""
         before = {k: km._NUDGE_WALK_STATS[k] for k in self.KEYS}
         gate0 = dict(km._NUDGE_GATE_STATS)
         s0, g0 = jd.shared_store_stats(), jd.goal_io_stats()["loads"]
@@ -410,8 +418,8 @@ class _WalkHarness(unittest.TestCase):
                          "gate %r, sweep %r" % ((d["shared"],) + tuple({k[-4:]: v for k, v in d[m].items()} for m in ("walk", "gate", "sweep"))))
         d["calls"] = list(self.calls)
         writer = ["%s (%s:%d, sid ..%s)" % (c, f, ln, s[-4:]) for s, c, f, ln in self.writer]
-        self.assertEqual(writer, [], "zero plain load_goals from any caller in the decision path (condition 7, ruling A's wording), by "
-                                     "function, file and line: %s" % "; ".join(writer))
+        self.assertEqual(writer, [], "zero plain load_goals from any caller during the pass, the whole tick (condition 7 in ruling A's "
+                                     "wording says the decision path; this window is wider), by function, file and line: %s" % "; ".join(writer))
         handoffs = sum(s1[k] - s0[k] for k in SHARED_HANDOFF_KEYS)
         self.assertEqual(g1 - g0, len(self.writer) + handoffs,
                          "the writer door's own counter, goal_io loads, moves once per load_goals call (the loader's first line), and the "
