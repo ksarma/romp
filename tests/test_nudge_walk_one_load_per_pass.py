@@ -400,7 +400,9 @@ SHARED_HANDOFF_KEYS = ("absent", "fallback", "corrupt", "unreadable_journal")
 # keys that are NOT call keys, so a bump of either beside a goal_io loads bump with no call through the door balanced the shared
 # reconciliation (no call key moved) and the writer one (one hand-off per loads) and red nothing in _pass; the bound is where it
 # reds on a pass with no fill, and the cases' writerLoads elements where one such pair rides beside each fill (the bound admits
-# second == fills).
+# second == fills). The other two, dup and refuse, are neither call keys nor hand-off keys, so a bump of either moves no
+# reconciliation and the bound admits it up to the fills; _pass holds them to zero on every pass, with the reason zero holds in this
+# harness (review round 4, extra5-1: a spurious bump of either beside a genuine fill was witnessed by nothing).
 SHARED_SECOND_KEYS = ("unreadable_journal", "corrupt", "dup", "refuse")
 # The fill road's entry keys: the call keys whose bump falls through into the fill (the statement list holding it does not end in
 # a return or a raise), so the fills a pass made are their sum, the bound's right-hand side in _pass. The roster pin derives them
@@ -1066,9 +1068,14 @@ class _WalkHarness(unittest.TestCase):
         and on a pass with fills refuses only what exceeds them: a pair that rides beside each genuine fill (one corrupt bump and one
         loads bump per miss the walk's read made) leaves second equal to fills, balances the writer reconciliation with its hand-off,
         and passes the bound; the cases' writerLoads elements are what red it there, 2 against 0 on the first pass (a
-        consolidation-pass verifier's state), and two pairs per fill red the bound again, 4 against 2. So the two layers cover different
-        passes: the bound holds the passes with no fill on its own, and the tuples' writerLoads elements the passes with fills.
-        `calls` carries the shared records (sid, function, file, line) for a case's own assertions."""
+        consolidation-pass verifier's state), and two pairs per fill red the bound again, 4 against 2. So for the hand-off second keys,
+        corrupt and unreadable_journal, the two layers cover different passes: the bound holds the passes with no fill on its own, and
+        the tuples' writerLoads elements the passes with fills. For dup and refuse, neither call keys nor hand-off keys, the
+        writerLoads elements see nothing, so the second layer is the zero line beside the bound: this harness is single-threaded (no
+        concurrent fill, so no dup) and writes no goals-archive during a pass (so no refuse), and a bump of either on any pass is a
+        counter moved with no road that moves it (review round 4, extra5-1: the sentence here said the two layers cover every pass,
+        and a spurious dup or refuse bump beside a genuine fill, up to the fill count, was witnessed by nothing). `calls` carries the
+        shared records (sid, function, file, line) for a case's own assertions."""
         before = {k: km._NUDGE_WALK_STATS[k] for k in self.KEYS}
         gate0 = dict(km._NUDGE_GATE_STATS)
         s0, g0 = jd.shared_store_stats(), jd.goal_io_stats()["loads"]
@@ -1143,6 +1150,17 @@ class _WalkHarness(unittest.TestCase):
                              "alone on a pass with no fill (on a pass with fills, one such pair per fill passes this bound and the case's "
                              "writerLoads element catches it)" % (now, second, sum(second.values()), fills,
                                         ", ".join("%s %d" % (k, d["shared"].get(k, 0)) for k in SHARED_FILL_KEYS), "; ".join(records) or "none"))
+        # the second keys that are neither call keys nor hand-off keys, dup and refuse: no reconciliation reads them and the bound
+        # above admits them up to the fills, so they are held to zero here, with the reason zero holds (review round 4, extra5-1)
+        spurious = {k: v for k, v in second.items() if k not in SHARED_HANDOFF_KEYS}
+        self.assertEqual(spurious, {},
+                         "pass at %d: no dup and no refuse bump, the second keys that are neither call keys nor hand-off keys, so no "
+                         "reconciliation reads them and the bound above admits them up to the fills (the cases' writerLoads elements read "
+                         "the hand-off keys alone). Zero holds in this harness for a reason and not by luck: it is single-threaded, so no "
+                         "concurrent fill publishes the same version first (dup), and nothing writes the goals-archive during a pass, so "
+                         "_archive_key cannot move under a replay (refuse); a bump of either here is a counter moved with no road that moves "
+                         "it. A future harness that drives those roads on purpose changes this line with its reason. This pass: second bumps "
+                         "%r against %d fill(s); recorded shared calls: %s" % (now, second, fills, "; ".join(records) or "none"))
         d["calls"] = list(self.calls)
         writer = ["%s (%s:%d, sid ..%s)" % (c, f, ln, s[-4:]) for s, c, f, ln in self.writer]
         self.assertEqual(writer, [], "zero plain load_goals from any caller during the pass, the whole tick (condition 7 in ruling A's "
