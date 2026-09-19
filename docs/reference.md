@@ -3635,8 +3635,10 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   every later reader of the tree on that thread, the agent-file lookup's
   stamp re-check included, pays no stat; a change on disk after the
   validation is seen by the next cycle's first reader, one cycle later at
-  most; a thread outside a cycle, a WS or HTTP handler's build or the
-  act-now nudge pass, reads per call as before), with `hit` and `miss`
+  most; a root evicted mid-cycle, a session departing, empties every open
+  scope, so a tree read after it is validated once more in that cycle; a
+  thread outside a cycle, a WS or HTTP handler's build or the act-now nudge
+  pass, reads per call as before), with `hit` and `miss`
   (trees vouched for by one stat per known directory against trees walked),
   `evict` (roots dropped because no alive session's transcript names them,
   on every jobs pass and, as a belt, after each feed build and from the
@@ -3644,8 +3646,14 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   paid: the tree validation's lstat per known directory and the agent-file
   lookup's stat per directory its stamp re-check takes; before 2026-09-19
   it counted the lstat half alone, so a figure from before that change and
-  one from after are not one series, and since then the figure per cycle
-  or pass is bounded by the directories held, not by the readers), `walkMs`
+  one from after are not one series; since then the two loops' own reads
+  pay per cycle or pass about `dirs` less the roots in the common order, a
+  tree read before its agent-file lookups, up to twice that when a command
+  row's owner lookup re-checks stamps before the tree is read, plus the
+  project and sibling directory stats an agent-file miss pays, and a
+  handler thread's per-call reads and a re-validation after an eviction
+  land in the same counter, so the figure is bounded per scoped reader set,
+  not per interval), `walkMs`
   and `validateMs` (the time in each, every thread), and the gauges `roots`
   (entries) and `dirs` (directories held); a directory stamped within the
   last two seconds, or one whose listing failed, is stored unvouched and

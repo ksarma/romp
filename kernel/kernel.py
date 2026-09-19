@@ -35210,8 +35210,9 @@ SUBAGENT_STEPS_CAP = 200        # tool calls shipped on the Agent head (agentSte
 # per build from the feed, timeline and chat builds and the nudge walk, and a pusher stack sample put a tenth of its push-stage
 # samples inside that walk. Bounded by ownership, not by a count: _subagent_trees_forget drops every root no alive session's
 # transcript names, on every jobs pass (_interrupt_block_tick, audience-independent) and, as a belt, after each feed build
-# and from the tracking-off frame. Validated at most once per pusher cycle and once per jobs pass since 2026-09-19: the
-# thread's cycle scope (_subagent_scope_open, below _subagent_tree_charge) holds the validated pair for the cycle.
+# and from the tracking-off frame. Validated at most once per pusher cycle and once per jobs pass since 2026-09-19 (plus once
+# more per eviction event in the cycle): the thread's cycle scope (_subagent_scope_open, below _subagent_tree_charge) holds the
+# validated pair for the cycle.
 _SUBAGENT_TREES = {}
 _SUBAGENT_TREE_STATS = {"hit": 0, "miss": 0, "evict": 0, "dirStats": 0, "walkMs": 0.0, "validateMs": 0.0}   # /perf memos.subagentTree;
 #                          advisory tallies, incremented without a lock as the neighbouring memos' are (a lost count under a race
@@ -35252,11 +35253,13 @@ def _subagent_tree_charge(kind, t0):
     _SUBAGENT_TREE_STATS[kind] += (time.monotonic() - t0) * 1000.0
 
 
-# THE CYCLE SCOPE (2026-09-19): a tree is validated at most once per pusher cycle and once per jobs pass. The walk memo made a
-# call cost one lstat per known directory instead of a listing, and _subagent_file's hit path re-stats every directory its walk
-# read, which for a nested or missing agent's file is the whole tree; so one _session_awaiting over A such agents paid (A+1) x D
-# directory stats with nothing changed, and it runs up to five times per session per pusher cycle (the chat, feed and timeline
-# builds and the chips) and once per jobs pass (the nudge look). Measured on the deployed kernel (py-spy, 2026-09-19):
+# THE CYCLE SCOPE (2026-09-19): a tree is validated at most once per pusher cycle and once per jobs pass, plus once more per
+# eviction event inside the cycle (a root leaving _SUBAGENT_TREES moves _SUBAGENT_TREES_GEN and every open scope empties itself;
+# in steady state that is a session departing). The walk memo made a call cost one lstat per known directory instead of a
+# listing, and _subagent_file's hit path re-stats every directory its walk read, which for a nested or missing agent's file is
+# the whole tree; so one _session_awaiting over A such agents paid (A+1) x D directory stats with nothing changed, and it runs
+# up to five times per session per pusher cycle (the chat, feed and timeline builds and the chips) and once per jobs pass (the
+# nudge look). Measured on the deployed kernel (py-spy, 2026-09-19):
 # _dir_stamp's one os.stat was 28% of the pusher's samples, and the memo's own counters showed 24.5 million validation lstats in
 # 6.8 hours over 1,294 directories (the user 2026-09-05, who wanted the one-core kernel investigated). The cycle and the pass
 # are the events a time window would have stood in for (the repo's design rule): the thread's slot opens at the cycle's start
@@ -35346,9 +35349,10 @@ def _subagent_tree(d):
     more identity).
 
     Inside a pusher cycle or a jobs pass (this thread's cycle scope, _subagent_scope; 2026-09-19) the validation itself
-    happens at most once per cycle: the pair a validated hit or a clean walk returned is held in the scope and every later
-    call for the root on that thread in the cycle is served it with no stat, and a change on disk after that validation is
-    seen by the next cycle's first call, one cycle later at most (the comment block above _subagent_scope_open). Not held:
+    happens at most once per cycle, plus once more per eviction event in the cycle (a gen move empties the scope): the pair a
+    validated hit or a clean walk returned is held in the scope and every later call for the root on that thread in the cycle
+    is served it with no stat, and a change on disk after that validation is seen by the next cycle's first call, one cycle
+    later at most (the comment block above _subagent_scope_open). Not held:
     a missing or replaced root (the two pop paths, which also move _SUBAGENT_TREES_GEN when they removed an entry, so every
     open scope drops what it holds) and a walk with a failed listing or child lstat, which cost what they cost today per
     call and never serve a failure."""
@@ -35455,11 +35459,12 @@ def _subagent_tree_memo_report():
     unowned), dirStats (the directory stats both validators paid: the tree validation's lstat per known directory and the
     agent-file lookup's os.stat per directory it re-checks, _dir_stamp; the lstat half alone before 2026-09-19), walkMs and
     validateMs (the time in each, every thread), and the gauges roots (entries) and dirs (directories held). A validation
-    happens at most once per pusher cycle and once per jobs pass since 2026-09-19 (_subagent_scope), so dirStats per cycle
-    or pass is bounded by the directories held, not by the readers: about `dirs` less the roots in the common order (a tree
-    read before its agent-file lookups), up to twice that when a command row's lookup re-checks stamps before the tree is
-    read, plus the project and sibling directory stats an agent-file miss pays. Written from several threads; a resize
-    under the sum is read again."""
+    happens at most once per pusher cycle and once per jobs pass since 2026-09-19 (_subagent_scope), plus one re-validation
+    per tree per eviction event in the cycle (a session departing), so the two loops' own reads pay per cycle or pass about
+    `dirs` less the roots in the common order (a tree read before its agent-file lookups), up to twice that when a command
+    row's lookup re-checks stamps before the tree is read, plus the project and sibling directory stats an agent-file miss
+    pays; the reads a handler thread makes (per call, as before) land in the same counter, so dirStats over an interval is
+    bounded per scoped reader set, not per interval. Written from several threads; a resize under the sum is read again."""
     for _ in range(3):
         try:
             dirs = sum(len(v[0]) for v in list(_SUBAGENT_TREES.values()))
