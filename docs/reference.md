@@ -3117,8 +3117,9 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   its stage, the connect stages against `ms_sum`, the nine cycle jobs
   against `stages_ms.jobs`, and the `romp perf` shares against the cycle
   time, which `cycle_ms_sum` takes after both containers close). A push
-  stage from a thread that is neither the pusher nor a connect push is
-  counted under `stagesForeign`.
+  stage from a thread that neither owns the pusher's cycle nor carries a
+  connect push's mark (neither the pusher inside its cycle nor a connect
+  push) is counted under `stagesForeign`.
   Two discontinuities, both on 2026-09-18, for anyone comparing a capture
   from before that day with one from after it. The nine cycle jobs the
   pusher runs (`beginCheckpointCycle`, `sessionsListing`, `applyPendingOps`,
@@ -3141,10 +3142,11 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   from a thread owning neither loop is counted under `stagesForeign`.
 - `stagesForeign`: `{stage: ms}` (2026-09-18), a `jobs.<job>` stage closed by
   a thread that owns neither loop (a handler thread, a test that opened no
-  cycle), or a push stage (`push`, `push.*`) closed by a thread that is
-  neither the pusher nor a connect push, cumulative wall under the stage
-  name, so a write that fits no owner is counted rather than merged into a
-  row that names another thread. On a
+  cycle), or a push stage (`push`, `push.*`) closed by a thread that
+  neither owns the pusher's cycle nor carries a connect push's mark (a
+  push-marked write from a thread owning no cycle included), cumulative
+  wall under the stage name, so a write that fits no owner is counted
+  rather than merged into a row that names another thread. On a
   running kernel the block holds the `jobs.autoNudge.*` parts of the
   act-now pass the dashboard's Auto Nudge and compaction-suggestion arms run
   on the WS handler thread (`_ws_act_now_tick`: `key`, `snapshot`, `looks`,

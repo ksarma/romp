@@ -1099,9 +1099,11 @@ class _PerfStats:
             # the kernel's own literals (a CYCLE_JOBS name, a `jobs.` + _job_stage / _sub_stage literal), never a client's text
             self.cycle_jobs_ms = {j: 0.0 for j in self.CYCLE_JOBS}
             self.stages_foreign = {}
-            # A push stage by its writer's purpose (2026-09-18, the second half of the same fix): a connect push (a fresh client's
-            # full push on its handler thread, _push_one) closes the same push.* stages the pusher's cycle does; its walls go
-            # here under the stage name, served as pusher.connectPush.stagesMs, so the flat push.* rows are the pusher's own.
+            # A push stage by its writer's purpose or owner (2026-09-18, the second half of the same fix): a connect push
+            # (a fresh client's full push on its handler thread, _push_one, under the "connect" mark) closes the same push.*
+            # stages the pusher's cycle does; its walls go here under the stage name, served as pusher.connectPush.stagesMs,
+            # so the flat push.* rows are the cycle owner's, the pusher's own; a push stage from a thread that neither carries
+            # the mark nor owns the pusher's cycle goes to stages_foreign above.
             # No seed: a row appears when a connect push closes that stage (push.warm and the `push` container are the pusher's
             # alone and never appear here), so the table lists what connect pushes ran rather than zeros for stages they cannot
             # reach. Keyed by the kernel's own stage literals, never a client's text

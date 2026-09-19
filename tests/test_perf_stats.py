@@ -1160,9 +1160,9 @@ class PushRowsByPurpose(unittest.TestCase):
     cycle, and a fresh client's full push on its HTTP handler thread (_push_one: _push(connect=True)). Until 2026-09-18
     stage() added both to the one flat row, so stages_ms.push.chat over a window held every browser reload's build beside
     the pusher's, and `romp perf` divided it by the pusher's cycle time (a chat share above the push share, or above one
-    hundred percent, while pages reloaded). Now stage() routes a push stage by the writer's PURPOSE, the thread's stage
-    mark: "connect" (what _push's decorator sets for connect=True) to pusher.connectPush.stagesMs under the stage name;
-    the pusher's own (the cycle's owner: its push.* under the "push" mark and the `push` container it closes outside the
+    hundred percent, while pages reloaded). Now stage() routes a push stage by the writer's PURPOSE or OWNER: the
+    "connect" stage mark (what _push's decorator sets for connect=True) to pusher.connectPush.stagesMs under the stage
+    name; the pusher's cycle owner (its push.* under the "push" mark and the `push` container it closes outside the
     mark) to the flat row; any other writer to stagesForeign, a "push"-marked write from a thread owning no cycle included
     (the mark says what _push was called for, not whose cycle it ran in). No seed: the connect table lists the stages
     connect pushes ran. No stage name, mark, split row or boot row changes."""

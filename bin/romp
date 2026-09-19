@@ -806,11 +806,13 @@ def kb(n):                        # bytes over the window as a rate
 
 
 def share(ms):                    # a pusher-owned stage's share of the PUSHER'S cycle time over the window: the numerator is a
-    #                               stages_ms row, the pusher's own since 2026-09-18 (kernel/kernel.py, _PerfStats.stage), and the
-    #                               divisor its cycle_ms_sum. A connect push's stages, closed on a handler thread, ride
-    #                               pusher.connectPush.stagesMs and print apart below, so no share here counts time the pusher's
-    #                               cycles never spent (before the split the chat share read above the push share, or above one
-    #                               hundred percent, while pages reloaded)
+    #                               stages_ms row, the pusher's own since 2026-09-18 (kernel/kernel.py, _PerfStats.stage credits a
+    #                               push stage to the thread that owns the pusher's cycle), and the divisor its cycle_ms_sum. A
+    #                               connect push's stages, closed on a handler thread under the "connect" mark, ride
+    #                               pusher.connectPush.stagesMs and print apart below, and a push stage from a thread that neither
+    #                               owns the cycle nor carries the mark counts under stagesForeign, in no share, so no share here
+    #                               counts time the pusher's cycles never spent (before the split the chat share read above the
+    #                               push share, or above one hundred percent, while pages reloaded)
     return "%3.0f%%" % (100.0 * ms / cyc_ms) if cyc_ms else "  -"
 
 
