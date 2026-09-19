@@ -1053,8 +1053,9 @@ class _PerfStats:
                                    whichever function or module makes them: os.stat and os.lstat
                                    through the wrappers _stat_counting_install puts on the os and
                                    posix modules, and on pathlib's accessor on 3.10; DirEntry.stat
-                                   through _entry_stat, since a DirEntry stats in C; not countable
-                                   from Python and not counted: open()'s fstat and a DirEntry.is_dir
+                                   through _entry_stat and its twins in judge.py, event_model.py and
+                                   sdk_backend.py, since a DirEntry stats in C; not countable from
+                                   Python and not counted: open()'s fstat and a DirEntry.is_dir
                                    without d_type), namesReads (raw names-registry reads), switchReads
                                    (the user-todos switch file), regReads (sdk_backend.read_reg file
                                    reads), and the warm-tab census: warmEligible (a cached tab no
@@ -4364,7 +4365,7 @@ def _reported_model_ids():
             continue
         seen.add(de.path)
         try:
-            st = de.stat()
+            st = _entry_stat(de)                     # the door for a scandir entry's stat (memos.chatSig.stats, when a signature is open)
         except OSError:
             continue
         key = (st.st_mtime_ns, st.st_size, st.st_ino)
@@ -37668,8 +37669,12 @@ def _chat_postal_relevant(ev):
 #                        whichever function or module makes them: os.stat and os.lstat through the wrappers
 #                        _stat_counting_install puts on the os and posix modules at import (and on pathlib's
 #                        accessor on Python 3.10), which every os.path, pathlib and importlib caller reaches;
-#                        DirEntry.stat through _entry_stat, the one door for a scandir entry's stat in kernel/
-#                        (judge.py carries a two-line twin), because a DirEntry stats in C and reaches no wrapper.
+#                        DirEntry.stat through _entry_stat and its same-bodied twins in judge.py, event_model.py and
+#                        sdk_backend.py (list_regs: the fork component's memo misses whenever a reg write moved the
+#                        sdk/ directory's mtime, and then every reg is one stat inside the signature), the doors every
+#                        scandir entry's stat in kernel/ goes through, because a DirEntry stats in C and reaches no
+#                        wrapper; the source pin derives the entry names from every scandir in kernel/ and holds their
+#                        .stat() to those doors.
 #                        Not in the count, and not countable from Python: the fstat inside open() (C, part of a
 #                        read, counted by the read counters and the bytes column) and a DirEntry.is_dir on a
 #                        filesystem that reports no d_type. Per signature: stats / (pre + post + thread), and the
@@ -37750,11 +37755,13 @@ _CHAT_SIG_STATS = {"pre": 0, "post": 0, "failedBuilds": 0, "targetedBuilds": 0, 
 
 
 def _entry_stat(e, **kw):
-    """The one door for a scandir entry's stat in this file (memos.chatSig.stats): a DirEntry stats in C and reaches no
+    """The door for a scandir entry's stat in this file (memos.chatSig.stats): a DirEntry stats in C and reaches no
     os.stat wrapper, so the count is taken here, when a signature is open on the thread, before the call. Counted as
     attempted, like a missing file's stat (the syscall was made whatever it answered); every site calls it once per
-    entry, and a DirEntry caches its answer, so a call is one syscall. A source pin (tests/test_kernel_delta_send.py)
-    holds every `e.stat(` in kernel/ to this helper and judge.py's twin."""
+    entry, and a DirEntry caches its answer, so a call is one syscall. judge.py, event_model.py and sdk_backend.py carry
+    same-bodied twins reading the thread-local off os.stat by attribute. A source pin (tests/test_kernel_delta_send.py)
+    derives every scandir entry name in kernel/ from the AST and holds each one's .stat() to this helper and the twins:
+    a pin on the spellings `e.stat(` and `entry.stat(` was green over two `de.stat(` sites (2026-09-19 review)."""
     tl = _CHAT_SIG_TL
     if tl.active:
         tl.stats += 1

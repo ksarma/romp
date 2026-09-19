@@ -7,6 +7,7 @@ events against the previous build — robust to _hydrate_postal turning one even
 which a fixed window would mishandle. A fresh connect / fork / behind-the-change client still gets the full
 {type:"session"} so it always renders from a correct base. Source-level + behavioural pins.
 """
+import ast
 import importlib
 import io
 import json
@@ -262,6 +263,7 @@ class _StatInterceptor:
     def __init__(self, tl):
         self.tl = tl
         self.stat = self.posix_stat = self.lstat = self.dirent = 0
+        self.dirent_by_dir = {}                            # DirEntry stats by the entry's directory: a channel's own count
 
     @property
     def total(self):
@@ -273,6 +275,9 @@ class _StatInterceptor:
                 setattr(self, field, getattr(self, field) + 1)
             return real(path, *a, **kw)
         counting.__wrapped__ = real
+        tl = getattr(real, "_romp_sig_counting", None)   # the kernel's thread-local rides its wrapper by attribute, and the
+        if tl is not None:                                 # _entry_stat twins in judge.py, event_model.py and sdk_backend.py read
+            counting._romp_sig_counting = tl               # it off os.stat: carried here, or they count nothing under interception
         return counting
 
     def __enter__(self):
@@ -294,6 +299,8 @@ class _StatInterceptor:
             def stat(self, **kw):
                 if getattr(me.tl, "active", False):
                     me.dirent += 1
+                    d = os.path.dirname(self._e.path)
+                    me.dirent_by_dir[d] = me.dirent_by_dir.get(d, 0) + 1
                 return self._e.stat(**kw)
 
             def __getattr__(self, name):
@@ -749,9 +756,31 @@ class ByteIdenticalFrames(unittest.TestCase):
                 with_card[id(fr)] = dict(fr, events=list(fr["events"]) + [card])
             return with_card[id(fr)]
         script = [(carded(fr), feed, tl) for fr, feed, tl in self._script()]
+        # the registry channel (the road the first exactness test could not see, 2026-09-19 review, regression-1): the
+        # signature's fork component calls the backend's fork_children, memoized on the sdk/ directory's mtime, and on a
+        # miss list_regs stats EVERY reg through a DirEntry (sdk_backend's _entry_stat twin). Every reg write is an
+        # os.replace into sdk/, which moves that mtime, so on a production root most pre-build signatures miss. Three
+        # peers' regs are written before any push and one more before every cycle (no forkedFrom: the tab's own fork
+        # component stays None, so no rebuild), and the regs present at each cycle are recorded for the derivation below.
+        sdk = km.jd.STATE / "sdk"                         # the backend's registry directory (its state_dir is jd.STATE)
+        peers = ["11111111-2222-4333-8444-0000000009%02d" % i for i in range(20, 30)]
+        regs_present = []
+        self.addCleanup(lambda: [os.unlink(sdk / (p + ".json")) for p in peers if (sdk / (p + ".json")).exists()])
+
+        def write_reg(i):
+            sdk.mkdir(parents=True, exist_ok=True)
+            tmp = sdk / (peers[i] + ".json.tmp")            # write_reg's shape: a temp name list_regs skips, then os.replace
+            tmp.write_text(json.dumps({"sid": peers[i], "name": "api%d" % i, "state": "idle", "pid": 0}))
+            os.replace(tmp, sdk / (peers[i] + ".json"))
+
+        def between(i):
+            write_reg(3 + i)
+            regs_present.append(len([n for n in os.listdir(sdk) if n.endswith(".json")]))
 
         def furnish(td, path, sess):
             jd = km.jd
+            for i in range(3):
+                write_reg(i)
             for d in (jd.STATESDIR, jd.GOALDIR, jd.GOALARCHDIR, jd._overrides_dir(), km.WORKING_DIR, km.NAMES, jd.STATE / "timeline"):
                 d.mkdir(parents=True, exist_ok=True)
             (jd.STATESDIR / (self.SID + ".jsonl")).write_text(json.dumps({"t": self.NOW - 30, "state": "idle"}) + "\n")
@@ -772,19 +801,30 @@ class ByteIdenticalFrames(unittest.TestCase):
         before, b0 = km._chat_sig_stats_report(), ps.snapshot()["builds"]["chat"]
         with mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": cfg.name}), mock.patch.object(km, "_pinned_notes_fp", pins_and_one_import), \
                 _StatInterceptor(km._CHAT_SIG_TL) as ic:
-            _wire, calls, _rows = self._run(km._chat_diff, perf=ps, furnish=furnish, script=script)
+            _wire, calls, _rows = self._run(km._chat_diff, perf=ps, furnish=furnish, script=script, between=between)
         after, b1 = km._chat_sig_stats_report(), ps.snapshot()["builds"]["chat"]
         d = {k: after[k] - before[k] for k in after}
         self.assertEqual(calls, [False, True, False, True, False, True], "premise: rebuilt, served, alternating")
         self.assertEqual(len(imports), 1, "the fresh import ran once, inside the first signature")
         n_sigs = d["pre"] + d["post"] + d["thread"]
         self.assertEqual(n_sigs, 9, "six pre-build and three post-build signatures, no thread")
-        seen = {"stat": ic.stat, "posix": ic.posix_stat, "lstat": ic.lstat, "dirent": ic.dirent}
+        seen = {"stat": ic.stat, "posix": ic.posix_stat, "lstat": ic.lstat, "dirent": ic.dirent, "dirent_by_dir": ic.dirent_by_dir}
         self.assertEqual(d["stats"], ic.total, "memos.chatSig.stats equals every stat intercepted inside the %d signatures: %r" % (n_sigs, seen))
         self._identities(d, b0, b1)
         self.assertGreaterEqual(ic.total / n_sigs, 20, "the world is not empty: at least twenty stats per signature (%r)" % (seen,))
         self.assertGreater(ic.lstat, 0, "the lstat channel ran (a realpath's per-component lstats)")
         self.assertGreater(ic.dirent, 0, "the DirEntry channel ran (the task store's one file, through _entry_stat)")
+        # the DirEntry channel by directory, each count derived: the task store's one file is one DirEntry stat per signature
+        # (_task_store_fp); the registry's regs are stat'ed by list_regs on every signature whose fork_children memo missed,
+        # which is each cycle's PRE-build one (the reg written before the cycle moved sdk/'s mtime) over the regs then present,
+        # and not the post-build one (nothing moved sdk/ during the build, so the memo hit). Without sdk_backend's _entry_stat
+        # twin the equality above is short by exactly this sum (the pre-fix gap on any root with registry files).
+        self.assertEqual(regs_present, [4, 5, 6, 7, 8, 9], "premise: three regs before any push, one more before each cycle")
+        self.assertEqual(ic.dirent_by_dir.get(os.path.join(cfg.name, "tasks", self.SID), 0), n_sigs,
+                         "the task store's file: one DirEntry stat per signature (%r)" % (ic.dirent_by_dir,))
+        self.assertEqual(ic.dirent_by_dir.get(str(sdk), 0), sum(regs_present),
+                         "the registry's regs: every reg present at each pre-build signature, none at a post-build one (%r)" % (ic.dirent_by_dir,))
+        self.assertGreater(sum(regs_present), n_sigs, "the registry channel outnumbers the task store's: the uncounted road was the larger one")
         self.assertGreater(ic.posix_stat, 0, "the posix-module channel ran (the fresh import's path finder)")
         self.assertEqual(d["regReads"], n_sigs, "one registry read per signature")
 
@@ -1457,9 +1497,72 @@ class ChatSigHelpers(unittest.TestCase):
         self.assertEqual((folds[idents["b"]]["stats"], folds[idents["b"]]["regReads"]), (3, 2), "thread b's fold is its own reads")
 
 
+def _direntry_stat_sites(source):
+    """(offenders, doors, routed) for one module's source, each a list of (line, entry name, enclosing def): the DirEntry
+    stat sites, derived from the AST rather than matched by spelling. Per def (and the module body outside any def): a
+    LISTING is a name bound to an expression containing a scandir call or naming an earlier listing (`entries =
+    list(os.scandir(d))`, `sorted(...)`, `with os.scandir(d) as it: entries = list(it)`); an ENTRY is the target of a for
+    or a comprehension whose iterable contains a scandir call or names a listing. A `.stat(` call on an entry is an offender, unless the def is named _entry_stat, whose `.stat(` on
+    its first parameter is a door; an `_entry_stat(<entry>)` call is a routed site. The kernel pin below asserts no
+    offender, one door per kernel module that carries one, and the routed sites it names."""
+    tree = ast.parse(source)
+
+    def scandir_in(node):
+        return any(isinstance(n, ast.Call) and (getattr(n.func, "attr", None) == "scandir" or getattr(n.func, "id", None) == "scandir")
+                   for n in ast.walk(node))
+
+    def names_of(target):
+        if isinstance(target, ast.Name):
+            return [target.id]
+        if isinstance(target, (ast.Tuple, ast.List)):
+            return [n for t in target.elts for n in names_of(t)]
+        return []
+
+    def refs(node, names):
+        return any(isinstance(x, ast.Name) and x.id in names for x in ast.walk(node))
+
+    def own(node):                                        # the scope's own nodes: no descent into a nested def, which is its own scope
+        for child in ast.iter_child_nodes(node):
+            yield child
+            if not isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                yield from own(child)
+    scopes = [tree] + [n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+    offenders, doors, routed = [], [], []
+    for scope in scopes:
+        where = scope.name if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)) else "<module>"
+        nodes = list(own(scope))
+        listings, grew = set(), True
+        while grew:                                       # to a fixpoint: `with os.scandir(d) as it: entries = list(it)` binds two
+            grew = False
+            for n in nodes:
+                bound = None
+                if isinstance(n, ast.Assign) and (scandir_in(n.value) or refs(n.value, listings)):
+                    bound = [x for t in n.targets for x in names_of(t)]
+                elif isinstance(n, ast.withitem) and n.optional_vars is not None and (scandir_in(n.context_expr) or refs(n.context_expr, listings)):
+                    bound = names_of(n.optional_vars)
+                if bound and not set(bound) <= listings:
+                    listings.update(bound); grew = True
+        entries = set()
+        for n in nodes:
+            if isinstance(n, (ast.For, ast.comprehension)) and (scandir_in(n.iter) or refs(n.iter, listings)):
+                entries.update(names_of(n.target))
+        if where == "_entry_stat" and scope.args.args:
+            entries.add(scope.args.args[0].arg)
+        if not entries:
+            continue
+        for n in nodes:
+            if not isinstance(n, ast.Call):
+                continue
+            if isinstance(n.func, ast.Attribute) and n.func.attr == "stat" and isinstance(n.func.value, ast.Name) and n.func.value.id in entries:
+                (doors if where == "_entry_stat" else offenders).append((n.lineno, n.func.value.id, where))
+            elif isinstance(n.func, ast.Name) and n.func.id == "_entry_stat" and n.args and isinstance(n.args[0], ast.Name) and n.args[0].id in entries:
+                routed.append((n.lineno, n.args[0].id, where))
+    return offenders, doors, routed
+
+
 class StatCountingInstall(unittest.TestCase):
     """The stat interception the stats counter rests on (2026-09-19 review, regression-1): installed once per process at
-    kernel import, shared by every kernel load, and the one door for a DirEntry's stat in kernel/."""
+    kernel import, shared by every kernel load, and the doors for a DirEntry's stat in kernel/ (_entry_stat and its twins)."""
 
     def test_the_wrappers_are_installed_once_per_process_and_shared_by_every_kernel_load(self):
         """os.stat and os.lstat are the kernel's counting wrappers around the builtins, the same objects on the posix module
@@ -1490,30 +1593,55 @@ class StatCountingInstall(unittest.TestCase):
             self.assertEqual(tl.stats, 4, "inside one: os.stat, os.lstat, pathlib and os.path alike, one each")
         self.assertFalse(tl.active)
 
+    def test_the_direntry_stat_scanner_derives_entry_names_and_flags_a_stat_on_one_outside_the_door_in_both_directions(self):
+        """The pin below is only as good as its derivation, so the scanner is checked on synthetic modules in both directions:
+        a `.stat(` on a name bound as a scandir entry through each spelling the kernel uses (a for over a listing bound by
+        assignment, over sorted(os.scandir()), over a `with ... as it`, over a list bound from that `it`, a comprehension) is an
+        offender whatever the name; a
+        `.stat(` inside a def named _entry_stat on its entry parameter is a door; a `.stat(` on a name NOT bound from a
+        scandir, a routed `_entry_stat(e)` call and an entry's other methods are none of these."""
+        cases = (
+            ("def f(d):\n    entries = list(os.scandir(d))\n    for de in entries:\n        st = de.stat()\n", [(4, "de", "f")], [], []),
+            ("def f(d):\n    for e in sorted(os.scandir(d), key=lambda e: e.name):\n        e.stat()\n", [(3, "e", "f")], [], []),
+            ("def f(d):\n    with os.scandir(d) as it:\n        for ent in it:\n            ent.stat(follow_symlinks=False)\n", [(4, "ent", "f")], [], []),
+            ("def f(d):\n    return [x.stat() for x in os.scandir(d)]\n", [(2, "x", "f")], [], []),
+            ("def f(d):\n    with os.scandir(d) as it:\n        entries = list(it)\n    for e in entries:\n        e.stat(follow_symlinks=False)\n", [(5, "e", "f")], [], []),
+            ("def _entry_stat(e, **kw):\n    return e.stat(**kw)\n", [], [(2, "e", "_entry_stat")], []),
+            ("def f(d):\n    for e in os.scandir(d):\n        e.is_dir()\n    for f in items:\n        f.stat()\n", [], [], []),
+            ("def f(d):\n    for e in os.scandir(d):\n        st = _entry_stat(e)\n", [], [], [(3, "e", "f")]),
+        )
+        for src, offenders, doors, routed in cases:
+            self.assertEqual(_direntry_stat_sites(src), (offenders, doors, routed), src)
+
     def test_every_direntry_stat_in_kernel_goes_through_the_entry_stat_door(self):
-        """A DirEntry stats in C and reaches no os.stat wrapper, so kernel/ has one door for it: _entry_stat (kernel.py) and
-        its two-line twins in judge.py and event_model.py. Source pin: every `e.stat(` or `entry.stat(` under kernel/*.py
-        sits inside a def named _entry_stat; a new scandir site that stats its entry directly is not counted and reds
-        this."""
+        """A DirEntry stats in C and reaches no os.stat wrapper, so kernel/ has doors for it: _entry_stat (kernel.py) and its
+        same-bodied twins in judge.py, event_model.py and sdk_backend.py. Source pin, DERIVED rather than spelled: for every
+        kernel/*.py, _direntry_stat_sites reads the AST for every name bound as a scandir entry (the target of a for or a
+        comprehension over a scandir call or over a listing bound from one) and flags a `.stat(` on such a name outside a
+        def named _entry_stat. The first pin matched the spellings `e.stat(` and `entry.stat(` and was green over two
+        `de.stat(` sites, _reported_model_ids (kernel.py) and list_regs (sdk_backend.py), the second of which a signature
+        reaches on every fork_children memo miss (2026-09-19 review, regression-1); both are routed now and named among
+        the routed sites so a revert of either reds this by name as well as by the exactness test."""
         root = os.path.join(os.path.dirname(HERE), "kernel")
-        pat = re.compile(r"\be\.stat\(|entry\.stat\(")
-        offenders, helpers = [], set()
+        offenders, doors, routed = {}, {}, {}
         for fn in sorted(os.listdir(root)):
             if not fn.endswith(".py"):
                 continue
-            cur = None
             with open(os.path.join(root, fn), encoding="utf-8") as f:
-                for i, line in enumerate(f, 1):
-                    m = re.match(r"^\s*def (\w+)\(", line)
-                    if m:
-                        cur = m.group(1)
-                    if pat.search(line):
-                        if cur == "_entry_stat":
-                            helpers.add(fn)
-                        else:
-                            offenders.append("%s:%d: %s" % (fn, i, line.strip()))
-        self.assertEqual(offenders, [], "a DirEntry.stat outside _entry_stat: not counted under memos.chatSig.stats")
-        self.assertEqual(helpers, {"kernel.py", "judge.py", "event_model.py"}, "the door and its twins")
+                o, d, r = _direntry_stat_sites(f.read())
+            if o:
+                offenders[fn] = o
+            if d:
+                doors[fn] = d
+            if r:
+                routed[fn] = r
+        self.assertEqual(offenders, {}, "a DirEntry.stat outside _entry_stat: not counted under memos.chatSig.stats")
+        self.assertEqual({fn: len(d) for fn, d in doors.items()}, {"kernel.py": 1, "judge.py": 1, "event_model.py": 1, "sdk_backend.py": 1},
+                         "the door and its three twins, one stat each")
+        by_fn = {(fn, where) for fn, sites in routed.items() for _ln, _name, where in sites}
+        self.assertTrue({("kernel.py", "_reported_model_ids"), ("sdk_backend.py", "list_regs"), ("kernel.py", "_task_store_fp")} <= by_fn,
+                        "the two sites routed this round and the task store's are among the routed scandir sites: %r" % sorted(by_fn))
+        self.assertGreaterEqual(sum(len(r) for r in routed.values()), 16, "the derivation saw the kernel's scandir sites: %r" % sorted(by_fn))
 
 
 if __name__ == "__main__":

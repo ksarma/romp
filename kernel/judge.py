@@ -18070,8 +18070,9 @@ _ABSENT_FLAGS_LOCK = threading.Lock()
 def _entry_stat(e, **kw):
     """The kernel's _entry_stat twin: a scandir entry's stat, counted on the kernel's open chat signature (its
     memos.chatSig.stats) through the thread-local the kernel hangs on its os.stat wrapper, read by attribute because
-    this module never imports the kernel (a DirEntry stats in C and reaches no wrapper). The kernel's source pin holds
-    every `e.stat(` in kernel/ to the two helpers."""
+    this module never imports the kernel (a DirEntry stats in C and reaches no wrapper). event_model.py and
+    sdk_backend.py carry the same body. The kernel's source pin derives every scandir entry name in kernel/ and holds
+    its .stat() to the kernel's helper and the three twins."""
     tl = getattr(os.stat, "_romp_sig_counting", None)
     if tl is not None and tl.active:
         tl.stats += 1
