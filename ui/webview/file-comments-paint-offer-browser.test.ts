@@ -43,11 +43,12 @@
 // pushed the passage below the body's bottom edge and seated the button 30 px above it, inside the body's band, beside other text (78c0806ce
 // hid it, as for any move); now the re-seat takes a box at least partly inside the body's (inBodyBox) and hides otherwise (leg 7). Legs
 // await the DOM's own states (the peer's mark appearing, the selectionchange count moving) and frames, never a timer; the poll's own
-// interval is the panel's. Every five-second wait after a real gesture names its step when it expires (settled): playwright's message
+// interval is the panel's. Every wait after a real gesture goes through settled, a thirty-second deadline that names its step when it
+// expires and puts beside it each witness the predicate read, the ones still unmet by name, and the page's timeline: playwright's message
 // names none, and the sweep logs of nine reds could not say which of leg 5's four waits had timed out. Leg 5's keyboard offer is awaited
 // on two counts, the page's selectionchange count (the event) and the float's show count (showFloat's write of `hidden = false`, counted
 // by an accessor openWith puts on the button), since the float's place cannot witness it for a selection across two lines (the comment
-// there says how a wait on the place alone flaked). Each leg asserts what the browser fired for the paint's move of the selection, its premise: one or more
+// there says how a wait on the place alone flaked, and what the offer's latency measured under load). Each leg asserts what the browser fired for the paint's move of the selection, its premise: one or more
 // events for the prefix highlight, none for the lone-child mark (the Slice 5 review, round 3: a browser firing one there would hide
 // the float through the listener's own collapsed-selection guard, and the leg would pass without reaching afterPaint's hide; the
 // count read into an assertion message pinned nothing). Skips LOUDLY without a playwright browser (CI installs none). Synthetic
@@ -98,44 +99,59 @@ const near = (a: number, b: number, what: string) => assert.ok(Math.abs(a - b) <
  *  every settled wait's predicate as its verdict changes (waitTraced). The expiry report prints its tail, so a red says what the page
  *  did and in what order, before and after the wait's predicate first ran. */
 const TAIL = 40;
+/** The deadline on every settled wait, a bound and not the predicate: the offer the keyboard-offer wait awaits came 9 to 44 ms after the
+ *  keys in 120 of 120 waits timed under box load 25 to 81 (the comment at that wait), so a wait that reaches this is a failure, and the
+ *  bound only keeps a sweep from hanging on one until node's 180 s test timeout, which would name nothing. */
+const DEADLINE = 30000;
 /** A settled wait's predicate, run in the page under a record on the timeline: `src` is the predicate's own text (the function
  *  playwright would have serialized), compiled once per text, and its verdict for `arg` is pushed as a timeline entry on the first
- *  run of the step and on every change of the verdict, so the timeline says when the wait first looked and when it was met. */
+ *  run of the step and on every change of the verdict, so the timeline says when the wait first looked and when it was met. A
+ *  predicate answers yes or no, or with the NAMES of its witnesses still unmet (the keyboard-offer wait; an empty list is met): the
+ *  entry then carries the names, and a change in which witnesses stand unmet is a change of verdict, so the timeline says which
+ *  witness came last and when. The expiry report reads the same names (settled's `unmet`). */
 const waitTraced = (p: { step: string; src: string; arg: unknown }): boolean => {
   const w = window as any;
   const fns = (w.__waitFns ||= {}) as Record<string, (a: unknown) => unknown>;
   const f = fns[p.src] || (fns[p.src] = new Function("return (" + p.src + ")")());
-  const met = !!f(p.arg);
-  const last = w.__waitLast as { step: string; met: boolean } | undefined;
-  if (!last || last.step !== p.step || last.met !== met) {
-    w.__waitLast = { step: p.step, met };
-    (w.__events ||= []).push(performance.now().toFixed(1) + " wait " + (met ? "MET" : "unmet") + " [" + p.step.slice(-70) + "]");
+  const out = f(p.arg);
+  const names = Array.isArray(out) ? (out as string[]) : out ? [] : null;   // null: a no from a yes-or-no predicate
+  const met = names !== null && names.length === 0;
+  const verdict = (met ? "MET" : "unmet") + " [" + p.step.slice(-70) + "]" + (names && names.length ? " " + names.join(", ") : "");
+  const last = w.__waitLast as { step: string; verdict: string } | undefined;
+  if (!last || last.step !== p.step || last.verdict !== verdict) {
+    w.__waitLast = { step: p.step, verdict };
+    (w.__events ||= []).push(performance.now().toFixed(1) + " wait " + verdict);
   }
   return met;
 };
-/** A five-second deadline on the DOM's own state after a real gesture (the float offered, the selection grown, the float hidden), as
- *  `waitForFunction` gives it, that names the step when it expires and puts beside it each witness the predicate could have read and
- *  what it had to be: the selection's text, whether it is collapsed and its range count, the float's state and inline place, the
- *  selectionchange and float-show counts beside the counts the wait was given to exceed (`need`, the wait's own argument), the live last
- *  range's rect, the left showFloat's arithmetic gives for it and the float's distance from it, the body's scroll offset, and the tail of
- *  the page's timeline. Playwright's own message names no step, so every such wait read alike in a sweep log, and the first report of the
- *  keyboard-offer wait's expiry under load (a real selection, a shown float at a place) could not say which of its five witnesses was
- *  unmet. The deadline is a deadline; the predicate is the event. */
+/** A thirty-second deadline (DEADLINE) on the DOM's own state after a real gesture (the float offered, the selection grown, the float
+ *  hidden), as `waitForFunction` gives it, that names the step when it expires and puts beside it each witness the predicate could have
+ *  read and what it had to be: the witnesses still unmet by name (`unmet`: the predicate's own answer, read once more at the report; a
+ *  yes-or-no predicate has the one, its step), the selection's text, whether it is collapsed and its range count, the float's state and
+ *  inline place, the selectionchange and float-show counts beside the counts the wait was given to exceed (`need`, the wait's own
+ *  argument), the live last range's rect, the left showFloat's arithmetic gives for it and the float's distance from it, the body's scroll
+ *  offset, and the tail of the page's timeline. Playwright's own message names no step, so every such wait read alike in a sweep log, and
+ *  the first report of the keyboard-offer wait's expiry under load (a real selection, a shown float at a place) could not say which of its
+ *  five witnesses was unmet. The deadline is a deadline; the predicate is the event. */
 async function settled(page: any, step: string, fn: any, arg: unknown = null): Promise<void> {
-  try { await page.waitForFunction(waitTraced, { step, src: String(fn), arg }, { timeout: 5000 }); }
+  const src = String(fn);
+  try { await page.waitForFunction(waitTraced, { step, src, arg }, { timeout: DEADLINE }); }
   catch (e) {
-    const seen = await page.evaluate(([need, tail]: [unknown, number]) => {
+    const seen = await page.evaluate(([need, text, tail]: [unknown, string, number]) => {
       const w = window as any; const f = document.querySelector(".fc-float") as HTMLElement | null; const sel = getSelection()!; const b = document.querySelector(".fileview-body") as HTMLElement | null;
       const r = sel.rangeCount ? sel.getRangeAt(sel.rangeCount - 1).getBoundingClientRect() : null;
       const expectedLeft = r ? Math.min(Math.max(8, r.right + 6), window.innerWidth - 90) : NaN;
       const left = f ? parseFloat(f.style.left) : NaN;
-      return { selected: String(sel).slice(0, 60), collapsed: sel.isCollapsed, rangeCount: sel.rangeCount,
+      // the predicate's own answer now: its unmet witnesses by name, or its yes or no (waitTraced compiled it under its text)
+      let out: unknown; try { out = w.__waitFns && w.__waitFns[text] ? w.__waitFns[text](need) : "the predicate was never compiled"; } catch (err) { out = "the predicate threw: " + String(err); }
+      const unmet = Array.isArray(out) ? out : out === true ? [] : out === false ? ["the step's own condition"] : [String(out)];
+      return { unmet, selected: String(sel).slice(0, 60), collapsed: sel.isCollapsed, rangeCount: sel.rangeCount,
         float: f ? { hidden: f.hidden, left: f.style.left, top: f.style.top } : null,
         selChanges: w.__selChanges, floatShows: w.__floatShows, need,
         rect: r ? { left: r.left, top: r.top, right: r.right, bottom: r.bottom, width: r.width, height: r.height } : null,
         expectedLeft, leftDiff: left - expectedLeft, bodyScrollTop: b ? b.scrollTop : null,
         now: performance.now(), events: ((w.__events || []) as string[]).slice(-tail) };
-    }, [arg, TAIL]).catch(() => null);
+    }, [arg, src, TAIL]).catch(() => null);
     throw new Error(step + ": " + String((e as Error).message).split("\n")[0] + "; seen " + JSON.stringify(seen));
   }
 }
@@ -508,15 +524,33 @@ test("in a browser, the real viewer and panel: a real drag over a plain paragrap
       // tests running at once (the race is the round trips before the scroll against the event's latency, and slowing those round
       // trips lets the event land before the scroll); green every run with the event awaited first. Without the show count the first
       // scene's wait passed with the keyboard offer removed from the product (the count moved, and the re-seated float stood at the
-      // place), and only the second scene's one-line growth caught it.
+      // place), and only the second scene's one-line growth caught it. The predicate answers with the witnesses still unmet, by name,
+      // so the timeline and the expiry report say which came last or never came. The witnesses come, and soon: timed under box load
+      // 25 to 81 with three copies of the file and a twelve-core burner running, the offer landed 9 to 44 ms after the keys in 120 of
+      // 120 waits (none past 3 s; the event itself 0.7 to 14.3 ms after the keydown, a task Blink posts at normal priority), and 168
+      // of 168 scenes met the wait inside a five-second bound in a 42-run sweep, so the deadline (DEADLINE, thirty seconds) is a bound
+      // on a failure and not the predicate. The one expiry on record with the selection real and the float shown at its place was a
+      // vacuity probe's designed red (the offer removed from the product: the show count stood at its baseline while the event count
+      // moved), and the two roads that would keep the show count at its baseline for good are not this leg's: a paint (paintAll's
+      // afterPaint) landing in the 1 to 14 ms between the keyboard's change of the selection and Blink's dispatch of its
+      // selectionchange reads the grown selection into offeredFor, and the event then compares equal and offers nothing (forced
+      // deterministically with a paint hooked on the keyup: the float stands here at the grown selection's arithmetic, so only the
+      // show is lost; on a one-line selection the paint hides the float and nothing re-offers it, a product window a peer's comment
+      // landing through the poll can hit, not fixed here), and pointerHeld stuck true (its only writers a press's begin and end); this
+      // leg paints once, the peer's comment (the store's HEAD then answers the poll's own mtime, and nothing presses after the drag).
       const changes = s.selChanges, shows = s.floatShows;
       await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
       await page.keyboard.down("Shift"); await page.keyboard.press("ArrowRight"); await page.keyboard.up("Shift");
       await settled(page, c.name + ": Shift+ArrowRight grew the selection by one character", (tx: string) => String(getSelection()) === tx, P2.slice(c.drag[0], c.drag[1] + 1));
       await settled(page, c.name + ": the keyboard's selectionchange offered the float beside the grown selection", (n: { sel: number; shows: number }) => {
-        const w = window as any; const f = document.querySelector(".fc-float") as HTMLElement; const sel = getSelection()!;
-        if (w.__selChanges <= n.sel || w.__floatShows <= n.shows || f.hidden || !sel.rangeCount) return false;
-        const r = sel.getRangeAt(sel.rangeCount - 1).getBoundingClientRect(); return Math.abs(parseFloat(f.style.left) - Math.min(Math.max(8, r.right + 6), window.innerWidth - 90)) < 0.01; }, { sel: changes, shows });
+        const w = window as any; const f = document.querySelector(".fc-float") as HTMLElement; const sel = getSelection()!; const unmet: string[] = [];
+        if (!(w.__selChanges > n.sel)) unmet.push("the selectionchange count (" + w.__selChanges + ", to pass " + n.sel + ")");
+        if (!(w.__floatShows > n.shows)) unmet.push("the float's show count (" + w.__floatShows + ", to pass " + n.shows + ")");
+        if (f.hidden) unmet.push("the float hidden");
+        if (!sel.rangeCount) unmet.push("no range");
+        else { const r = sel.getRangeAt(sel.rangeCount - 1).getBoundingClientRect(); const x = Math.min(Math.max(8, r.right + 6), window.innerWidth - 90);
+          if (!(Math.abs(parseFloat(f.style.left) - x) < 0.01)) unmet.push("the float's left (" + f.style.left + ", showFloat's arithmetic for the live last range " + x.toFixed(3) + " px)"); }
+        return unmet; }, { sel: changes, shows });
       s = await scene(page);
       assert.ok(s.selChanges > changes, c.name + ": Chromium fired selectionchange for the keyboard's change");
       assert.ok(s.floatShows > shows, c.name + ": ...and the panel offered the float for it (showFloat ran)");
