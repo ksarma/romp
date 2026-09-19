@@ -1628,9 +1628,17 @@ class RoutingStatements(unittest.TestCase):
         listing = subprocess.run(["git", "-C", str(root), "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
                                  capture_output=True, check=True).stdout
         found = {}
-        for rel in listing.decode().split("\0"):
+        # A name git lists is bytes. fsdecode keeps an undecodable byte as a surrogate (surrogateescape on POSIX), so the
+        # file is still read under its real name (os.fsencode gives the bytes back at the open) and a pin failure prints
+        # it in a %r; never errors="ignore" or "replace", which would point at a path that does not exist and drop the
+        # file silently. Decoded per entry, so any failure here stays bound to the entry it came from; the first version
+        # decoded the joined listing strictly, and one such name errored every test here naming an offset and no file.
+        for entry in listing.split(b"\0"):
+            if not entry:
+                continue
+            rel = os.fsdecode(entry)
             path = root / rel
-            if not rel or path.is_symlink():
+            if path.is_symlink():
                 continue
             try:
                 with open(path, "rb") as fh:
@@ -1749,6 +1757,21 @@ class RoutingStatements(unittest.TestCase):
         self.assertNotIn("blob.bin", sorted(found), "a NUL in the first bytes rejects the file")
         #                            the paths, not the dict: a failure would otherwise print the decoded blob, 64 MiB of it
         self.assertLess(peak, 16 * self.PROBE, "the scan read the blob past its first bytes: peak %d" % peak)
+
+    def test_a_path_whose_name_is_not_utf8_is_read_and_named(self):
+        """One listed path whose NAME is not valid UTF-8 (git ls-files -z emits the raw bytes) used to error every test
+        here with a UnicodeDecodeError naming an offset into the joined listing and no file. The file is read under its
+        real name, and a pin failure names it, surrogate and all."""
+        d = _scratch_repo(self)
+        name = b"notes-caf\xe9.md"                                                # latin-1 e-acute, not UTF-8
+        with open(os.path.join(os.fsencode(str(d)), name), "wb") as fh:
+            fh.write(b"a note naming stagesForeign\n")
+        found = self._scan(d)                                                     # must not raise
+        rel = os.fsdecode(name)                                                   # 'notes-caf\udce9.md'
+        self.assertIn(rel, sorted(found), "the file is read under its real name")
+        with self.assertRaises(AssertionError) as swept:
+            self._pin_swept_set(found)
+        self.assertIn(repr(rel), str(swept.exception), "the failure names the file, surrogate and all")
 
     def test_the_lock_is_one_file_for_every_process_of_this_tree(self):
         """A second process over this checkout with its own TMPDIR and no record of this run's system temp dir (the
