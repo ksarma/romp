@@ -1280,6 +1280,58 @@ class Collector(unittest.TestCase):
         self.assertEqual(snap["http"]["GET /p"]["count"], 16000)
 
 
+class ContainerKidsCache(unittest.TestCase):
+    """_container_kids caches the rows a container's bytes sum over, per prefix, keyed on the split's row count (rows are only
+    added within a cycle). The cache lives on the owner's cycle state and is RESET with the split at the in-place closes
+    (cycle, jobs_pass), not only at cycle_begin (2026-09-19 review, extra8-1): a container closed in the gap between a close
+    and the next begin, when the fresh split's row count reads the same as the cached one, summed the PREVIOUS split's row
+    objects. Rows carry bytes through the thread's reader counter (em._count_read), so the wrong sum is a visible figure."""
+
+    def _rows(self, st, pfx, container, reads):
+        for name, n in reads:
+            km.em._count_read("/lab/%s" % name, n)
+            st.stage(pfx + name, 0.001)
+        st.stage(container, 0.003)
+
+    def test_a_container_closed_in_the_gap_after_an_in_place_close_sums_the_gaps_rows_not_the_previous_splits(self):
+        """The two-boundary gap: a cycle with three plain sub-rows and its container (four rows: the kids cached at a count of
+        four), closed in place; then, before the next cycle_begin, three sub-rows and the container again, so the row count
+        reads four against the cached four. Plain sub-rows (build, send, x), not the push.chat.sig seam, which is a
+        container itself and adds a glue row when it closes; and no stage_boundary after the begin, which would add a
+        jobs.other row: either makes the two counts differ and the cache rebuild, and the pin would hold at any head. A
+        single stage_boundary in the gap (a mark, no row: the previous mark is None after the close) leaves the count
+        alone. Read off the ring after a second in-place close, so the figure is the served one."""
+        for owner, pfx, container, close, ring in (
+                ("pusher", "push.chat.", "push.chat", lambda st: st.cycle(0.01), lambda snap: snap["pusher"]["stageRing"]),
+                ("jobs", "jobs.", "jobsPass", lambda st: st.jobs_pass(0.01), lambda snap: snap["jobs"]["stageRing"])):
+            with self.subTest(owner=owner):
+                st = km._PerfStats()
+                st.cycle_begin(owner)                              # the begin sets the first byte mark
+                self._rows(st, pfx, container, [("build", 100), ("send", 200), ("x", 300)])   # four rows: kids cached at 4
+                close(st)                                          # the in-place close: the split emptied, and the kids cache with it
+                st.stage_boundary()                                # the gap before the next begin: a mark, no row (prev None)
+                self._rows(st, pfx, container, [("build", 50), ("send", 70), ("x", 0)])       # four rows again, so the count reads 4
+                close(st)                                          # a second in-place close: the gap's split lands on the ring
+                row = ring(st.snapshot())[-1]["stages"][container]
+                self.assertEqual(row["bytes"], 120, "%s: the gap's rows (50 + 70 + 0), not the previous split's 600" % owner)
+
+    def test_the_cache_is_reused_while_no_row_was_added_and_rebuilt_when_one_was(self):
+        """The other edge: resetting the cache at every stage() call would pass the gap pin and lose the cache. A container
+        closed twice with no row added in between rebuilds nothing (no _through_nested call, the per-row cost the cache
+        exists to save); one new row rebuilds the list once, one call per row."""
+        st = km._PerfStats()
+        st.cycle_begin()
+        st.stage_boundary()
+        st.stage("push.chat.sig", 0.001); st.stage("push.chat", 0.001)         # the first close builds the list (two rows)
+        calls = []
+        real = km._PerfStats._through_nested
+        with mock.patch.object(km._PerfStats, "_through_nested", classmethod(lambda cls, *a: calls.append(a) or real(*a))):
+            st.stage("push.chat", 0.001)
+            self.assertEqual(calls, [], "no row added since: the cached list serves")
+            st.stage("push.chat.send", 0.001); st.stage("push.chat", 0.001)
+            self.assertEqual(len(calls), 2, "a row was added: rebuilt once, one _through_nested per row under the prefix (sig, send)")
+
+
 class JobRowsByOwner(unittest.TestCase):
     """A `jobs.<job>` stage is written from two threads under one prefix: nine jobs in _pusher_cycle_jobs on the pusher and
     nineteen in _jobs_pass on the jobs thread (plus a job's parts from _sub_stage). Until 2026-09-18 stage() added every
