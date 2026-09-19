@@ -45,8 +45,9 @@ what is LEFT at teardown, and a wrong-root read keyed on the root the RETURNED b
 item, its own PR after this one. TheResidualIsWorded holds this wording here and in the ledger entry.
 
 The ratchet judges TRANSITIONS, at three windows. The test: the singleton read before the test and after its own
-teardown, and the test whose own transition made the bad state fails (a different object left, or the directory
-removed under the object it found). The class and module boundaries: a read at the scope's start and at its end,
+teardown, and the test whose own transition made the bad state fails (a different object left, the directory
+removed under the object it found, or that object's state_dir repointed, both sides rendered from the reads'
+recorded text since the live attribute shows the after path on both). The class and module boundaries: a read at the scope's start and at its end,
 after tearDownClass or tearDownModule, and the scope whose setup or teardown made the bad state fails, the error
 landing on the scope's last test with the boundary named. The setup before a test: a singleton found over a gone
 directory that no verdict has named yet was made by something outside every window (import-time code) and is
@@ -65,7 +66,8 @@ the test inherited, the kernel's own design; None before and False after is the 
 WHICH test builds first depends on the run (the xdist scheduler, the subset, the module order), so a name list
 could never be right: the census that found ViewBuilder saw a different first builder on each of three workers.
 The remedy is one per road: the sandbox sentence when the value left is the kernel's class over a root that is
-not the reference or not a directory; put back the object you found otherwise. A kernel re-execution inside a test replaces the marker
+not the reference or not a directory; put the state_dir back where it was found when the same object was repointed;
+put back the object you found otherwise. A kernel re-execution inside a test replaces the marker
 function and resets the singleton, so the before value is stale and only what the test LEFT is judged, against
 jd.STATE as the reload re-bound it: None or False pass, the lazy build over the loader's root passes, and a build
 anywhere else is named with the re-execution wording; the kernel's FIRST load inside a test (no marker before) is
@@ -178,6 +180,11 @@ alphabetically, and each case's `before` is what the previous case left):
     change from None with the gone clause and the sandbox remedy; the module end is quiet on the named object.
   V, the same leak completed by setUpModule: a's inherited report, the class end quiet (its start read saw the
     object) and the module end named at b's teardown with the gone clause and the sandbox remedy.
+  X, the same object with its state_dir repointed: One.a builds first; One.b repoints the singleton at a kept sandbox
+    and leaves it (named at its own window, both roots from the recorded text, no gone clause, the repoint remedy);
+    One.c repoints and puts the state_dir back (quiet); Two's tearDownClass repoints the object its test left (the
+    class boundary, named before its quiet rules); Three's tearDownClass puts back the object it found with its
+    state_dir repointed (the put-back branch); the module end is quiet on the named object.
   M, class teardowns that install a value: One.a builds first; Two's tearDownClass builds over a kept sandbox (the
     class boundary names the change from the run root's backend to the sandbox's, sandbox remedy); Three's
     tearDownClass resets the slot to None (object remedy, no sandbox sentence); Four does nothing under the None and
@@ -226,7 +233,8 @@ fixture READS and the branch each read feeds, with the case that reds under each
     (H.a passes); os.path.isdir replaced by os.path.exists (D.One's boundary verdict disappears, A.g); isdir forced
     True (A.f, A.g, B.a, D, L); the last read never recorded (D and L boundary text); the before read replaced by a
     null record (A.d, A.e, E.a and more); the after read skipped (every failing case).
-  the same-marker judgment: the same-object gone transition deleted (A.f passes silently); the gone check made
+  the same-marker judgment: the same-object gone transition deleted (A.f passes silently); the repoint comparison
+    dropped (X.One.b passes silently); the gone check made
     absolute again (A.h, E.b and D.Two fail as false accusations and every error count rises); identity replaced by
     equality of state_dir (A.d passes); the rebuild road rendered as before (A.d's text); a None after treated as
     nothing left (A.i and F.d pass); any False after admitted (F.f passes); the None-to-False allowance removed (F.c
@@ -254,7 +262,8 @@ fixture READS and the branch each read feeds, with the case that reds under each
     where the scope's last case fails on its own the boundary failure folds into that item's one teardown report, so
     those runs pin it by reading the boundary text, not the count); the quiet rule reading the inherited report's
     list too, the one-list behaviour (U's class boundary and V's module boundary disappear); the same-object gone
-    transition deleted (D and L); the put-back-of-a-gone-object branch deleted (P's boundary text disappears); the final start-to-end judgment
+    transition deleted (D and L); the repoint of the last test's object dropped (X.Two's boundary disappears); the
+    put-back-repointed comparison dropped (X.Three's boundary disappears, the module end quiet on the named object); the put-back-of-a-gone-object branch deleted (P's boundary text disappears); the final start-to-end judgment
     deleted (M's three boundary verdicts disappear); the object it accused not named (D.Two.a gets an inherited
     report); the start read replaced by a null record (K.Two and others); the yield to the tests' windows removed
     (N: boundary text on every accused class, Two.b errors), without its first-window condition (Six's boundary
@@ -299,6 +308,9 @@ INHERITED = "starts under the kernel's backend singleton (km._sdk_backend) over 
 INHERITED_KEPT = ("starts under the kernel's backend singleton (km._sdk_backend) over a directory that is not jd.STATE, before any "
                   "test in this worker has run")
 PUT_BACK_GONE = "put back the kernel's backend singleton (km._sdk_backend) it found, whose directory is gone: "
+PUT_BACK_REPOINTED = "put back the kernel's backend singleton (km._sdk_backend) it found with its state_dir repointed: before "
+REMEDY_C = ("Put back the singleton's state_dir where it was found: the kernel's readers hold the object and read its state_dir "
+            "on every registry scan")
 BOUNDARY = "'s class or module boundary (tearDownClass, tearDownModule or a class- or module-scoped fixture)"
 SHARED_STATE = "left shared state changed"     # the judge fixture's text: quiet in every case here, so the ratchet's is the only red
 SDK_NOT_FOUND = "sdk-backend: claude_agent_sdk not found"     # the boot log's line on the missing road (_sdk_import_notice)
@@ -863,6 +875,57 @@ SCRATCH_V = SCRATCH_HEAD + textwrap.dedent("""\
 
         def test_b_does_nothing(self):
             pass
+""")
+
+SCRATCH_X = SCRATCH_HEAD + textwrap.dedent("""\
+
+    class One(unittest.TestCase):
+        root = None
+
+        def test_a_the_lazy_first_build(self):
+            assert km._sdk_backend is None
+            assert km._sdk().state_dir == jd.STATE
+
+        def test_b_repoints_the_singleton_it_found_at_a_kept_sandbox_and_leaves_it(self):
+            One.root = sandbox()
+            km._sdk_backend.state_dir = One.root      # the same object; every later registry scan reads this root
+
+        def test_c_repoints_and_puts_the_state_dir_back(self):
+            be = km._sdk_backend
+            found = be.state_dir
+            other = sandbox()
+            be.state_dir = other
+            be.state_dir = found
+            shutil.rmtree(other)
+
+    class Two(unittest.TestCase):
+        root = None
+
+        @classmethod
+        def tearDownClass(cls):
+            Two.root = sandbox()
+            km._sdk_backend.state_dir = Two.root      # the teardown repoints the object its test left
+
+        def test_a_does_nothing_under_the_repointed_object(self):
+            assert km._sdk_backend.state_dir == One.root and One.root.is_dir()
+
+    class Three(unittest.TestCase):
+        @classmethod
+        def setUpClass(cls):
+            cls.saved = (km._sdk_backend, jd.STATE)
+            cls.root = sandbox()
+            km._sdk_backend = None
+            jd.STATE = cls.root
+
+        @classmethod
+        def tearDownClass(cls):
+            km._sdk_backend, jd.STATE = cls.saved     # the object it found, put back
+            cls.moved = sandbox()
+            km._sdk_backend.state_dir = cls.moved     # with its state_dir repointed
+            shutil.rmtree(cls.root)
+
+        def test_a_builds_over_the_class_root(self):
+            assert km._sdk().state_dir == Three.root
 """)
 
 SCRATCH_M = SCRATCH_HEAD + textwrap.dedent("""\
@@ -1990,6 +2053,50 @@ class ValuesOnTheOtherRoads(_NestedRun, unittest.TestCase):
     def test_the_class_and_module_ends_are_quiet_on_the_named_object(self):
         self.assertIsNone(boundary(self.out, "::Cases"), self.out)
         self.assertIsNone(boundary(self.out, ""), self.out)
+
+
+class ARepointedStateDir(_NestedRun, unittest.TestCase):
+    """X: the same object with its state_dir text changed, at the three places the reads compare it. One.b repoints the
+    singleton One.a built at a kept sandbox and leaves it (named at its own window with the changed wording, both sides
+    from the recorded text since the live attribute shows the after path on both, no gone clause, the repoint remedy);
+    One.c repoints and puts the state_dir back (quiet); Two's tearDownClass repoints the object its test left (the
+    class boundary, before its quiet rules, on an object a verdict already named); Three's setUpClass saves and
+    replaces the singleton and moves jd.STATE, Three.a builds over the class root (allowed at its own window), and its
+    tearDownClass puts the saved object back with its state_dir repointed (the put-back-repointed branch). At the
+    round-3 head the run was 4 passed, exit 0, and no window said anything: the same-object road compared isdir alone,
+    although the readers hold the object and read its state_dir on every registry scan."""
+    SCRATCH = SCRATCH_X
+    ERRORS = 3
+
+    def test_a_repoint_left_in_place_is_named_at_its_own_window_with_the_repoint_remedy(self):
+        method = "test_b_repoints_the_singleton_it_found_at_a_kept_sandbox_and_leaves_it"
+        text = self.assertRatchetFailed("One", method, remedy=REMEDY_C)
+        m = re.match(r"changed after its teardown: before SdkBackend over (\S+), after SdkBackend over (\S+)$", text)
+        self.assertIsNotNone(m, text)
+        self.assertNotEqual(m.group(1), m.group(2), "both sides come from the recorded text, not the live attribute: %s" % text)
+        self.assertNotIn(GONE, text)
+        self.assertNotIn(REBUILT, text)
+        _, fix = verdict(self.out, "One", method)
+        self.assertNotIn(SANDBOX, fix, fix)
+        self.assertNotIn(REMEDY_A, fix, fix)
+        self.assertNotIn(REMEDY_B, fix, fix)
+
+    def test_a_repoint_put_back_is_quiet(self):
+        self.assertRatchetPassed("One", "test_c_repoints_and_puts_the_state_dir_back")
+        self.assertIsNone(boundary(self.out, "::One"), self.out)
+
+    def test_a_teardown_that_repoints_the_object_its_test_left_is_named_at_the_class_boundary(self):
+        text = self.assertBoundaryFailed("::Two", "Two.test_a_does_nothing_under_the_repointed_object", remedy=REMEDY_C)
+        self.assertTrue(text.startswith("changed after its teardown: before SdkBackend over "), text)
+        self.assertIn(", after SdkBackend over ", text)
+        self.assertNotIn(GONE, text)
+
+    def test_a_put_back_with_the_state_dir_repointed_is_named_at_the_class_boundary(self):
+        text = self.assertBoundaryFailed("::Three", "Three.test_a_builds_over_the_class_root", remedy=REMEDY_C)
+        self.assertTrue(text.startswith(PUT_BACK_REPOINTED + "SdkBackend over "), text)
+        self.assertNotIn(GONE, text)
+        self.assertIsNone(boundary(self.out, ""), "the module end is quiet on the named object: %s" % self.out)
+        self.assertEqual(boundary_scopes(self.out), {"test_scratch.py::Two", "test_scratch.py::Three"}, self.out)
 
 
 class FirstBuildThenTheRunRootRemoved(_NestedRun, unittest.TestCase):
