@@ -504,13 +504,22 @@ class SkeletonReconnect(unittest.TestCase):
         for name in ("_client_reset_chat_base", "_resolve_reconnect", "_send_chat_or_status", "_send_tab_order"):
             s = inspect.getsource(getattr(km, name))
             self.assertLess(s.index("with _client_lock("), s.index('"skeleton"'), name + ": the lock comes first")
-        # the two lock-free helpers are reached only from bodies that hold the lock
+        # the three lock-free helpers (_release_skeleton_locked, _tab_order_frame, _skeleton_held_here) are reached only from
+        # bodies that hold the lock
         self.assertEqual(owners("_release_skeleton_locked("),
                          {"_release_skeleton", "_send_chat_locked", "_send_chat_proto2", "_client_reset_chat_sid"})   # _send_chat_proto2: reached from _send_chat_locked alone (T323 stage 4b)
         self.assertEqual(owners("_tab_order_frame("), {"_send_tab_order"})
         for name in ("_release_skeleton", "_client_reset_chat_sid", "_send_tab_order"):
             s = inspect.getsource(getattr(km, name))
             self.assertLess(s.index("with _client_lock("), s.index("_release_skeleton_locked(" if name != "_send_tab_order" else "_tab_order_frame("), name)
+        # the per-client skeleton predicate reads the set lock-free; its two callers, the cold gate's walk and the warm-tab
+        # census, each take the client's slot lock first (2026-09-19 review, correctness-4: the predicate had no caller check)
+        self.assertEqual(owners("_skeleton_held_here("), {"_held_as_skeleton_by_all", "_skeleton_census"},
+                         "a new caller of the lock-free predicate must join this set AND take the lock")
+        for name in ("_held_as_skeleton_by_all", "_skeleton_census"):
+            s = inspect.getsource(getattr(km, name))
+            self.assertIn("with _client_lock(", s, name + ": takes the slot lock")
+            self.assertLess(s.index("with _client_lock("), s.index("_skeleton_held_here("), name + ": the lock comes first")
         self.assertEqual(owners("_send_chat_locked("), {"_send_chat", "_send_chat_or_status"},
                          "_send_chat_locked has no lock-free caller")
         for name in ("_send_chat", "_send_chat_or_status"):
