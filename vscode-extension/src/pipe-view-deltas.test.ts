@@ -204,6 +204,40 @@ test("a byid collection arriving as an object seeds no base: the frame is delive
   assert.deepEqual(ws.sent, [{ type: "needSlot", slot: "bars" }], "the patch asks for the whole slot");
 });
 
+// The dictlist arm's second refusal (2026-09-19): a lane whose NAME carries the separator. The kernel refuses to patch such a
+// payload (_delta_split raises and the slot goes whole on every push), so no kernel sends a patch for one; a receiver that
+// seeded over it would file the lane's items under keys another lane's items can spell (lane "web<SEP>x" holding item "a" and
+// lane "web" holding item "x<SEP>a" are one key), so a patch would merge the two lanes. Refused, the frame is delivered whole
+// and its patch asks for the whole slot, as the other refusals do.
+test("a dictlist lane whose name carries the separator seeds no base: the frame is delivered whole and its patch asks for the whole slot", async () => {
+  const h = await harness("timeline"), ws = h.sockets[0];
+  const laneWithSep = { type: "bars", turns: { "web\u001fx": [{ id: "a", n: 1 }] }, judging: {}, messages: [] };
+  ws.frame(laneWithSep);
+  assert.deepEqual(h.delivered, [laneWithSep], "delivered whole, as it came");
+  ws.frame({ type: "delta", slot: "bars", base: 0, rev: 1, coll: { turns: { set: { "web\u001fx\u001fa": { id: "a", n: 2 } } } } });
+  assert.deepEqual(h.delivered, [laneWithSep], "nothing new delivered: no base to apply onto");
+  assert.deepEqual(ws.sent, [{ type: "needSlot", slot: "bars" }], "the patch asks for the whole slot");
+});
+
+// The refusal is per FRAME, not per remote (view-deltas.ts, the refusal arm): a whole frame this table cannot key drops a base
+// an earlier frame seeded, so one refused frame between two patches costs the next patch its base, and the next whole frame
+// that keys seeds again. A remote that alternates shapes is not a case any kernel produces; the pin is on the granularity the
+// comment states, which a receiver that kept the held base through a refused frame would falsify silently (the patch would
+// apply onto a base the remote no longer holds).
+test("one refused whole frame drops a base an earlier frame seeded: the next patch finds none and asks for the whole slot, and a keyable frame after it seeds again", async () => {
+  const h = await harness("timeline"), ws = h.sockets[0];
+  const keyable = { type: "bars", turns: { web: [{ id: "a", n: 1 }] }, judging: {}, messages: [] };
+  const flat = { type: "bars", turns: { web: [{ id: "a", n: 1 }] }, judging: [{ sid: "web", t: 1, judge: "closer", t1: 2 }], messages: [] };   // judging a list: a pre-T278c shape
+  ws.frame(keyable); ws.frame(flat);
+  ws.frame({ type: "delta", slot: "bars", base: 0, rev: 1, coll: { turns: { set: { "web\u001fa": { id: "a", n: 2 } } } } });
+  assert.deepEqual(h.delivered, [keyable, flat], "nothing new delivered: the refused frame dropped the base the keyable one seeded");
+  assert.deepEqual(ws.sent, [{ type: "needSlot", slot: "bars" }], "the patch asks for the whole slot");
+  ws.frame(keyable);
+  ws.frame({ type: "delta", slot: "bars", base: 0, rev: 1, coll: { turns: { set: { "web\u001fa": { id: "a", n: 3 } } } } });
+  assert.deepEqual(h.delivered.at(-1)!.turns, { web: [{ id: "a", n: 3 }] }, "a keyable frame after it seeds again, and the patch applies");
+  assert.equal(ws.sent.length, 1, "nothing more asked");
+});
+
 test("feed and timeline revisions are independent, and a full frame resets only its slot", async () => {
   const h = await harness(), ws = h.sockets[0];
   ws.frame(feed()); ws.frame({ type: "bars", turns: {}, judging: {}, messages: [] }); ws.frame(delta());

@@ -10,7 +10,13 @@
 // protocol) to T278c (328e46c26, 2026-09-09; upstream kernels in that window, and fork main from its 2026-09-05 fold
 // until it folded T278c), whose bars frame keys judging as a FLAT list (bykeys:sid,t,judge,t1) and ships its own key
 // list (_keys); a kernel before the slot protocol sends the same flat list in whole frames and no patch; and a future
-// collection keyed by another table takes the same road. Seeded, the first judging patch assembled to the patched
+// collection keyed by another table takes the same road. The same refusal for a dictlist lane whose NAME carries the
+// separator (2026-09-19): the kernel refuses to patch such a payload (_delta_split raises, and its slot goes whole on every
+// push), so this side seeds no base over one, since a lane "a<SEP>b" holding item "c" and a lane "a" holding item "b<SEP>c"
+// spell one key and a patch would merge them. The rule is the producer's, mirrored here because this receiver meets
+// FOREIGN kernels; the kernel's inline shim decoder (kernel.py, the BEGIN VIEW DELTA DECODER block) does not mirror it and
+// meets only the kernel that rendered it, which never patches such a payload (the ledger entry
+// upstream/2026-09-19-shim-decoder-seeds-a-separator-lane.md records that gap). Seeded, the first judging patch assembled to the patched
 // entries alone, per lane and in the old entry shape, and a lane's marks collapsed between full frames; unseeded,
 // every patch from it recovers (needSlot) and the slot crosses whole per change, the pre-delta cost, rendered from the
 // flat list (federation.ts judgingToWire). Its feed frame keys asks as this table does and seeds as any other. The
@@ -42,7 +48,10 @@ function split(value: any, kind: string): Collection {
   }
   // A list where the kind says dictlist, or an object where it says a list, is a wire keyed by another table (the
   // header's pre-T278c judging); an absent collection is left as before (the kernel keys nothing for it either and
-  // sends such a frame whole, so a base seeded over it is never patched).
+  // sends such a frame whole, so a base seeded over it is never patched). A dictlist lane whose name carries the
+  // separator is refused below, in the lane walk: the kernel refuses to patch such a payload (_delta_split), and seeded
+  // here its items' keys could not be told apart from another lane's. The reasons stay short: federation.ts puts one
+  // behind the slot and before the remote's build tag in a row the kernel cuts at 64 characters (CLIENT_DIAG_STR_MAX).
   if (value !== undefined && value !== null && (kind.startsWith("dictlist:") ? !object(value) : !Array.isArray(value))) {
     throw new Unkeyable(kind + " is " + (Array.isArray(value) ? "a list" : "not a list"));
   }
@@ -59,6 +68,7 @@ function split(value: any, kind: string): Collection {
   }
   if (kind.startsWith("dictlist:")) {
     if (object(value)) for (const [lane, list] of Object.entries(value)) {
+      if (lane.includes(SEP)) throw new Unkeyable(kind + " lane has separator");   // the kernel's twin refusal (_delta_split)
       const prefix = lane + SEP;
       if (!Array.isArray(list) || !list.length) put(list, prefix, true);
       else for (const item of list) put(item, prefix);
@@ -127,7 +137,10 @@ export class ViewDeltas {
           // the header's rule: no base for a frame this table cannot key, so the next patch recovers (needSlot) and
           // that kernel serves the slot whole again; the frame itself continues whole, as every full frame does. The
           // refusal is remembered, by collection and shape, for the patch that finds no base below; nothing is said
-          // here, where a remote that never patches and one that will are the same frame
+          // here, where a remote that never patches and one that will are the same frame. Per FRAME, not per remote:
+          // a whole frame this table cannot key drops a base a previous one seeded (bases.delete), and the next whole
+          // frame that keys seeds again and ends the refusal (refused.delete below); nothing about the remote's build
+          // is remembered, only its last whole frame's shape
           this.bases.delete(full);
           this.refused.set(full, name + " " + (e as Error).message);
           return msg;

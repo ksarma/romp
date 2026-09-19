@@ -14,6 +14,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { FederationManager, REMOTE_STALE_MS, REMOTE_REDIAL_MS } from "./federation";
+import { ViewDeltas, VIEW_DELTA_KINDS } from "./view-deltas";
 
 const HOST = "TESTHOST";
 const SID_A = "11111111-2222-4333-8444-000000000701";   // "api" on TESTHOST
@@ -691,8 +692,8 @@ test("the unknown-slot breadcrumb shares the rule: the same slot from the same b
 // remote were 200 rows, 200 console lines and 200 Set entries, held across a redial, and the bound was the peer's). Now
 // every slot this bundle does not decode is one key per build (federation.ts UNKNOWN_SLOT_KEY); the first name rides in the
 // row, cut to 32 characters so the kernel's 64-character cut of `why` (CLIENT_DIAG_STR_MAX) keeps the build tag behind it;
-// and Conn.saidDelta holds at most seven keys per build the /tunnels row has named on the conn (the six refusals this
-// side's table can produce, and the one unknown-slot marker).
+// and Conn.saidDelta holds at most nine keys per build the /tunnels row has named on the conn (the eight refusals this
+// side's table can produce, enumerated by the row-length test below, and the one unknown-slot marker).
 test("a remote that names a new unknown slot in every patch spends one row, one console line and one latch key per build: 200 names are one row naming the first, a redial adds none, a new build adds one, and a long name is cut so the build tag survives the kernel's cut", async () => {
   const row: Record<string, any> = { kernelSha: "aaaaaaaaa" };
   const restore = tunnelsStub(row);
@@ -822,6 +823,9 @@ test("the constructor-throw retry timer landing after the watchdog dialed: the s
 // no key) and never a third through "" (the row keeps the last successful probe's sha while the peer is down: kernel.py
 // _remote_public). A fix followed by a rollback is the design: the key names a state (this conn, this slot, this reason,
 // this build), and a rollback to a build with the same reason returns to a state already said, so no row.
+// The latch itself (sayDeltaOnce filing a row once per event) is pinned by tests 9, 11, 12 and 15 to 17, whose latch-removed
+// mutation reds them; this test pins the BOUND on the over-report and the rollback, and reds under that mutation only on its
+// "no third row" counts (four rows where two).
 test("the stale-sha over-report is bounded to one extra row per conn, slot and reason per deploy: a reason first said on a redialed socket under the old build is said again when the poll lands the new one, and no third (the same reason, a poll re-reading the same sha, a rollback to the old build); another reason is its own row", async () => {
   const row: Record<string, any> = { kernelSha: "aaaaaaaaa" };
   const restore = tunnelsStub(row);
@@ -875,6 +879,53 @@ test("the stale-sha over-report is bounded to one extra row per conn, slot and r
       ws3.frame(turnsAsList); ws3.frame(barsPatchEmpty(805));
       assert.deepEqual(unkeyedRows(sent).map((r) => r.why), [REFUSED_JUDGING + " @aaaaaaaaa", REFUSED_JUDGING + " @bbbbbbbbb", "bars turns dictlist:id is a list @aaaaaaaaa"], "another collection refused under a build already in the set is its own row: the key carries the reason");
       assert.equal(errors.length, 3);
+      fm.conns.get(HOST).closed = true;
+    }));
+  } finally { restore(); }
+});
+
+// Every refusal this side's table can produce, derived from the table itself (a dictlist kind refuses a list, a non-list and
+// a lane whose name carries the separator; a byid kind refuses a non-list), each driven through its own receiver to the patch
+// that finds no base, which is where the reason is heard; and the bound the hostconn row rests on: federation's why is the
+// slot, the reason and " @<sha>", the kernel cuts why at 64 characters (CLIENT_DIAG_STR_MAX), and the longest tag a peer's
+// rev-parse --short prints is 12 hex and -dirty, so every row keeps its build tag when the longest reason stays under 64 with
+// that tag. The counts are the ones Conn.saidDelta's comment, test 18's header and the PR body state (eight refusals, nine
+// keys per build); a table change moves them all through this test.
+test("the table's refusals, derived from VIEW_DELTA_KINDS: eight, each its own reason, the longest row under the kernel's 64-character cut with a 12-character dirty tag; and a lane carrying the separator files its row through the conn", async () => {
+  const reasons: string[] = [];
+  for (const [slot, kinds] of Object.entries(VIEW_DELTA_KINDS)) {
+    for (const [name, kind] of Object.entries(kinds)) {
+      const shapes: any[] = kind.startsWith("dictlist:") ? [[], "x", { ["web" + SEP + "x"]: [] }] : [{}];
+      for (const shape of shapes) {
+        let heard = "";
+        const vd = new ViewDeltas(() => {}, (s, why) => { heard = s + " " + why; });
+        vd.receive({ type: slot, [name]: shape });
+        assert.equal(vd.receive({ type: "delta", slot, base: 0, rev: 1, coll: {}, rest: {} }), null, "the patch after a refused seed yields nothing");
+        assert.ok(heard, "the patch after a refused seed is heard, with the reason");
+        reasons.push(heard);
+      }
+    }
+  }
+  assert.equal(new Set(reasons).size, reasons.length, "each shape its own reason: " + reasons.join("; "));
+  assert.equal(reasons.length, 8, reasons.join("; "));
+  const tag = " @" + "a".repeat(12) + "-dirty";
+  const longest = Math.max(...reasons.map((r) => (r + tag).length));
+  assert.ok(longest < 64, longest + " characters: " + reasons.join("; "));
+  assert.equal(longest, 62, "the judging lane refusal behind the slot with a 12-character dirty tag (the PR body's figure)");
+  // through the conn: the row's why is the reason behind the slot and before the build tag, and the console line names it
+  const row: Record<string, any> = { kernelSha: "a".repeat(12) + "-dirty" };
+  const restore = tunnelsStub(row);
+  try {
+    await withManager("timeline", ({ fm, sent }) => countingConsoleErrors(async (errors) => {
+      seedLocalTimeline(fm);
+      const ws = attached(fm);
+      await fm.poll();
+      ws.frame({ type: "bars", turns: { ["web" + SEP + "x"]: [bar("seg-1", 1000, 1005, "first")] }, judging: {}, messages: [], now: 600, warming: false });
+      ws.frame(barsPatchEmpty(605));
+      assert.deepEqual(unkeyedRows(sent).map((r) => r.why), ["bars turns dictlist:id lane has separator" + tag]);
+      assert.equal(unkeyedRows(sent)[0].why.length, 61);
+      assert.deepEqual(ws.sent, [{ type: "needSlot", slot: "bars" }], "the patch asks for the whole slot on this conn");
+      assert.equal(errors.length, 1);
       fm.conns.get(HOST).closed = true;
     }));
   } finally { restore(); }
