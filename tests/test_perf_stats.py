@@ -31,6 +31,7 @@ import time
 import unittest
 import shutil
 import socket
+import stat
 import subprocess
 import urllib.request
 from unittest import mock
@@ -1536,6 +1537,14 @@ def _git_bytes(root, *args, env=None):
     return proc.stdout
 
 
+def _git_env_scrubbed():
+    """A copy of this process's environment with every GIT_* variable removed and GIT_TEST_* kept (the ScratchCheckout
+    shape in tests/test_entrypoints_executable.py). git obeys a hook's GIT_DIR and GIT_INDEX_FILE over `-C`, so a call
+    that must read the repository AT A PATH, not the one the caller's hook is running in, scrubs first: the scratch
+    repos' every git call, and the lock path's rev-parse (round 2's fresh-4)."""
+    return {name: value for name, value in os.environ.items() if not name.startswith("GIT_") or name.startswith("GIT_TEST_")}
+
+
 def _scratch_repo(test):
     """A git repository of its own under the run's temp root (removed with the test, and swept with the root either way)
     for a pin that needs a listed file the live tree must not hold: a file placed in it is untracked and unignored, so
@@ -1549,7 +1558,7 @@ def _scratch_repo(test):
     each skipped at the open, so the pins stayed green over a listing that was not the scratch repo's."""
     d = Path(tempfile.mkdtemp())
     test.addCleanup(shutil.rmtree, d, ignore_errors=True)
-    env = {name: value for name, value in os.environ.items() if not name.startswith("GIT_") or name.startswith("GIT_TEST_")}
+    env = _git_env_scrubbed()
     env.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
     subprocess.run(["git", "init", "-q", str(d)], env=env, check=True, capture_output=True, timeout=60)
     return d, env
@@ -1669,8 +1678,13 @@ class RoutingStatements(unittest.TestCase):
         # scanned tree, on purpose: a lock file anywhere inside the worktree, plans/ or the root, would be an untracked,
         # unignored file, and this scan reads exactly those. The first version sat in tempfile.gettempdir(), which
         # tests/__init__.py repoints to a private root per process, so every process locked a different inode and
-        # nothing waited.
-        return Path(os.fsdecode(_git_bytes(root, "rev-parse", "--absolute-git-dir").strip())) / "romp-routing-sweep.lock"
+        # nothing waited. Resolved under the scrubbed git environment (GIT_* removed, GIT_TEST_* kept) and NOT under
+        # the scratch repos' config overrides: a hook's GIT_DIR moves rev-parse to the hook's repository, and did move
+        # the lock there, so two processes over one checkout stopped sharing an inode (round 2's fresh-4); a
+        # machine-wide config does not move the git dir, and a global safe.directory must still resolve a
+        # dubious-ownership checkout. The residual: a checkout reachable ONLY through an exported GIT_DIR resolves
+        # nothing here, and its tests that read the live tree skip with rev-parse's reason.
+        return Path(os.fsdecode(_git_bytes(root, "rev-parse", "--absolute-git-dir", env=_git_env_scrubbed()).strip())) / "romp-routing-sweep.lock"
 
     @classmethod
     @contextlib.contextmanager
@@ -1682,12 +1696,20 @@ class RoutingStatements(unittest.TestCase):
         repository of their own (the scratch-repo, mock and wording tests) go with it."""
         root = Path(HERE).parent
         lock = cls._lock_path(root)
-        with open(lock, "a+") as fh:
-            fcntl.flock(fh, fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH)
+        # The lock file is permanent and zero bytes: created once, by the first runner, under their umask (0o666 before
+        # it), and never removed, because removing a lock file races its next taker (a process holding the old inode
+        # holds a lock nobody who opens the new one can see). flock needs no write access, so every later runner,
+        # another user included, opens it read-only and locks it; the first version's open(lock, "a+") needed write
+        # permission and errored the class on a read-only lock file (round 2's fresh-3).
+        fd = os.open(lock, os.O_RDONLY | os.O_CREAT, 0o666)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH)
             try:
                 yield root
             finally:
-                fcntl.flock(fh, fcntl.LOCK_UN)
+                fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
 
     @staticmethod
     def _flocks_this_process_holds(path):
@@ -1997,7 +2019,7 @@ class RoutingStatements(unittest.TestCase):
                 self.fail("the holder printed no lock path; its stderr:\n%s" % errlog.read().decode(errors="replace"))
             self.assertEqual(Path(line.strip()), self._lock_path(root),
                              "two processes with different TMPDIRs compute one lock path")
-            with open(self._lock_path(root), "a+") as fh:
+            with open(self._lock_path(root), "rb") as fh:                 # read-only, as _tree_lock opens it
                 with self.assertRaises(BlockingIOError, msg="the holder's exclusive lock refuses a shared try here"):
                     fcntl.flock(fh, fcntl.LOCK_SH | fcntl.LOCK_NB)
                 with self.assertRaises(BlockingIOError, msg="and an exclusive try"):
@@ -2015,6 +2037,40 @@ class RoutingStatements(unittest.TestCase):
             if thread.is_alive():
                 thread.join(60)
             errlog.close()
+
+    def test_the_lock_path_ignores_an_exported_git_dir(self):
+        """The lock path is resolved under the scrubbed git environment: with a GIT_DIR exported (a hook's, here a scratch
+        repo's), `git -C <root> rev-parse --absolute-git-dir` under the ambient environment answers the exported
+        repository, and a lock path built from that landed the lock in the hook's git dir, so two processes over one
+        checkout stopped sharing an inode (round 2's fresh-4, round 1's high on a new road). Both directions are run:
+        the ambient call moves, the lock path does not."""
+        root = Path(HERE).parent
+        d, env = _scratch_repo(self)
+        before = RoutingStatements._lock_path(root)
+        with mock.patch.dict(os.environ, {"GIT_DIR": str(d / ".git")}):
+            moved = os.fsdecode(_git_bytes(root, "rev-parse", "--absolute-git-dir").strip())
+            self.assertEqual(os.path.realpath(moved), os.path.realpath(d / ".git"),
+                             "the premise: under the ambient environment the exported GIT_DIR wins over -C")
+            self.assertEqual(RoutingStatements._lock_path(root), before, "and the lock path is unmoved by it")
+
+    def test_the_lock_is_taken_on_a_read_only_lock_file(self):
+        """The lock file is permanent, created by whichever runner came first under their umask, so a later runner may
+        meet one it cannot write (another user's, or a read-only git dir). flock needs no write access: the lock is taken
+        in both modes on a lock file of mode 0o444, where the first version's open(lock, "a+") raised PermissionError
+        and errored the class (round 2's fresh-3). The chmod touches the lock file in the git dir, outside the scanned
+        tree, and is restored by addCleanup; a kill in the window leaves 0o444, which the open tolerates."""
+        root = Path(HERE).parent
+        lock = self._lock_path(root)
+        mode = stat.S_IMODE(os.stat(lock).st_mode)
+        self.addCleanup(os.chmod, lock, mode)
+        try:
+            os.chmod(lock, 0o444)
+        except PermissionError as e:
+            self.skipTest("the lock file is not ours to chmod: %s" % e)
+        with self._tree_lock(exclusive=True) as held:
+            self.assertEqual(held, root)
+        with self._tree_lock(exclusive=False) as held:
+            self.assertEqual(held, root)
 
     def test_places_scans_while_holding_the_shared_lock(self):
         """The composition, not its halves: _places reads the tree INSIDE its shared hold. The lock test above pins the
