@@ -187,7 +187,7 @@ class Shell(unittest.TestCase):
         # the first open gives the iframe its src and holds the ask for the page's load (a message into a document
         # still loading is dropped); a second ask while one waits is not queued (the page's opener toggles)
         _has(self, "if(!f.getAttribute('src')){var u=f.getAttribute('data-src');if(!u)return;sPend=true;f.setAttribute('src',u);", js)
-        _has(self, "if(sPend){sPend=false;open();}});}return;}", js)   # the load listener is armed once for the element's life (review round 3 of the lazy panes, 2026-09-19: a re-fetch over a dead document reuses it)
+        _has(self, "if(sPend){sPend=false;var o=sOpen;sOpen=null;if(o)o();}});}return;}", js)   # the load listener is armed once for the element's life (review round 3 of the lazy panes, 2026-09-19: a re-fetch over a dead document reuses it) and posts the ask the tap that fetched recorded (review round 4, correctness-2: it closed over the first tap's)
         # the tap-time read (the same round, kernel-3; the marker read added in review round 4, kernel-2): no document, about:blank, or a document without the
         # pane shim's marker (an error body) drops the src and the pending flag so the promotion below fetches again
         _has(self, "if(f.getAttribute('src')){var live=false;try{var sd=f.contentDocument;live=!!(sd&&sd.URL&&sd.URL!=='about:blank'&&f.contentWindow&&typeof f.contentWindow.__rompApp==='string');}catch(e){}", js)

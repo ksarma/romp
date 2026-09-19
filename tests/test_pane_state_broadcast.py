@@ -816,6 +816,23 @@ SETTINGS_APP = 'settings'; SETTINGS_LOADS.slice().forEach((f) => f());   // the 
 out.gearErrorBodyLoaded = Object.assign(snap(), { sets: SETTINGS_SETS - setsBefore }); reset();
 window.__rompOpenSettings();   // the mirror again over the marked page
 out.gearErrorBodyMirror = Object.assign(snap(), { sets: SETTINGS_SETS - setsBefore }); reset();
+// (e) review round 4 (correctness-2, extra6-2): the ask the re-fetched page's load delivers is the LATEST tap's, its tab and section with it. Before
+// this the one load listener closed over the FIRST tap's open (and so its bare msg), so every re-fetch opened the gear at the first tap's tab and
+// section whatever the tap that caused it named. A dead document, then a tap naming a tab and a section (the strip's tab-widgets gear, T379):
+SETTINGS_DEAD = true;
+window.__rompOpenSettings('chat', 'tab-widgets');
+out.gearDeadTapNamed = Object.assign(snap(), { src: ATTRS['f-settings'].src, sets: SETTINGS_SETS - setsBefore, waiting: SETTINGS_LOADS.length });
+SETTINGS_DEAD = false; SETTINGS_URL = 'http://TESTHOST:1/settings'; SETTINGS_APP = 'settings'; SETTINGS_LOADS.slice().forEach((f) => f());   // the re-fetched page loads
+out.gearDeadNamedLoaded = Object.assign(snap(), { sets: SETTINGS_SETS - setsBefore }); reset();
+// (f) a tap while the first fetch is still in flight (the frame at about:blank, no marker yet) that names a tab and a section: the restart's load
+// posts the second tap's message, not the first's bare one (the same fix; the earlier code dropped the second tap's names entirely)
+delete ATTRS['f-settings'].src; SETTINGS_URL = 'about:blank'; SETTINGS_APP = undefined;   // the gear as served, data-src alone, before any tap
+window.__rompOpenSettings();
+out.gearInFlightFirst = Object.assign(snap(), { src: ATTRS['f-settings'].src, sets: SETTINGS_SETS - setsBefore });
+window.__rompOpenSettings('panes', 'files');
+out.gearInFlightSecond = Object.assign(snap(), { src: ATTRS['f-settings'].src, sets: SETTINGS_SETS - setsBefore, waiting: SETTINGS_LOADS.length });
+SETTINGS_URL = 'http://TESTHOST:1/settings'; SETTINGS_APP = 'settings'; SETTINGS_LOADS.slice().forEach((f) => f());   // the restarted fetch's page loads
+out.gearInFlightLoaded = Object.assign(snap(), { sets: SETTINGS_SETS - setsBefore }); reset();
 // the Feed pane off in this browser (the gear's Panes section): a browse ask naming no pane takes the Files pane's
 // arm (the feed cannot be lifted), a browseClosed puts nothing back, and a phone gets the Files tab, not the feed's
 FEED_OFF = true;
@@ -988,6 +1005,27 @@ class RelayArms(unittest.TestCase):
         self.assertIn("if(f.getAttribute('src')){var live=false;try{var sd=f.contentDocument;live=!!(sd&&sd.URL&&sd.URL!=='about:blank'&&f.contentWindow&&typeof f.contentWindow.__rompApp==='string');}catch(e){}", js, "the tap-time read, before the promotion branch: the url and the marker")
         self.assertIn("if(!live){try{f.removeAttribute('src');}catch(e){}sPend=false;}}", js)
         self.assertLess(js.index("var live=false;"), js.index("if(!f.getAttribute('src')){var u=f.getAttribute('data-src');"), "…so the promotion below re-fetches in the same tap")
+
+    def test_the_re_fetched_pages_load_delivers_the_latest_taps_ask_with_its_tab_and_section(self):
+        # review round 4 (2026-09-19, correctness-2 and extra6-2): the gear's one load listener (armed for the element's life since round 3) closed
+        # over the FIRST tap's open, and so its msg, so a re-fetch after a dead document, or the restart a tap during the first fetch makes, opened
+        # the gear at the first tap's tab and section whatever the later tap named. The tap that fetches records its own poster (sOpen, written on
+        # a fork line beside the upstream promotion line) and the listener posts and clears it: the load delivers the LATEST tap's ask.
+        d = self.out["gearDeadTapNamed"]
+        self.assertEqual((d["src"], d["sets"], d["settings"], d["waiting"]), ("/settings", 4, [], 1), "a dead document, then a tap naming a tab and a section: re-fetched (one more assignment), nothing posted into the dead frame, still one listener: %r" % (d,))
+        self.assertEqual(self.out["gearDeadNamedLoaded"]["settings"], [{"romp": "openSettings", "tab": "chat", "section": "tab-widgets"}], "the re-fetched page's load delivers THAT tap's ask, tab and section with it (before: the first tap's bare message)")
+        f1 = self.out["gearInFlightFirst"]
+        self.assertEqual((f1["src"], f1["sets"], f1["settings"]), ("/settings", 5, []), "a first tap on the parked gear fetches: %r" % (f1,))
+        f2 = self.out["gearInFlightSecond"]
+        self.assertEqual((f2["src"], f2["sets"], f2["settings"], f2["waiting"]), ("/settings", 6, [], 1), "a second tap while the fetch is in flight (about:blank, no marker) restarts it and posts nothing yet: %r" % (f2,))
+        self.assertEqual(self.out["gearInFlightLoaded"]["settings"], [{"romp": "openSettings", "tab": "panes", "section": "files"}], "the restarted fetch's load delivers the SECOND tap's ask (before: the first's, its names dropped)")
+        js = km._LANDING_SETTINGS_JS
+        self.assertIn("var sPend=false,sArmed=false,sOpen=null;", js, "the pending ask's poster lives in the shared scope the listener reads")
+        self.assertIn("if(sPend){sPend=false;var o=sOpen;sOpen=null;if(o)o();}});}return;}", js, "the one listener posts the recorded ask and clears it")
+        up = "if(!f.getAttribute('src')){var u=f.getAttribute('data-src');if(!u)return;sPend=true;f.setAttribute('src',u);"
+        self.assertIn(up, js, "the upstream promotion line is intact")
+        self.assertLess(js.index(up), js.index("\n  sOpen=open;"), "the ask is recorded on the fork's own line right after it")
+        self.assertLess(js.index("\n  sOpen=open;"), js.index("if(!sArmed){sArmed=true;"), "…and before the listener is armed")
 
     def test_closing_the_gear_puts_the_keyboard_back_in_the_chat(self):
         # the gear's document is the hidden settings iframe, lifted while open; closing hides it, which drops focus

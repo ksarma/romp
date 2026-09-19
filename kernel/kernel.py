@@ -67434,7 +67434,7 @@ function feedHere(){return !(window.__rompPaneEnabled&&!window.__rompPaneEnabled
 // page has loaded waits for the iframe's load, once (the files forward's shape): a message posted into the
 // document still on its way would be dropped, and the first click would show nothing. A second ask while that
 // one waits is not queued: the page's opener toggles, so two would open and close it.
-var sPend=false,sArmed=false;
+var sPend=false,sArmed=false,sOpen=null;   // sOpen: the poster of the ask the fetch in flight answers, written by the tap that fetched and read once by the one load listener (review round 4, 2026-09-19, correctness-2 and extra6-2)
 window.__rompOpenSettings=function(tab,section){var f=document.getElementById('f-settings');if(!f)return;
 // tab and section (T379): the chat strip's tab-widgets gear asks for the Chat tab at its Tab widgets section; the rail's gear names none (the remembered tab)
 var msg={romp:'openSettings'};if(typeof tab==='string'&&tab)msg.tab=tab;if(typeof section==='string'&&section)msg.section=section;
@@ -67455,8 +67455,9 @@ var open=function(){try{f.contentWindow&&f.contentWindow.postMessage(msg,'*');}c
 if(f.getAttribute('src')){var live=false;try{var sd=f.contentDocument;live=!!(sd&&sd.URL&&sd.URL!=='about:blank'&&f.contentWindow&&typeof f.contentWindow.__rompApp==='string');}catch(e){}
   if(!live){try{f.removeAttribute('src');}catch(e){}sPend=false;}}
 if(!f.getAttribute('src')){var u=f.getAttribute('data-src');if(!u)return;sPend=true;f.setAttribute('src',u);
+  sOpen=open;   // [fork] review round 4 (2026-09-19, correctness-2 and extra6-2): the ask THIS fetch answers, read by the listener below at the page's load. The listener is armed once for the element's life and closed over the first tap's open (and so its msg), so every re-fetch after a dead document, and the restart a tap during the first fetch makes, opened the gear at the FIRST tap's tab and section whatever the later tap named; the tap that fetches records its own ask here and the listener posts and clears it
   if(!sArmed){sArmed=true;f.addEventListener('load',function(){try{if(f.contentDocument&&f.contentDocument.URL==='about:blank')return;}catch(e){}   // the empty document's own load, not the page's; ONE listener for the element's life (a re-fetch after a failed one reuses it: review round 3)
-    if(sPend){sPend=false;open();}});}return;}
+    if(sPend){sPend=false;var o=sOpen;sOpen=null;if(o)o();}});}return;}
 if(sPend)return;
 open();};
 // #settings=<tab> in the URL (T404 round two): a standalone /feed or /fleet page's off notice lands here with the tab named,
