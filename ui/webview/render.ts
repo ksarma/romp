@@ -104,7 +104,7 @@ import { focusAfterDismiss, emptyStateParts } from "./pane-focus";   // where fo
 import { MENTION_MAX_ROWS, mentionQuery, rankMentions, mentionMoreNote, mentionToken, insertMention, mentionKeyAction, mentionSegments } from "./composer-mention";   // the @-mention card's rules, pure; the DOM is setupComposer's mention block and markMentions
 import type { MentionCandidate, MentionQuery } from "./composer-mention";
 import { defaultCommentName, defaultBreakoutName, defaultForkName, nameToSend } from "./comment-name";
-import { followReader, keepPlaceAcrossShow, followTail, atBottomDist, followBoxBelow, followTailShrink, reshowStick } from "./scroll-keep";
+import { followReader, keepPlaceAcrossShow, followTail, atBottomDist, followBoxBelow, followTailShrink, followRebuiltTail, reshowStick } from "./scroll-keep";
 import { phParts } from "./composer-placeholder";   // the resting placeholder names the session (2026-09-09)
 import { retainLiveOmitted } from "./tab-order";
 import { localStrip, stripHost, readCloseAckMs } from "./tab-order";
@@ -1415,7 +1415,7 @@ let landTrail: string[] = [];
 // count is NOT len − winStart + spacer: a unit may own more than one node (the day
 // divider that opens a new day precedes its turn), so anything mapping DOM back to
 // units reads data-unit off the node rather than counting children.
-interface View { el: HTMLElement; rendered: number; scrollTop: number; stick: boolean; shown: boolean; stale: boolean; winStart: number; winEnd?: number; avgTurnH?: number; pxPerTurn?: number; spacerCount?: number; spacerCountBot?: number; unitTotal?: number; gapUnits?: Map<number, number>; edgeTop?: number; edgeUp?: boolean; gestureScroll?: boolean; working?: boolean; units?: DisplayItem[]; measureDue?: boolean; measured?: { avg?: number; per?: number }; uo?: ResizeObserver; uh?: WeakMap<Element, number>; ro?: ResizeObserver; mo?: MutationObserver; }   // working: the session's state at the last sync, the "worked …" footer's one non-event input (syncViewInner); units: the display items the DOM was last built from (compact mode's tail plan reads them, chat-compact-tail.ts); measureDue: a window build or a reflow asks the unit observer for fresh figures (measureUnits); measured: the figures it read, waiting for the next paint to take them (applyMeasure)
+interface View { el: HTMLElement; rendered: number; scrollTop: number; stick: boolean; shown: boolean; stale: boolean; winStart: number; winEnd?: number; avgTurnH?: number; pxPerTurn?: number; spacerCount?: number; spacerCountBot?: number; unitTotal?: number; gapUnits?: Map<number, number>; edgeTop?: number; edgeUp?: boolean; gestureScroll?: boolean; working?: boolean; units?: DisplayItem[]; measureDue?: boolean; measured?: { avg?: number; per?: number }; followRebuilt?: boolean; uo?: ResizeObserver; uh?: WeakMap<Element, number>; ro?: ResizeObserver; mo?: MutationObserver; }   // working: the session's state at the last sync, the "worked …" footer's one non-event input (syncViewInner); units: the display items the DOM was last built from (compact mode's tail plan reads them, chat-compact-tail.ts); measureDue: a window build or a reflow asks the unit observer for fresh figures (measureUnits); measured: the figures it read, waiting for the next paint to take them (applyMeasure)
 const views = new Map<string, View>();
 
 // Pending pickers (AskUserQuestion / tool-permission) keyed by session id. These
@@ -13410,7 +13410,12 @@ function ensureView(id: string): View {
         if (content && lastH >= 0 && activeId === id && view.shown && content.clientHeight > 0 && followTailShrink(view.stick, h - lastH)) {
           writeScroll(content, content.scrollHeight, "tail-shrink", true);
           view.scrollTop = content.scrollTop;
+        } else if (content && lastH >= 0 && activeId === id && view.shown && content.clientHeight > 0 && followRebuiltTail(view.stick, view.followRebuilt === true, h - lastH)) {
+          // the re-window's own follow (PR E, scroll-keep.ts followRebuiltTail): the rebuilt tail's rows settled after its synchronous write
+          writeScroll(content, content.scrollHeight, "rewindow", true);
+          view.scrollTop = content.scrollTop;
         }
+        if (lastH >= 0) view.followRebuilt = false;   // the re-window's mark lasts one delivery
         lastH = h;
       });
       v.ro.observe(elv);
@@ -13444,9 +13449,9 @@ function ensureView(id: string): View {
         // The heights recorded are BORDER-BOX (entryBoxHeight), and the window's figures are measured HERE, where the
         // heights arrive at frame end after layout, never in the render task (measureUnits; PR E).
         const w = view3.el.clientWidth;
-        if (w !== unitW) { unitW = w; for (const e of entries) unitHeights.set(e.target, entryBoxHeight(e)); view3.measureDue = true; measureUnits(view3); return; }
+        if (w !== unitW) { unitW = w; for (const e of entries) unitHeights.set(e.target, entryBoxHeight(e)); view3.measureDue = true; measureUnits(view3); takeMeasureAtBottom(view3); return; }
         const changes = unitChanges(entries.map((e) => ({ target: e.target, height: entryBoxHeight(e) })), view3.el.children, unitHeights, unitOf);
-        measureUnits(view3);
+        measureUnits(view3); takeMeasureAtBottom(view3);
         const content = document.getElementById("content");
         if (!content || activeId !== id || !view3.shown) return;   // baselines are recorded above regardless; an inactive view files nothing
         for (const c of changes)
@@ -13540,12 +13545,13 @@ function syncViewInner(id: string, atBottom?: boolean): View {
     const start = Math.max(0, total - WINDOW_TAIL, lastCompactUnit(s, items));
     renderWindowItems(v, s, items, start, total, working); v.stale = false; return v;
   }
-  // The figures the unit observer measured since the last paint reach the spacers and the gap units HERE, inside the
-  // paint (PR E): appendActive reads the scroller after this sync and follows the tail or restores the reader's anchor
-  // over whatever moved, so a spacer written here is accounted for, where one written at frame end in the observer's
-  // callback would move a bottom reader off the bottom on an engine without scroll anchoring. Every later branch,
-  // the no-op fast path included, sees the re-sized spacers.
-  if (applyMeasure(v)) { redrawGapUnits(v); sizeSpacers(v); }
+  // The figures the unit observer measured since the last paint reach the spacers and the gap units HERE, inside
+  // appendActive's paint (PR E), the one caller that passes `atBottom`: it reads the scroller after this sync and follows
+  // the tail or restores the reader's anchor over whatever moved, so a spacer written here is accounted for. (A
+  // follow-mode reader at the bottom took them already, at frame end, with the bottom written after: takeMeasureAtBottom.)
+  // A spacer written anywhere else moves the reader: a switch's or a landing's sync passes no `atBottom`, so those leave
+  // the figures parked for the next tail paint or window build. Every later branch, the fast path included, sees the write.
+  if (atBottom !== undefined && applyMeasure(v)) { redrawGapUnits(v); sizeSpacers(v); }
   // No-op fast path — a tab SWITCH / repaint with no event change: reveal the cached DOM, re-render nothing.
   // WITHOUT this, every showActive() re-built the trailing window (markdown + highlight.js) — the big-session
   // switch lag (the user 2026-06-25). A REAL change lowers v.rendered (delta-send sets it to the change index;
@@ -13975,6 +13981,19 @@ function queueSpacerRow(sid: string, topBefore: number, topAfter: number, botBef
     const sh = content ? content.scrollHeight : 0, ch = content ? content.clientHeight : 0;
     for (const [rsid, a, b, c, d] of rows) scrollDiagRow("spacer", spacerRow(rsid, a, b, c, d, sh, ch));
   });
+}
+
+/** A follow-mode reader at the bottom takes the measured figures at once, at frame end in the unit observer's callback (PR E): the
+ *  spacers and gap units are written and the bottom is written after them, so the reader stays at the bottom whatever moved above
+ *  (the view observer's tail-shrink follow, T262f, is the precedent for a frame-end follow write). Every other reader's figures wait
+ *  for the next paint (applyMeasure in syncViewInner), where appendActive restores their anchor over the change. */
+function takeMeasureAtBottom(v: View): void {
+  if (!v.measured || !v.stick || !v.shown || !activeId || views.get(activeId) !== v) return;
+  const content = document.getElementById("content");
+  if (!content || !atBottom(content)) return;
+  if (!applyMeasure(v)) return;
+  redrawGapUnits(v); sizeSpacers(v);
+  writeScroll(content, content.scrollHeight, "spacer-follow", true);
 }
 
 // The window's two figures, measured where the heights arrive (PR E, 2026-09-19): the unit ResizeObserver's callback
@@ -15144,9 +15163,9 @@ function landActive(content: HTMLElement | null, v: View): void {
     whenChatVisible(() => { const c = document.getElementById("content"); const vv = activeId ? views.get(activeId) : null; if (c && vv) landActive(c, vv); });
     return;
   }
-  if (applyMeasure(v)) redrawGapUnits(v);   // the figures the observer measured on a previous show (a tab built while hidden had none until it was shown)
-  sizeSpacers(v);  // the view is now VISIBLE (display set in showActive): the spacers take the measured figures; the observer's
-                   // re-show delivery measures a tab built while display:none, and the next paint or show applies that (PR E)
+  sizeSpacers(v);  // the view is now VISIBLE (display set in showActive): the spacers take the figures the view holds. A figure the
+                   // observer measured since (a tab built while display:none measures on its re-show) waits for the next tail paint,
+                   // whose scroll maths accounts for the spacer change; a write here would move the reader (PR E, syncViewInner)
   // The durable seek re-arms the per-pass attempt: every render pass retries until it lands, the
   // user cancels, or the backstop fires — never hijacking a scroll-back keep-offset restore.
   if (!pendingAnchor && pendingAnchorT == null && pendingAnchorKeepY == null && seek && seek.sid === activeId) {
@@ -15865,7 +15884,12 @@ function virtualizeToViewport(): void {
       const beforeY = before ? before.getBoundingClientRect().top - content.getBoundingClientRect().top : 0;
       renderWindowItems(v, s, items, Math.max(0, c - WINDOW_RADIUS), Math.min(items.length, c + WINDOW_RADIUS), working);
       const anchor = v.el.querySelector(`[data-unit="${c}"]`) as HTMLElement | null;
-      if (anchor) {
+      // A follow-mode reader whose re-window reaches the tail (a jump to the live bottom: focus-live) lands at the BOTTOM (PR E).
+      // Placing the focus unit's top under the viewport left them above the bottom by the spacer estimate's error, and only a
+      // view that came out SHORTER (the tail-shrink follow) brought them back: with an estimate that came out longer they
+      // stayed 55 px above the live tail (the landing lab's takeover road, under the median estimate).
+      if (v.stick && (v.winEnd ?? 0) >= items.length) { writeScroll(content, content.scrollHeight, "rewindow", true); v.followRebuilt = true; }   // …and the view observer follows the rows' settling (followRebuiltTail)
+      else if (anchor) {
         const yNow = anchor.getBoundingClientRect().top - content.getBoundingClientRect().top + content.scrollTop;
         writeScroll(content, yNow - beforeY, "rewindow");
       }

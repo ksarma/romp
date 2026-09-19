@@ -37,6 +37,16 @@ test("fewer than two complete turns yields no figure: one user row (no complete 
   assert.equal(perTurnEstimate([user(30), asst(70), user(30), asst(50), user(30)]), 90, "two complete turns (100 and 80): their mean, the median of two");
 });
 
+test("the figure is whole pixels: sub-pixel layout differences between two windows of the same turns are not a change", () => {
+  // rows lay out at fractions of a pixel (a 27.09375 px row was read in the landing lab); over a 200-turn gap a thirty-second of a pixel
+  // per turn is 7 px of spacer movement to compensate for nothing
+  const a = [user(30.03125), asst(70.0625), user(30), asst(90.03125), user(30), asst(900)];
+  const b = [user(30), asst(70), user(30.09375), asst(90), user(30), asst(900)];
+  assert.equal(perTurnEstimate(a), 110); assert.equal(perTurnEstimate(b), 110);
+  assert.equal(median([100.09375, 120.03125]), 110.0625, "the median itself keeps the fraction; the figure rounds it");
+  assert.equal(perTurnEstimate([user(30), asst(70.6), user(30), asst(70.6), user(30)]), 101, "…to the nearest pixel");
+});
+
 test("the trailing turn is the one streaming and is never counted, so a growing reply moves no figure", () => {
   const rows = [user(30), asst(70), user(30), asst(90), user(30), asst(100)];
   const before = perTurnEstimate(rows);

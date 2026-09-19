@@ -51,19 +51,23 @@ class FakeEl {
 }
 
 type Diag = Array<{ kind: string; data: any }>;
+type Writes = Array<{ top: number; writer: string; stick: boolean }>;
 type World = {
-  reads: Reads; diag: Diag; rafs: Array<() => void>; views: Map<string, any>; activeId: string | null;
-  sizeSpacers: (v: any) => void; measureUnits: (v: any) => void; applyMeasure: (v: any) => boolean; redrawGapUnits: (v: any) => void;
+  reads: Reads; diag: Diag; rafs: Array<() => void>; views: Map<string, any>; activeId: string | null; writes: Writes; content: { scrollTop: number };
+  sizeSpacers: (v: any) => void; measureUnits: (v: any) => void; applyMeasure: (v: any) => boolean; redrawGapUnits: (v: any) => void; takeMeasureAtBottom: (v: any) => void;
   gapUnitsOf: (items: DisplayItem[], per: number | undefined) => Map<number, number> | undefined; entryBoxHeight: (e: any) => number;
 };
-function lift(activeId: string | null): World {
+/** The scroller: 9,114 px tall in a 902 px viewport; `scrollTop` starts at the bottom unless a world says otherwise. Every layout read counts. */
+function lift(activeId: string | null, scrollTop = 9114 - 902): World {
   const js = liftBetween("function gapUnitsOf(", "function unitAtScroll(");
   const reads: Reads = { offsetHeight: 0, scrollHeight: 0, clientHeight: 0 };
-  const diag: Diag = []; const rafs: Array<() => void> = []; const views = new Map<string, any>();
-  const content = { get scrollHeight() { reads.scrollHeight++; return 9114; }, get clientHeight() { reads.clientHeight++; return 902; } };
+  const diag: Diag = []; const rafs: Array<() => void> = []; const views = new Map<string, any>(); const writes: Writes = [];
+  const content = { scrollTop, get scrollHeight() { reads.scrollHeight++; return 9114; }, get clientHeight() { reads.clientHeight++; return 902; } };
   const hooks = { FakeEl, views, activeId, document: { getElementById: (id: string) => (id === "content" ? content : null) },
                   raf: (cb: () => void) => { rafs.push(cb); return rafs.length; }, diag: (kind: string, data: any) => diag.push({ kind, data }),
-                  spacerRow, gapHeight, rowsFor, meanRowHeight, perTurnEstimate };
+                  spacerRow, gapHeight, rowsFor, meanRowHeight, perTurnEstimate,
+                  atBottom: (c: any) => c.scrollHeight - c.scrollTop - c.clientHeight <= 2,
+                  writeScroll: (c: any, top: number, writer: string, stick = false) => { writes.push({ top, writer, stick }); c.scrollTop = Math.min(top, c.scrollHeight - c.clientHeight); } };
   const prelude = `
     const H = HOOKS;
     const HTMLElement = H.FakeEl;
@@ -71,9 +75,10 @@ function lift(activeId: string | null): World {
     const views = H.views; const activeId = H.activeId; const document = H.document;
     const requestAnimationFrame = H.raf; const scrollDiagRow = H.diag; const spacerRow = H.spacerRow; const gapHeight = H.gapHeight;
     const rowsFor = H.rowsFor, meanRowHeight = H.meanRowHeight, perTurnEstimate = H.perTurnEstimate;
+    const atBottom = H.atBottom, writeScroll = H.writeScroll;
   `;
-  const api = new Function("HOOKS", prelude + js + "\nreturn { sizeSpacers, measureUnits, applyMeasure, redrawGapUnits, gapUnitsOf, entryBoxHeight };")(hooks);
-  return { reads, diag, rafs, views, activeId, ...api };
+  const api = new Function("HOOKS", prelude + js + "\nreturn { sizeSpacers, measureUnits, applyMeasure, redrawGapUnits, gapUnitsOf, entryBoxHeight, takeMeasureAtBottom };")(hooks);
+  return { reads, diag, rafs, views, activeId, writes, content, ...api };
 }
 
 /** A view over `items` (a head gap as unit 0, then event units) rendered as the window [winStart, total): a top spacer, then one row per
@@ -217,6 +222,40 @@ test("the observer's entry height is the border box (the height offsetHeight rep
   assert.equal(w.entryBoxHeight({}), 0);
 });
 
+// ── the follow-mode take at frame end ────────────────────────────────────────────────────────────
+
+test("a follow-mode reader at the bottom takes the figures at frame end: the spacers are written and the bottom written after them; anyone else's figures wait for the paint", () => {
+  const two: Array<[string, number]> = [["turn turn-user", 30], ["turn turn-assistant", 70], ["turn turn-user", 30], ["turn turn-assistant", 90], ["turn turn-user", 30], ["turn turn-assistant", 500]];
+  // the active, shown, follow-mode view with the reader at the bottom: the observer's delivery applies and follows
+  const w = lift("A");
+  const world = viewOver(w, 200, 1 + 100 + 6, 101, (u) => two[u - 101]);
+  w.views.set("A", world.v); world.v.shown = true; world.v.stick = true;
+  buildOne(w, world.v, world.items); observe(w, world.v, world.rows);
+  assert.ok(world.v.measured, "the figures are parked by the measure");
+  w.takeMeasureAtBottom(world.v);
+  assert.equal(world.v.measured, undefined, "…and taken at once");
+  assert.equal(world.v.pxPerTurn, 110); assert.equal(world.v.gapUnits.get(0), 200 * 110, "the gap units follow");
+  assert.deepEqual(w.writes, [{ top: 9114, writer: "spacer-follow", stick: true }], "one write, the bottom, attributed as the spacer's follow");
+  // the same reader scrolled up: nothing is taken, the figures wait for the paint (appendActive restores their anchor there)
+  const up = lift("A", 1000);
+  const w2 = viewOver(up, 200, 1 + 100 + 6, 101, (u) => two[u - 101]);
+  up.views.set("A", w2.v); w2.v.shown = true; w2.v.stick = false;
+  buildOne(up, w2.v, w2.items); observe(up, w2.v, w2.rows); up.takeMeasureAtBottom(w2.v);
+  assert.ok(w2.v.measured, "parked"); assert.equal(w2.v.pxPerTurn, undefined); assert.deepEqual(up.writes, []);
+  // follow mode recorded but the reader not at the bottom (a stale flag): nothing is taken either
+  const stale = lift("A", 1000);
+  const w3 = viewOver(stale, 200, 1 + 100 + 6, 101, (u) => two[u - 101]);
+  stale.views.set("A", w3.v); w3.v.shown = true; w3.v.stick = true;
+  buildOne(stale, w3.v, w3.items); observe(stale, w3.v, w3.rows); stale.takeMeasureAtBottom(w3.v);
+  assert.ok(w3.v.measured, "the recorded follow mode alone does not move a reader who is not at the bottom"); assert.deepEqual(stale.writes, []);
+  // an inactive or hidden view: nothing
+  const other = lift("B");
+  const w4 = viewOver(other, 200, 1 + 100 + 6, 101, (u) => two[u - 101]);
+  other.views.set("A", w4.v); w4.v.shown = true; w4.v.stick = true;
+  buildOne(other, w4.v, w4.items); observe(other, w4.v, w4.rows); other.takeMeasureAtBottom(w4.v);
+  assert.ok(w4.v.measured); assert.deepEqual(other.writes, []);
+});
+
 // ── source pins on what the harness does not lift ────────────────────────────────────────────────
 
 test("render.ts: the render task's spacer code holds no layout read; the unit observer records border-box heights and measures in both of its branches", () => {
@@ -228,11 +267,19 @@ test("render.ts: the render task's spacer code holds no layout read; the unit ob
   assert.doesNotMatch(paintSide, /offsetHeight|scrollHeight|clientHeight|getBoundingClientRect|offsetTop/, "sizeSpacers, the trim, the eviction, the measure and the apply read no layout property");
   assert.match(inFrame, /requestAnimationFrame\(\(\) => \{[\s\S]*?const sh = content \? content\.scrollHeight : 0, ch = content \? content\.clientHeight : 0;/, "the diag row's scroller read rides a frame");
   const uo = RENDER.slice(RENDER.indexOf("v.uo = new ResizeObserver((entries) => {"), RENDER.indexOf("v.mo = new MutationObserver("));
-  assert.match(uo, /unitHeights\.set\(e\.target, entryBoxHeight\(e\)\); view3\.measureDue = true; measureUnits\(view3\); return; \}/, "a reflow records border boxes and re-measures");
-  assert.match(uo, /height: entryBoxHeight\(e\) \}\)\), view3\.el\.children, unitHeights, unitOf\);\s*\n\s*measureUnits\(view3\);/, "…and so does every delivery");
-  assert.match(RENDER, /if \(applyMeasure\(v\)\) \{ redrawGapUnits\(v\); sizeSpacers\(v\); \}/, "syncViewInner takes the figures inside the paint");
+  assert.match(uo, /unitHeights\.set\(e\.target, entryBoxHeight\(e\)\); view3\.measureDue = true; measureUnits\(view3\); takeMeasureAtBottom\(view3\); return; \}/, "a reflow records border boxes, re-measures and lets a bottom reader take the figures");
+  assert.match(uo, /height: entryBoxHeight\(e\) \}\)\), view3\.el\.children, unitHeights, unitOf\);\s*\n\s*measureUnits\(view3\); takeMeasureAtBottom\(view3\);/, "…and so does every delivery");
+  assert.match(inFrame, /function takeMeasureAtBottom\(v: View\): void \{[\s\S]*?if \(!content \|\| !atBottom\(content\)\) return;[\s\S]*?writeScroll\(content, content\.scrollHeight, "spacer-follow", true\);/, "the frame-end take: at the bottom, then the bottom written");
+  // the parked figures reach the DOM in the paint that keeps the reader's place: appendActive's sync (the one caller of syncView that
+  // passes atBottom, and the one that follows the tail or restores the anchor over what moved) and a window build (whose callers anchor
+  // around their target after it); a switch's or a landing's sync applies nothing (a 55 px move of a bottom reader in the landing lab)
+  assert.match(RENDER, /if \(atBottom !== undefined && applyMeasure\(v\)\) \{ redrawGapUnits\(v\); sizeSpacers\(v\); \}/, "syncViewInner takes the figures inside appendActive's paint alone");
   assert.match(RENDER, /function renderWindowItems\([^\n]*\n\s*applyMeasure\(v\);/, "a window build takes them first");
-  assert.match(RENDER, /if \(applyMeasure\(v\)\) redrawGapUnits\(v\);\s*\/\/[^\n]*\n\s*sizeSpacers\(v\);/, "landActive takes them on show");
+  const land = RENDER.slice(RENDER.indexOf("function landActive(content: HTMLElement | null, v: View): void {"), RENDER.indexOf("\n}\n", RENDER.indexOf("function landActive(content: HTMLElement | null, v: View): void {")));
+  assert.ok(land.includes("sizeSpacers(v);"), "landActive still sizes the spacers from the figures the view holds");
+  assert.doesNotMatch(land, /applyMeasure|redrawGapUnits/, "…and takes no parked figure: a spacer written on show moves the reader");
+  const calls = (RENDER.match(/(?<![\w.])applyMeasure\(v\)/g) || []).length;
+  assert.equal(calls, 3, "three takers: appendActive's sync, the window build, and the frame-end follow at the bottom (" + calls + ")");
   assert.match(RENDER, /import \{ rowsFor, meanRowHeight, perTurnEstimate \} from "\.\/turn-estimate";/);
   assert.match(RENDER, /interface View \{[^\n]*measured\?: \{ avg\?: number; per\?: number \};/, "the parked figures live on the view");
 });

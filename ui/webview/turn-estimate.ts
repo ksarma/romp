@@ -82,8 +82,11 @@ export function median(xs: readonly number[]): number | null {
 export const MIN_COMPLETE_TURNS = 2;
 
 /** The head gap's per-turn estimate from a window's rows: the median over its complete turns when it holds at least MIN_COMPLETE_TURNS
- *  of them, else null (the caller keeps what it had). */
+ *  of them, else null (the caller keeps what it had). Whole pixels: rows lay out at fractions of a pixel, so two windows of the same
+ *  turns can differ by a thirty-second of a pixel per turn, and a changed figure re-sizes the spacer above the reader (over a
+ *  200-turn gap that thirty-second is 7 px of movement to compensate for nothing). */
 export function perTurnEstimate(rows: readonly EstRow[]): number | null {
   const hs = completeTurnHeights(rows);
-  return hs.length >= MIN_COMPLETE_TURNS ? median(hs) : null;
+  const m = hs.length >= MIN_COMPLETE_TURNS ? median(hs) : null;
+  return m == null ? null : Math.round(m);
 }
