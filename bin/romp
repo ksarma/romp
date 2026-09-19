@@ -2340,9 +2340,11 @@ if moved:
             plural = len(names) > 1
             subject = (", ".join(names)) if len(groups) > 1 else ("they" if plural else "it")
             head += "; " + say(subject, plural)
-elif unwritten or parked:
-    # followers were reached and none was written (round 2 of the review; a follower parked behind its move, round 1 of the
-    # review, 2026-09-19): the tail says why, and the head must not deny them
+elif unwritten or parked or failed:
+    # followers were reached and none was moved: a record that would not read (round 2 of the review), a follower parked
+    # behind its move (round 1 of the review, 2026-09-19), or every reached follower's step failed (round 2 of that review,
+    # its extra7-2: the failed bucket came after this guard, and the head denied the followers the tail then named); the
+    # tail says why, and the head must not deny them
     head = "no follower moved to %s" % words(r.get("pick") or "")
 else:
     head = "no running session follows the machine default, so none moved to %s" % words(r.get("pick") or "")
@@ -2409,8 +2411,9 @@ def words(side, login_id="", label=""):
 if r.get("launched") is None and r.get("cannotTell"):
     # a client is up whose landing attached a surviving CLI with no report on record (the reviewer's cannot-tell class,
     # 2026-09-18; the rebase follow-up): a process runs, and what it bills is its first init's to say, which a resumed
-    # session streams at its first turn; "no CLI is up" was false for it
-    launched = "launched: a surviving CLI is attached that has not reported which side it bills; its first turn's report says"
+    # session streams at its first turn; "no CLI is up" was false for it. The clause ends the way the walk's report bucket
+    # and the pick's "report" tail say it (round 2 of the review, 2026-09-19, its fresh-3: it used to end mid-sentence)
+    launched = "launched: a surviving CLI is attached that has not reported which side it bills; its first report decides which side it bills"
 elif r.get("launched") is None:
     # no landed launch stands under this kernel: a dormant session, a client torn down, or a connect composed and not landed
     # (round 2 of the review, 2026-09-18: "no CLI process running" claimed a process fact the kernel does not know, since

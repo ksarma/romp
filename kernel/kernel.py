@@ -41286,8 +41286,16 @@ def _billing_request(b):
         if not be.record_reads(sid):
             return {"ok": False, "error": "%s's record would not read, so nothing was changed" % who, "_status": 409}
         superseded = _drop_parked_auth(sid, "the default pick")
+        # A REFUSED CLEAR ANSWERS 409 IN ITS OWN WORDS, NEVER A TRACEBACK (round 2 of the billing verb's review, 2026-09-19;
+        # its fresh-2): follow_default_auth's clear and its reg mirror are one guarded unit now, so a record write that fails
+        # (a full or read-only state directory) restores the live pick, files a row and answers False with a sentence of
+        # its own (pop_auth_refusal, read by `sid`); until then the raise escaped into do_POST's catch-all, an HTTP 500 whose
+        # body was the traceback with this box's absolute paths, and the live object was following the default while the
+        # reg still carried the pick. The drop stays AHEAD of the write (the paragraph above: a drop after it reopens the
+        # drain race round 2 closed on every successful clear), so a refused clear can have dropped a parked pick; the
+        # sentence then names the count, as the record-unreadable refusal does
         if not be.follow_default_auth(sid):
-            return _billing_refusal(be, who, pick, dropped=superseded)
+            return _billing_refusal(be, who, pick, dropped=superseded, sid=sid)
         out["default"] = _billing_default(be)["value"]   # what it follows now, for the caller's line
     elif now:
         # the box's reason came first, above, with the queue untouched (round 2 of the review): a --now pick this box
@@ -41359,23 +41367,29 @@ def _park_reason(be, sid):
     return "queue"
 
 
-def _auth_refusal(be, who, pick):
+def _auth_refusal(be, who, pick, sid=None):
     """The sentence a billing pick the backend refused is answered with: the box's reason for the side and the stored
-    login (auth_unavailable_why, the one vocabulary every Billing surface uses), else the one other way set_auth answers
-    False, a record that would not read. POST /billing's 409 and the parked-op drain's auth arm (round 1 of the review,
-    2026-09-18: the drain discarded set_auth's verdict) say the same words."""
+    login (auth_unavailable_why, the one vocabulary every Billing surface uses), else the sentence the backend left for
+    THIS call when it refused a write (`sid`; round 2 of the billing verb's review, 2026-09-19, its fresh-2: the `default`
+    road's clear whose record write failed, SdkBackend.pop_auth_refusal, popped so a later refusal never reads a stale
+    one; a backend without the door answers as before), else the one other way set_auth and follow_default_auth answer
+    False, a record that would not read. Until fresh-2 a refused WRITE took the record-unreadable sentence, which
+    misdescribes it. POST /billing's 409 and the parked-op drain's auth arm (round 1 of the review, 2026-09-18: the
+    drain discarded set_auth's verdict) say the same words."""
     side, lid = lg.parse_pick(pick)
     why = str(getattr(be, "auth_unavailable_why", lambda *a: "")(side, lid) or "")
-    return why or ("%s's record would not read, so nothing was changed" % who)
+    own = str(getattr(be, "pop_auth_refusal", lambda s: "")(sid) or "") if sid else ""
+    return why or own or ("%s's record would not read, so nothing was changed" % who)
 
 
-def _billing_refusal(be, who, pick, dropped=0):
+def _billing_refusal(be, who, pick, dropped=0, sid=None):
     """The 409 for a pick the backend refused, in _auth_refusal's words. `dropped` (round 1 of the billing verb's review,
     2026-09-19; its regression-2 and kernel-2): how many parked picks the `default` or `--now` road dropped before the
     backend refused, the residual window between the record's readability probe and the write. "Nothing was changed" is
     false then, so the sentence says what went and the count rides the body as `superseded`; the verb prints the
-    kernel's sentence, so it needs no arm of its own."""
-    err = _auth_refusal(be, who, pick)
+    kernel's sentence, so it needs no arm of its own. `sid` (round 2 of that review; fresh-2) lets the sentence be the
+    one the backend left for this call: the `default` road's refused clear."""
+    err = _auth_refusal(be, who, pick, sid=sid)
     if dropped:
         err = err.replace("so nothing was changed", "so the pick was not applied")   # _auth_refusal's one record-unreadable sentence
         err += "; %d earlier queued pick%s dropped before the refusal" % (dropped, " was" if dropped == 1 else "s were")

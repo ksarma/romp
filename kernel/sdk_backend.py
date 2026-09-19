@@ -8202,7 +8202,7 @@ class SdkSession:
                 self._relaunch_bounded = False
                 self._landing_ask_bounded = False   # the memo dies with the pick it belonged to (the docstring's last paragraph)
 
-    def _recover_picked_pending_at_init(self) -> None:
+    def _recover_picked_pending_at_init(self, refused=None) -> None:
         """THE CLI'S FIRST INIT IS THE CLOSING EVENT for a PICKED session's pending that a cannot-tell attach left
         standing (round 4 of the reviewer's review, 2026-09-19; its regression-1). _connect_landed's picked branch
         no longer serves the ask when `_launched_auth is None and attach` (the attach cannot tell what the survivor
@@ -8228,7 +8228,23 @@ class SdkSession:
             the pick is ASKED now, with the stamps truthful, through the ordinary arm rules (_ask_parked_pick: the
             surface recorded, request_reconnect with the pick, held for live work or deferred behind an open turn
             exactly as set_auth's own request would be), so the relaunch composes the pick and its landing serves it.
-            No loop follows: the relaunch stamps _launched_auth at its landing and the entry gate below is on None.
+            No loop follows: the relaunch stamps _launched_auth at its landing and the entry gate below is on None;
+          * UNLESS THE RELAUNCH WOULD COMPOSE WHAT THIS SAME REPORT REFUSED (`refused`, the (side, stored login) pair
+            the wrong-landing branch of the init handler marked refused a few lines before this runs; round 2 of the
+            billing verb's review, 2026-09-19, its extra5-1, in both refuters' narrowed form). The ask's own guard reads
+            the reconnect flags alone, so after that branch DECLINED a relaunch (nothing to fall to on this box, or the
+            one fall already taken) the ask re-armed the very relaunch it declined: the compose reads the pick (the same
+            stored login) and the refusal leaves it nothing to fall to, so the relaunch carried the same token, landed
+            the same way, its landing served the pending on the shape word (a false served, on a session billing the
+            wrong account), and the CLI with every subagent and background task inside it was torn down for nothing.
+            So the ask is gated on WHAT THE RELAUNCH WOULD COMPOSE (_launch_shape, the arm's own compose): when it
+            composes anything else (the fall the refusal opened, a pick of ANOTHER stored login than the refused
+            launch, whose relaunch is right and needed) the pick is asked as above; when it composes the refused pair
+            the pending is CLOSED with a problem row saying the pick cannot be applied on this box and what the session
+            bills instead. Neither a served clear (the CLI does not bill the pick), nor a silent one, nor a retarget:
+            the pick stands in the reg and the Billing row with its refusal beside it, the dots go, and the next pick
+            is the next deciding event. Gated before the armed check: an arm another pick holds would relaunch
+            composing the same refused pair, and its landing would serve this pending falsely too.
         Entered only for a picked session with a pending standing after a landing that stamped no side
         (_note_auth_source's gate), and RUN THROUGH _follow_default_guarded as the step of that guard (round 5; its
         correctness-2 and kernel-2): a raise inside (the served branch's reg mirror on a full or read-only state
@@ -8265,6 +8281,22 @@ class SdkSession:
                               % (self.name, ("%s login" % self.backend.login_display(running_login)) if running_login
                                  else self._launched_auth))
             return
+        if refused is not None:
+            # the relaunch's compose, read with the hold released (file I/O: the operator's settings and the login records,
+            # the refusal among them); compared as the pair the arm would stamp (_launch_shape names the side and the login)
+            shape = self.backend._launch_shape(self)
+            if (shape["auth"], shape["login"]) == tuple(refused):
+                # the pair-guarded clear the served branch uses; what this close IS, the line below says (not a serve)
+                self._clear_served_auth_pending(pending_ask)
+                self._mirror_auth_pending()
+                self.backend._poke()
+                picked = ("the %s login" % self.backend.login_display(pending_ask[1])) if pending_ask[1] else "the %s" % pending_auth
+                runs = ("the %s login" % self.backend.login_display(launched_login)) if running_login else "the %s" % self._launched_auth
+                self._log_quietly("auth (%s): this session's surviving CLI reported its billing, %s, while its pick is %s, whose token "
+                                  "this same report refused; a relaunch would carry that token again and land the same way, so the "
+                                  "pick cannot be applied on this box: it stands unapplied, nothing is asked, and the session keeps "
+                                  "billing %s" % (self.name, runs, picked, runs), problem=True)
+                return
         self._ask_parked_pick("init")
 
     def _ask_parked_pick(self, how: str) -> None:
@@ -13421,6 +13453,7 @@ class SdkBackend:
         self._drain_wake_timer = None
         self.login_ok = lambda: True              # the kernel wires its credential-store probe (T124); permissive unwired
         self.last_auth_refusal = ""               # why the last set_auth refused (auth_unavailable_why) → the kernel's toast names it
+        self._auth_refusals = {}                  # sid → the sentence a refused `default` clear left for its caller (pop_auth_refusal)
         self._usage_all_keyed = False             # refresh_usage's one-shot: the last refresh found only
         #                                           keyed candidates (already logged); reset when a
         #                                           pollable session exists again, so the 60s rail timer
@@ -15580,6 +15613,7 @@ class SdkBackend:
         (_expected_auth) and the session carries no explicit per-session pick — a pick outranks
         the declaration — else against _launched_keyed as before; see the comment at the check."""
         _ll = getattr(sess, "_launched_login", "") or ""
+        refused = None   # the (side, stored login) pair this init's own report refused, for the closer's gate below (extra5-1)
         if _ll:
             # A launch billed to a STORED login (T346) carried that login's setup-token in its own environment as
             # CLAUDE_CODE_OAUTH_TOKEN, the box's helper disabled (the environment road, 2026-09-14). The init's source
@@ -15608,6 +15642,7 @@ class SdkBackend:
                 used = "the CLI's %s credential" % str(source).strip()
                 why = "the token was not used and the CLI signed in with %s instead" % used
                 _logins.mark_refused(self.state_dir, _ll, why)
+                refused = ("login", _ll)        # what this report refused: a relaunch composing it lands the same way
                 sess._launched_login = ""       # the evidence: this process does not bill the stored login
                 self._persist_login_evidence(sess, launchedLogin="", authLoginLive="")
                 # The reconnect relaunches onto the documented fall, read AFTER the refusal is recorded: the key when
@@ -15719,8 +15754,11 @@ class SdkBackend:
                 # branch), the cannot-tell attach leaves it, and this report decides it. The verb's rebase follow-up had run
                 # its closer bare here, since the guard's restore puts a served pick's pending back on a raise; the guard's
                 # row names that pending's next deciding event, the next pick, so the closer takes the one door like every
-                # other step
-                self._follow_default_guarded(sess, landing="init", step=sess._recover_picked_pending_at_init)
+                # other step. The pair the wrong-landing branch above refused rides along (round 2 of the billing verb's
+                # review, 2026-09-19; its extra5-1): the closer's ask is gated on what the relaunch would compose, and a
+                # relaunch composing the refused pair is closed with a row instead of asked
+                self._follow_default_guarded(sess, landing="init",
+                                             step=lambda: sess._recover_picked_pending_at_init(refused=refused))
         if keyed == sess.api_key_auth and not first:
             return
         sess.api_key_auth = keyed
@@ -19610,7 +19648,9 @@ class SdkBackend:
         the default from its next launch; the landing decides from the composed shape). Until round 1 of the review the dormant branch forced
         authPending False for a picked session, and a session picked onto the login and running it under its host kept
         billing the login after `default` while every reader said it followed the default. No /auth chip: the session
-        made no pick. False for a record that will not read."""
+        made no pick. False for a record that will not read, and for a record whose write is refused (the clear and its
+        mirror as one unit, below; round 2 of the billing verb's review, its fresh-2), with the pick left standing and the
+        sentence for the caller left at pop_auth_refusal."""
         reg = read_reg(self.state_dir, sid)
         if not reg:
             return False
@@ -19620,9 +19660,12 @@ class SdkBackend:
             aka = reg.get("apiKeyAuth")
             ran = ("key" if aka else "login") if isinstance(aka, bool) else ""
             ask = bool(ran) and ran != self.fallback_auth()
-            self._update_reg(sid, auth="", authLogin="", authPending=ask)
-            self._poke()
             name = reg.get("name") or sid[:8]
+            try:
+                self._update_reg(sid, auth="", authLogin="", authPending=ask)
+            except Exception as e:
+                return self._refuse_default_clear(sid, name, e)   # the dormant twin of the live road's unit below (fresh-2)
+            self._poke()
             if ask:
                 self._log("auth (%s): its own pick is cleared; it follows the machine default again (%s); its CLI last reported "
                           "the %s, so it is asked to move when it next attaches, and a fresh launch composes the default"
@@ -19631,10 +19674,29 @@ class SdkBackend:
                 self._log("auth (%s): its own pick is cleared; it follows the machine default again (%s) from its next launch%s"
                           % (name, label, ("; its CLI last reported the %s, which the default resolves to" % ran) if ran else ""))
             return True
-        with s._hold_write():   # the pick pair under the hold, mirrored from the live fields (round 2 of the review; _mirror_auth)
-            s.auth = ""
-            s.auth_login = ""
-        s._mirror_auth()
+        # THE CLEAR AND ITS MIRROR ARE ONE GUARDED UNIT WITH A REFUSAL OF THEIR OWN (round 2 of the billing verb's review,
+        # 2026-09-19; its fresh-2, both refuters). The pair was cleared under the hold and mirrored bare, outside the one-guard
+        # rule this PR adopted for the step below, so a reg write that failed (a full or read-only state directory) left the
+        # LIVE object following the machine default, the dashboard's status and the verb's read with it, while the reg and a
+        # kernel restart still carried the pick, with the parked picks the route had dropped already gone: the inverse of
+        # round 1's regression-2 (a caller told nothing changed after a change); and the raise escaped this method into POST
+        # /billing's catch-all, an HTTP 500 whose body was the traceback, absolute paths included, on a kernel reachable
+        # over the tailnet. So the pair is snapshotted, the clear and its mirror run as one unit, and a raise restores the
+        # pair, files one problem row, leaves THIS call's own refusal sentence for the route (pop_auth_refusal: never the
+        # 409's "record would not read, so nothing was changed", which misdescribes a refused write and the drop before
+        # it) and returns False, which is what happened. Its own guard, not the follower step's (_follow_default_guarded):
+        # that guard returns True with the pick cleared when the STEP fails, since the clear had happened; here it has not
+        with s._hold_lock:
+            before = (s.auth, getattr(s, "auth_login", "") or "")
+        try:
+            with s._hold_write():   # the pick pair under the hold, mirrored from the live fields (round 2 of the review; _mirror_auth)
+                s.auth = ""
+                s.auth_login = ""
+            s._mirror_auth()
+        except Exception as e:
+            with s._hold_write():
+                s.auth, s.auth_login = before
+            return self._refuse_default_clear(sid, s.name, e)
         self._log("auth (%s): its own pick is cleared; it follows the machine default again (%s)" % (s.name, label))
         if s.ended:
             return True
@@ -19654,6 +19716,24 @@ class SdkBackend:
         # request and a relaunch of a survivor that may already bill the default
         self._follow_default_guarded(s, label, because=because)
         return True
+
+    def _refuse_default_clear(self, sid: str, name: str, e: BaseException) -> bool:
+        """follow_default_auth's own refusal (round 2 of the billing verb's review, 2026-09-19; its fresh-2): the record write
+        that mirrors the clear failed, the live pair is back as it was (the live road) or was never touched (the dormant
+        road), so the caller is told the pick stands, in a sentence of this failure's own. The sentence names the failure's
+        class only: the route hands it to a caller over HTTP, and an OSError's text carries the record's absolute path,
+        which is this box's business (the problem row below keeps the masked text for the Log). Always False."""
+        why = "%s's pick was not cleared: its record would not write (%s), so it keeps its own pick" % (name, type(e).__name__)
+        self._auth_refusals[sid] = why
+        self._log("auth (%s): its own pick was NOT cleared: the record write failed (%s: %s); the pick stands and the session "
+                  "bills as it did" % (name, type(e).__name__, _mask_ids(e)), problem=True)
+        return False
+
+    def pop_auth_refusal(self, sid: str) -> str:
+        """The sentence the last refused billing write on `sid` left for its caller (a `default` clear whose record write
+        failed, _refuse_default_clear), popped: "" when none. Popped, and keyed by sid, so a caller never reads a refusal
+        another call or another session left (last_auth_refusal, set_auth's toast reason, is one slot and is not read here)."""
+        return str(self._auth_refusals.pop(str(sid), "") or "")
 
     def _follow_default_unlanded(self, s, label, because=None) -> None:
         """follow_default_auth's step for a live session with NO running side (no CLI report, no landed stamp), the state

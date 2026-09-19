@@ -743,6 +743,50 @@ class DefaultPick(_RouteServer):
         self.assertEqual(fake.calls, [("follow_default_auth", SID)])
         self.assertEqual((resp["reconnect"], resp["queued"], resp["cut"]), ("at the end of the open turn", False, False))
 
+    def test_a_default_whose_clear_will_not_write_answers_409_in_the_writes_own_words_with_no_traceback(self):
+        # round 2 of the billing verb's review (2026-09-19; fresh-2, the DISCLOSURE half, both refuters): follow_default_auth's
+        # bare mirror raised out of POST /billing into do_POST's catch-all, an HTTP 500 whose body was traceback.format_exc()
+        # with this box's absolute paths, on a kernel reachable over the tailnet. A REAL backend behind the real handler, a
+        # live picked session, and the fault on the clear's own mirror (the write carrying the cleared pair, not gated on
+        # authPending): the answer is a 409 in the write's own sentence, the live object and its record keep the pick, and
+        # the body carries no traceback and no absolute path. A pick parked earlier rides the case: the road drops it before
+        # the write (kept ahead of the write: a drop after it reopens the drain race round 2 closed on every successful
+        # clear), so the sentence names the drop, as the record-unreadable refusal does
+        d = tempfile.mkdtemp()
+        Path(d, "session-hosts").write_text("off")   # a test that mints its own state root pins hosts off (2026-09-11)
+        be = sb.SdkBackend(d, "/bin/true", lambda *a, **k: None, log=lambda m: None)
+        be.login_ok = lambda: True
+        be.key_state = lambda: "ok"
+        reg = {"sid": SID, "name": "web", "cwd": d, "alive": True, "lastSid": SID, "auth": "login"}
+        sb.write_reg(Path(d), SID, reg)
+        s = sb.SdkSession(be, dict(reg))
+        s._launched_auth = "login"
+        s.auth_live = "login"
+        be.sessions[SID] = s
+        km._pending_ops.pop(SID, None)
+        km._inflight_ops.pop(SID, None)
+        km._park_op(SID, ("auth", "key"))   # PerSessionPick._parked's seed, with its cleanup
+        self.addCleanup(lambda: (km._pending_ops.pop(SID, None), km._inflight_ops.pop(SID, None), km._save_pending_ops()))
+        real_write = sb.write_reg
+
+        def refused(state_dir, sid, reg):
+            if sid == SID and reg.get("auth") == "":
+                raise PermissionError(13, "Permission denied", str(sb._reg_path(state_dir, sid)))
+            return real_write(state_dir, sid, reg)
+        a, b = self._local(be)
+        with a, b, mock.patch.object(sb, "write_reg", refused):
+            code, resp = self._post({"target": "web", "pick": "default"})
+        text = json.dumps(resp)
+        self.assertEqual(code, 409, (code, text[:400]))
+        self.assertEqual(resp, {"ok": False, "superseded": 1,
+                                "error": "web's pick was not cleared: its record would not write (PermissionError), so it keeps its "
+                                         "own pick; 1 earlier queued pick was dropped before the refusal"})
+        self.assertNotIn("Traceback", text)
+        self.assertNotRegex(text, r"/[A-Za-z0-9_.-]+/", "no absolute path reaches the caller")
+        self.assertEqual((s.auth, s.auth_login, s.effective_auth()), ("login", "", "login"), "the live object keeps its pick")
+        self.assertEqual(sb.read_reg(Path(d), SID)["auth"], "login", "the record is as it was")
+        self.assertNotIn(SID, km._pending_ops, "the parked pick went before the write, and the sentence said so")
+
 
 class AllFollowing(_RouteServer):
     """POST /billing {pick, allFollowing}: the walk over this kernel's live followers."""
@@ -2071,6 +2115,126 @@ class BackendHelpers(unittest.TestCase):
         self.assertIn("auth (api): follows the machine default again: automatic, but this session's step failed (PermissionError", rows[1])
         self.assertIn("; it stays on the side it is on until its next connect or the next default write, with no ask standing", rows[1])
 
+    def test_the_init_closes_a_pick_whose_relaunch_would_carry_the_token_this_report_refused_and_asks_one_of_another_login(self):
+        # round 2 of the billing verb's review (2026-09-19; extra5-1, in both refuters' narrowed form). The full chain through
+        # real code, no hand-set stamps: a survivor launched by the previous kernel on stored login A (the reg's launchedLogin),
+        # a live host lease and no report (the cannot-tell class), the user's pick parked on it before the boot re-attach
+        # composes (set_auth's never-landed branch), the real compose, the cannot-tell attach landing, then the CLI's first
+        # init reporting a KEY word: A's token was not used. The wrong-landing branch marks A refused and, with nothing to
+        # fall to on this box (no helper readable, no machine login to fall to), DECLINES a relaunch; the closer then ran
+        # its ask on the reconnect flags alone and re-armed the very relaunch just declined, which composed A again (the
+        # compose reads the pick, and the refusal leaves it nothing to fall to), carried the same token, landed the same
+        # way and served the pending on the shape word: a false served on a session billing the wrong account, the CLI and
+        # its work torn down for nothing. Gated on what the relaunch would compose: the same refused pair is CLOSED with a
+        # row that says the pick cannot be applied on this box and what bills instead (never served, never silent, never
+        # retargeted: the pick stands); a pick of ANOTHER stored login than the refused launch is still asked, since that
+        # relaunch composes B and is right
+        a, b = self._stored_login("Alpha"), self._stored_login("Beta")
+        self.be.key_state = lambda: "unknown"                    # no key to fall to: Claude Code's settings cannot be read
+        self.be._helper_source_read = lambda: (None, False)      # and the same read for the machine login's fall: nothing to fall to
+        leased = self.__dict__.setdefault("_leased", set())
+        self.be._host_lease_live = lambda sess: sess.sid in leased
+        for name, pick, asked in (("web", a, False), ("api", b, True)):
+            self.n += 1
+            sid = "11111111-2222-3333-4444-%012d" % self.n
+            reg = {"sid": sid, "name": name, "cwd": self.d, "alive": True, "lastSid": sid,
+                   "auth": "login", "authLogin": a["id"], "launchedLogin": a["id"]}   # the previous kernel launched it on A
+            sb.write_reg(Path(self.d), sid, reg)
+            s = sb.SdkSession(self.be, dict(reg))
+            s._launched_auth = None
+            s.inflight = 0
+            self.be.sessions[sid] = s
+            q = self._queue_loop(s)
+            leased.add(sid)
+            self.assertEqual(s._launched_login, a["id"], "the reg restored the launched login")
+            self.assertTrue(self.be.set_auth(sid, "login:" + pick["id"], chip=False))   # the pick: A again, or B
+            self.assertEqual((s._auth_pending_target(), len(q)), (("login", pick["id"]), 0), "%s: parked for the landing" % name)
+            fell, side, lid = self.be._decide_auth(s)
+            self.be._stamp_compose(s, side, lid)                 # the real compose's stamps
+            s._host_is_attach = True
+            s._connect_landed()                                   # the cannot-tell attach lands: the pending stands
+            self.assertEqual((s._launched_auth, s._auth_pending_target()), (None, ("login", pick["id"])), name)
+            del self.logs[:]
+            seq0 = self.be._problem_seq
+            self.be._note_auth_source(s, "apiKeyHelper")          # the CLI's first init: a key word, A's token was not used
+            rows = [p["text"] for p in self.be.problems(20) if p["seq"] > seq0]
+            self.assertTrue(any("nothing to fall to on this box, so the session stays where it landed" in r for r in rows),
+                            (name, rows))                         # the wrong-landing branch declined a relaunch
+            self.assertEqual((s._launched_auth, s._launched_login), ("key", ""), "%s: the report is the stamp; A is not what runs" % name)
+            self.assertTrue(sb._logins.record_state(self.d, a["id"]).get("refused"), "A is marked refused")
+            closed = [r for r in rows if "so the pick cannot be applied on this box" in r]
+            if asked:
+                self.assertEqual((s._auth_pending_target(), len(q)), (("login", b["id"]), 1),
+                                 "api: a pick of ANOTHER stored login than the refused launch is asked; its relaunch composes B")
+                self.assertEqual(len([m for m in self.logs if "so it is asked now" in m]), 1, self.logs)
+                self.assertEqual(closed, [], "nothing closed: the relaunch is right")
+                continue
+            self.assertEqual((s._auth_pending, s._auth_pending_login, self._reg(sid)["authPending"], len(q), s._reconnect),
+                             ("", "", False, 0, False), "web: the pending is closed with no ask and no arm; the dots go")
+            self.assertEqual((s.auth, s.auth_login, self._reg(sid)["auth"], sb.SdkBackend.reg_login(self._reg(sid))),
+                             ("login", a["id"], "login", a["id"]), "the pick stands: no retarget, no served clear")
+            self.assertEqual([m for m in self.logs if "asked now" in m or "the pick is served" in m], [], "neither asked nor served")
+            self.assertEqual(len(closed), 1, rows)
+            self.assertEqual(closed[0], "auth (web): this session's surviving CLI reported its billing, the key, while its pick is the "
+                                        "Alpha login, whose token this same report refused; a relaunch would carry that token again and "
+                                        "land the same way, so the pick cannot be applied on this box: it stands unapplied, nothing is "
+                                        "asked, and the session keeps billing the key")
+            # the compose the gate read is the arm's own: it would still name A, with nothing to fall to
+            shape = self.be._launch_shape(s)
+            self.assertEqual((shape["auth"], shape["login"]), ("login", a["id"]))
+
+    def test_follow_default_auth_whose_clear_will_not_write_restores_the_pick_and_refuses_in_its_own_words(self):
+        # round 2 of the billing verb's review (2026-09-19; fresh-2, the STATE half, both refuters): the clear of the pick pair
+        # ran under the hold and its reg mirror ran bare, OUTSIDE the one-guard rule the step below it takes, so a reg write
+        # that failed (a full or read-only state directory) left the live object following the machine default, the status
+        # rows and the verb's read with it, while the reg and a kernel restart still carried the pick: the caller was told
+        # it failed and the change had happened, the inverse of round 1's regression-2. The clear and its mirror are one
+        # unit now: the pair is restored on a raise, the record is untouched, a row is filed, and the caller gets False with
+        # a sentence of this failure's own (never the 409's "record would not read, so nothing was changed", which
+        # misdescribes a refused write). The fault is injected on the CLEAR's own mirror, the write that carries the
+        # cleared pair, whatever authPending says: the guard test above exempts exactly this write with its authPending
+        # predicate, so it stayed green over the bare mirror
+        web = self._sess("web", auth="login", launched="login")
+        web.auth_live = "login"
+        wq = self._queue_loop(web)
+        real_write = sb.write_reg
+
+        def refused(state_dir, sid, reg):
+            if sid == web.sid and reg.get("auth") == "":
+                raise PermissionError(13, "Permission denied", str(sb._reg_path(state_dir, sid)))
+            return real_write(state_dir, sid, reg)
+        seq0 = self.be._problem_seq
+        with mock.patch.object(sb, "write_reg", refused):
+            self.assertFalse(self.be.follow_default_auth(web.sid), "the write was refused: the caller is told the pick stands")
+        self.assertEqual((web.auth, web.auth_login), ("login", ""), "the live object keeps its pick (restored from the snapshot)")
+        self.assertEqual((web.effective_auth(), self.be.billing_view(web.sid)["pick"]["explicit"]), ("login", True),
+                         "the status rows and the verb's read see the pick, not the default")
+        reg = self._reg(web.sid)
+        self.assertEqual((reg["auth"], reg.get("authPending", False)), ("login", False), "the record is as it was")
+        self.assertEqual((len(wq), web._auth_pending), (0, ""), "no step ran: nothing asked, nothing pending")
+        self.assertEqual(self.be.pop_auth_refusal(web.sid),
+                         "web's pick was not cleared: its record would not write (PermissionError), so it keeps its own pick")
+        self.assertEqual(self.be.pop_auth_refusal(web.sid), "", "popped once: a later refusal never reads this one")
+        rows = [p["text"] for p in self.be.problems(10) if p["seq"] > seq0]
+        self.assertEqual(len(rows), 1, rows)
+        self.assertTrue(rows[0].startswith("auth (web): its own pick was NOT cleared: the record write failed (PermissionError: "), rows[0])
+        self.assertIn("; the pick stands and the session bills as it did", rows[0])
+        # the dormant road (no object; the reg write is the whole change) is wrapped the same way
+        self.n += 1
+        dsid = "11111111-2222-3333-4444-%012d" % self.n
+        sb.write_reg(Path(self.d), dsid, {"sid": dsid, "name": "docs", "cwd": self.d, "alive": True, "lastSid": dsid,
+                                          "auth": "login", "apiKeyAuth": False})
+
+        def refused_dormant(state_dir, sid, reg):
+            if sid == dsid:
+                raise OSError(28, "No space left on device", str(sb._reg_path(state_dir, sid)))
+            return real_write(state_dir, sid, reg)
+        with mock.patch.object(sb, "write_reg", refused_dormant):
+            self.assertFalse(self.be.follow_default_auth(dsid))
+        self.assertEqual(self._reg(dsid)["auth"], "login", "the record is as it was")
+        self.assertEqual(self.be.pop_auth_refusal(dsid),
+                         "docs's pick was not cleared: its record would not write (OSError), so it keeps its own pick")
+
     def test_the_follower_step_is_reached_only_through_the_guard_and_its_own_hand_offs(self):
         # CENSUS PIN (the verb's rebase onto the reviewer's round 2, 2026-09-19): every caller of the follower's step runs
         # it through _follow_default_guarded, so the only bare calls of _follow_default and _follow_default_unlanded are the
@@ -2766,6 +2930,18 @@ class VerbWords(unittest.TestCase):
         self.assertEqual(out.stdout.strip(), "romp billing: no running session follows the machine default, so none moved to the API key; "
                                              "1 skipped (api): it has its own pick", "a skipped session has its own pick and follows nothing")
 
+    def test_the_walk_whose_every_reached_follower_failed_does_not_deny_the_followers(self):
+        # round 2 of the review (2026-09-19; extra7-2, both refuters): with nothing moved and every reached follower's step
+        # failed, the head said "no running session follows the machine default" while the tail named the two followers the
+        # walk reached and could not move; the head's guard was widened for `unwritten` in round 2 and `failed` was added
+        # after it. The whole line, since only the head changes
+        out = self._romp("--all-following", "key", reply=(200, {"ok": True, "pick": "key", "moved": 0, "skipped": 0, "unwritten": 0,
+                                                                 "failed": 2, "sessions": [], "skippedSessions": [], "unwrittenSessions": [],
+                                                                 "failedSessions": ["api", "notes"], "outlooks": {}}))
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(out.stdout.strip(), "romp billing: no follower moved to the API key; 0 skipped; "
+                                             "2 failed (api, notes): they keep following the default unchanged, the kernel's Log names the fault")
+
     def test_an_empty_session_is_misuse_on_every_arm(self):
         # round 2 of the review (verb-6): `romp billing ""` passed the arity check as one argument and reached the kernel's
         # 400 (or "the kernel isn't running"), exit 1, against the verb's own header (misuse is the usage line, exit 2, before
@@ -2831,10 +3007,11 @@ class VerbWords(unittest.TestCase):
         self.assertEqual(self._romp("web", reply=(200, view)).stdout.splitlines()[0],
                          "launched: no CLI is up under this kernel; the CLI last reported: API key")
         # a client up whose landing attached a surviving CLI with no report (the reviewer's cannot-tell class; the rebase
-        # follow-up, 2026-09-18): "no CLI is up" was false for it, and its first turn's report says what it bills
+        # follow-up, 2026-09-18): "no CLI is up" was false for it, and its first report decides which side it bills (the clause
+        # completed in round 2 of the review, 2026-09-19, its fresh-3: it ended mid-sentence, and this pin held it so)
         view.update(live="", cannotTell=True)
         self.assertEqual(self._romp("web", reply=(200, view)).stdout.splitlines()[0],
-                         "launched: a surviving CLI is attached that has not reported which side it bills; its first turn's report says")
+                         "launched: a surviving CLI is attached that has not reported which side it bills; its first report decides which side it bills")
 
     def test_an_old_kernels_404_names_the_cause_and_the_remedy_on_both_arms(self):
         # finding 13: a kernel from before this change answers its catch-all 404 (text, no JSON object) and the verb printed
@@ -3035,6 +3212,8 @@ class OneAskPerInit(unittest.TestCase):
         def call_soon_threadsafe(self, cb, *a):
             cb(*a)
 
+    NOFALL = "nofall"   # a box with NOTHING to fall to: no helper readable (key_state unknown) and no machine login the fall can read
+
     def _backend(self, box):
         d = tempfile.mkdtemp()
         Path(d, "session-hosts").write_text("off")
@@ -3042,6 +3221,8 @@ class OneAskPerInit(unittest.TestCase):
         be = sb.SdkBackend(d, "/bin/true", lambda *a, **k: None, log=logs.append)
         be.login_ok = lambda: True
         be.key_state = (lambda: "ok") if box == "keyed" else (lambda: "unknown")
+        if box == self.NOFALL:
+            be._helper_source_read = lambda: (None, False)   # the read a refused stored login's fall asks (pick_fall): nothing to fall to
         leased = set()
         be._host_lease_live = lambda sess: sess.sid in leased
         return be, logs, leased
@@ -3139,7 +3320,7 @@ class OneAskPerInit(unittest.TestCase):
         else:
             outcome = "WRONG-SILENT"
         return {"asks": asks, "bare": bare, "arms": arms, "total": total, "armed": armed, "pending": pending, "flag": flag,
-                "launched": s._launched_auth, "bills": bills, "rows": len(rows), "outcome": outcome}
+                "launched": s._launched_auth, "bills": bills, "rows": len(rows), "rowtexts": rows, "outcome": outcome}
 
     def test_exactly_one_ask_per_init_over_every_interleaving_of_the_cannot_tell_attach(self):
         import itertools
@@ -3175,6 +3356,52 @@ class OneAskPerInit(unittest.TestCase):
                          "the wrong-silent set is exactly the pre-existing residual: %r" % sorted(silent ^ set(self.RESIDUAL)))
         self.assertEqual(max(init_hist), 1)
         self.assertEqual(max(arm_hist), 1)
+
+    def test_on_a_box_with_nothing_to_fall_to_the_init_closes_a_pick_whose_relaunch_would_land_wrong_again_with_a_row(self):
+        # round 2 of fork PR #813's review (2026-09-19; its extra5-1, in both refuters' narrowed form). The closer's gate on what
+        # the relaunch would compose never fires in the product above: that harness box always has a fall (login_ok True, the
+        # operator's settings readable), so a wrong landing's branch REQUESTS the relaunch onto the fall (bare-init=1 in every
+        # loginA/*/key state of its table) and the relaunch composes the fall, never the refused pair. The gate's own box is
+        # this one, with nothing to fall to: that branch DECLINES a relaunch, and the closer's ask, reading the reconnect flags
+        # alone, re-armed the very relaunch it declined, composing the refused login again (a false served at its landing on a
+        # session billing the wrong account, the CLI and its work torn down for nothing). The stored-login states are driven
+        # on this box through the same real compose, landing and init: the init still asks at most once and at most one
+        # relaunch is armed; every state whose relaunch would compose the refused pair (the pick is the refused login, the
+        # attach could not tell, the report a key word: 8 states) ends with the pending CLOSED, nothing asked at the init, no
+        # bare request (the branch declined) and the row that says the pick cannot be applied on this box, whatever other
+        # arm stands; no state ends wrong-silent. ROMP_ASK_TABLE=<path> writes this leg's lines to <path>.nofall
+        import itertools
+        be, logs, leased = self._backend(self.NOFALL)
+        lines, closed, silent, n = [], set(), set(), 5000
+        init_hist = {}
+        for state in itertools.product(("loginA",), self.GESTURE, (self.NOFALL,), self.TIMING, self.CLS, self.ARM, self.REPORT):
+            existing, gesture, box, timing, cls, arm, report = state
+            n += 1
+            r = self._drive(be, logs, leased, n, *state)
+            a, ar = r["asks"], sum(r["arms"].values())
+            key = "%s/%s/%s/%s/%s/%s/%s" % (existing, gesture, box, timing, cls, arm, report)
+            lines.append("%-56s flag=%d asks pick=%d landing=%d init=%d bare-init=%d total=%d arms=%d armed=%d pending=%s launched=%s "
+                         "bills=%s rows=%d %s" % (key, r["flag"], a["pick"], a["landing"], a["init"], r["bare"]["init"], r["total"],
+                                                  ar, r["armed"], r["pending"], r["launched"], r["bills"], r["rows"], r["outcome"]))
+            init_hist[a["init"]] = init_hist.get(a["init"], 0) + 1
+            same_pair = gesture == "loginA" and cls == "lease" and report == "key"
+            with self.subTest(state=key):
+                self.assertLessEqual(a["init"], 1, "the init asked twice: %s" % lines[-1])
+                self.assertLessEqual(ar, 1, "two relaunches armed: %s" % lines[-1])
+                if same_pair:
+                    self.assertEqual((a["init"], r["bare"]["init"], r["pending"]), (0, 0, None),
+                                     "the relaunch would compose the refused pair: closed, not asked, and the wrong-landing branch declined: %s"
+                                     % lines[-1])
+                    self.assertTrue(any("so the pick cannot be applied on this box" in t for t in r["rowtexts"]), r["rowtexts"])
+                    closed.add(state)
+                if r["outcome"] == "WRONG-SILENT":
+                    silent.add(state)
+        table = os.environ.get("ROMP_ASK_TABLE")
+        if table:
+            Path(table + ".nofall").write_text("\n".join(lines) + "\nINIT-ASKS %r\n" % sorted(init_hist.items()))
+        self.assertEqual(n - 5000, 192, "the product: 4 gestures x 2 timings x 3 classes x 4 arms x 2 reports on the one box")
+        self.assertEqual(len(closed), 8)
+        self.assertEqual(silent, set(), "no state ends wrong-silent on this box: %r" % sorted(silent))
 
 
 if __name__ == "__main__":

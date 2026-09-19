@@ -9946,6 +9946,15 @@ class DefaultBillingMovesItsFollowers(unittest.TestCase):
         self.assertEqual([str(m) for m in self.logs if "reported its billing" in str(m)],
                          ["auth (web): this session's surviving CLI reported its billing, the key, which its pick names: the pick is served, "
                           "no reconnect"])   # said since round 5 (2026-09-19), the served half of the closer
+        # THE SERVED LEG IS DISCRIMINATED FROM THE ASK-THEN-WITHDRAW ROAD (round 2 of fork PR #813's review, 2026-09-19; its
+        # extra6-1, strengthening this test of fork PR #787's closer): with the closer's ask leg load-bearing, a closer that ASKED
+        # here instead of serving also ends with the pending cleared and no relaunch, since the ask's own request is withdrawn by
+        # the served check (_served_by_connect: the running process already runs the key), which clears the pending the same
+        # way; the two roads differ in the line said and in auth_live, which the served check's withdrawal wipes and the
+        # dashboard's Billing row reads. The pins the refuters found discriminating in this harness (its _Now loop double
+        # resets the slot flag on both roads, so the flag assertions proposed first do not)
+        self.assertEqual([str(m) for m in self.logs if "so it is asked now" in str(m)], [], "served, not asked and withdrawn")
+        self.assertEqual(s.auth_live, "key", "the report stands: the ask-then-withdraw road wipes it")
 
     def test_a_picked_landing_that_stamped_no_auth_serves_the_ask_off_the_attach_road_alone(self):
         # the mutation pass over round 4 (2026-09-19; m36): the picked branch's `_launched_auth is None and not attach`
@@ -10006,10 +10015,17 @@ class DefaultBillingMovesItsFollowers(unittest.TestCase):
             with s._hold_write():
                 s._auth_pending = "login"; s._auth_pending_login = target["id"]
             self.be._update_reg(s.sid, authLogin=target["id"], authPending=True)
+            del self.logs[:]
             self.be._note_auth_source(s, "none")                     # the init: the bearer login answered, A's token
             self.assertEqual((s._launched_auth, s.auth_login_live), ("login", a["id"]))
             self.assertEqual(s._auth_pending, "" if served else "login", "served for A's own pending; B's stands for its reconnect")
             self.assertEqual(bool(self._reg(s).get("authPending")), not served)
+            if served:
+                # the served leg discriminated from the ask-then-withdraw road (round 2 of fork PR #813's review, 2026-09-19; its
+                # extra6-1, strengthening this test of fork PR #787's closer): the closer's line, no ask line, and the report kept
+                self.assertEqual(len([str(m) for m in self.logs if "the pick is served, no reconnect" in str(m)]), 1, self.logs)
+                self.assertEqual([str(m) for m in self.logs if "so it is asked now" in str(m)], [], "served, not asked and withdrawn")
+                self.assertEqual(s.auth_live, "login", "the report stands: the ask-then-withdraw road wipes it")
 
     def test_the_init_closer_waits_for_a_landing(self):
         # the mutation pass over round 4 (2026-09-19; m41): the closer's gate requires a landing to have happened
@@ -10040,6 +10056,18 @@ class DefaultBillingMovesItsFollowers(unittest.TestCase):
             self.be._note_auth_source(s, "apiKeyHelper")
         self.assertEqual(closer.call_count, 0, "no pending, no closer")
         self.assertEqual((s.auth_live, s._auth_pending), ("key", ""))
+        # THE FIRST-INIT ROAD STAMPS THE SIDE FOR A PICKED SESSION WITH NO PENDING TOO (round 2 of fork PR #813's review,
+        # 2026-09-19; its extra6-2): fork PR #787's picked-init gate stamped only when a pending stood, and the rebase of fork
+        # PR #813 widened it to every first init of a session whose landing could not tell (the verb's status reads the stamp).
+        # The widening is load-bearing: with the stamp narrowed back, a later pick on this session finds an object no landing
+        # stamped, parks with no request (set_auth's never-landed branch), and nothing applies it. So the stamp is pinned
+        # directly, and then the follow-on pick of the other side REQUESTS its reconnect against it
+        self.assertEqual(s._launched_auth, "key", "the report became the stamp, pending or not")
+        self.assertEqual(self.be.auth_apply_outlook(s.sid), "none", "nothing pending on a stamped object")
+        self.assertTrue(self.be.set_auth(s.sid, "login"))            # the follow-on pick of the other side
+        self.assertEqual(s._auth_pending_target(), ("login", ""))
+        self.assertTrue(s._reconnect, "the pick's own request armed: the stamp said what runs, so the request branch was taken")
+        self.assertEqual(self.be.auth_apply_outlook(s.sid), "now", "not 'report': the pending stands on a stamped object with its arm")
 
     def _same_side_re_pick_in_an_attach_window(self, n=0, pick="key"):
         """A picked session whose boot re-attach composes its own pick, re-picked inside the attach window (set_auth's
