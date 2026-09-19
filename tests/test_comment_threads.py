@@ -1425,8 +1425,9 @@ class CommentOps(CommentBase):
     cleanup; a leak from this class fires on the leaking test, and on the test after it too, because CommentBase.setUp saves
     the leaked stub as the value tearDown restores. The last-in-file class keeps guarding a leak from any other class: under
     pytest-xdist the two need not share a worker, so that pin alone told nothing about this class on most runs (the three
-    _stub hunks reverted: CommentOps alone 27 of 34 red serially, the whole module red under -n 4, the last-in-file pin
-    green seven times in eight)."""
+    _stub hunks reverted: CommentOps alone 28 of 34 red serially, since pytest runs the class alphabetically, the leaking
+    test is seventh and the check fires on it and on every test after it; the whole module red under -n 4; the
+    last-in-file pin green in most runs on one box, a single measurement, for the reason above)."""
 
     def _assert_sdk_is_the_kernels_own(self):
         self.assertEqual(getattr(km._sdk, "__qualname__", None), "_sdk",
