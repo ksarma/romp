@@ -64559,8 +64559,18 @@ function parentMobile(){try{return (window.parent!==window&&typeof window.parent
 // skeleton-tabs.ts's gate). The dial line below reads RESTART_DIET for the first dial (everConnected false) and nothing after it,
 // so setting the reload diet's flag here gives the phone the same shape with the URL line left as upstream wrote it; a redial
 // carries the diet through reconnect=1 as today, and a redial after a socket that died before the bundle's ready was answered
-// dials as a fresh page, as the reload diet does. The main chat pane alone: a column is SKEL already, a standalone page or the
-// VS Code webview has no shell (parentMobile undefined), the desktop's grid shows several panes and keeps the whole push. The
+// dials as a fresh page, as the reload diet does. TWO readers of the flag (review round 3, 2026-09-19): the dial line below, and
+// window.__rompDialTerms (the reload core's tail), whose skeleton term federation.ts carries onto every remote relay dial
+// (remoteDialUrl); both scope it to this page's first LOCAL dial through !everConnected. The relay is dialed after the bundle's
+// async /tunnels poll (federation.ts start, poll, openRemote, connect), which this shim's dial at parse precedes, so on a healthy
+// page the local socket has opened (everConnected true) before the relay dial is built and that dial carries NO skeleton term
+// (observed 3/3 and 7/7 phone cold opens in review; pinned in a real engine by test_federated_dial_terms_served.py's phone pass):
+// the remote serves its whole board through the relay, the shape the main pane always had. In the window before the local open
+// (never observed) the relay dial would carry skeleton=1: with the stored tab on that host `active` names it and the remote serves
+// it whole and skeletons the rest; with the stored tab local no `active` rides and the remote's relay no-active rule
+// (_resolve_reconnect) skeletons every transcript-bearing tab, which the hub's chain loads one per ask through the relay once the
+// local gate opens. Off this pane the flag stays false: a column is SKEL already, a standalone page or the VS Code webview has no
+// shell (parentMobile undefined), the desktop's grid shows several panes and keeps the whole push. The
 // shell's probe is defined in its head, before any iframe (_landing), so this read at the shim's load cannot race the shell's
 // body scripts. A blob with no activeId (a first-ever open) dials the term too and the kernel keeps its fail-safe whole push
 // for a local page with no hint (_resolve_reconnect); a stored tab that has ended matches no session and every tab is skeleton,
