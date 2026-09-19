@@ -40,8 +40,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 # ThreadPoolExecutor, so the tier thread's own CPU says little about what the judges cost; the
 # workers' does. _TimedPool wraps each submitted callable with a time.thread_time() delta into one
 # counter, and the name below rebinds so every `ThreadPoolExecutor(...)` in this module builds the
-# timed pool without touching the dozen pool sites. A worker blocked on a model call adds nothing:
-# thread_time is CPU, not wall.
+# timed pool without touching the pool sites themselves (the POOL SITES line under the rebind
+# enumerates them, eleven as of 2026-09-19, derived from this file by tests/test_perf_stats.py).
+# A worker blocked on a model call adds nothing: thread_time is CPU, not wall.
 # The same delta goes to the SINK when one is set: the kernel installs its perf collector's writer at
 # load (set_worker_cpu_sink), so the workers' share stands in the kernel's live counters as each
 # future ends and a live read of those counters agrees with a snapshot while that collector holds

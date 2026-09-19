@@ -1017,7 +1017,11 @@ class _PerfStats:
                                    figure as a measurement (the note says this block cannot
                                    tell how much of a window's figure is the workers'; a
                                    window that straddles the displacement still carries what
-                                   landed while armed, one that begins after it none); the
+                                   landed while armed, one that begins after it none); an
+                                   absent key never means the workers contributed nothing to
+                                   the figure, only that this block cannot say how much of it
+                                   is their share, the residual bin/romp's note carries too
+                                   (the reviewer's ask after round 2, 2026-09-19); the
                                    displaced collector's live dict keeps the key at what it
                                    took while armed, a record, not a report, and reset() keeps
                                    the key on a collector that holds the sink (the review
