@@ -1646,7 +1646,8 @@ class RoutingStatements(unittest.TestCase):
     What PLACES counts, since PR 797's closing check asked for the derivation: one entry per text file in the tree
     above whose text matches BLOCKS at least once, however many times it matches, so the count the sweep holds is the
     size of PLACES, a set of files. The block-name regex is a one-directional proxy: it finds the files that NAME a
-    routed block, and a file can state the routing without naming one (this branch's own ledger entry does), so such
+    routed block, and a file can state the routing without naming one (the ledger entry that recorded this sweep,
+    upstream/2026-09-19-stage-attribution-followup.md, does), so such
     prose is outside the sweep whatever the file set. `git ls-files -z --cached --others --exclude-standard | xargs -0 grep -I -l -E
     '<the BLOCKS pattern>'` at the repo root approximates it (run it beside the test and compare: over this tree it has
     listed the same files plus the bin/romp-kernel symlink the scan skips) and is not the scan's rule (checked on GNU
