@@ -411,7 +411,10 @@ class ByteIdenticalFrames(unittest.TestCase):
         one tab, rebuilt and served alternately: pre = the six pre-build signatures = builds.chat cached + built, post = the
         three post-build signatures = built less nosig, no nosig, a compare on every cycle after the first (a cached entry
         to compare against), at least one stat per signature (the transcript's), and no census count with no chat client
-        registered (the harness's clients are the push's targets, not connected clients)."""
+        registered (the harness's clients are the push's targets, not connected clients). The identity count is pinned
+        from the compare's own operands, not from a fixed label set: whether the two empty tails are one object between
+        two signatures differs by CPython version (3.10 no, 3.12 and 3.13 yes; the comment at the pin says why), so only
+        the four values every CPython keeps as one object are pinned by label."""
         ps = km._PERF_STATS
         pairs = []
         real_note = km._chat_sig_note_pre
@@ -433,16 +436,22 @@ class ByteIdenticalFrames(unittest.TestCase):
         self.assertEqual(d["post"], built - d["nosig"], "one post-build signature per rebuild that had a signature")
         self.assertEqual(d["compares"], 5, "every cycle after the first meets the cached entry")
         # compareIdentity is the count the compare itself sees, pinned from its operands (2026-09-18 review, medium 7): the
-        # components the two signatures hold as ONE object (None, a bool, an empty tuple, a small int: the interpreter's
-        # singletons) against those rebuilt per signature (a fresh stat pair, a tuple of them)
+        # components the two signatures hold as ONE object against those rebuilt per signature (a fresh stat pair, a tuple
+        # of them). Pinned by label below are only the four values every CPython keeps as one object: the two bools (needs,
+        # floor), the None postal and the small-int downtime. The two empty tails (taskout, pathlink) are NOT pinned: each
+        # is built by tuple() over a generator on exactly one side of the compare (pl_at in _chat_build_deps on the cached
+        # side, touts in _chat_sig_deps on the fresh side), and tuple() over an empty generator returns a fresh empty tuple
+        # on CPython 3.10 and the shared empty tuple on 3.12 and 3.13 (measured 2026-09-19: on 3.10 neither tail was one
+        # object between the two signatures, on 3.12 and 3.13 both were). compareIdentity counts what the interpreter
+        # gives, so the operand-derived equality holds on every version while the per-label set differs.
         self.assertEqual(len(pairs), 5)
         expected = sum(sum(1 for a, b in zip(old, new) if a is b) for old, new in pairs)
         self.assertEqual(d["compareIdentity"], expected)
         self.assertGreater(expected, 0); self.assertLess(expected, 5 * len(km._CHAT_SIG_LABELS))
         for old, new in pairs:
             same = {lab for lab, a, b in zip(km._CHAT_SIG_LABELS, old, new) if a is b}
-            self.assertTrue({"needs", "floor", "taskout", "pathlink", "postal", "downtime"} <= same,
-                            "the two bools, the empty tails, the None postal and the small-int downtime are one object: %r" % sorted(same))
+            self.assertTrue({"needs", "floor", "postal", "downtime"} <= same,
+                            "the two bools, the None postal and the small-int downtime are one object: %r" % sorted(same))
             self.assertFalse({"transcript", "states"} & same, "a stat pair is built per signature, never the same object")
         # stats is exact (medium 9): per signature the transcript, the states file (one key, the fsid: no anchor here), the
         # archive, episodes and gone identities, the working note's and one CLAUDE.md on the chain (a session with no cwd:
