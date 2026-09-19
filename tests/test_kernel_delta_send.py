@@ -855,7 +855,12 @@ class ByteIdenticalFrames(unittest.TestCase):
         cleanups run after the measurement, so the counts are unchanged by them, and a directory the world made is
         removed if still empty. Premise 3, after the run and before any count: the furnished channels ran (the files
         stand until cleanup, the cwd resolved to the worktree, the worktree top, the task store and the postal store
-        were read inside a signature, the names and registry reads landed), since a thinner world keeps the equality."""
+        were read inside a signature, the names and registry reads landed), since a thinner world keeps the equality.
+        Premise 4, before the run: the kernel's counting wrappers stand on os.stat, os.lstat, posix.stat and posix.lstat
+        (each carries this kernel's thread-local). A peer module that displaced one and never restored it, or restored
+        the builtin, leaves the kernel counting a subset of what the interceptor sees, and the equality would be the
+        first to say so, with two numbers and no reason (constructed 2026-09-19: os.stat displaced read 76 against 531,
+        os.lstat 476, posix.stat 519)."""
         ps = km._PERF_STATS
         cfg = tempfile.TemporaryDirectory(); self.addCleanup(cfg.cleanup)
         if shutil.which("git") is None:
@@ -972,6 +977,11 @@ class ByteIdenticalFrames(unittest.TestCase):
                          "would run over nothing; this test refuses to run over that world rather than bind the singleton "
                          "(the cause is fixed at its source: tests/test_kernel.py ViewBuilder restores the singleton with its "
                          "sandbox): backend over %r, this world at %r" % (str(be.state_dir), str(km.jd.STATE)))
+        for name, fn in (("os.stat", os.stat), ("os.lstat", os.lstat), ("posix.stat", posix.stat), ("posix.lstat", posix.lstat)):
+            self.assertIs(getattr(fn, "_romp_sig_counting", None), km._CHAT_SIG_TL,
+                          "premise: the kernel's counting wrapper stands on %s (a peer that displaced it and never restored it "
+                          "leaves the kernel counting a subset of what the interceptor sees, and the equality would be the first "
+                          "to say so, with two numbers and no reason): %r" % (name, fn))
         sbmod = sys.modules["romp_sdk_backend"]
         real_list_regs = sbmod.list_regs
         scans = []                                        # (the root scanned, a signature open on this thread) per list_regs call
@@ -1029,7 +1039,7 @@ class ByteIdenticalFrames(unittest.TestCase):
         (the postal key stats in the tail), the transcript's checkpoint path (a realpath: lstats), and registry files with
         one more written before every cycle, read by the kernel's own backend singleton, which _stats_world asserts is over
         this root and asserts scanned the registry inside a signature once per cycle before any count is compared (its
-        docstring names the two premises and the round-2 ruling behind them). One fresh module import is forced inside the
+        docstring names the four premises and the round-2 ruling behind them). One fresh module import is forced inside the
         first signature: importlib stats through the posix module, so the equality holds only with the posix wrap in
         place. Pinned: the equality, at least twenty stats per signature, and each channel seen (lstat, DirEntry, posix).
         At the first cut this read 63 counted against about 200 intercepted over the six-cycle window; restoring per-site
@@ -1128,6 +1138,28 @@ class ByteIdenticalFrames(unittest.TestCase):
         self.assertIn("the registry channel ran", msg, "the failure names the missing premise, the channel that did not run: %s" % msg)
         self.assertNotIn("!= 39", msg, "not a count mismatch")
         self.assertNotIn("equals every stat intercepted", msg, "not the equality")
+
+
+    def test_a_displaced_stat_wrapper_fails_the_premise_not_a_count(self):
+        """Constructed case 3, for the world's fourth premise (the closing check on the exactness world, 2026-09-19): the
+        kernel's counting wrappers stand on os.stat, os.lstat, posix.stat and posix.lstat. A peer module that patched one
+        and never restored it, or restored the builtin, leaves the kernel counting a subset of what the interceptor
+        sees: with os.stat displaced by the builtin the equality read 76 against 531, with os.lstat 476, with posix.stat
+        519, each a count mismatch with two numbers and no reason. The world refuses to run over such a process: an
+        AssertionError naming the displaced wrapper, raised before any signature runs, and not the equality. Removing
+        the premise loop from _stats_world reds every leg here with no AssertionError raised: the world runs to its end
+        and returns, since the equality lives in the exactness test and not in the world (the main test would then red
+        on the equality, with the two numbers above and no reason)."""
+        for mod, name in ((os, "stat"), (os, "lstat"), (posix, "stat"), (posix, "lstat")):
+            with self.subTest(wrapper="%s.%s" % (mod.__name__, name)):
+                builtin = getattr(mod, name).__wrapped__
+                with mock.patch.object(mod, name, builtin):
+                    with self.assertRaises(AssertionError) as cm:
+                        self._stats_world()
+                msg = str(cm.exception)
+                self.assertIn("premise: the kernel's counting wrapper stands on %s.%s" % (mod.__name__, name), msg,
+                              "the failure names the displaced wrapper: %s" % msg)
+                self.assertNotIn("equals every stat intercepted", msg, "not the equality")
 
     REG_PEERS = ["11111111-2222-4333-8444-0000000009%02d" % i for i in range(20, 30)]   # the stats world's registry peers
 
