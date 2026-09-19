@@ -137,7 +137,8 @@ checks against 0 derives (1 failed, 11 passed); a derive counted in the skip bra
 skipping pass, 0 against 2 (4 failed, 8 passed), as do the currency read dropped and the fixture's parse left out of
 jd._PARSE_CACHE (3 failed, 9 passed each; at the head before the ceilings moved, those two red the first pass's gate
 assertion); a reference to the real shared door bound at kernel import and called per session in the pass loop reds the
-shared reconciliation, the counters two over the recorded calls (5 failed, 7 passed), a shared counter moved with no
+shared reconciliation, the counters two over the recorded calls (5 failed, 7 passed; review round 4: and the birth pin, 6 failed,
+11 passed of 17, below), a shared counter moved with no
 recorded call reds it on every pass, one over (5 failed, 7 passed), the door's hit bump dropped reds it the other way (4
 failed, 8 passed), and a phantom record appended by the recorder reds the ceilings ahead of it (4 failed, 8 passed);
 `jd.load_goals` per session in the pass loop reds the writer assertion naming `_auto_nudge_pass` (5 failed, 7 passed),
@@ -179,7 +180,8 @@ are recorded below. The state-gate case: the working gate moved below the store
 read (1 failed, 11 passed); a served bump in the working branch (contrived; 1 failed, 11 passed); the loads bump moved
 above the working gate (2 failed, 10 passed, the census the other); the verdict renamed (1 failed, 11 passed);
 `_put_walk_gate` made a no-op, so the second pass skips (2 failed, 10 passed); a read conditioned on a memo row standing
-(contrived; 3 failed, 9 passed); a read in the skip branch (5 failed, 7 passed). The sweep cases: the sweep's ownership
+(contrived; 3 failed, 9 passed; review round 4 dropped the second-pass tuple that was one of the three, below); a read in the
+skip branch (5 failed, 7 passed). The sweep cases: the sweep's ownership
 inverted (3 failed, 9 passed); the recorder using the bare basename, the sweep's read filed under `romp-kernel` (3
 failed, 9 passed); SID_C's store deleted in the store case and written in the no-store case, the hand-off count 1
 against 0 and 0 against 1 (1 failed, 11 passed each); SID_C's store read before the first pass, and the cache cleared
@@ -204,6 +206,47 @@ reference: the class word, a writer's name, the dead-man's bound, `_dead_wait_bl
 the toggle needle dropped from the jobs block, each of the walk entry's four needles and its pointer dropped, this
 module's pointer dropped, and the gloss phrase changed (1 failed, 11 passed each). The assertion texts name the
 mechanism and are in the commit messages.
+
+Review round 4 (2026-09-19). The record above is the fourth round's battery over the twelve cases of that head; this head has
+seventeen (the second-bump roster pin, the kernel-and-judge birth pin and the three enumeration cases are new), so a figure
+in this paragraph reads against 17. Three lenses ran before the round's rulings, and the states they named were re-run at
+this head, each plant landed on kernel/kernel.py, kernel/judge.py or this module and reverted, the module run single-process
+on 3.12; the figures are counts from those logs. The tuple-elements lens, the forged pair (a corrupt or unreadable_journal
+bump beside a goal_io loads bump, no call through the door): in the kernel's skip branch it reds the second-bump bound in
+_pass at the first skip pass of the first case, of the two unwalked-sid sweep cases and of the state-gate case, its third
+(4 failed, 13 passed; at the head before the bound the moved-transcript tuple two passes later, 3 failed, 9 passed of 12);
+in _wait_for_graph before the first skip pass, and in _closer_settled before the run pass, the bound at that pass (1 failed,
+16 passed each; 12 passed before); in the kernel's working branch before the state-gate case's first pass, the bound at that
+pass (1 failed, 16 passed; 12 passed before); after the walk's read on a look whose gate is served, the bound at the run pass
+(1 failed, 16 passed; the moved-transcript tuple before). With the bound removed and the skip-branch pair landed, the restored
+first-skip-pass tuple is the line that reds, writerLoads 2 against 0 (3 failed, 14 passed): the restored elements stand
+behind the bound. The roster pin: refuse dropped from SHARED_SECOND_KEYS, and a poisoned bump added to the door's fallback
+branch, each red the roster (1 failed, 16 passed each); a refuse bump placed above every call-key bump reds the order (1
+failed, 16 passed). The replay lens, the re-arming: a memo row recorded only when none stood, and one re-recorded under the
+standing row's key, each red the first case's fourth pass (walk 1 against 0 per session) and the state-gate case's third
+(skippedParses 0 against 2) with every pass before them green (2 failed, 15 passed each); the walk gate's write-on-change
+dropped reds the state-gate case's third pass alone (1 failed, 16 passed); `_put_walk_gate` made a no-op reds its
+second-pass re-evaluation line and the wedge sweep case (2 failed, 15 passed); the read conditioned on a memo row, whose one
+red in the state-gate case was the dropped second-pass tuple, reds the first case's walk ceiling at the run pass and the walk
+census (2 failed, 15 passed). Five earlier states of those roads red what they did: the skip's early return dropped and the
+gate called from the skip path (3 failed, 14 passed each), the loads bump conditioned on four parses (2 failed, 15 passed),
+the working gate moved below the read and the served bump in the working branch (1 failed, 16 passed each). The census lens,
+the three limits: `_closer_settled` decorated without functools.wraps with a shared load in its real body reds the identity
+check naming the wrapper (1 failed, 16 passed; 12 passed before the check, the census reading the wrapper's three lines);
+the gate decorator's wraps dropped reds the walk census's site count, 0 against 1, a true red with a false cause (1 failed,
+16 passed; that census carries no identity line). The birth pin: the shared door bound to a kernel module-level name at
+import and never called, `getattr` with the door's name at kernel module level, and the door imported under an alias there
+each red the pin naming the line and the form (1 failed, 16 passed each; the first was 12 passed before the pin); in the
+judge, a module-level alias of the door below its definition, and the door passed to `map` rather than to `_or_fault`, each
+red it as a bare name outside a call (1 failed, 16 passed each). The battery's two import-time aliases, each called per
+session in the pass loop, red their reconciliation on every pass and the pin (6 failed, 11 passed each). The enumeration:
+the census with its alias kind dropped reds the alias sample and the loader forms at F03, the from-import with as (2 failed,
+15 passed); with its Attribute kind dropped, the walk census, the sample case, the bump forms at B01 and the loader forms at
+F02 (4 failed, 13 passed); with its Name kind dropped, the loader forms at F01 (1 failed, 16 passed); reading string
+constants as spellings, the prose sample and the loader forms at F07 (2 failed, 15 passed); reading getattr's string
+argument as a spelling, the via_getattr sample and F07 (2 failed, 15 passed); the bump scan without its operator check, the
+bump forms at B08, `-= -1` (1 failed, 16 passed); the hand-off count taken from the lines, the hand-off forms at P04, two
+calls on one line (1 failed, 16 passed). The clean module: 17 passed single-process on 3.10, 3.11, 3.12, 3.13 and 3.14t.
 
 Drives the real pass (_auto_nudge_tick) over two alive sessions with real transcript files and real goal stores, on the
 suite's fake clock (the pass takes `now`). SYNTHETIC fixtures only; a PRIVATE synthetic sid pair (the goal-store fixture
