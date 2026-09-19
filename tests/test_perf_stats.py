@@ -4816,7 +4816,12 @@ class Disclosed(unittest.TestCase):
     # it reds on cannot be asked the second question. Two clauses have no needle here: "so two uploads from one kernel remain
     # linkable by design" is a consequence, not a property of a document, and is the paragraph's end mark (_paragraph); the
     # request sentence before "What does travel" (no hostname, account or filename anywhere in the request, and no second
-    # file) is pinned over a recording receiver in tests/test_perf_upload.py.
+    # file) is pinned over a recording receiver in tests/test_perf_upload.py. The sentence after the end mark in the same
+    # paragraph of the reference (the one answer accepted is 201 with the receipt body; any other status, a body outside the
+    # shape, a connection error or a timeout refused by a fixed line naming the code or the error's class, never the body) is
+    # the verb's handling of the response, behaviour and not a claim about what travels, so it is outside _paragraph's window
+    # too; the refusal tests in tests/test_perf_upload.py (a status other than 201, a redirect, a body outside the shape, a
+    # timeout, each refused by its code or class alone) pin it.
     CONDITIONAL_CLAIMS = (
         ("the `malloc` block's `arena`, `fordblks`, `hblkhd` and `uordblks`, null with no leaves under it where the C library has no mallinfo2",
          "_check with km._MALLINFO2 patched None: the raw and the public malloc are None and none of the four is a process name "
@@ -5043,10 +5048,17 @@ class Disclosed(unittest.TestCase):
     # directions over the flattened paragraph: every hit lies inside a listed entry's words or inside one of the four
     # name-group heads, the name pins' own clauses (_check), the only exemption; and every entry's words carry a hit, so the
     # list cannot hold a clause the grammar would not find. A literal tuple of regex strings, so a reader can compare it
-    # word for word with the grammar as the PR body states it.
+    # word for word with the grammar as the PR body states it. The last eight words (if, unless, except, otherwise, elsewhere,
+    # wherever, whenever, until) have no hit in today's paragraph and are in the grammar since the consolidation of the second
+    # closing check: a clause phrased with one of them tomorrow is found, where before it was not (a clause planted with
+    # unless left both tests green, executed). before is not a word of the grammar: its one hit, "glibc before 2.33", is a
+    # platform list no single-box execution holds, so an entry for it would fail; the residue the grammar leaves is stated
+    # in the PR body.
     CLAUSE_MARKERS = (r"\bonly\b", r"\bper\b(?!-)", r"\bwhere\b", r"\bwhen\b", r"\bwhatever\b", r"\bwhoever\b", r"\beach\b",
                       r"\bevery\b", r"\balone\b", r"\bwith or without\b", r"\bcollapsed\b", r"\bcoarsened\b", r"\brounded\b",
-                      r"\bnull\b", r"\bin place of\b", r"\bexactly one of\b", r"\badds no number\b", r"\bfor a snapshot\b")
+                      r"\bnull\b", r"\bin place of\b", r"\bexactly one of\b", r"\badds no number\b", r"\bfor a snapshot\b",
+                      r"\bif\b", r"\bunless\b", r"\bexcept\b", r"\botherwise\b", r"\belsewhere\b", r"\bwherever\b", r"\bwhenever\b",
+                      r"\buntil\b")
     NAME_GROUP_HEADS = tuple("every leaf under `%s`" % b for b in BLOCKS)   # the four name pins' clauses, held by _check's name walk
 
     @classmethod
@@ -5632,7 +5644,9 @@ class Disclosed(unittest.TestCase):
         disclosure paragraph is conditional when it carries a conditioning word, only, per (the word alone, never the
         hyphenated per- of per-process and per-machine, which the lookahead excludes), where, when, whatever, whoever, each,
         every, alone, with or without, collapsed, coarsened, rounded, null, in place of, exactly one of, adds no number, for a
-        snapshot. Two directions over the flattened paragraph. FORWARD: every occurrence of a conditioning word lies inside the
+        snapshot, and eight words with no hit in today's paragraph, if, unless, except, otherwise, elsewhere, wherever,
+        whenever, until, added at the consolidation of the second closing check so that a clause phrased with one of them
+        tomorrow is found. Two directions over the flattened paragraph. FORWARD: every occurrence of a conditioning word lies inside the
         words of one CONDITIONAL_CLAIMS entry, each located exactly once, or inside one of the four name-group heads, "every
         leaf under `<block>`", the name pins' own clauses, whose populations _check holds both ways; those four are the only
         exemption. REVERSE: every entry's words carry at least one conditioning word, so the list cannot hold a clause the
