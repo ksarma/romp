@@ -8,7 +8,8 @@
 // and what it hears. The layout viewport is the browser's own (innerHeight 844 under the shell's viewport meta). Three
 // moves: the keyboard up with iOS's pan (height 508, offsetTop 83, then resize and scroll), the keyboard down (844, 0),
 // and a keyboard with no pan (508, 0); then (round 2) the picker's lift under the pan, a pinch with the keyboard up and the
-// keyboard dismissed under the zoom. After each the driver waits two animation frames (fit() coalesces to one per frame)
+// keyboard dismissed under the zoom; then (round 3) the keyboard up with the visual viewport at the layout viewport's bottom
+// (508, 336), the fixed bar inside the band. After each the driver waits two animation frames (fit() coalesces to one per frame)
 // and reads, in the shell's coordinate space: the composer's bottom (the chat iframe's top plus the composer's bottom inside
 // its same-origin document), the body's box, #mtabs's box, and the three shell variables.
 // Prints one `RESULT:` JSON line; exits 3 when the browser does not launch (the Python side turns that into a skip).
@@ -143,6 +144,11 @@ try {
   out.kbDown = await move(844, 0);       // the keyboard down: the pan is gone with it
   out.kbNoPan = await move(508, 0);      // a keyboard that does not pan (Android under resizes-visual)
   out.settled = await move(844, 0);
+  // round 3 (2026-09-19): the keyboard up with the visual viewport dragged to the layout viewport's bottom (height 508,
+  // offsetTop 336: the band 336..844), so the fixed bottom:0 bar is inside the band and the fixed body, at the pan, ends at
+  // the bar; the strip must be reserved there or the bar paints over the composer
+  out.kbUpDeep = await move(508, 336);
+  out.settledDeep = await move(844, 0);
   // round 2 (2026-09-19): a zoom after the pan, and the keyboard dismissed while the zoom holds (the fake's scale is what the
   // shell reads; the browser's own layout is not zoomed)
   out.kbUpAgain = await move(508, 83);

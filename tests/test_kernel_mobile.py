@@ -600,6 +600,20 @@ BAR.top = 459; fire(WIN, 'resize'); flush();   // one pixel inside the band: vis
 out.barOnePxIn = { appH: appH(), barH: barH() };
 BAR.top = null; global.innerHeight = 844; visualViewport.height = 844; fire(WIN, 'resize'); flush();
 out.barEdgeBack = { appH: appH(), barH: barH() };
+// round 3 (2026-09-19): the bar INSIDE the band under a pan. The keyboard up (vv.height 460 in an 844 layout viewport) and the
+// visual viewport dragged down the layout viewport until the fixed bottom:0 bar (800..844) is in the visible band: the fixed
+// body follows the pan, so the composer rides at the band's bottom edge and would meet the bar. The bar's box decides
+// whenever it can be read: at offsetTop 340 the band ends at 800 and the bar is hidden (no strip); at 341 its top pixel is
+// in the band and the strip is reserved; at 384 (the band 384..844, the bar wholly inside) too. The first cut took upstream's
+// height difference first (844 - 460 > 120: a keyboard) and collapsed the strip over the composer in the last two
+visualViewport.height = 460; visualViewport.offsetTop = 340; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+out.barUnderTheBand = { appTop: appTop(), appH: appH(), barH: barH() };
+visualViewport.offsetTop = 341; fire(VV, 'scroll'); flush();
+out.barEntersTheBand = { appTop: appTop(), appH: appH(), barH: barH() };
+visualViewport.offsetTop = 384; fire(VV, 'scroll'); flush();
+out.barInTheBand = { appTop: appTop(), appH: appH(), barH: barH() };
+visualViewport.height = 844; visualViewport.offsetTop = 0; fire(VV, 'resize'); flush();
+out.barInTheBandBack = { appTop: appTop(), appH: appH(), barH: barH() };
 // round 2 (2026-09-19): the writer's other population. fit() publishes a pan only off a coarse pointer; a FINE pointer writes
 // 0px whatever the visual viewport says (no soft keyboard to pan for), so a fine-pointer window the mobile query still
 // matches by width alone (at or under 820 px) takes the fixed body at top 0. From a panned state, the pointer turns fine
@@ -702,8 +716,8 @@ class MobileFitExecutes(unittest.TestCase):
         self.assertEqual(self.out["shrunkBack"], {"appH": "844px", "barH": "44px"})
 
     def test_a_pinch_publishes_no_pan_and_keeps_the_bars_strip(self):
-        # a zoom pans the visual viewport too (iOS zooms through user-scalable=no) with no keyboard behind it: nothing
-        # about the shell's layout may move under a pinch (the pinch-aware fit, 2026-08-19)
+        # a pinch pans the visual viewport too, with no keyboard behind it: nothing about the shell's layout may move
+        # under a pinch (the pinch-aware fit, 2026-08-19)
         self.assertEqual(self.out["pinch"], {"appTop": "0px", "appH": "844px", "barH": "44px"})
         self.assertEqual(self.out["pinchBack"], {"appTop": "0px", "appH": "844px", "barH": "44px"})
 
@@ -724,6 +738,18 @@ class MobileFitExecutes(unittest.TestCase):
         self.assertEqual(self.out["barAtTheEdge"], {"appH": "460px", "barH": "0px"})
         self.assertEqual(self.out["barOnePxIn"], {"appH": "460px", "barH": "44px"})
         self.assertEqual(self.out["barEdgeBack"], {"appH": "844px", "barH": "44px"})
+
+    def test_a_bar_inside_the_band_under_a_pan_keeps_its_strip_whatever_the_height_difference_says(self):
+        # round 3 (2026-09-19): the first cut read upstream's height difference FIRST and the bar's box only when that said no
+        # keyboard, so with the keyboard up (844 - 460 > 120) and the visual viewport dragged down the layout viewport until
+        # the fixed bar was inside the visible band, the strip still collapsed while the fixed body, following the pan, put
+        # the composer at the band's bottom edge under the bar. The box decides whenever it can be read: hidden with the band
+        # ending at the bar's top (offsetTop 340), visible one pixel further (341) and wholly inside (384), and a visible bar
+        # keeps its strip. The first cut gave 0px in all three.
+        self.assertEqual(self.out["barUnderTheBand"], {"appTop": "340px", "appH": "460px", "barH": "0px"})
+        self.assertEqual(self.out["barEntersTheBand"], {"appTop": "341px", "appH": "460px", "barH": "44px"}, "one pixel of the bar in the band")
+        self.assertEqual(self.out["barInTheBand"], {"appTop": "384px", "appH": "460px", "barH": "44px"}, "the bar wholly inside the band")
+        self.assertEqual(self.out["barInTheBandBack"], {"appTop": "0px", "appH": "844px", "barH": "44px"})
 
     def test_a_fine_pointer_writes_no_pan_whatever_the_visual_viewport_says(self):
         # round 2 (2026-09-19): the writer is gated on the pointer and the fixed body on the layout query, two populations. A

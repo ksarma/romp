@@ -123,12 +123,16 @@ class OneHeightBasis(unittest.TestCase):
 
     def test_no_html_or_body_rule_gives_the_fixed_panels_a_new_containing_block(self):
         # round 2 (2026-09-19): the first cut looped over the test's own literal for these properties, a guard no kernel.py could
-        # fail. The invariant is page-wide: a transform, filter, contain, will-change, perspective or backdrop-filter on html
+        # fail. The invariant is page-wide: a transform (or one of its longhands translate, rotate and scale, or an
+        # offset-path), a filter or backdrop-filter, a contain or content-visibility, a will-change or a perspective on html
         # or body makes THAT box the containing block of every position:fixed descendant, and the shell's fixed panels (the
         # tab bar glued to the true bottom above all) would move with the fixed body's pan. So the scan reads the served CSS,
         # every style element and every media block. The population is every rule whose selector has html, body or :root as
         # its SUBJECT (the last compound: 'body.picker-open iframe.lifted' names body as an ancestor, where a transform is
-        # legitimate, and is out), and a property matches at a declaration boundary (text-transform is not transform).
+        # legitimate, and is out), and a property matches at a declaration boundary (text-transform is not transform, and
+        # transform:scale(...) is a transform value, not a scale declaration). Round 3 (2026-09-19): the list was six; the
+        # five added (translate, rotate, scale, content-visibility, offset-path) each displaced a fixed bottom:0 bar into the
+        # body's box in Chromium and WebKit the way will-change:transform does, and the six-item scan stayed green for them.
         rules = _served_rules(self.html)
         subject = re.compile(r"^(html|body|:root)(?![\w-])")
         def subjects(sel):
@@ -137,7 +141,7 @@ class OneHeightBasis(unittest.TestCase):
         self.assertGreaterEqual(len(pop), 4, "the html/body population is the base chain, the mobile chain, the flex body and the fixed body at least: %r"
                                 % ([sel for _, sel, _ in pop],))
         self.assertIn(_FIXED_BODY_RULE, ["%s{%s}" % (sel, decl) for _, sel, decl in pop], "the fixed body rule is in the population")
-        prop = re.compile(r"(^|;)\s*(transform|filter|contain|will-change|perspective|backdrop-filter)\s*:")
+        prop = re.compile(r"(^|;)\s*(transform|translate|rotate|scale|filter|backdrop-filter|contain|content-visibility|will-change|perspective|offset-path)\s*:")
         self.assertEqual([(at, sel, decl) for at, sel, decl in pop if prop.search(decl)], [],
                          "a containing-block property on html or body moves every fixed panel with the fixed body's pan")
 
@@ -146,21 +150,34 @@ class OneHeightBasis(unittest.TestCase):
         # sized by --app-h, the new-session picker's lift (body.picker-open iframe.lifted, top:0), still at layout y 0 under
         # the pan, so the band the body rule removes from the composer survived under the picker; the comment over the body
         # rule had listed six fixed panels by hand and missed it. The consumers are DERIVED here from the served CSS, never
-        # listed: every rule that is position:fixed and sized by var(--app-h) sits at var(--app-top), in the rule itself or
-        # in a later rule of the same selector inside the mobile block (the lift's base rule is upstream's line and stays
-        # byte-identical; the mobile block re-tops it, so a coarse desktop layout keeps the lift at the static body's origin).
+        # listed. Round 3 (2026-09-19): per SELECTOR, not per rule. A selector's declarations are the union over every rule
+        # that names it (each member of a comma list counts), at any at-rule level, so a box whose position:fixed sits in one
+        # rule and whose var(--app-h) height sits in another rule of the same selector is in the population too (the per-rule
+        # scan before this left such a box out and its census stayed green). Each member sits at var(--app-top) in a rule of
+        # its selector inside the mobile block (the lift's base rule is upstream's line and stays byte-identical; the mobile
+        # block re-tops it, so a coarse desktop layout keeps the lift at the static body's origin), and no rule of the
+        # selector after that origin names another top, which would win the cascade at equal specificity.
         rules = _served_rules(self.html)
         self.assertGreater(len(rules), 100, "the parse read the served stylesheets: %d rules" % len(rules))
-        fixed_h = [(i, at, sel, decl) for i, (at, sel, decl) in enumerate(rules) if "position:fixed" in decl and "var(--app-h" in decl]
-        self.assertTrue(fixed_h, "derived population empty: no fixed rule sized by --app-h in the served CSS")
+        by_sel = {}
+        for i, (at, sel, decl) in enumerate(rules):
+            for member in sel.split(","):
+                by_sel.setdefault(member.strip(), []).append((i, at, decl))
+        fixed_h = sorted(sel for sel, rs in by_sel.items()
+                         if any("position:fixed" in d for _, _, d in rs) and any("var(--app-h" in d for _, _, d in rs))
+        self.assertTrue(fixed_h, "derived population empty: no selector both position:fixed and sized by --app-h in the served CSS")
         # the census as of this change. A new fixed consumer of --app-h joins this list AND takes the pan (the loop below),
         # or the band opens again under whatever it covers.
-        self.assertEqual(sorted(sel for _, _, sel, _ in fixed_h), ["body", "body.picker-open iframe.lifted"])
+        self.assertEqual(fixed_h, ["body", "body.picker-open iframe.lifted"])
         mobile = ("@media " + km._MOBILE_MQ,)
         origin = "top:var(--app-top,0px)"
-        for i, at, sel, decl in fixed_h:
-            retopped = [d for j, (a, s_, d) in enumerate(rules) if j > i and a == mobile and s_ == sel and origin in d]
-            self.assertTrue(origin in decl or retopped, "%s (in %r) has no --app-top origin: %s" % (sel, at, decl))
+        a_top = re.compile(r"(^|;)\s*top\s*:")
+        for sel in fixed_h:
+            rs = by_sel[sel]
+            origins = [i for i, at, d in rs if at == mobile and origin in d]
+            self.assertTrue(origins, "%s has no --app-top origin inside the mobile block: %r" % (sel, [(at, d) for _, at, d in rs]))
+            self.assertEqual([(at, d) for i, at, d in rs if i > max(origins) and a_top.search(d) and origin not in d], [],
+                             "%s: a rule after its --app-top origin names another top and wins the cascade" % sel)
 
     def test_an_unpainted_pane_is_dark_not_white(self):
         # a pane whose document has not painted is a white rectangle in a dark frame (Firefox shows it
@@ -197,13 +214,17 @@ class RefitsWhenTheVisibleHeightChanges(unittest.TestCase):
         self.assertLess(self.js.index("setProperty('--app-top'"), self.js.index("if(window.scrollY||document.documentElement.scrollTop)window.scrollTo(0,0);"))
 
     def test_the_bars_reservation_follows_the_bars_own_box(self):
-        # D1 (2026-09-19): upstream's kbOpen (the visual viewport far shorter than the layout viewport) stands, rebound
-        # rather than edited because barfit() calls it by name, and widened by the bar's geometry: hidden when its box
-        # starts at or below the visible band's bottom edge (offsetTop + vv.height, layout coordinates). A bar an engine
-        # keeps above the keyboard stays visible by this reading and keeps its strip, so it never covers the composer.
+        # D1 (2026-09-19): kbOpen is rebound rather than edited because barfit() calls it by name; upstream's declaration
+        # stands, saved as kbOpenVV. The bar's BOX decides whenever it can be read: hidden when the box starts at or below the
+        # visible band's bottom edge (offsetTop + vv.height, layout coordinates), visible otherwise, whatever the height
+        # difference says (round 3, 2026-09-19: the first cut took upstream's verdict FIRST, so with the keyboard up and the
+        # visual viewport dragged far enough down the layout viewport for the bar to enter the band, the strip collapsed and
+        # the bar painted over the composer the fixed body had carried to the band's bottom edge). Upstream's reading stands
+        # only where the box cannot be read (no bar, no visualViewport) and under a pinch, where a zoom must not re-lay the
+        # shell. Behaviour: test_kernel_mobile.MobileFitExecutes.
         self.assertIn("function kbOpen(){var vv=window.visualViewport;return vv?(window.innerHeight-vv.height*(vv.scale||1)>120):false;}", self.js)
-        self.assertIn("var kbOpenVV=kbOpen;\nkbOpen=function(){if(kbOpenVV())return true;var vv=window.visualViewport,bar=document.getElementById('mtabs');\n"
-                      "if(!vv||!bar||typeof bar.getBoundingClientRect!=='function'||(vv.scale||1)>1.01)return false;\n"
+        self.assertIn("var kbOpenVV=kbOpen;\nkbOpen=function(){var vv=window.visualViewport,bar=document.getElementById('mtabs');\n"
+                      "if(!vv||!bar||typeof bar.getBoundingClientRect!=='function'||(vv.scale||1)>1.01)return kbOpenVV();\n"
                       "return bar.getBoundingClientRect().top>=(vv.offsetTop||0)+vv.height;};", self.js)
         # barfit() still reads kbOpen by name, so the rebinding is what it sees
         self.assertIn("setProperty('--mtabs-h',(kbOpen()?0:(bar.offsetHeight||0))+'px')", self.js)

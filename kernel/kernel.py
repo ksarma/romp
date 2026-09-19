@@ -69879,15 +69879,20 @@ function kbOpen(){var vv=window.visualViewport;return vv?(window.innerHeight-vv.
 // interactive-widget=resizes-content: innerHeight, vv.height and --app-h agree) while the fixed bar is still outside the
 // visible band; .col then reserved a bar-tall strip that rendered as an empty band above the keyboard. Read the geometry
 // instead of inferring it: the bar is hidden when its box starts at or below the visible band's bottom edge, offsetTop +
-// vv.height in layout coordinates (getBoundingClientRect is layout-viewport-relative, for a fixed box too). A bar the
-// engine keeps ABOVE the keyboard (Android Chrome under resizes-content: innerHeight shrinks and fixed bottom:0 rides the
-// shrunken bottom) is visible by this reading, so its strip stays reserved and the bar never covers the composer; the
-// focused-field and shrunken-innerHeight readings considered instead would have collapsed it there. A pinch (scale above
-// 1) keeps upstream's verdict: user-scalable=no leaves none on a phone, and a desktop trackpad zoom must not re-lay the
-// shell (the pinch-aware note over fit()). Rebound rather than edited: barfit() calls kbOpen by name.
+// vv.height in layout coordinates (getBoundingClientRect is layout-viewport-relative, for a fixed box too), and visible
+// otherwise, whatever the height difference says. The bar's box decides whenever it can be read; upstream's reading stands
+// only where it cannot (no bar, no visualViewport) and under a pinch (scale above 1.01), where a zoom must not re-lay the
+// shell (the pinch-aware note over fit()). Round 3 (2026-09-19): the first cut took upstream's verdict FIRST and read the
+// box only when that said no keyboard, so with the keyboard up and the visual viewport dragged far enough down the layout
+// viewport for the bar to enter the visible band (the fixed body follows the pan, so the composer rides at the band's
+// bottom edge) the strip still collapsed and the bar painted over the composer's bottom; a bar inside the band keeps its
+// strip now. A bar the engine keeps ABOVE the keyboard (Android Chrome under resizes-content: innerHeight shrinks and
+// fixed bottom:0 rides the shrunken bottom) is visible by this reading too, so its strip stays reserved; the focused-field
+// and shrunken-innerHeight readings considered instead would have collapsed it there. Rebound rather than edited:
+// barfit() calls kbOpen by name.
 var kbOpenVV=kbOpen;
-kbOpen=function(){if(kbOpenVV())return true;var vv=window.visualViewport,bar=document.getElementById('mtabs');
-if(!vv||!bar||typeof bar.getBoundingClientRect!=='function'||(vv.scale||1)>1.01)return false;
+kbOpen=function(){var vv=window.visualViewport,bar=document.getElementById('mtabs');
+if(!vv||!bar||typeof bar.getBoundingClientRect!=='function'||(vv.scale||1)>1.01)return kbOpenVV();
 return bar.getBoundingClientRect().top>=(vv.offsetTop||0)+vv.height;};
 function barfit(){try{var bar=document.getElementById('mtabs');if(!bar)return;
 document.documentElement.style.setProperty('--mtabs-h',(kbOpen()?0:(bar.offsetHeight||0))+'px');}catch(e){}}
@@ -72369,9 +72374,10 @@ def _landing():
             # visualViewport.offsetTop). iOS pans the visual viewport down the layout viewport to reveal the focused composer
             # while the layout viewport keeps its height; a body sized to vv.height at layout y 0 then left the bottom
             # offsetTop pixels of the visible band showing bare background under the composer. With the pan as its top edge
-            # the body covers exactly the visible band. The height chain of the rule above; no transform, filter or contain
-            # on any html or body rule (tests/test_shell_viewport_fit.py scans the served CSS for them), so the shell's
-            # fixed panels keep the viewport as their containing block and stay glued to the true bottom. This block only:
+            # the body covers exactly the visible band. The height chain of the rule above; no containing-block property
+            # (transform and its longhands, filter, contain, will-change and the rest of the list tests/test_shell_viewport_fit.py
+            # scans the served CSS for) on any html or body rule, so the shell's fixed panels keep the viewport as their
+            # containing block and stay glued to the true bottom. This block only:
             # outside _MOBILE_MQ (a fine pointer above 820 px, a coarse one above 1024 px) the body stays in flow at layout
             # y 0; a coarse document there still publishes its pan, and nothing consumes it (the two gates, and the two
             # populations they cover, are in the fit() comment; the served populations leg drives both).
