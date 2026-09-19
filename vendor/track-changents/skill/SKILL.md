@@ -161,39 +161,50 @@ head outside every project followed by an expansion, run from a cwd in no
 project and from a tracked one, the 22 readable ones refuse 3 times after
 resolution, each by name on a tracked file (20 refusals from the tracked cwd
 became allowances), and the 22 opaque ones keep their 22 refusals from the
-tracked cwd and their 22 allowances from the cwd in no project. This guard is
-best-effort against known write forms: it refuses the shell writes it models
-and, by design, allows anything it does not recognise, so it never blocks
-ordinary work it cannot read; it is a backstop, not a complete boundary. The
-allow-by-default for an unmodelled writer is deliberately not flipped, since
-flipping it would refuse almost all normal work. What it does refuse, while a
-tracked project is in play, is a write it reads but cannot place: a target it
-cannot read, a path it cannot check (a stat error other than not-found), an
-option on a modelled writer or wrapper it does not parse in full, an env -S
-string, a shell option it does not know to be inert for paths, a link whose
-source it cannot read, a `~` or `$HOME` write beside a mention of HOME or beside
-a variable name the shell fills in, a template or format string as an
-interpreter's write path, and, from any working directory, a write through an
-alias the command makes (a hard link, `cp -l`, `cp -s`, `link`, a link whose
-source it cannot read) whose source lies in a tracked project or is one it
-cannot read. A value it can read (a name the command set to a plain string
-earlier in the same command, HOME, PWD, OLDPWD, `~+` and `~-`, none of them once
-the command names or may fill in the name) is resolved first and the real path
-judged. These write forms are not modelled and still reach a tracked file:
-rsync; awk with a redirect inside its program; ed; ex; make; find with -delete
-or -exec; a git subcommand that writes the working tree (checkout, stash, apply,
-reset, rm, clean, mv); a computed path inside an interpreter (a name, sys.argv,
-os.environ or process.env in python3 -c or node -e); a script the shell reads
-from elsewhere (eval, xargs, a sourced file, trap, a command whose name is an
-expansion, a script held in a variable); a command that runs another command and
-is outside the guard's wrapper set (unshare, nsenter, script, setarch, setpriv,
-strace, coproc and their kin); a link made by a writer outside the model
-(python, tar, rsync) that a later modelled write follows; shuf -o; a cd through
-CDPATH; and an opaque expansion from a cwd outside every project, leading or
-after a literal head outside every project (a `..` inside the value could climb
-into a project; from a cwd in a tracked project the same word is refused as not
-literal). Whichever way you write a tracked file, use `track-edit`, so your
-change comes back to be accepted or rejected.
+tracked cwd and their 22 allowances from the cwd in no project. A pin addendum
+(2026-09-19) pinned the fifth pass's unpinned claims from the tracked cwd, where
+an unresolved name is refused and a resolved one judged by name, and closed what
+its attacker found, each a stated rule applied to a construct the guard could
+already see: `cp --parents` lands each source at its whole path under the
+destination, so `cp --parents docs/report.md ../web/` is judged on
+web/docs/report.md; python's `-c` is read inside its option cluster with the
+code glued on (`-c'...'`, `-uc'...'`, `-Xutf8 -c'...'`) and node's `--eval=`
+with its code (`--print=` takes none, node then reads the script from stdin);
+and a triple-quoted python path is the plain string it is, while a template
+literal holding a quote is still a template. None of the 164 ordinary commands
+newly refuses. This guard is best-effort against known write forms: it refuses
+the shell writes it models and, by design, allows anything it does not
+recognise, so it never blocks ordinary work it cannot read; it is a backstop,
+not a complete boundary. The allow-by-default for an unmodelled writer is
+deliberately not flipped, since flipping it would refuse almost all normal work.
+What it does refuse, while a tracked project is in play, is a write it reads but
+cannot place: a target it cannot read, a path it cannot check (a stat error
+other than not-found), an option on a modelled writer or wrapper it does not
+parse in full, an env -S string, a shell option it does not know to be inert for
+paths, a link whose source it cannot read, a `~` or `$HOME` write beside a
+mention of HOME or beside a variable name the shell fills in, a template or
+format string as an interpreter's write path, and, from any working directory, a
+write through an alias the command makes (a hard link, `cp -l`, `cp -s`, `link`,
+a link whose source it cannot read) whose source lies in a tracked project or is
+one it cannot read. A value it can read (a name the command set to a plain
+string earlier in the same command, HOME, PWD, OLDPWD, `~+` and `~-`, none of
+them once the command names or may fill in the name) is resolved first and the
+real path judged. These write forms are not modelled and still reach a tracked
+file: rsync; awk with a redirect inside its program; ed; ex; make; find with
+-delete or -exec; a git subcommand that writes the working tree (checkout,
+stash, apply, reset, rm, clean, mv); a computed or escaped path inside an
+interpreter (a name, sys.argv, os.environ or process.env, a concatenation or an
+escape sequence in the string, in python3 -c or node -e); a script the shell
+reads from elsewhere (eval, xargs, a sourced file, trap, a command whose name is
+an expansion, a script held in a variable); a command that runs another command
+and is outside the guard's wrapper set (unshare, nsenter, script, setarch,
+setpriv, strace, coproc and their kin); a link made by a writer outside the
+model (python, tar, rsync) that a later modelled write follows; shuf -o; a cd
+through CDPATH; and an opaque expansion from a cwd outside every project,
+leading or after a literal head outside every project (a `..` inside the value
+could climb into a project; from a cwd in a tracked project the same word is
+refused as not literal). Whichever way you write a tracked file, use
+`track-edit`, so your change comes back to be accepted or rejected.
 
 For ANY change to the file, use the CLI, NOT the Edit/Write/MultiEdit tools:
 

@@ -3802,6 +3802,24 @@ document stands on its own, each with the reasoning it was given.
     tracked cwd and allowed from the cwd in no project; three recorded false refusals from earlier passes are allowed
     now that their value resolves (a `$PWD` link source, an `x=scratch` class-E entry, a `~+` spelling), and one cost
     entry is added, a `$PWD` write beside a mention of PWD from the tracked cwd.
+    The pin addendum (2026-09-19; the fifth pass's mutation lens found seven B2 claims no test held, and its attacker
+    seven in-model overwrites; the second commit of the ruled sequence) pinned the claims from the tracked cwd, where an
+    unresolved name is refused and a resolved one judged by name (a mid-word `$HOME` beside a mention of HOME; a loop
+    variable, a `read`, a `mapfile` and a `getopts` into a name set earlier; the copy of the names a `$(...)` inherits;
+    the poison of an unknown wrapper option and of an `env -S` string; the fresh scope of a `flock -c` string;
+    resolution under a bare `.git` repo, each with the real-shell landing or the clean twin run, and each opaque row
+    pinned allowed from a cwd in no project, the residual with its boundary) and closed the overwrites, each a stated
+    rule applied to a construct the guard could already see, no rule added (the PWD and OLDPWD finding is closed in B2's
+    own commit, above): `cp --parents` lands each source at its whole spelling under the destination (`under` in
+    `copyTargets`; the flag was known and its landing computed as the basename); python's short options are read as a
+    cluster the way python reads them, `-c` and `-m` taking the rest of the word or the next word and `-W` and `-X` a
+    value (`-c'CODE'`, `-uc'CODE'`, `-Xutf8 -c'CODE'`, `-bc'CODE'` and `-Ic'CODE'` were skipped as unknown options);
+    node's `--eval=CODE` is its code and `--print=X` a flag (node then reads the script from stdin, measured); a
+    triple-quoted python string is the plain string it is (`pyStringArg`'s delimiter is three quotes or one) and a JS
+    string body runs to the next quote of its own kind, so a template literal holding a quote is a template (`nodeStr`).
+    The cost, measured against the corpus (285 entries): none of the 164 ordinary commands newly refuses. The contract's
+    writer list names a concatenation and an escape sequence among the interpreter paths that pass
+    (`open("docs\x2freport.md","w")` lands, measured), and the four surfaces carry the addendum's sentence.
     Without ROMP_SID it exits 0 before reading stdin (decision 24). Cost: about 60 ms
     per Bash call when no target needs the link closure (a read, a literal target outside any project, an explicit
     hit on the project's tracked list, an empty list); a write to a file inside a tracking project that the list

@@ -282,6 +282,22 @@
 // reaches (one of them a live overwrite before), and 20 of their 22 refusals from the tracked cwd became allowances;
 // the 22 opaque shapes keep their verdicts, refused from the tracked cwd and allowed from the cwd in no project.
 //
+// THE PIN ADDENDUM (2026-09-19, after the fifth pass's mutation lens and attacker; the second commit of the ruled
+// sequence). Seven B2 claims no test held are pinned (a mid-word `$HOME` beside a mention of HOME; a loop variable, a
+// `read`, a `mapfile` and a `getopts` into a name set earlier; the copy of the names a `$(...)` inherits; the poison
+// of an unknown wrapper option and of an `env -S` string; the fresh scope of a `flock -c` string; resolution under a
+// bare `.git` repo), each from a tracked cwd, where an unresolved name is refused and a resolved one judged by name,
+// and the attacker's in-model overwrites are closed, each a stated rule applied to a construct the guard could
+// already see, no rule added (the PWD and OLDPWD finding is closed in B2's own commit above: EXPANDED_NAMES names
+// every name valueOf substitutes). `cp --parents`, a known flag, had its landing computed as the basename; the source
+// lands at its whole spelling under the destination (`under` in copyTargets). Python's `-c` was matched only at the
+// end of a word, so `-c'CODE'`, `-uc'CODE'`, `-bc'CODE'` and `-Ic'CODE'` were skipped as unknown options; the cluster
+// is read as python reads it. Node's `--eval=CODE` was skipped too (`--print=X` takes no code: node reads the script
+// from stdin, measured). A triple-quoted python path was read as an empty string with text after it and dropped
+// (pyStringArg), and a template literal holding a quote matched neither the literal nor the template class (nodeStr).
+// None of the 164 ordinary commands newly refuses. The contract's writer list names a concatenation and an escape
+// sequence among the interpreter paths that pass (measured: `open("docs\x2freport.md","w")` lands).
+//
 // THE LISTS THAT REMAIN, each with the side its GAP falls on (a missing entry causes a false refusal, or a write):
 //   PREFIXES (the wrapper set): gap = a WRITE (an unlisted wrapper is read as its own command, an unmodelled writer by
 //     the contract), so the set is stated on the four surfaces and the unlisted wrappers the passes found (unshare,
@@ -317,15 +333,17 @@
 // plain string earlier in the same command, HOME, PWD, OLDPWD, `~+` and `~-`, none of them once the command names or
 // may fill in the name) is resolved first and the real path judged. These write forms are not modelled and still
 // reach a tracked file: rsync; awk with a redirect inside its program; ed; ex; make; find with -delete or -exec; a
-// git subcommand that writes the working tree (checkout, stash, apply, reset, rm, clean, mv); a computed path inside
-// an interpreter (a name, sys.argv, os.environ or process.env in python3 -c or node -e); a script the shell reads
-// from elsewhere (eval, xargs, a sourced file, trap, a command whose name is an expansion, a script held in a
-// variable); a command that runs another command and is outside the guard's wrapper set (unshare, nsenter, script,
-// setarch, setpriv, strace, coproc and their kin); a link made by a writer outside the model (python, tar, rsync)
-// that a later modelled write follows; shuf -o; a cd through CDPATH; and an opaque expansion from a cwd outside every
-// project, leading or after a literal head outside every project (a `..` inside the value could climb into a project;
-// from a cwd in a tracked project the same word is refused as not literal). The same paragraph, and this writer list,
-// are on the vendored SKILL.md, hooks/README.md and docs/install.md, pinned identical by a test.
+// git subcommand that writes the working tree (checkout, stash, apply, reset, rm, clean, mv); a computed or escaped
+// path inside an interpreter (a name, sys.argv, os.environ or process.env, a concatenation or an escape sequence in
+// the string, in python3 -c or node -e); a script the shell reads from elsewhere (eval, xargs, a sourced file, trap,
+// a command whose name is an expansion, a script held in a variable); a command that runs another command and is
+// outside the guard's wrapper set (unshare, nsenter, script, setarch, setpriv, strace, coproc and their kin); a link
+// made by a writer outside the model (python, tar, rsync) that a later modelled write follows; shuf -o; a cd through
+// CDPATH; and an opaque expansion from a cwd outside every project, leading or after a literal head outside every
+// project (a `..` inside the value could climb into a project; from a cwd in a tracked project the same word is
+// refused as not literal). The same paragraph, and this writer list, are on the vendored SKILL.md, hooks/README.md
+// and docs/install.md, pinned identical by a test.
+
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -1614,6 +1632,7 @@ function parseCopyOptions(args, verb) {
   const operands = [];
   let targetDir = null;
   let noTargetDir = false;
+  let parents = false;   // cp --parents: each source lands at <destination>/<the source path as spelled> (the pin addendum)
   for (let k = 0; k < args.length; k++) {
     const a = args[k];
     const t = a.text;
@@ -1626,6 +1645,7 @@ function parseCopyOptions(args, verb) {
       const eq = t.indexOf('=');
       const nameL = eq < 0 ? t.slice(2) : t.slice(2, eq);
       if (eq < 0 && spec.argLong.has(nameL)) { k++; continue; }   // a separate argument
+      if (verb === 'cp' && eq < 0 && nameL === 'parents') { parents = true; continue; }
       if (spec.knownLong.has(nameL)) continue;                     // a flag, or a value glued with `=`
       return { unknown: t };
     }
@@ -1652,20 +1672,33 @@ function parseCopyOptions(args, verb) {
     }
     operands.push(a);
   }
-  return { operands, targetDir, noTargetDir };
+  return { operands, targetDir, noTargetDir, parents };
 }
 
 // cp / mv / install / ln: the last operand is the destination, unless -t DIR names the directory;
 // a destination that is an existing directory receives each source under its own name. A glob
 // operand is expanded first, as the shell expands it before the command sees its operands. A
 // link is one directory entry whatever it points at: ln names its link and walks no source.
+// `cp --parents` (the pin addendum, 2026-09-19; the fourth and fifth passes' `cp --parents docs/report.md ../web/`
+// wrote web/docs/report.md while the guard, which knew the option as a flag, judged web/report.md): the source
+// lands at <destination>/<the source path as spelled>, a `..` in it climbing from the destination as cp's own
+// `../web2/../abs/a/b/c.md` does, and the destination is a directory or cp writes nothing (one that is not there
+// when the hook runs is read as one, the refuse side).
 // Returns { targets } or { unknown } (an option the table does not know, for the caller to refuse).
 function copyTargets(args, cwd, verb) {
   const land = (s, d) => (verb === 'ln' ? [d] : landing(s, d, cwd));
   const parsed = parseCopyOptions(args, verb);
   if (parsed.unknown) return { unknown: parsed.unknown };
   if (parsed.installDir) return { targets: [] };   // directories made, no file written
-  const { operands, targetDir: targetDirRaw, noTargetDir } = parsed;
+  const { operands, targetDir: targetDirRaw, noTargetDir, parents } = parsed;
+  // the name a source takes under a destination directory: its basename, or with --parents its whole spelling
+  const under = (dirText, s) => {
+    if (!parents) return word(path.join(dirText, path.basename(s.text)), s.literal, s.raw, { at: dirText });
+    const prefix = dirText.replace(/\/+$/, '') + '/';
+    const rel = s.text.replace(/^\/+/, '');
+    const cut = s.text.length - rel.length;
+    return word(prefix + rel, s.literal, s.raw, { at: dirText, marks: s.marks ? 'q'.repeat(prefix.length) + s.marks.slice(cut) : null, numeric: s.numeric });
+  };
   let targetDir = targetDirRaw;
   const expanded = [];
   for (let k = 0; k < operands.length; k++) {
@@ -1686,17 +1719,17 @@ function copyTargets(args, cwd, verb) {
   if (targetDir) {
     if (targetDir.glob) { const m = expandGlob(targetDir, cwd); targetDir = m && m.length === 1 ? m[0] : word(targetDir.text, false, targetDir.raw, { marks: targetDir.marks }); }
     if (!targetDir.literal) return { targets: [targetDir] };
-    for (const s of expanded) out.push(...land(s, word(path.join(targetDir.text, path.basename(s.text)), s.literal, s.raw, { at: targetDir.text })));
+    for (const s of expanded) out.push(...land(s, under(targetDir.text, s)));
     return { targets: out };
   }
   if (expanded.length < 2) return { targets: out };
   const dst = expanded[expanded.length - 1];
   if (!dst.literal) return { targets: [dst] };
   const resolved = literalPath(dst.text, cwd);
-  let isDir = false;
-  if (!noTargetDir && resolved) { try { isDir = fs.statSync(resolved).isDirectory(); } catch { isDir = /\/$/.test(dst.text); } }
+  let isDir = parents;   // with --parents the destination is a directory, or cp writes nothing
+  if (!noTargetDir && resolved && !isDir) { try { isDir = fs.statSync(resolved).isDirectory(); } catch { isDir = /\/$/.test(dst.text); } }
   if (isDir) {
-    for (const s of expanded.slice(0, -1)) out.push(...land(s, word(path.join(dst.text, path.basename(s.text)), s.literal, s.raw, { at: dst.text })));
+    for (const s of expanded.slice(0, -1)) out.push(...land(s, under(dst.text, s)));
     return { targets: out };
   }
   if (expanded.length === 2) return { targets: land(expanded[0], dst) };
@@ -1779,10 +1812,15 @@ const PY_OPEN = new RegExp(`\\b(?:io\\.)?open\\(${PY_ARG}\\)`, 'g');
 const PY_PATH_OPEN = new RegExp(`\\bPath\\(${PY_ARG}\\)\\s*\\.open\\(${PY_ARG}\\)`, 'g');
 const PY_PATH_WRITE = new RegExp(`\\bPath\\(${PY_ARG}\\)\\s*\\.write_(?:text|bytes)\\(`, 'g');
 const PY_SHUTIL = new RegExp(`\\bshutil\\.(?:copy|copyfile|copy2|move)\\(${PY_ARG}\\)`, 'g');
-const NODE_STR = '(["\'`])([^"\'`\\n]*)\\1';   // one string literal: its quote and its body (a `${` inside a backtick body is a template)
+// One JS string literal: its quote (group g) and its body (group g + 1). The body runs to the next quote of the SAME
+// kind, so the other two quotes inside it are text (the pin addendum, 2026-09-19: a body class that excluded every
+// quote could not span `\`docs/${"report"}.md\``, so a template literal holding a string was neither a literal nor a
+// template and the write it named was never judged); a `${` inside a backtick body makes it a template (nodeStringArg).
+const nodeStr = (g) => `(["'\`])((?:(?!\\${g})[^\\n])*)\\${g}`;
+const NODE_STR = nodeStr(1);
 const NODE_WRITE = new RegExp(`\\b(?:writeFile|writeFileSync|appendFile|appendFileSync|createWriteStream|truncate|truncateSync)\\(\\s*${NODE_STR}\\s*[,)]`, 'g');
-const NODE_OPEN = new RegExp(`\\b(?:open|openSync)\\(\\s*${NODE_STR}\\s*,\\s*(["\'\`])([rwaxs+]*)\\3`, 'g');
-const NODE_COPY = new RegExp(`\\b(?:copyFile|copyFileSync|rename|renameSync|cp|cpSync)\\(\\s*(["\'\`])[^"\'\`\\n]*\\1\\s*,\\s*${NODE_STR}\\s*[,)]`, 'g');
+const NODE_OPEN = new RegExp(`\\b(?:open|openSync)\\(\\s*${NODE_STR}\\s*,\\s*(["'\`])([rwaxs+]*)\\3`, 'g');
+const NODE_COPY = new RegExp(`\\b(?:copyFile|copyFileSync|rename|renameSync|cp|cpSync)\\(\\s*${nodeStr(1)}\\s*,\\s*${nodeStr(3)}\\s*[,)]`, 'g');
 
 // A python call's argument list, as { positional: [...], keyword: { name: text } }, each value
 // the source text; commas inside quotes or nested parentheses do not split.
@@ -1820,7 +1858,10 @@ function pyString(text) {
 // concatenation: the computed path the contract leaves out of model).
 function pyStringArg(text) {
   const s = String(text == null ? '' : text).trim();
-  const m = s.match(/^([A-Za-z]{0,3})(['"])([^'"\n]*)\2([\s\S]*)$/);
+  // the delimiter is three quotes or one (the pin addendum, 2026-09-19: a triple-quoted plain path was read as an empty
+  // string with text after it and dropped, so `open("""docs/report.md""","w")` wrote the tracked file unjudged); the
+  // body runs to the first closing delimiter, so the other quote inside it is text
+  const m = s.match(/^([A-Za-z]{0,3})('''|"""|['"])([\s\S]*?)\2([\s\S]*)$/);
   if (!m) return null;
   const rest = m[4].trim();
   if (/f/i.test(m[1])) return { template: s };
@@ -1854,7 +1895,7 @@ function scanScript(kind, text) {
   } else if (kind === 'node') {
     for (const m of t.matchAll(NODE_WRITE)) take(nodeStringArg(m[1], m[2]));
     for (const m of t.matchAll(NODE_OPEN)) if (/[wa+]/.test(m[4])) take(nodeStringArg(m[1], m[2]));
-    for (const m of t.matchAll(NODE_COPY)) take(nodeStringArg(m[2], m[3]));
+    for (const m of t.matchAll(NODE_COPY)) take(nodeStringArg(m[3], m[4]));
   }
   return out;
 }
@@ -2719,11 +2760,27 @@ function extract(command, ctx) {
         let stdin = true;   // no script operand: the script is on stdin (python3 <<EOF, python3 -u <<EOF)
         for (let k = 0; k < args.length; k++) {
           const a = args[k];
-          if (kind === 'python' && /^-[WX]./.test(a.text)) continue;   // -Xutf8, -Wignore: an option with its value glued on
-          if (kind === 'python' && /^-[A-Za-z]*c$/.test(a.text)) { inline = args[k + 1] || null; stdin = false; break; }
-          if (kind === 'node' && (a.text === '-e' || a.text === '--eval' || a.text === '-p' || a.text === '--print')) { inline = args[k + 1] || null; stdin = false; break; }
+          // python's short options, read as a cluster the way python reads them (the pin addendum, 2026-09-19; before, `-c`
+          // was matched at the END of a word, so `-c'CODE'`, `-uc'CODE'`, `-bc'CODE'` and `-Ic'CODE'`, the code glued
+          // on, were skipped as unknown options and the write in the code was never scanned): `c` and `m` take the rest of
+          // the word or the next word, `W` and `X` a value the same way, every other letter is a flag
+          if (kind === 'python' && a.literal && /^-[^-]/.test(a.text)) {
+            let seen = null;
+            for (let j = 1; j < a.text.length; j++) {
+              const ch = a.text[j];
+              if (ch === 'c') { inline = j < a.text.length - 1 ? sliceWord(a, j + 1) : (args[k + 1] || null); seen = 'c'; break; }
+              if (ch === 'm') { seen = 'm'; break; }   // a module: its code is not in the command
+              if (ch === 'W' || ch === 'X') { if (j === a.text.length - 1) k++; break; }
+            }
+            if (seen) { stdin = false; break; }
+            continue;
+          }
+          // node's code takes the next word after -e, --eval, -p, --print or the cluster -pe, or is glued with `=` to --eval
+          // (the pin addendum: `--eval='CODE'` was skipped as an unknown option); `--print=X` takes no code, node then reads
+          // the script from stdin (measured on node 22), so it stays a flag and a heredoc after it is the script
+          if (kind === 'node' && (a.text === '-e' || a.text === '--eval' || a.text === '-p' || a.text === '--print' || a.text === '-pe')) { inline = args[k + 1] || null; stdin = false; break; }
+          if (kind === 'node' && a.literal && /^--eval=/.test(a.text)) { inline = sliceWord(a, 7); stdin = false; break; }
           if (a.text === '-') break;   // stdin, said so
-          if (kind === 'python' && a.text === '-m') { stdin = false; break; }   // a module
           if (INTERPRETER_OPERANDS[kind].has(a.text)) { k++; continue; }
           if (a.text.startsWith('-')) continue;
           stdin = false;   // a script file: its contents are not in the command
