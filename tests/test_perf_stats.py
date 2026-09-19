@@ -14,6 +14,7 @@ and test_tab_meta_push.py patterns). Synthetic fixtures only: placeholder UUIDs,
 import base64
 import collections
 import concurrent.futures
+import copy
 import inspect
 import io
 import json
@@ -1980,6 +1981,16 @@ class PusherRecords(unittest.TestCase):
             "_turn_notify_tick")                       # upstream's turn-end notification pass
 
     def setUp(self):
+        # The real _pusher_cycle the tests below drive opens the pusher's cycle on this thread: cycle_begin registers the thread
+        # in _PERF_STATS._owners and cycle() leaves the registration standing, so until this cleanup every class run after
+        # this one in the module inherited the main thread as the pusher's owner (the leak PushStages's real-push test was
+        # green through; 2026-09-19 review). Registered before anything else in setUp, so a raising setUp cannot skip it.
+        owners, cycle_state = dict(km._PERF_STATS._owners), copy.deepcopy(km._PERF_STATS._cycle_state)
+
+        def restore_cycle_owner():
+            km._PERF_STATS._owners.clear(); km._PERF_STATS._owners.update(owners)
+            km._PERF_STATS._cycle_state.clear(); km._PERF_STATS._cycle_state.update(cycle_state)
+        self.addCleanup(restore_cycle_owner)
         self.td = tempfile.TemporaryDirectory()
         names = Path(self.td.name) / "names"
         names.mkdir()
@@ -2249,9 +2260,12 @@ class PushStages(unittest.TestCase):
     first (2026-09-18): stage() credits a push stage to the thread that owns the pusher's cycle, and
     the "push" mark _push carries is no owner, so a bare _push with no cycle open counts under
     stagesForeign and the flat rows read zero. Before that line the real-push test was green only
-    while an earlier class in this module (PusherRecords, through the real _pusher_cycle) had left
-    this thread registered as the pusher's owner, and red with the class run alone; tearDown puts
-    the owner map and the split state back so no later test inherits this class's cycle."""
+    through a leak: PusherRecords drove the real _pusher_cycle, whose cycle_begin registered this
+    thread as the pusher's owner, and never restored the owner map, so the registration reached
+    every class after it (red with this class run alone). That leak is closed at its source, a
+    cleanup in PusherRecords.setUp; this class opens its own cycle because its _push needs an owner,
+    not because a sibling leaves one. tearDown puts the owner map and the split state back so no
+    later test inherits this class's cycle."""
 
     STUBS = ("NAMES", "_live_map", "_live_names", "_chat_tab_sessions", "build_session",
              "_cached_feed", "_cached_timeline", "build_timeline", "_fleet_view_sig", "_comments_frame",
