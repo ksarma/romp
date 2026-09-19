@@ -17,21 +17,23 @@ slot patches per conn, so a kernel that ignores the term is decoded too: tests/t
 Five observables, green with the change:
   1. each relay dial URL (window.__dials) carries caps=feedDelta;
   2. the Waiting pane shows the todo TESTHOST filed after its full frame (the delta applied and reached the pane);
-  3. the frames each relay socket received after its full frame are feedDelta, none of them {type:"delta"};
+  3. the frames each relay socket received after its full frame include a feedDelta;
   4. the HUB's client-diag.jsonl carries no `delta-unapplied` (outline), `feedDelta-unapplied` (outline, waiting)
      or `feedDelta-nobase` (federation) row, and DOES carry the pages' own federation rows (the positive control:
      a negative read over an absent or renamed file must not pass);
   5. the REMOTE kernel's /perf memos.wire.feed_slot_split stays 0 (it never took the re-encoding split path).
-Red at the base on 1, on 3's feedDelta clause, and on 5 (run 2026-09-18: the dial carried no caps, no feedDelta
-frame reached either relay socket, feed_slot_split counted every feed send). 3's {type:"delta"} clause and 2 and 4
-are green at the base too, all for one reason: every change in this lab lands in the frame's REMAINDER (the todo
+Red at the base on 1, 3 and 5 (run 2026-09-18: the dial carried no caps, no feedDelta frame reached either relay
+socket, feed_slot_split counted every feed send). 2 and 4 are green at the base too, both for one reason: every
+change in this lab lands in the frame's REMAINDER (the todo
 changes userTodos and userTodoRows beside the per-session usertodo card; the ledgers slice moves with it), and the
 slot path signs the remainder whole, so its delta for the change exceeds the size guard (_DELTA_MAX_FRACTION, 0.6)
 and downgrades to a whole frame the pane applies. That is the remainder, not the board's size: a 12-session board
 behaves the same, and the base's remote counted 54, 44 and 34 slot-path sends across three runs while sending zero
-{type:"delta"} frames. The {type:"delta"} clause stays because it is the only check on what the socket actually
-received (5 is a counter on the sender); an asks-only change (a notice card, POST /notice) is what makes the slot
-path emit a real patch, and the corners lab drives that. The failing-before test for the apply path is the real
+{type:"delta"} frames. For the same reason this lab asserts nothing about {type:"delta"} frames (a "none arrived"
+clause here could never go red, review round 1); the executable witness that a slot patch is decoded is
+tests/test_federated_capability_corners_served.py CornerCapsIgnoredStandIn.test_frames_after_the_full_are_slot_patches,
+which files an asks-only notice (POST /notice) and asserts a real ("delta", "feed") frame arrived and the card
+showed. The failing-before test for the apply path is the real
 FederationManager fed a remote full frame and a remote delta in ui/webview/federation-remote-feed-delta.test.ts,
 which also runs the no-base case (a remote delta with no full frame held asks THAT kernel for one on its own
 socket), unreachable from outside a live page.
@@ -318,16 +320,12 @@ class FederatedFeedDelta(unittest.TestCase):
                         "the hub's Waiting pane shows the todo TESTHOST filed after the relay socket held its full frame: the remote's "
                         "delta was applied and reached the pane (frames on the waiting relay: %r)" % (self._page("waiting")["frames"],))
 
-    def test_the_remote_serves_the_relay_sockets_feed_deltas_never_slot_deltas(self):
+    def test_the_remote_serves_the_relay_sockets_feed_deltas(self):
         for app in ("waiting", "fleet"):
             frames = self._page(app)["frames"]
             kinds = [f["t"] for f in frames]
             self.assertIn("feed", kinds, "the %s relay socket received the remote's full frame: %r" % (app, kinds))
             self.assertIn("feedDelta", kinds, "…and, after the board changed, a feedDelta frame: %r" % (kinds,))
-            self.assertEqual([f for f in frames if f["t"] == "delta"], [],
-                             "no view-delta slot frame reached the %s relay socket: the remote honoured the cap, so the feed never took "
-                             "the slot path (a slot patch would now be reassembled per conn, federation-remote-view-delta.test.ts, at "
-                             "the cost of a re-encode per build on the remote): %r" % (app, kinds))
 
     def test_the_hub_files_no_unapplied_or_nobase_row(self):
         self._driver_ran()

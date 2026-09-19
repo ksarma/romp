@@ -759,8 +759,8 @@ class CornerNewLocalV1Remote(_Corner):
         self._assert_dials(caps=True)
 
     def test_a_feed_patch_arrived_and_was_reassembled(self):
-        # the append's own patch where the vintage files the pair under asks (1087 B, coll asks, in the round-4 drive), else
-        # the idle slot's clock-only one a minute later (110 B in rounds 2 and 3, when the append moved the remainder and
+        # the append's own patch where the vintage files the pair under asks (1087 B, coll asks, in the round-2 drive), else
+        # the idle slot's clock-only one a minute later (110 B in rounds 1 and 2, when the append moved the remainder and
         # crossed whole); either is a real patch from a real pre-T278c kernel, reassembled with no row and nothing asked
         self._assert_change_posted()
         kinds = self._kinds("fleet")
@@ -806,7 +806,7 @@ class CornerNewLocalV0Remote(_Corner):
     judging as a flat list too, so the receiver refuses it as a base, but a pre-delta kernel sends no patch, so the
     refusal costs nothing and nothing names it (the row is the first patch's; a row at the seed would have named a
     remote behaving as designed). The wire pays a whole frame per change and per minute, the pre-delta cost. The change
-    is a transcript append (rounds 2 and 3 filed
+    is a transcript append (rounds 1 and 2 filed
     a todo, whose visible side that vintage has none of: it serves the feed payload to no Waiting client and minted no
     rolled-up todo card on the feed page); its visible sides are the bar on the hub's timeline and the swap of api's
     provisional row on the Outline, both asserted (the frames are whole here, so the swap is an observable beside the
@@ -871,7 +871,8 @@ class CornerOldLocal(_Corner):
     whole once); the size guard, when the PATCH reaches 0.6 of the frame: for a remainder move the patch is the changed
     cards plus the whole remainder, which happens on this lab board at its composition (ledger rows and scalars about 79
     percent of an 18.5 KB frame in the round-1 drive's record, so a needs-you card's state flip a cycle later crosses
-    whole here and the old page shows the card 1.8 s late instead of never) and not on the measured live board at 17
+    whole here and the old page shows the card late instead of never; the 1.8 s is an early round-1 drive's, with a needs-you
+    notice before the card was made a completed one, and that drive kept no report) and not on the measured live board at 17
     percent of 5.76 MB, where a remainder move is a patch too; for a change confined to the cards the patch is the
     changed cards alone, which reaches 0.6 for a change touching most cards (20 of 30 on the class's 8-session board;
     about 72 percent on the recorded shape, derived from its figures) or for a shrink whose del list reaches 0.6 of
