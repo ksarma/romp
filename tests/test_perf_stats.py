@@ -1249,7 +1249,7 @@ class PushRowsByPurpose(unittest.TestCase):
         nothing from it. The mark alone as the pusher's stand-in (this test's first meaning, 2026-09-18 review) let a
         _push(connect=False) from any other thread merge its walls into those rows: a push share above one hundred percent
         with stagesForeign empty. Latent on a kernel: _push_all's one caller opens the cycle first and _push_one passes
-        connect=True, so no live caller takes this road; a bare _push in a test opens a cycle first (PushStages below)."""
+        connect=True, so no live caller takes this road."""
         st = km._PerfStats()
         out = {}
 

@@ -1434,11 +1434,10 @@ class _PerfStats:
         connect_stages_ms, served as pusher.connectPush.stagesMs; the pusher's cycle owner (its push.* under the "push"
         mark _push sets when the pusher calls it, and its `push` container, closed outside the mark) to the flat row;
         any other writer to stagesForeign, a "push"-marked write from a thread owning no cycle included (the mark says
-        what _push was called for, not whose cycle it ran in; a bare _push in a test opens a cycle first). A connect push
-        runs the same stage calls as the cycle, and until then its walls were added to the
-        flat push.* rows, whose one consumer divides them by the pusher's cycle time. The split rows already keep the
-        owners apart and are unchanged; every other stage (`jobs`, `jobsPass`, `prelude`) is a flat row for every
-        writer, as before."""
+        what _push was called for, not whose cycle it ran in). A connect push runs the same stage calls as the cycle, and
+        until then its walls were added to the flat push.* rows, whose one consumer divides them by the pusher's cycle
+        time. The split rows already keep the owners apart and are unchanged; every other stage (`jobs`, `jobsPass`,
+        `prelude`) is a flat row for every writer, as before."""
         marks = self._byte_marks()
         ms = dt * 1000.0
         with self.lock:
