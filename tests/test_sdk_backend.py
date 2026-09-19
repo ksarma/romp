@@ -10168,6 +10168,203 @@ class DefaultBillingMovesItsFollowers(unittest.TestCase):
         self.assertEqual(s._auth_pending, ""); self.assertFalse(self._reg(s).get("authPending"))
         self.assertEqual([str(m) for m in self.logs if str(m).startswith("auth (")], ["auth (s5): set to key; unchanged, no reconnect"])
 
+    def _same_side_re_pick_beside_another_picks_request(self, n, effort_running="high", **busy):
+        """The round 5 addendum's road (its road lens, 2026-09-19; C11d and C11w): inside the attach window ANOTHER pick (an
+        effort pick) makes its own request, held for live work or deferred behind a turn (`busy`: inflight=1, or a task
+        registered), so _reconnect_when_idle stands with the effort surface alone; then the same-side billing re-pick takes
+        set_auth's already-applying branch (no request of its own), and the cannot-tell attach lands. Returns the session
+        at the moment before the CLI's first init."""
+        s = self._sess(n, auth="key", effort=effort_running)
+        s._launched_keyed = True; s.auth_live = ""; s._launched_auth = None
+        s._launching = self.be._launch_shape(s); s._connecting = True; s._host_is_attach = True
+        if busy.get("turn"):
+            s.inflight = 1                                           # a turn in flight through the window and the init
+        if busy.get("task"):
+            s._on_task_event("task_started", {"task_id": "t-1", "task_type": "local_bash", "description": "a sweep"})
+        self.assertTrue(self.be.set_effort(s.sid, "max"))            # the other pick: its request waits (deferred, or held)
+        self.assertTrue(s._reconnect_when_idle); self.assertFalse(s._reconnect)
+        self.assertEqual(sorted(s._reconnect_surfaces), ["effort"], "the deferred arm is the effort pick's alone")
+        self.assertTrue(self.be.set_auth(s.sid, "key"))              # the same-side re-pick: already applying, no request
+        self.assertEqual(s._auth_pending, "key"); self.assertEqual(sorted(s._reconnect_surfaces), ["effort"])
+        s._connect_landed()                                          # the cannot-tell attach lands
+        self.assertIsNone(s._launched_auth); self.assertEqual(s._auth_pending, "key")
+        return s
+
+    def _reconnect_lines(self):
+        return [str(m) for m in self.logs if str(m).startswith("reconnect (")]
+
+    def test_a_deferred_arm_another_pick_holds_is_no_arm_for_the_closers_ask_and_its_withdrawal_leaves_the_pick_armed(self):
+        # the round 5 addendum's road lens (2026-09-19; its C11d, a latch round 5's fourteen-state enumeration missed, which
+        # covered the other pick's arm in its immediate form alone): an effort pick made inside the attach window with a turn
+        # in flight is DEFERRED (_reconnect_when_idle, the effort surface recorded), and the closer's ask leg read that flag as
+        # an arm standing for the billing pick too, so it recorded no auth surface and asked nothing. The deferred arm was the
+        # effort pick's alone: withdrawn before the settle, _settle_withdrawal found no surface and ended it, and the billing
+        # pending stood with no arm in any form, the retry gesture swallowed as already applying, the session billing the
+        # login. The deferred form is no arm for this pick: the ask runs (the auth surface recorded, the request deferred once
+        # more, no second arm), the withdrawal leaves the arm standing for the billing pick, and the settle arms it. Red on
+        # 2db48571e: no auth surface after the init, and the withdrawal's line said "was the only one pending; no reconnect"
+        s = self._same_side_re_pick_beside_another_picks_request(6, turn=True)
+        del self.logs[:]
+        self.be._note_auth_source(s, "none")                         # the init: the survivor bills the login
+        self.assertEqual(s._launched_auth, "login"); self.assertEqual(s._auth_pending, "key")
+        self.assertIn("auth", s._reconnect_surfaces, "the ask recorded its surface: the deferred arm was the effort pick's alone")
+        self.assertTrue(s._reconnect_when_idle); self.assertFalse(s._reconnect, "deferred once more, not armed under the turn")
+        self.assertEqual(len(self._asks()), 1, self.logs)
+        self.assertIn("so it is asked now; reconnect deferred to the end of the open turn", self._asks()[0])
+        # the effort pick is withdrawn before the settle: the arm stands for the billing pick, and says so
+        del self.logs[:]
+        self.assertTrue(self.be.set_effort(s.sid, "high"))           # back to the running value: the pending max pick is withdrawn
+        self.assertEqual(self._reconnect_lines(),
+                         ["reconnect (s6): the withdrawn effort pick leaves the pending auth pick pending; the reconnect stands"])
+        self.assertTrue(s._reconnect_when_idle, "the deferred arm stands, for the billing pick now")
+        self.assertEqual(sorted(s._reconnect_surfaces), ["auth"]); self.assertEqual(s._auth_pending, "key")
+        # the turn ends: the settle that finds the session quiet arms the relaunch that applies the pick
+        s.inflight = 0
+        self.assertTrue(s._arm_reconnect_if_quiet("settle", queued_ok=True), "the settle arms")
+        self.assertTrue(s._reconnect); self.assertIn("auth", s._reconnect_riding, "the pick rides its relaunch")
+        self.assertEqual(s._auth_pending, "key"); self.assertTrue(self._reg(s).get("authPending"))
+
+    def test_an_arm_another_pick_holds_for_live_work_is_no_arm_for_the_closers_ask_either(self):
+        # the round 5 addendum's road lens (2026-09-19; its C11w): the held form of the same latch, the other pick's request
+        # held for a background task instead of deferred behind a turn. The ask is held for the same work, the withdrawal
+        # leaves the arm standing for the billing pick, and the settle that finds the work ended arms it. Red on 2db48571e
+        s = self._same_side_re_pick_beside_another_picks_request(7, task=True)
+        self.assertTrue(s._reconnect_held_for_work)
+        del self.logs[:]
+        self.be._note_auth_source(s, "none")
+        self.assertEqual(s._auth_pending, "key"); self.assertIn("auth", s._reconnect_surfaces)
+        self.assertTrue(s._reconnect_when_idle); self.assertFalse(s._reconnect, "held for the work, not armed over it")
+        self.assertEqual(len(self._asks()), 1, self.logs)
+        self.assertIn("so it is asked now; reconnect held for 0 subagents and 1 background task", self._asks()[0])
+        del self.logs[:]
+        self.assertTrue(self.be.set_effort(s.sid, "high"))
+        self.assertEqual(self._reconnect_lines(),
+                         ["reconnect (s7): the withdrawn effort pick leaves the pending auth pick pending; the reconnect stands"])
+        self.assertTrue(s._reconnect_when_idle); self.assertEqual(sorted(s._reconnect_surfaces), ["auth"])
+        s._on_task_event("task_notification", {"task_id": "t-1", "status": "completed"})   # the work ends on the CLI's stream
+        self.assertEqual(s._live_work_counts(), (0, 0)); self.assertFalse(s._reconnect, "no removal arms at its own frame")
+        self.assertTrue(s._arm_reconnect_if_quiet("settle", queued_ok=True), "the settle that finds no work arms")
+        self.assertTrue(s._reconnect); self.assertIn("auth", s._reconnect_riding); self.assertEqual(s._auth_pending, "key")
+
+    def test_a_request_the_window_pick_queued_behind_the_init_is_an_arm_the_closer_does_not_double(self):
+        # the round 5 mutation pass (2026-09-19): the armed guard's surface disjunct ("auth" in _pending_names) survived
+        # unpinned. set_auth's request branch records the surface on the kernel thread and schedules its request onto the
+        # loop, so an init landing first finds the surface recorded with neither flag set: the request is coming, and the
+        # closer must not ask twice. A queuing loop double makes the ordering deterministic. Characterisation pin: green on
+        # 2db48571e by design (the disjunct stood there); it discriminates by mutation (the disjunct dropped asks twice)
+        class _Queue:
+            def __init__(self): self.queued = []
+            def call_soon_threadsafe(self, cb, *a): self.queued.append((cb, a))
+            def flush(self):
+                while self.queued:
+                    cb, a = self.queued.pop(0); cb(*a)
+        s = self._sess(8, auth="key")
+        s._launched_keyed = True; s.auth_live = ""; s._launched_auth = None
+        q = _Queue(); s.loop = q
+        s._launching = self.be._launch_shape(s); s._connecting = True; s._host_is_attach = True
+        self.assertTrue(self.be.set_auth(s.sid, "login"))            # the other side: its own request, queued behind the init
+        self.assertEqual(len(q.queued), 1); self.assertIn("auth", s._reconnect_surfaces)
+        self.assertFalse(s._reconnect); self.assertFalse(s._reconnect_when_idle, "neither flag: the request has not run")
+        s._connect_landed()
+        self.assertIsNone(s._launched_auth); self.assertEqual(s._auth_pending, "login")
+        del self.logs[:]
+        self.be._note_auth_source(s, "apiKeyHelper")                 # the init: the survivor bills the key
+        self.assertEqual(s._launched_auth, "key"); self.assertEqual(s._auth_pending, "login")
+        self.assertEqual(self._asks(), [], "the recorded surface is the request coming: nothing is asked twice")
+        self.assertEqual(len(q.queued), 1, "no second request queued")
+        q.flush()                                                    # the pick's own request runs: it arms
+        self.assertTrue(s._reconnect); self.assertIn("auth", s._reconnect_riding)
+
+    def test_the_ask_pokes_once_and_neither_the_ask_nor_the_closer_acts_without_a_pending(self):
+        # the round 5 mutation pass (2026-09-19): the ask's poke (the dots move at the arm) and the two no-pending returns (the
+        # closer's own, and _ask_parked_pick's own, which fork PR #813 reaches from the landing roads without the closer's
+        # gate) survived unpinned; on the init road each return masked the other, so both are driven directly.
+        # Characterisation pin: green on 2db48571e by design; each of the three discriminates by its own mutation (the poke
+        # removed; the ask's return dropped, so the bare call arms with no pending; the closer's return dropped, so it
+        # reaches the ask leg with no pending)
+        s = self._sess(9, auth="key")
+        s._launched_keyed = True; s.auth_live = "login"; s._launched_auth = "login"   # a stamped process billing the login
+        self.assertEqual(s._auth_pending, "")
+        with mock.patch.object(self.be, "_poke", wraps=self.be._poke) as poke, \
+                mock.patch.object(s, "_ask_parked_pick", wraps=s._ask_parked_pick) as ask:
+            s._recover_picked_pending_at_init()                      # no pending: the closer returns before its ask leg
+            self.assertEqual(ask.call_count, 0, "the closer's own return")
+            s._ask_parked_pick("init")                               # the ask's own return, called bare as 813's landing roads do
+        self.assertEqual(poke.call_count, 0); self.assertFalse(s._reconnect); self.assertFalse(s._reconnect_when_idle)
+        self.assertEqual(set(s._reconnect_surfaces), set()); self.assertEqual(self._asks(), [])
+        self.assertEqual([str(m) for m in self.logs if "reported its billing" in str(m)], [])
+        # a pending the CLI does not bill and nothing armed: one ask, one poke, after the arm
+        with s._hold_write():
+            s._auth_pending = "key"; s._auth_pending_login = ""
+        with mock.patch.object(self.be, "_poke", wraps=self.be._poke) as poke:
+            s._ask_parked_pick("init")
+        self.assertEqual(poke.call_count, 1, "the ask pokes once")
+        self.assertTrue(s._reconnect); self.assertEqual(len(self._asks()), 1, self.logs)
+
+    def test_the_ask_names_the_stored_login_the_pick_carries(self):
+        # the round 5 mutation pass (2026-09-19): the ask line's `picked` half for a pending to a STORED login (named by its
+        # label) survived unpinned; every pinned ask carried a side word. The state is set directly, as the stored-login
+        # compare test (m39) sets it: a pending to stored login Beta on a survivor composed for the machine's own login, the
+        # init reporting the key. The wording is what is pinned. Characterisation pin: green on 2db48571e by design; it
+        # discriminates by mutation (the login branch of `picked` dropped names the side word)
+        b = self._record("Beta")
+        s = self._sess(10, auth="login")
+        s.auth_live = ""; s._launched_auth = None
+        s._launching = self.be._launch_shape(s); s._connecting = True; s._host_is_attach = True
+        s._connect_landed()
+        self.assertIsNone(s._launched_auth); self.assertEqual(s._launched_login, "")
+        s.auth_login = b["id"]
+        with s._hold_write():
+            s._auth_pending = "login"; s._auth_pending_login = b["id"]
+        self.be._update_reg(s.sid, authLogin=b["id"], authPending=True)
+        del self.logs[:]
+        self.be._note_auth_source(s, "apiKeyHelper")                 # the init: the survivor bills the key
+        self.assertEqual(s._launched_auth, "key"); self.assertEqual(s._auth_pending_target(), ("login", b["id"]))
+        self.assertTrue(s._reconnect)
+        self.assertEqual(self._asks(), ["auth (s10): this session's surviving CLI reported its billing, the key, while its pick is the "
+                                        "%s login; the pick was left to this report and nothing was armed for it, so it is asked now; "
+                                        "reconnecting to apply" % self.be.login_display(b["id"])])
+
+    def test_the_seeds_own_line_says_the_reg_named_the_rows_it_counts(self):
+        # the round 5 mutation pass (2026-09-19): the reconcile's clauses moved to "counted live for the surviving CLI" and its
+        # docstring says the seed's own line KEEPS "the reg named", since the rows it counts are the seeded ones; the settle's
+        # sister phrase was pinned and this half was not. Characterisation pin: green on 2db48571e by design; it discriminates
+        # by mutation (the seed's line moved to the reconcile's phrase)
+        s = self._sess(11, auth="key")
+        del self.logs[:]
+        self.assertEqual(s._seed_live_work_from_reg({"bgTasks": [{"taskId": "t-1", "type": "local_bash", "desc": "a sweep"}]}), 1)
+        self.assertEqual([str(m) for m in self.logs if str(m).startswith("live work (")],
+                         ["live work (s11): 1 background task the reg named for the surviving CLI counted as live from the attach; the "
+                          "CLI's own stream confirms or ends each, and its first turn-end report decides the rest (an omission retires "
+                          "a shell and holds any other type)"])
+
+    def test_a_background_tasks_changed_snapshot_is_logged_once_and_applied_to_nothing(self):
+        # round 5 (2026-09-19; its extra5-3, settled by execution) disclosed the snapshot the bundled CLI pushes behind a
+        # repeated initialize and said this kernel logs it once as an unhandled subtype and applies nothing from it; the
+        # mutation pass found the reference's sentence pinned by its first clause alone and the kernel's claim unpinned for
+        # THIS subtype. An empty snapshot, twice, over a session holding a row the stream started: the row stands (under
+        # replace semantics it would be retired), one line naming the subtype and the payload's keys, no problem row.
+        # Characterisation pin: green on 2db48571e by design (the catch-all predates the PR); it discriminates by mutation
+        # (the once-per-life line removed; a branch applying the snapshot under replace semantics)
+        class _Sys:
+            def __init__(self, subtype, data): self.subtype, self.data, self.uuid = subtype, data, "u1"
+        _Sys.__name__ = "SystemMessage"
+        seen = sb.SdkSession._sys_subtypes_seen
+        sb.SdkSession._sys_subtypes_seen = set()                    # class state: another module's test may have seen it
+        self.addCleanup(setattr, sb.SdkSession, "_sys_subtypes_seen", seen)
+        s = self._sess(12, auth="key")
+        s._on_task_event("task_started", {"task_id": "t-1", "task_type": "local_agent", "description": "a foreground agent",
+                                          "tool_use_id": "tu-1"})
+        self.assertEqual(sorted(s._bg_tasks), ["t-1"])
+        del self.logs[:]
+        for _ in range(2):
+            s._on_message(_Sys("background_tasks_changed", {"tasks": []}), _AssistantMessage, _ResultMessage, _Sys)
+        self.assertEqual(sorted(s._bg_tasks), ["t-1"], "applied to nothing: the row the stream started stands")
+        unhandled = [str(m) for m in self.logs if "unhandled SystemMessage subtype" in str(m)]
+        self.assertEqual(len(unhandled), 1, self.logs)
+        self.assertIn("'background_tasks_changed'", unhandled[0]); self.assertIn("keys=['tasks']", unhandled[0])
+        self.assertEqual([p for p in self.be.problems(10) if "background_tasks_changed" in p["text"]], [], "a note, not a problem")
+
     def test_a_moot_pending_to_a_stored_login_is_withdrawn_when_the_default_returns_to_it(self):
         # finding 1 (round 1 of the review): the withdraw compared the pending SIDE WORD against the target's, so a
         # follower running stored login A, asked to move to the machine's own login (held: a turn in flight) and then
@@ -11164,8 +11361,12 @@ class DefaultBillingMovesItsFollowers(unittest.TestCase):
                       "workflow run it omits until the CLI's own stream ends it, and counts a running task it names that the kernel "
                       "never saw; a turn that ends without that report holds what nothing spoke for, said in the log", doc)
         # round 5 of the reviewer's review (2026-09-19): the background_tasks_changed snapshot, settled by execution, disclosed
+        # ...the whole sentence since the round 5 addendum (its mutation pass: pinned by its first clause alone, "is applied" and
+        # "arrives before" both passed). Characterisation for the doc: the sentence stood at 2db48571e; the pin discriminates by
+        # mutation of the doc (either flip)
         self.assertIn("The bundled CLI also pushes a snapshot of its background tasks (`background_tasks_changed`) behind a repeated "
-                      "initialize", doc)
+                      "initialize; it arrives after the handshake, covers running non-foreground tasks only, and is not applied "
+                      "(settled by execution against 2.1.266, 2026-09-19).", doc)
         self.assertNotIn("drops what nothing spoke for", doc)
         # the round 4 addendum (2026-09-19; the adoption lens): what a task counted from the report alone lacks, disclosed
         self.assertIn("A task counted from the report alone starts, for the elapsed time shown, at the report's moment (the report "
@@ -14508,6 +14709,45 @@ class SettingsPickThroughTheLoopUnderAHost(SettingsPickThroughTheLoop):
         self.assertEqual(s._bg_tasks["k-3"]["type"], "kite")
 
 
+    def test_an_unknown_label_is_bounded_to_60_characters_in_its_row_and_its_key_and_said_once_per_label_per_report(self):
+        # the round 5 addendum's mutation pass (2026-09-19): the label's 60-character bound (the row text and the ring key)
+        # and the one row per distinct label per report survived unpinned. Two rows typed by one 70-character label in one
+        # report: one ring row, count 1, its text carrying the first 60 characters and never the whole; a second report
+        # whose label differs past the 60th character counts on the same row (the key is the bounded label). Characterisation
+        # pin: green on 2db48571e by design; it discriminates by mutation (the bound dropped; the per-report dedupe dropped)
+        self._helper()
+        s = self._survivor_with_a_carried_ask(bg_tasks=[])
+        self._connect()
+        label = "kite-" + "x" * 65
+        self.assertEqual(len(label), 70)
+        asyncio.run(s._stop_hook({"background_tasks": [
+            {"id": "k-1", "type": label, "status": "running", "description": "one"},
+            {"id": "k-2", "type": label, "status": "running", "description": "two"}]}, None, None))
+        rows = [p for p in self.be.problems(20) if "label this build's record does not know" in p["text"]]
+        self.assertEqual(len(rows), 1, self.be.problems(20))
+        self.assertEqual(rows[0]["count"], 1, "one row per distinct label per report, not per task")
+        self.assertIn(repr(label[:60]), rows[0]["text"]); self.assertNotIn(label, rows[0]["text"], "bounded to 60 characters")
+        self.assertEqual((s._bg_tasks["k-1"]["type"], s._bg_tasks["k-2"]["type"]), (label, label), "the rows carry the label whole")
+        asyncio.run(s._stop_hook({"background_tasks": [
+            {"id": "k-3", "type": label[:60] + "y" * 10, "status": "running", "description": "three"}]}, None, None))
+        rows = [p for p in self.be.problems(20) if "label this build's record does not know" in p["text"]]
+        self.assertEqual(len(rows), 1, self.be.problems(20)); self.assertEqual(rows[0]["count"], 2, "keyed by the bounded label")
+
+    def test_the_unreadable_lists_shape_names_at_most_twelve_keys(self):
+        # the round 5 addendum's mutation pass (2026-09-19): the shape's key-name cap survived unpinned. One unkeyable entry
+        # (no id) carrying fourteen keys: the shape names the first twelve, sorted, and no more. Characterisation pin: green on
+        # 2db48571e by design; it discriminates by mutation (the cap dropped names fourteen)
+        self._helper()
+        s = self._survivor_with_a_carried_ask(bg_tasks=[])
+        self._connect()
+        asyncio.run(s._stop_hook({"background_tasks": [{"k%02d" % i: i for i in range(1, 15)}]}, None, None))
+        rows = self._unreadable_rows()
+        self.assertEqual(len(rows), 1, self.be.problems(20))
+        self.assertIn("(1 entry, 1 this kernel cannot key (not an object, or no id); keys seen: k01, k02, k03, k04, k05, k06, k07, k08, "
+                      "k09, k10, k11, k12)", rows[0]["text"])
+        self.assertNotIn("k13", rows[0]["text"])
+
+
 class ReportAbsencePredicate(unittest.TestCase):
     """report_absence_decides, the one predicate both reconciles of a Stop payload consult (the round 3 pre-check,
     2026-09-19), pinned by value, since the mutation pass of the same day found its normalization and its answer for an
@@ -14579,6 +14819,24 @@ class ReportLabelNormalisation(unittest.TestCase):
         for beyond in ("kite", "a label no build emits", "local_bash2", "Shell"):
             self.assertTrue(sb._bg_type_unknown(beyond), repr(beyond))
             self.assertEqual(sb._bg_type_discriminant(beyond), beyond, "still normalised to itself: adopted, and said by the caller")
+
+    def test_the_derivation_rule_is_pinned_over_a_synthetic_record_and_the_constants_are_the_rule_over_the_record(self):
+        # the round 5 addendum's mutation pass (2026-09-19): the inverse was pinned by its RESULT (equality with the seven
+        # entries), so an equal hand-written copy in place of the derivation passed; a copy is what round 5 removed, and it
+        # goes stale when the record grows. The rule is factored (_derive_report_label_inverse) and pinned over a synthetic
+        # record, apart from the constant; the constants are pinned as the rule applied to the record, so an entry added to
+        # the record without the inverse following (the drift a copy allows) fails here, where the seven-entry equality
+        # alone would not. Red on 2db48571e on the factored name alone (the rule was the constant's comprehension there); the
+        # rule and the drift each discriminate by mutation (a condition dropped from the rule; a hand-written inverse beside a
+        # record that gained an entry)
+        rule = sb._derive_report_label_inverse
+        self.assertEqual(rule({"a_x": "x", "b_y": "y", "c_y": "y", "d": "d"}), {"x": "a_x"},
+                         "one carrier with a differing label inverts; two carriers (y) and a label equal to its discriminant (d) do not")
+        self.assertEqual(rule({}), {})
+        self.assertEqual(sb._REPORT_LABEL_TO_DISCRIMINANT, rule(sb._REPORT_PRODUCER_LABELS), "the constant is the rule over the record")
+        self.assertEqual(sb._REPORT_KNOWN_BG_TYPES,
+                         frozenset(sb._REPORT_PRODUCER_LABELS) | frozenset(sb._REPORT_PRODUCER_LABELS.values()),
+                         "every discriminant and every label the record carries")
 
     def test_bg_row_normalises_absent_fields_to_empty_strings(self):
         # the mutation pass over round 4 (2026-09-19; m09 and m10): a None tool_use_id from a stream frame, or a mirror row

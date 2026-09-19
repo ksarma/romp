@@ -4083,11 +4083,23 @@ _REPORT_PRODUCER_LABELS = {
     "auto_mode_scan": "auto-mode scan",
     "remote_agent": "cloud session",
 }
+
+
+def _derive_report_label_inverse(record: dict) -> dict:
+    """LABEL -> DISCRIMINANT from a producer's record (discriminant -> label), by the one rule the comment above
+    states: a label that differs from its discriminant and that exactly ONE discriminant carries is inverted; a label
+    two discriminants carry has no injective inverse and is left out (it maps to itself downstream), and so is a label
+    equal to its own discriminant. Factored out of the constant's comprehension (the round 5 addendum, 2026-09-19; its
+    mutation pass): the constant equals a hand-written copy until the record grows, so the rule is pinned over a
+    synthetic record and the constant as the rule applied to the record."""
+    carriers: dict = {}
+    for disc, label in record.items():
+        carriers.setdefault(label, []).append(disc)
+    return {label: discs[0] for label, discs in carriers.items() if len(discs) == 1 and label != discs[0]}
+
+
 # LABEL -> DISCRIMINANT, derived: the labels one discriminant carries and that differ from it (seven on 2.1.266)
-_REPORT_LABEL_TO_DISCRIMINANT = {
-    label: disc for disc, label in _REPORT_PRODUCER_LABELS.items()
-    if label != disc and sum(1 for other in _REPORT_PRODUCER_LABELS.values() if other == label) == 1
-}
+_REPORT_LABEL_TO_DISCRIMINANT = _derive_report_label_inverse(_REPORT_PRODUCER_LABELS)
 # every spelling the record knows: the ten discriminants and the labels they carry (`monitor` among them)
 _REPORT_KNOWN_BG_TYPES = frozenset(_REPORT_PRODUCER_LABELS) | frozenset(_REPORT_PRODUCER_LABELS.values())
 
@@ -7992,10 +8004,13 @@ class SdkSession:
           * the CLI already bills the pick: SERVED, cleared as the landing's served clear does (the mirror and a
             poke after the hold), said in one line;
           * the CLI bills something else and an arm already stands for the pick (a pick of the other side made during
-            the attach window, whose own request armed at set_auth; a reconnect another pick armed; a wrong landing's
-            request): the pending stands for THAT reconnect, which relaunches composing the pick and whose landing
-            serves it; nothing is asked twice (this is the one branch on which "it stands for its own reconnect" is
-            true);
+            the attach window, whose own request armed at set_auth or is still queued behind this init with its surface
+            recorded; a reconnect another pick armed in its IMMEDIATE form; a wrong landing's request): the pending
+            stands for THAT reconnect, which relaunches composing the pick and whose landing serves it; nothing is asked
+            twice (this is the one branch on which "it stands for its own reconnect" is true). A request another pick
+            holds in its DEFERRED form alone (held for live work, or behind the open turn, with no auth surface) is not
+            such an arm: it is that pick's, and its withdrawal ends it (the round 5 addendum, 2026-09-19;
+            _ask_parked_pick's docstring), so the pick is asked through the third branch;
           * the CLI bills something else and NO arm stands (the already-applying branch's road, both halves of round
             4's fix: round 4 closed this case only when the CLI already billed the picked side, and on this half the
             pending latched for the kernel's life, the retry gesture read as already applying, and the session kept
@@ -8044,12 +8059,28 @@ class SdkSession:
         request goes through the one arm rule as set_auth's own would (_note_reconnect_ask records the surface and
         says what the request will do; request_reconnect with the pick: at once when quiet, deferred behind an open
         turn, held for live work until the settle that finds none), so the relaunch composes the pick and its landing
-        serves the pending. An arm already standing (the reconnect scheduled, the deferred flag, or the auth surface
-        recorded and not yet run) is left to itself: request_reconnect would tolerate a second ask, but the arm is
-        already there and the pending stands for it. A pick's relaunch draws no spawn-stagger slot (the walk's memo is
-        fork PR #813's). Loop thread (the init handler); the request is scheduled onto the same loop."""
+        serves the pending. An arm already standing FOR THIS PICK is left to itself: the reconnect scheduled (_reconnect,
+        the immediate form, whose relaunch composes the session's pick and whose landing serves the pending; a
+        withdrawal of another pick after the init leaves it standing, since _settle_withdrawal disarms only in the
+        composed half of a window or at "applied"), or the auth surface recorded and not yet run, or riding a connect
+        ("auth" in _pending_names: set_auth's request branch records the surface on the kernel thread and schedules
+        its request onto this loop, so an init landing first finds the surface with neither flag set and the request
+        coming). request_reconnect would tolerate a second ask, but the arm is already there and the pending stands
+        for it. THE DEFERRED FORM ALONE IS NO ARM FOR THIS PICK (the round 5 addendum's road lens, 2026-09-19): a
+        request ANOTHER pick made in the window, held for live work or deferred behind the open turn
+        (_reconnect_when_idle with that pick's surface recorded and not this one's), stands for that pick, and when
+        it is withdrawn before the settle, _settle_withdrawal finds no surface left and ends the deferred arm ("was the
+        only one pending; no reconnect"), leaving the billing pending with no arm in any form: the retry gesture read
+        as already applying and the session billed the old account, the latch the closer exists to close, reached
+        through an effort pick (its docstring's "a reconnect another pick armed" branch, true for the immediate form
+        alone). So the flag is not read as an arm here: the ask runs, _note_reconnect_ask records the auth surface and
+        request_reconnect defers or holds the request once more (the flag it sets already stands; no second arm), and
+        the withdrawal then finds this pick's surface and leaves the arm standing for it ("leaves the pending auth pick
+        pending; the reconnect stands"). The same reason _follow_default's early return was removed
+        in round 2 of the reviewer's review (its docstring). A pick's relaunch draws no spawn-stagger slot (the walk's
+        memo is fork PR #813's). Loop thread (the init handler); the request is scheduled onto the same loop."""
         with self._hold_lock:
-            armed = bool(self._reconnect or self._reconnect_when_idle or "auth" in self._pending_names())
+            armed = bool(self._reconnect or "auth" in self._pending_names())   # not _reconnect_when_idle: the docstring says why
             pending_auth, pending_login = self._auth_pending_target()
         if armed or not pending_auth:
             return
