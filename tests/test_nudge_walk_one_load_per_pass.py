@@ -253,10 +253,14 @@ def _pass_through_lines(fn, callee):
 def _loader_sites(obj, needle):
     """Every place `obj`'s source names a loader whose spelling contains `needle`, read from the AST: (index, line) pairs, one
     per node, indexed as inspect.getsource(obj).splitlines() is, so a census can check adjacency against a line index. A site
-    is an ast.Name whose id contains the needle or an ast.Attribute whose dotted spelling (the value chain and the attribute,
-    `jd.load_goals_shared_or_fault`) contains it, so `jd.load_goals_shared` counts both spellings of the shared door and
-    nothing else, and a mention in a comment, a docstring or any string literal is no node of either kind and no site: the
-    one rule the source censuses share. Two calls on one line are two sites. Read from the tree and not from tokenised text
+    is an ast.Name whose id contains the needle, an ast.Attribute whose dotted spelling (the value chain and the attribute,
+    `jd.load_goals_shared_or_fault`) contains it, or an ast.alias whose imported name contains it (`from romp_judge import
+    load_goals_shared as _lgs`: the import line is the site, and the alias's later uses, Names of another spelling, are not;
+    review round 3: over Name and Attribute alone, a loader imported under an alias inside a replaced helper's body was no
+    site), so `jd.load_goals_shared` counts both spellings of the shared door and nothing else, and a mention in a comment, a
+    docstring or any string literal is no node of these kinds and no site: the one rule the source censuses share. By the same
+    rule a loader reached through a string, `getattr(jd, "load_goals_shared")` or an importlib lookup, names it in no node of
+    these kinds and is outside the census. Two calls on one line are two sites. Read from the tree and not from tokenised text
     (review round 2, correctness-1): the first cut blanked comments and strings token by token, and on 3.10 and 3.11 the
     tokenizer gives a whole f-string as one STRING token (3.12 and later split it into FSTRING_* parts), so a loader CALL
     written inside an f-string was blanked with the literal and invisible on two of the five CI interpreters; ast.walk reaches
@@ -274,6 +278,8 @@ def _loader_sites(obj, needle):
                 v = v.value
             parts.append(v.id if isinstance(v, ast.Name) else "...")
             spelled = ".".join(reversed(parts))
+        elif isinstance(node, ast.alias):
+            spelled = node.name                       # the imported name; the alias itself (`as _lgs`) is a spelling of the census's own
         else:
             continue
         if needle in spelled:
@@ -931,11 +937,14 @@ class TheCountersOneSite(unittest.TestCase):
 
     def test_the_census_reads_code_not_prose_and_sees_a_call_inside_an_f_string_on_every_interpreter(self):
         """The rule the censuses share, exercised (review round 2, tests-3: no scanned source carried a mention of a loader, so
-        the rule was held by no assertion), over three local samples that are never called (inspect reads them; no store is
-        touched and no recorder window entered): the loader named in a docstring, a string literal and a comment and nowhere
-        in code is no site; one call is one site; one call inside an f-string is one site on every interpreter (correctness-1:
-        the tokenizer gives 3.10 and 3.11 one STRING token for a whole f-string and 3.12 and later its FSTRING_* parts, and a
-        census over blanked tokens read the call on the later ones only; the AST census does not consult the tokenizer)."""
+        the rule was held by no assertion), over four local samples that are never called (inspect reads them; no store is
+        touched, no recorder window entered and the import never runs): the loader named in a docstring, a string literal and a
+        comment and nowhere in code is no site; one call is one site; one call inside an f-string is one site on every
+        interpreter (correctness-1: the tokenizer gives 3.10 and 3.11 one STRING token for a whole f-string and 3.12 and later
+        its FSTRING_* parts, and a census over blanked tokens read the call on the later ones only; the AST census does not
+        consult the tokenizer); a loader imported under an alias is one site, the import line, and the alias's call is not
+        (review round 3: over Name and Attribute alone, an import alias inside a replaced helper's real body was no site and the
+        module stayed green)."""
         def mentions_only(sid):
             """The look's read is jd.load_goals_shared_or_fault(sid), named here and in no code line of this body."""
             note = "jd.load_goals_shared_or_fault(sid) in a string literal"   # jd.load_goals_shared_or_fault(sid) in a comment
@@ -948,12 +957,19 @@ class TheCountersOneSite(unittest.TestCase):
         def in_fstring(sid):
             return f"{jd.load_goals_shared_or_fault(sid)}"
 
+        def under_an_alias(sid):
+            from romp_judge import load_goals_shared as _lgs      # the import is the site; the call below is a Name of another spelling
+            return _lgs(sid)
+
         self.assertEqual(_loader_sites(mentions_only, "load_goals"), [],
                          "a loader named in a docstring, a string literal or a comment is not a site")
         self.assertEqual(len(_loader_sites(one_call, "load_goals")), 1, "one call is one site: %r" % _loader_sites(one_call, "load_goals"))
         self.assertEqual(len(_loader_sites(in_fstring, "load_goals")), 1,
                          "a call inside an f-string is one site on every interpreter, this one %s: %r"
                          % (sys.version.split()[0], _loader_sites(in_fstring, "load_goals")))
+        alias_sites = _loader_sites(under_an_alias, "load_goals")
+        self.assertEqual([ln.split()[0] for _i, ln in alias_sites], ["from"],
+                         "a loader imported under an alias is one site, the import line, and the alias's call is not: %r" % alias_sites)
 
 
 class Docs(unittest.TestCase):
