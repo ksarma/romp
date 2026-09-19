@@ -394,8 +394,10 @@ class ServedBlock(unittest.TestCase):
     """(a): a served kernel, a feed page on a real socket, a pusher cycle, GET /perf."""
 
     def _get(self, port, path):
-        req = urllib.request.Request("http://127.0.0.1:%d%s" % (port, path),
-                                     headers={"X-Romp-Token": os.environ["ROMP_SERVE_TOKEN"]})
+        # km.TOKEN, not os.environ: under xdist every worker imports every test module at collection, and a later
+        # module's import-time ROMP_SERVE_TOKEN write changes the env after this module's kernel captured its token
+        # (tests/test_perf_stats.py's _req says the same; _connect above already dials with km.TOKEN)
+        req = urllib.request.Request("http://127.0.0.1:%d%s" % (port, path), headers={"X-Romp-Token": km.TOKEN})
         with urllib.request.urlopen(req, timeout=10) as r:
             return r.status, json.loads(r.read().decode())
 
