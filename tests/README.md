@@ -152,9 +152,17 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   Run it when the oracle or the reader in `bin/romp-service` changes:
   `python3 tests/romp-service-differential.py` (about ten seconds, four
   verify runs at a time; `--list` prints the fixtures without running).
-  A disagreement in the dangerous direction (the oracle accepting what
-  systemd drops or refuses) is a defect in the oracle, and where the reader
-  follows the oracle, in the reader; the other direction is a false refusal.
+  A disagreement in the dangerous direction (the oracle reporting what
+  systemd does not set, run or read: a value systemd leaves unset or sets to
+  something else, a unit systemd fails to load, as many commands or
+  EnvironmentFile paths as systemd's or more with a difference among them,
+  another exec path) is a defect in the oracle, and where the reader follows
+  the oracle, in the reader; the other direction (the oracle refusing or
+  leaving unset what systemd sets, or listing fewer commands or files) is a
+  false refusal. Until fork PR #778's round-5 preface the mark covered
+  systemd-unset-oracle-set, more commands and more files alone, so a value
+  both set and different, the direction's worst member since it is
+  confidently wrong, went unmarked.
   Taken against `systemd 255 (255.4-1ubuntu8.17)` at the fold head
   (2026-09-19; 256 may move any class, and a different build prints a notice
   beside the counts):
@@ -178,10 +186,17 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   REFUSES is the oracle raising NotImplementedError on a form it does not
   model (a specifier whose value is the host's, the cgroup's or the unit
   path's), not a disagreement; the fold batch agreed 10 of 10 at the fold
-  head and 27 of 27 with the addendum's 17 (pasted from its run: `fold batch:
-  27 cases, 27 agree, 0 REFUSES, 0 DISAGREE, 0 dangerous`); the
-  dangerous-direction count is 0. Before the fold the lens counted 421 agree,
-  138 REFUSES and 125 DISAGREE over the same 684.
+  head, 27 of 27 with the addendum's 17, and 35 of 35 with the round-5
+  preface's 8 EnvironmentFile forms (a doubled slash, a `.` component, a
+  trailing slash with and without the `-` prefix, a trailing `.` component,
+  `//`, and a `..` component in two places, which systemd ignores as not
+  normalized; the oracle models `path_simplify_and_warn` for
+  `EnvironmentFile=` since that commit, where it raised on a doubled slash,
+  `/./` and a trailing slash and, unguarded, read `/x/env/.` as written and a
+  `..` path as a file: 3 dangerous rows against the previous oracle). Pasted
+  from its run: `fold batch: 35 cases, 35 agree, 0 REFUSES, 0 DISAGREE, 0
+  dangerous`; the dangerous-direction count is 0. Before the fold the lens
+  counted 421 agree, 138 REFUSES and 125 DISAGREE over the same 684.
 - **node suites** — live beside their sources in `ui/webview/*.test.ts` and
   `vscode-extension/src/*.test.ts`, run with `npm test` from
   `vscode-extension/`. Many pin lines of `kernel/kernel.py` as strings — run

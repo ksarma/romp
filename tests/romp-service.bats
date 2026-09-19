@@ -1770,8 +1770,8 @@ _sd() {   # the oracle: a python that reads a unit the way systemd v255 does, wr
 # read_line, extract-word.c extract_first_word, escape.c cunescape_one, specifier.c specifier_printf, utf8.c utf8_is_valid,
 # path-util.c path_simplify / path_is_valid / filename_is_valid, load-fragment.c config_parse_environ / config_parse_exec /
 # config_parse_unit_env_file, service.c service_verify). It models the forms these tests feed it and RAISES on anything outside that
-# set (a specifier other than %% and %h, the deprecated %c %r %R included, an EnvironmentFile path that path_simplify would change,
-# an ExecStop or SuccessAction that would rescue a unit with no ExecStart), so a case leaning on the oracle where it is not modelled
+# set (a specifier other than %% and %h, the deprecated %c %r %R included, an ExecStop or SuccessAction that would rescue a unit
+# with no ExecStart), so a case leaning on the oracle where it is not modelled
 # fails loudly rather than validating against a guess (round 4, extra6-6: the specifier table and the escape set were wrong, and an
 # ExecStart path came out as the literal string None). Text is handled as latin-1 so every byte of the file survives; a value is
 # written out as bytes.
@@ -2031,7 +2031,10 @@ def parse(path):
             if r is None: return                                           # Failed to resolve unit specifiers, ignoring
             pfx, fp = ("-", r[1:]) if r.startswith("-") else ("", r)
             if not fp.startswith("/"): return                              # EnvironmentFile= path is not absolute, ignoring (a quoted path too)
-            if "//" in fp or "/./" in fp or (len(fp) > 1 and fp.endswith("/")): raise NotImplementedError("path_simplify is not modelled")
+            fp = path_simplify(fp)                                         # path_simplify_and_warn: -/x//y/env is -/x/y/env, /x/./env and /x/env/ are
+                                                                           # /x/env (the round-5 preface of fork PR #778, verified on 255.4; the
+                                                                           # differential's fold batch carries the forms)
+            if ".." in fp.split("/"): return                               # EnvironmentFile= path is not normalized, ignoring (verified: /x/../env reads no file)
             st["envfiles"].append((pfx, fp))
     cont = None
     ln = 0
@@ -4007,8 +4010,20 @@ EOF
     # A, a kept value: accepted, written in the writer's form (%% doubled), and read back as the same value by the oracle. The last form
     # has a non-ASCII letter after the % (systemd's POSSIBLE_SPECIFIERS is ASCII, so it copies both characters), and the reader runs under
     # a UTF-8 locale, where a test asking the locale's alphabet instead of the listed one takes the letter for a specifier (the fold's
-    # addendum: the reader's [[:alnum:]] and the oracle's isalnum both would, and no case had a letter outside ASCII)
-    local utf8loc; utf8loc="$(locale -a 2>/dev/null | grep -iE '^(C|en_US)\.utf-?8$' | head -1)"; : "${utf8loc:=C.UTF-8}"
+    # addendum: the reader's [[:alnum:]] and the oracle's isalnum both would, and no case had a letter outside ASCII). The leg needs that
+    # locale installed and usable: under the C locale bash's [[:alnum:]] never matches the letter's bytes, so the [[:alnum:]] mutation
+    # stays green and the leg proves nothing, and a name that is not installed is the C locale by another name (a fresh bash falls back
+    # to it). So no UTF-8 locale, or one bash cannot use, FAILS here with the remedy; the leg never passes vacuously and never skips (the
+    # round-5 preface of fork PR #778; the fallback to C.UTF-8 by name, which stood here, was that vacuous pass on a runner without one)
+    local utf8loc; utf8loc="$(locale -a 2>/dev/null | grep -iE '^(C|en_US)\.utf-?8$' | head -1)"
+    if [[ -z "$utf8loc" ]]; then
+        echo "romp-service.bats: no UTF-8 locale is installed (locale -a lists neither C.UTF-8 nor en_US.UTF-8), and the non-ASCII leg of class A needs one to prove anything. Remedy: install one (Debian and Ubuntu: apt-get install locales, then locale-gen en_US.UTF-8, or dpkg-reconfigure locales; C.UTF-8 comes with libc-bin on Ubuntu) or select an installed UTF-8 locale by name in this case, then run the case again." >&2
+        false
+    fi
+    if ! LC_ALL="$utf8loc" bash -c '[[ "$1" == [[:alnum:]] ]]' _ $'\xc3\xa9'; then
+        echo "romp-service.bats: the UTF-8 locale $utf8loc is listed by locale -a, but a fresh bash under LC_ALL=$utf8loc does not match a non-ASCII letter with [[:alnum:]] (it fell back to the C locale), so the non-ASCII leg of class A would prove nothing. Remedy: generate the locale (Debian and Ubuntu: locale-gen $utf8loc, or dpkg-reconfigure locales) or select another installed UTF-8 locale by name in this case, then run the case again." >&2
+        false
+    fi
     for form in '/x/a%/b' '/x/a%-b' '/x/a%.b' '/x/a%~b' '/x/a%:b' '/x/a%'$'\xc3\xa9''b'; do
         cp "$unit.clean" "$unit"; _svc_line "$unit" "Environment=CLAUDE_CONFIG_DIR=$form"
         [ "$(_sd_read "$unit" env CLAUDE_CONFIG_DIR)" = "$form" ]                     # systemd keeps % and the character
@@ -4244,6 +4259,76 @@ EOF
         _three_roads_refuse "$unit" "ExecStart carries the specifier %$c, which systemd expands and this reader would take literally"
         _three_roads_refuse "$unit" "Write the absolute path in its place (a literal % is written %%)"
     done
+}
+
+@test "rewrite (Linux): a \\u escape naming a surrogate or a noncharacter in ExecStart's path is refused on rewrite, rewrite --check and the marked child's install (exit 5, the file byte for byte) with this surface's own form, that systemd decodes the escape and runs the unit where a rewrite would write the decoded bytes raw and systemd then refuses the line whole, and refusal 13's remedy, to move the clone; the Environment= twin's consequence and its remove-the-escape remedy are absent, and the oracle reads the decoded path systemd runs" {
+    # the round-5 preface (fork PR #778, 2026-09-19; verified on 255.4 by hand and by the differential's esc-P-bsuFFFE and esc-P-bsud800):
+    # systemd's cunescape_one decodes a \u surrogate or noncharacter into bytes and config_parse_exec keeps the path, so the unit loads and
+    # runs; the same bytes written raw are a line systemd refuses whole (String is not UTF-8 clean), so the escape is the only written form
+    # that reads back to the same bytes, and the writer, which writes a path raw, has none. The refusal is right; its text rendered the
+    # Environment= twin's parenthetical (an assignment carrying them is dropped, that surface's consequence) and its remedy said to remove
+    # the escape, which cannot be followed: a rewrite proceeds only when the path is this clone's, so the escape stands for a byte of the
+    # executable's real path. Red under the old remedy restored (the _W_EXEC_ERR and _W_EXEC_FIX assignments dropped from _unit_unichar).
+    local unit="$ROMP_SYSTEMD_DIR/romp-manager.service" form esc rest what raw
+    _old_unit "$unit"; cp "$unit" "$unit.clean"
+    for form in '\uFFFE|a noncharacter|'$'\xef\xbf\xbe' '\uD800|a surrogate|'$'\xed\xa0\x80' '\uFDD0|a noncharacter|'$'\xef\xb7\x90' '\uDFFF|a surrogate|'$'\xed\xbf\xbf'; do
+        esc="${form%%|*}"; rest="${form#*|}"; what="${rest%%|*}"; raw="${rest#*|}"
+        cp "$unit.clean" "$unit"; grep -v '^ExecStart=' "$unit" > "$unit.new" && mv -f "$unit.new" "$unit"
+        _svc_line "$unit" "ExecStart=$TEST_DIR/a${esc}b/romp-manager up"
+        [ "$(_sd_read "$unit" exec0)" = "$TEST_DIR/a${raw}b/romp-manager" ]           # systemd loads the unit and runs the decoded path
+        ROMP_MANAGER_BIN="$TEST_DIR/a${raw}b/romp-manager" _three_roads_refuse "$unit" \
+            "ExecStart's command has the escape $esc, $what, which systemd decodes into bytes that are not UTF-8 by its rule and runs this unit with; a rewrite would have to write the decoded bytes raw, which systemd then refuses whole (String is not UTF-8 clean), so this reader does not carry the escape" \
+            "an Environment= assignment carrying them is dropped" "Remove the escape from" "this reader does not model that reading" "then systemctl --user daemon-reload"
+        ROMP_MANAGER_BIN="$TEST_DIR/a${raw}b/romp-manager" _three_roads_refuse "$unit" \
+            "Move the clone to a path without such characters and run romp-service install from it, which writes the unit afresh and restarts the manager (the escape stands for a byte of the executable's real path, so the line without it names another place)."
+    done
+    # the Environment= twin keeps its own consequence and remedy (the fold case above holds them; here the one phrase that tells the two apart)
+    cp "$unit.clean" "$unit"; _svc_line "$unit" 'Environment=CLAUDE_CONFIG_DIR=/x/\uFFFE'
+    _three_roads_refuse "$unit" "an Environment= assignment carrying them is dropped" "runs this unit with" "Move the clone"
+}
+
+@test "rewrite (Linux): an EnvironmentFile path with a doubled slash, a . component or a trailing slash is read as written and written back byte for byte on rewrite, rewrite --check and the marked child's install, its - prefix kept, where systemd and the oracle read the simplified path from the same line before and after; a shell naming the same spelling agrees, one naming the simplified spelling agrees when the place exists and is refused, exit 5 and nothing written, when it does not" {
+    # the round-5 preface (fork PR #778, 2026-09-19), by execution on 255.4: systemd's config_parse_unit_env_file runs path_simplify_and_warn
+    # on the path (-/x//y/env loads as -/x/y/env; /x/./env and /x/env/ as /x/env; a .. component left after simplifying is ignored as not
+    # normalized), and the reader neither simplifies nor refuses: the line goes back as written, its - prefix kept, so the file systemd reads
+    # is the same before and after a rewrite. The compare against ROMP_SERVICE_ENV_FILE is by place (_same_path): the same spelling agrees,
+    # and so does the simplified one for a place that exists; two spellings of a place that does not exist are refused (exit 5, nothing
+    # written), a false refusal on the safe side, stated here as it is. The oracle raised on these forms as not modelled until this commit.
+    local unit="$ROMP_SYSTEMD_DIR/romp-manager.service" form simp
+    _old_unit "$unit"; cp "$unit" "$unit.clean"
+    mkdir -p "$TEST_DIR/ef/y"
+    for form in "-/x//y/env|/x/y/env" "/x/./env|/x/env" "/x/env/|/x/env" "-$TEST_DIR/ef//y/env|$TEST_DIR/ef/y/env" "$TEST_DIR/ef/./env|$TEST_DIR/ef/env" "$TEST_DIR/ef/env/|$TEST_DIR/ef/env"; do
+        simp="${form#*|}"; form="${form%%|*}"
+        cp "$unit.clean" "$unit"; grep -v '^EnvironmentFile=' "$unit" > "$unit.new" && mv -f "$unit.new" "$unit"; _svc_line "$unit" "EnvironmentFile=$form"
+        [ "$(_sd_read "$unit" envfile)" = "$simp" ]                                        # systemd's reading: the simplified path
+        ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite --check
+        [ "$status" -eq 0 ]
+        _marked_install_ok
+        grep -qxF "EnvironmentFile=$form" "$unit"                                           # written back as written, the prefix kept
+        cp "$unit.clean" "$unit"; grep -v '^EnvironmentFile=' "$unit" > "$unit.new" && mv -f "$unit.new" "$unit"; _svc_line "$unit" "EnvironmentFile=$form"
+        ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite
+        [ "$status" -eq 0 ]
+        grep -qxF "EnvironmentFile=$form" "$unit"
+        [ "$(_sd_read "$unit" envfile)" = "$simp" ]                                        # and systemd reads the same file from the written line
+        ROMP_SERVICE_ENV_FILE="${form#-}" ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite --check    # the same spelling agrees
+        [ "$status" -eq 0 ]
+        cp "$unit" "$unit.before"
+        ROMP_SERVICE_ENV_FILE="$simp" ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite --check         # the simplified spelling: by place
+        if [[ "$form" == *"$TEST_DIR"* ]]; then
+            [ "$status" -eq 0 ]
+        else
+            [ "$status" -eq 5 ]
+            [[ "$output" == *"ROMP_SERVICE_ENV_FILE: the file reads ${form#-}, this environment names $simp"* ]]
+            [[ "$output" == *"nothing was rewritten"* ]]
+            ROMP_SERVICE_ENV_FILE="$simp" ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite
+            [ "$status" -eq 5 ]
+            cmp -s "$unit" "$unit.before"
+        fi
+    done
+    # the neighbour systemd ignores: a .. component left after simplifying reads no file to systemd and to the oracle, and the reader keeps
+    # the line as it keeps a path that is not absolute
+    cp "$unit.clean" "$unit"; grep -v '^EnvironmentFile=' "$unit" > "$unit.new" && mv -f "$unit.new" "$unit"; _svc_line "$unit" 'EnvironmentFile=-/x/y/../env'
+    [ "$(_sd_read "$unit" envfile)" = "" ]
 }
 
 @test "unit reader: the header's numbered list of refusals is one item per _unit_refuse call site in _unit_scan, 1 to N with no gap, every call site in the file inside that function, and N is 21" {

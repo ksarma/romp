@@ -344,7 +344,12 @@ _unit_env_file_line() {   # EnvironmentFile=: the whole rvalue is the path, read
 #      service never saw it; round 3 replayed it under [Service]);
 #   8. a second ExecStart= line (systemd refuses the unit: more than one ExecStart= setting); 9. an ExecStart command with an
 #      unbalanced quote or an escape systemd refuses (the line yields no command, or a command systemd refuses to start), or 10. an
-#      eight-bit or surrogate escape this reader does not model; 11. a command beginning with a prefix character (-, @, :, +, !, |),
+#      eight-bit, surrogate or noncharacter escape this reader does not model (a \u escape naming a surrogate or a noncharacter: systemd
+#      decodes it into bytes that are not UTF-8 by its rule and runs the unit with them in the path, where a rewrite would have to write
+#      the decoded bytes raw, a line systemd refuses whole (refusal 4), so the escape is the only written form that reads back to the
+#      same bytes and the writer has none; its remedy is refusal 13's, since a rewrite proceeds only when the path is this clone's and
+#      the escape so stands for a byte of the executable's real path: fork PR #778's round-5 preface, verified on 255.4); 11. a command
+#      beginning with a prefix character (-, @, :, +, !, |),
 #      which the writer would not write back; 12. a specifier in the command; 13. a command path systemd refuses as an executable
 #      name (_exec_path_unsafe: a quote, a backslash or a control character, "Executable name contains special characters", the
 #      unit never starts; the second pass over the addendum: the round-trip test had installed the manager at such a path and its
@@ -378,6 +383,8 @@ _W_WORD=""; _W_REST=""; _W_ERR=""; _W_KIND=""; _W_CH=""
 _W_FIX=""; _W_FIX_TAIL=""   # for a `carry` refusal: the remedy's verb phrase, ending in its preposition (the call site adds `the value` or
                             # `the path`), and what follows that (the fold's addendum: one remedy served the byte escapes, where the
                             # character itself is right, and the \u surrogates and noncharacters, where it is refusal 4)
+_W_EXEC_ERR=""; _W_EXEC_FIX=""   # for a `carry` refusal on ExecStart's path alone, when set: the form and the whole remedy line (the round-5
+                                 # preface of fork PR #778: a \u surrogate or noncharacter has another consequence there; _unit_unichar says which)
 _WS=$' \t\n\r'   # systemd's WHITESPACE: what strstrip strips, what the comment test skips and what extract_first_word splits on
 _unit_refuse() {   # $1 the line number, $2 the form, $3 the remedy; $4 non-empty: $3 is the whole second line and the shared tail is not
                    # appended (round 4, extra7-4: the ExecStart-path site named the install route itself, and the tail then added a
@@ -426,7 +433,15 @@ _unit_unichar() {   # $1 a code point from \uNNNN or \UNNNNNNNN, $2 the escape a
         # the remedy is to remove it, not to write the character: a surrogate has no UTF-8 form and a noncharacter written raw is a line
         # systemd refuses the whole file on (refusal 4; the fold's addendum, where the byte escapes' remedy served here too)
         _W_ERR="the escape $2, $what, which systemd decodes into bytes that are not UTF-8 by its rule (an Environment= assignment carrying them is dropped); this reader does not model that reading"; _W_KIND=carry
-        _W_FIX="Remove the escape from"; _W_FIX_TAIL=" (written as the character itself, the line is not UTF-8 to systemd, which then loads nothing from the file)"; return 1
+        _W_FIX="Remove the escape from"; _W_FIX_TAIL=" (written as the character itself, the line is not UTF-8 to systemd, which then loads nothing from the file)"
+        # ExecStart's path (the round-5 preface of fork PR #778, verified on 255.4): systemd decodes the escape into the path's bytes and RUNS
+        # the unit, where it drops an Environment= assignment; the writer writes a path back raw, and a line carrying these bytes is one
+        # systemd refuses whole (String is not UTF-8 clean, refusal 4), so the escape is the only written form that reads back to the same
+        # bytes and the writer has no re-encoding for it. The remedy is refusal 13's, not removing the escape: a rewrite proceeds only when
+        # the path is this clone's, so the escape stands for a byte of the executable's real path, and the line without it names another place.
+        _W_EXEC_ERR="the escape $2, $what, which systemd decodes into bytes that are not UTF-8 by its rule and runs this unit with; a rewrite would have to write the decoded bytes raw, which systemd then refuses whole (String is not UTF-8 clean), so this reader does not carry the escape"
+        _W_EXEC_FIX="Move the clone to a path without such characters and run romp-service install from it, which writes the unit afresh and restarts the manager (the escape stands for a byte of the executable's real path, so the line without it names another place)."
+        return 1
     fi
     _utf8_char "$1" _W_CH
 }
@@ -436,7 +451,7 @@ _unit_first_word() {   # $1 an rvalue: _W_WORD its first word, unquoted and unes
                        # backslash, an escape it does not decode, \x00, an octal above \377, \u0000, a code point above U+10FFFF), or `carry`,
                        # an escape systemd decodes into bytes whose reading this reader does not model (_unit_byte, _unit_unichar say which)
     local s="$1" c q="" bs="" out="" h
-    _W_WORD=""; _W_REST=""; _W_ERR=""; _W_KIND=""; _W_FIX=""; _W_FIX_TAIL=""
+    _W_WORD=""; _W_REST=""; _W_ERR=""; _W_KIND=""; _W_FIX=""; _W_FIX_TAIL=""; _W_EXEC_ERR=""; _W_EXEC_FIX=""
     s="${s#"${s%%[!$_WS]*}"}"
     [[ -n "$s" ]] || return 2
     while [[ -n "$s" ]]; do
@@ -585,7 +600,13 @@ _unit_scan() {
             execs=$((execs + 1))
             (( execs == 1 )) || { _unit_refuse "$n" "a second ExecStart= line, which systemd refuses in a service of this type (more than one ExecStart= setting)" "Keep the one line that runs romp-manager up"; return 1; }
             if ! _unit_first_word "$rv"; then
-                if [[ "$_W_KIND" == carry ]]; then _unit_refuse "$n" "ExecStart's command has $_W_ERR" "$_W_FIX the path$_W_FIX_TAIL"; return 1; fi
+                if [[ "$_W_KIND" == carry ]]; then
+                    # a \u surrogate or noncharacter has this surface's own form and remedy (_unit_unichar says why); the byte escapes keep
+                    # the shared ones. One call, item 10.
+                    if [[ -n "$_W_EXEC_ERR" ]]; then v="ExecStart's command has $_W_EXEC_ERR"; k="$_W_EXEC_FIX"; w=own
+                    else v="ExecStart's command has $_W_ERR"; k="$_W_FIX the path$_W_FIX_TAIL"; w=""; fi
+                    _unit_refuse "$n" "$v" "$k" "$w"; return 1
+                fi
                 _unit_refuse "$n" "ExecStart's command has $_W_ERR; systemd reads such a line as no command (Unbalanced quoting) or keeps the backslash and refuses the executable name, so the service does not start, where this rewrite would write a command that does" "Write the path plain, quoted as systemd.syntax(7) describes only if it needs quoting"; return 1
             fi
             w="$_W_WORD"; rest="$_W_REST"

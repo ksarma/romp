@@ -13,7 +13,8 @@ escape tokens on six surfaces plus two single-quoted ones, eight stray-backslash
 small batch the fold added (raw noncharacters, the plane-1 noncharacter escapes, a last-line continuation on an
 Environment line, a backslash at the end of a quoted argument) and its addendum added to (the accepted side of each
 refused Unicode range, the last plane's noncharacters raw and escaped, a 255-byte name and path component, and the
-continuation shapes a comment line, a blank line or a whitespace-only line follows), reported separately so the 684
+continuation shapes a comment line, a blank line or a whitespace-only line follows; the round-5 preface added the EnvironmentFile
+forms path_simplify changes, a doubled slash, a . component, a trailing slash, a .. component), reported separately so the 684
 stay comparable with the lens's numbers. Each fixture is written as a synthetic user unit under a scratch root and loaded by
 `systemd-analyze --user --man=no verify` with `env -i`, HOME and XDG_RUNTIME_DIR under that root, SYSTEMD_UNIT_PATH
 pointing at the fixtures (stub basic, shutdown and default targets beside them; nothing of the live user
@@ -24,11 +25,15 @@ exec->path of the first ExecStart command in its "Command X is not executable" c
 extracted verbatim from tests/romp-service.bats and run through its CLI in `dump` mode with the same HOME.
 
 Verdicts per fixture: agree; agree (both refuse); REFUSES (the oracle raises NotImplementedError, its documented
-not-modelled path, not a disagreement); DISAGREE. The direction that matters most is counted on its own: a
-disagreement where the oracle accepts what systemd drops or refuses (a value systemd never sets reported as set, a
-unit systemd fails to load reported as loaded, a command or an EnvironmentFile systemd drops reported as kept). That
-column marks those shapes alone: two values both set and different, or the same number of commands with other
-arguments, is a DISAGREE without the mark, so a disagreement row is read by its detail text, not by the column.
+not-modelled path, not a disagreement); DISAGREE. The direction that matters most is counted on its own, the dangerous
+column: a disagreement where the oracle reports what systemd does not set, run or read. Its shapes: a value systemd
+leaves unset or sets to something else (both set and different is the oracle, and a reader following it, reporting a
+value systemd will not set, the direction's worst member since it is confidently wrong), a unit systemd fails to load
+reported as loaded, as many commands as systemd's or more with a difference among them, another exec->path, and as
+many EnvironmentFile paths or more with a difference. The other direction, the oracle refusing or leaving unset what
+systemd sets, or listing fewer commands or files, is a DISAGREE without the mark: a false refusal where the reader
+follows it. Until fork PR #778's round-5 preface the column marked systemd-unset-oracle-set, more commands and more
+files alone, so a both-set mismatch and a same-count argv difference went unmarked.
 
 Run:  python3 tests/romp-service-differential.py            (about ten seconds; four verify runs at a time)
       python3 tests/romp-service-differential.py --list    (the fixture ids and their [Service] lines, no runs)
@@ -37,7 +42,7 @@ that skips, since its counts are a claim about one systemd build. Every class is
 
   WRITTEN AGAINST: systemd 255 (255.4-1ubuntu8.17)
   EXPECTED AT THE FOLD HEAD (2026-09-19): see tests/README.md, which carries the pasted totals and the per-class
-  table from the run at that head, and the fold batch's count after the addendum. 256 may move any class; a
+  table from the run at that head, and the fold batch's count after the addendum and the round-5 preface. 256 may move any class; a
   different version prints a notice beside the counts.
 
 Classes (the round-4 lens's ids; assignment by fixture id, every disagreement in exactly one class):
@@ -203,7 +208,18 @@ def fold_fixtures():
             ("fold-E-cont-comment-text", "E", [f"ExecStart={NX}", "Environment=V=x\\", "# c", "Environment=W=y"], "normal"),
             ("fold-E-cont-quoted-blank", "E", [f"ExecStart={NX}", 'Environment=V="x\\', "", "Environment=W=y"], "normal"),
             ("fold-X-path-name-255", "X", ["ExecStart=" + "a" * 255], "normal"),
-            ("fold-X-path-comp-255", "X", ["ExecStart=/nx/" + "a" * 255 + "/x"], "normal")]
+            ("fold-X-path-comp-255", "X", ["ExecStart=/nx/" + "a" * 255 + "/x"], "normal"),
+            # the round-5 preface (2026-09-19): the EnvironmentFile forms path_simplify_and_warn changes, which systemd reads as the
+            # simplified path (the oracle raised on them as not modelled until it modelled the simplification), and a .. component left
+            # after simplifying, which systemd ignores as not normalized (no file)
+            ("fold-F-dslash", "F", ["EnvironmentFile=-/x//y/env", f"ExecStart={NX}"], "normal"),
+            ("fold-F-dotseg", "F", ["EnvironmentFile=/x/./env", f"ExecStart={NX}"], "normal"),
+            ("fold-F-trail", "F", ["EnvironmentFile=/x/env/", f"ExecStart={NX}"], "normal"),
+            ("fold-F-trail-dash", "F", ["EnvironmentFile=-/x/env/", f"ExecStart={NX}"], "normal"),
+            ("fold-F-dot-end", "F", ["EnvironmentFile=/x/env/.", f"ExecStart={NX}"], "normal"),
+            ("fold-F-droot", "F", ["EnvironmentFile=//", f"ExecStart={NX}"], "normal"),
+            ("fold-F-dotdot", "F", ["EnvironmentFile=/x/../env", f"ExecStart={NX}"], "normal"),
+            ("fold-F-dotdot-mid", "F", ["EnvironmentFile=-/x/y/../env", f"ExecStart={NX}"], "normal")]
 
 CLASSES = [
     ("A", re.compile(r"^spec-(E|P|A|F)-nonalnum|^spec-P-trail$")),
@@ -310,8 +326,11 @@ def run_oracle(root, sd, path):
 
 # ---- the comparison -----------------------------------------------------------------------------------------------
 def compare(kind, sd, orc):
-    """(verdict, detail, dangerous): verdict in agree / agree (both refuse) / REFUSES / DISAGREE; dangerous when the oracle accepts
-    what systemd drops or refuses."""
+    """(verdict, detail, dangerous): verdict in agree / agree (both refuse) / REFUSES / DISAGREE; dangerous when the oracle reports
+    what systemd does not set, run or read: a value systemd leaves unset or sets to something else, a unit systemd fails to load, as
+    many commands as systemd's or more with a difference among them, another exec->path, as many EnvironmentFile paths or more with
+    a difference. The oracle refusing or leaving unset what systemd sets, or listing fewer commands or files, is unmarked (a false
+    refusal where the reader follows it). The round-5 preface of fork PR #778 added the both-set and same-count shapes."""
     if "refuses" in orc: return "REFUSES", orc["refuses"], False
     if sd["fatal"] and orc["fatal"] is not None: return "agree (both refuse)", "", False
     if sd["fatal"]: return "DISAGREE", "systemd refuses the unit (%s); the oracle loads it" % "; ".join(sd["notes"])[:200], True
@@ -322,16 +341,17 @@ def compare(kind, sd, orc):
             a, b = sd["env"].get(k), orc["env"].get(k)
             if a != b:
                 diffs.append("%s: systemd %s, oracle %s" % (k, "unset" if a is None else repr(a), "unset" if b is None else repr(b)))
-                if a is None or (b is not None and a != b): dangerous = dangerous or a is None
+                if b is not None: dangerous = True      # the oracle sets what systemd leaves unset, or sets another value
     sd_cmds, orc_cmds = sd["cmds"], [c["argv"] for c in orc["execs"]]
     if sd_cmds != orc_cmds:
         diffs.append("argv: systemd %r, oracle %r" % (sd_cmds, orc_cmds))
-        if len(orc_cmds) > len(sd_cmds): dangerous = True
+        if len(orc_cmds) >= len(sd_cmds): dangerous = True     # more commands than systemd runs, or as many with other words
     if sd["path"] is not None and orc["execs"] and orc["execs"][0]["path"] != sd["path"]:
         diffs.append("exec->path: systemd %r, oracle %r" % (sd["path"], orc["execs"][0]["path"]))
+        dangerous = True                                       # a path systemd does not run
     if sd["envfiles"] != orc["envfiles"]:
         diffs.append("EnvironmentFile: systemd %r, oracle %r" % (sd["envfiles"], orc["envfiles"]))
-        if len(orc["envfiles"]) > len(sd["envfiles"]): dangerous = True
+        if len(orc["envfiles"]) >= len(sd["envfiles"]): dangerous = True   # more files than systemd reads, or as many with another path
     if diffs: return "DISAGREE", "; ".join(diffs), dangerous
     return "agree", "", False
 
@@ -391,7 +411,7 @@ def main():
     print("%-6s %6d %6d %8d %9d %10d" % ("total", tot["cases"], tot["agree"], tot["refuses"], tot["disagree"], tot["dangerous"]))
     f = per.get("fold", {"cases": 0, "agree": 0, "refuses": 0, "disagree": 0, "dangerous": 0})
     print("fold batch: %d cases, %d agree, %d REFUSES, %d DISAGREE, %d dangerous" % (f["cases"], f["agree"], f["refuses"], f["disagree"], f["dangerous"]))
-    print("dangerous = a disagreement where the oracle accepts what systemd drops or refuses")
+    print("dangerous = a disagreement where the oracle reports what systemd does not set, run or read (a value unset or other to systemd, a unit it fails to load, as many commands or files or more with a difference, another exec->path)")
     bad = [r for r in rows if r[1] == "DISAGREE"]
     if bad:
         print("disagreements:")
