@@ -918,9 +918,13 @@ def summary_mismatch(out, errors):
     """None when the nested run's summary line counts `errors` errors, else a sentence naming the count expected and
     the summary line found. The line is pytest's last ("6 passed, 3 errors in 0.19s"), read tolerant of any other
     comma-separated count between passed and errors (a warning, a skip, an xfail: "6 passed, 1 warning, 3 errors in")
-    and strict about the count: every skipped segment ends in a comma and stays on the line, and the count follows a
-    space, so "13 errors" does not stand for 3. With `errors` 0 the line carries no errors segment at all, other counts
-    allowed. The first form asked for "N passed, M errors in" and "N passed in" exactly, so one unrelated warning in
+    and strict about the count: every skipped segment ends in a comma, and the count follows a space, so "13 errors"
+    does not stand for 3. With `errors` 0 the line carries no errors segment at all, other counts allowed. The count
+    is read on the summary line alone because SUMMARY_LINE selects that line (re.M without re.S, so its capture holds
+    no newline); the segment class's newline exclusion ([^,\n]) and the [ ,] tail after the count are defence in
+    depth over a value already reduced to one line, and no test can red on the exclusion alone. At the round-3 head
+    the test named for the property credited the class; it pins SUMMARY_LINE's line selection
+    (NestedSummaryMatcher.test_the_count_is_read_on_the_summary_line_alone). The first form asked for "N passed, M errors in" and "N passed in" exactly, so one unrelated warning in
     the child (an unpinned pytest's deprecation, a conftest filterwarnings entry pytest drops with a config warning)
     turned "6 passed, 3 errors in" into "6 passed, 1 warning, 3 errors in" and redded every run with a message that
     named no warning (round 1, 2026-09-19).
@@ -1262,10 +1266,23 @@ class NestedSummaryMatcher(unittest.TestCase):
         self.assertIsNotNone(problem)
         self.assertIn("counts 3 errors but does not read 'N passed, other counts, 3 errors in'", problem)
 
-    def test_a_segment_never_crosses_a_line(self):
+    def test_the_count_is_read_on_the_summary_line_alone(self):
+        """SUMMARY_LINE's line selection, not the segment class, keeps the count on the summary line: the class's
+        newline exclusion is unreachable over the one-line capture (at the round-3 head this test's name credited the
+        class). Three fabricated outputs: a count on a later line is not read (reds only when the segment search is
+        repointed from the matched line to the whole output AND the class is widened to [^,]; neither alone); a later
+        line carrying a passed-and-errors shape of its own is not read (reds under the repoint alone, with either
+        class); a rule split across two lines is no summary line (reds when SUMMARY_LINE gains re.S: its capture then
+        holds the newline)."""
         out = "=== 6 passed, 3 errors in 0.19s ===\nanother line, with a comma, 2 errors named here\n"
         self.assertIsNotNone(summary_mismatch(out, 2), "the count is read on the summary line alone")
         self.assertIsNone(summary_mismatch(out, 3))
+        out = "=== 6 passed, 3 errors in 0.19s ===\n2 passed, 1 error in 0.01s\n"
+        self.assertIsNotNone(summary_mismatch(out, 1), "a later line's own passed-and-errors shape is not the summary line")
+        self.assertIsNone(summary_mismatch(out, 3))
+        out = "=== 6 passed,\n3 errors in 0.19s ===\n"
+        self.assertIsNone(SUMMARY_LINE.search(out), "a rule split across two lines is no summary line")
+        self.assertIn("no pytest summary line", summary_mismatch(out, 3))
 
     def test_no_summary_line_is_refused_with_the_count_expected(self):
         for out in ("", "collected 0 items\n", "6 passed, 3 errors in 0.19s\n"):     # the last lacks pytest's rule of equals signs
