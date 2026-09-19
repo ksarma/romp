@@ -7594,7 +7594,8 @@ test family re-verifies. Where the code as built departs from the text above, wh
    pairing was not touched by the build, whose items are the walk and the paint; built since as decision 52 of
    plans/file-review.md, 2026-09-18, by a rule the viewer and the map share rather than by `Block.leaves`: an inline
    start tag with no end tag in its block renders as its own characters on both sides, so the block maps and that
-   fix shape is moot); the 1,000-row table's numbers the
+   fix shape is moot for the bare spelling, while the self-closing spelling (`<b/>`, `<div/>`, `<table/>`,
+   `<title/>`) stays HTML and keeps that shape, as decision 52 records); the 1,000-row table's numbers the
    brief asked for were taken beside the fence's (item 2), the table's emission running once per source on the Walked
    row as before and the one-cell rule's check being one scan of the table's cells per selection. Five sentences in
    earlier notes are history since this build: the Slice 5 note's guarantees paragraph (above) says "PRE and TD stay

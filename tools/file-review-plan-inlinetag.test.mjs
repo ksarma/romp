@@ -183,7 +183,7 @@ test('the guide says a selection across several cells can be commented from the 
 
 test('plans/markdown-viewer.md points at both decisions without rewriting the slices\' history', () => {
   assert.ok(viewerPlan.includes('Overturned by decision 53 of plans/file-review.md (2026-09-18): a selection across several cells of one table anchors to its span, the pipes and the delimiter row inside the quote, and the one-cell sentence, `cellsRule`, `coveredCells` and `coveredOnly` are gone from the map; this item stands as the slice\'s history.'));
-  assert.ok(viewerPlan.includes('built since as decision 52 of plans/file-review.md, 2026-09-18, by a rule the viewer and the map share rather than by `Block.leaves`: an inline start tag with no end tag in its block renders as its own characters on both sides, so the block maps and that fix shape is moot'));
+  assert.ok(viewerPlan.includes('built since as decision 52 of plans/file-review.md, 2026-09-18, by a rule the viewer and the map share rather than by `Block.leaves`: an inline start tag with no end tag in its block renders as its own characters on both sides, so the block maps and that fix shape is moot for the bare spelling, while the self-closing spelling (`<b/>`, `<div/>`, `<table/>`, `<title/>`) stays HTML and keeps that shape, as decision 52 records'));
   assert.ok(viewerPlan.includes('3. *Item 3, a selection spanning cells is refused with the reason named, the Raw view offered on the span.*'), 'the Slice 8 item keeps its title as history');
 });
 
