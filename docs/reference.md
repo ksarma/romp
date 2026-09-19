@@ -3810,10 +3810,26 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   `cpu_ms_workers`, which on the child road is near zero, the child's
   workers riding `cpu_ms_child_workers`; the
   producer thread's own per-pass work is not included and shows under the
-  process line's "other"; a `/perf` snapshot adds judge.py's in-process pool
-  accumulator, `judge_worker_cpu_ms()`, to the sum at read time while the
-  kernel's live stats dict does not carry it, so a delta comes from one source,
-  never one of each), `wakes` (every wake of the producer: the backends'
+  process line's "other"; the workers' share reaches the kernel's live
+  counters as each pool future ends, through the sink the kernel arms in
+  judge.py right after it builds its collector (`set_worker_cpu_sink`), so a
+  live read of the stats dict and a `/perf` snapshot agree and a delta may
+  take either; the arming is what creates `cpu_ms_workers`, and the key
+  rides a served block exactly while that collector is the sink judge.py
+  holds, so a judge block without the key is from a collector that is not
+  that sink now, whatever made it so: a collector nothing armed, or one the
+  sink has since left, as when a later kernel load in the same process
+  displaced it (the load re-executes judge.py and clears the hook; only a
+  test process moves the sink once armed), and no workers' share lands in its
+  `cpu_ms_sum` from then on: the key is absent, never a zero or a frozen
+  figure that could pass for a measurement (a kernel serving `/perf` always
+  arms, so the shape is a collector built outside one or one the sink left,
+  and `romp perf` says "workers' share not reported" over such a pair; the
+  note says the block cannot tell how much of a window's figure is the
+  workers', since a window that straddles the displacement still carries
+  what landed while armed); judge.py's own counter,
+  `judge_worker_cpu_ms()`, serves the judge child, which runs with no kernel
+  in its process), `wakes` (every wake of the producer: the backends'
   pokes, `POST /tick`, and two kernel-internal sites; one SDK turn fires
   several, so this is an upper bound on the poke rate), `wakes_event` and
   `wakes_backstop` (how the producer's 3 s wait ended; `wakes - wakes_event`

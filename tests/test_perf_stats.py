@@ -27,6 +27,7 @@ import time
 import unittest
 import shutil
 import socket
+import subprocess
 import urllib.request
 from unittest import mock
 import contextlib
@@ -238,7 +239,9 @@ class Collector(unittest.TestCase):
         self.assertEqual(set(snap["sends"]), {"full", "delta", "deduped"})
         self.assertEqual(snap["judge"]["ms_mean"], 0.0, "no passes: the mean is 0, not a division error")
         self.assertIn("cpu_ms_sum", snap["judge"])
-        self.assertIn("cpu_ms_workers", snap["judge"])
+        self.assertNotIn("cpu_ms_workers", snap["judge"],
+                         "nothing armed this collector as judge.py's worker-CPU sink: the workers' share is ABSENT, never a 0.0 "
+                         "that reads as measured; arm_judge_worker_sink opens the key (the review ruling, 2026-09-18)")
         self.assertEqual({k: snap["judge"][k] for k in ("wakes", "wakes_event", "wakes_backstop")},
                          {"wakes": 0, "wakes_event": 0, "wakes_backstop": 0},
                          "the producer's wake counters: present and zero on a fresh collector")
@@ -654,8 +657,10 @@ class Collector(unittest.TestCase):
         self.assertEqual(snap["judge"]["passes"], 2)
         self.assertAlmostEqual(snap["judge"]["ms_last"], 4000.0)
         self.assertAlmostEqual(snap["judge"]["ms_mean"], 3000.0)
-        self.assertAlmostEqual(snap["judge"]["cpu_ms_sum"] - snap["judge"]["cpu_ms_workers"], 250.0,
-                               msg="the tier threads' CPU, apart from the pool workers' share")
+        self.assertAlmostEqual(snap["judge"]["cpu_ms_sum"], 250.0,
+                               msg="the tier threads' CPU alone: nothing armed this collector, so no pool workers' share is in the sum")
+        self.assertNotIn("cpu_ms_workers", snap["judge"],
+                         "and no workers' key stands beside it to be mistaken for a measured zero (the review ruling, 2026-09-18)")
 
     def test_judge_child_is_served_as_a_size_and_a_status_never_the_line(self):
         """judge.child stood as the judges' child's done line verbatim (2026-09-18, a paste-safety review of the snapshot):
@@ -687,6 +692,9 @@ class Collector(unittest.TestCase):
         self.assertEqual((child.get("recordCache"), child.get("goalIo"), "asmCheckpoint" in child), (None, {"loads": 2}, False),
                          "a block rides only as a dict, and only when sent")
         self.assertEqual(self.st.snapshot()["judge"]["cpu_ms_child_workers"], 4.0, "the CPU folds as before")
+        self.assertNotIn("cpu_ms_workers", self.st.snapshot()["judge"],
+                         "the child's report lands with no sink armed (the child road needs none) and opens no in-process "
+                         "workers' key: only the arming, or an in-process future, creates it (the review ruling, 2026-09-18)")
         line = json.dumps(done) + "\n"
         self.st.judge_child_done(done, pid=4242, chars=len(line))
         self.assertEqual(self.st.snapshot()["judge"]["child"]["chars"], len(line), "the reader's own count when it has one")
@@ -2076,20 +2084,420 @@ class GoalIoCounters(unittest.TestCase):
 
 class JudgeCpu(unittest.TestCase):
     """The judge's CPU is attributed from two places: the tier threads (_run_tier) and every future the
-    tiers submit to judge.py's pools (_TimedPool, bound to the module's ThreadPoolExecutor name)."""
+    tiers submit to judge.py's pools (_TimedPool, bound to the module's ThreadPoolExecutor name). The workers'
+    share reaches the kernel's LIVE counters as each future ends, through the sink the kernel installs at load
+    (jd.set_worker_cpu_sink(_PERF_STATS.judge_worker_cpu)), so a live read of the stats dict and a snapshot()
+    read agree and a delta may take either, on the collector that holds the sink (a served block carries
+    cpu_ms_workers exactly then, review round 1, 2026-09-19); judge.py's own counter (judge_worker_cpu_ms) stays for the serve
+    child, whose module object no kernel ever loads. Until 2026-09-18 snapshot() added that module counter to
+    its COPY at read time and the live dict never carried it: two readings of one key disagreed by the whole
+    total, and a delta from one of each was wrong (tests/test_judges_process.py paid, f5ba16832)."""
+
+    def _arm(self, stats):
+        """Point judge.py's sink at `stats` for this test, recording every delta it is handed. judge.py is one module
+        object for every kernel a test process loads and the LAST load holds the sink, so a test that asserts on its
+        own kernel's counters arms them itself; the previous sink comes back at cleanup. The recording wrapper is laid
+        over judge_worker_cpu ON THE INSTANCE (the class method stays, the _HttpWatch shape) BEFORE the arming, so the
+        collector's own road (arm_judge_worker_sink, which opens cpu_ms_workers at 0.0 as the kernel's load does)
+        installs the wrapper itself and holds_judge_worker_sink stays true under the harness: a wrapper installed
+        beside the collector's method would read as a displacement and the served block would drop the key (review
+        round 1, 2026-09-19: presence follows who holds the sink, and a closure over the method is not the method)."""
+        jd = km.jd
+        received = []
+        real = km._PerfStats.judge_worker_cpu
+
+        def sink(ms):
+            received.append(ms)
+            real(stats, ms)
+        stats.judge_worker_cpu = sink
+        self.addCleanup(lambda: stats.__dict__.pop("judge_worker_cpu", None))   # the instance attribute goes; the method shows again
+        prev = stats.arm_judge_worker_sink()
+        self.addCleanup(jd.set_worker_cpu_sink, prev)
+        return received
+
+    @staticmethod
+    def _live(stats):
+        with stats.lock:
+            return dict(stats.judge)
 
     def test_pool_workers_account_their_cpu(self):
         jd = km.jd
         self.assertTrue(issubclass(jd.ThreadPoolExecutor, concurrent.futures.ThreadPoolExecutor),
                         "every pool in judge.py is a real executor that also accounts")
+        received = self._arm(km._PERF_STATS)
         before = jd.judge_worker_cpu_ms()
+        live0 = self._live(km._PERF_STATS)
         with jd.ThreadPoolExecutor(max_workers=2) as ex:
             self.assertEqual(ex.submit(lambda a, b=1: a + b, 2, b=3).result(), 5, "args and kwargs pass through")
             ex.submit(_burn_cpu, 0.005).result()
         grew = jd.judge_worker_cpu_ms() - before
         self.assertGreaterEqual(grew, 4.0, "about 5 ms of a worker's CPU landed")
         self.assertLess(grew, 500.0)
-        self.assertEqual(km._PERF_STATS.snapshot()["judge"]["cpu_ms_workers"], jd.judge_worker_cpu_ms())
+        self.assertAlmostEqual(sum(received), grew, places=6, msg="the sink is handed the same deltas the module counter takes")
+        snap = km._PERF_STATS.snapshot()["judge"]
+        self.assertAlmostEqual(snap["cpu_ms_workers"] - live0["cpu_ms_workers"], sum(received), places=6,
+                               msg="the snapshot's cpu_ms_workers is what the sink received, copied from the live dict")
+        self.assertAlmostEqual(snap["cpu_ms_sum"] - live0["cpu_ms_sum"], sum(received), places=6,
+                               msg="and cpu_ms_sum grew by the same: the workers' share is in the sum at write time")
+
+    def test_a_live_read_and_a_snapshot_agree_on_cpu_ms_sum_after_pool_work(self):
+        """(i) One source. A private collector takes the sink; after real pool work its live dict and its snapshot carry
+        the same cpu_ms_sum and cpu_ms_workers, and the snapshot reads NOTHING from judge.py's counter (that counter is
+        stubbed to a billion for one read and the snapshot does not move). Red before 2026-09-18 on the first
+        assertion: the snapshot added judge_worker_cpu_ms() to its copy, the live dict had no workers' share."""
+        jd = km.jd
+        st = km._PerfStats()
+        received = self._arm(st)
+        with jd.ThreadPoolExecutor(max_workers=1) as ex:
+            ex.submit(_burn_cpu, 0.005).result()
+        self.assertGreaterEqual(sum(received), 4.0, "about 5 ms of a worker's CPU went through the sink")
+        live = self._live(st)
+        snap = st.snapshot()["judge"]
+        self.assertEqual(snap["cpu_ms_sum"], live["cpu_ms_sum"], "the snapshot copies the live sum and adds nothing at read time")
+        self.assertEqual(snap["cpu_ms_workers"], live["cpu_ms_workers"], "the workers' share is a live counter, copied")
+        self.assertAlmostEqual(live["cpu_ms_workers"], sum(received), places=6)
+        self.assertAlmostEqual(live["cpu_ms_sum"], sum(received), places=6, msg="no tier ran: the sum is the workers' share alone")
+        with mock.patch.object(jd, "judge_worker_cpu_ms", return_value=1e9):
+            again = st.snapshot()["judge"]
+        self.assertEqual(again["cpu_ms_sum"], live["cpu_ms_sum"], "judge.py's module counter is not an input to the snapshot")
+        self.assertEqual(again["cpu_ms_workers"], live["cpu_ms_workers"])
+
+    def test_with_no_sink_the_module_counter_alone_accumulates_and_the_kernels_dict_stands_still(self):
+        """(iii) The sink is optional: judge.py with none set (the serve child's process, a standalone romp-judge run)
+        keeps its own counter, which _serve_pass reads for workerCpuMs, and writes to no kernel."""
+        jd = km.jd
+        prev = jd.set_worker_cpu_sink(None)
+        self.addCleanup(jd.set_worker_cpu_sink, prev)
+        live0 = self._live(km._PERF_STATS)
+        before = jd.judge_worker_cpu_ms()
+        with jd.ThreadPoolExecutor(max_workers=1) as ex:
+            ex.submit(_burn_cpu, 0.005).result()
+        self.assertGreaterEqual(jd.judge_worker_cpu_ms() - before, 4.0, "the module counter took the worker's CPU")
+        live1 = self._live(km._PERF_STATS)
+        self.assertEqual((live1["cpu_ms_workers"], live1["cpu_ms_sum"]), (live0["cpu_ms_workers"], live0["cpu_ms_sum"]),
+                         "no sink, no write to the kernel's counters")
+
+    def test_an_unarmed_collector_serves_no_workers_key_and_the_arming_opens_it_at_a_genuine_zero(self):
+        """(ii) The review ruling on the write-time fold (2026-09-18): an unarmed sink must be distinguishable from a
+        genuine zero. A collector nothing armed has no cpu_ms_workers in its live dict or its snapshot (red before: the
+        constructor opened the key at 0.0, the reading a process that never armed the sink would have served as fact);
+        arm_judge_worker_sink opens it at 0.0 with no pool future yet run, a genuine zero, and installs this collector's
+        writer; pool work then moves it; and a write through judge_worker_cpu on a collector that does not hold the sink
+        is a record, not a report: the live dict takes the key and the served block, what the user reads, drops it while
+        its cpu_ms_sum carries the write (review round 2, 2026-09-19: this cell had asserted the live dict alone and
+        called the write the evidence of reporting). cpu_ms_sum is served in every case: the tier threads' and the child's
+        CPU."""
+        jd = km.jd
+        st = km._PerfStats()
+        self.assertNotIn("cpu_ms_workers", self._live(st), "unarmed: no key in the live dict")
+        self.assertNotIn("cpu_ms_workers", st.snapshot()["judge"], "the snapshot copies the live dict: no key, not a zero")
+        self.assertEqual(st.snapshot()["judge"]["cpu_ms_sum"], 0.0, "cpu_ms_sum is served regardless")
+        prev = st.arm_judge_worker_sink()
+        self.addCleanup(jd.set_worker_cpu_sink, prev)
+        self.assertEqual(self._live(st).get("cpu_ms_workers"), 0.0, "armed, no future yet: a genuine zero, present")
+        self.assertEqual(st.snapshot()["judge"]["cpu_ms_workers"], 0.0)
+        installed = jd.set_worker_cpu_sink(None)
+        self.assertIs(getattr(installed, "__self__", None), st, "the arming installed this collector's writer: %r" % (installed,))
+        self.assertEqual(installed.__name__, "judge_worker_cpu")
+        st.arm_judge_worker_sink()
+        with jd.ThreadPoolExecutor(max_workers=1) as ex:
+            ex.submit(_burn_cpu, 0.005).result()
+        snap = st.snapshot()["judge"]
+        self.assertGreaterEqual(snap["cpu_ms_workers"], 4.0, "the value, once a future ran: %r" % snap["cpu_ms_workers"])
+        self.assertEqual(snap["cpu_ms_sum"], snap["cpu_ms_workers"], "no tier ran: the sum is the workers' share")
+        bare = km._PerfStats()
+        bare.judge_worker_cpu(2.5)
+        served = bare.snapshot()["judge"]
+        self.assertNotIn("cpu_ms_workers", served, "a write on a collector that does not hold the sink is a record, not a "
+                         "report: the served block drops the key (review round 2, 2026-09-19)")
+        self.assertEqual(served["cpu_ms_sum"], 2.5, "while cpu_ms_sum carries the write")
+        self.assertEqual(self._live(bare).get("cpu_ms_workers"), 2.5, "the live dict holds the record")
+
+    def test_the_reference_and_the_docstring_say_the_key_is_absent_until_the_sink_is_armed(self):
+        """(e) The two places PR 788 wrote its interim one-source sentence, the _PerfStats docstring's judge entry and
+        docs/reference.md's judge bullet, now describe the write-time fold and the unarmed shape: the arming creates
+        cpu_ms_workers, a block without it is from a collector nothing armed, and neither still says a delta comes from
+        one source, never one of each (the review ruling, 2026-09-18)."""
+        doc = km._PerfStats.__doc__ or ""
+        ref = Path(HERE).parent.joinpath("docs", "reference.md").read_text(encoding="utf-8")
+        for name, text in (("the _PerfStats docstring", doc), ("docs/reference.md", ref)):
+            text = re.sub(r"\s+", " ", text)      # a re-wrap is not a change of meaning (review round 2, 2026-09-19: the gap
+            #                                         bound below counted the docstring's indentation, 56 of its 60)
+            self.assertRegex(text, r"the arming is what creates\s+`?cpu_ms_workers`?", name)
+            self.assertRegex(text, r"straddles the displacement", "%s carries the hedge: a keyless block cannot say how much of a "
+                             "window's figure is the workers' (review round 2, 2026-09-19)" % name)
+            self.assertRegex(text, r"collector nothing armed", name)
+            self.assertRegex(text, r"workers' share not\s+reported", "%s names the CLI's wording for the absent key" % name)
+            self.assertNotRegex(text, r"one source,\s+never\s+one\s+of\s+each", "%s: PR 788's interim sentence is gone" % name)
+            self.assertRegex(text, r"later kernel load[\s\S]{0,60}displaced", "%s names the displaced collector as a keyless shape "
+                             "(review round 1, 2026-09-19: it was listed as one and served the key frozen)" % name)
+            self.assertNotRegex(text, r"earlier kernel load\s+in a test process after a later load re-armed",
+                                "%s: the sentence round 1 found false is gone" % name)
+        # the two CLI copies of the same predicate, bin/romp's comment over the "not reported" note and the bats test's,
+        # read with their comment markers stripped and whitespace normalised: each names the displaced collector and
+        # carries the hedge, and neither says the share is absent from the figure (review round 2, 2026-09-19: bin/romp's
+        # copy had dropped the hedge its siblings carry, and the bats copy still stated the closed rule from before round 1)
+        top = Path(HERE).parent
+        for name, path in (("bin/romp", top / "bin" / "romp"), ("tests/romp-perf.bats", top / "tests" / "romp-perf.bats")):
+            text = re.sub(r"\s+", " ", re.sub(r"(?m)^[ \t]*#", " ", path.read_text(encoding="utf-8")))
+            self.assertRegex(text, r"later kernel load[\s\S]{0,60}displaced", "%s names the displaced collector" % name)
+            self.assertRegex(text, r"not reported", name)
+            self.assertRegex(text, r"straddles", "%s carries the hedge: a window that straddles the displacement carries the share" % name)
+            self.assertNotRegex(text, r"share is not in the window's figure", "%s: the share may be in the figure; the note says the "
+                                "block cannot split it" % name)
+            self.assertNotRegex(text, r"has no pool workers' share in it", "%s: the closed rule from before round 1 is gone" % name)
+
+    def test_judge_worker_cpus_docstring_states_a_write_as_a_record_and_presence_by_who_holds_the_sink(self):
+        """The writer's own docstring follows the serving rule round 1 installed (review round 2, 2026-09-19: it still said a
+        write was itself the evidence that the share is reported, while snapshot() pops the key from any collector that
+        does not hold the sink, so a wrapper installed beside the method records and reports nothing, the opposite of the
+        promise). Whitespace is normalised first, so a re-wrap cannot red it. Kept apart from the class-docstring pin above
+        on purpose: this method's docstring carries none of that text."""
+        doc = re.sub(r"\s+", " ", km._PerfStats.judge_worker_cpu.__doc__ or "")
+        self.assertNotRegex(doc, r"write is itself the evidence", "the retired rule is gone")
+        self.assertRegex(doc, r"a served block carries the key only while this collector is the sink judge\.py holds",
+                         "the serving rule, in the writer's own words")
+        self.assertRegex(doc, r"holds_judge_worker_sink", "and it names the question snapshot() asks")
+        self.assertRegex(doc, r"RECORD, not a report", "a write is a record")
+
+    def test_judge_pys_pool_site_line_is_the_ast_walks_enumeration(self):
+        """kernel/judge.py carries ONE machine-readable line under the _TimedPool rebind, `# POOL SITES: run_pass -> ... |
+        main only -> ...`, and this test derives that line from the file and compares (review round 2, 2026-09-19: PR
+        792's rationale had enumerated the sites by hand, ten where the file has eleven, in place of a parenthetical
+        that claimed a check and was false; a written list is the same artifact with more words, so the list is derived
+        here and a new site reds this test until the line names it). THE PREDICATE. A pool site is an ast.Call whose
+        callee is the bare name ThreadPoolExecutor or _TimedPool: after the rebind every such construction builds
+        _TimedPool, whose submit wrapper feeds the sink. An attribute-form construction (concurrent.futures.
+        ThreadPoolExecutor(...)) would bypass the rebind and is asserted absent. A site is named by the module-level def
+        whose span holds it, in source order, one name per construction. run_pass REACHES a site when a walk from run_pass
+        over the Name loads of module-level functions inside each function's body reaches its owner: an over-approximation
+        of calls (a function passed as a value counts as reached), so "main only" is what the walk proves: no name road
+        from run_pass at all, and main the one module-level function that reaches the owner. Every owner is reached from
+        main (its subcommand dispatch)."""
+        import ast
+        path = Path(HERE).parent / "kernel" / "judge.py"
+        src = path.read_text(encoding="utf-8")
+        tree = ast.parse(src)
+        top = {n.name: n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.ClassDef))}
+
+        def owner_of(lineno):
+            for name, node in top.items():
+                if node.lineno <= lineno <= node.end_lineno:
+                    return name
+            return "<module>"
+        sites, bypass = [], []
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            f = node.func
+            if isinstance(f, ast.Name) and f.id in ("ThreadPoolExecutor", "_TimedPool"):
+                sites.append((node.lineno, owner_of(node.lineno)))
+            elif isinstance(f, ast.Attribute) and f.attr in ("ThreadPoolExecutor", "_TimedPool"):
+                bypass.append((node.lineno, owner_of(node.lineno)))
+        sites.sort()
+        self.assertEqual(bypass, [], "a pool built past the rebind would feed no sink: %r" % (bypass,))
+        self.assertNotIn("<module>", [o for _, o in sites], "every pool site sits inside a module-level def: %r" % (sites,))
+        refs = {}
+        for name, node in top.items():
+            refs[name] = {n.id for n in ast.walk(node) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load) and n.id in top}
+
+        def reach(start):
+            seen, stack = set(), [start]
+            while stack:
+                x = stack.pop()
+                if x not in seen:
+                    seen.add(x); stack.extend(refs.get(x, ()))
+            return seen
+        from_pass, from_main = reach("run_pass"), reach("main")
+        owners = [o for _, o in sites]
+        self.assertEqual([o for o in owners if o not in from_main], [], "every pool site is reached from main")
+        for owner in sorted({o for o in owners if o not in from_pass}):
+            who = sorted(f for f in top if f != owner and owner in reach(f))
+            self.assertEqual(who, ["main"], "%s is reached from main alone, which is what the line's 'main only' claims" % owner)
+        derived = "# POOL SITES: run_pass -> %s | main only -> %s" % (" ".join(o for o in owners if o in from_pass),
+                                                                      " ".join(o for o in owners if o not in from_pass))
+        written = [ln for ln in src.splitlines() if ln.startswith("# POOL SITES: ")]
+        self.assertEqual(len(written), 1, "exactly one POOL SITES line in kernel/judge.py: %r" % (written,))
+        self.assertEqual(written[0], derived, "kernel/judge.py's POOL SITES line is the AST walk's enumeration; the walk found %d "
+                         "constructions at lines %s. Update the line to the derived text, and if a site moved between the two "
+                         "groups, read what the kernel's arming rests on (the rebind's comment)" % (len(sites), [ln for ln, _ in sites]))
+
+    def test_the_kernel_arms_the_sink_at_load(self):
+        """A kernel load installs its collector's judge_worker_cpu as judge.py's sink and opens judge.cpu_ms_workers at
+        0.0 (armed, no pool future yet: a genuine zero, present), and a judge module no kernel has loaded has none, as a
+        collector built beside the kernel's has no key. Observed in a child process: judge.py is one module object per
+        process and every kernel load re-arms it, so only a load this test controls can show the state before and after."""
+        state = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, state, True)
+        env = dict(os.environ)
+        env["ROMP_STATE_DIR"] = state
+        env["ROMP_KERNEL_NO_OPEN"] = "1"
+        env.setdefault("ROMP_SERVE_TOKEN", "test-token-DO-NOT-USE")
+        code = ("import sys; sys.path.insert(0, %r)\n"
+                "from romp_load import load_source\n"
+                "load_source('romp_event_model', %r)\n"
+                "jd = load_source('romp_judge', %r)\n"
+                "assert jd.set_worker_cpu_sink(None) is None, 'no kernel loaded: no sink'\n"
+                "km = load_source('romp_kernel', %r)\n"
+                "sink = jd.set_worker_cpu_sink(None); jd.set_worker_cpu_sink(sink)\n"   # read and put back: a cleared sink drops the key
+                "assert getattr(sink, '__self__', None) is km._PERF_STATS, sink\n"
+                "assert sink.__name__ == 'judge_worker_cpu', sink\n"
+                "snap = km._PERF_STATS.snapshot()['judge']\n"
+                "assert snap.get('cpu_ms_workers') == 0.0, snap.get('cpu_ms_workers')\n"
+                "assert 'cpu_ms_workers' not in km._PerfStats().snapshot()['judge'], 'a collector nothing armed: no key'\n"
+                # a SECOND kernel load in the same process, the test-suite shape (review round 1, 2026-09-19): it re-executes
+                # judge.py and arms its own collector; the first collector is displaced and its served block drops the key,
+                # while its live dict keeps the frozen record; the pool work that follows lands in the second collector only.
+                # The displaced collector's block is asserted first, so a run on the code before this round fails on it.
+                "km2 = load_source('romp_kernel_second_load', %r)\n"
+                "first, second = km._PERF_STATS, km2._PERF_STATS\n"
+                "assert 'cpu_ms_workers' not in first.snapshot()['judge'], 'displaced: no key, never the frozen 0.0: %%r' %% first.snapshot()['judge'].get('cpu_ms_workers')\n"
+                "assert first.judge.get('cpu_ms_workers') == 0.0, 'the live dict keeps the record it took while armed'\n"
+                "assert second.snapshot()['judge']['cpu_ms_workers'] == 0.0\n"
+                "assert jd.worker_cpu_sink() == second.judge_worker_cpu, jd.worker_cpu_sink()\n"
+                "assert second.holds_judge_worker_sink() and not first.holds_judge_worker_sink()\n"
+                "import time\n"
+                "def burn(s):\n"
+                "    t = time.thread_time()\n"
+                "    while time.thread_time() - t < s: pass\n"
+                "with jd.ThreadPoolExecutor(max_workers=1) as ex: ex.submit(burn, 0.005).result()\n"
+                "assert second.snapshot()['judge']['cpu_ms_workers'] >= 4.0, second.snapshot()['judge']\n"
+                "assert 'cpu_ms_workers' not in first.snapshot()['judge'], 'still none on the displaced collector'\n"
+                "assert first.judge.get('cpu_ms_workers') == 0.0, 'nothing lands in a displaced collector'\n"
+                "print('armed')\n"
+                % (HERE, os.path.join(BIN, "romp-event-model"), os.path.join(BIN, "romp-judge"), os.path.join(BIN, "romp-kernel"),
+                   os.path.join(BIN, "romp-kernel")))
+        r = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, timeout=300)
+        self.assertEqual(r.returncode, 0, "stderr:\n%s" % r.stderr[-3000:])
+        self.assertIn("armed", r.stdout)
+
+    def _sink_saved(self):
+        """Restore whatever sink judge.py holds now at cleanup (read by a set-and-put-back, so this also runs on the code
+        before round 1, which had no worker_cpu_sink getter: the behavioral assertion is what goes red there)."""
+        jd = km.jd
+        prev = jd.set_worker_cpu_sink(None)
+        jd.set_worker_cpu_sink(prev)
+        self.addCleanup(jd.set_worker_cpu_sink, prev)
+
+    def test_a_collector_a_later_arming_displaced_serves_no_workers_key(self):
+        """The presence invariant, FORWARD (review round 1, 2026-09-19): a collector a later arming displaced (what a later
+        kernel load does through judge.py's re-execution) keeps its live key frozen at what it took, and its served block
+        drops the key, so `romp perf` says "not reported" over such a pair instead of reading the frozen figure as a
+        measurement. Red before on the first assertNotIn: the displaced block carried the key at 0.0."""
+        jd = km.jd
+        self._sink_saved()
+        first = km._PerfStats()
+        first.arm_judge_worker_sink()
+        self.assertEqual(first.snapshot()["judge"]["cpu_ms_workers"], 0.0, "armed, no future yet: present at a genuine zero")
+        second = km._PerfStats()
+        second.arm_judge_worker_sink()                                   # displaces `first`, as a later kernel load does
+        self.assertNotIn("cpu_ms_workers", first.snapshot()["judge"], "displaced: the served block has no key, never the frozen 0.0")
+        self.assertEqual(self._live(first).get("cpu_ms_workers"), 0.0, "the live dict keeps the record it took while armed")
+        with jd.ThreadPoolExecutor(max_workers=1) as ex:
+            ex.submit(_burn_cpu, 0.005).result()
+        self.assertGreaterEqual(second.snapshot()["judge"]["cpu_ms_workers"], 4.0, "the pool work landed in the collector that holds the sink")
+        self.assertNotIn("cpu_ms_workers", first.snapshot()["judge"], "and still none on the displaced one")
+        self.assertEqual(self._live(first)["cpu_ms_workers"], 0.0, "frozen: nothing lands in a displaced collector")
+        first.reset()
+        self.assertNotIn("cpu_ms_workers", self._live(first), "a reset on a displaced collector re-creates nothing")
+        self.assertFalse(first.holds_judge_worker_sink()); self.assertTrue(second.holds_judge_worker_sink())
+
+    def test_a_reset_on_the_collector_that_holds_the_sink_keeps_the_key(self):
+        """The presence invariant, REVERSE (review round 1, 2026-09-19): reset() on the collector that holds the sink keeps
+        cpu_ms_workers, at a genuine zero, and the next future lands in it. Red before on the first assertEqual: the
+        literal reset() rebuilds the dict from omitted the key, so an armed collector read "nothing armed me" while it was
+        the one reporting."""
+        jd = km.jd
+        self._sink_saved()
+        st = km._PerfStats()
+        st.arm_judge_worker_sink()
+        with jd.ThreadPoolExecutor(max_workers=1) as ex:
+            ex.submit(_burn_cpu, 0.005).result()
+        self.assertGreaterEqual(self._live(st)["cpu_ms_workers"], 4.0, "premise: armed and reporting")
+        st.reset()
+        self.assertEqual(self._live(st).get("cpu_ms_workers"), 0.0, "reset on the collector that holds the sink keeps the key at 0.0")
+        self.assertEqual(st.snapshot()["judge"]["cpu_ms_workers"], 0.0)
+        with jd.ThreadPoolExecutor(max_workers=1) as ex:
+            ex.submit(_burn_cpu, 0.005).result()
+        snap = st.snapshot()["judge"]
+        self.assertGreaterEqual(snap["cpu_ms_workers"], 4.0, "and the next future lands in the kept key")
+        self.assertEqual(snap["cpu_ms_sum"], snap["cpu_ms_workers"], "no tier ran: the sum is the workers' share")
+        self.assertTrue(st.holds_judge_worker_sink())
+
+    def test_a_cleared_sink_drops_the_key_from_the_served_block_and_a_bare_sink_serves_it(self):
+        """Two more faces of the one invariant (review round 1, 2026-09-19). A jd.set_worker_cpu_sink(None) leaves nobody
+        holding the sink, so the armed collector's served block drops the key while its live record stands (red before:
+        the block kept serving the frozen figure). And a collector installed by a direct set_worker_cpu_sink with no
+        arming call IS the one reporting, so its served block carries the key at 0.0 though its live dict has none yet."""
+        jd = km.jd
+        self._sink_saved()
+        st = km._PerfStats()
+        st.arm_judge_worker_sink()
+        with jd.ThreadPoolExecutor(max_workers=1) as ex:
+            ex.submit(_burn_cpu, 0.005).result()
+        jd.set_worker_cpu_sink(None)
+        self.assertNotIn("cpu_ms_workers", st.snapshot()["judge"], "a cleared sink: nobody holds it, the key leaves the served block")
+        self.assertGreaterEqual(self._live(st)["cpu_ms_workers"], 4.0, "the live record stands")
+        self.assertFalse(st.holds_judge_worker_sink())
+        bare = km._PerfStats()
+        jd.set_worker_cpu_sink(bare.judge_worker_cpu)                    # no arming call, the sink alone
+        self.assertNotIn("cpu_ms_workers", self._live(bare), "no arming: the live dict has no key yet")
+        self.assertEqual(bare.snapshot()["judge"]["cpu_ms_workers"], 0.0, "but it IS reporting: the served block carries the key at 0.0")
+        self.assertTrue(bare.holds_judge_worker_sink())
+
+    def test_a_raising_sink_still_restores_the_workers_stage_mark_and_its_raise_propagates(self):
+        """_TimedPool's finally restores the worker's previous stage mark BEFORE it runs the accounting, so a sink that
+        raises cannot skip the restore (review round 1, 2026-09-19: the sink ran first, and a raising one left the
+        submitter's mark on the pool thread for every later future to inherit as its own "previous"; red before on the raw
+        read of the worker's mark). The raise still propagates as the future's error: no try/except around the sink, a
+        perf path that ate its own errors would publish numbers nobody could trust. The mark is read RAW on the worker,
+        through the base class's submit, which bypasses the wrapper that would set and restore it."""
+        jd = km.jd
+        em = jd.em                                                          # the module object _TimedPool's wrapper calls into
+        # this kernel's provider pair for the test's duration: a private judge or event-model load by another test module
+        # in the same process re-executes event_model.py and clears both hooks, so the pair cannot be assumed installed
+        saved = (em._SET_STAGE_FN[0], em._READ_STAGE_FN[0])
+        em.set_stage_provider(km._set_stage); em.set_read_stage_provider(km._current_read_stage)
+        self.addCleanup(em.set_stage_provider, saved[0]); self.addCleanup(em.set_read_stage_provider, saved[1])
+
+        def boom(ms):
+            raise RuntimeError("sink died")
+        prev = jd.set_worker_cpu_sink(boom)
+        self.addCleanup(jd.set_worker_cpu_sink, prev)
+        raw_submit = concurrent.futures.ThreadPoolExecutor.submit           # the base class's: no mark, no accounting
+        em._set_stage_mark("judge.test")                                    # the submitter's mark, carried into the worker
+        self.addCleanup(em._set_stage_mark, None)
+        self.assertEqual(em._read_stage(), "judge.test", "premise: the stage provider pair is installed")
+        with jd.ThreadPoolExecutor(max_workers=1) as ex:
+            fut = ex.submit(lambda: "the future's own result")
+            with self.assertRaises(RuntimeError, msg="the sink's raise stands in for the future's result: nothing swallows it"):
+                fut.result(10)
+            self.assertIsNone(raw_submit(ex, em._read_stage).result(10),
+                              "the worker's previous mark (none) is restored though the sink raised")
+            em._set_stage_mark(None)
+            self.assertIsNone(raw_submit(ex, em._read_stage).result(10), "and a later future from an unmarked thread leaves it clear")
+
+    def test_a_pool_future_from_a_thread_outside_the_producer_lands_under_cpu_ms_workers(self):
+        """The sink is per future and reads no thread: a future submitted from a plain Thread, the shape of the kernel's
+        boot roads (threading.Thread(target=_rewind_migration_bg), which calls jd.run_rewound_reconcile), lands in the
+        armed collector's cpu_ms_sum and cpu_ms_workers like one from a tier thread under _producer. The boot road submits
+        no pool future today (tests/test_kernel_rewind.py pins that by running the real migration over a discoverable
+        session with a recording sink); this pins what the design does if a later change makes it submit one (review
+        round 1, 2026-09-19: the body's rationale had claimed kernel.py calls no jd.run_* outside _producer)."""
+        jd = km.jd
+        st = km._PerfStats()
+        received = self._arm(st)
+
+        def boot_road():
+            with jd.ThreadPoolExecutor(max_workers=1) as ex:
+                ex.submit(_burn_cpu, 0.005).result()
+        th = threading.Thread(target=boot_road, name="boot-road")
+        th.start(); th.join(30)
+        self.assertFalse(th.is_alive())
+        snap = st.snapshot()["judge"]
+        self.assertGreaterEqual(snap["cpu_ms_workers"], 4.0, "the plain thread's pool future landed: %r" % snap["cpu_ms_workers"])
+        self.assertEqual(snap["cpu_ms_sum"], snap["cpu_ms_workers"], "no tier ran: the sum is the workers' share")
+        self.assertAlmostEqual(sum(received), snap["cpu_ms_workers"], places=6, msg="through the sink, once")
 
     def test_run_tier_accounts_the_tier_threads_cpu(self):
         """The shared tier runner (judge.py _run_tier, stage three round two) lands the thread's own CPU in the pass's

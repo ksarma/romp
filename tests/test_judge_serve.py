@@ -613,6 +613,26 @@ class Deltas(unittest.TestCase):
                          "a line judge.py already prefixed is not prefixed twice (the base wrote romp-judge: romp-judge: ...)")
 
 
+class WorkerCpuWithoutAKernel(unittest.TestCase):
+    """The child runs judge.py as __main__ in a process where no kernel is loaded, so the worker-CPU sink the kernel installs
+    (set_worker_cpu_sink, the kernel's live counters) is unset there and the module counter alone accumulates; _serve_pass
+    reads that counter before and after run_pass for the done line's workerCpuMs. This module's private judge load
+    (romp_judge_serve) is a module object no kernel ever loaded, the same shape as the child's."""
+
+    def test_the_sink_is_unset_and_the_module_counter_takes_the_workers_cpu(self):
+        self.assertIsNone(jd.set_worker_cpu_sink(None), "no kernel loaded this module object: no sink")
+        before = jd.judge_worker_cpu_ms()
+
+        def spin(seconds):
+            t0 = time.thread_time()
+            while time.thread_time() - t0 < seconds:              # loop-ok: bounded by the thread's own CPU clock
+                pass
+        with jd.ThreadPoolExecutor(max_workers=1) as ex:
+            ex.submit(spin, 0.002).result()
+        self.assertGreater(jd.judge_worker_cpu_ms() - before, 1.0, "about 2 ms of a worker's CPU landed in the module counter")
+        self.assertIsNone(jd.set_worker_cpu_sink(None), "and the pool run installed none")
+
+
 class Pins(unittest.TestCase):
     def test_main_dispatches_serve_and_the_usage_names_it(self):
         import inspect
