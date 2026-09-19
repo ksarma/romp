@@ -798,7 +798,9 @@ def hosts_dir(state_dir) -> Path:
     on disk is read BEFORE the mkdir, and when it was not, the root this call made is tightened to 0700 by a chmod the
     line after `hosts/` is made, then READ BACK by lstat, and a read-back that is not 0700 is refused with the mode read
     and the one-step remedy (the shape owner_only_dir uses, with its lstat, its not-a-directory and its foreign-uid
-    refusals, so a symlink swapped into the root's place is refused rather than tightened on behalf of its target). Only
+    refusals, so a symlink swapped into the root's place is refused rather than tightened on behalf of its target; a live
+    symlink at the root's path, pointing at a directory, is a root on disk to this call: exists() follows it, `hosts/` is
+    made under its target, and the target is never read back or tightened). Only
     the root is touched: the ancestors the parents mkdir made on the way (an XDG parent such as `~/.local/state`, which
     romp does not own) keep the umask's mode, and a root already on disk, at whatever mode, is left as it is (its mode is
     the creator's business, kernel/judge.py's for every install's root; this call never reads or repairs it). Between the
@@ -810,8 +812,9 @@ def hosts_dir(state_dir) -> Path:
     is on disk before this call and the create road is a caller's over a root no romp tool has made (a test's fresh root, a
     host run by hand over one). tests/test_session_host.py StateRootByHostsDir pins the fix: the root reads 0700 under the
     runner's umask, 002, 022, 077 and 000 when this call made it, with `hosts/` 0700 and the ancestor made on the way at
-    the umask's mode; a root pre-existing at 0755 stays 0755 with `hosts/` 0700 below it; and the refusal fires when the
-    read-back disagrees."""
+    the umask's mode; a root pre-existing at 0755 or 0777 stays as planted with `hosts/` 0700 below it; a live symlink at
+    the root's path takes the pre-existing road and one swapped in after the read is refused with its target untouched;
+    the read-back is an lstat, so a stat that disagrees is inert; and the refusal fires when the read-back disagrees."""
     root = Path(state_dir)
     made_root = not root.exists()               # the create road, decided before the mkdir: a root already on disk is left as it is
     d = owner_only_dir(root / "hosts", "hosts directory", parents=True)

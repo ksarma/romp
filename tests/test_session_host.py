@@ -2082,7 +2082,11 @@ class StateRootByHostsDir(unittest.TestCase):
     that read); a root pre-existing at 0755 stays 0755 with hosts/ 0700 below it, and no chmod names it (the create-only
     scope); and a read-back that disagrees is refused with the mode read and the remedy. Refusable: the chmod removed on a
     scratch copy reds the 002, 022 and 000 arms (077 stays green, the umask's mode being the code's there); a chmod that
-    does not take, or a stubbed lstat answering 0755 on the read-back, fires the refusal."""
+    does not take, or a stubbed lstat answering 0755 on the read-back, fires the refusal. The addendum to round 6 pins
+    three more edges the lenses found unpinned: a pre-existing root at 0777 is left as planted too (the 0755 case's second
+    arm); a live symlink at the root's path takes the pre-existing road (exists() follows it, hosts/ is made 0700 under
+    its target, the target is never read or tightened) while a link swapped in after the read is refused as not a
+    directory with its target untouched; and the read-back is an lstat, so a stat that disagrees is inert."""
 
     def _made_under(self, umask, root=None):
         """hosts_dir over a root not yet on disk, under `umask` (restored); the root's and hosts/'s modes as read back.
@@ -2155,30 +2159,127 @@ class StateRootByHostsDir(unittest.TestCase):
         self.assertEqual(chmods, [(os.fspath(root), 0o700)], "one chmod, the root's; the ancestor and hosts/ (born 0700) are not named")
 
     def test_a_root_already_on_disk_is_left_as_it_is_and_hosts_below_it_is_0700(self):
-        """The create-only scope, by execution: a root planted at 0755 before the call stays 0755 (its mode is its
-        creator's business, kernel/judge.py's on every install), hosts/ under it is 0700, and no chmod names the root.
-        Under 022, the umask that would leave a made root at the same 0755, so the read cannot be the umask's doing."""
+        """The create-only scope, by execution: a root planted before the call keeps its mode (its creator's business,
+        kernel/judge.py's on every install), hosts/ under it is 0700, and no chmod names the root. Two arms, 0755 and
+        0777 (the addendum to round 6 added 0777, the loosest mode and the one the fix's 0700 would change the most),
+        both under 022, the umask that would leave a made root at 0755, so neither read can be the umask's doing."""
         base = tempfile.mkdtemp(prefix="sr-")
         self.addCleanup(shutil.rmtree, base, True)
-        root = Path(base) / "state"
-        root.mkdir(mode=0o755)
-        os.chmod(root, 0o755)
-        self.assertEqual(stat.S_IMODE(os.lstat(root).st_mode), 0o755, "planted")
+        for planted in (0o755, 0o777):
+            with self.subTest(planted="%04o" % planted):
+                root = Path(base) / ("state-%04o" % planted)
+                root.mkdir(mode=planted)
+                os.chmod(root, planted)                 # the mkdir's mode is masked by the runner's umask; this is not
+                self.assertEqual(stat.S_IMODE(os.lstat(root).st_mode), planted, "planted")
+                chmods = []
+                real_chmod = os.chmod
+
+                def spy(path, mode, *a, **k):
+                    chmods.append(os.fspath(path))
+                    return real_chmod(path, mode, *a, **k)
+                old = os.umask(0o022)
+                try:
+                    with mock.patch.object(os, "chmod", spy):
+                        self.assertEqual(sh.hosts_dir(root), root / "hosts")
+                finally:
+                    os.umask(old)
+                self.assertEqual(stat.S_IMODE(os.lstat(root).st_mode), planted, "a pre-existing root keeps its mode")
+                self.assertEqual(stat.S_IMODE(os.lstat(root / "hosts").st_mode), 0o700, "hosts/ below it is 0700")
+                self.assertNotIn(os.fspath(root), chmods, "no chmod named the pre-existing root")
+
+    def test_a_live_symlink_at_the_roots_path_is_a_root_on_disk_and_one_swapped_in_after_the_read_is_refused(self):
+        """Two symlink arms (the addendum to round 6; HostsDir pins a symlink at hosts/, these are at the root). (1) A live
+        symlink at the root's path, pointing at a directory that exists, takes the pre-existing road: exists() follows
+        the link and answers True, hosts/ is made under the target and is 0700, and the target (planted 0755) is never
+        read back or tightened; no chmod names the root or the target, and the link is still a link afterwards, as it
+        was under the parent's hosts_dir (the create-only scope). (2) The race the docstring names: a link swapped in
+        AFTER exists() said False (a Path.exists that plants the link as it answers False for this root) is refused by
+        the read-back's first lstat as not a directory, the text carrying the root's path, and the target is not
+        tightened on the link's behalf: its mode is still 0755, and the hosts/ under it, made through the link by the
+        parents mkdir before the refusal, is 0700, ours. Refusable: that lstat swapped for a stat sees the target's
+        directory, passes, and chmods the target to 0700, which reds (2) on the target's mode and the chmod list."""
+        base = tempfile.mkdtemp(prefix="sr-")
+        self.addCleanup(shutil.rmtree, base, True)
         chmods = []
         real_chmod = os.chmod
 
         def spy(path, mode, *a, **k):
             chmods.append(os.fspath(path))
             return real_chmod(path, mode, *a, **k)
+
+        def plant(name):
+            target = Path(base) / (name + "-target")
+            target.mkdir(mode=0o755)
+            os.chmod(target, 0o755)
+            return target, Path(base) / name
+        # (1) the live link, on disk before the call
+        target, root = plant("live")
+        os.symlink(target, root)
+        self.assertTrue(root.exists(), "exists() follows the link: a root on disk, to this call")
         old = os.umask(0o022)
         try:
             with mock.patch.object(os, "chmod", spy):
                 self.assertEqual(sh.hosts_dir(root), root / "hosts")
         finally:
             os.umask(old)
-        self.assertEqual(stat.S_IMODE(os.lstat(root).st_mode), 0o755, "a pre-existing root keeps its mode")
-        self.assertEqual(stat.S_IMODE(os.lstat(root / "hosts").st_mode), 0o700, "hosts/ below it is 0700")
-        self.assertNotIn(os.fspath(root), chmods, "no chmod named the pre-existing root")
+        self.assertTrue(stat.S_ISLNK(os.lstat(root).st_mode), "the link is still a link")
+        self.assertEqual(stat.S_IMODE(os.lstat(target).st_mode), 0o755, "the target is neither read back nor tightened")
+        self.assertEqual(stat.S_IMODE(os.lstat(target / "hosts").st_mode), 0o700, "hosts/ under the target, 0700")
+        self.assertEqual(chmods, [], "no chmod: not the root, not the target (hosts/ is born 0700)")
+        # (2) the link swapped in after exists() said False
+        target2, root2 = plant("swapped")
+        real_exists = Path.exists
+
+        def exists(self_path, *a, **k):
+            if os.fspath(self_path) == os.fspath(root2) and not os.path.lexists(root2):
+                os.symlink(target2, root2)              # the swap, between the read and the mkdir
+                return False                            # what the read said
+            return real_exists(self_path, *a, **k)
+        old = os.umask(0o022)
+        try:
+            with mock.patch.object(Path, "exists", exists), mock.patch.object(os, "chmod", spy), \
+                    self.assertRaises(OSError) as cm:
+                sh.hosts_dir(root2)
+        finally:
+            os.umask(old)
+        self.assertIn("is not a directory", str(cm.exception))
+        self.assertIn(os.fspath(root2), str(cm.exception))
+        self.assertTrue(stat.S_ISLNK(os.lstat(root2).st_mode), "the swapped-in link stands")
+        self.assertEqual(stat.S_IMODE(os.lstat(target2).st_mode), 0o755, "not tightened on the link's behalf")
+        self.assertEqual(stat.S_IMODE(os.lstat(target2 / "hosts").st_mode), 0o700,
+                         "made through the link by the parents mkdir, before the refusal; 0700, ours")
+        self.assertEqual(chmods, [], "no chmod on either arm")
+
+    def test_the_read_back_is_an_lstat_so_a_stat_that_disagrees_is_inert(self):
+        """The read-back reads the root by os.lstat, the shape owner_only_dir uses, not by os.stat (the addendum to round
+        6: every other case here stays green with the read-back swapped to os.stat, so this one pins the choice). A
+        stubbed os.stat answers S_IFDIR|0755 for the root once the chmod has run, exactly as the disagreement case's
+        lstat stub does; hosts_dir returns normally, the root reads 0700 by the real lstat, and the chmod ran once.
+        Refusable: the read-back's os.lstat swapped for os.stat makes the stub's 0755 the mode read, and the refusal
+        fires where this asserts a return."""
+        base = tempfile.mkdtemp(prefix="sr-")
+        self.addCleanup(shutil.rmtree, base, True)
+        root = Path(base) / "state"
+        real_stat, real_chmod = os.stat, os.chmod
+        chmodded = []
+
+        def chmod(path, mode, *a, **k):
+            chmodded.append(os.fspath(path))
+            return real_chmod(path, mode, *a, **k)
+
+        def lying_stat(path, *a, **k):
+            st = real_stat(path, *a, **k)
+            if not isinstance(path, int) and os.fspath(path) == os.fspath(root) and chmodded:
+                return os.stat_result((stat.S_IFDIR | 0o755,) + tuple(st)[1:])
+            return st
+        old = os.umask(0o022)
+        try:
+            with mock.patch.object(os, "chmod", chmod), mock.patch.object(os, "stat", lying_stat):
+                self.assertEqual(sh.hosts_dir(root), root / "hosts")
+        finally:
+            os.umask(old)
+        self.assertEqual(chmodded, [os.fspath(root)], "the chmod ran once, on the root")
+        self.assertEqual(stat.S_IMODE(os.lstat(root).st_mode), 0o700, "the real mode, by lstat")
 
     def test_a_read_back_that_disagrees_is_refused_with_the_mode_and_the_remedy(self):
         """The read-back's disagreement arm, driven by a stubbed lstat: after the real chmod, the lstat that reads the
