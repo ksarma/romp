@@ -3908,8 +3908,15 @@ measurement; a float inside a window under a duration key, a name carrying the
 token `ms`, its own or any key above it, is a millisecond total),
 so a fresh export passes whole and two
 uploads from one kernel remain linkable through them by design. A finding is
-reported by kind and key path, never by value. The verb then prints the path,
-the byte size and the URL it will dial (the address as configured with `/v1/upload`
+reported by kind and key path, never by value. What is sent is what was
+checked: the body is the parsed document written out again the way the export
+writes it (one space of indent, sorted keys, a trailing newline), never the
+file's own bytes, so a spelling no check read (a number written with more
+digits than a float holds or with an exponent, the whitespace between tokens,
+the order of keys) never travels, and a file as the export wrote it goes out
+byte for byte as the file. The verb then prints the path,
+the byte size of the body it will send (the file's own size for a file as the
+export wrote it) and the URL it will dial (the address as configured with `/v1/upload`
 appended, so whatever the setting carries is seen before the yes) and asks for
 a yes. Off a terminal it refuses unless `--yes` is passed. That flag is the form an agent
 uses, and the command line that carries it is the record of the confirmation;
@@ -3917,7 +3924,8 @@ no setting or environment variable replaces it, so nothing uploads unless a
 command says so. Each run is opt-in and keeps no state. Read the file before
 you send it.
 
-The verb sends one `POST <receiver>/v1/upload`: the file's bytes as the body
+The verb sends one `POST <receiver>/v1/upload`: the checked document,
+re-serialised as above, as the body
 under six headers, three set by the verb (`Content-Type: application/json`,
 `Content-Length` and `User-Agent: romp-perf-upload/1`) and three by Python's
 HTTP client (`Host`, which names the receiver, `Accept-Encoding: identity` and

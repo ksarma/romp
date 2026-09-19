@@ -16,8 +16,8 @@ file that is not UTF-8 text among it, is refused without echoing the value, exit
 unauthenticated: no credential exists for it, and the verb reads no token from anywhere and sends none.
 
 The file must exist, be a regular file of at most 1 MiB, parse as strict JSON (no NaN or Infinity literals, no
-key repeated within one object at any depth, since json.loads would keep the last copy while the bytes sent
-carry every copy) with the top-level `schema` line `romp-perf-export/1`, nest at most MAX_DEPTH levels (32; a fresh
+key repeated within one object at any depth: the receiver's contract refuses one, and a reader that kept one copy
+would silently choose which value is checked and sent) with the top-level `schema` line `romp-perf-export/1`, nest at most MAX_DEPTH levels (32; a fresh
 export is about 7 deep; a deeper file is refused in one line that names the bound, before any check walks it and never with a
 traceback: the checks recurse one frame per level, and this is the one road that reads a file a person names),
 and pass the export's own check again as the file stands, since the user may have edited it: the scan for the
@@ -40,13 +40,27 @@ the allocator's arena on a long-lived kernel among them; a float inside a window
 the token `ms` such as `cycle_cpu_ms_sum` or `wallMs`, is a millisecond total, which the kernel's sums carry through
 the seconds window in weeks), so a fresh export passes whole.
 
-Before sending, the verb prints the path, the byte size and the URL it will dial (the address as configured
+WHAT IS SENT IS WHAT WAS CHECKED. Every check and the fold belt read the PARSED document, and the body post() sends
+is that document written out again by the export's own writer (perf_export.document_text: one space of indent, sorted
+keys, a trailing newline), never the file's raw bytes. Until the fourth review round (2026-09-19) the verb sent the
+file's bytes while its checks read the parse, and whatever the parser discards travelled unread by any check: a number
+literal's spelling (digits past a float's precision, a digit run the denylist walk had refused respelled with an
+exponent, a listed private string that is a digit run respelled inside a numeric leaf), inter-token whitespace, key
+order; the repeated-key refusal closed one instance of that divergence and left the class open. The re-serialisation
+closes the class by construction: the artifact the checks bind is the document they read, and the bytes on the wire
+are a function of that document alone. A file as the export wrote it re-serialises to itself byte for byte (the same
+function wrote it; pinned), so an unedited export goes out as the file. What the re-serialisation does not change is
+what the checks read: a number is a measurement to every check (the scan reads keys and string values), so a listed
+digit run written as a plain number is on the wire in its canonical spelling, as the number every check passed.
+
+Before sending, the verb prints the path, the byte size of the body it will send (the file's own size for a file as
+the export wrote it) and the URL it will dial (the address as configured
 with the route appended, so a path in the setting is seen at the prompt), then asks for a yes on a terminal
 (stdin is a tty). Off a terminal it refuses, exit 2, unless `--yes` is passed: that flag is the form
 an agent uses, and its presence in the command is the visible record of the confirmation. No configuration
 file or environment variable stands in for it, so nothing sends from a cron by default.
 
-The send is ONE POST to <receiver>/v1/upload, the file's bytes as the body, under six headers: the verb sets
+The send is ONE POST to <receiver>/v1/upload, the checked document re-serialised as the body, under six headers: the verb sets
 `Content-Type: application/json`, `Content-Length` and a fixed `User-Agent: romp-perf-upload/1` (no version
 detail, no hostname); the HTTP client adds `Host` (the receiver's own name), `Accept-Encoding: identity` and
 `Connection: close`. A 30 s DEADLINE over the whole exchange (TIMEOUT_S): the connect and, for https, the handshake
@@ -210,8 +224,9 @@ def upload_url(u):
 
 # ── strict JSON ──────────────────────────────────────────────────────────────────────────────────────────
 class RepeatedKey(ValueError):
-    """An object spells the same key twice: json.loads would keep the last copy and drop the rest, so the
-    document checked and the bytes sent would differ. The key itself is not carried: it may be anything."""
+    """An object spells the same key twice: json.loads would keep the last copy and drop the rest, and this reader
+    must not silently choose which copy is checked and sent (the receiver's contract refuses a repeated key too). The
+    key itself is not carried: it may be anything."""
 
 
 def _no_constant(name):
@@ -257,7 +272,9 @@ def nesting_depth(node):
 # ── the file ─────────────────────────────────────────────────────────────────────────────────────────────
 
 def read_export(path, state):
-    """The file's bytes, once every check passes: it exists and is a regular file, it is at most MAX_BYTES, it
+    """The checked document's bytes, re-serialised by the export's own writer (pe.document_text), once every check
+    passes; never the file's raw bytes (the module docstring, WHAT IS SENT IS WHAT WAS CHECKED). The checks: the file
+    exists and is a regular file, it is at most MAX_BYTES, it
     parses as strict JSON (strict_loads: a repeated key is named as the reason, since the file may be one the
     user edited by hand and an editor calls it valid) to an object with the schema line, it nests at most MAX_DEPTH
     levels (nesting_depth), and it passes
@@ -335,7 +352,7 @@ def read_export(path, state):
         # file this verb reads far inside any build's stack, so nothing reaches this line by nesting alone; it stands so
         # that whatever the interpreter's stack looks like, the verb answers with one line and never a traceback
         raise Refusal("refused: %s could not be checked (RecursionError); nothing sent" % path, 1)
-    return data
+    return pe.document_text(doc).encode("utf-8")      # the document the checks read, spelled as the export spells it
 
 
 # ── the confirmation ─────────────────────────────────────────────────────────────────────────────────────
@@ -557,7 +574,7 @@ def main(argv=None, stdin=None) -> int:
                           "fragment (http is allowed for 127.0.0.1 and localhost only); nothing sent" % source, 2)
         data = read_export(a.file, pe.state_dir())
         url = upload_url(u)
-        print("%s (%d bytes) to %s" % (a.file, len(data), url))     # the URL dialled, so a path in the setting is seen before the yes
+        print("%s (%d bytes) to %s" % (a.file, len(data), url))     # the body's size and the URL dialled, so a path in the setting is seen before the yes
         sys.stdout.flush()
         confirmed(a.yes, stdin=stdin)
         status, body = post(url, data)

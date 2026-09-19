@@ -34,7 +34,9 @@ the status code or the error class and nothing of the body or of any exception's
 deadline over the whole exchange, so a receiver answering in pieces each under the limit is cut at the total (a
 raw-socket drip receiver pins it) and the connection's own timeout is cut to the time the deadline has left (a unit pin);
 and an enumeration of the request a recording receiver saw: the request line, every header
-and the body bytes, which equal the file's.
+and the body bytes, which are the checked document written out by the export's own writer (perf_export.document_text),
+so they equal the file's for a file as the export wrote it and, for a file edited since, carry the parsed document's
+canonical spelling and never the file's own (WHAT IS SENT IS WHAT WAS CHECKED, the fourth review round, 2026-09-19).
 
 Nothing here reads a live kernel, a real state directory or a real setting: the child's HOME is synthetic or a
 temp directory under the test's own tree, USER and LOGNAME are `tester`, socket.gethostname is pinned to
@@ -195,6 +197,13 @@ def _keys_named(doc, name):
                 walk(v, where + (i,))
     walk(doc, ())
     return out
+
+
+def _wire(doc):
+    """The bytes the verb sends for a document it accepts: the export's own writer over the parsed document
+    (perf_export.document_text), which is the file's bytes when the file is as the export wrote it and the canonical
+    spelling of the parse otherwise (a compact json.dump differs from it in whitespace alone)."""
+    return pu.pe.document_text(doc).encode("utf-8")
 
 
 class _RecordingEnv(collections.abc.MutableMapping):
@@ -800,11 +809,13 @@ class Cli(unittest.TestCase):
         with open(edited, "rb") as fh:
             data = fh.read()
         self.assertEqual(data.count(b"2000000000"), 4, "four integers past the floor, written without a point")
+        wire = _wire(doc)
+        self.assertEqual(wire.count(b"2000000000"), 4, "and the same four in the body the verb sends")
         r = _run([edited] + base, self.state)
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(r.stdout, "%s (%d bytes) to %s/v1/upload\n" % (edited, len(data), self.fake.url) + SUCCESS % (RECEIPT, 180))
+        self.assertEqual(r.stdout, "%s (%d bytes) to %s/v1/upload\n" % (edited, len(wire), self.fake.url) + SUCCESS % (RECEIPT, 180))
         self.assertEqual(len(self.fake.requests), 1, "the export with byte totals inside the seconds window was sent")
-        self.assertEqual(self.fake.requests[0][2], data, "the body is the file's bytes, totals included")
+        self.assertEqual(self.fake.requests[0][2], wire, "the body is the checked document re-serialised, totals included")
         doc["perf"]["pusher"]["clients"]["byKind"]["chrome"]["bytes"] = 2_000_000_000.0   # the same total as a float: a stamp
         with open(edited, "w") as fh:
             json.dump(doc, fh)
@@ -838,11 +849,13 @@ class Cli(unittest.TestCase):
         self.assertIn(b"2000000000.0", data, "the sum is written as a float, with a point")
         self.assertIn(b'"push": 2000000000.0', data)
         self.assertIn(b"1600000000.0", data)
+        wire = _wire(doc)
+        self.assertIn(b'"push": 2000000000.0', wire, "the sums are in the body the verb sends, as floats")
         r = _run([edited] + base, self.state)
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(r.stdout, "%s (%d bytes) to %s/v1/upload\n" % (edited, len(data), self.fake.url) + SUCCESS % (RECEIPT, 180))
+        self.assertEqual(r.stdout, "%s (%d bytes) to %s/v1/upload\n" % (edited, len(wire), self.fake.url) + SUCCESS % (RECEIPT, 180))
         self.assertEqual(len(self.fake.requests), 1, "the export with millisecond totals inside the seconds window was sent")
-        self.assertEqual(self.fake.requests[0][2], data, "the body is the file's bytes, sums included")
+        self.assertEqual(self.fake.requests[0][2], wire, "the body is the checked document re-serialised, sums included")
         doc["perf"]["pusher"]["clients"]["byKind"]["chrome"]["sendMax"] = 1.6e9     # no `ms` token in the name: a stamp
         with open(edited, "w") as fh:
             json.dump(doc, fh)
@@ -874,11 +887,13 @@ class Cli(unittest.TestCase):
         self.assertIn(b'"arena": 2931437568.0', data, "the figure is written as a float, with a point")
         self.assertIn(b"2731423520.0", data)
         self.assertIn(b"2500000000000.0", data)
+        wire = _wire(doc)
+        self.assertIn(b'"arena": 2931437568.0', wire, "the figures are in the body the verb sends, as floats")
         r = _run([edited] + base, self.state)
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(r.stdout, "%s (%d bytes) to %s/v1/upload\n" % (edited, len(data), self.fake.url) + SUCCESS % (RECEIPT, 180))
+        self.assertEqual(r.stdout, "%s (%d bytes) to %s/v1/upload\n" % (edited, len(wire), self.fake.url) + SUCCESS % (RECEIPT, 180))
         self.assertEqual(len(self.fake.requests), 1, "the export with allocator figures above the seconds window was sent")
-        self.assertEqual(self.fake.requests[0][2], data, "the body is the file's bytes, figures included")
+        self.assertEqual(self.fake.requests[0][2], wire, "the body is the checked document re-serialised, figures included")
         doc["perf"]["process"]["malloc"]["arena"] = 1_931_437_568.0                  # the same kind of figure inside the seconds window: a stamp
         with open(edited, "w") as fh:
             json.dump(doc, fh)
@@ -897,7 +912,11 @@ class Cli(unittest.TestCase):
         self.assertEqual(r.stdout, "%s (%d bytes) to %s/v1/upload\n" % (self.file, len(self.data), base), "shown before the prompt, so a refusal to answer is informed")
         self.assertEqual(len(self.fake.requests), 1)
 
-    def test_a_file_that_repeats_a_key_is_refused_before_the_scan_since_the_bytes_and_the_parse_would_differ(self):
+    def test_a_file_that_repeats_a_key_is_refused_before_the_scan_since_the_reader_must_not_choose_a_copy(self):
+        """A key spelled twice in one object is refused as not strict JSON, at any depth and whatever the values. The reason
+        since the fourth review round (2026-09-19): the body sent is the parsed document re-serialised, so the bytes and
+        the parse no longer differ, but a reader that kept one copy (json.loads keeps the last) would silently choose which
+        value is checked and sent, and the receiver's contract refuses a repeated key; the refusal stays and names no key."""
         base = ["--yes", "--receiver", self.fake.url]
         dup = os.path.join(self.xdg, "dup.json")
         plants = '"note": "TESTHOST.example", "cwd": "/home/someone/secret-project"'       # the hostname pinned in the child, and a path
@@ -911,7 +930,67 @@ class Cli(unittest.TestCase):
             self.assertEqual(r.stdout, "")
             self.assertNotIn("TESTHOST", r.stdout + r.stderr)
             self.assertNotIn("someone", r.stdout + r.stderr)
-        self.assertEqual(self.fake.requests, [], "json.loads alone would keep the last copy, pass the scan, and send the bytes with both")
+        self.assertEqual(self.fake.requests, [], "json.loads alone would keep the last copy and this verb would have chosen it in silence")
+
+    def test_the_body_is_the_checked_document_re_serialised_so_a_spelling_no_check_read_never_travels(self):
+        """WHAT IS SENT IS WHAT WAS CHECKED (the upload's fourth review round, 2026-09-19). Every check and the fold belt
+        read the parsed document; until this round post() sent the file's raw bytes, so whatever the parser discards
+        travelled unread by any check. Three spellings from the round, each planted in a fresh export by editing its TEXT
+        (not by json.dump, which would canonicalise them): a number literal with more digits than a float holds
+        (0.30000000000000004441 parses to 0.30000000000000004); a digit run the denylist walk refuses as a float inside the
+        stamp window (1700000000.5) respelled with an exponent to a value outside it (1700000000e-9 is 1.7); and a listed
+        private string that is a digit run (4242424242) respelled inside a numeric leaf (4242424242e-3 is 4242424.242).
+        For each, the body the recording receiver saw is the parsed document written out by the export's own writer
+        (perf_export.document_text), the file's spelling is nowhere in it, it differs from the file's bytes, and
+        Content-Length and the summary line follow the body. A fresh export re-serialises to itself byte for byte (the
+        same function wrote it), so a file as the export wrote it goes out as the file. Fails before: the three bodies
+        were the files' bytes, each digit run in them. WHAT THIS DOES NOT CHANGE is the checks' scope: the scan reads keys
+        and string values, so the same listed digit run written as a plain integer is a number to every check and is on the
+        wire as that number, before and after (pinned last, as what it is), where the quoted spelling is the scan's refusal;
+        the re-serialisation closes the spelling channel and does not widen what the checks read."""
+        base = ["--yes", "--receiver", self.fake.url]
+        text = self.data.decode("utf-8")
+        anchor = '"uptime_s": 60'
+        self.assertEqual(text.count(anchor), 1, "the fresh export's one uptime line is where the leaf is planted")
+        self.assertEqual(_wire(pu.strict_loads(self.data)), self.data, "a fresh export re-serialises to itself: the writer is the same function")
+        os.makedirs(os.path.join(self.home, ".config", "romp"))
+        with open(os.path.join(self.home, ".config", "romp", "private-strings.txt"), "w", encoding="utf-8") as fh:
+            fh.write("4242424242\n")
+        self.assertNotIn(b"4242424242", self.data)
+        edited = os.path.join(self.xdg, "edited.json")
+        for literal, canonical, digits in (("0.30000000000000004441", "0.30000000000000004", b"4441"),
+                                           ("1700000000e-9", "1.7", b"1700000000"),
+                                           ("4242424242e-3", "4242424.242", b"4242424242")):
+            with open(edited, "w", encoding="utf-8") as fh:
+                fh.write(text.replace(anchor, anchor + ', "zzratio": ' + literal))
+            with open(edited, "rb") as fh:
+                raw = fh.read()
+            self.assertIn(digits, raw, literal)
+            self.fake.reset()
+            r = _run([edited] + base, self.state, home=self.home)
+            self.assertEqual(r.returncode, 0, r.stderr + " (%s: the checks read %s, a measurement)" % (literal, canonical))
+            self.assertEqual(len(self.fake.requests), 1, literal)
+            line, headers, body = self.fake.requests[0]
+            self.assertEqual(body, _wire(pu.strict_loads(raw)), "the body is the parsed document written by the export's writer: " + literal)
+            self.assertNotEqual(body, raw, "and not the file's bytes: " + literal)
+            self.assertIn(('"zzratio": ' + canonical).encode(), body, literal)
+            self.assertNotIn(digits, body, "the spelling no check read is not on the wire: " + literal)
+            self.assertEqual(int(dict(headers)["Content-Length"]), len(body), "Content-Length follows the body sent")
+            self.assertEqual(r.stdout, "%s (%d bytes) to %s/v1/upload\n" % (edited, len(body), self.fake.url) + SUCCESS % (RECEIPT, 180),
+                             "the summary line names the body's size, not the file's")
+        with open(edited, "w", encoding="utf-8") as fh:
+            fh.write(text.replace(anchor, anchor + ', "zzratio": "4242424242"'))          # the listed digit run as a string: the scan reads it
+        self.fake.reset()
+        r = self._refused(_run([edited] + base, self.state, home=self.home), 1,
+                          "refused: a string this machine knows (private string) survives as the value at perf/zzratio; nothing sent")
+        self.assertNotIn("4242424242", r.stdout + r.stderr)
+        self.assertEqual(self.fake.requests, [])
+        with open(edited, "w", encoding="utf-8") as fh:
+            fh.write(text.replace(anchor, anchor + ', "zzratio": 4242424242'))            # as a plain integer: a number to every check
+        r = _run([edited] + base, self.state, home=self.home)
+        self.assertEqual(r.returncode, 0, r.stderr + " (a number is a measurement to every check; the scan reads keys and string values)")
+        self.assertIn(b'"zzratio": 4242424242', self.fake.requests[0][2],
+                      "the residual the re-serialisation leaves: the listed digit run travels as the number every check passed")
 
     def test_an_edited_file_the_fold_would_have_changed_is_refused_by_kind_and_key_path_and_never_sent(self):
         """The re-check holds the file to the export's FOLD, not to the walk's shapes alone (the upload's second review
@@ -1261,7 +1340,7 @@ class Cli(unittest.TestCase):
         self.assertEqual(r.stdout, "%s (%d bytes) to %s/v1/upload\n" % (self.file, len(self.data), self.fake.url) + SUCCESS % (RECEIPT.upper(), 7))
         self.assertEqual(r.stderr, "")
         self.assertEqual(len(self.fake.requests), 1)
-        self.assertEqual(self.fake.requests[0][2], self.data, "the body is the file's bytes")
+        self.assertEqual(self.fake.requests[0][2], self.data, "the body is the file's bytes: a file as the export wrote it re-serialises to itself")
 
 
 class DepthBound(unittest.TestCase):
@@ -1702,7 +1781,7 @@ class Enumeration(unittest.TestCase):
     client's app string in every place the export folds or drops them), the upload runs through bin/romp against
     it with --yes, and the one request the receiver saw is compared whole: the request line, the header set
     (exactly six: Host, User-Agent, Accept-Encoding, Content-Type, Content-Length, Connection), the body bytes
-    against the file's. Both runs are hermetic: an empty HOME under the test's tree, USER and LOGNAME `tester`,
+    against the file's, which a fresh export's re-serialisation equals. Both runs are hermetic: an empty HOME under the test's tree, USER and LOGNAME `tester`,
     no ROMP_* variable, a dead kernel port; the machine strings the two scans read are the same for both."""
     FIXED_HEADERS = ("Host", "User-Agent", "Accept-Encoding", "Content-Type", "Content-Length", "Connection")
 
@@ -1738,7 +1817,8 @@ class Enumeration(unittest.TestCase):
         self.assertEqual(len(headers), len(self.FIXED_HEADERS), headers)
         self.assertEqual(dict(headers), {"Host": "127.0.0.1:%d" % fake.port, "User-Agent": "romp-perf-upload/1", "Accept-Encoding": "identity",
                                          "Content-Type": "application/json", "Content-Length": str(len(data)), "Connection": "close"})
-        self.assertEqual(body, data, "the body is the file's bytes, unchanged")
+        self.assertEqual(body, data, "the body is the file's bytes: a file as the export wrote it re-serialises to itself")
+        self.assertEqual(body, _wire(doc), "and is the checked document written by the export's own writer, the same function that wrote the file")
         self.assertEqual(len(body), int(dict(headers)["Content-Length"]))
         # nothing of the machine or the file in the request line or a header: the plants, the real hostname, user and home
         # of the machine running the suite, the temp tree, the file's name, a path, a uuid, a hex token

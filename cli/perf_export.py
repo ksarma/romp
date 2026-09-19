@@ -321,6 +321,17 @@ def default_path(state: Path, now=None) -> Path:
     return state / EXPORT_DIR / ("perf-export-%s.json" % now.strftime("%Y%m%dT%H%M"))
 
 
+def document_text(doc) -> str:
+    """The text this verb writes for `doc`, the ONE spelling of an export: json.dumps with one space of indent and
+    sorted keys, and a trailing newline. `romp perf upload` sends the same function's output for the document its
+    checks passed (cli/perf_upload.py, read_export), never a file's own bytes, so what travels is what was checked
+    (the upload's fourth review round, 2026-09-19), and a file as this verb wrote it re-serialises to itself byte for
+    byte (json.dumps round-trips its own output: a float's repr is the shortest spelling that reads back to it, and the
+    keys are sorted both times), pinned in tests/test_perf_upload.py. A change here changes what both verbs put on disk
+    and on the wire."""
+    return json.dumps(doc, indent=1, sort_keys=True) + "\n"
+
+
 def write_file(path: Path, text: str) -> int:
     """Create or replace `path` as a regular file readable by the owner alone; the byte count written, which is
     every byte of `text`: os.write may write fewer than asked (a full disk, a size limit, an interruption), so the
@@ -384,7 +395,7 @@ def main(argv=None) -> int:
         return 1
     path = Path(a.out) if a.out else default_path(state, now)
     try:
-        n = write_file(path, json.dumps(doc, indent=1, sort_keys=True) + "\n")
+        n = write_file(path, document_text(doc))
     except OSError as e:
         sys.stderr.write("%s: cannot write %s (%s)\n" % (PROG, path, e.__class__.__name__))
         return 1
