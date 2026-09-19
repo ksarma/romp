@@ -1578,6 +1578,12 @@ test("installPerfTelemetry reads the page: the gear's store, the timeline entrie
     assert.deepEqual(d.wsBytesByHost, { h1: 321 }, "read through window.__rompFed.wsBytesByHost, differenced against the install-time total");
     assert.equal(d.ua, "safari-ios");
     assertIdentifiersOnly(d);
+    // the second minute: h1 delivers nothing and stays attached, so the row carries h1: 0 through the page's
+    // attachedHostOrdinals reader (unwired, the position would be absent, as a detached silent host's is)
+    a!.timed("session", () => { t += 10; });
+    intervalCb!();
+    assert.equal(sent.length, 2);
+    assert.deepEqual(sent[1].data.wsBytesByHost, { h1: 0 }, "an attached idle host reads 0: the attachment is read through window.__rompFed.attachedHostOrdinals");
   } finally {
     delete g.window;
     delete g.document;
