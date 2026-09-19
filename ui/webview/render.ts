@@ -10845,7 +10845,14 @@ function showUserTodoReply(sid: string, todoId: string, todoText: string, todoDe
   const cancel = el("button", "picker-action confirm-btn"); cancel.textContent = "Cancel";
   const send = el("button", "picker-action confirm-btn"); send.textContent = "Send";
   const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") { e.stopPropagation(); close(); } };
-  const close = () => { overlay.remove(); document.removeEventListener("keydown", onKey, true); };
+  // THE KEYBOARD (the user 2026-09-19, a phone screenshot: the detail filled the sheet and the answer box was one squeezed
+  // line). The shell sizes this iframe to the VISIBLE height, so the on-screen keyboard opening or closing lands here as
+  // this window's own resize — the picker's fold (kbFit in showPicker), on this overlay: short window → kb-tight, and
+  // styles.css pins the sheet to the top under a 12px frame and lets the box scroll (#ut-reply-prompt.kb-tight, the
+  // .picker-overlay.kb-tight rules the class shares). Gone with the modal: close() drops it, and it drops itself when
+  // the overlay was removed some other way (a second Reply replacing this one). waiting.ts showReply is the twin.
+  const kbFit = () => { if (!overlay.isConnected) { window.removeEventListener("resize", kbFit); return; } overlay.classList.toggle("kb-tight", window.innerHeight < 480); };
+  const close = () => { overlay.remove(); document.removeEventListener("keydown", onKey, true); window.removeEventListener("resize", kbFit); };
   const go = () => {
     const text = input.value.trim();
     if (!text) { input.classList.add("bad"); input.focus(); return; }
@@ -10859,11 +10866,18 @@ function showUserTodoReply(sid: string, todoId: string, todoText: string, todoDe
   send.addEventListener("click", go);
   input.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); go(); } });
   input.addEventListener("input", () => input.classList.remove("bad"));
+  // the box grows with the answer (growComposer, the composer's precedent): height auto measures the floor — three rows
+  // (rows=3; styles.css min-height) — then the content's scroll height plus the border a border-box height carries,
+  // capped at a share of the window so Cancel and Send stay in the box; never under the floor, whatever the cap
+  const grow = () => { input.style.height = "auto"; const floor = input.offsetHeight; input.style.height = Math.max(floor, Math.min(input.scrollHeight + floor - input.clientHeight, Math.round(window.innerHeight * 0.4))) + "px"; };
+  input.addEventListener("input", grow);
   overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
   box.append(h, d); if (dd) box.appendChild(dd); box.append(input, actions);
   actions.append(cancel, send);
   overlay.appendChild(box);
   document.body.appendChild(overlay);
+  window.addEventListener("resize", kbFit);
+  kbFit();   // synced at open too, not only on the first resize: the keyboard may already be up
   document.addEventListener("keydown", onKey, true);
   input.focus();
 }

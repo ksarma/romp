@@ -218,7 +218,7 @@ async function host(activeId: string | null = ACTIVE): Promise<Host> {
   const fn = new Function(
     "el", "notice", "todoFoldLabel", "applyFold", "rememberFold", "utDetailHint", "applyUtHint", "utHintFor", "UT_HINT_CLASS",
     "linkifyPrRefs", "prRepoFor", "isCoarsePointer", "renderingSid", "utDetailOpen", "linkifyPathTokens", "linkifyFileUris",
-    "openPathLink", "vscodeApi", "activeId", "openPath", "linkifyUrls", "urlChip", "linkTarget",
+    "openPathLink", "vscodeApi", "activeId", "openPath", "linkifyUrls", "urlChip", "linkTarget", "window",
     code + "\nreturn { renderTodo, showUserTodoReply, todoFileChip, todoLinkChip, openpath, utreply };");
   const el = (tag: string, cls?: string) => { const e = document.createElement(tag); if (cls) e.className = cls; return e; };
   // renderTodo is ONE notice() (the notice vocabulary, 2026-09-08): the stub returns the turn the builder would, with the
@@ -231,6 +231,9 @@ async function host(activeId: string | null = ACTIVE): Promise<Host> {
     openPathLink, null, activeId,
     (p: string, sid: string | null) => opened.push([p, sid]),
     linkifyUrls, urlChip, linkTarget,
+    // the window as the modal's keyboard fold reads it (reply-sheet-keyboard.test.ts executes that fold; here it is out of the
+    // way): a tall window, so no kb-tight, and listener methods that keep nothing
+    { innerHeight: 900, addEventListener() { /* the fold's resize listener, not under test here */ }, removeEventListener() { /* its removal */ } },
   );
   return { ...out, opened };
 }

@@ -2956,6 +2956,20 @@ a.ut-link:hover { filter: brightness(1.12); text-decoration: none; }
   border: 1px solid var(--box-border); border-radius: 6px; outline: none; resize: vertical; }
 .ut-reply-input:focus { border-color: var(--accent); }
 .ut-reply-input.bad { border-color: #ff6a6a; }
+/* THE SHEET ON A PHONE WITH THE KEYBOARD UP (the user 2026-09-19, screenshot): a todo's long detail filled the
+   sheet and the answer box was one squeezed line above Cancel and Send. .confirm-box is a column flex box capped at
+   the window (max-height, overflow hidden) whose children all shrink; a wrapped text block's automatic minimum
+   (min-height: auto) refuses to give, the textarea's (overflow auto) resolves to zero, so the box took the whole
+   deficit and the cap clipped instead of scrolling. Three rules on this dialog's own selectors, never on .confirm-box
+   or .picker-box (seven dialogs share them): the answer box never shrinks and holds three rows (rows=3; resize:
+   vertical stays), the detail is the part that gives way, capped and scrolling within itself (#pinned-notes above is
+   the precedent; min-height: 0 is the half that lets it shrink at all), and a short window (the keyboard up; both
+   builders toggle kb-tight on this window's own resize, as the picker does) pins the sheet to the top under the
+   picker's 12px frame so the buttons sit above the keyboard. The picker's kb-tight rules on .picker-overlay reach this
+   overlay through the class it shares (the dvh cap, overflow-y auto on the box). */
+#ut-reply-prompt .ut-reply-input { flex: 0 0 auto; min-height: calc(3lh + 16px); }
+#ut-reply-prompt .ut-detail.open { flex: 1 1 auto; min-height: 0; max-height: min(12em, 35dvh); overflow-y: auto; overscroll-behavior: contain; }
+#ut-reply-prompt.kb-tight { align-items: flex-start; padding: 12px 16px; }
 
 /* ---------- postal cards (romp peer mail) + teammate messages ---------- */
 /* Both are THE notice since 2026-09-08 (renderPostalService / renderTeammate): a peer's mail wears its
