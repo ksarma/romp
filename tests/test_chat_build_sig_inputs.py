@@ -119,6 +119,8 @@ CENSUS = {
     "_norm_branch": ("pure", "over a branch string"),
     "_notify_session_effective": ("sig", "ncards", "the master bell; the session's own override is in flags"),
     "_op_qid": ("pure", "over a parked op"),
+    "_op_todo": ("pure", "over a parked op (the request id an answer carries, the answer-queued mark)"),
+    "_open_user_todos": ("sig", "usertodos", "this session's open rows in the request store, gated by the switch; the rows, the switch and the flagged-store state are one component (_user_todo_fp), and the parked mark reads the sid's ops, which the ops component keys"),
     "_orphan_replies": ("sig", "states"),
     "_parked_md": ("pure", "over a parked op"),
     "_op_paths": ("pure", "over a parked op (its attachment list, T373 fold)"),
@@ -169,6 +171,9 @@ CENSUS = {
     "_live_map": ("sig", "row", "the liveness map when the caller passed none"),
     "_tree_of": ("sig", "cwd"),
     "_user_images": ("pure", "over a turn's blocks and text"),
+    "_user_todo_session_ended": ("pure", "over the reg's alive bit (reg), the death marker (gone) and the states file's newest row (states)"),
+    "_user_todos_on": ("sig", "usertodos", "the per-install switch file, the component's on/off prefix"),
+    "_user_todos_unreadable": ("sig", "usertodos", "whether the store on disk is the version its shape guard flagged, the component's 'unreadable' value"),
     "iso": ("pure", "over a timestamp"),
 }
 
@@ -208,6 +213,7 @@ DOTTED = {
     "os.path.exists": ("sig", "transcript", "whether the transcript exists yet"),
     "os.path.realpath": ("sig", "cwd", "the two tree tops compared through the filesystem"),
     "os.path.expanduser": ("const", "the home directory"),
+    "Path.home": ("const", "the home directory"),
     "os.path.basename": ("pure", "over a path string"),
     "os.path.dirname": ("pure", "over a path string"),
     "json.dumps": ("pure", "over a value"),
@@ -219,10 +225,12 @@ DOTTED = {
 
 # Module globals build_session reads without calling.
 GLOBALS = {
+    "Path": ("const", "the pathlib class; its calls are in DOTTED"),
     "Sessions": ("const", "the backend-agnostic session API class; its calls are in DOTTED"),
     "_CHAT_FOLD_STATS": ("out", "counters"),
     "_PATH_LINK_CACHE": ("sig", "pathlink"),
     "_SEND_TOOL_RE": ("const", "a module regex"),
+    "_USER_TODOS_UNREADABLE_CARD": ("const", "the to-do card's wording for a flagged request store"),
     "_FOLLOWUP_GOAL_RE": ("const", "a module regex"),
     "_chat_fold": ("memo", "see _chat_fold_get"),
     "_RENDER_FLOOR": ("sig", "floor", "the render floor the pusher's last build used; the pusher's own decision is the floor component"),
@@ -378,6 +386,9 @@ class Census(unittest.TestCase):
                 if ent[0] == "sig":
                     self.assertIn(ent[1], labels, "%s is keyed under %r, which the signature has no component for" % (name, ent[1]))
         self.assertNotIn("judge_gen", labels, "the global judge-pass counter is no longer a chat input")
+        self.assertIn("usertodos", labels, "the request store's per-session component is present")
+        self.assertEqual(km._CHAT_SIG_LABELS.index("usertodos"), km._CHAT_SIG_LABELS.index("floor") + 1,
+                         "usertodos follows floor, ahead of the dependency tail")
         self.assertEqual(km._PerfStats.CHAT_MISS, km._CHAT_SIG_LABELS + ("cold", "nosig"),
                          "the /perf attribution carries one counter per label")
         self.assertEqual(km._CHAT_SIG_LABELS[-len(km._CHAT_SIG_DEPS):], km._CHAT_SIG_DEPS,
@@ -501,6 +512,8 @@ class _World(unittest.TestCase):
         km._built_chat.clear()
         km._live_scope.chat_shared = None
         km._live_scope.usage = km._live_scope.spend_pause = None   # a drain scope another module left on this thread
+        for cache in (km._user_todos_cache, km._user_todos_bad, km._user_todos_switch_cache):
+            cache.clear()                             # the request store's memos are keyed by path: this world's root is new
         self.sess = {"sid": SID, "name": "web", "path": str(self.tpath), "anchor": SID}
 
     def tearDown(self):
@@ -530,6 +543,8 @@ class _World(unittest.TestCase):
             for k in [k for k in cache if k[0] == SID]:
                 cache.pop(k, None)
         km._PIN_ASSOC_MEMO.pop(SID, None)
+        for cache in (km._user_todos_cache, km._user_todos_bad, km._user_todos_switch_cache):
+            cache.clear()
         self.td.cleanup()
 
     def sig(self, now=NOW, deps=None, tm=None):
@@ -711,6 +726,58 @@ class Differential(_World):
         d.mkdir(parents=True)
         (d / "1.json").write_text(json.dumps({"id": "1", "subject": "write the tests", "status": "pending"}))
         self.assertEqual(self.moved(a, self.sig()), ("tasks",))
+
+    def test_a_user_todo_write_misses_under_usertodos_for_its_own_session_alone(self):
+        a = self.sig()
+        km._add_user_todo(PEER, "need the auth scheme picked")
+        self.assertEqual(self.moved(a, self.sig()), (), "another session's request moves nothing of this tab's key")
+        tid = km._add_user_todo(SID, "need the plural form confirmed for the collection route")
+        b = self.sig()
+        self.assertEqual(self.moved(a, b), ("usertodos",), "a register changes the card with no transcript write")
+        self.assertEqual(self.moved(b, self.sig()), ())
+        km._resolve_user_todo(SID, tid, "withdrawn")
+        self.assertEqual(self.moved(b, self.sig()), ("usertodos",), "and so does the stamp that clears it")
+
+    def test_the_user_todo_switch_and_the_flagged_store_each_miss_under_usertodos(self):
+        # the switch: a flip changes the card with no store write, so it rides the same component, for a session
+        # with rows of its own (a sid with none reads None either way); the flagged store: a file that is not
+        # sid to list reads empty, and while the switch is on the card wears the cause in place of the rows
+        km._add_user_todo(SID, "need the plural form confirmed for the collection route")
+        a = self.sig()
+        try:
+            km._set_user_todos(True)
+            b = self.sig()
+            self.assertEqual(self.moved(a, b), ("usertodos",), "the switch flipping on is a component")
+            km._set_user_todos(False)
+            self.assertEqual(self.moved(a, self.sig()), (), "and off again restores the key")
+            km._set_user_todos(True)
+            c = self.sig()
+            (jd.STATE / "user-todos.json").write_text(json.dumps({"enabled": True, "gt": 1}))
+            with contextlib.redirect_stderr(io.StringIO()):
+                d = self.sig()
+            self.assertEqual(self.moved(c, d), ("usertodos",), "the store going bad is news to the tab")
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(self.moved(d, self.sig()), (), "and byte-stable while the bad file stands")
+        finally:
+            km._set_user_todos(False)
+            km._user_todos_bad.clear()
+
+    def test_a_parked_answer_moves_the_key_and_its_drain_restores_it(self):
+        # the answer-queued mark reads the sid's parked ops off _pending_ops: a seven-slot op parking and leaving
+        # must move the key, or the mark is served stale from the chat cache after a park or a drain
+        tid = km._add_user_todo(SID, "need the plural form confirmed for the collection route")
+        km._set_user_todos(True)
+        try:
+            a = self.sig()
+            km._pending_ops[SID] = [("send", "Re: the plural form\n\nnotes", None, None, True, None, tid)]
+            b = self.sig()
+            moved = self.moved(a, b)
+            self.assertTrue(moved, "a parked answer changes the key")
+            self.assertTrue(set(moved) <= {"ops", "usertodos"}, moved)
+            km._pending_ops.pop(SID, None)
+            self.assertEqual(self.sig(), a, "the drain (or the recall) restores the key exactly")
+        finally:
+            km._set_user_todos(False)
 
     def test_the_live_tail_misses_under_live_for_an_echo_and_for_its_dropped_mark(self):
         # the owning backend's tail (Sessions.live_rev): a backend with no counter is keyed on the tail's

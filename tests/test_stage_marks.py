@@ -116,6 +116,8 @@ CALLBACK_ALLOW = {
     ("SdkBackend", "push", "_pusher_wake.set"): "sets the pusher's wake event",
     ("SdkBackend", "log", "_backend_log"): "a stderr line through the exit log",
     ("SdkBackend", "boot_phase", "_mark_boot"): "a boot-row stamp (censusDone, attachDone)",
+    ("SdkBackend", "todo_lost", "_user_todo_answer_lost"): "starts the landed-check thread and returns; the def is marked, so the "
+                                                            "thread's transcript parse counts under its own name (userTodos.lost)",
     ("CodexBackend", "notify", "_send_to_app"): "a frame to the app over its socket",
     ("CodexBackend", "poke", "_wake_kernel"): "sets the kernel's wake event",
     ("CodexBackend", "push", "_pusher_wake.set"): "sets the pusher's wake event",

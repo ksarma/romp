@@ -313,6 +313,9 @@ OFF_FEED = (
     "_thread_turn_read",           # comment threads: forkOf
     "_turn_end_key",               # the post-loop notify pass, the checkpoints, the bell pass after the feed's loop: lastStopAt
     "_turn_opener",                # the post-loop notify pass: lastTurnOpener
+    "_user_todo_loss_boot_pass",   # main's boot pass over persisted drop marks (the request store's loss seam): sid, echoes
+    "_user_todo_losses_pending",   # the prune's hold on an answered row whose loss the seam is still checking: echoes
+    "_user_todo_session_ended",    # the to-do card's ended gate, the answer's refusal and the prune: alive
     "jd._judge_auth",              # the judge's billing pick: auth, authLogin
     "jd._reg_spawned_at",          # the judge tiers' plan and close signatures: spawnedAt
 )

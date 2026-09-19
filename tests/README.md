@@ -26,6 +26,17 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   `PYTHONPATH=~/.local/state/romp/sdkvenv/lib/python3.12/site-packages python3 -m
   pytest tests/test_sdk_backend.py -q` (the venv `bin/romp-sdk-setup` creates;
   match the python version to it).
+  Tests that mint requests from sessions (the user-todo store) call
+  `km._set_user_todos(True)` first: the switch is OFF by default and every
+  read is gated, so a fixture that skips it sees empty surfaces and green
+  assertions about nothing. They also clear `km._user_todos_cache`,
+  `km._user_todos_bad` and `km._user_todos_switch_cache` in setUp and
+  tearDown, and write `off` into their own state root's `session-hosts`;
+  `_StoreSandbox` in `test_user_todos.py` is the template. Every kernel
+  helper that writes the store carries `user_todo` in its name:
+  `NoJudgeWritesTheStore` derives its token list from that pattern, and
+  `NoInferenceWritesTheStore` resolves every call of one against an
+  allow-list of the defs that may act.
 - **`*.bats`** — the shell surfaces: `bin/romp`, the launch chain, hooks,
   postal CLI. Keep them GNU/BSD-portable (CI runs bats on ubuntu).
   Run: `bats tests/*.bats`.

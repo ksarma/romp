@@ -208,6 +208,8 @@ romp mail remote                 # legacy singleton scheme only (ROMP_POSTAL_PEE
 | `set_working(text)` | Publish what you hold so peers steer clear |
 | `check_sent()` | Whether your sent messages were read yet |
 | `recall_message(to, id?)` | Unsend a message the recipient hasn't read |
+| `add_user_todo(text, detail?, blocking?)` | File a request with the person you work for and keep working; returns an id. Listed only while the **Requests from sessions** switch is on (see [The Requests switch](#the-requests-switch)) |
+| `withdraw_user_todo(id)` | Take that request back once it is met or moot |
 
 Not the same tools: romp peers are discovered only through the postal service's `list_agents`. Claude Code also ships its own `ListAgents` and `SendMessage` tools, which list the account's Anthropic cloud sessions and this session's own subagents: a different system, and a cloud session in that list is easy to mistake for a romp peer (the user 2026-09-08, who found one there that read like a session of theirs). The recommended setting is `"permissions": { "deny": ["ListAgents"] }` in the Claude Code settings, so the only list of agents a session sees is romp's; `SendMessage` must stay allowed, because continuing a subagent uses it.
 
@@ -4442,6 +4444,48 @@ Where to read it: `/version` carries `taskTracking` at the top level and in `set
 `settingsGt` as `task-tracking`; `/perf` carries `judge.tierStarts`, the count of judge tier threads started, flat while
 off. `kernel/judge.py` `MODEL_CALLERS` is the census of every judge that makes a model call, each declaring its relation
 to the switch; an ast test holds it to the module's call sites, and the entry point refuses an undeclared name.
+
+## The Requests switch
+
+A session can file a request with you (a decision, an input or an action only you can give) and keep working
+meanwhile; the guide's [Requests from sessions](guide.md#requests-from-sessions) section covers what you see. The
+switch is kernel-side and per-install: `~/.local/state/romp/user-todos-enabled.json`, `{"enabled": true, "gt":
+<gesture stamp>}`, off by default. Only a literal `true` turns it on: an absent file reads off, silently; a
+present file of any other shape (unparsable text, a JSON list, the string `"false"`, `enabled` null or 0) reads
+off and is reported once per file version in the kernel log and in the postal bus's log, since a hand-edit that
+turned the feature off must not be a silent mystery. Reading never creates the file. The kernel memoizes the read
+on the file's modification time and size, so the surfaces that consult it per frame pay one stat each.
+
+The gear's **Requests from sessions** checkbox (Settings, Sessions, Requests) posts `setUserTodos` with a gesture
+stamp; the setter follows the ordering, echo and stale rules every gesture-stamped setting uses, and a refused
+write (a full disk, a directory in the file's place) is told on the same socket as a `settingStale` frame naming
+the fault and the kept value. It is one machine's own setting: never a federation `KERNEL_SETTING`, never
+proposed to or pinned on another machine, and not in `/version`'s `settings` dict. Where to read it: `/version`
+carries `userTodos` at the top level, with its stamp under `settingsGt` as `user-todos`.
+
+While the switch is off: `POST /usertodo` and `POST /usertodo/withdraw` answer `409 {"ok": false, "error":
+"requests from sessions are turned off on this machine"}` and write nothing; Reply and Dismiss on the card
+answer with a warning that names the switch and change nothing; the postal bus leaves `add_user_todo` and
+`withdraw_user_todo` out of `tools/list` and refuses a call anyway before any post; the card shows no requests
+and the chat's delta frames carry no `userTodos` key at all. Requests filed earlier stay stored (the store is
+`user-todos.json` in the same directory, a different file) and reappear when the switch is turned back on; at
+startup the kernel log says how many open requests sit stored behind an off switch. A session already connected
+gains or loses the two tools within a few seconds of a flip, in either direction, without a restart: the bus
+declares `tools.listChanged` and polls the switch file every two seconds (`ROMP_POSTAL_SWITCH_POLL`; a value that
+is not a number falls back to two and is said once).
+
+The routes' other answers: `POST /usertodo` takes `{"id": <sid>, "text": <one short line>, "detail"?: <longer
+context>, "blocking"?: true|false}` and answers `{"ok": true, "todoId": "ut-..."}`; 400 for a missing id or text,
+an id that is not a session id, a `blocking` that is not a boolean, or a text over 500 characters or a detail over
+4000 (the error carries the one-line advice, and the request is refused rather than cut short); 503 when the
+kernel cannot read its request store; for a session another attached machine owns, that machine's 409 relayed
+with the host named, or 502 with the cause (the tunnel not answering, a kernel there that predates the route,
+another status, an answer without an id). `POST /usertodo/withdraw` takes `{"id": <sid>, "todoId": "ut-..."}` and
+answers an account: `ok` (this call closed the request), `state` (withdrawn, answered, dismissed or unknown),
+`at` (the epoch of the closing stamp, or null) and `owner` (whether the id is among the asking session's own
+requests; null when the store could not be read, with `error` saying so). A request the person already answered
+or dismissed is a plain non-error answer to the session, with the time; an id that is unknown or another
+session's is an error.
 
 ## The judges' process (stage three)
 

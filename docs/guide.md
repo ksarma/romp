@@ -422,6 +422,116 @@ into the background, then pauses for the result. In that case it shows an
 session's next turn, when the task finishes or blocks, when you clear the card,
 or as soon as you reply.
 
+## Requests from sessions
+
+A request is something a session files with you when one part of its work
+needs something only you can give: a decision, a credential, a review of a
+draft. The session keeps working on everything else, and the request stays in
+view until you answer it, you dismiss it, or the session withdraws it. The
+feature is off by default; [Turning it on](#turning-it-on) below says where the
+switch is.
+
+Without it, the request disappears. The `api` session of `notes-api` reaches the
+login routes, finds it cannot pick the auth scheme on its own, says so in one
+sentence, and moves on to the routes that need no login. Its card stays in
+Working, the transcript keeps scrolling, and the sentence sits in the middle of
+a long turn. You learn about it days later when you reread the transcript, or
+never. Romp's [judges](judges.md) cannot catch this reliably: they read the
+transcript and infer, and a turn that ends on progress reads as progress. A
+request is the session stating the need outright, in a place that inference
+cannot erase.
+
+### What you see
+
+The card at the bottom of a session's transcript lists the agent's own
+checklist under a **to-do** head. When the session has open requests, the card
+gains a second section, **Waiting on you**, with one row per request, oldest
+first. Each row is the session's one-line request. A small "details" hint after
+the line means there is more behind it; click the line to open it, and a file
+path in the details opens the file. A request the session marked as blocking
+wears a small "blocking" word after the line. Each row has two buttons:
+
+- **Reply** opens a small dialog that quotes the request. Type your answer and
+  press Enter. On a phone, Enter starts a new line and **Send** sends. The
+  answer reaches the session as a message from you, headed with `Re:` and the
+  request's own line, so a short answer such as "session cookies" lands without
+  ambiguity. The row leaves the card once the session has taken the answer. If
+  the answer has to wait first (the session is compacting, or other messages
+  are ahead of it in the queue), the row reads **answer queued** in Reply's
+  place until it goes; the queued bubble's cancel takes the answer back and the
+  row's Reply returns.
+- **Dismiss** clears the request without sending anything. Press it twice; the
+  first press asks you to confirm. Use it for a request that is moot or stale.
+
+Each section appears only when it has rows, so a session with no open requests
+shows the card it always did. Past twelve open requests, the oldest twelve stay
+in view and the rest are hidden behind a "more waiting" row. If the kernel cannot read
+its request store, the card says so in place of the requests and names the
+file; Reply and Dismiss change nothing and say so, and the kernel log has the
+cause. Fix or remove the file and the card reads again.
+
+If a session has ended, its requests stay out of the card until you revive it;
+they are hidden, not cleared, and come back with the session. A session that is
+only asleep after a kernel restart is still listed, and Reply wakes it with its
+history intact. An answer that never reached the session (its process died
+holding it, or you cancelled it from the queue) puts the request back on the
+card; an answer the transcript shows the session received keeps the request
+closed.
+
+### Turning it on
+
+The feature is off by default. The gear's **Requests from sessions** checkbox
+(Settings, Sessions, Requests) turns it on for the machine whose kernel you are
+looking at; each attached machine keeps its own setting. While it is off,
+sessions on that machine are not given the tools that file or withdraw a
+request, nothing is listed, and Reply and Dismiss on a row you were shown before
+the flip say so instead of acting. Flipping the switch reaches sessions that are
+already running: within a few seconds the tools appear or disappear for them, no
+restart needed. Requests filed earlier stay stored and reappear when you turn it
+back on; at startup, the kernel's log says how many are waiting.
+
+### How a session files one
+
+A session gets two tools alongside its mail tools (see
+[Inter-agent communication](#inter-agent-communication-the-romp-postal-service)):
+
+- `add_user_todo` takes one short line, what it needs and why, an optional
+  `detail` for context the line cannot carry, and an optional `blocking` flag for
+  a request it cannot go on without. It returns an id. The line holds up to 500
+  characters and the detail up to 4000; a longer one is refused rather than cut
+  short, and the session is told to keep the request to one line and put the
+  rest in its reply. The tool's description tells the session what qualifies:
+  something it is waiting on you for, never a status update or an FYI. It also
+  tells the session to withdraw the request the moment the need is met.
+- `withdraw_user_todo` takes the id and takes the request back. Withdrawing a
+  request you already answered or dismissed, or one the session already
+  withdrew, gets a plain answer saying so, with the time, and no error: the need
+  is met, which is what the session wanted. An id that is unknown or another
+  session's is refused. Neither is a silent success.
+
+A request filed by a subagent belongs to the session the subagent works inside,
+because you talk to the session, not to the subagent.
+
+Nothing prompts the session to file a request beyond the tool's own description,
+and nothing forces it to withdraw one. A session that forgets to withdraw leaves
+a moot request in view until you dismiss it. That is the accepted cost: a stale
+visible request costs a glance and a click, and a vanished one costs whatever
+was asked.
+
+### What it deliberately does not do
+
+- Romp never clears a request on its own. The judges that keep the feed current
+  cannot answer, dismiss, or withdraw one, because they infer from transcript
+  text, and inference has erased this kind of request before. Only you or the
+  session can clear it.
+- Romp never asks a session whether it still needs its open requests. An idle
+  session almost always does, and asking would spend a turn per session to learn
+  nothing.
+- A request has no priority, deadline, or edit. To change one, the session
+  withdraws it and files another.
+- A request moves no card and rings no bell: it waits on the card at the
+  bottom of the session's transcript.
+
 ## Inter-agent communication (the Romp Postal Service)
 
 Sessions message each other through a mailbox Romp gives them, and every

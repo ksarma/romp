@@ -24,11 +24,11 @@ JOB_NAME_RE = r"_job_stage\(['\"](\w+)['\"]"
 
 PUSHER_JOBS = ("beginCheckpointCycle", "sessionsListing", "applyPendingOps", "turnNotify", "persistCheckpoints", "convergeCheckpoints",
                "bootRowBackstop", "kernelSample", "apiHealth")
-HOUSEKEEPING = ("liftSpentAwaiting", "deathSweep", "endOnIdle", "deferralSweep", "autoNudge", "interruptBlock",
+HOUSEKEEPING = ("liftSpentAwaiting", "deathSweep", "pruneUserTodos", "endOnIdle", "deferralSweep", "autoNudge", "interruptBlock",
                 "persistTickSeen", "persistIntrMarks", "persistSpendTrees", "autoPauseOnLimit", "usagePoll", "retryUpgrade", "autoPauseOnSpend",
                 "spendGuard", "autoResumeRetry", "autoResumeSession", "autoRetry", "idleQueueDrive", "clearDoneNotes",
                 "heldWorking")
-QUIET = ("_lift_spent_awaiting", "_death_sweep_tick", "_end_on_idle_sweep", "_deferral_sweep_tick", "_interrupt_block_tick",
+QUIET = ("_lift_spent_awaiting", "_death_sweep_tick", "_prune_user_todos", "_end_on_idle_sweep", "_deferral_sweep_tick", "_interrupt_block_tick",
          "_persist_tick_seen", "_persist_intr_marks", "_persist_spend_trees", "_auto_pause_on_limit", "_usage_poll_tick",
          "_auto_pause_on_spend_limit", "_spend_guard_tick", "_auto_resume_retry", "_auto_resume_session_retry",
          "_auto_retry_tick", "_idle_queue_drive_tick", "_clear_done_working_notes", "_held_working_pass", "_turn_notify_tick", "_apply_pending_ops",
@@ -361,6 +361,22 @@ class TheJobsLoop(_LabCycles):
             else: km._LOOPS_STOP.clear()
         self.assertEqual(n[0], 2)
         self.assertGreaterEqual(time.monotonic() - t0, 0.05, "one pace between the two passes")
+
+
+class TheRequestPruneIsHousekeeping(_LabCycles):
+    def test_the_prune_runs_once_per_jobs_pass_and_never_in_the_pushers_cycle(self):
+        """The request store's prune (_prune_user_todos) is a housekeeping job: one call per jobs pass, none from the pusher's
+        cycle, executed (the source pins in tests/test_user_todos.py and Partition above say where it is written)."""
+        km = self.km
+        calls = []
+        km._prune_user_todos = lambda: calls.append(1)
+        km._pusher_cycle()
+        self.assertEqual(calls, [], "the pusher's cycle ran no prune")
+        km._jobs_cycle()
+        self.assertEqual(calls, [1], "one jobs pass, one prune")
+        km._jobs_cycle()
+        self.assertEqual(calls, [1, 1], "once per pass, never more")
+        self.assertIn("jobs.pruneUserTodos", km._PERF_STATS.snapshot()["stages_ms"], "counted as its own stage of the pass")
 
 
 if __name__ == "__main__":

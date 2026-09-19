@@ -32,7 +32,7 @@ class SettingsSectionsTest(unittest.TestCase):
         h = _gear_src()
         self.assertLess(h.index("id=rs-tabs"), h.index("data-pane=general"), "the pills come first")
         for pane, heads in (("general", ["Account", "Panes", "Appearance", "Permissions", "This machine", "Keyboard shortcuts"]), ("chat", ["Display", "Comments", "Thinking", "Chat history", "Tab strip", "Tab widgets"]),
-                            ("feed", ["Cards"]), ("sessions", ["New sessions"]), ("automation", ["Nudges", "Model"]), ("tasks", ["Task tracking", "Judges"]),   # Model: the two model switches (2026-09-17)
+                            ("feed", ["Cards"]), ("sessions", ["New sessions", "Requests"]), ("automation", ["Nudges", "Model"]), ("tasks", ["Task tracking", "Judges"]),   # Model: the two model switches (2026-09-17)
                             ("debug", ["Judging bands", "Diagnostics"])):
             p = _pane(h, pane)
             self.assertIn("<div class='rs-sec rs-sec-first'>%s</div>" % heads[0], p, pane + " opens with its first head")
@@ -54,7 +54,7 @@ class SettingsSectionsTest(unittest.TestCase):
             "general": ["rs-billing", "rs-login-btn", "rs-panes-sec", "rs-pane-timeline", "rs-pane-fleet", "rs-pane-feed", "rs-filesctl", "rs-panedock", "rs-theme", "rs-cmap", "rs-pal", "rs-fileedit", "rs-conserve", "rs-updates"],
             "chat": ["rs-compact", "rs-dense", "rs-chatscheme", "rs-striprows", "rs-cmtmodel", "rs-cmteffort", "rs-cmtfast", "rs-thinksum", "rs-widgets", "rs-swidgets"],
             "feed": ["rs-feedcollapsed"],
-            "sessions": ["rs-defaultdir", "rs-backend"],
+            "sessions": ["rs-defaultdir", "rs-backend", "rs-usertodos"],
             "automation": ["rs-autonudge", "rs-suggestcompact", "rs-alwaysfast", "rs-retryupgrade"],   # the two model switches: kernel policies applied to sessions on the kernel's own initiative (2026-09-17)
             "tasks": ["rs-tasktrack", "rs-judgemodel", "rs-judgefast", "rs-judgeeffort", "rs-distillmodel", "rs-distillfast", "rs-distilleffort", "rs-indexmodel", "rs-indexfast", "rs-indexeffort", "rs-judgeconc"],
             "debug": ["rs-judges-index", "rs-judges-triage", "ra-open", "rs-log-open", "rsver"],
@@ -80,6 +80,13 @@ class SettingsSectionsTest(unittest.TestCase):
         self.assertTrue(au.index(">Task tracking<") < au.index("id=rs-tasktrack") < au.index(">Judges<") < au.index("id=rs-judgemodel") < au.index("id=rs-indexeffort") < au.index("id=rs-judgeconc"))   # the master switch first (T404 PR 2)
         for gone in ("id=rs-autonudge", "id=rs-conserve", "id=rs-thinksum", ">Sessions<"):
             self.assertNotIn(gone, au, gone + " left Task tracking (T404)")
+        # Sessions: the New sessions rows, then the Requests section with its one switch (a property of the sessions,
+        # what a session asks of the user; not Chat, not Task tracking); its note about task tracking sits in the row
+        se = panes["sessions"]
+        self.assertTrue(se.index(">New sessions<") < se.index("id=rs-defaultdir") < se.index("id=rs-backend")
+                        < se.index(">Requests<") < se.index("id=rs-usertodos") < se.index("id=rs-usertodos-tt"))
+        self.assertIn("rs-usertodos-tt", h[h.index("function dressTracking"):h.index("function tellShellTracking")],
+                      "the note is un-hidden while task tracking is off, like the Automation rows' notes")
         # General (T404): the login leads, then the panes with the Files control, Appearance, Permissions (Allow file editing), This machine
         # (Conserve memory, Updates install automatically), then the shortcuts; Debug: the judges' debug views, then Open log as the last
         # button before the version (T290)

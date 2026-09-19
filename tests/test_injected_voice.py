@@ -28,6 +28,9 @@ Scope note — what is deliberately NOT checked:
 
 SYNTHETIC fixtures only (placeholder ids, invented goal text).
 """
+import contextlib
+import inspect
+import io
 import json
 import os
 import re
@@ -102,10 +105,18 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
         jd.GOALDIR, jd.STATE = Path(self.td.name), Path(self.td.name)
         (jd.GOALDIR / (SID + ".json")).write_text(json.dumps(
             {"rompUuid": SID, "seq": 4, "nodes": _nodes(), "placements": {}, "status": {}}))
+        # two open requests from the session, the same synthetic notes-api world (the answer body below)
+        km._user_todos_cache.clear()
+        km._user_todos_switch_cache.clear()
+        km._set_user_todos(True)                     # the switch is OFF by default
+        km._add_user_todo(SID, "Need the auth-scheme decision to wire login; building the open routes meanwhile")
+        km._add_user_todo(SID, "Need a staging API key before the load test can run")
 
     def tearDown(self):
         jd.GOALDIR, jd.STATE = self.saved_goaldir, self.saved_state
         self.td.cleanup()
+        km._user_todos_cache.clear()
+        km._user_todos_switch_cache.clear()
 
     def _bodies(self):
         """Every message romp injects, by name, rendered from the same synthetic store."""
@@ -159,6 +170,11 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
             # the user's own words; the quoting frame around them is romp-authored and scanned here
             "comment thread opener": km._comment_first_message(
                 "Cap the retry delay at two minutes.", "Why two minutes and not five?"),
+            # the reply to a request from the session (plans/user-todos.md): the request's own line anchors
+            # the user's answer; the frame is romp-authored and scanned here
+            "user-todo answer": km._user_todo_answer_body(
+                "Need the auth-scheme decision to wire login; building the open routes meanwhile",
+                "Go with the session cookie for now."),
             # the dashboard-edit trace (the user 2026-08-22): the file viewer saved over a file in this
             # session's tree, and the session is told in the person's voice — never edited under silently
             "edit trace": km._edit_trace_body("/TESTDIR/notes-api/README.md"),
@@ -299,9 +315,11 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
             # never a status ask — bolting a progress question onto it would be noise
             # …and the spend ceiling's message is a STOP order with one question (what was fanning out), not a
             # progress ask: the session is to halt, not to report where things stand
+            # ...and a reply to a request from the session is the user's own answer to something the
+            # session asked for: the same class as a typed follow-up, never a status ask
             if name in ("typed follow-up on a summary",
                         "debt reminder (question)", "debt reminder (handoff)",
-                        "debt reminder (several)", "comment thread opener", "edit trace",
+                        "debt reminder (several)", "comment thread opener", "user-todo answer", "edit trace",
                         "comment-thread merge", "compaction suggestion", "spend ceiling",
                         "relayed question", "relayed question (procedural why)",
                         "relayed question (with the conversation)"):
@@ -314,6 +332,184 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
                 self.assertTrue("stand" in text or "what's next" in text or "keep going" in text,
                                 "%r no longer asks for progress" % name)
                 self.assertIn("from me", text, "%r no longer asks what it needs from the user" % name)
+
+
+class UserTodoToolDescriptionsKeepTheVeil(unittest.TestCase):
+    """The two postal tools for requests from sessions describe an obligation to the PERSON THE AGENT
+    WORKS FOR, so their descriptions ride the same veil as injected bodies: no romp machinery named. (The
+    other postal tools name romp on purpose: the bus is visible tooling with the product's name on it;
+    these two must not teach the model a tracking system.) The result texts land in the agent's context
+    exactly as the descriptions do, so every branch of both tools is rendered and scanned too."""
+
+    def test_the_descriptions_carry_no_romp_vocabulary(self):
+        pm = load_source("romp_postal_voice", os.path.join(BIN, "romp-postal-service"))
+        tools = {t["name"]: t for t in pm.MCP_TOOLS}
+        for name in ("add_user_todo", "withdraw_user_todo"):
+            self.assertIn(name, tools, "the tool exists to be scanned")
+            desc = tools[name]["description"]
+            self.assertIn("person you work for", desc, "%s speaks as the person the agent works for" % name)
+            for word, why in ROMP_WORDS:
+                with self.subTest(tool=name, word=word):
+                    self.assertNotIn(word, desc.lower(),
+                                     "%s's description speaks romp at the session (%r: %s)" % (name, word, why))
+            for field, prop in tools[name]["inputSchema"]["properties"].items():
+                for word, why in ROMP_WORDS:
+                    with self.subTest(tool=name, word=word, field=field):
+                        self.assertNotIn(word, str(prop.get("description") or "").lower())
+
+    def test_the_result_texts_carry_no_romp_vocabulary(self):
+        # every branch of _mcp_call for the two tools, rendered with the kernel, the identity and the heartbeat
+        # stubbed: the kernel's statuses are relayed from a canned text here, so the kernel-side constants the
+        # live texts would carry are scanned separately (UserFacingStringsSayRequest)
+        pm = load_source("romp_postal_voice_results", os.path.join(BIN, "romp-postal-service"))
+        saved = (pm._kernel_post, pm._self_identity, pm._heartbeat)
+        canned = {}
+        pm._kernel_post = lambda path, body, timeout=2: canned.get("res")
+        pm._self_identity = lambda: (SID, "api")
+        pm._heartbeat = lambda *a, **k: None
+        pm._user_todos_switch_cache.clear()
+        pm.USER_TODOS_SWITCH.parent.mkdir(parents=True, exist_ok=True)
+        pm.USER_TODOS_SWITCH.write_text(json.dumps({"enabled": True, "gt": 1}))
+
+        def refusal(status, text):
+            return {"ok": False, "status": status, "error": json.dumps({"ok": False, "error": text})}
+        try:
+            results = {}
+            canned["res"] = {"ok": True, "todoId": "ut-9f2c1a34"}
+            results["add: noted"] = pm._mcp_call("add_user_todo", {"text": "Need the port"})[0]
+            results["add: no text"] = pm._mcp_call("add_user_todo", {"text": "  "})[0]
+            canned["res"] = None
+            results["add: unreachable"] = pm._mcp_call("add_user_todo", {"text": "Need the port"})[0]
+            results["withdraw: unreachable"] = pm._mcp_call("withdraw_user_todo", {"id": "ut-9f2c1a34"})[0]
+            results["withdraw: no id"] = pm._mcp_call("withdraw_user_todo", {})[0]
+            for status, text in ((409, "requests from sessions are turned off on this machine"),
+                                 (400, "text is 501 characters, over the 500-character cap: keep the request to one line and put the rest in your reply"),
+                                 (502, "the tunnel to TESTHOST is not answering (re-dialing)"),
+                                 (503, "the request store is unreadable (see the kernel log)")):
+                canned["res"] = refusal(status, text)
+                results["add: refused %d" % status] = pm._mcp_call("add_user_todo", {"text": "Need the port"})[0]
+                results["withdraw: refused %d" % status] = pm._mcp_call("withdraw_user_todo", {"id": "ut-9f2c1a34"})[0]
+            canned["res"] = {"ok": True}
+            results["withdraw: withdrawn"] = pm._mcp_call("withdraw_user_todo", {"id": "ut-9f2c1a34"})[0]
+            canned["res"] = {"ok": False}
+            results["withdraw: no open request"] = pm._mcp_call("withdraw_user_todo", {"id": "ut-deadbeef"})[0]
+            for state in ("answered", "dismissed", "withdrawn"):
+                canned["res"] = {"ok": False, "state": state, "at": T0, "owner": True}
+                results["withdraw: already " + state] = pm._mcp_call("withdraw_user_todo", {"id": "ut-9f2c1a34"})[0]
+            canned["res"] = {"ok": False, "state": "unknown", "at": None, "owner": False}
+            results["withdraw: not yours"] = pm._mcp_call("withdraw_user_todo", {"id": "ut-deadbeef"})[0]
+            canned["res"] = {"ok": False, "state": "unknown", "at": None, "owner": True,
+                             "error": "malformed closing stamp on ut-9f2c1a34: resolved=True"}
+            results["withdraw: unreadable record"] = pm._mcp_call("withdraw_user_todo", {"id": "ut-9f2c1a34"})[0]
+            canned["res"] = {"ok": False, "state": "unknown", "at": None, "owner": None,
+                             "error": "the request store is unreadable (see the kernel log)"}
+            results["withdraw: unreadable store"] = pm._mcp_call("withdraw_user_todo", {"id": "ut-9f2c1a34"})[0]
+            pm.USER_TODOS_SWITCH.write_text(json.dumps({"enabled": False, "gt": 2}))
+            pm._user_todos_switch_cache.clear()
+            results["add: switch off"] = pm._mcp_call("add_user_todo", {"text": "Need the port"})[0]
+            results["withdraw: switch off"] = pm._mcp_call("withdraw_user_todo", {"id": "ut-9f2c1a34"})[0]
+        finally:
+            pm._kernel_post, pm._self_identity, pm._heartbeat = saved
+            pm.USER_TODOS_SWITCH.unlink()
+            pm._user_todos_switch_cache.clear()
+        # the pass rendered the real branches, not copies of one fallback
+        self.assertIn("Noted", results["add: noted"])
+        self.assertIn("Withdrawn", results["withdraw: withdrawn"])
+        self.assertIn("Nothing changed", results["withdraw: no open request"])
+        self.assertIn("Already closed", results["withdraw: already answered"])
+        self.assertIn("Already withdrawn", results["withdraw: already withdrawn"])
+        self.assertIn("of yours", results["withdraw: not yours"])
+        self.assertIn("Couldn't read the record", results["withdraw: unreadable record"])
+        self.assertIn("one line", results["add: refused 400"])
+        self.assertIn("turned off on this machine", results["add: refused 409"])
+        self.assertIn("not answering", results["add: refused 502"])
+        self.assertIn("unreadable", results["add: refused 503"])
+        self.assertIn("did not happen", results["withdraw: refused 502"])
+        self.assertIn("was not withdrawn", results["withdraw: unreadable store"])
+        self.assertIn("turned off on this machine", results["add: switch off"])
+        self.assertIn("turned off on this machine", results["withdraw: switch off"])
+        for name, text in results.items():
+            for word, why in ROMP_WORDS:
+                with self.subTest(result=name, word=word):
+                    self.assertNotIn(word, text.lower(),
+                                     "%s's result speaks romp at the session (%r: %s)" % (name, word, why))
+
+
+class UserFacingStringsSayRequest(unittest.TestCase):
+    """The user-facing word is 'request' on every surface (the card, the warns, the boot notice, the bus's
+    texts); 'user todo' stays the code's name (the store, the functions, the tool names, the WS types)."""
+
+    def _kernel_strings(self):
+        return {name: getattr(km, name) for name in (
+            "_USER_TODOS_OFF_ERR", "_USER_TODOS_OFF_WARN", "_USER_TODOS_UNREADABLE_ERR", "_USER_TODOS_UNREADABLE_WARN",
+            "_USER_TODOS_UNREADABLE_CARD", "_USER_TODO_STAMP_FAILED_WARN", "_USER_TODO_SETTLED_WARN",
+            "_USER_TODO_DISMISS_SETTLED_WARN", "_USER_TODO_ENDED_WARN", "_USER_TODO_UNDELIVERED_WARN")}
+
+    def test_every_kernel_constant_says_request_and_never_todo(self):
+        for name, text in self._kernel_strings().items():
+            with self.subTest(constant=name):
+                low = text.lower()
+                self.assertIn("request", low, text)
+                self.assertNotIn("todo", low, text)
+                self.assertNotIn("user todo", low, text)
+
+    def test_the_boot_notice_and_the_caps_say_request(self):
+        td = tempfile.TemporaryDirectory()
+        saved = jd.STATE
+        jd.STATE = Path(td.name)
+        km._user_todos_cache.clear()
+        km._user_todos_switch_cache.clear()
+        try:
+            km._set_user_todos(True)
+            km._add_user_todo(SID, "Need the staging port")
+            km._set_user_todos(False)
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                self.assertEqual(km._user_todos_off_boot_notice(), 1)
+            low = err.getvalue().lower()
+            self.assertIn("request", low)
+            self.assertNotIn("todo", low)
+            with self.assertRaises(ValueError) as cm:
+                km._user_todo_check_size("n" * 501)
+            self.assertNotIn("todo", str(cm.exception).lower())
+            self.assertNotIn("note", str(cm.exception).lower())
+        finally:
+            jd.STATE = saved
+            km._user_todos_cache.clear()
+            km._user_todos_switch_cache.clear()
+            td.cleanup()
+
+    def test_the_bus_texts_say_request_and_never_todo_or_note(self):
+        pm = load_source("romp_postal_voice_words", os.path.join(BIN, "romp-postal-service"))
+        for text in (pm.USER_TODOS_OFF_ADD, pm.USER_TODOS_OFF_WITHDRAW):
+            self.assertIn("request", text.lower(), text)
+            self.assertNotIn("todo", text.lower(), text)
+        arms = inspect.getsource(pm._mcp_call)
+        arms = arms[arms.index('if name == "add_user_todo":'):arms.index('if name == "check_sent":')]
+        for literal in re.findall(r'"((?:[^"\\]|\\.)*)"', arms):
+            low = literal.lower()
+            if "todo" in low and not (low.startswith("/usertodo") or "withdraw_user_todo" in low
+                                      or "add_user_todo" in low or low in ("todoid", "blocking", "detail", "text", "id")):
+                self.fail("a bus text says todo: %r" % literal)
+            if " note" in low or low.startswith("note"):
+                if not low.startswith("noted"):
+                    self.fail("a bus text says note: %r" % literal)
+        for name in ("add_user_todo", "withdraw_user_todo"):
+            tool = next(t for t in pm.MCP_TOOLS if t["name"] == name)
+            self.assertNotIn("todo", tool["description"].lower().replace("withdraw_user_todo", ""), name)
+
+    def test_the_card_and_the_reply_dialog_carry_no_todo_word(self):
+        render = (Path(HERE).parent / "ui" / "webview" / "render.ts").read_text()
+        todo = render[render.index("function renderTodo"):render.index("function todoFoldLabel")]
+        modal = render[render.index("function showUserTodoReply"):render.index("\nfunction ", render.index("function showUserTodoReply") + 10)]
+        self.assertIn('head.textContent = `Waiting on you', todo)
+        self.assertIn('h.textContent = "Reply"', modal)
+        for literal in re.findall(r'textContent = ("[^"]*"|`[^`]*`)', todo + modal):
+            self.assertNotIn("todo", literal.lower(), literal)
+        for literal in re.findall(r'title = ("[^"]*"|`[^`]*`)', todo + modal):
+            self.assertNotIn("todo", literal.lower(), literal)
+        for literal in re.findall(r'placeholder = ("[^"]*"|`[^`]*`)', modal):
+            self.assertNotIn("todo", literal.lower(), literal)
 
 
 class TheRuleIsWrittenDown(unittest.TestCase):

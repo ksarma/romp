@@ -262,6 +262,16 @@ var GEAR_HTML =
   "<select id=rs-backend style='display:none'>" +
   '<option value=sdk>Claude Code</option><option value=codex>Codex</option>' +
   '</select></span></div>' +
+  // REQUESTS (plans/user-todos.md): what a session asks of the user, a property of the sessions, so it sits here
+  // and not in Chat or Task tracking. Per-install like Thinking summaries (this machine's own, never sent to
+  // another), off by default. The note names the surfaces that wait for task tracking; dressTracking un-hides it
+  // while tracking is off, like the Automation rows' notes.
+  "<div class='rs-sec'>Requests</div>" +
+  "<label class='rs-row'><input type=checkbox id=rs-usertodos>" +
+  '<span><b>Requests from sessions</b>' +
+  '<span class=rs-sub>A session can file a request with you, a decision, an input or an action only you can give, and keep working meanwhile. Each open request is listed under Waiting on you on the card at the bottom of that session\u2019s transcript, with Reply and Dismiss. Off by default. This machine\u2019s own setting, never sent to another.</span>' +
+  '<span class=rs-note id=rs-usertodos-tt hidden>While task tracking is off, the requests still show on the card and the tab flag; the feed marker, the badge count and the idle hold on the session\u2019s card wait for tracking.</span>' +
+  '</span></label>' +
   '</div>' +
   '<div class=rs-pane data-pane=automation hidden>' +
   // AUTOMATION (T404, the user 2026-09-13): what romp sends to the sessions on its own
@@ -409,6 +419,7 @@ function initGear(post, opts) {
     fe = document.getElementById('rs-fileedit'),
     pn = { timeline: document.getElementById('rs-pane-timeline'), fleet: document.getElementById('rs-pane-fleet'), feed: document.getElementById('rs-pane-feed') },
     ths = document.getElementById('rs-thinksum'),
+    utd = document.getElementById('rs-usertodos'),   // the Requests switch (plans/user-todos.md): per-install, like ths
     wcf = document.getElementById('rs-wholechat'),
     afb = document.getElementById('rs-alwaysfast'), rub = document.getElementById('rs-retryupgrade'),   // the Automation pane's model switches (2026-09-17)
     tk = document.getElementById('rs-tasktrack'),
@@ -1055,6 +1066,9 @@ function initGear(post, opts) {
   if (ths) ths.addEventListener('change', function () { post({ type: 'setThinkingSummaries', enabled: ths.checked, gt: gclock.stamp('thinking-summaries') }); });
   // Whole chat frames (2026-09-15): per-install like Thinking summaries (the LOCAL kernel's floor), not a KERNEL_SETTING; stamped
   if (wcf) wcf.addEventListener('change', function () { post({ type: 'setWholeChatFrames', enabled: wcf.checked, gt: gclock.stamp('whole-chat-frames') }); });
+  // Requests from sessions (plans/user-todos.md): per-install like the two above (this machine's own copy, never a
+  // KERNEL_SETTING; gear.test.ts pins the membership), stamped through the clock under its own store name
+  if (utd) utd.addEventListener('change', function () { post({ type: 'setUserTodos', enabled: utd.checked, gt: gclock.stamp('user-todos') }); });
   // THE TASK TRACKING SWITCH (T404): the kernel's setting (gt-gated, a KERNEL_SETTING across machines). The click POSTS and
   // nothing more: the dependent controls dress and the shell hears the flip (a taskTracking message: the rail's Outline and
   // Feed buttons and any open pane of theirs, ahead of its next /version read) on the KERNEL'S ECHO, the taskTracking frame
@@ -1070,9 +1084,11 @@ function initGear(post, opts) {
       if (on) row.removeAttribute('title'); else row.title = TT_OFF_TIP;
       Array.prototype.forEach.call(row.querySelectorAll('input, select, button'), function (c) { c.disabled = !on; });
     });
-    var an1 = document.getElementById('rs-autonudge-tt'), sc1 = document.getElementById('rs-suggestcompact-tt');
+    var an1 = document.getElementById('rs-autonudge-tt'), sc1 = document.getElementById('rs-suggestcompact-tt'),
+      ut1 = document.getElementById('rs-usertodos-tt');   // the Requests row's note: which of its surfaces wait for tracking
     if (an1) an1.hidden = !!on;
     if (sc1) sc1.hidden = !!on;
+    if (ut1) ut1.hidden = !!on;
   }
   function tellShellTracking(on) { try { (window.parent !== window ? window.parent : window).postMessage({ romp: 'taskTracking', on: !!on }, '*'); } catch (e) {} }
   if (tk) tk.addEventListener('change', function () { post({ type: 'setTaskTracking', enabled: tk.checked, gt: gclock.stamp('task-tracking') }); });
@@ -1515,13 +1531,14 @@ function initGear(post, opts) {
     'comment-fast': 'Fast comment threads',
     'judge-fast': 'Fast mode (triage judges)', 'distill-fast': 'Fast mode (distilling judges)', 'index-fast': 'Fast mode (indexing judges)',
     'always-fast': 'Always fast', 'retry-upgrade': 'Retry upgrades after downgrades',
-    'thinking-summaries': 'Thinking summaries', 'whole-chat-frames': 'Always load whole chats' };
+    'thinking-summaries': 'Thinking summaries', 'whole-chat-frames': 'Always load whole chats',
+    'user-todos': 'Requests from sessions' };
   // store name → the message type that sets it: the whitelist for the toast's Apply anyway (a frame
   // may re-issue the one setting it names, nothing else) and the completeness pin's map
   // (gear.test.ts checks every emitter stamps through the clock under its own store name)
   var STALE_TYPE = { 'auto-nudge': 'setAutoNudge', 'compact-suggest': 'setCompactSuggest', 'task-tracking': 'setTaskTracking',
     'file-editing': 'setFileEditing', 'update-mode': 'setUpdateMode', 'thinking-summaries': 'setThinkingSummaries',
-    'whole-chat-frames': 'setWholeChatFrames',
+    'whole-chat-frames': 'setWholeChatFrames', 'user-todos': 'setUserTodos',
     'judge-model': 'setJudgeModel', 'judge-effort': 'setJudgeEffort',
     'index-model': 'setIndexModel', 'index-effort': 'setIndexEffort', 'judge-concurrency': 'setJudgeConcurrency',
     'distill-model': 'setDistillModel', 'distill-effort': 'setDistillEffort',
@@ -1891,6 +1908,7 @@ function initGear(post, opts) {
       fillMixedMarks(v, rows);
     }).catch(function () { fillAutoNudge(v.autoNudge, []); fillMixedMarks(v, []); });
     if (ths) ths.checked = !!v.thinkingSummaries;   // per-install opt-in: this kernel's persisted answer is authoritative
+    if (utd) utd.checked = !!v.userTodos;           // the Requests switch (default off): the same per-install rule
     if (wcf) wcf.checked = !!v.wholeChatFrames;     // the Whole chat frames switch: the same per-install rule
     if (tk) { tk.checked = v.taskTracking !== false; dressTracking(tk.checked); }   // the master switch (T404): absent reads on
     if (fe) fe.checked = !!v.fileEditing;   // the kernel's persisted opt-in is authoritative (see the viewer's consent popup)

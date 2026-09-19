@@ -25,13 +25,18 @@ test("a bare file:// URL becomes a clickable .file-uri-link that opens the file 
   assert.match(LINKS, /decodeURIComponent\(p\)/);
 });
 
-test("linkify runs on chat message bodies (assistant reply + user bubble + nudge full text) and nowhere else — never tool summaries", () => {
+test("linkify runs on chat message bodies (assistant reply + user bubble + nudge full text) and a request's detail, never tool summaries", () => {
   assert.match(RENDER, /linkifyFileUris\(body, undefined, ev\.spacePaths, ev\.pathLinks, ev\.pathPins, ev\.pathPreview, ev\.pathPreviewWhy\)/);   // the assistant reply
   assert.match(RENDER, /linkifyFileUris\(bubble, imgPaths, ev\.spacePaths, ev\.pathLinks, ev\.pathPins, ev\.pathPreview, ev\.pathPreviewWhy\)/); // your own bubble (in-bubble images don't re-thumb)
   assert.match(RENDER, /linkifyFileUris\(full, imgPaths, ev\.spacePaths, ev\.pathLinks, ev\.pathPins, ev\.pathPreview, ev\.pathPreviewWhy\)/);   // a compact nudge's expanded full text (2026-07-17)
-  // exactly the definition + those three applications — so tool-use reports/summaries stay untouched
+  // plus a request's detail (plans/user-todos.md): in the card's detail section and quoted in the Reply dialog, an
+  // agent's note about the user's own project, where a path should open like one in a message. Shape-only (no
+  // per-message kernel verdict exists for a note), so the root alone is passed.
+  assert.match(RENDER, /linkifyFileUris\(d\);/);
+  assert.match(RENDER, /linkifyFileUris\(dd\);/);
+  // exactly the definition + those five applications: tool-use reports and summaries stay untouched
   const uses = RENDER.match(/linkifyFileUris\(/g) || [];
-  assert.equal(uses.length, 4, "linkifyFileUris is defined once and applied to exactly the three chat bodies");
+  assert.equal(uses.length, 6, "linkifyFileUris is defined once and applied to the three chat bodies + the two request-detail sites");
 });
 
 test("linkify works inside INLINE backticks (agents backtick paths), skips existing links, trims trailing punctuation; a fenced block links on the kernel's verdict under the viewer's code gate (2026-09-12)", () => {

@@ -440,7 +440,7 @@ class ServedSettingsTabs(unittest.TestCase):
         self.assertEqual(g["heads"]["tasks"], ["Task tracking", "Judges"], "the master switch, then the judges (T404 PR 2)" + table)
         self.assertEqual(g["heads"]["automation"], ["Nudges", "Model"], "the two model switches sit after the Nudges: kernel policies applied to sessions on the kernel's own initiative (2026-09-17)" + table)
         self.assertEqual(g["heads"]["feed"], ["Cards"], table)
-        self.assertEqual(g["heads"]["sessions"], ["New sessions"], "the Sessions-pane rows left settings: the pane carries them" + table)
+        self.assertEqual(g["heads"]["sessions"], ["New sessions", "Requests"], "the Sessions-pane rows left settings: the pane carries them; the Requests switch is a property of the sessions" + table)
 
     def test_the_files_row_reads_files_like_the_pane_rows_above_it(self):
         # T407 (the user 2026-09-13, a screenshot of the Panes section): the row read "Files control in the dashboard bar"

@@ -230,7 +230,7 @@ type ChatEvent = (
   // and NOT a blue "you typed this" bubble. blocks = one per sending agent {id, summary?, body}.
   | { kind: "teammate"; blocks: { id: string; summary?: string; body: string }[]; ts?: string; uuid?: string; source?: InjectedSource }
   // Claude Code's Task to-do list, folded into one live checklist.
-  | { kind: "todo"; tasks: TodoTask[]; error?: string; ts?: string; uuid?: string }
+  | { kind: "todo"; tasks: TodoTask[]; userTodos?: UserTodo[]; error?: string; userTodosError?: string; ts?: string; uuid?: string }
   // A CLIENT-side optimistic echo of a just-sent message is one of these (uuid OPT_PREFIX), injected at the
   // tail so it shows the instant you hit Enter and STAYS put across pushes — bridging the server-side
   // echo→landed gap where the kernel's own provisional briefly vanished (the user 2026-07-15). It rides the
@@ -315,6 +315,10 @@ type ChatEvent = (
 ) & { tlId?: string };   // tlId: the timeline atom this event's hover lights — a prompt → the DOT, work → the BAR
 
 interface TodoTask { id: string; subject: string; activeForm?: string; status: string }
+// An open request from the session (plans/user-todos.md): a need the agent filed with the person it works for.
+// Store values (id, text, createdT, optional detail, blocking when the agent set it) plus `queued` while the
+// answer waits in the kernel's queue; the chat payload dedups on its serialization, so nothing per build rides.
+interface UserTodo { id: string; text: string; detail?: string; createdT?: number; blocking?: boolean; queued?: boolean }
 
 // ChipState, the kernel's chip states, lives in status-chip.ts since T322b beside its labels (imported above), so the label
 // map is checked exhaustive over it: needsInput = a live permission/picker prompt (on YOU), the legacy "awaiting" accepted
@@ -381,7 +385,7 @@ interface BgTasks { count: number; tasks: BgTask[]; }
 // kernel ships only the last WIRE_TAIL events (headFrom > 0) to keep startup light; older history streams in
 // on scroll-back (loadOlder → chatHead prepends, lowering headFrom). headFrom 0 = the whole transcript is
 // resident. chatTail's `from` is GLOBAL and mapped through headFrom.
-interface Session { id: string; name: string; color: Color | null; events: ChatEvent[]; status: Status; firstSeen?: number; cwd?: string; gitBranch?: string; workTree?: { dir: string; branch: string } | null; githubRepo?: string | null; headFrom?: number; headTotal?: number | null; proto?: number; headKnown?: boolean; firstUuid?: string | null; lastUuid?: string | null; regions?: Region[]; pageTurns?: number; tailLo?: number | null; bgTasks?: BgTasks; hideFromFeed?: boolean; postalServiceOff?: boolean; mailOffWhy?: string; notify?: boolean; branch?: { fromSid: string; fromName: string; cut: string; t: number } | null; branches?: { sid: string; name: string; cut: string; t: number }[] | null; sub?: SubInfo; }
+interface Session { id: string; name: string; color: Color | null; events: ChatEvent[]; status: Status; firstSeen?: number; cwd?: string; gitBranch?: string; workTree?: { dir: string; branch: string } | null; githubRepo?: string | null; headFrom?: number; headTotal?: number | null; proto?: number; headKnown?: boolean; firstUuid?: string | null; lastUuid?: string | null; regions?: Region[]; pageTurns?: number; tailLo?: number | null; bgTasks?: BgTasks; userTodos?: UserTodo[]; hideFromFeed?: boolean; postalServiceOff?: boolean; mailOffWhy?: string; notify?: boolean; branch?: { fromSid: string; fromName: string; cut: string; t: number } | null; branches?: { sid: string; name: string; cut: string; t: number }[] | null; sub?: SubInfo; }
 // A SUBAGENT VIEWER pseudo-session (plans/subagent-transcripts.md): a read-only tab whose events are one
 // agent's own transcript, fed by {type:"subagent"} frames. Client-only — the kernel never lists it in
 // tabOrder (reconcileTabOrder keeps a known, never-kernel-seen id), so it lives exactly as long as the
@@ -4270,56 +4274,258 @@ function parseAskRaw(ev: Extract<ChatEvent, { kind: "tool" }>): AskAnswerBlock[]
   });
 }
 
-// Claude Code's Task to-do list — a compact live checklist mirroring the terminal:
-// ○ pending / ◐ in_progress / ✓ completed (done is struck through).
+// The to-do card (plans/user-todos.md): two different things share it on purpose. The agent's plan for
+// itself (Claude Code's Task checklist, exactly as before: ○ pending / ◐ in_progress / ✓ completed, done
+// struck through) and "Waiting on you" (the requests the agent filed with the person it works for, with
+// Reply and Dismiss). Each section auto-hides when empty, so today's behavior is unchanged when no request
+// exists.
+const utDetailOpen = new Set<string>();   // keyed disclosure: which request details are expanded; survives re-renders
+// Dismiss's two-step arm, KEYED like the detail disclosure: the todo event trails the transcript, so every transcript change
+// of a working session rebuilds this card, and an arm kept on the node (the "armed" class and its text) was
+// wiped by the rebuild before the confirming click could land. renderTodo paints the arm back from the Set on
+// every rebuild and the handler reads and writes the Set, never the node. The coarse-pointer one-shot cancel is
+// keyed the same way, so the REBUILT node's confirm can retire the listener the old node registered.
+const utArmed = new Set<string>();
+const utDisarmers = new Map<string, EventListener>();
+function paintUtDismiss(node: HTMLElement, armed: boolean): void {
+  node.classList.toggle("armed", armed);
+  node.textContent = armed ? "Really dismiss?" : "Dismiss";
+}
+function utRetireDisarmer(tid: string): void {
+  const one = utDisarmers.get(tid);
+  if (one) { document.removeEventListener("pointerdown", one, true); utDisarmers.delete(tid); }
+}
+// cancel an arm: the Set, the one-shot, and whichever rebuild of the button is on screen
+function utDisarm(tid: string): void {
+  utArmed.delete(tid); utRetireDisarmer(tid);
+  const node = document.querySelector<HTMLElement>(`[data-act="utdismiss"][data-tid="${tid}"]`);
+  if (node) paintUtDismiss(node, false);
+}
+// OPTIMISTIC REMOVAL (Reply sent / Dismiss confirmed): the client drops the row before any verdict and the next
+// push confirms. The ids awaiting that confirmation gate the warn-frame re-sync (a warn carries no sid or request
+// id, so "this client has a removal pending" is the only gate it has), and a push that no longer lists an id
+// settles it, per session. Keyed request id -> its SESSION id: the warn's re-sync must reach the view that holds
+// the refused row, and the user may have switched sessions inside the round-trip.
+const utPendingRemoval = new Map<string, string>();
+function utSettlePending(before: UserTodo[] | undefined, now: UserTodo[] | undefined): void {
+  if (!utPendingRemoval.size && !utArmed.size) return;
+  const live = new Set((now || []).map((t) => t.id));
+  for (const t of before || []) {
+    if (live.has(t.id)) continue;
+    utPendingRemoval.delete(t.id);
+    if (utArmed.has(t.id)) utDisarm(t.id);   // a row the kernel dropped mid-two-step takes its arm (and one-shot) with it
+  }
+}
+// A dismissed session takes its keyed state with it: utSettlePending runs only from the SAME session's later
+// frames, which never arrive once it is gone. Arms go by the rows the last frame listed; pending ids by their
+// owning session (a pending row may already be gone from that list).
+function utForgetSession(sid: string, rows: UserTodo[] | undefined): void {
+  for (const t of rows || []) if (utArmed.has(t.id)) utDisarm(t.id);
+  for (const [tid, owner] of utPendingRemoval) if (owner === sid) utPendingRemoval.delete(tid);
+}
+// One helper for both removal sites: the row goes NOW and the heading's count follows it (a "Waiting on you · 3"
+// over two rows read wrong until the next push). The heading goes with the last row, as renderTodo paints it (the
+// section auto-hides when empty), and so does the card when that heading was all it had: the kernel ships no todo
+// event when both lists are empty. The turn is HIDDEN, never removed: syncViewInner keys on v.el.childNodes, and
+// the next push's render replaces the node either way.
+function utDropRow(row: Element | null): void {
+  if (!row) return;
+  const card = row.closest(".todo-list");
+  // a row inside the hidden block past the twelfth: the block's toggle counts the rows it hides, so its label
+  // follows the removal too (through utFoldLabel, the render's own), and the last hidden row takes the toggle and
+  // the empty block with it
+  const rest = row.parentElement?.classList.contains("ut-rest") ? row.parentElement : null;
+  row.remove();
+  if (!card) return;
+  if (rest) {
+    const m = rest.querySelectorAll(".ut-item").length;
+    const tog = card.querySelector(".ut-fold") as HTMLElement | null;
+    if (m && tog) { tog.dataset.n = String(m); utFoldLabel(tog, rest.classList.contains("todo-open"), m); }
+    else { tog?.remove(); rest.remove(); }
+  }
+  const head = card.querySelector(".ut-head");
+  if (!head) return;
+  const n = card.querySelectorAll(".ut-item").length;
+  // the notice head names the section when there is no checklist to name (renderTodo's gist): it follows the count too
+  const gist = card.closest(".notice")?.querySelector(".notice-gist");
+  if (n) {
+    head.textContent = `Waiting on you · ${n}`;
+    if (gist && /^waiting on you · /.test(gist.textContent || "")) gist.textContent = `waiting on you · ${n}`;
+    return;
+  }
+  head.remove();
+  if (!card.childElementCount) (card.closest(".turn-todo") as HTMLElement | null)?.style.setProperty("display", "none");
+}
+// The "more behind this" hint on a row WITH detail: "▸ details" trails the text, "▾ details" while the detail is
+// open; a bare row renders nothing, so the two read differently at a glance. The title doubles as the
+// aria-label. Painted INSIDE .ut-text, the delegated uttoggle target: the hint adds no target and no listener of
+// its own (the click-safety rule, click-safe.test.ts).
+const utHint = (open: boolean) => open ? { text: "▾ details", title: "click to hide the details" }
+                                       : { text: "▸ details", title: "has details: click to read" };
+function paintUtHint(node: HTMLElement, open: boolean): void {
+  const h = utHint(open);
+  node.textContent = h.text; node.title = h.title; node.setAttribute("aria-label", h.title);
+}
+// the label of the toggle for the rows past the twelfth, shared by the render and the delegate's flip
+function utFoldLabel(tog: HTMLElement, open: boolean, n: number): void {
+  tog.textContent = open ? `hide ${n}` : `+ ${n} more waiting`;
+  setTip(tog, open ? "hide the older requests again" : "show the requests past the first twelve");
+}
 function renderTodo(ev: Extract<ChatEvent, { kind: "todo" }>): HTMLElement {
   const key = "todo:" + (renderingSid || "");
-  // FAIL LOUDLY (the user 2026-07-03): the kernel couldn't read Claude's authoritative task store, so it
-  // surfaces THIS instead of quietly showing a lossy transcript-folded list that could be wrong. The error
-  // severity rides the rail and dot; the reason reads in the body's own text colour.
-  if (ev.error) {
-    const body = el("div", "notice-md"); body.textContent = ev.error;
-    return notice({ src: "to-do", glyph: "todo", sev: "err", gist: "unavailable", body, key, open: true, cls: "turn-todo",
-                    tip: "the task store could not be read, so no list is shown — nothing here is guessed" });
-  }
+  const uts = ev.userTodos || [];
   const done = ev.tasks.filter((t) => t.status === "completed").length;
   const body = el("div", "todo-list");
-  const row = (t: (typeof ev.tasks)[number]) => {
-    const r = el("div", "todo-item todo-" + t.status);
-    const mark = el("span", "todo-mark");
-    mark.textContent = t.status === "completed" ? "✓" : t.status === "in_progress" ? "◐" : "○";
-    r.appendChild(mark);
-    const txt = el("span", "todo-text");
-    txt.textContent = t.status === "in_progress" && t.activeForm ? t.activeForm : t.subject;
-    r.appendChild(txt);
-    return r;
-  };
-  // PROGRESSIVE DISCLOSURE (the user 2026-08-24): a continuously-dispatched session — a manager
-  // especially — accumulates dozens of finished tasks and the card showed them all. Default = the
-  // ON-DECK work (in_progress + pending); the finished bulk (completed — and cancelled/deleted,
-  // should the store carry them: anything not on deck) folds into one row, "+N more completed",
-  // click to expand and click again to re-fold, nothing lost. The fold sits WHERE the bulk lives
-  // (finished work precedes current work in the list), keyed per session so the state survives the
-  // per-push re-renders (the openFolds idiom); a list with ≤ 2 finished rows stays inline — a fold
-  // hiding two rows costs a click for nothing. The toggle rides the body delegate (data-act=todofold):
-  // the label flip + rows appearing ARE the click's acknowledgement, immediate and local.
-  const onDeck = ev.tasks.filter((t) => t.status === "in_progress" || t.status === "pending");
-  const finished = ev.tasks.filter((t) => t.status !== "in_progress" && t.status !== "pending");
-  if (finished.length >= 3) {
-    const foldKey = "todo-done:" + (renderingSid || "");
-    const doneBox = el("div", "todo-done");
-    for (const t of finished) doneBox.appendChild(row(t));
-    applyFold(doneBox, "todo-open", foldKey);
-    const tog = el("button", "todo-fold") as HTMLButtonElement;
-    tog.type = "button";
-    tog.dataset.act = "todofold"; tog.dataset.nkey = foldKey; tog.dataset.n = String(finished.length);
-    todoFoldLabel(tog, doneBox.classList.contains("todo-open"), finished.length);
-    body.appendChild(tog);
-    body.appendChild(doneBox);
-  } else for (const t of finished) body.appendChild(row(t));
-  for (const t of onDeck) body.appendChild(row(t));
-  // OPEN by default (glanceable state, still foldable): the checklist is the point of the card
-  return notice({ src: "to-do", glyph: "todo", gist: `${done} of ${ev.tasks.length} done`, body, key, open: true, cls: "turn-todo" });
+  let sev: NoticeSev = "info";
+  let tip: string | undefined;
+  // The head names the agent's own checklist ("n of m done"; "unavailable" when its store could not be read);
+  // with no checklist to name, it names the section that is left: the requests waiting on the person.
+  let gist = ev.tasks.length || !uts.length ? `${done} of ${ev.tasks.length} done` : `waiting on you · ${uts.length}`;
+  // FAIL LOUDLY (the user 2026-07-03): the kernel couldn't read Claude's authoritative task store, so it
+  // surfaces THIS instead of quietly showing a lossy transcript-folded list that could be wrong. The error
+  // severity rides the rail and dot; the reason reads in the body's own text colour. No early return: the
+  // waiting-on-you section below renders from a DIFFERENT store (the requests) and must survive an unreadable
+  // task store.
+  if (ev.error) {
+    sev = "err"; gist = "unavailable";
+    tip = "the task store could not be read, so no list is shown: nothing here is guessed";
+    const msg = el("div", "notice-md"); msg.textContent = ev.error;
+    body.appendChild(msg);
+  } else if (ev.tasks.length) {
+    const row = (t: (typeof ev.tasks)[number]) => {
+      const r = el("div", "todo-item todo-" + t.status);
+      const mark = el("span", "todo-mark");
+      mark.textContent = t.status === "completed" ? "✓" : t.status === "in_progress" ? "◐" : "○";
+      r.appendChild(mark);
+      const txt = el("span", "todo-text");
+      txt.textContent = t.status === "in_progress" && t.activeForm ? t.activeForm : t.subject;
+      r.appendChild(txt);
+      return r;
+    };
+    // PROGRESSIVE DISCLOSURE (the user 2026-08-24): a continuously-dispatched session accumulates dozens of
+    // finished tasks and the card showed them all. Default = the ON-DECK work (in_progress + pending); the
+    // finished bulk folds into one row, "+N more completed", click to expand and click again to re-fold,
+    // nothing lost. The fold sits WHERE the bulk lives (finished work precedes current work in the list),
+    // keyed per session so the state survives the per-push re-renders (the openFolds idiom); a list with
+    // two or fewer finished rows stays inline. The toggle rides the body delegate (data-act=todofold).
+    const onDeck = ev.tasks.filter((t) => t.status === "in_progress" || t.status === "pending");
+    const finished = ev.tasks.filter((t) => t.status !== "in_progress" && t.status !== "pending");
+    if (finished.length >= 3) {
+      const foldKey = "todo-done:" + (renderingSid || "");
+      const doneBox = el("div", "todo-done");
+      for (const t of finished) doneBox.appendChild(row(t));
+      applyFold(doneBox, "todo-open", foldKey);
+      const tog = el("button", "todo-fold") as HTMLButtonElement;
+      tog.type = "button";
+      tog.dataset.act = "todofold"; tog.dataset.nkey = foldKey; tog.dataset.n = String(finished.length);
+      todoFoldLabel(tog, doneBox.classList.contains("todo-open"), finished.length);
+      body.appendChild(tog);
+      body.appendChild(doneBox);
+    } else for (const t of finished) body.appendChild(row(t));
+    for (const t of onDeck) body.appendChild(row(t));
+  }
+  // "Waiting on you": the open requests, oldest first. Reply puts the user's answer into the session (anchored to
+  // the request it answers) and the kernel stamps the request answered at the handover; Dismiss clears it without
+  // a message. All affordances are DELEGATED (data-act, handled on document.body): this card rebuilds on every
+  // push, and a per-render listener eats a mid-press click (the click-safety rule, click-safe.test.ts).
+  if (uts.length) {
+    const head = el("div", "ut-head");
+    head.textContent = `Waiting on you · ${uts.length}`;
+    body.appendChild(head);
+    const utRow = (t: UserTodo): HTMLElement => {
+      const row = el("div", "ut-item");
+      const line = el("div", "ut-line");
+      const txt = el("span", "ut-text");
+      txt.textContent = t.text;
+      if (t.blocking) {
+        // the agent said it cannot go on without the answer: a dim word after the text, no colour of status (the
+        // card moves for nothing in this change; a later one reads the flag)
+        const b = el("span", "ut-blocking"); b.textContent = "blocking";
+        b.title = "the session says it cannot go on without this";
+        txt.appendChild(b);
+      }
+      // progressive disclosure: the one-line version by default, detail one click away, and the row SAYS there is
+      // more. ONE gate drives the text's click affordance, the hint and the detail body: the kernel ships `detail`
+      // only for a non-blank detail; the trim keeps the client honest should a row ever arrive raw.
+      const detail = (t.detail || "").trim();
+      if (detail) {
+        txt.classList.add("ut-has-detail");
+        txt.dataset.act = "uttoggle"; txt.dataset.tid = t.id;
+        txt.title = utHint(utDetailOpen.has(t.id)).title;
+        const more = el("span", "ut-more"); paintUtHint(more, utDetailOpen.has(t.id)); txt.appendChild(more);
+      }
+      line.appendChild(txt);
+      if (t.queued) {
+        // the answer is parked in the kernel's queue (behind a compaction, a hold or a queue) and the bubble's
+        // cancel is where it is recalled: the words stand in Reply's place until the op drains or is recalled
+        const q = el("span", "ut-queued"); q.textContent = "answer queued";
+        q.title = "your answer is waiting in line for this session; the cancel on its bubble takes it back";
+        line.appendChild(q);
+      } else {
+        const reply = el("button", "ut-btn ut-reply");
+        reply.dataset.act = "utreply"; reply.dataset.tid = t.id; reply.dataset.sid = renderingSid || "";
+        (reply as any)._uttext = t.text;   // rides the node: the dialog quotes the request it answers
+        (reply as any)._utdetail = t.detail || "";   // and its detail, so the whole request is in view while answering
+        reply.textContent = "Reply";
+        reply.title = "answer this: your reply goes straight to the session";
+        line.appendChild(reply);
+      }
+      const dis = el("button", "ut-btn ut-dismiss");
+      dis.dataset.act = "utdismiss"; dis.dataset.tid = t.id; dis.dataset.sid = renderingSid || "";
+      paintUtDismiss(dis, utArmed.has(t.id));   // keyed: a rebuild mid-two-step keeps "Really dismiss?"
+      dis.title = "clear this without a reply (for moot or stale requests)";
+      // arm-state disarm on pointer-out, cosmetic, so a local listener is fine. FINE POINTERS ONLY: on a coarse
+      // pointer the pointer "leaves" the instant the finger lifts, so this disarmed the button between the arming
+      // tap and the confirming one. There the arm holds until a tap anywhere ELSE cancels it (the one-shot
+      // dismisser wired at arm time in the utdismiss handler).
+      if (!isCoarsePointer())
+        dis.addEventListener("pointerleave", () => { if (utArmed.has(t.id)) utDisarm(t.id); });
+      line.appendChild(dis);
+      row.appendChild(line);
+      if (detail) {
+        const d = el("div", "ut-detail" + (utDetailOpen.has(t.id) ? " open" : ""));
+        d.textContent = t.detail || "";
+        linkifyFileUris(d);   // a path in the detail opens like one in a transcript (shape-only: no per-message kernel verdict here)
+        row.appendChild(d);
+      }
+      return row;
+    };
+    // PAST TWELVE: with more than twelve open rows the twelve oldest stay inline and the rest are hidden behind a
+    // keyed toggle, the checklist's own idiom for its completed bulk, so a runaway store never floods the card;
+    // twelve is the number the session's own resume block hides beyond, one number for both. The rows inside the
+    // hidden block are rows all the same (the removal helper recounts them), so the heading's count stays honest.
+    const UT_INLINE_ROWS = 12;
+    const inline = uts.slice(0, UT_INLINE_ROWS), rest = uts.slice(UT_INLINE_ROWS);
+    for (const t of inline) body.appendChild(utRow(t));
+    if (rest.length) {
+      const utFoldKey = "ut-more:" + (renderingSid || "");
+      const box = el("div", "ut-rest");
+      for (const t of rest) box.appendChild(utRow(t));
+      applyFold(box, "todo-open", utFoldKey);
+      const tog = el("button", "todo-fold ut-fold") as HTMLButtonElement;
+      tog.type = "button";
+      tog.dataset.act = "utfold"; tog.dataset.nkey = utFoldKey; tog.dataset.n = String(rest.length);
+      utFoldLabel(tog, box.classList.contains("todo-open"), rest.length);
+      body.appendChild(tog);
+      body.appendChild(box);
+    }
+  }
+  // The request store's OWN failure (the kernel's shape guard refused user-todos.json): its own key, never the
+  // task store's `error`, whose branch supplants the checklist (rightly, since that list could not be read); this
+  // one leaves the checklist standing and heads the section it stands in for. The kernel ships no rows beside it
+  // (a flagged store reads empty), so this is the section's whole body while it stands; the fixed file brings the
+  // rows back. The err severity rides the rail and dot the way the task store's does.
+  if (ev.userTodosError) {
+    sev = "err";
+    if (!ev.error && !ev.tasks.length) gist = "unavailable";
+    if (!tip) tip = "the request store could not be read, so what waits on you is not shown: nothing here is guessed";
+    const h = el("div", "ut-head"); h.textContent = "Waiting on you · unavailable";
+    body.appendChild(h);
+    const m = el("div", "notice-md"); m.textContent = ev.userTodosError;
+    body.appendChild(m);
+  }
+  // OPEN by default (glanceable state, still foldable): the checklist, and what waits on the person, are the point
+  return notice({ src: "to-do", glyph: "todo", sev, gist, body, key, open: true, cls: "turn-todo", tip });
 }
 
 // the completed-bulk fold's label + tip, shared by the render and the delegate's flip
@@ -9437,6 +9643,55 @@ function showForkPrompt(sid: string, uuid: string): void {
   document.body.appendChild(overlay);
   document.addEventListener("keydown", onKey, true);
   input.focus(); input.setSelectionRange(0, input.value.length);
+}
+
+// REPLY TO A REQUEST (plans/user-todos.md): a small dialog on the confirm chrome: the request quoted, a field for
+// the answer, Enter to send. ONE kernel op (userTodoAnswer) both puts the reply into the session as a message from
+// the person it works for AND stamps the request answered at the handover, never sendMessage plus a separate
+// stamp, so the two cannot diverge. A modal, not an inline input on the card: the card rebuilds on every push,
+// which would clobber a half-typed inline field; the overlay lives outside #content and survives.
+function showUserTodoReply(sid: string, todoId: string, todoText: string, todoDetail = ""): void {
+  document.getElementById("ut-reply-prompt")?.remove();
+  const overlay = el("div", "picker-overlay confirm-overlay"); overlay.id = "ut-reply-prompt";
+  const box = el("div", "picker-box confirm-box");
+  const h = el("div", "confirm-title"); h.textContent = "Reply";
+  const d = el("div", "confirm-detail ut-reply-quote"); d.textContent = todoText;
+  // the request's detail, when it has one, quoted beneath the line in the row's detail dress: the whole request
+  // stays in view while the answer is typed, without opening the detail first; a bare request adds nothing here
+  const dd = todoDetail.trim() ? el("div", "ut-detail open") : null;
+  if (dd) { dd.textContent = todoDetail; linkifyFileUris(dd); }
+  const input = document.createElement("textarea");
+  input.className = "ut-reply-input"; input.rows = 3;
+  input.placeholder = "Your answer goes straight to the session";
+  const actions = el("div", "confirm-actions");
+  const cancel = el("button", "picker-action confirm-btn"); cancel.textContent = "Cancel";
+  const send = el("button", "picker-action confirm-btn"); send.textContent = "Send";
+  const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") { e.stopPropagation(); close(); } };
+  const close = () => { overlay.remove(); document.removeEventListener("keydown", onKey, true); };
+  const go = () => {
+    const text = input.value.trim();
+    if (!text) { input.classList.add("bad"); input.focus(); return; }
+    vscodeApi?.postMessage({ type: "userTodoAnswer", id: sid, todoId, text });
+    close();
+    // optimistic: the row goes NOW (answering clears it); the next push confirms, and a stale click gets the
+    // kernel's loud warn instead of a silent nothing (the pending mark lets that warn repaint the row)
+    utPendingRemoval.set(todoId, sid);
+    utDropRow(document.querySelector(`.ut-item [data-tid="${todoId}"]`)?.closest(".ut-item") ?? null);
+  };
+  cancel.addEventListener("click", close);
+  send.addEventListener("click", go);
+  // Enter sends on a fine pointer only, the composer's own rule: on a phone Enter is a NEWLINE and the Send button
+  // sends (mobile keyboards often cannot produce Shift+Enter); without the guard a two-line answer sent its first
+  // line alone there
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey && !isCoarsePointer()) { e.preventDefault(); go(); } });
+  input.addEventListener("input", () => input.classList.remove("bad"));
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+  box.append(h, d); if (dd) box.appendChild(dd); box.append(input, actions);
+  actions.append(cancel, send);
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+  document.addEventListener("keydown", onKey, true);
+  input.focus();
 }
 
 // ── COMMENT THREADS (the user 2026-08-13) ───────────────────────────────────────────────────────────
@@ -17382,6 +17637,7 @@ function upsert(msg: any) {
   if (typeof msg.selfHost === "string" && msg.selfHost && !hostOf(msg.id)) adoptSelfHost(msg.selfHost);
   const existed = sessions.has(msg.id);
   const prev = sessions.get(msg.id);
+  if (prev && "userTodos" in msg) utSettlePending(prev.userTodos, msg.userTodos);   // a row gone from the payload is confirmed gone
   awaitingFull.delete(msg.id);   // a full session landed → this session is re-based; a later gap may ask again
   const wasSkeleton = onFull(skeletonTabs, msg.id);   // …and the tab is loaded: it leaves the skeleton set (the kernel released it when it sent this frame)
   // A frame that would take a HELD transcript from content to nothing is status-shaped, never a wipe (T249b,
@@ -17548,6 +17804,9 @@ function upsert(msg: any) {
     pageTurns: typeof msg.pageTurns === "number" ? msg.pageTurns : (prev ? prev.pageTurns : undefined),
     tailLo: regions ? turnsBeforeTail(regions) : (keepResident && prev ? prev.tailLo : (typeof msg.tailLo === "number" ? msg.tailLo : (msg.headKnown ? 0 : null))),   // the merged tail's start, not the frame's alone
     bgTasks: ("bgTasks" in msg) ? msg.bgTasks : (prev ? prev.bgTasks : undefined),
+    // the open requests from the session (plans/user-todos.md): the merge seam; a chatTail delta carries the field
+    // too (below), so a caught-up client never keeps a stale list
+    userTodos: ("userTodos" in msg) ? msg.userTodos : (prev ? prev.userTodos : undefined),
     hideFromFeed: ("hideFromFeed" in msg) ? !!msg.hideFromFeed : (prev ? prev.hideFromFeed : undefined),
     postalServiceOff: ("postalServiceOff" in msg) ? !!msg.postalServiceOff : (prev ? prev.postalServiceOff : undefined),
     mailOffWhy: ("mailOffWhy" in msg) ? String(msg.mailOffWhy || "") : (prev ? prev.mailOffWhy : undefined),   // why the mail is off (T356): thread, isolation, an unreadable record, the settings file unreadable (flags)
@@ -17888,6 +18147,9 @@ function chatTail(msg: any) {
   // the per-session view flags ride the tail beside the status (2026-09-11): a bell flipped in another column or
   // browser reaches this caught-up copy on the flip, not on the next full frame
   applyFrameFlags(s, msg, pendingFlags, msg.id);   // under the click's pending guard (flag-pending.ts): a tail built before a click cannot flip its row back
+  // the requests field rides the delta (kernel _send_chat, while the switch is on), like status: the chat's steady
+  // state is chatTail frames, so a caught-up client that only merged the field from full session frames kept it stale
+  if ("userTodos" in msg) { utSettlePending(s.userTodos, msg.userTodos); s.userTodos = msg.userTodos; }
   if ("ledger" in msg) ledgers.set(msg.id, msg.ledger ?? null);
   scheduleRenderTabs();   // once per animation frame however many tails a cycle lands (2026-09-04)
   if (msg.id === activeId) {
@@ -18668,6 +18930,7 @@ function dismissSession(id: string, why: DismissWhy, doomed?: ReadonlySet<string
   const wasActive = activeId === id;
   const name = sessions.get(id)?.name || tabMeta.get(id)?.name || "a session";   // read before the maps forget it; never a raw sid in a line the user reads (T357)
   if (wasActive) stashActiveDraft(id);   // FIRST: what is on screen belongs to this id, whatever happens next
+  utForgetSession(id, sessions.get(id)?.userTodos);   // its keyed Reply/Dismiss state, before the map forgets the rows
   sessions.delete(id);
   onDismiss(skeletonTabs, id);   // a tab that left the strip (✕, the kernel's omission, a host drop) has nothing left to load (2026-09-07)
   awaitingFull.delete(id); pendingFullWhy.delete(id);   // …and its parked full ask goes with it (2026-09-19): a tab that left the strip gets no answer, and a latch outliving the tab is an ask nothing will answer
@@ -18994,6 +19257,18 @@ listenForFrames(perfFrameHandler("chat", (m) => vscodeApi?.postMessage(m), (e: M
     // an unreadable parent, the SDK setup hint). It gets a dialog naming the reason and takes the
     // provisional tab down with it; a toast would slide past the one moment it needed to be read.
     else if (provisionalId) failProvisional(m.text); else warnToast(m.text);
+    // A warn is also the kernel REFUSING a gesture this client may have already painted: Reply and Dismiss on a
+    // request remove their row optimistically before any verdict. While one of those is pending, re-sync from the
+    // events so a refused row returns NOW: the kernel's state did not change on a refusal, so the next push can
+    // dedup to nothing and the optimistic removal would otherwise stand until an unrelated repaint. GATED on the
+    // pending set: the frame carries no sid or request id, and a warn about anything else should repaint nothing.
+    // EVERY view holding a pending id goes stale, not only the active one: the user may have switched sessions
+    // inside the round-trip; appendActive rebuilds the active one now, a hidden one rebuilds on its next switch.
+    if (utPendingRemoval.size) {
+      for (const sid of new Set(utPendingRemoval.values())) { const v = views.get(sid); if (v) v.stale = true; }
+      if (activeId && views.get(activeId)?.stale) appendActive();
+      utPendingRemoval.clear();
+    }
   }
   else if (m.type === "spendCeiling" && typeof m.text === "string" && m.text) {
     // the spend guard's word (T350): a session crossed the hourly spend ceiling, or fell back under it. Its OWN type,
@@ -20952,6 +21227,69 @@ setupSettings();
       if (!box) return;
       rememberFold(box, "todo-open", el.dataset.nkey || undefined);
       todoFoldLabel(el, box.classList.contains("todo-open"), Number(el.dataset.n) || 0);
+    },
+    // the requests past the twelfth on the to-do card (renderTodo): flip the box, keep the state in openFolds, relabel
+    utfold: (elx) => {
+      const box = elx.parentElement?.querySelector(".ut-rest") as HTMLElement | null;
+      if (!box) return;
+      rememberFold(box, "todo-open", elx.dataset.nkey || undefined);
+      utFoldLabel(elx, box.classList.contains("todo-open"), Number(elx.dataset.n) || 0);
+    },
+    // REQUESTS on the to-do card (plans/user-todos.md). All delegated like qx: the transcript tail rebuilds on every
+    // push and a per-render listener eats a mid-press click. The detail disclosure keys through utDetailOpen so it
+    // survives the rebuild.
+    uttoggle: (elx) => {
+      const tid = elx.dataset.tid; if (!tid) return;
+      const open = !utDetailOpen.has(tid);
+      if (open) utDetailOpen.add(tid); else utDetailOpen.delete(tid);
+      const det = elx.closest(".ut-item")?.querySelector(".ut-detail");
+      det?.classList.toggle("open", open);
+      // the "▸ details" hint flips with the detail (▾ while open): with the body appearing, that flip IS the click's
+      // acknowledgement, immediate and local; the next push re-renders the same state
+      const more = elx.querySelector<HTMLElement>(".ut-more");
+      if (more) paintUtHint(more, open);
+      elx.title = utHint(open).title;
+    },
+    utreply: (elx) => {
+      const tid = elx.dataset.tid, sid = elx.dataset.sid || activeId;
+      if (!tid || !sid) return;
+      showUserTodoReply(sid, tid, ((elx as any)._uttext as string) || "", ((elx as any)._utdetail as string) || "");
+    },
+    // Dismiss arms then confirms in place: clearing a request the agent still waits on deserves a second click, but
+    // is light enough to skip a modal. Optimistic removal: the kernel's dismiss is loud on a stale id, so a stale
+    // click warns instead of silently missing.
+    utdismiss: (elx) => {
+      const tid = elx.dataset.tid, sid = elx.dataset.sid || activeId;
+      if (!tid || !sid) return;
+      if (!utArmed.has(tid)) {   // the keyed Set, never the node's class: the card rebuilds every push (see utArmed)
+        utArmed.add(tid); paintUtDismiss(elx, true);
+        // COARSE POINTERS have no hover, so the pointerleave disarm never wires there (renderTodo) and the arm would
+        // otherwise latch forever: hold it until the next tap anywhere ELSE cancels it (the folder-menu one-shot
+        // dismisser idiom). pointerdown, not click: it fires first on the NEXT tap, and the arming tap's own
+        // pointerdown is already in the past, so registering here cannot self-cancel. A press ON the button KEEPS
+        // the listener registered: it is either the confirming tap (the click handler below settles it) or a
+        // scroll that merely started on the button; an any-pointerdown removal would spend the one-shot on that
+        // scroll, leaving the arm latched with the tap-elsewhere cancel gone. Only a pointerdown genuinely
+        // elsewhere disarms and removes. The button is found by its DATA, not by node identity: a push between
+        // the two taps replaces the node, and the confirming tap lands on the rebuild.
+        if (isCoarsePointer()) {
+          const disarm = (ev: Event) => {
+            if ((ev.target as Element | null)?.closest?.(`[data-act="utdismiss"][data-tid="${tid}"]`)) return;
+            utDisarm(tid);
+          };
+          utRetireDisarmer(tid);   // never two one-shots for one id
+          utDisarmers.set(tid, disarm);
+          document.addEventListener("pointerdown", disarm, true);
+        }
+        return;
+      }
+      // the confirming tap's pointerdown was ON the button, so it did not spend the one-shot: retire it here (keyed,
+      // so a rebuilt node retires the listener the old one registered), or it lingers on document and fires once
+      // more against the removed row
+      utArmed.delete(tid); utRetireDisarmer(tid);
+      utPendingRemoval.set(tid, sid);
+      vscodeApi?.postMessage({ type: "userTodoDismiss", id: sid, todoId: tid });
+      utDropRow(elx.closest(".ut-item"));
     },
     // the follow-up header's goal-context disclosure (followUpHeader): keyed in openFolds like every fold
     futoggle: (el) => {
