@@ -1431,13 +1431,13 @@ rf:rows(sock(),"return-fresh").map(function(x){return x.data;})});""")
 # iframes with the served markup's src or data-src, a .pane parent each and a body that keeps data-tab. The pane's shim
 # then runs where the document would load: after the tap (`before`), for a lazy pane; at the shell's boot, for the chat.
 _LAZY_PRE = r"""
-const ATTRS = {}, SRCSETS = [], DIVCLS = {};
+const ATTRS = {}, SRCSETS = [], DIVCLS = {}, LOADFNS = {};   // LOADFNS: the load listeners per frame, kept as functions so a case can fire the frame's load (review round 3, tests-3; LOADS keeps the ids as before)
 const mk = (id) => { const k = id.slice(2), a = (k === 'chat') ? { src: '/' + k } : { 'data-src': '/' + k }; ATTRS[id] = a; DIVCLS[id] = new Set();   // the served markup: the chat alone ships src
   const dc = DIVCLS[id];
   return { id, parentNode: { classList: { add: (c) => dc.add(c), remove: (c) => dc.delete(c), contains: (c) => dc.has(c) } },
     classList: { toggle() {} }, contentDocument: {}, contentWindow: { addEventListener: () => {} },
     getAttribute: (x) => (x in a ? a[x] : null), setAttribute: (x, v) => { a[x] = v; if (x === 'src') SRCSETS.push(id); }, removeAttribute: (x) => { delete a[x]; },
-    addEventListener: (x, f) => { if (x === 'load') LOADS.push(id); } }; };
+    addEventListener: (x, f) => { if (x === 'load') { LOADS.push(id); (LOADFNS[id] = LOADFNS[id] || []).push(f); } } }; };
 ['f-chat', 'f-fleet', 'f-feed', 'f-timeline', 'f-waiting', 'f-files'].forEach((id) => { PANES[id] = mk(id); });
 let TABNOW = null; const BODYCLS = new Set();
 global.document.body = { setAttribute: (x, v) => { if (x === 'data-tab') TABNOW = v; }, getAttribute: (x) => (x === 'data-tab' ? TABNOW : null),
@@ -1493,6 +1493,33 @@ out({boot:t_boot,afterTap:t_afterTap,atLoad:t_atLoad,told:t_told,away:t_away,par
         self.assertIs(r["away"]["onScreen"], False, "the switch back to the chat re-tells: off screen")
         self.assertEqual(r["parked"], {"states": ["up", "parked"], "sockets": 1}, "a return off screen parks the pane (D2): no dial, one parked word")
         self.assertEqual(r["back"], {"dialed": 2, "sockets": 2, "states": ["up", "parked", "up"]}, "its tab shows it and it dials once, the shell's link being up; the open says up again")
+
+    def test_the_shells_reader_and_the_real_shims_marker_agree_the_tapped_documents_load_is_the_panes_own(self):
+        # tests-3 (review round 3, 2026-09-19): the shell's docState() decides a lazy pane loaded by the marker the pane shim sets in its window
+        # (window.__rompApp), and before this nothing in a fast tier coupled the two: renaming the marker on either side left every Python and
+        # webview test green and reddened the 80 s served Chromium leg alone. Here the REAL shim core runs in the pane scope after the tap, its
+        # window glued in as the shell frame's contentWindow, and the shell's own promotion listener reads it on the frame's load.
+        r = _run_linked(app="waiting", pre=_LAZY_PRE, before=_MOBILE_GLUE + r"""
+global.__rompMobileTab('waiting');   // the tap: the src is set, the promotion listener armed; the shim below is that document's
+PANES['f-waiting'].contentWindow=window;   // the pane's window IS the frame's contentWindow (before this glue the frame carried a bare fake)
+PANES['f-waiting'].contentDocument={URL:'https://TESTHOST/waiting'};   // its document, committed at the pane's url
+""", scenario=r"""
+shOpen();shRecv({type:'ka'});   // the shell's socket is open: a shell client-diag row goes out at once
+var t_marker={type:typeof window.__rompApp,value:window.__rompApp};   // what the REAL shim set at its parse
+var t_before={loading:DIVCLS['f-waiting'].has('loading'),failed:DIVCLS['f-waiting'].has('failed')};
+(LOADFNS['f-waiting']||[]).forEach(function(f){f({type:'load'});});   // the frame's load event: the shell's listener reads the document
+function shRows(what){var all=[];SHSOCKS.forEach(function(s){s.sent.forEach(function(x){var m=JSON.parse(x);if(m.type==='clientDiag'&&m.surface==='shell'&&m.what===what)all.push(m.data);});});return all;}
+out({marker:t_marker,before:t_before,after:{loading:DIVCLS['f-waiting'].has('loading'),failed:DIVCLS['f-waiting'].has('failed')},
+unmarked:shRows('pane-load-unmarked'),failedRows:shRows('pane-load-failed'),listeners:(LOADFNS['f-waiting']||[]).length});""")
+        self.assertEqual(r["marker"], {"type": "string", "value": "waiting"}, "the real shim set the marker on the pane's window at its parse (APP)")
+        self.assertEqual(r["before"], {"loading": True, "failed": False}, "after the tap the pane is loading")
+        self.assertGreaterEqual(r["listeners"], 1, "the shell's promotion listener is on the frame (a case over no listener would witness nothing)")
+        self.assertEqual(r["after"], {"loading": False, "failed": False}, "the load: the shell read the pane's OWN document (docState 'app') and ended the loading state, no failure")
+        self.assertEqual(r["unmarked"], [], "no pane-load-unmarked row: the shell's reader recognised the marker the real shim set (a renamed marker on either side files one here)")
+        self.assertEqual(r["failedRows"], [], "no pane-load-failed row")
+        # the belt beside the executed case: the two literals, so a rename that keeps the pair in step still shows up in a diff review
+        self.assertIn("window.__rompApp=APP;", km._shim_core_js("waiting"), "the shim's marker line")
+        self.assertIn("typeof w.__rompApp==='string')?'app':'doc'", km._LANDING_MOBILE_JS, "the shell's read of the same name")
 
     def test_the_phones_first_chat_dial_carries_skeleton_1_and_a_redial_or_another_layout_does_not(self):
         r = _run_linked(app="chat", pre=_LAZY_PRE, before=_MOBILE_GLUE, scenario=r"""

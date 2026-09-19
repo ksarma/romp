@@ -537,6 +537,7 @@ class ClientDiagAllowlistTest(unittest.TestCase):
                 ("sw-message", {"shape": "object", "hasSid": True, "kind": "tap", "dup": False, "sw": True}),
                 ("return-probe", {"decision": "redial-closed", "hiddenMs": 30000, "quietMs": 31000, "attempts": 3, "firstFailMs": 12500, "ms": 30500}),   # D3 (2026-09-18): the shell socket's return probe, one row per return; decision is an enum, the rest ints
                 ("pane-load-failed", {"pane": "waiting", "via": "backstop", "n": 2}),   # the lazy panes (2026-09-19): a pane's document failed to load; pane is a key of _PANE_ORDER, via an enum (load, backstop), n the count for that pane on this page
+                ("pane-load-unmarked", {"pane": "waiting", "via": "load"}),   # review round 3 (2026-09-19, family two): a document the origin served at the pane's url with no pane shim, shown as served and said
             ],
         }
         for surface, rows in posters.items():

@@ -261,12 +261,17 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   boot, the last unless the gear has that pane off), so a pane the phone never
   showed has no document and files no rows of any kind: its absence from the
   rows is the saving, not a field. A lazy pane whose document fails to load
-  (the load event over an error page or over an HTTP error body at the pane's
-  url, which the pane shim's marker in the frame's window tells from the pane's
-  own document, or no such document by the 30 s backstop) is
-  put back where a tap finds it, says so over the pane area with a tap to retry,
-  and files one `pane-load-failed` row (surface `shell`: `pane`, `via` `load`
-  or `backstop`, `n` the failures for that pane on this page).
+  (the load event over an error page, which commits no readable document, or
+  no committed document by the 30 s backstop) is put back where a tap finds
+  it, says so over the pane area with a control to retry, and files one
+  `pane-load-failed` row (surface `shell`: `pane`, `via` `load` or `backstop`,
+  `n` the failures for that pane on this page). A document the origin SERVED
+  at the pane's url that carries no pane shim (the kernel's own "needs the
+  ui/ modules" page, its 403 line under a stale cookie, a proxy's 502 body) is
+  not a failure: the shell cannot classify it, so it is shown as served (the
+  loader clears, the src stays) and one `pane-load-unmarked` row (surface
+  `shell`: `pane`, `via`) says what was seen; a reader that cannot classify
+  never reports absent (since 2026-09-19).
   A redial declares itself (`reconnect=1` on the `/ws` URL) once the kernel's
   caps frame has answered the bundle's ready; before that, with the ready still
   queued, or after a socket that died before the caps frame came back, it dials

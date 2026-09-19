@@ -564,7 +564,6 @@ test("HIGH-1 (review round 2, 2026-09-19): a reveal the paint will NOT stamp und
   assert.match(rb, /\n  const plan = paintPlan\(asks\);\n  const shown = plan\.shown, byTurn = plan\.byTurn, grouped = plan\.grouped;\n  for \(const \[tid, members\] of byTurn\) \{\n    const g = buildGroup\(tid, members\);/, "renderBody paints from paintPlan's object");
   assert.doesNotMatch(rb, /viewFiltered\(|turnGroups\(/, "…and derives neither view nor groups a second time");
   assert.equal(SRC.split("paintPlan(").length - 1, 3, "three sites: the definition, renderBody, paintedKeyOf");
-  assert.match(body("paintedKeyOf"), /const plan = paintPlan\(predictFollowMoves\(asks\)\);[^\n]*\n\s*const a = plan\.shown\.find\(\(x\) => x\.itemId === itemId\);\n\s*if \(!a\) return null;\n\s*return plan\.grouped\.has\(itemId\) \? "g:" \+ a\.turnId : "a:" \+ itemId;/, "paintedKeyOf answers from the same plan, over the render's INPUT (the predicted list, round 3)");
   // (g) extra6-1 (review round 3): a PENDING follow-up on a needs-you card the tag lens shows only through its escape. render() predicts the card
   // into Working before it plans, and the lens hides a working card of a session outside it, so the paint stamps no key for X; the handler's
   // answer must be derived from the same input (paintedKeyOf over predictFollowMoves(asks)), so the reveal takes the open road at the tap.
@@ -596,6 +595,7 @@ test("HIGH-1 (review round 2, 2026-09-19): a reveal the paint will NOT stamp und
   assert.match(body("applyFollowMove"), /const out = predictFollowMoves\(list\);\n\s*for \(let i = 0; i < list\.length; i\+\+\) \{\n\s*if \(out\[i\] === list\[i\]\) continue;\n\s*predictedFrom\.set\(list\[i\]\.itemId, list\[i\]\);[^\n]*\n\s*list\[i\] = out\[i\];\n\s*\}\n\}/, "one implementation: applyFollowMove is the transform applied in place");
   assert.doesNotMatch(body("predictFollowMoves"), /predictedFrom|pendingMoveKind\.set|list\[i\] =/, "the transform writes nothing");
   PLAN.clearMoves();
+  assert.match(body("paintedKeyOf"), /const plan = paintPlan\(predictFollowMoves\(asks\)\);[^\n]*\n\s*const a = plan\.shown\.find\(\(x\) => x\.itemId === itemId\);\n\s*if \(!a\) return null;\n\s*return plan\.grouped\.has\(itemId\) \? "g:" \+ a\.turnId : "a:" \+ itemId;/, "paintedKeyOf answers from the same plan, over the render's INPUT (the predicted list, round 3)");   // the source pin after the executed case, so a wrong input reds by execution first
   assert.match(body("paintPlan"), /const shown = viewFiltered\(list\);\n\s*const byTurn = turnGroups\(shown\);/, "the plan is the display view and its groups, the lines renderBody used to run inline");
 });
 

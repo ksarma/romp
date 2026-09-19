@@ -347,7 +347,41 @@ try {
   });
   // the TAB-TAP leg (stage 0): tap a lazy pane's tab, wait for its socket (its document loads on the tap), then go back to the chat,
   // so the return below finds a tapped pane off screen: the parked-pane contract (D2) exercised on a pane that did not exist at boot
-  if (cfg.tapPane) {
+  if (cfg.tapPane && cfg.abortMode === "unmarked") {
+    // FAMILY TWO (review round 3, 2026-09-19): the tapped pane's document is a page the ORIGIN served with no pane shim: here the kernel's own
+    // 403 line for a token-gated route once the cookie is stale (text/plain, 'forbidden: ...', the class's common member; the four "needs the
+    // ui/ modules" pages are the others). The shell must not call it a failure: the loader retires on the document's load, the src stays, no
+    // failed state paints, one pane-load-unmarked row (via load) is filed and no pane-load-failed row; the document shows as served (its text
+    // starts 'forbidden'). No shim runs in it, so the pane says nothing on the shell's wire (no wsState, no socket): the tapUp wait is skipped,
+    // and out.tapped stays null so _parked expects nothing parked at the return (there is no shim to park) and _lazy counts a no-tap boot.
+    const path = "/" + cfg.tapPane, isPath = (u) => u.pathname === path;
+    const denial = (route) => route.fulfill({ status: 403, contentType: "text/plain", body: "forbidden: token required (a stale cookie)" });
+    await page.route(isPath, denial);
+    out.t.tap = now();
+    await page.click("#mtabs button[data-pane=" + cfg.tapPane + "]");
+    const clearDeadline = now() + 20000;
+    let cleared = false;
+    while (now() < clearDeadline) {
+      cleared = await page.evaluate((p) => { const f = document.getElementById("f-" + p), d = f && f.parentElement; return !document.body.classList.contains("pane-loading") && !!d && !d.classList.contains("loading"); }, cfg.tapPane);
+      if (cleared) break;
+      await sleep(50);
+    }
+    out.loadingClearedMs = cleared ? now() - out.t.tap : -1;
+    out.loaderSeen = await page.evaluate(() => window.__labLoaderSeen || null);
+    out.unmarked = await page.evaluate((p) => {
+      const f = document.getElementById("f-" + p), d = f.parentElement;
+      let url = null, text = null;
+      try { url = f.contentDocument ? f.contentDocument.URL : null; text = f.contentDocument && f.contentDocument.body ? f.contentDocument.body.textContent : null; } catch (e) { url = "ERR:" + String(e).slice(0, 60); }
+      return { src: f.getAttribute("src"), lazy: f.getAttribute("data-lazy-src"), bodyFailed: document.body.classList.contains("pane-failed"), bodyLoading: document.body.classList.contains("pane-loading"),
+               divFailed: d.classList.contains("failed"), divLoading: d.classList.contains("loading"), url, text: text === null ? null : text.slice(0, 40), msg: (document.getElementById("pane-load-msg") || {}).textContent || "" };
+    }, cfg.tapPane);
+    await page.unroute(isPath, denial);
+    await page.click("#mtabs button[data-pane=chat]");
+    await sleep(Math.max(300, (cfg.settleMs || 1500) / 2));
+    out.tapped = null;   // no shim in the served document: nothing to park, nothing to dial (the reason above)
+    out.framesAtBoot = out.frames;
+    out.frames = page.frames().map((f) => { try { return new URL(f.url()).pathname; } catch (e) { return f.url(); } });
+  } else if (cfg.tapPane) {
     const prefetchBeforeTap = out.dials.filter((d) => d.app === "chat").reduce((n, d) => n + (d.needFull || []).filter((w) => w === "prefetch").length, 0);
     out.t.tap = now();
     if (cfg.abortPane) {
@@ -357,12 +391,9 @@ try {
       // (body.pane-failed, #pane-load painted with the message, the loader itself down) and load it on the re-tap.
       const abortPath = "/" + cfg.abortPane;
       const isAbortUrl = (u) => u.pathname === abortPath;
-      // abortMode error-body (HIGH 2, review round 2 closeout): the fetch answers a 502 with a body, a proxy's page while the kernel
-      // restarts: same-origin at the pane's url, committed, and load fires in every engine; the shell must not take it for the pane's
-      // own document (the pane shim's window marker tells them apart), so the failed state, the re-park and the re-tap are the same
-      const aborter = cfg.abortMode === "error-body"
-        ? (route) => route.fulfill({ status: 502, contentType: "text/html", body: "<!DOCTYPE html><html><body><h1>502 Bad Gateway</h1></body></html>" })
-        : (route) => route.abort();
+      // (the round-2 error-body mode, a 502 page fulfilled at the url, is gone with round 3's family two: a document the origin served is
+      // shown as served, never a failure; its leg is the unmarked branch above)
+      const aborter = (route) => route.abort();
       await page.route(isAbortUrl, aborter);
       await page.click("#mtabs button[data-pane=" + cfg.tapPane + "]");
       const failDeadline = now() + 45000;
@@ -378,7 +409,7 @@ try {
         if (failedSeen) break;
         await sleep(200);
       }
-      out.abort = { ms: failedSeen ? now() - out.t.tap : -1, mode: cfg.abortMode || "abort", ...(failedSeen || {}) };
+      out.abort = { ms: failedSeen ? now() - out.t.tap : -1, mode: "abort", ...(failedSeen || {}) };
       await page.unroute(isAbortUrl, aborter);
       out.t.retap = now();
       await page.click("#mtabs button[data-pane=" + cfg.tapPane + "]");   // the re-tap: the shell promotes the re-parked pane again, as a first tap would

@@ -1134,7 +1134,7 @@ const words = (k) => (POSTED[k] || []).map((m) => m.on && m.on[k]);
 const divCls = (k) => Array.from(DIVS[k].cls).filter((c) => c !== 'pane').sort();
 const diagRows = (what) => SOCKS.flatMap((s) => s.sent.map((x) => JSON.parse(x))).filter((m) => m.type === 'clientDiag' && m.surface === 'shell' && m.what === what).map((m) => m.data);
 const backstops = () => TIMERS.filter((t) => t.ms === 30000).forEach((t) => t.f());   // every 30 s backstop armed so far (a stale promotion's is inert on its token)
-const shimUp = (k, url) => { frames['f-' + k].contentDocument = { URL: url || ('http://TESTHOST:1/' + k) }; frames['f-' + k].contentWindow.__rompApp = k; };   // the pane's OWN document: committed at its url with the pane shim run in its window (window.__rompApp, as the served shim sets it while parsing); what committed() takes for a good load (review round 2 closeout: a committed document alone no longer does)
+const shimUp = (k, url) => { frames['f-' + k].contentDocument = { URL: url || ('http://TESTHOST:1/' + k) }; frames['f-' + k].contentWindow.__rompApp = k; };   // the pane's OWN document: committed at its url with the pane shim run in its window (window.__rompApp, as the served shim sets it while parsing); docState's 'app' (a document without the marker is 'doc': shown as served and said, review round 3)
 const out = {};
 const origTell = window.__rompPanesTell; window.__rompPanesTell = () => { LOG.push('tell'); origTell(); };
 """
@@ -1277,29 +1277,33 @@ out.again = snap();
 out.feed = { src: src().feed, div: divCls('feed') };
 console.log(JSON.stringify(out));
 """
-# HIGH 2, review round 2 closeout (2026-09-19): committed() reads the pane's OWN document (the shim's window.__rompApp beside the
-# same-origin url), so an HTTP error body at the pane's url (a proxy's 502 while the kernel restarts: same origin, no shim) fails on
-# its load event, or at the backstop, as an error page does. Before, any committed same-origin document counted as loaded, and the
-# 502 kept the src for the page's life with no retry road. The refused input is recorded beside the refusal.
-_LAZY_ERROR_BODY_DRIVER = _LAZY_TOOLS + r"""
+# Family two (review round 3, 2026-09-19; supersedes the round-2 closeout's error-body rule): docState() classifies the frame's document,
+# and a same-origin document at the pane's url with NO pane shim (`doc`: the kernel's own fallback page, its 403 line under a stale cookie,
+# a proxy's 502 body) is a document the origin served that this reader cannot classify. It is shown as served (the loading state ends,
+# the src stays, no failed state, no re-park) and said once (one shell client-diag row `pane-load-unmarked` {pane, via}); a reader that
+# cannot classify never reports absent. Round 2 called it a failure, which re-parked the kernel's own diagnostic behind an overlay no tap
+# could clear. The refused inputs stay refused: no document (an error page) fails via load; a frame never committed fails via the backstop.
+_LAZY_UNMARKED_DRIVER = _LAZY_TOOLS + r"""
 SOCKS.forEach((s) => { s.readyState = 1; s.onopen && s.onopen(); });
 shimUp('feed'); (LOADS.feed || []).forEach((f) => f());
-const snapK = (k) => ({ src: src()[k], lazy: lazy()[k], div: divCls(k), bodyLoading: BODY_CLS.has('pane-loading'), bodyFailed: BODY_CLS.has('pane-failed'), msg: MSG.textContent, sets: Object.assign({}, SETS), rows: diagRows('pane-load-failed') });
+const snapK = (k) => ({ src: src()[k], lazy: lazy()[k], div: divCls(k), bodyLoading: BODY_CLS.has('pane-loading'), bodyFailed: BODY_CLS.has('pane-failed'), msg: MSG.textContent, sets: Object.assign({}, SETS), unmarked: diagRows('pane-load-unmarked'), failed: diagRows('pane-load-failed') });
 window.__rompMobileTab('waiting');
 out.tap = snapK('waiting');
-frames['f-waiting'].contentDocument = { URL: 'http://TESTHOST:1/waiting' };   // an HTTP error body: the response committed a same-origin document AT the pane's url, and no shim ran in it
-out.errorBodyDoc = { url: frames['f-waiting'].contentDocument.URL, shim: typeof frames['f-waiting'].contentWindow.__rompApp };   // the input the detector must refuse
-(LOADS.waiting || []).forEach((f) => f());   // ...and fired load, as every engine does for a committed error response
-out.errorBodyLoad = snapK('waiting');
-window.__rompMobileTab('waiting');   // the re-tap promotes it again
+frames['f-waiting'].contentDocument = { URL: 'http://TESTHOST:1/waiting' };   // a served document AT the pane's url with no shim run in its window (the 403 line: text/plain 'forbidden: ...'; a fallback page; a 502 body)
+out.unmarkedDoc = { url: frames['f-waiting'].contentDocument.URL, shim: typeof frames['f-waiting'].contentWindow.__rompApp };   // the input the reader cannot classify
+(LOADS.waiting || []).forEach((f) => f());   // ...and its load fired, as every engine does for a committed response
+out.unmarkedLoad = snapK('waiting');
+window.__rompMobileTab('chat'); window.__rompMobileTab('waiting');   // the tab again: the src stands, nothing promotes twice, no loader
 out.retap = snapK('waiting');
-shimUp('waiting'); (LOADS.waiting || []).forEach((f) => f());   // the kernel is back: the pane's own document, its shim run
-out.goodLoad = snapK('waiting');
-window.__rompMobileTab('fleet');   // the same body with no load event by the backstop: a failure too, not a slow load
+backstops();   // the backstop over the shown document: nothing moves (no loading state to end)
+out.backstopAfter = snapK('waiting');
+window.__rompMobileTab('fleet');   // the same document with NO load event by the backstop (a slow parser-blocking sheet): shown and said via the backstop, not a failure
 frames['f-fleet'].contentDocument = { URL: 'http://TESTHOST:1/fleet' };
 backstops();
-out.errorBodyBackstop = snapK('fleet');
-out.waitingAfter = snapK('waiting');
+out.unmarkedBackstop = snapK('fleet');
+window.__rompMobileTab('timeline');   // the refused input still refused: no document at all (Chromium's error page) fails via load
+frames['f-timeline'].contentDocument = null; (LOADS.timeline || []).forEach((f) => f());
+out.noneLoad = snapK('timeline');
 console.log(JSON.stringify(out));
 """
 # HIGH 2, review round 2 closeout: the per-promotion token (TOK). The iframe element keeps every promotion's load listener and
@@ -1500,25 +1504,35 @@ class LazyPanes(unittest.TestCase):
         self.assertEqual(o["again"]["sets"], {"feed": 1, "waiting": 3}, "a later show of the loaded pane reassigns nothing")
         self.assertEqual(o["feed"], {"src": "/feed", "div": []}, "the feed's document, committed at boot, is untouched throughout")
 
-    def test_an_http_error_body_at_the_panes_url_is_a_failed_load_not_a_loaded_pane(self):
-        # HIGH 2, review round 2 closeout (2026-09-19). committed() reads the pane's OWN document: same-origin at the pane's url AND the
-        # pane shim run in its window (window.__rompApp). A proxy's 502 during a kernel restart is same-origin at the url with no shim;
-        # before this it committed, loaded() cleared the loader over the error body, and the src stayed set for the page's life with
-        # no retry road. The guard is proven by the input it refuses, recorded beside the refusal.
-        o = _lazy(self.seed, _LAZY_ERROR_BODY_DRIVER)
-        self.assertEqual(o["errorBodyDoc"], {"url": "http://TESTHOST:1/waiting", "shim": "undefined"}, "the refused input: a same-origin document at the pane's own url with no shim in its window")
-        e = o["errorBodyLoad"]
-        self.assertEqual((e["src"], e["lazy"], e["div"], e["bodyFailed"], e["bodyLoading"]), (None, "/waiting", ["failed"], True, False), "the error body's load re-parks the pane and paints the failed state where the user looks")
-        self.assertEqual(e["rows"], [{"pane": "waiting", "via": "load", "n": 1}], "one row, via the load event")
-        self.assertEqual(e["msg"], "Couldn't load this pane. Tap to try again.")
+    def test_a_document_the_origin_served_with_no_shim_is_shown_as_served_and_said_never_a_failure(self):
+        # Family two (review round 3, 2026-09-19): the detector must not claim failure for a page it cannot classify. A same-origin document at
+        # the pane's url with no pane shim (the kernel's own "needs the ui/ modules" page, its 403 line for a token-gated route once the cookie
+        # is stale, a proxy's 502 body) is what the origin served, so the loading state ends, the src stays, no failed state paints and one
+        # pane-load-unmarked row says what was seen. Round 2 called this a failure and re-parked the kernel's own diagnostic behind an
+        # overlay no tap could clear (the 403 being the common member: every lazy tap on the phone painted it). The input is recorded
+        # beside the verdict; the refused inputs (no document; a frame never committed by the backstop) stay refused in the failed-load case.
+        o = _lazy(self.seed, _LAZY_UNMARKED_DRIVER)
+        t = o["tap"]
+        self.assertEqual((t["src"], t["div"], t["bodyLoading"], t["unmarked"]), ("/waiting", ["loading"], True, []), "the first tap: loading")
+        self.assertEqual(o["unmarkedDoc"], {"url": "http://TESTHOST:1/waiting", "shim": "undefined"}, "the input: a same-origin document at the pane's own url with no shim in its window")
+        u = o["unmarkedLoad"]
+        self.assertEqual((u["src"], u["lazy"], u["div"], u["bodyLoading"], u["bodyFailed"], u["msg"]), ("/waiting", None, [], False, False, ""), "its load: shown as served (the loader clears, the src stays, no failed state, no re-park)")
+        self.assertEqual(u["unmarked"], [{"pane": "waiting", "via": "load"}], "…and said once: the reader reports what it saw, never absent")
+        self.assertEqual(u["failed"], [], "no pane-load-failed row")
         r = o["retap"]
-        self.assertEqual((r["src"], r["div"], r["sets"]["waiting"]), ("/waiting", ["loading"], 2), "the re-tap promotes it again")
-        g = o["goodLoad"]
-        self.assertEqual((g["src"], g["div"], g["bodyFailed"], g["msg"], g["rows"]), ("/waiting", [], False, "", e["rows"]), "the pane's own document with its shim run: loaded, no new row")
-        b = o["errorBodyBackstop"]
-        self.assertEqual((b["src"], b["lazy"], b["div"], b["bodyFailed"]), (None, "/fleet", ["failed"], True), "the same body with no load event by the 30 s backstop: a failure, not the slow-load road (a slow load has its shim run)")
-        self.assertEqual(b["rows"], e["rows"] + [{"pane": "fleet", "via": "backstop", "n": 1}], "a second row, via the backstop, for the other pane")
-        self.assertEqual((o["waitingAfter"]["src"], o["waitingAfter"]["div"]), ("/waiting", []), "the loaded pane's stale backstops moved nothing")
+        self.assertEqual((r["src"], r["div"], r["sets"]["waiting"], r["bodyLoading"]), ("/waiting", [], 1, False), "the tab again: one src set for the page's life, no loader (the document stands as served; a reload is the retry road)")
+        self.assertEqual(o["backstopAfter"], r, "the backstop over the shown document moves nothing and says nothing more")
+        b = o["unmarkedBackstop"]
+        self.assertEqual((b["src"], b["div"], b["bodyFailed"]), ("/fleet", [], False), "the same document with no load event by the 30 s backstop: shown, not the failed road")
+        self.assertEqual(b["unmarked"], [{"pane": "waiting", "via": "load"}, {"pane": "fleet", "via": "backstop"}], "…and said via the backstop")
+        n = o["noneLoad"]
+        self.assertEqual((n["src"], n["lazy"], n["div"], n["bodyFailed"]), (None, "/timeline", ["failed"], True), "the refused input stays refused: no document (an error page) fails via load and re-parks")
+        self.assertEqual(n["failed"], [{"pane": "timeline", "via": "load", "n": 1}])
+        self.assertEqual(n["unmarked"], b["unmarked"], "a failure files no unmarked row")
+        js = km._LANDING_MOBILE_JS
+        self.assertIn("function docState(f){try{var d=f.contentDocument;if(!d)return 'none';var u=d.URL;if(!u||u==='about:blank')return 'blank';var w=f.contentWindow;return (w&&typeof w.__rompApp==='string')?'app':'doc';}catch(e){return 'none';}}", js, "the classifier's four answers")
+        self.assertNotIn("function committed(", js, "the one-marker boolean is gone: no failure claim for a page the reader cannot classify")
+        self.assertTrue({"pane", "via"} <= set(km.CLIENT_DIAG_KEYS["shell"]), "the row's keys survive the shell allowlist (its fixture row is test_client_diag_allowlist's)")
 
     def test_the_promotion_token_makes_a_stale_listener_and_a_stale_backstop_inert_across_a_retry(self):
         # HIGH 2, review round 2 closeout: the two `if(TOK[k]!==tok)return;` guards were unpinned (the failed-load case above reaches its
