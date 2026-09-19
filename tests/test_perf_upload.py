@@ -1176,21 +1176,37 @@ class Cli(unittest.TestCase):
         lens over the final artifact): perf_public.identifier_hits searches every number by its wire spelling, json.dumps,
         the writer's own, so the listed run written as a number in any spelling whose canonical form carries it (a plain
         integer, a float, a negative, embedded in a longer run, a fraction, two exponent forms that canonicalise to
-        4242424242.0 and so put the run on the wire from a file that never spelled it, a listed float-shaped entry and its
-        exponent respelling, an element of a list, a leaf under usage) is refused by the scan naming the kind and the path,
-        the run in no output, nothing sent; 4242424242e-3 still travels, as 4242424.242, a spelling that carries no listed
-        run. Fails before: every numeric spelling was sent, the run on the wire as the number every check passed, where the
-        quoted spelling alone was the scan's refusal."""
+        4242424242.0 and so put the run on the wire from a file that never spelled it, a listed float-shaped entry
+        1234.5678 and its exponent respelling 12345678e-4, an element of a list, a leaf under usage) is refused by the scan
+        naming the kind and the path, the run in no output, nothing sent; 4242424242e-3 still travels, as 4242424.242, a
+        spelling that carries no listed run. Fails before: every numeric spelling was sent, the run on the wire as the
+        number every check passed, where the quoted spelling alone was the scan's refusal. The float-shaped entry is the
+        base's (5d1de45dc): the first floor (a086ced5a) measured an entry by its LONGEST digit run and so dropped 1234.5678
+        (eight digits, longest run four) from the numeric arm while it kept a bare 4242424, and this test was moved to
+        1234567.8 with it; the closing check (2026-09-19) found that input refused at the base and sent at head, rc 0, the
+        value on the wire. The floor now counts digits across the whole entry (perf_public.numeric_probe), and this case is
+        the upload half of the restored assertion. AND EVERY SPELLING A READER RECOVERS THE VALUE FROM IS SCANNED (the same
+        closing check): json spells a float at or above 1e16, or under 1e-4, in exponent form with a point after the first
+        digit, so a listed 12345670000000000 was refused when the leaf spelled the integer and the same value travelled as
+        1.234567e+16, and a listed 0.000015 travelled as 1.5e-05; perf_public.number_spellings scans an exponent-spelled
+        leaf by its plain decimal expansion too, so the int 12345670000000000, the float 1.234567e+16, its negative, and
+        1.5e-05 in three spellings are each refused naming the entry's line, and the refusal is the only stderr line (every
+        entry is at or above the floor). Fails before the fix: 1.234567e+16, -1.234567e+16, 1.5e-05, 0.000015 and 15e-6
+        were sent, rc 0, the exponent spelling on the wire."""
         base = ["--yes", "--receiver", self.fake.url]
         text = self.data.decode("utf-8")
         anchor = '"uptime_s": 60'
         self.assertEqual(text.count(anchor), 1, "the fresh export's one uptime line is where the leaf is planted")
         self.assertEqual(_wire(pu.strict_loads(self.data)), self.data, "a fresh export re-serialises to itself: the writer is the same function")
         os.makedirs(os.path.join(self.home, ".config", "romp"))
+        entries = {1: "4242424242",                # a bare digit run
+                   2: "1234.5678",                 # float-shaped: eight digits across the entry, a longest run of four (the base's entry)
+                   3: "12345670000000000",         # an integer whose canonical float spelling is exponent form, 1.234567e+16
+                   4: "0.000015"}                  # seven digits; the plain spelling of 1.5e-05, which is how json spells the value
         with open(os.path.join(self.home, ".config", "romp", "private-strings.txt"), "w", encoding="utf-8") as fh:
-            fh.write("4242424242\n1234567.8\n")                                          # the float-shaped entry carries a seven-digit run: at the floor
-        self.assertNotIn(b"4242424242", self.data)
-        self.assertNotIn(b"1234567.8", self.data)
+            fh.write("".join(entries[n] + "\n" for n in sorted(entries)))
+        for entry in list(entries.values()) + ["1.234567e+16", "1.5e-05"]:
+            self.assertNotIn(entry.encode(), self.data, "the fresh export carries no listed entry in any spelling")
         edited = os.path.join(self.xdg, "edited.json")
         for literal, canonical, digits in (("0.30000000000000004441", "0.30000000000000004", b"4441"),
                                            ("1700000000e-9", "1.7", b"1700000000"),
@@ -1223,16 +1239,24 @@ class Cli(unittest.TestCase):
         refusal = ("refused: a string this machine knows (private string) survives as the value at %s; "
                    "edit line %d of the private-strings list or that value; nothing sent")
         for literal in ("4242424242", "4242424242.0", "4242424242.5", "-4242424242", "14242424242", "0.4242424242",
-                        "4.242424242e9", "4242424242e0", "1234567.8", "12345678e-1"):      # as a NUMBER: the scan reads the wire spelling
+                        "4.242424242e9", "4242424242e0",                    # line 1, by the wire spelling
+                        "1234.5678", "12345678e-4",                         # line 2: the float-shaped entry, and its exponent respelling
+                        "1.234567e+16", "12345670000000000", "-1.234567e+16",   # line 3: the int, and the float json spells with an exponent
+                        "1.5e-05", "0.000015", "15e-6"):                    # line 4: a small float json spells with an exponent, three ways
             with open(edited, "w", encoding="utf-8") as fh:
                 fh.write(text.replace(anchor, anchor + ', "zzratio": ' + literal))
-            self.assertTrue(any(run in json.dumps(json.loads(literal)) for run in ("4242424242", "1234567.8")),
-                            "the canonical spelling of %s carries a listed run" % literal)
-            listed_line = 1 if "4242424242" in json.dumps(json.loads(literal)) else 2          # the refusal names the entry's line, never the entry
-            r = self._refused(_run([edited] + base, self.state, home=self.home), 1, refusal % ("perf/zzratio", listed_line))
-            for run in ("4242424242", "1234567.8", "12345678"):
+            value = json.loads(literal)
+            spellings = pp.number_spellings(json.dumps(value), value)      # the wire spelling, then its plain expansion when it has an exponent
+            lines = [n for n, entry in entries.items() if any(entry in s for s in spellings)]
+            self.assertEqual(len(lines), 1, "%s: exactly one listed entry is carried by a spelling of the value %r" % (literal, spellings))
+            listed_line = lines[0]                                         # the refusal names the entry's line, never the entry
+            r = _run([edited] + base, self.state, home=self.home)
+            self.assertEqual(r.returncode, 1, "%s as a number was not refused (listed entry on line %d): %s" % (literal, listed_line, r.stdout + r.stderr))
+            self._refused(r, 1, refusal % ("perf/zzratio", listed_line))
+            for run in list(entries.values()) + ["12345678", "1.234567e+16", "1.5e-05"]:
                 self.assertNotIn(run, r.stdout + r.stderr, literal)
             self.assertEqual(r.stdout, "", literal)
+            self.assertEqual(r.stderr.count("\n"), 1, literal + ": the refusal alone; every listed entry is at or above the floor, so no advisory")
         with open(edited, "w", encoding="utf-8") as fh:
             fh.write(text.replace(anchor, anchor + ', "zzlist": [4242424242, 1]'))            # an element of a list
         self._refused(_run([edited] + base, self.state, home=self.home), 1, refusal % ("perf/zzlist/0", 1))
@@ -1255,9 +1279,14 @@ class Cli(unittest.TestCase):
         """The floor by the upload child (2026-09-19, the comment at pp.NUMERIC_PROBE_MIN_DIGITS). With a list of a comment, a
         word, a blank and a six-digit run (line 4) under the child's HOME, an export edited to carry the run as a NUMBER in
         five spellings (whole, inside a byte total, a float, a negative, an exponent form) is sent, exit 0, the number on
-        the wire, and stderr is exactly the one line saying 1 of 2 entries are checked in keys and string values but not in
-        numbers; the same run in QUOTES is refused as before, naming line 4 and the remedy, the loud line before the
-        refusal. With the run lengthened to seven digits on the same line, five numeric spellings are each refused in one
+        the wire, and stderr is exactly the one line saying 1 of 2 entries are spelled like a number but carry fewer than 7
+        digits and so are checked in keys and string values and not in numbers, and what does and does not protect a number
+        (the text is perf_public.LIST_UNDER_NUMERIC_FLOOR, pasted here whole: the closing check of 2026-09-19 found the old
+        line's remedy, list more of the digits, a trap, since a listed eight-digit run protected the number 1234.5678 in no
+        spelling while it silenced the line; the count is by number_shaped entries under the floor, so the word entry is
+        not counted and a mixed entry such as abc12 would not be either); the same run in QUOTES is refused as before,
+        naming line 4 and the remedy, the loud line before the refusal. With the run lengthened to seven digits on the same
+        line, five numeric spellings are each refused in one
         stderr line naming the kind, the value's path and line 4 of the list, the run in no output, nothing sent. The
         boundary is by execution with literals: 424242 travels, 4242424 does not. Fails before: every six-digit spelling was
         refused and no refusal named a line."""
@@ -1271,8 +1300,12 @@ class Cli(unittest.TestCase):
         listed = os.path.join(self.home, ".config", "romp", "private-strings.txt")
         with open(listed, "w", encoding="utf-8") as fh:
             fh.write("# strings that must never be published\nzzcoinedzz\n\n424242\n")
-        loud = ("romp: 1 of 2 private-strings entries are checked in keys and string values but not in numbers (their digit "
-                "runs are shorter than 7); a value that must be found in a number needs 7 or more of its digits listed\n")
+        loud = ("romp: 1 of 2 private-strings entries are spelled like a number but carry fewer than 7 digits, so they are checked in keys "
+                "and string values and not in numbers; a number is checked against a listed entry only when the entry, or the plain decimal "
+                "spelling of an entry written with an exponent, carries 7 or more digits, and the match is against the number's own spelling: "
+                "a listed 1234.5678 protects the number 1234.5678, a listed 12345678 does not, and a listed entry of fewer digits protects no "
+                "number\n")
+        self.assertEqual(loud, pp.LIST_UNDER_NUMERIC_FLOOR % (1, 2, 7, 7) + "\n", "the literal here is the module's line with its four numbers")
         for literal in ("424242", "9424242", "424242.0", "-424242", "4.24242e5"):
             with open(edited, "w", encoding="utf-8") as fh:
                 fh.write(text.replace(anchor, anchor + ', "zzratio": ' + literal))
@@ -1301,6 +1334,42 @@ class Cli(unittest.TestCase):
             self.assertNotIn("4242424", r.stdout + r.stderr, literal)
             self.assertEqual(r.stdout, "", literal)
         self.assertEqual(self.fake.requests, [], "no seven-digit spelling was sent")
+
+    def test_a_listed_entry_carrying_other_characters_is_applied_to_a_number_by_its_token_run_and_refused_before_any_request(self):
+        """The alphabet is not asked of the numeric arm (the closing delta, 2026-09-19). A listed (12345678), eight digits inside
+        characters no number spells, is applied to a number by its whole-token run (perf_public.probe_in), so an export edited
+        to carry the integer 12345678 is refused naming the kind, the path and line 1 of the list, the run in no output, rc 1
+        and NO request at the receiver, as the base at 5d1de45dc did; the delta's first cut required a listed entry to be
+        spelled like a number before it reached the arm, and the closing check's Refuted section measured that cut as three
+        refusals turned into POSTs ((12345678), _12345678 and 12345678/ against the leaf 12345678, on this road and the
+        export's). The token-run match is by digit GROUPS: the same list lets the pointed 1234.5678 travel, rc 0 and one
+        request carrying the value, since its groups 1234 and 5678 are not the entry's one group, and stderr is empty, the
+        entry being at the floor by its eight digits and not something the advisory counts. Fails under the first cut: rc 0
+        and one POST carrying 12345678."""
+        base = ["--yes", "--receiver", self.fake.url]
+        text = self.data.decode("utf-8")
+        anchor = '"uptime_s": 60'
+        self.assertEqual(text.count(anchor), 1)
+        self.assertNotIn("12345678", text, "the fresh export carries no eight-digit run")
+        edited = os.path.join(self.xdg, "edited.json")
+        os.makedirs(os.path.join(self.home, ".config", "romp"))
+        with open(os.path.join(self.home, ".config", "romp", "private-strings.txt"), "w", encoding="utf-8") as fh:
+            fh.write("(12345678)\n")
+        with open(edited, "w", encoding="utf-8") as fh:
+            fh.write(text.replace(anchor, anchor + ', "zzratio": 12345678'))
+        r = _run([edited] + base, self.state, home=self.home)
+        self._refused(r, 1, "refused: a string this machine knows (private string) survives as the value at perf/zzratio; "
+                            "edit line 1 of the private-strings list or that value; nothing sent")
+        self.assertNotIn("12345678", r.stdout + r.stderr)
+        self.assertEqual(r.stdout, "")
+        self.assertEqual(self.fake.requests, [], "refused before any request: nothing was dialled")
+        with open(edited, "w", encoding="utf-8") as fh:
+            fh.write(text.replace(anchor, anchor + ', "zzratio": 1234.5678'))
+        r = _run([edited] + base, self.state, home=self.home)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(r.stderr, "", "an eight-digit entry is at the floor: nothing is under it to be said")
+        self.assertEqual(len(self.fake.requests), 1)
+        self.assertIn(b'"zzratio": 1234.5678', self.fake.requests[0][2], "the groups split unlike the entry's: the value travels")
 
     def test_an_edited_file_the_fold_would_have_changed_is_refused_by_kind_and_key_path_and_never_sent(self):
         """The re-check holds the file to the export's FOLD, not to the walk's shapes alone (the upload's second review

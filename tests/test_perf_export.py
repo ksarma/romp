@@ -1437,14 +1437,16 @@ class Cli(unittest.TestCase):
         the private list may hold a digit run, and a listed run written as a number travelled unread while the same run in
         quotes was refused). A hit is a value finding at the number's path, whatever the file spelled: a plain integer, a
         float, a negative, a run embedded in a longer one, a fraction, an exponent form whose canonical spelling carries the
-        run (4.242424242e9 is 4242424242.0), a listed float-shaped entry and its exponent respelling, a list element. A
+        run (4.242424242e9 is 4242424242.0), a listed float-shaped entry and its exponent respelling (1234.5678, eight digits, at
+        the floor by digit count; the base's assertion, deleted by a086ced5a when the floor was computed as the longest run and
+        restored by the closing delta), a list element. A
         number whose canonical spelling does not carry the run is no hit (4242424242e-3 is 4242424.242, and a float that
         merely rounds near it), nor are a bool or null under a probe that spells them, nor any number under the machine's
         word and path probes (a hostname, a login, a home directory, a session id, a working directory spell letters,
         slashes or dashes a number never carries). Fails before: every numeric leaf was skipped."""
-        listed = [(pp.PRIVATE_KIND, "4242424242"), (pp.PRIVATE_KIND, "1234567.8")]      # a float-shaped entry carries a seven-digit run: at the floor
+        listed = [(pp.PRIVATE_KIND, "4242424242"), (pp.PRIVATE_KIND, "1234.5678")]      # the pointed entry: eight digits, at the floor by digit count
         for value, where in ((4242424242, "a/n"), (4242424242.0, "a/n"), (4242424242.5, "a/n"), (-4242424242, "a/n"), (14242424242, "a/n"),
-                             (0.4242424242, "a/n"), (4.242424242e9, "a/n"), (1234567.8, "a/n"), (12345678e-1, "a/n"), ([1, 4242424242], "a/n/1")):
+                             (0.4242424242, "a/n"), (4.242424242e9, "a/n"), (1234.5678, "a/n"), (12345678e-4, "a/n"), ([1, 4242424242], "a/n/1")):
             self.assertEqual(_hits({"a": {"n": value}}, listed), [(pp.PRIVATE_KIND, "the value at %s" % where)], repr(value))
             self.assertIn(json.dumps(value if not isinstance(value, list) else value[1]).strip("-"), pe.document_text({"a": {"n": value}}),
                           "the spelling scanned is the spelling the writer puts in the file")
@@ -1460,19 +1462,108 @@ class Cli(unittest.TestCase):
         self.assertEqual(_hits({"a": {"n": 911111111}}, [("session id", "11111111")]), [("session id", "the value at a/n")],
                          "an all-digit id prefix a counter carries is a hit, the rare cost the docstring names")
 
+    def test_an_exponent_spelled_number_is_scanned_by_its_plain_decimal_spelling_too(self):
+        """A float whose canonical spelling carries an exponent (at or above 1e16 or under 1e-4 in magnitude) is scanned by every
+        spelling a reader recovers the value from (pp.number_spellings): the wire spelling and its plain decimal expansion
+        (format(Decimal(text), 'f') of the TEXT: 1.234567e+16 is 12345670000000000, 1.5e-05 is 0.000015, 1e+23 is
+        100000000000000000000000), and by NO third spelling: the exact integer of the double (int(1e+23) is
+        99999999999999991611392) is binary noise nobody wrote, which a listed 9999999 would match; the closing delta's first cut
+        scanned it and the verifier dropped it (E pins that a listed 99999999999999991611392 hits nothing, and a listed 9999999
+        neither). A listed entry is expanded the same way and THE FLOOR IS DECIDED PER SPELLING (pp.numeric_probe over each of
+        number_spellings' results), so a listed 1.234567e+16 is applied as 12345670000000000 and as itself, a listed 12345678e-4 as
+        1234.5678 and as itself, and a listed 1.5e-05 (four digits as written, seven as 0.000015) is applied as its expansion
+        alone: G hits the leaves 1.5e-05 and 0.000015, and machine_probes does not count it under the floor (the stderr test);
+        the first cut decided the floor on the entry's text once, so a listed 1e+16 protected nothing while the line told the
+        operator it carried too few digits (the closing delta's verifier). An expansion with fewer digits than the entry is not
+        armed: a listed 1.0000000e+2 (nine digits) is armed as itself and as 100.00000, never as 100, so the leaves 100.5 and
+        1000 travel (H). The closing check of 2026-09-19: a listed 12345670000000000 was refused when the leaf spelled the
+        integer and travelled when the same value's canonical spelling was 1.234567e+16, repr's point after the first digit
+        breaking the substring, while the module claimed a listed run was found however the file spelled it (the hole as old as
+        the numeric scan, 431db9a60). A number yields at most ONE Hit, the first spelling that carries a probe, and the Hit
+        never carries a spelling; the wire spelling is still what the writer puts in the file. Decimal of the text, not of the
+        value: Decimal(value) is the double's exact binary expansion (Decimal(1e+23) is 99999999999999991611392, never the
+        100000000000000000000000 a reader recovers from the text). An entry that underflows to zero (1000000e-400, seven
+        digits) expands to its long plain fraction and to no bare 0, so it refuses no number carrying a zero (the first cut's
+        int() road spelled str(int(0.0))). Dropping the Decimal spelling reds A on 1.234567e+16 (its first case), B on
+        1.234567e-05, C on 1.5e-05 and F on 1e+23; the int() spelling back reds E and the 1e+23 pin; scanning a probe by its
+        text alone reds D on the integer leaf and G on both leaves; Decimal of the value reds F on 1e+23 (and the
+        number_spellings pins); a Hit per spelling reds the single-Hit assertion on D over 1.234567e+16 (both spellings carry a
+        probe); a spelling in the Hit reds the digit-free reprs; the floor decided on the entry's text reds G's hits."""
+        A = pp.Probe(pp.PRIVATE_KIND, "12345670000000000", 2)
+        B = pp.Probe(pp.PRIVATE_KIND, "1234567", 3)
+        C = pp.Probe(pp.PRIVATE_KIND, "0.000015", 4)
+        D = pp.Probe(pp.PRIVATE_KIND, "1.234567e+16", 5)
+        E = pp.Probe(pp.PRIVATE_KIND, "99999999999999991611392", 6)
+        F = pp.Probe(pp.PRIVATE_KIND, "100000000000000000000000", 7)
+        G = pp.Probe(pp.PRIVATE_KIND, "1.5e-05", 8)
+        H = pp.Probe(pp.PRIVATE_KIND, "1.0000000e+2", 9)
+        digits = re.compile(r"\d{4,}")
+        for probe, value, where in ((A, 1.234567e+16, "a/n"), (A, -1.234567e+16, "a/n"), (A, [1, 1.234567e+16], "a/n/1"),
+                                    (A, 12345670000000000, "a/n"), (B, 1.234567e-05, "a/n"), (B, 0.001234567, "a/n"), (B, 1.234567e+16, "a/n"),
+                                    (C, 1.5e-05, "a/n"), (C, 0.000015, "a/n"), (D, 12345670000000000, "a/n"), (D, 1.234567e+16, "a/n"),
+                                    (F, 1e+23, "a/n"), (G, 1.5e-05, "a/n"), (G, 0.000015, "a/n")):
+            hits = pp.identifier_hits({"a": {"n": value}}, [probe])
+            self.assertEqual(len(hits), 1, "one Hit per number, whatever its spellings: %r under line %d" % (value, probe.line))
+            self.assertEqual(hits, [pp.Hit(pp.PRIVATE_KIND, False, where, len(where.split("/")), probe.line)], "%r under line %d" % (value, probe.line))
+            self.assertIsNone(digits.search(repr(hits)), "the Hit carries no spelling: %r" % (hits,))
+        for probe, value in ((A, 1.234568e+16), (A, 1e+16), (B, 1.234568e-05), (C, 1.5e-06), (E, 1e+23), (pp.Probe(pp.PRIVATE_KIND, "9999999", 6), 1e+23),
+                             (G, 1.5e-06), (H, 100.5), (H, 1000), (H, 100), (pp.Probe(pp.PRIVATE_KIND, "1000000e-400", 10), 409600)):
+            self.assertEqual(pp.identifier_hits({"a": {"n": value}}, [probe]), [], "no hit: %r under line %d" % (value, probe.line))
+        self.assertEqual(_hits({"a": {"n": "x1.5e-05"}}, [G]), [(pp.PRIVATE_KIND, "the value at a/n")], "a four-digit entry is still checked in a string")
+        for value in (1.234567e+16, -1.234567e+16, 1.234567e-05, 1.5e-05, 1e+23):
+            self.assertIn("e", json.dumps(value), repr(value))
+            self.assertIn(json.dumps(value), pe.document_text({"a": {"n": value}}), "the wire spelling is what the writer puts in the file")
+        self.assertEqual(pp.number_spellings("1.234567e+16", 1.234567e+16), ("1.234567e+16", "12345670000000000"))
+        self.assertEqual(pp.number_spellings("1.5e-05", 1.5e-05), ("1.5e-05", "0.000015"))
+        self.assertEqual(pp.number_spellings("1.234567e-05", 1.234567e-05), ("1.234567e-05", "0.00001234567"))
+        self.assertEqual(pp.number_spellings("-1.5e-05", -1.5e-05), ("-1.5e-05", "-0.000015"))
+        self.assertEqual(pp.number_spellings("1e+23", 1e+23), ("1e+23", "100000000000000000000000"), "two spellings at most: never the double's exact integer")
+        self.assertEqual(pp.number_spellings("1e+16", 1e+16), ("1e+16", "10000000000000000"))
+        self.assertEqual(pp.number_spellings("1.000000e+5", 100000.0), ("1.000000e+5", "100000.0"))
+        self.assertEqual(pp.number_spellings("1.0000000e+2", pp._number_value("1.0000000e+2")), ("1.0000000e+2", "100.00000"))
+        self.assertEqual([pp.numeric_probe(s) for s in pp.number_spellings("1.5e-05", pp._number_value("1.5e-05"))], [False, True],
+                         "a listed 1.5e-05 is armed as its expansion alone")
+        self.assertEqual([pp.numeric_probe(s) for s in pp.number_spellings("1e+16", pp._number_value("1e+16"))], [False, True])
+        underflow = pp.number_spellings("1000000e-400", pp._number_value("1000000e-400"))
+        self.assertEqual((len(underflow), underflow[0], underflow[1][:2], underflow[1].strip("0."), "0" in underflow), (2, "1000000e-400", "0.", "1", False),
+                         "an entry that underflows to 0.0 expands to its long plain fraction and never to a bare 0")
+        for value in (5000.0, 0.037, 2.5, 180.0, 1.37e11, 409600, 100.5, 0.0, 1234.5678, 12345678e-4, -4242424):
+            self.assertEqual(pp.number_spellings(json.dumps(value), value), (json.dumps(value),), "no exponent, one spelling: %r" % (value,))
+        for text in (".5678", "1234567.", "1e400", "12345670000000000", "1234567", "+4242424", "(12345678)", "1234 5678"):
+            self.assertEqual(pp.number_spellings(text, pp._number_value(text)), (text,),
+                             "a fragment, an overflow, a plus, an integer or a text json cannot read keeps its one spelling: %r" % (text,))
+        self.assertEqual(pp.number_spellings("12345678e-4", pp._number_value("12345678e-4")), ("12345678e-4", "1234.5678"),
+                         "a listed exponent form is applied as its plain spelling too")
+
     def test_a_listed_digit_run_under_seven_digits_is_not_applied_to_a_number_and_one_of_seven_is_with_its_list_line(self):
-        """THE NUMERIC FLOOR (2026-09-19, the comment at pp.NUMERIC_PROBE_MIN_DIGITS): identifier_hits applies a listed private
-        string to a number's wire spelling only when the entry carries a digit run of at least seven digits, because a
-        shorter run collides with some number of a real export by coincidence too often for a match to be evidence (measured
-        on a real export of 3,770 numbers: a listed four-digit run matched some number about one export in four, a
-        seven-digit run about one in 7,000). The boundary is pinned by execution with literals, never the constant: a
+        """THE NUMERIC FLOOR (2026-09-19, the comment at pp.NUMERIC_PROBE_MIN_DIGITS; its predicate corrected by the closing delta
+        the same day): identifier_hits applies a listed private string to a number's spellings only through a spelling of the
+        entry that carries at least seven digits counted across the whole spelling (pp.digit_count, pp.numeric_probe), because
+        a shorter listed value collides with some number of a real export by coincidence too often for a match to be evidence
+        (measured on a real export of 3,770 numbers: a listed four-digit run matched some number about one export in four, a
+        seven-digit run about one in 7,000). The quantity is the DIGIT COUNT, never the longest run, never the character length
+        and never the alphabet: the first floor (a086ced5a) gated on the longest run and excluded a listed 1234.5678 (eight
+        digits, longest run four) while it kept a bare 4242424, dropping a protection the base had; a length gate would admit
+        1234.56 (seven characters, six digits); the closing delta's first cut required the entry to be spelled like a number
+        (pp.number_shaped) and so dropped the base's token-run match of a listed (12345678), _12345678 or 12345678/ to the leaf
+        12345678, three refusals turned into sends. The boundary is pinned by execution with literals, never the constant: a
         six-digit listed run is no hit in any number that carries it (whole, inside a longer one, as a float, a negative, an
-        exponent spelling, a fraction, a list element) and stays a hit in a key and in a string value; a seven-digit listed
-        run is a hit as an integer, a float, a negative, an exponent spelling that canonicalises to it, inside a longer run
-        and as a fraction, at the value's path, and the Hit carries the entry's LIST LINE (Probe.line) and never its text. A
-        word probe keeps today's token-run match over numbers and an all-digit session-id prefix, eight digits, is above the
-        floor, so the floor's one effect is on the list. A floor of eight turns the seven-digit assertions red; a floor of
-        six turns the six-digit ones red."""
+        exponent spelling, a fraction, a list element) and stays a hit in a key and in a string value; a seven-digit listed run
+        is a hit as an integer, a float, a negative, an exponent spelling that canonicalises to it, inside a longer run and as a
+        fraction, at the value's path, and the Hit carries the entry's LIST LINE (Probe.line) and never its text; a listed
+        1234.5678 (line 5) hits the leaves 1234.5678 and 12345678e-4 carrying line 5 (the restored assertion); a listed 1234.56
+        hits no number carrying it and still hits the string and the key; a listed 12345678 does NOT hit the leaf 1234.5678 (the
+        trap the first stderr line advised: that number's spelling carries no eight consecutive digits); a listed (12345678)
+        (line 1) hits the leaf 12345678 by its token run and not the leaf 1234.5678, a listed 1234 5678 (line 2) hits 1234.5678
+        and not 12345678 (the groups split differently), a listed _12345678 and 12345678/ hit 12345678, and a listed zz4242424 is
+        armed and hits nothing (no number's token is zz4242424), all as the base at 5d1de45dc had them; abc12 is under the floor
+        by its two digits. The truth tables of digit_count, number_shaped and numeric_probe pin the count, the alphabet the
+        stderr line reads (the ASCII digits; a lone `e`, the empty string, a space and a comma are not shaped) and that the arm
+        reads the count alone (zz4242424 and (12345678) are numeric probes, abc12 is not). A word probe keeps today's token-run
+        match over numbers and an all-digit session-id prefix, eight digits, is above the floor, so the floor's one effect is on
+        the list. A floor of eight turns the seven-digit assertions red; a floor of six turns the six-digit ones red; the longest
+        run back turns the 1234.5678 hits red; a length gate turns the 1234.56 no-hits red; the alphabet back in the arm turns
+        the token-run hits and the numeric_probe truth table red."""
         six = [pp.Probe(pp.PRIVATE_KIND, "424242", 4)]
         for value in (424242, 1424242, 424242.0, -424242, 4.24242e5, 0.424242, [424242]):
             self.assertEqual(pp.identifier_hits({"a": {"n": value}}, six), [], "a six-digit listed run is not applied to a number: %r" % (value,))
@@ -1486,41 +1577,108 @@ class Cli(unittest.TestCase):
             self.assertEqual(hits[0].line, 3, "the Hit carries the entry's list line")
             self.assertNotIn("4242424", repr(hits), "and never its text")
         self.assertEqual(pp.identifier_hits({"a": {"n": 4242424}}, [(pp.PRIVATE_KIND, "4242424")])[0].line, None, "a plain tuple probe has no line")
-        self.assertEqual([pp.longest_digit_run(s) for s in ("424242", "4242424", "zz12345678zz.9", "1234.5678", "abc", "")], [6, 7, 8, 4, 0, 0])
+        pointed = [pp.Probe(pp.PRIVATE_KIND, "1234.5678", 5)]
+        for value in (1234.5678, 12345678e-4, -1234.5678, 91234.5678, 1234.56789):
+            hits = pp.identifier_hits({"a": {"n": value}}, pointed)
+            self.assertEqual(hits, [pp.Hit(pp.PRIVATE_KIND, False, "a/n", 2, 5)], "a listed 1234.5678, eight digits, is applied to a number: %r" % (value,))
+            self.assertNotIn("1234", repr(hits), "and never its text")
+        six_pointed = [pp.Probe(pp.PRIVATE_KIND, "1234.56", 6)]
+        for value in (1234.56, 91234.56, -1234.56):
+            self.assertIn("1234.56", json.dumps(value), repr(value))
+            self.assertEqual(pp.identifier_hits({"a": {"n": value}}, six_pointed), [],
+                             "a listed 1234.56, seven characters and six digits, is applied to no number: %r" % (value,))
+        self.assertEqual(_hits({"a": {"n": "x1234.56"}}, six_pointed), [(pp.PRIVATE_KIND, "the value at a/n")], "and stays a hit in a string value")
+        self.assertEqual(_hits({"a": {"1234.56": 1}}, six_pointed), [(pp.PRIVATE_KIND, "a key under a")], "and in a key")
+        self.assertEqual(pp.identifier_hits({"a": {"n": 1234.5678}}, [pp.Probe(pp.PRIVATE_KIND, "12345678", 7)]), [],
+                         "a listed eight-digit run protects only a number whose spelling carries it, and 1234.5678 carries no eight consecutive digits")
+        self.assertEqual([pp.digit_count(s) for s in ("1234.5678", "1234.56", "424242", "4242424", "1.5e-05", "12345670000000000", "0.000015", "abc12", "abc", "")],
+                         [8, 6, 6, 7, 4, 17, 7, 2, 0, 0])
+        self.assertEqual([pp.number_shaped(s) for s in ("1234.5678", "-4242424", "1.5e-05", ".5678", "4242424", "abc12", "zz4242424", "e", "", "1234 5678", "1,234")],
+                         [True, True, True, True, True, False, False, False, False, False, False])
+        self.assertEqual([pp.numeric_probe(s) for s in ("1234.5678", "4242424", "-4242424", "12345678e-4", "0.000015", "zz4242424", "(12345678)", "1234 5678",
+                                                         "424242", "1234.56", "1.5e-05", "abc12")],
+                         [True, True, True, True, True, True, True, True, False, False, False, False], "the arm reads the digit count and nothing else")
+        # the alphabet is not asked of the arm: an entry carrying other characters is applied by its token run, as the base did
+        for text, line, hit, miss in (("(12345678)", 1, 12345678, 1234.5678), ("1234 5678", 2, 1234.5678, 12345678),
+                                      ("_12345678", 3, 12345678, 1234.5678), ("12345678/", 4, 12345678, 1234.5678)):
+            probe = [pp.Probe(pp.PRIVATE_KIND, text, line)]
+            hits = pp.identifier_hits({"a": {"n": hit}}, probe)
+            self.assertEqual(hits, [pp.Hit(pp.PRIVATE_KIND, False, "a/n", 2, line)], "a listed %s is applied to the number %r by its token run" % (text, hit))
+            self.assertNotIn("12345678", repr(hits) + repr(hits[0].line), "and never its text")
+            self.assertEqual(pp.identifier_hits({"a": {"n": miss}}, probe), [], "the groups of %r split unlike %s" % (miss, text))
+        self.assertEqual(pp.identifier_hits({"a": {"n": 4242424}}, [pp.Probe(pp.PRIVATE_KIND, "zz4242424", 5)]), [],
+                         "an armed entry carrying a letter matches no number: no number's token is zz4242424")
         self.assertEqual(_hits({"a": {"n": 4242}}, [("hostname", "4242")]), [("hostname", "the value at a/n")], "a word probe over a number is as before")
         self.assertEqual(_hits({"a": {"n": 911111111}}, [("session id", "11111111")]), [("session id", "the value at a/n")],
                          "an eight-digit id prefix is above the floor")
 
     def test_the_stderr_line_counts_the_listed_entries_under_the_numeric_floor_once_and_names_none(self):
-        """machine_probes says once on stderr how many listed entries are checked in keys and string values but not in numbers
-        (pp.LIST_UNDER_NUMERIC_FLOOR): the entries that carry digits, all in runs shorter than the floor, so that a reader
-        whose private value is a short digit run knows the numeric arm does not protect it and can list more of its digits
-        or accept that. Over a list of a comment, a word, a six-digit run, a word with two digits and a seven-digit run: two
-        of four, the line's exact text, no entry in it, and each probe carries its file line, the comment counting. A list
-        whose every digit run is at or over the floor, or that carries no digit, says nothing. Removing the line turns this
-        red; so does a floor of eight (three of four) or of six (one of four)."""
+        """machine_probes says once on stderr how many listed entries are spelled like a number but carry fewer digits than the
+        floor in every spelling (pp.LIST_UNDER_NUMERIC_FLOOR): those are checked in keys and string values and not in numbers,
+        and the line says what does protect a number (an entry of seven or more digits, as written or as the plain decimal
+        spelling of an entry written with an exponent, matched against the number's own spelling: a listed 1234.5678 protects the
+        number 1234.5678, a listed 12345678 does not, and a listed entry of fewer digits protects no number), so that a reader
+        whose private value is a short number knows the numeric arm does not protect it and that listing a longer bare run
+        would silence this line without protecting the value (the trap the first line laid; the closing delta of 2026-09-19).
+        Over a list of a comment, a word, a six-digit run, a word with two digits, a seven-digit run, 1234.56, 1.5e-05 and
+        1234.5678: two of seven (424242 and 1234.56 are spelled like a number and under the floor; 1.5e-05 is four digits as
+        written and seven as its expansion 0.000015, which is the spelling armed, so it is NOT counted, where the delta's first
+        cut counted it and told the operator a value it protected was unprotected; abc12 carries letters, so no number can
+        carry it and it is not counted, where the first trigger counted it; 4242424 and 1234.5678 are armed), the line's exact
+        text, and each probe carries its file line, the comment counting. The line names no entry: the two values it spells,
+        1234.5678 and 12345678, are the template's own worked example, there for every list. The silent lists are the next
+        test's, on their own so that a trigger change that keeps this count and fires for one of them reds by name. Removing
+        the line turns this red; so does a floor of eight (four of seven: 4242424 and 0.000015 fall under it), a floor of six
+        (the line silent: 424242 and 1234.56 reach it), the longest-run trigger (five of seven: abc12 and 1234.5678 counted,
+        1.5e-05 by its run of two), an any-digit trigger (four of seven, abc12 counted), a length gate (one of seven: 1234.56
+        and 1.5e-05 are seven characters), or the floor decided on the entry's text alone (three of seven, 1.5e-05 counted)."""
         listed = os.path.join(self.state, "list.txt")
         with open(listed, "w", encoding="utf-8") as fh:
-            fh.write("# a comment on line 1\nzzcoinedzz\n424242\nabc12\n4242424\n")
+            fh.write("# a comment on line 1\nzzcoinedzz\n424242\nabc12\n4242424\n1234.56\n1.5e-05\n1234.5678\n")
         env = {"HOME": HOME, "USER": "tester", "ROMP_PRIVATE_STRINGS": listed}
         err = io.StringIO()
         with mock.patch.object(pp.socket, "gethostname", return_value="TESTHOST.example"), contextlib.redirect_stderr(err):
             probes = pp.machine_probes(None, env=env)
-        self.assertEqual(err.getvalue(), ("romp: 2 of 4 private-strings entries are checked in keys and string values but not in numbers (their digit "
-                         "runs are shorter than 7); a value that must be found in a number needs 7 or more of its digits listed\n"))
+        self.assertEqual(err.getvalue(), ("romp: 2 of 7 private-strings entries are spelled like a number but carry fewer than 7 digits, so they are checked "
+                                          "in keys and string values and not in numbers; a number is checked against a listed entry only when the entry, "
+                                          "or the plain decimal spelling of an entry written with an exponent, carries 7 or more digits, and the match is "
+                                          "against the number's own spelling: a listed 1234.5678 protects the number 1234.5678, a listed 12345678 does "
+                                          "not, and a listed entry of fewer digits protects no number\n"))
         self.assertEqual(err.getvalue().count("romp:"), 1, "said once")
-        for entry in ("zzcoinedzz", "424242", "abc12", "4242424"):
+        for entry in ("zzcoinedzz", "424242", "abc12", "4242424", "1.5e-05", "0.000015"):
             self.assertNotIn(entry, err.getvalue(), "the line names no entry")
+        self.assertIn("a listed 1234.5678 protects the number 1234.5678, a listed 12345678 does not", pp.LIST_UNDER_NUMERIC_FLOOR,
+                      "the two values the line spells are the template's worked example, not the list's entries")
         self.assertEqual([(p.text, p.line) for p in probes if p.kind == pp.PRIVATE_KIND],
-                         [("zzcoinedzz", 2), ("424242", 3), ("abc12", 4), ("4242424", 5)], "each probe carries the file's line, the comment counting")
+                         [("zzcoinedzz", 2), ("424242", 3), ("abc12", 4), ("4242424", 5), ("1234.56", 6), ("1.5e-05", 7), ("1234.5678", 8)],
+                         "each probe carries the file's line, the comment counting")
         self.assertTrue(all(p.line is None for p in probes if p.kind != pp.PRIVATE_KIND), "a machine string has no line")
-        for content in ("zzcoinedzz\nsecond-coined\n", "4242424\n12345678\n", ""):
+
+    def test_the_stderr_line_is_silent_for_a_list_with_nothing_spelled_like_a_number_under_the_floor(self):
+        """The silent side of the line above, each list on its own so a trigger change that keeps the count and fires for one of
+        these reds naming it: two words; two runs at or over the floor; the empty list; a word with digits beside a run with
+        letters (abc12, zz424242: the construction that fired the first line on every run on this box's list, whose entries all
+        carry a letter and appear in no number); a pointed value and a negative at the floor; an exponent-spelled 1.5e-05 and
+        1e+16 (four and one digit as written, seven and seventeen as 0.000015 and 10000000000000000, the spellings the arm
+        applies: an entry armed through its expansion is protected, and the line must not say otherwise, which the delta's
+        first cut did); an IP-shaped 10.0.0.1 beside an eight-digit run (an arrangement no number spells but the alphabet admits:
+        it is counted, the cost the comment at pp.NUMBER_CHARS names, so that list is the one loud case here, 1 of 2). Any of
+        the first cut's triggers (the longest run, any digit, the entry's text alone) reds a case here by name."""
+        listed = os.path.join(self.state, "list.txt")
+        env = {"HOME": HOME, "USER": "tester", "ROMP_PRIVATE_STRINGS": listed}
+        for content in ("zzcoinedzz\nsecond-coined\n", "4242424\n12345678\n", "", "abc12\nzz424242\n", "1234.5678\n-4242424\n", "1.5e-05\n1e+16\n"):
             with open(listed, "w", encoding="utf-8") as fh:
                 fh.write(content)
             err = io.StringIO()
             with mock.patch.object(pp.socket, "gethostname", return_value="TESTHOST.example"), contextlib.redirect_stderr(err):
                 pp.machine_probes(None, env=env)
-            self.assertEqual(err.getvalue(), "", "nothing under the floor, nothing said: %r" % content)
+            self.assertEqual(err.getvalue(), "", "nothing spelled like a number under the floor, nothing said: %r" % content)
+        with open(listed, "w", encoding="utf-8") as fh:
+            fh.write("10.0.0.1\n12345678\n")
+        err = io.StringIO()
+        with mock.patch.object(pp.socket, "gethostname", return_value="TESTHOST.example"), contextlib.redirect_stderr(err):
+            pp.machine_probes(None, env=env)
+        self.assertEqual(err.getvalue(), pp.LIST_UNDER_NUMERIC_FLOOR % (1, 2, 7, 7) + "\n", "an IP-shaped entry is inside the alphabet and is counted")
 
     def test_the_private_strings_list_feeds_the_probes_when_present_and_is_a_no_op_absent(self):
         """The machine-local list the repository's pre-push hook reads (~/.config/romp/private-strings.txt: one string per
@@ -1706,8 +1864,21 @@ class Cli(unittest.TestCase):
         export child refuses a snapshot whose counter spells a listed digit run, an integer or a float, naming the kind and the
         value's path and never the number, and writes nothing; the same snapshot without the list exports, the counter a
         number like any other. This is the cost the reference states for a listed string that is romp vocabulary, and the
-        remedy is the same, editing the list. Fails before: exit 0, the file written with the run in it."""
+        remedy is the same, editing the list. Two roads the closing check of 2026-09-19 found open on this verb are refused
+        here too. A listed 1234.5678 (eight digits, at the floor by digit count) as pusher.cycle_ms_p50, the shape that counter
+        has on a real kernel: the base at 5d1de45dc refused it and a086ced5a's longest-run floor sent it; the digits are in no
+        output, and the stderr line's own worked example, which spells 1234.5678, is not there either, since an armed entry is
+        not under the floor and nothing else is listed. A listed 12345670000000000 as pusher.cycles, spelled 1.234567e+16 by
+        json.dump (repr puts the point after the first digit) and spelled as the integer: both refused, the first by the
+        plain decimal expansion. And the token run the closing delta's first cut dropped by gating the arm on the alphabet: a
+        listed (12345678), characters no number spells around the run, with pusher.cycles carrying 12345678 is refused naming
+        line 1, as the base did (the closing check's Refuted section measured that cut as three refusals turned into sends).
+        The negative control the first stderr line's trap relied on: a listed 12345678 with the same 1234.5678 counter is the
+        next test's. Fails before: exit 0 and the file written with the run in it (the first case); exit 0 and the value
+        written (the closing check's two, and the token-run case under the first cut)."""
         listed = os.path.join(self.xdg, "private-strings.txt")
+        refusal = ("romp perf export: refused: a string this machine knows (private string) survives as the value at "
+                   "%s; edit line 1 of the private-strings list or that value; nothing written\n")
         with open(listed, "w", encoding="utf-8") as fh:
             fh.write("4242424242\n")
         for value in (4242424242, 4242424242.0, 4.242424242e9):
@@ -1717,40 +1888,126 @@ class Cli(unittest.TestCase):
                 json.dump(snap, fh)
             r = _run(["--public", "--from", self.src], env_extra={"ROMP_PRIVATE_STRINGS": listed}, state=self.state)
             self.assertEqual(r.returncode, 1, repr(value) + "\n" + r.stdout + r.stderr)
-            self.assertEqual(r.stderr, "romp perf export: refused: a string this machine knows (private string) survives as the value at "
-                                       "perf/pusher/cycles; edit line 1 of the private-strings list or that value; nothing written\n", repr(value))
+            self.assertEqual(r.stderr, refusal % "perf/pusher/cycles", repr(value))
             self.assertNotIn("4242424242", r.stdout + r.stderr, repr(value))
             self.assertFalse(os.path.exists(os.path.join(self.state, "perf-exports")), repr(value))
         r = _run(["--public", "--from", self.src], state=self.state)
         self.assertEqual(r.returncode, 0, r.stderr + " (without the list, the counter is a number like any other)")
+        shutil.rmtree(os.path.join(self.state, "perf-exports"))
+        # the restored protection: a pointed value of eight digits, the shape pusher.cycle_ms_p50 has on a real kernel; the
+        # fixture's sha abbreviates to 0123456789ab, a STRING value carrying the bare run 12345678, so it goes: this case and
+        # its control are about the number
+        with open(listed, "w", encoding="utf-8") as fh:
+            fh.write("1234.5678\n")
+        snap = leak_snapshot()
+        snap.pop("kernel_sha")
+        snap["pusher"]["cycle_ms_p50"] = 1234.5678
+        with open(self.src, "w") as fh:
+            json.dump(snap, fh)
+        r = _run(["--public", "--from", self.src], env_extra={"ROMP_PRIVATE_STRINGS": listed}, state=self.state)
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertEqual(r.stderr, refusal % "perf/pusher/cycle_ms_p50")
+        for digits in ("1234.5678", "12345678"):
+            self.assertNotIn(digits, r.stdout + r.stderr)
+        self.assertFalse(os.path.exists(os.path.join(self.state, "perf-exports")))
+        # the exponent spelling: one value, as json.dump spells the float and as the integer
+        with open(listed, "w", encoding="utf-8") as fh:
+            fh.write("12345670000000000\n")
+        for value in (1.234567e+16, 12345670000000000):
+            snap = leak_snapshot()
+            snap["pusher"]["cycles"] = value
+            with open(self.src, "w") as fh:
+                json.dump(snap, fh)
+            with open(self.src, encoding="utf-8") as fh:
+                self.assertIn('"cycles": ' + json.dumps(value), fh.read(), "the snapshot spells the value as json does: %r" % (value,))
+            r = _run(["--public", "--from", self.src], env_extra={"ROMP_PRIVATE_STRINGS": listed}, state=self.state)
+            self.assertEqual(r.returncode, 1, repr(value) + "\n" + r.stdout + r.stderr)
+            self.assertEqual(r.stderr, refusal % "perf/pusher/cycles", repr(value))
+            for digits in ("12345670000000000", "1.234567e+16", "1234567"):
+                self.assertNotIn(digits, r.stdout + r.stderr, repr(value))
+            self.assertFalse(os.path.exists(os.path.join(self.state, "perf-exports")), repr(value))
+        # the token run: an entry carrying characters no number spells, applied by its whole-token run as the base did (the
+        # closing delta's first cut gated the arm on the alphabet and sent this document); the sha string carries the bare run
+        # and not the parenthesised entry, so it stays, and the refusal is the number's
+        with open(listed, "w", encoding="utf-8") as fh:
+            fh.write("(12345678)\n")
+        snap = leak_snapshot()
+        snap["pusher"]["cycles"] = 12345678
+        with open(self.src, "w") as fh:
+            json.dump(snap, fh)
+        r = _run(["--public", "--from", self.src], env_extra={"ROMP_PRIVATE_STRINGS": listed}, state=self.state)
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertEqual(r.stderr, refusal % "perf/pusher/cycles")
+        self.assertNotIn("12345678", r.stdout + r.stderr)
+        self.assertFalse(os.path.exists(os.path.join(self.state, "perf-exports")))
+        r = _run(["--public", "--from", self.src], state=self.state)
+        self.assertEqual(r.returncode, 0, r.stderr + " (without the list, the counter is a number like any other)")
+
+    def test_a_listed_bare_eight_digit_run_neither_protects_a_pointed_value_nor_is_said_to(self):
+        """The negative control the first stderr line's trap relied on (the closing check of 2026-09-19): with 12345678 listed
+        and pusher.cycle_ms_p50 carrying 1234.5678, the export is written, rc 0, the file carrying the value, and stderr is
+        EMPTY. An eight-digit entry is above the floor, so it is applied to numbers and nothing is under the floor to be said;
+        and it protects only a number whose spelling carries that run, which 1234.5678 does not (its longest run is four). The
+        first line advised listing more of the value's digits, which produced exactly this: the line silenced and the value on
+        the wire; the new line says what does protect a number instead, and the previous test pins that a listed 1234.5678
+        refuses. The fixture's sha abbreviation, a string carrying the run, is dropped so the control is about the number. A
+        floor of nine turns the empty-stderr assertion red (the entry falls under the floor and the line fires); an advisory
+        that counts every number-shaped entry, floor ignored, turns it red the same way."""
+        listed = os.path.join(self.xdg, "private-strings.txt")
+        with open(listed, "w", encoding="utf-8") as fh:
+            fh.write("12345678\n")
+        snap = leak_snapshot()
+        snap.pop("kernel_sha")
+        snap["pusher"]["cycle_ms_p50"] = 1234.5678
+        with open(self.src, "w") as fh:
+            json.dump(snap, fh)
+        r = _run(["--public", "--from", self.src], env_extra={"ROMP_PRIVATE_STRINGS": listed}, state=self.state)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(r.stderr, "", "an eight-digit entry is above the floor, so nothing is under it and nothing is said")
+        written = os.listdir(os.path.join(self.state, "perf-exports"))
+        self.assertEqual(len(written), 1)
+        with open(os.path.join(self.state, "perf-exports", written[0]), encoding="utf-8") as fh:
+            self.assertIn('"cycle_ms_p50": 1234.5678', fh.read(), "the value travels: a listed bare run protects only a number whose spelling carries it")
 
     def test_a_listed_six_digit_run_inside_a_byte_total_exports_with_the_stderr_line_and_a_seven_digit_run_refuses_naming_the_list_line(self):
         """The floor by the export child (2026-09-19). With a list of a comment, a word, a blank and a six-digit run (line 4), a
         snapshot whose rss_kb carries the run inside a byte total (9424242) exports, exit 0, the file written with the number
-        in it, and stderr is exactly the one line saying 1 of 2 entries are checked in keys and string values but not in
-        numbers; the same run as a KEY is refused as before, naming line 4, the loud line before the refusal. With the run
+        in it, and stderr is exactly the one line saying 1 of 2 entries are spelled like a number but carry fewer than 7 digits,
+        so they are checked in keys and string values and not in numbers, and what does protect a number (the closing delta's
+        text, 2026-09-19: the first line advised listing more digits, which for a pointed value silenced the line and protected
+        nothing); the same holds for the pointed 1234.56 (seven characters, six digits) listed on line 4 with pusher.cycle_ms_p50
+        carrying it, the case the floor lets through by design, pinned green on purpose: the value travels and the line says so
+        once; the same run as a KEY is refused as before, naming line 4, the loud line before the refusal. With the run
         lengthened to seven digits on the same line 4, a counter that spells it, as an integer, a float, a negative and an
         exponent spelling, and a byte total that carries it, is refused naming the kind, the value's path and line 4 of the
         list with the remedy, the run in no output, nothing written, and stderr is that one line, since no entry is under
         the floor. The boundary is by execution with literals: 424242 passes, 4242424 refuses. Fails before: the six-digit run
         refused the export, exit 1, and no refusal named a line."""
         listed = os.path.join(self.xdg, "private-strings.txt")
-        loud = ("romp: 1 of 2 private-strings entries are checked in keys and string values but not in numbers (their digit "
-                "runs are shorter than 7); a value that must be found in a number needs 7 or more of its digits listed\n")
+        loud = ("romp: 1 of 2 private-strings entries are spelled like a number but carry fewer than 7 digits, so they are checked in keys "
+                "and string values and not in numbers; a number is checked against a listed entry only when the entry, or the plain decimal "
+                "spelling of an entry written with an exponent, carries 7 or more digits, and the match is against the number's own spelling: "
+                "a listed 1234.5678 protects the number 1234.5678, a listed 12345678 does not, and a listed entry of fewer digits protects no "
+                "number\n")
+        self.assertEqual(loud, pp.LIST_UNDER_NUMERIC_FLOOR % (1, 2, 7, 7) + "\n", "the literal here is the module's line with its four numbers")
+        for entry, block, leaf, value, spelled in (("424242", "process", "rss_kb", 9424242, '"rss_kb": 9424242'),
+                                                   ("1234.56", "pusher", "cycle_ms_p50", 1234.56, '"cycle_ms_p50": 1234.56')):
+            with open(listed, "w", encoding="utf-8") as fh:
+                fh.write("# strings that must never be published\nzzcoinedzz\n\n%s\n" % entry)
+            snap = leak_snapshot()
+            snap[block][leaf] = value
+            with open(self.src, "w") as fh:
+                json.dump(snap, fh)
+            r = _run(["--public", "--from", self.src], env_extra={"ROMP_PRIVATE_STRINGS": listed}, state=self.state)
+            self.assertEqual(r.returncode, 0, entry + "\n" + r.stdout + r.stderr)
+            self.assertEqual(r.stderr, loud, entry)
+            written = os.listdir(os.path.join(self.state, "perf-exports"))
+            self.assertEqual(len(written), 1, entry)
+            with open(os.path.join(self.state, "perf-exports", written[0]), encoding="utf-8") as fh:
+                self.assertIn(spelled, fh.read(), "the number carrying the six-digit entry is written: %s" % entry)
+            shutil.rmtree(os.path.join(self.state, "perf-exports"))
         with open(listed, "w", encoding="utf-8") as fh:
             fh.write("# strings that must never be published\nzzcoinedzz\n\n424242\n")
-        snap = leak_snapshot()
-        snap["process"]["rss_kb"] = 9424242
-        with open(self.src, "w") as fh:
-            json.dump(snap, fh)
-        r = _run(["--public", "--from", self.src], env_extra={"ROMP_PRIVATE_STRINGS": listed}, state=self.state)
-        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        self.assertEqual(r.stderr, loud)
-        written = os.listdir(os.path.join(self.state, "perf-exports"))
-        self.assertEqual(len(written), 1)
-        with open(os.path.join(self.state, "perf-exports", written[0]), encoding="utf-8") as fh:
-            self.assertIn('"rss_kb": 9424242', fh.read(), "the byte total carrying the six-digit run is written")
-        shutil.rmtree(os.path.join(self.state, "perf-exports"))
         snap = leak_snapshot()
         snap["pusher"]["connectPush"]["byApp"]["424242"] = {"count": 1}
         with open(self.src, "w") as fh:

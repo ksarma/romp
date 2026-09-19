@@ -100,12 +100,19 @@ that is there but is not a regular file, one that cannot be read, a symbolic lin
 ROMP_PRIVATE_STRINGS naming a file that is not there, is said on stderr at the moment it happens, LIST_UNREADABLE, naming
 the path and the reason, since a check that turns itself off must say so) are searched for in every key, string value and NUMBER of
 the finished document, case-insensitively (a number by its wire spelling, json.dumps, the spelling the export's writer
-puts in the file and the upload puts on the wire, so a listed digit run inside a numeric leaf is found however the file
-spelled it, the fourth review round, 2026-09-19; a bool and null are not scanned; a listed string is applied to a
-NUMBER only when it carries a digit run of at least NUMERIC_PROBE_MIN_DIGITS digits, seven, the floor the comment at that
-constant derives from measured collision chances, since 2026-09-19, and a listed entry whose digit runs are all shorter
-is checked in every key and string value and in no number, which machine_probes says once on stderr,
-LIST_UNDER_NUMERIC_FLOOR), and a hit refuses the write naming
+puts in the file and the upload puts on the wire, and, when that spelling carries an exponent, by its plain decimal
+expansion too, number_spellings, so a listed digit run inside a numeric leaf is found however the file spelled it, the
+fourth review round and the closing delta, 2026-09-19; a bool and null are not scanned; a listed string is applied to a
+NUMBER only when some spelling of it, the entry as listed or the plain decimal expansion of an entry written with an
+exponent, carries at least NUMERIC_PROBE_MIN_DIGITS digits, seven, counted across the whole spelling (numeric_probe:
+1234.5678 has eight, (12345678) has eight and is applied by its token run; never the longest run, never the character
+length, and never the alphabet: an entry carrying other characters is applied too, since the base matched it to a number
+by its token run and dropping that sent three refused documents), the floor the comment at that constant derives from
+measured collision chances, since 2026-09-19, and a listed entry spelled like a number (number_shaped) whose every
+spelling has fewer digits is checked in every key and string value and in no number, which machine_probes says once on
+stderr, LIST_UNDER_NUMERIC_FLOOR, naming what does protect a number; an entry carrying a character outside NUMBER_CHARS
+is not counted by that line, since it is a substring of no number and the line's remedy is written for a value), and a
+hit refuses the write naming
 the key path and the kind of string, never the value; for a listed string the refusal also names the LINE of the list
 the entry is on (Hit.line, carried from the Probe, never the text) and the remedy, editing that line or the value.
 A hostname or a login is a WORD and is matched as a run of whole tokens
@@ -146,6 +153,7 @@ import re
 import socket
 import stat
 import sys
+from decimal import Decimal
 
 OTHER = "other"
 
@@ -732,22 +740,65 @@ PROBE_MIN = 4   # a shorter machine string matches romp's own vocabulary too oft
 WORD_KINDS = frozenset({"hostname", "username"})   # probes that are words: matched as runs of whole tokens alone (probe_in)
 PRIVATE_KIND = "private string"                    # a listed string: matched as a substring OR a run of whole tokens (probe_in)
 TOKEN = re.compile(r"[a-z0-9]+")
-DIGIT_RUN = re.compile(r"[0-9]+")
-# THE NUMERIC FLOOR (2026-09-19). identifier_hits scans a number by its wire spelling (json.dumps) and applies a probe to it
-# only when the probe carries a digit run of at least NUMERIC_PROBE_MIN_DIGITS digits (longest_digit_run); a listed private
-# string whose digit runs are all shorter is checked in every key and string value as before and in no number, and
-# machine_probes says so once on stderr (LIST_UNDER_NUMERIC_FLOOR). The floor is where a match becomes EVIDENCE, not a
-# tolerated rate of false refusals. Measured on a real export of 2026-09-19 (3,770 numbers, 2,684 of them integers, none
-# negative or exponent-spelled): a listed run of k digits collides by substring with some number of that one export with
-# probability about 0.26 at k=4 (2,558 distinct 4-digit windows over the 10,000 possible), 0.023 at k=5, 0.0019 at k=6,
-# 0.00015 at k=7, 0.000012 at k=8 and under one in a million at k=9; over the day's nine real exports together, 0.81, 0.13,
-# 0.011, 0.00095 and 0.000076 for k=4 to 8. At four digits a match is a coin toss on coincidence alone, so a refusal there
-# says nothing about whether the private value is present, and a check that refuses at random trains its reader to clear the
-# refusal without looking; at seven the coincidence is about 0.015 percent per export, so a match is overwhelmingly the
-# listed value itself. That is why an entry under the floor is not checked in numbers at all rather than checked with a
-# known error rate: below the floor the check carries no information. The list this was measured beside holds eleven
-# entries, none a digit run, the longest digit run three, none drawn from the number alphabet, so the floor changes nothing
-# for it today; it is a guard for a list that later holds a long digit run.
+DIGITS = frozenset("0123456789")               # the decimal digits, the explicit ASCII set (str.isdigit accepts other scripts' digits too)
+# NUMBER_CHARS is an ALPHABET test, not a grammar: every character json.dumps emits for a finite int or float (400k values
+# sampled, 2026-09-19), so a string outside it is a substring of no number. It admits arrangements no number spells (10.0.0.1,
+# 2026-09, +424242, 1e5e5), accepted because the alphabet decides only whether the stderr line counts an entry (machine_probes),
+# never whether it is applied to a number (numeric_probe, by digit count alone): an IP address under the floor is counted by a
+# line whose remedy cannot apply to it, a cost taken over a grammar that would have to track json's own.
+NUMBER_CHARS = frozenset("+-.0123456789e")
+# THE NUMERIC FLOOR (2026-09-19; its predicate corrected by the closing delta the same day). identifier_hits scans a number by
+# its wire spelling (json.dumps) and, when that spelling carries an exponent, by its plain decimal expansion too
+# (number_spellings), and applies a listed private string to those spellings only through a SPELLING OF THE ENTRY that carries
+# at least NUMERIC_PROBE_MIN_DIGITS digits counted across the whole spelling (numeric_probe: 1234.5678 has eight, 1234.56 six,
+# 4242424 seven, 1.5e-05 four as listed and seven as its plain expansion 0.000015, which is the spelling armed); a listed entry
+# spelled like a number (number_shaped) whose every spelling has fewer digits is checked in every key and string value as
+# before and in no number, and machine_probes says so once on stderr (LIST_UNDER_NUMERIC_FLOOR, which also says what does
+# protect a number). The floor is by DIGIT COUNT and by nothing else: an entry carrying characters outside NUMBER_CHARS
+# ((12345678), _12345678, 12345678/, 1234 5678, zz4242424) is armed by the same count and is applied by its token run
+# (probe_in), which matches a number whose digit groups split the same way, as the base at 5d1de45dc did; the closing delta's
+# first cut gated the arm on the alphabet and turned three refusals into sends ((12345678), _12345678 and 12345678/ against
+# the leaf 12345678, refused at the base and at cd3b4cfab, exported and POSTed under that cut), so the alphabet decides only
+# the stderr count, where such an entry is not counted: it is a substring of no number and the line's remedy is written for
+# a value. The floor is where a match becomes EVIDENCE, not a tolerated rate of false refusals. Measured on a real export of
+# 2026-09-19 (3,770 numbers, 2,684 of
+# them integers, none negative or exponent-spelled): a listed run of k digits collides by substring with some number of that
+# one export with probability about 0.26 at k=4 (2,558 distinct 4-digit windows over the 10,000 possible), 0.023 at k=5,
+# 0.0019 at k=6, 0.00015 at k=7, 0.000012 at k=8 and under one in a million at k=9; over the day's nine real exports together,
+# 0.81, 0.13, 0.011, 0.00095 and 0.000076 for k=4 to 8. Those nine exports are not on disk; the one real export this box keeps
+# (3,658 numbers, 2,595 of them integers, none negative or exponent-spelled) re-derives the per-export row within its stated
+# precision (0.23, 0.021, 0.0018, 0.00015, 0.000012) and is the corpus of the shape rates below. At four digits a match is a
+# coin toss on coincidence alone, so a refusal there says nothing about whether the private value is present, and a check that
+# refuses at random trains its reader to clear the refusal without looking; at seven the coincidence is about 0.015 percent
+# per export, so a match is overwhelmingly the listed value itself. That is why an entry under the floor is not checked in
+# numbers at all rather than checked with a known error rate: below the floor the check carries no information.
+# WHY THE DIGIT COUNT, and not the longest digit run or the character length. The chance that a listed value of some shape
+# collides is the count of distinct windows of that shape over the export's spellings divided by ten to the power of its
+# DIGITS: the denominator is set by the digit count alone, and the numerator is bounded by the spellings whatever the shape (a
+# float's spelling holds one point, so a pointed shape has at most one window per float), so each digit divides the chance by
+# about ten and moving the point does not multiply it back. The first floor (a086ced5a) gated on the LONGEST RUN and so
+# excluded a listed 1234.5678 (eight digits, longest run four) while it kept a bare 4242424: the value with the stronger
+# evidence was dropped (the dddd.dddd window is bounded by one per float, 1.09e-5 on the comment's export against the 1.5e-4
+# of the seven-run it kept, fourteen times; measured 7.2e-7 on the export on disk, two hundred times), the base at 5d1de45dc
+# had refused that value on both roads while a086ced5a sent it, and the stderr line then advised listing more consecutive
+# digits, which silenced the line and protected nothing, since that number's spelling carries no eight consecutive digits. A
+# CHARACTER-LENGTH gate over the number alphabet admits 1234.56 (seven characters, six digits), a value drawn from a million:
+# the verifier measured its window at 8.75e-4 on a corpus of the comment's shape, 2.6 times the bare seven-run's; on the
+# export on disk the six-digit pointed shapes collide between 5.2e-5 (ddddd.d) and 1.7e-4 (d.ddddd, 1.2 times the bare
+# seven-run) with dddd.dd at 7.6e-5, every seven-digit pointed shape is under 1.8e-5 and every eight-digit one under 1.8e-6
+# (the closing delta's floor-measurement script over the export on disk, counts only). A digit-count gate admits 1234.5678
+# and excludes 1234.56 and 424242, which is the order the chances have. THE ONE EXCEPTION TO "EACH DIGIT DIVIDES BY TEN": the
+# leading zeros of a fraction count as digits and add no evidence. A listed 0.000015 counts seven and is armed, but a float
+# spelled 1.5xe-05 for any digit x expands to 0.000015x and carries it, so the entry collides with every float in
+# [1.5e-05, 1.6e-05), about one in a hundred of the floats in that decade, the rate of its TWO significant digits and not of
+# seven (the closing delta's verifier measured 5 of 800 random exponent-spelled floats; the same holds with no exponent for a
+# listed 0.001234 against [0.001234, 0.001235)). Such an entry is armed at the collision rate of its significant digits; no
+# real export's float sits in those ranges today (none is exponent-spelled), and the count is not corrected for it because a
+# significant-digit floor would drop 0.000015 and 1.5e-05 from the numeric arm, a design change the ruling did not make.
+# The list this was measured beside holds eleven entries, none spelled like a number, so none is counted by the line, and
+# none carries seven digits, so none is applied to a number (at cd3b4cfab the line's longest-run trigger counted five of
+# them, entries carrying a letter, and fired on every run here, which the closing check caught); the floor is a guard for a
+# list that later holds a numeric value.
 # What the floor leaves as it was. A hostname or a login (WORD_KINDS) is matched as a run of whole tokens, so over a number
 # it matches a whole digit group only (an all-digit hostname or login of PROBE_MIN or more characters; rare, the cost
 # identifier_hits' docstring names), and it stays applied to numbers at any length. Every other probe is a substring match
@@ -788,8 +839,11 @@ PRIVATE_STRINGS_FILE = os.path.join("romp", "private-strings.txt")
 PRIVATE_STRINGS_MAX = 64 * 1024
 LIST_OVER_BOUND = "romp: the private-strings list is over %d bytes; entries past the bound are not checked" % PRIVATE_STRINGS_MAX
 LIST_NOT_IN_FORCE = "romp: %d of %d private-strings entries did not become probes and are not checked; the list is not fully in force"
-LIST_UNDER_NUMERIC_FLOOR = ("romp: %d of %d private-strings entries are checked in keys and string values but not in numbers (their digit "
-                            "runs are shorter than %d); a value that must be found in a number needs %d or more of its digits listed")
+LIST_UNDER_NUMERIC_FLOOR = ("romp: %d of %d private-strings entries are spelled like a number but carry fewer than %d digits, so they are checked "
+                            "in keys and string values and not in numbers; a number is checked against a listed entry only when the entry, or the "
+                            "plain decimal spelling of an entry written with an exponent, carries %d or more digits, and the match is against the "
+                            "number's own spelling: a listed 1234.5678 protects the number 1234.5678, a listed 12345678 does not, and a listed entry "
+                            "of fewer digits protects no number")
 LIST_UNREADABLE = "romp: no private-strings list was read from %s (%s); no listed string is checked"   # the path and the reason
 LIST_NOT_UTF8 = "romp: %d line(s) of the private-strings list at %s are not UTF-8 and are not checked"
 
@@ -909,10 +963,84 @@ def private_strings(env):
     return [text for _, text in private_entries(env)]
 
 
-def longest_digit_run(s):
-    """The length of the longest run of decimal digits in `s`, 0 when it carries none: what NUMERIC_PROBE_MIN_DIGITS is
-    measured against (`abc` is 0, `zz424242zz` is 6, `1234.5678` is 4, `4242424` is 7)."""
-    return max((len(run) for run in DIGIT_RUN.findall(s)), default=0)
+def digit_count(s):
+    """How many characters of `s` are decimal digits (DIGITS, the ASCII set), counted across the whole string: what
+    NUMERIC_PROBE_MIN_DIGITS is measured against (`1234.5678` is 8, `1234.56` is 6, `424242` is 6, `4242424` is 7,
+    `1.5e-05` is 4, `12345670000000000` is 17, `0.000015` is 7, `abc12` is 2, `abc` and the empty string are 0). Never
+    the longest run: the first floor (a086ced5a) measured that and excluded 1234.5678 while it kept 4242424, the comment
+    at NUMERIC_PROBE_MIN_DIGITS."""
+    return sum(1 for c in s if c in DIGITS)
+
+
+def number_shaped(s):
+    """Is `s` spelled like a number: at least one digit, and every character in NUMBER_CHARS, the alphabet json.dumps
+    spells a finite number with (`1234.5678`, `-4242424`, `1.5e-05`, `.5678` and `4242424` are; `abc12`, `zz4242424`, a
+    lone `e` and the empty string are not). Read by machine_probes alone, to decide whether an entry under the floor is
+    COUNTED by the stderr line: a string carrying any other character is a substring of no number's spelling, so the
+    line's remedy, written for a value, cannot apply to it (at cd3b4cfab the line counted any digit run under the floor,
+    letters or not, and fired on every run on this box for entries carrying a letter). It decides nothing about whether
+    an entry is APPLIED to a number (numeric_probe, by digit count alone): such an entry can still match a number by its
+    token run, and the base did. An alphabet test, not a grammar: 10.0.0.1 and 2026-09 are shaped (the comment at
+    NUMBER_CHARS). On the entry's stripped lower-cased text, the normalisation machine_probes applies (a listed `1.5E-05`
+    is `1.5e-05`)."""
+    return any(c in DIGITS for c in s) and all(c in NUMBER_CHARS for c in s)
+
+
+def numeric_probe(s):
+    """Is the spelling `s` of a listed entry applied to NUMBERS by identifier_hits: it carries at least
+    NUMERIC_PROBE_MIN_DIGITS digits (digit_count), the floor the comment at that constant derives, and nothing else is
+    asked of it (`1234.5678`, `4242424`, `-4242424`, `12345678e-4`, `0.000015`, `zz4242424`, `(12345678)` and `1234 5678`
+    are; `424242`, `1234.56`, `1.5e-05` and `abc12` are not). Not the alphabet: an entry carrying other characters is
+    applied by its token run (probe_in), which matches a number whose digit groups split the same way, as the base did;
+    the closing delta's first cut required number_shaped here and turned three refusals into sends. Decided per
+    SPELLING, so an entry written with an exponent is armed through its plain expansion when that carries the digits
+    (identifier_hits applies numeric_probe to each of number_spellings' results; a listed 1.5e-05 is armed as 0.000015
+    and not as itself, a listed 1e+16 as 10000000000000000)."""
+    return digit_count(s) >= NUMERIC_PROBE_MIN_DIGITS
+
+
+def _number_value(text):
+    """The int or finite float `text` parses to as a JSON number, else None: what number_spellings expands a listed
+    entry through. A fragment (`.5678`, `1234567.`), an overflow (`1e400`, which parses to infinity), a plus sign or a
+    leading zero parses to no finite number and keeps its one spelling."""
+    try:
+        value = json.loads(text)
+    except ValueError:                                     # not a JSON number; also the interpreter's digit limit on a huge int
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return value if isinstance(value, int) or math.isfinite(value) else None
+
+
+def number_spellings(text, value=None):
+    """Every spelling a reader recovers a number's value from, distinct, `text` first: the spellings identifier_hits scans
+    a number leaf by and applies an armed listed entry as. `text` is the wire spelling (json.dumps(node) for a leaf; the
+    entry as listed for a probe) and `value` the number it spells (the leaf itself; _number_value(text) for a probe).
+    When `value` is a finite float and `text` carries an exponent (repr spells a float at or above 1e16 or under 1e-4 in
+    magnitude with a point after the first digit and an exponent after the mantissa), the plain decimal expansion of the
+    TEXT, format(Decimal(text), 'f') (`1.234567e+16` is `12345670000000000`, `1.5e-05` is `0.000015`, `1.234567e-05` is
+    `0.00001234567`, `-1.5e-05` is `-0.000015`, `1e+16` is `10000000000000000`, `1e+23` is `100000000000000000000000`).
+    Two spellings at most, and never a third: the exact integer the double holds, str(int(value)), differs from the
+    expansion above 2**53 (int(1e+23) is 99999999999999991611392) and spells digits neither the file nor a person wrote,
+    binary noise that a listed 9999999 would then match; the closing delta's first cut scanned it and the verifier
+    dropped it (the ruling named the plain expansion alone). Decimal of the TEXT, never of the value: Decimal(value) is
+    the double's exact binary expansion, not a spelling a reader recovers (Decimal(1e+23) is 99999999999999991611392 and
+    never 100000000000000000000000). A number whose repr carries no exponent has the one spelling (5000.0, 0.037,
+    1234.5678, 409600, every int), so a real export's numbers gain none: the export the floor was measured on had no
+    exponent-spelled number. The closing check of 2026-09-19: a listed 12345670000000000 was refused when the leaf
+    spelled the integer and travelled when the same value's canonical spelling was 1.234567e+16; the hole was as old as
+    the numeric scan (431db9a60), and this module claimed a listed run was found however the file spelled it. A listed
+    entry is expanded the same way and the floor is decided PER SPELLING (identifier_hits applies numeric_probe to each):
+    a listed 1.5e-05 is armed as its expansion 0.000015 and not as itself, a listed 1e+16 as 10000000000000000, and an
+    expansion that carries fewer digits than the entry is not armed (a listed 1.0000000e+2 is armed as itself and as
+    100.00000, both harmless, and never as 100). An entry that underflows to zero (1000000e-400) expands to its long
+    plain fraction and to no `0`."""
+    out = [text]
+    if isinstance(value, float) and math.isfinite(value) and "e" in text:
+        plain = format(Decimal(text), "f")
+        if plain not in out:
+            out.append(plain)
+    return tuple(out)
 
 
 class Probe(collections.namedtuple("Probe", "kind text")):
@@ -941,13 +1069,25 @@ def machine_probes(state_dir=None, env=None):
     entry silently while a document carrying it was sent (the upload's second review round, 2026-09-18); an empty
     entry is never a probe (an empty substring is in every string). When a listed entry did not become a probe (the
     reader returns no blank today, so only a filter a later change adds could drop one), LIST_NOT_IN_FORCE says how
-    many of how many on stderr: a list silently not in force is the wrong signal. When at least one listed entry
-    carries digits only in runs shorter than NUMERIC_PROBE_MIN_DIGITS, LIST_UNDER_NUMERIC_FLOOR says once how many of
-    how many are checked in keys and string values and not in numbers (the comment at the floor: below it a match in a
-    number is coincidence, so identifier_hits does not apply such an entry to a number), so that a reader whose private
-    value is a short digit run knows the numeric arm does not protect it and can list more of its digits or accept
-    that; an entry with no digit at all is not counted, since no number spells it. See the module docstring for why
-    session names are not probes, and why a listed string that is also romp vocabulary refuses on purpose."""
+    many of how many on stderr: a list silently not in force is the wrong signal. When at least one listed entry is
+    spelled like a number (number_shaped, on its stripped lower-cased text) and NO spelling of it (number_spellings:
+    the text, and the plain decimal expansion of an entry written with an exponent) carries NUMERIC_PROBE_MIN_DIGITS
+    digits (numeric_probe, the arm's own test, so the two sides partition the number-shaped entries),
+    LIST_UNDER_NUMERIC_FLOOR says once how many of how many are checked in keys and string values and not in numbers
+    (the comment at the floor: below it a match in a number is coincidence, so identifier_hits does not apply such an
+    entry to a number) and what does protect a number: a listed entry of seven or more digits, in its own spelling or
+    its plain expansion, matched against the number's own spelling, since a listed bare run protects only a number
+    whose spelling carries that run (the first line advised listing more of the value's digits, which for a pointed
+    value such as 1234.5678 silenced the line and protected nothing; the closing delta of 2026-09-19). A listed 1e+16 or
+    1.5e-05 is not counted: its plain expansion (10000000000000000, 0.000015) carries the digits and is what the arm
+    applies. An entry with no digit, or with any character outside NUMBER_CHARS (zz424242, abc12), is not counted: it
+    is a substring of no number, so the line's remedy, written for a value, cannot apply to it (at cd3b4cfab the
+    trigger counted any digit run under the floor, letters or not, and the line fired on every run on this box for
+    entries carrying a letter); an entry of seven or more digits with such a character (zz4242424, (12345678)) is
+    applied to numbers by its token run and is not what the line is about. Both numbers in the line run over listed
+    LINES, so a repeated entry is counted once per line while the probes dedupe it to one (a list of 1234.56, 1234.56
+    and 424242 says 3 of 3). See the module docstring for why session names are not probes, and why a listed string
+    that is also romp vocabulary refuses on purpose."""
     env = os.environ if env is None else env
     out = []
 
@@ -972,7 +1112,9 @@ def machine_probes(state_dir=None, env=None):
     dropped = sum(1 for _, s in listed if (PRIVATE_KIND, str(s).strip().lower()) not in out)
     if dropped:
         sys.stderr.write(LIST_NOT_IN_FORCE % (dropped, len(listed)) + "\n")
-    under = sum(1 for _, s in listed if 0 < longest_digit_run(str(s)) < NUMERIC_PROBE_MIN_DIGITS)
+    texts = [str(s or "").strip().lower() for _, s in listed]
+    under = sum(1 for t in texts                                            # spelled like a number, and armed by no spelling: the arm's other side
+                if number_shaped(t) and not any(numeric_probe(s) for s in number_spellings(t, _number_value(t))))
     if under:
         sys.stderr.write(LIST_UNDER_NUMERIC_FLOOR % (under, len(listed), NUMERIC_PROBE_MIN_DIGITS, NUMERIC_PROBE_MIN_DIGITS) + "\n")
     if state_dir:
@@ -1023,26 +1165,53 @@ def identifier_hits(doc, probes, skip=()):
     so the spelling scanned is the spelling sent: the private list may hold a digit run, and a listed run written as
     a number (4242424242, 4242424242.0, -4242424242, 0.4242424242, or 4.242424242e9, which canonicalises to
     4242424242.0 and so put the run on the wire from a file that never spelled it) travelled unread while the same run
-    in quotes was refused (the upload's fourth review round, 2026-09-19, the round's lens over the final artifact). A
-    bool and null are not scanned (they spell no probe). What this costs: a number spells no path, no uuid, no
-    hostname and no login (a hex id's eight-character prefix can be all digits, rarely, and a login can be, and then
-    a counter carrying it is refused naming the kind and the path, like a listed word that is romp vocabulary), so
-    the scan over numbers finds a probe that is a digit run alone, which is what the private list is for. THE NUMERIC
-    FLOOR (2026-09-19, the comment at NUMERIC_PROBE_MIN_DIGITS): a substring probe is applied to a number only when it
-    carries a digit run of at least NUMERIC_PROBE_MIN_DIGITS digits, since a shorter listed run collides with some
-    number of an export by coincidence too often for a match to say anything (measured: about one export in four at
-    four digits, about one in 7,000 at seven); a listed entry under the floor is checked in every key and string value
-    and in no number, and a word probe (WORD_KINDS, a token-run match) is applied to numbers as before. The numbers
-    themselves are all scanned; the floor selects the probes."""
+    in quotes was refused (the upload's fourth review round, 2026-09-19, the round's lens over the final artifact);
+    AND, when that spelling carries an exponent (a float at or above 1e16 or under 1e-4 in magnitude: repr puts a
+    point after the first digit and an exponent after the mantissa), by every other spelling a reader recovers the
+    value from (number_spellings): its plain decimal expansion (1.234567e+16 is 12345670000000000, 1.5e-05 is
+    0.000015; never the exact integer of the double, binary noise above 2**53 that nobody spelled), since a listed
+    12345670000000000 was refused when the leaf spelled the integer and travelled when the same value's canonical
+    spelling was 1.234567e+16, the point after the first digit breaking the substring (the closing check of
+    2026-09-19; the hole was as old as the numeric scan, 431db9a60, and the claim that a listed run is found however
+    the file spelled it was false until the expansion). A number yields at most ONE Hit, at the first spelling and
+    probe that match, and the Hit never carries a spelling. A bool and null are not scanned (they spell no probe).
+    What this costs: a number spells no path, no uuid, no hostname and no login (a hex id's eight-character prefix
+    can be all digits, rarely, and a login can be, and then a counter carrying it is refused naming the kind and the
+    path, like a listed word that is romp vocabulary), so the scan over numbers finds a probe that is a digit run
+    alone, which is what the private list is for. THE NUMERIC FLOOR (2026-09-19, the comment at
+    NUMERIC_PROBE_MIN_DIGITS): a probe that is not a word is applied to a number only through a spelling of it that
+    carries at least NUMERIC_PROBE_MIN_DIGITS digits counted across the whole spelling (numeric_probe: 1234.5678 has
+    eight and is applied, 1234.56 has six and is not; never the longest run, which excluded 1234.5678 and dropped a
+    protection the base had, and never the character length, which admits 1234.56), since a shorter listed value
+    collides with some number of an export by coincidence too often for a match to say anything (measured: about one
+    export in four at four digits, about one in 7,000 at seven); a listed entry under the floor is checked in every
+    key and string value and in no number, and a word probe (WORD_KINDS, a token-run match) is applied to numbers as
+    before. The alphabet is NOT asked: a listed entry carrying characters no number spells ((12345678), _12345678,
+    12345678/, 1234 5678) is armed by the same digit count and is applied by its token run (probe_in), which matches a
+    number whose digit groups split the same way (a listed (12345678) refuses the leaf 12345678, a listed 1234 5678 the
+    leaf 1234.5678), as the base at 5d1de45dc did; the closing delta's first cut required number_shaped here and
+    turned three refusals into sends. A listed signed number is applied without its sign the same way (a listed
+    -12345670000000000 refuses the leaf 12345670000000000: the token run strips the sign). An armed listed entry is
+    applied by every spelling of number_spellings that carries the digits (a listed 1.234567e+16 as 12345670000000000
+    and as itself, a listed 12345678e-4 as 1234.5678 and as itself, a listed 1.5e-05 as 0.000015 alone, its own text
+    being four digits), each a Probe carrying the entry's line. The floor is decided per spelling; the numbers
+    themselves are all scanned, by every spelling; the floor selects the probes."""
     hits = []
-    numeric = [p for p in probes if p[0] in WORD_KINDS or longest_digit_run(p[1]) >= NUMERIC_PROBE_MIN_DIGITS]
+    numeric = []                  # the probes applied to a number: a word probe as itself, a listed entry by each spelling at the floor
+    for p in probes:
+        kind, text = p
+        if kind in WORD_KINDS:
+            numeric.append(p)
+        else:
+            numeric.extend(Probe(kind, s, getattr(p, "line", None)) for s in number_spellings(text, _number_value(text)) if numeric_probe(s))
 
     def scan(s, where, key, applicable=probes):
         for p in applicable:
             kind, probe = p
             if probe_in(kind, probe, s):
                 hits.append(Hit(kind, key, "/".join(str(p) for p in where), len(where), getattr(p, "line", None)))
-                return
+                return True
+        return False
 
     def walk(node, where):
         if isinstance(node, dict):
@@ -1058,7 +1227,9 @@ def identifier_hits(doc, probes, skip=()):
         elif isinstance(node, str):
             scan(node, where, False)
         elif isinstance(node, (int, float)) and not isinstance(node, bool):
-            scan(json.dumps(node), where, False, numeric)      # the number as the export writes it and the upload sends it; the floor's probes
+            for spelled in number_spellings(json.dumps(node), node):   # as the export writes it and the upload sends it, then its plain expansion
+                if scan(spelled, where, False, numeric):               # one Hit per number: the first spelling a floor probe is found in
+                    break
 
     walk(doc, ())
     return hits

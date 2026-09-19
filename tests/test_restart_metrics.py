@@ -735,6 +735,41 @@ class PublicForm(unittest.TestCase):
                          "the list turning itself off is said, naming the path and the reason")
         self.assertIs(json.loads(r.stdout)["public"], True, "and the public document was printed")
 
+    def test_a_listed_pointed_value_a_spend_bucket_spells_refuses_the_public_print_naming_the_path_and_the_list_line(self):
+        """The third road of the numeric floor (the comment at pp.NUMERIC_PROBE_MIN_DIGITS; the closing delta of 2026-09-19).
+        spend.json's usd for a day is a float that reaches the public document as buckets/N/spendUsd (spend_by_day, then
+        round(x, 4)), so a listed private string that is a pointed value of eight digits, 1234.5678, refuses the print as the
+        export and the upload refuse it: rc 1, the one stderr line naming the kind, the value's path and line 1 of the list
+        with the remedy, the digits in no output, nothing printed; the same document with no list prints, the value in its
+        bucket. The child runs under a pinned hostname, a synthetic HOME and login and no kernel, as the fifo case does, and
+        under a timeout. The export and upload roads pin this value in their own modules; this road shares check_document
+        and passed by inheritance at the closing delta, unpinned, so a road-specific change here would have gone unseen.
+        Fails at a086ced5a, whose longest-run floor did not apply an entry of this shape to any number: rc 0, the value
+        printed."""
+        (self.state / "spend.json").write_text(json.dumps({"days": {"2026-09-10": {"usd": 1234.5678, "turns": 30}}, "hours": {}}))
+        xdg = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, xdg, True)
+        listed = os.path.join(xdg, "private-strings.txt")
+        with open(listed, "w", encoding="utf-8") as fh:
+            fh.write("1234.5678\n")
+        env = {k: v for k, v in os.environ.items() if not k.startswith("ROMP_") and k not in ("CLAUDE_CODE_SESSION_ID", "XDG_CONFIG_HOME")}
+        env.update({"XDG_STATE_HOME": xdg, "HOME": "/home/tester", "USER": "tester", "LOGNAME": "tester", "ROMP_KERNEL_PORT": "1"})
+        child = ("import runpy, socket, sys; socket.gethostname = lambda: 'TESTHOST.example'; sys.argv = sys.argv[1:]; "
+                 "runpy.run_path(sys.argv[0], run_name='__main__')")
+        argv = [sys.executable, "-c", child, os.path.join(BIN, "romp-restart-metrics"), "--json", "--public", "--anchor", "2026-09-10",
+                "--tz", TZ, "--no-live", "--state", str(self.state)]
+        r = subprocess.run(argv, capture_output=True, text=True, timeout=20, env=dict(env, ROMP_PRIVATE_STRINGS=listed))
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertEqual(r.stderr, "romp restart-metrics: refused: a string this machine knows (private string) survives as the value at "
+                                   "buckets/0/spendUsd; edit line 1 of the private-strings list or that value; nothing printed\n")
+        self.assertEqual(r.stdout, "", "nothing printed")
+        for digits in ("1234.5678", "12345678", "1234"):
+            self.assertNotIn(digits, r.stdout + r.stderr, "the value is never printed")
+        r = subprocess.run(argv, capture_output=True, text=True, timeout=20, env=env)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(r.stderr, "", "no list, nothing said")
+        self.assertEqual(json.loads(r.stdout)["buckets"][0]["spendUsd"], 1234.5678, "without the list the value is a measurement like any other")
+
     def test_public_without_json_is_refused(self):
         err = io.StringIO()
         with mock.patch("sys.stderr", err):

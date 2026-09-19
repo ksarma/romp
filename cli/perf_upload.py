@@ -50,19 +50,28 @@ literal's spelling (digits past a float's precision, a digit run the denylist wa
 exponent, a listed private string that is a digit run respelled inside a numeric leaf), inter-token whitespace, key
 order; the repeated-key refusal closed one instance of that divergence and left the class open. The re-serialisation
 closes the class by construction: the artifact the checks bind is the document they read, and the bytes on the wire
-are a function of that document alone. A file as the export wrote it re-serialises to itself byte for byte (the same
-function wrote it; pinned), so an unedited export goes out as the file. And the checks read the spelling that goes out:
-the identifier scan (perf_public.identifier_hits) searches every number by its wire spelling, json.dumps, the same
-spelling document_text writes, so a listed private string that is a digit run is refused in a numeric leaf too, however
-the file spelled it (4242424242, 4242424242.0, -4242424242, 0.4242424242, or 4.242424242e9, which canonicalises to
-4242424242.0 and so once put the run on the wire from a file that never spelled it), where until the same round a number
-was a measurement to every check and the run travelled as the number they passed; the paste walk and the denylist walk
-judge a number by its value, as before. The same scan serves the export and restart-metrics, so a counter that spells a
-listed string refuses those too, naming the kind, the path and the line of the list the entry is on, the cost the docs
-already accept for a listed word that is romp vocabulary; the remedy, which the refusal states, is editing that line or
-the value. Since 2026-09-19 the scan applies a listed entry to a number only when it carries a digit run of at least
-perf_public.NUMERIC_PROBE_MIN_DIGITS digits (seven; the comment there has the measured collision chances); a shorter
-listed run is checked in keys and string values and not in numbers, said once on stderr.
+are a function of that document alone. A file as the export wrote it re-serialises to itself byte for byte (the
+same function wrote it; pinned), so an unedited export goes out as the file. And the checks read the spelling that goes
+out: the identifier scan (perf_public.identifier_hits) searches every number by its wire spelling, json.dumps, the same
+spelling document_text writes, and, when that spelling carries an exponent, by its plain decimal expansion as well
+(perf_public.number_spellings: 1.234567e+16 is also scanned as 12345670000000000, 1.5e-05 as 0.000015, the value a
+reader recovers from the wire; never by the double's exact integer, binary noise nobody wrote), so a listed private
+string with seven or more digits in some spelling of it (perf_public.NUMERIC_PROBE_MIN_DIGITS, the floor by digit count
+over the whole spelling, so a listed 1234.5678 has eight and a listed 1.5e-05 reaches it as 0.000015) is refused in a
+numeric leaf however the file spelled it (4242424242, 4242424242.0, -4242424242, 0.4242424242, or 4.242424242e9, which
+canonicalises to 4242424242.0 and so once put the run on the wire from a file that never spelled it; 1.234567e+16 for a
+listed 12345670000000000, which until the closing check of 2026-09-19 was refused as an integer and sent in exponent
+form; and, by its whole-token run, 12345678 for a listed (12345678), as the base did and as the closing delta's first
+cut did not), where until the fourth round a number was a measurement to every check and the run travelled as the number
+they passed; the paste walk and the denylist walk judge a number by its value, as before. A spelling that carries no
+listed entry travels: 4242424242e-3 is 4242424.242 on the wire and no spelling of that value carries the listed run. The
+same scan serves the export and restart-metrics, so a counter that spells a listed string refuses those too, naming the
+kind, the path and the line of the list the entry is on, the cost the docs already accept for a listed word that is romp
+vocabulary; the remedy, which the refusal states, is editing that line or the value. Since 2026-09-19 the scan applies a
+listed entry to a number only through a spelling of it, the entry as written or the plain decimal spelling of an entry
+written with an exponent, that carries at least perf_public.NUMERIC_PROBE_MIN_DIGITS digits (seven; the comment there
+has the measured collision chances); an entry spelled like a number whose every spelling has fewer is checked in keys
+and string values and not in numbers, said once on stderr, and a listed entry of fewer digits protects no number.
 
 Before sending, the verb prints the path, the byte size of the body it will send (the file's own size for a file as
 the export wrote it) and the URL it will dial (the address as configured
