@@ -1316,12 +1316,15 @@ class Cli(unittest.TestCase):
         word, a blank and a six-digit run (line 4) under the child's HOME, an export edited to carry the run as a NUMBER in
         five spellings (whole, inside a byte total, a float, a negative, an exponent form) is sent, exit 0, the number on
         the wire, and stderr is exactly the one line saying 1 of 2 entries (list line 4: the entry by the line it is on, never
-        its text or the list's path) are spelled like a number but carry fewer than 7 digits and so are checked in keys and
-        string values and not in numbers, and what does and does not protect a number
+        its text or the list's path) could match a number, by their spelling or by their digit groups, but carry fewer than 7
+        digits and so are checked in keys and string values and not in numbers, and what does and does not protect a number
         (the text is perf_public.LIST_UNDER_NUMERIC_FLOOR, pasted here whole: the closing check of 2026-09-19 found the old
         line's remedy, list more of the digits, a trap, since a listed eight-digit run protected the number 1234.5678 in no
-        spelling while it silenced the line; the count is by number_shaped entries under the floor, so the word entry is
-        not counted and a mixed entry such as abc12 would not be either); the same run in QUOTES is refused as before,
+        spelling while it silenced the line; the count is by number_matchable entries under the floor since the closing
+        re-run, an entry spelled like a number or a run of digit-only tokens such as (123456) or _123456, since the arm
+        applies those to a number by their digit groups and an operator holding one is unprotected in numbers too, so the
+        word entry is not counted and an entry carrying a letter such as abc12 would not be either); the same run in QUOTES
+        is refused as before,
         naming line 4 and the remedy, the loud line before the refusal. With the run lengthened to seven digits on the same
         line, five numeric spellings are each refused in one
         stderr line naming the kind, the value's path and line 4 of the list, the run in no output, nothing sent. The
@@ -1337,8 +1340,9 @@ class Cli(unittest.TestCase):
         listed = os.path.join(self.home, ".config", "romp", "private-strings.txt")
         with open(listed, "w", encoding="utf-8") as fh:
             fh.write("# strings that must never be published\nzzcoinedzz\n\n424242\n")
-        loud = ("romp: 1 of 2 private-strings entries (list line 4) are spelled like a number but carry fewer than 7 digits, so they are checked "
-                "in keys and string values and not in numbers; a number is checked against a listed entry only when the entry, or the plain "
+        loud = ("romp: 1 of 2 private-strings entries (list line 4) could match a number, by their spelling or by their digit groups, but carry "
+                "fewer than 7 digits, so they are checked in keys and string values and not in numbers; a number is checked against a listed "
+                "entry only when the entry, or the plain "
                 "decimal spelling of an entry written with an exponent, carries 7 or more digits, and the match is against the number's own "
                 "spelling: a listed 1234.5678 protects the number 1234.5678, a listed 12345678 does not, and a listed entry of fewer digits "
                 "protects no number\n")
@@ -2420,8 +2424,18 @@ class Docs(unittest.TestCase):
                       "the uptime rounded down to the minute and, only when `--usage` was given, every leaf under `usage` (the uptime's bucket "
                       "`kernelUptime`, the `sessions` block's `parsed`, `chatBuilt` and `stamped`",       # the clause's prefix; its population is Disclosed's
                       "the kernel commit",
-                      "so two uploads from one kernel remain linkable by design"):
+                      "so two uploads from one kernel remain linkable by design",
+                      # the closing re-run's finding 3, as its verification corrected it: the round's first replacement said an
+                      # entry carrying a letter is not counted since no number spells one, and a listed 1e5 is counted (the
+                      # exponent's e); the sentence now says which letter a number spells and that the alphabet decides
+                      "and an entry outside the number alphabet that carries a letter in a digit group (abc12, zz424242) is not counted; the one "
+                      "letter a number spells is an exponent's e, so an entry in the alphabet such as 1e5 is counted by its spelling"):
             self.assertTrue(words in text, "not in the reference: " + words)
+        # the closing re-run's finding 3: the clause saying an entry outside the number alphabet "is a substring of no number"
+        # was false by execution ((1234567), _1234567 and 1234567/ each refuse the number 1234567 by its digit groups); deleted.
+        # Asserted by boolean like the needles above: assertNotIn on failure prints the whole flattened page (about 400 KB)
+        for clause in ("substring of no number", "since no number spells one", "since no number spells a letter"):
+            self.assertFalse(clause in text, "the falsified alphabet clause is back in the reference: " + clause)
 
     def test_the_readme_rows_name_every_importer_of_the_public_shape_counted_from_the_code(self):
         """This PR added a fourth importer of cli/perf_public.py and left both README enumerations of who shares the public

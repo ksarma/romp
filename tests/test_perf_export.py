@@ -1787,8 +1787,9 @@ class Cli(unittest.TestCase):
                          "an eight-digit id prefix is above the floor")
 
     def test_the_stderr_line_counts_the_listed_entries_under_the_numeric_floor_once_by_their_list_lines_and_names_no_text(self):
-        """machine_probes says once on stderr how many listed entries are spelled like a number but carry fewer digits than the
-        floor in every spelling (pp.LIST_UNDER_NUMERIC_FLOOR), WHICH by the line of the list each is on (list lines 3 and 6 here,
+        """machine_probes says once on stderr how many listed entries could match a number (pp.number_matchable: spelled like one,
+        or a run of digit-only tokens; the closing re-run of 2026-09-19 widened the count from the alphabet alone) but carry
+        fewer digits than the floor in every spelling (pp.LIST_UNDER_NUMERIC_FLOOR), WHICH by the line of the list each is on (list lines 3 and 6 here,
         pp.list_lines_phrase; never an entry's text and never the list's path, the review of 2026-09-19): those are checked in
         keys and string values and not in numbers, and the line says what does protect a number (an entry of seven or more digits, as written or as the plain decimal
         spelling of an entry written with an exponent, matched against the number's own spelling: a listed 1234.5678 protects the
@@ -1819,7 +1820,8 @@ class Cli(unittest.TestCase):
         err = io.StringIO()
         with mock.patch.object(pp.socket, "gethostname", return_value="TESTHOST.example"), contextlib.redirect_stderr(err):
             probes = pp.machine_probes(None, env=env)
-        self.assertEqual(err.getvalue(), ("romp: 2 of 7 private-strings entries (list lines 3 and 6) are spelled like a number but carry fewer than 7 digits, "
+        self.assertEqual(err.getvalue(), ("romp: 2 of 7 private-strings entries (list lines 3 and 6) could match a number, by their spelling or by their digit "
+                                          "groups, but carry fewer than 7 digits, "
                                           "so they are checked in keys and string values and not in numbers; a number is checked against a listed entry only "
                                           "when the entry, or the plain decimal spelling of an entry written with an exponent, carries 7 or more digits, and "
                                           "the match is against the number's own spelling: a listed 1234.5678 protects the number 1234.5678, a listed "
@@ -1865,6 +1867,62 @@ class Cli(unittest.TestCase):
         self.assertEqual(err.getvalue(), pp.LIST_UNDER_NUMERIC_FLOOR % (1, 2, "list line 1", 7, 7) + "\n",
                          "an IP-shaped entry is inside the alphabet and is counted, by its list line")
 
+    def test_the_stderr_line_counts_an_under_floor_run_of_digit_only_tokens_too_and_not_an_entry_with_a_letter(self):
+        """The widened count (the closing re-run of 2026-09-19, finding 3, ruled as widen): the line counts an under-floor entry
+        that COULD MATCH A NUMBER (pp.number_matchable), spelled in the number alphabet (number_shaped) or a run of digit-only
+        tokens, since the token-run arm applies such an entry at seven digits ((1234567), _1234567 and 1234567/ each refuse the
+        leaf 1234567, executed here as literals), so the operator whose private value is an underscored or parenthesised
+        six-digit id is told it is unprotected in numbers; the head at b3df460d5 counted the alphabet alone and said 2 of 6 over
+        the report's six-shape list, justified by a clause execution falsified (an entry outside the alphabet was said to be
+        matched by no number, so the remedy could not reach it), and that clause is gone from the module (the negative source
+        pins here; the docs/reference.md side is the Docs class's, in the upload module). The truth table of number_matchable;
+        the six-shape list gives 6 of 6, list lines 1 to 6, no entry's punctuated text in the line; abc12 and zz424242 stay
+        silent (a letter in a token outside the number alphabet), while a listed 1e5 alone, in the alphabet and carrying the
+        one letter a number spells, an exponent's e, IS counted, 1 of 1, list line 1 (the re-run's verification found the
+        round's first wording, that no number's token carries a letter, false by that entry: TOKEN splits 1.5e-05 into 1, 5e
+        and 05, and this test's own truth table has number_matchable("1e-5") True); (123456) against the leaf 123456 is no hit
+        (under the floor, which is what the line is for). Reverting the count to number_shaped reds the six-shape pin (2 of 6); an
+        any-digit predicate (cd3b4cfab's trigger) reds the abc12 silence and the truth table; the old template phrase reds the
+        six-shape literal; the clause back in the module reds the source pin; the letter clause re-asserted in the module reds the
+        negative source pin."""
+        for text in ("(1234567)", "_1234567", "1234567/", "(123456)", "1 23456", "12-3456", "10.0.0.1", "1.5e-05", "1e-5", "4242424"):
+            self.assertTrue(pp.number_matchable(text), text)
+        for text in ("zz424242", "abc12", "e", "", "()", "_"):
+            self.assertFalse(pp.number_matchable(text), text)
+        for text in ("(1234567)", "_1234567", "1234567/"):
+            self.assertEqual(pp.identifier_hits({"a": {"n": 1234567}}, [pp.Probe(pp.PRIVATE_KIND, text, 1)]), [pp.Hit(pp.PRIVATE_KIND, False, "a/n", 2, 1)],
+                             "the token-run arm applies %s to the leaf 1234567: the remedy the line names reaches this entry" % text)
+        self.assertEqual(pp.identifier_hits({"a": {"n": 123456}}, [pp.Probe(pp.PRIVATE_KIND, "(123456)", 1)]), [], "six digits: under the floor, no hit")
+        listed = os.path.join(self.state, "list.txt")
+        env = {"HOME": HOME, "USER": "tester", "ROMP_PRIVATE_STRINGS": listed}
+        with open(listed, "w", encoding="utf-8") as fh:
+            fh.write("(123456)\n_123456\n123456/\n1 23456\n12-3456\n123456\n")
+        err = io.StringIO()
+        with mock.patch.object(pp.socket, "gethostname", return_value="TESTHOST.example"), contextlib.redirect_stderr(err):
+            pp.machine_probes(None, env=env)
+        self.assertEqual(err.getvalue(), pp.LIST_UNDER_NUMERIC_FLOOR % (6, 6, "list lines 1, 2, 3, 4, 5 and 6", 7, 7) + "\n", "every shape is counted")
+        self.assertIn("(list lines 1, 2, 3, 4, 5 and 6) could match a number, by their spelling or by their digit groups, but carry fewer than 7 digits",
+                      err.getvalue())
+        for entry in ("(123456)", "_123456", "123456/", "1 23456", "12-3456"):
+            self.assertNotIn(entry, err.getvalue(), "no entry's text is in the line: %s" % entry)
+        with open(listed, "w", encoding="utf-8") as fh:
+            fh.write("abc12\nzz424242\n")
+        err = io.StringIO()
+        with mock.patch.object(pp.socket, "gethostname", return_value="TESTHOST.example"), contextlib.redirect_stderr(err):
+            pp.machine_probes(None, env=env)
+        self.assertEqual(err.getvalue(), "", "a letter in a token outside the number alphabet: nothing is counted")
+        with open(listed, "w", encoding="utf-8") as fh:
+            fh.write("1e5\n")
+        err = io.StringIO()
+        with mock.patch.object(pp.socket, "gethostname", return_value="TESTHOST.example"), contextlib.redirect_stderr(err):
+            pp.machine_probes(None, env=env)
+        self.assertEqual(err.getvalue(), pp.LIST_UNDER_NUMERIC_FLOOR % (1, 1, "list line 1", 7, 7) + "\n",
+                         "the one letter a number spells, an exponent's e: in the alphabet, six digits as 100000, counted")
+        with open(pp.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        for clause in ("substring of no number", "remedy cannot apply", "since no number's token carries"):
+            self.assertNotIn(clause, source, "the falsified clause is gone from the module: %s" % clause)
+
     def test_the_stderr_line_names_the_counted_entries_by_list_line_in_file_order_and_never_their_text_or_the_path(self):
         """The review of 2026-09-19: the line points at each entry it counts by the ONE-BASED LINE of the list it is on
         (pp.list_lines_phrase: `list line 4`, `list lines 3 and 6`, `list lines 2, 5 and 9`), the number an editor shows and the
@@ -1899,7 +1957,7 @@ class Cli(unittest.TestCase):
         line = err.getvalue()
         self.assertEqual(line, pp.LIST_UNDER_NUMERIC_FLOOR % (3, 8, "list lines 2, 5 and 9", 7, 7) + "\n")
         self.assertEqual(line.count("romp:"), 1, "said once")
-        self.assertIn("romp: 3 of 8 private-strings entries (list lines 2, 5 and 9) are spelled like a number", line,
+        self.assertIn("romp: 3 of 8 private-strings entries (list lines 2, 5 and 9) could match a number", line,
                       "the counted entries by the list lines they are on, in file order")
         for wrong in ("(list lines 1, 2 and 3)", "(list lines 2, 3, 5, 6, 7, 8, 9 and 10)"):
             self.assertNotIn(wrong, line, "not the positions in the count, not every listed line")
@@ -1923,7 +1981,7 @@ class Cli(unittest.TestCase):
         N the counted entries past the six. Over a list with nine counted entries on lines 2, 5, 9, 12, 15, 18, 21, 24 and 27
         and words and comments between them (25 entries): the line is exactly the template with 9, 25, `list lines 2, 5, 9, 12,
         15, 18 and 3 more` and the floor twice, one newline and it at the end, the counted set recomputed from the list through
-        the module's own predicates (number_shaped, numeric_probe over number_spellings) equal to those nine lines, the
+        the module's own predicates (number_matchable, numeric_probe over number_spellings) equal to those nine lines, the
         remainder the three past six, and the lines past the cap absent by name. The same list cut to six counted entries (6 of
         17) renders all six and counts nothing as more, so every pin at or under six holds byte for byte. The cap removed
         (nine lines listed), a cap of five (`15 and 4 more` here, `15 and 1 more` at six) and a remainder off by one (`and 4
@@ -1942,11 +2000,11 @@ class Cli(unittest.TestCase):
         line = err.getvalue()
         self.assertEqual(line, pp.LIST_UNDER_NUMERIC_FLOOR % (9, 25, "list lines 2, 5, 9, 12, 15, 18 and 3 more", 7, 7) + "\n",
                          "nine counted: the first six lines in file order, then the rest counted")
-        self.assertIn("(list lines 2, 5, 9, 12, 15, 18 and 3 more) are spelled", line)
+        self.assertIn("(list lines 2, 5, 9, 12, 15, 18 and 3 more) could match", line)
         self.assertEqual(line.count("\n"), 1, "one line: no newline inside it")
         self.assertTrue(line.endswith("\n"))
         self.assertEqual(len(rows) - sum(1 for r in rows if r.startswith("#")), 25, "the list's length is every entry")
-        counted = [n for n, t in pp.private_entries(env) if pp.number_shaped(t.lower())
+        counted = [n for n, t in pp.private_entries(env) if pp.number_matchable(t.lower())
                    and not any(pp.numeric_probe(sp) for sp in pp.number_spellings(t.lower(), pp._number_value(t.lower())))]
         self.assertEqual(counted, counted_at, "the counted set is the counted set")
         self.assertEqual(len(counted) - 6, 3, "and the remainder is the counted entries past the six named")
@@ -2255,7 +2313,7 @@ class Cli(unittest.TestCase):
         """The floor by the export child (2026-09-19). With a list of a comment, a word, a blank and a six-digit run (line 4), a
         snapshot whose rss_kb carries the run inside a byte total (9424242) exports, exit 0, the file written with the number
         in it, and stderr is exactly the one line saying 1 of 2 entries (list line 4: the entry by the line it is on, never its text
-        or the list's path) are spelled like a number but carry fewer than 7 digits, so they are checked in keys and string values
+        or the list's path) could match a number but carry fewer than 7 digits, so they are checked in keys and string values
         and not in numbers, and what does protect a number (the closing delta's
         text, 2026-09-19: the first line advised listing more digits, which for a pointed value silenced the line and protected
         nothing); the same holds for the pointed 1234.56 (seven characters, six digits) listed on line 4 with pusher.cycle_ms_p50
@@ -2267,7 +2325,8 @@ class Cli(unittest.TestCase):
         the floor. The boundary is by execution with literals: 424242 passes, 4242424 refuses. Fails before: the six-digit run
         refused the export, exit 1, and no refusal named a line."""
         listed = os.path.join(self.xdg, "private-strings.txt")
-        loud = ("romp: 1 of 2 private-strings entries (list line 4) are spelled like a number but carry fewer than 7 digits, so they are checked "
+        loud = ("romp: 1 of 2 private-strings entries (list line 4) could match a number, by their spelling or by their digit groups, but carry fewer "
+                "than 7 digits, so they are checked "
                 "in keys and string values and not in numbers; a number is checked against a listed entry only when the entry, or the plain "
                 "decimal spelling of an entry written with an exponent, carries 7 or more digits, and the match is against the number's own "
                 "spelling: a listed 1234.5678 protects the number 1234.5678, a listed 12345678 does not, and a listed entry of fewer digits "

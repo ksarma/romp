@@ -73,7 +73,8 @@ kind, the path and the line of the list the entry is on, the cost the docs alrea
 vocabulary; the remedy, which the refusal states, is editing that line or the value. Since 2026-09-19 the scan applies a
 listed entry to a number only through a spelling of it, the entry as written or the plain decimal spelling of an entry
 written with an exponent, that carries at least perf_public.NUMERIC_PROBE_MIN_DIGITS digits (seven; the comment there
-has the measured collision chances); an entry spelled like a number whose every spelling has fewer is checked in keys
+has the measured collision chances); an entry that could match a number, by its spelling or by its digit groups
+(perf_public.number_matchable), whose every spelling has fewer is checked in keys
 and string values and not in numbers, said once on stderr naming such entries by their list lines (never their text,
 never the list's path), and a listed entry of fewer digits protects no number.
 

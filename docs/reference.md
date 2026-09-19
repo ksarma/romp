@@ -3825,18 +3825,22 @@ own spelling alone and is not expanded, since its expansion would run to as
 many digits as the exponent, and one stderr line says so by the entry's list
 line, never its text: an entry that reaches the floor and matches a number,
 as a substring of the number's spelling or as its run of whole digit groups,
-refuses the export and the upload, an entry spelled like
-a number with fewer digits in every spelling is checked in keys and string
-values and not in numbers, and one stderr line says how many entries that is,
+refuses the export and the upload, an entry that could match a number, by its
+spelling or by its digit groups, with fewer digits in every spelling is
+checked in keys and string values and not in numbers, and one stderr line
+says how many entries that is,
 which by the line of the list each is on (the first six lines, then a count
 of the rest, so the line stays one line; never the entry's text, never the
 list's path), and what does and does not protect a number; the floor comes from a real
 export, where a listed run of four digits matched some number by coincidence
 about one time in four and a run of seven digits about one time in 7,000, so
-below seven a match said nothing about the private value; an entry carrying a
-character no number is spelled with is not counted by that line, since it is
-a substring of no number, and is applied to a number by its digit groups when
-it carries seven or more digits), for the strings only this machine knows (its hostname, user and home
+below seven a match said nothing about the private value; a parenthesised,
+underscored, slashed or space-split run is counted like a bare one, since the
+check applies such an entry to a number by its digit groups (a listed
+(1234567) refuses the number 1234567) and an entry outside the number alphabet
+that carries a letter in a digit group (abc12, zz424242) is not counted; the one
+letter a number spells is an exponent's e, so an entry in the alphabet such as
+1e5 is counted by its spelling), for the strings only this machine knows (its hostname, user and home
 directory, the session ids and working directories in the state directory's
 registry, and the lines of `~/.config/romp/private-strings.txt` when that
 file exists, the list the repository's pre-push hook reads, one string per
