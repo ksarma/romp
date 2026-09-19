@@ -1628,7 +1628,9 @@ class RoutingStatements(unittest.TestCase):
     def _tree_lock(cls, exclusive):
         """The repo root, held under a file lock that lives in the checkout's git dir (one per linked worktree), shared
         by every process over this tree whatever its TMPDIR, and outside the scanned tree; flock, so a process that
-        dies drops it."""
+        dies drops it. A checkout without git metadata skips the whole class at setUpClass, through the lock path's
+        rev-parse: the listing's skip (no git, no repository) in a different place, and the tests here that need no
+        repository of their own (the scratch-repo, mock and wording tests) go with it."""
         root = Path(HERE).parent
         lock = cls._lock_path(root)
         with open(lock, "a+") as fh:
