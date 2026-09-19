@@ -315,6 +315,48 @@ test("a remote patch for a slot this side does not decode is said (a hostconn ro
   });
 });
 
+// The condition lasts the conn's life (the slot stays unknown to this bundle), so the row and the console line are said
+// once per conn per slot, like the sibling dial-deferred row and the refused-seed row below (Conn.saidDelta); the
+// needSlot stays per patch, since it is the resync itself and the kernel coalesces asks. The slot name is the key, the
+// empty string for a slotless patch its own; a detach ends the conn and its latch, a redial keeps both.
+test("the unknown-slot breadcrumb is latched per conn per slot: a second patch for the slot is asked for whole again but said no more, a second slot has its own row, a re-attached host is said again, a redialed socket is not", async () => {
+  await withManager("timeline", ({ fm, sent }) => countingConsoleErrors((errors) => {
+    seedLocalTimeline(fm);
+    const ws = attached(fm);
+    const rows = () => sent.filter((x) => x && x.type === "clientDiag" && x.what === "hostconn" && x.data && x.data.ev === "delta-unknown-slot").map((x) => x.data);
+    ws.frame({ type: "delta", slot: "lanes", base: 0, rev: 1, coll: {}, rest: { now: 505 } });
+    ws.frame({ type: "delta", slot: "lanes", base: 1, rev: 2, coll: {}, rest: { now: 506 } });
+    assert.deepEqual(rows(), [{ host: HOST, ev: "delta-unknown-slot", why: "lanes" }], "two lanes patches, said once");
+    assert.equal(errors.length, 1, "and one console line: " + errors.join(" | "));
+    assert.deepEqual(ws.sent, [{ type: "needSlot", slot: "lanes" }, { type: "needSlot", slot: "lanes" }], "asked per patch all the same: the ask is the resync");
+    ws.frame({ type: "delta", slot: "marks", base: 0, rev: 1, coll: {} });
+    assert.deepEqual(rows().map((r) => r.why), ["lanes", "marks"], "a second unknown slot has its own row");
+    ws.frame({ type: "delta" }); ws.frame({ type: "delta" });
+    assert.deepEqual(rows().map((r) => r.why), ["lanes", "marks", ""], "the slotless patch is its own key, said once");
+    assert.equal(errors.length, 3);
+    // a redial on the conn (the watchdog's abandon-and-dial) keeps the latch: it is the conn's, not the socket's
+    const conn = fm.conns.get(HOST);
+    clock += REMOTE_STALE_MS + 1000;
+    fm.watchdog(clock);
+    const ws2 = last(FakeWS.made);
+    assert.notEqual(ws2, ws, "redialed");
+    assert.equal(fm.conns.get(HOST), conn);
+    ws2.open();
+    ws2.frame({ type: "delta", slot: "lanes", base: 0, rev: 1, coll: {} });
+    assert.deepEqual(rows().map((r) => r.why), ["lanes", "marks", ""], "not said again on the redialed socket");
+    assert.deepEqual(ws2.sent, [{ type: "needSlot", slot: "lanes" }], "…but asked, on the new socket");
+    // a detach ends the conn and its latch: the re-attached host's first unknown patch is said again
+    fm.closeRemote(HOST);
+    fm.openRemote(HOST, true);
+    const ws3 = last(FakeWS.made);
+    ws3.open();
+    ws3.frame({ type: "delta", slot: "lanes", base: 0, rev: 1, coll: {} });
+    assert.deepEqual(rows().map((r) => r.why), ["lanes", "marks", "", "lanes"], "said again on the new conn");
+    assert.equal(errors.length, 4);
+    fm.conns.get(HOST).closed = true;
+  }));
+});
+
 // ── two hosts, the same bare lane (2026-09-19) ──────────────────────────────────────────────────────────────────────
 // A receiver per conn, not one shared: two hosts whose bars frames carry the same bare lane (a session sid is not
 // unique across hosts) each reassemble onto their own base. Different bar ids per host make a shared base visible

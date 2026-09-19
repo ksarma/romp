@@ -1216,17 +1216,23 @@ export class FederationManager {
     // The LOCAL socket's frames arrive reassembled already (the shim applies its own deltas before __rompFed.inbound)
     // and pass untouched, as does a frame for a host this manager holds no conn for (a detached host's straggler).
     if (host !== LOCAL) {
-      const vd = this.conns.get(host)?.viewDeltas;
-      if (vd) {
+      const c = this.conns.get(host);
+      const vd = c?.viewDeltas;
+      if (c && vd) {
         // A patch for a slot this receiver has no table for (a kernel newer than this bundle, serving a slot it does
         // not know) is the one frame neither path decodes: the receiver asks that kernel for the whole slot and yields
         // nothing, and the drop is said here first, the way every other drop on this layer is (a hostconn row under the
-        // keys the family already has, and the console), never silently. A known slot's patch that cannot apply is the
-        // receiver's own resync (needSlot on this conn) and needs no row: the full frame it earns is the repair.
+        // keys the family already has, and the console), never silently. Said ONCE per conn per slot (sayDeltaOnce, the
+        // slotless patch its own key): the condition lasts the conn's life, and a row per patch would be the flood this
+        // layer exists to end (the phone's 86 rows), while the ask stays per patch since it is the resync itself and the
+        // kernel coalesces asks (2026-09-19). A known slot's patch that cannot apply is the receiver's own resync
+        // (needSlot on this conn) and needs no row: the full frame it earns is the repair.
         if (msg && msg.type === "delta" && !(typeof msg.slot === "string" && Object.prototype.hasOwnProperty.call(VIEW_DELTA_KINDS, msg.slot))) {
           const slot = typeof msg.slot === "string" ? msg.slot : "";
-          try { console.error("federation: a delta frame from " + host + " names a slot this side does not decode (" + (slot || "no slot") + "): asking that kernel for the whole slot"); } catch (e) { /* nothing to report to */ }
-          this.diag("hostconn", { host, ev: "delta-unknown-slot", why: slot });
+          if (this.sayDeltaOnce(c, "delta-unknown-slot", slot)) {
+            try { console.error("federation: a delta frame from " + host + " names a slot this side does not decode (" + (slot || "no slot") + "): asking that kernel for the whole slot (said once for this connection)"); } catch (e) { /* nothing to report to */ }
+            this.diag("hostconn", { host, ev: "delta-unknown-slot", why: slot });
+          }
         }
         msg = vd.receive(msg);
         if (msg === null) return;
