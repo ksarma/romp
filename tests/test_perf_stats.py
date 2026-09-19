@@ -1554,14 +1554,19 @@ class RoutingStatements(unittest.TestCase):
     The tree is every text file git tracks or would track (PR 797's closing check, 2026-09-19): `git ls-files --cached
     --others --exclude-standard` at the repo root, so an untracked file is swept before it is committed, no directory
     excluded, symlinks skipped (bin/romp-kernel points at the kernel), a file read as text when its first 8 KiB hold no
-    NUL byte and it decodes as UTF-8. The eight-directory walk this replaced omitted the root files, plans/, claude/,
-    hooks/, vscode-extension/ and ui/ outside ui/webview; none of them named a block, so the pin was complete by luck
-    and would not have caught a statement added there. Measured at 639043a31 in a clean worktree: git lists 3109 paths,
+    NUL byte and it decodes as UTF-8. The eight-directory walk this replaced (kernel, bin, cli, docs, upstream, tests,
+    scripts, ui/webview) omitted every other directory and the root files, 373 tracked files at 639043a31 (tools/ 143,
+    vscode-extension/ 70, ui/ outside ui/webview 40, plans/ 35, vendor/ 28, assets/ 18, the 14 root files, .github/ 8,
+    hooks/ 8, claude/ 4, overrides/ 2, postal/ 2, .githooks/ 1), and inside its eight roots it read only a suffix
+    allowlist and pruned assets and dot directories, 68 more (37 under docs/assets, 26 .json, 3 .bash, 1 .csv, 1 .svg);
+    none of the 441 named a block, so the pin was complete by luck and would not have caught a statement added there.
+    Measured at 639043a31 in a clean worktree: git lists 3109 paths,
     14 are symlinks, 41 hold a NUL in their first 8 KiB, none fails to decode, 3054 read as text, 71.8 MB (decimal) of
     them. The count moves with every file added, so it is only ever quoted with its head; no directory list is kept. An
-    untracked file git does not ignore is read too: ui/out-tests, the webview test build's output, is not ignored, so
-    its compiled files are read when it exists; no ui/webview source names a block today, so no copy there can, and a
-    source that starts to would red this pin on a machine holding the build output before it did in CI. The scan
+    untracked file git does not ignore is read too: a scratch note, a saved diff, an editor backup, a .orig or .rej a
+    merge left, a caption under docs/assets (none of those is ignored here), so a machine holding one reds this pin
+    before CI does; the webview test build's output, vscode-extension/out-tests, is ignored by vscode-extension/.gitignore
+    and never read, and ui/out-tests does not exist. The scan
     takes a file lock shared and the plant test below takes it exclusive: pytest-xdist can run the tests on different
     workers at once, and a sibling's scan during the plant would read the plant and red. The lock is one file per
     checkout, in its git dir, so an xdist worker, a second pytest run, or a run under its own TMPDIR all wait on the
