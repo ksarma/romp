@@ -1188,6 +1188,8 @@ class EnvRowsPopulation(unittest.TestCase):
             self.assertIn("direct readers of the surface set by construction", text, where)
             self.assertNotIn("does not cross a dict at all", text, "%s states it as a property of the kernel" % where)
         self.assertIn("a bound on the census's reach, not a property of the kernel", census_doc)
+        self.assertIn("That bounds the census's reach and says nothing of", census_doc,
+                      "the taint pass's own comment states the bound in the same sense (the mutation pass reverted it green)")
         self.assertIn("a bound on the census's reach and not a property # of this module", module)
 
 
@@ -1201,7 +1203,9 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
     `extend`, and second writers of the ring (`be._problems.append` from kernel.py, `self.backend._problems.append`
     from a session, `self._problems.insert` in a second SdkBackend method). Each sabotage is replayed here on a module
     copy or a synthetic module and must be LOUD: a tenth content row (the identity pin reds), a failure named by site,
-    or a CensusError. The copies edit anchors asserted present once in the module."""
+    or a CensusError. The copies edit anchors asserted present once in the module. The rulings' lenses (the addendum of
+    2026-09-19) added 45 dict-source variants and 60 alias receivers, 35 and 13 of them quiet; the five tests at the end
+    of this class replay every quiet one, loud now, beside the refusal-side pins the mutation pass found missing."""
 
     FMT_ANCHOR = "RESERVED_DROP_RING = ("
     METHOD_ANCHOR = "    def problem_seq(self) -> int:"
@@ -1612,6 +1616,296 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
         for path in CENSUS_FILES:
             hits = [i + 1 for i, ln in enumerate(Path(path).read_text(encoding="utf-8").splitlines()) if pat.match(ln)]
             self.assertEqual(hits, [], "%s binds an alias of the door at line(s) %r" % (os.path.basename(path), hits))
+
+
+    # ---- the addendum's replays (the round-6 rulings' lenses, 2026-09-19): a plant per quiet pass, each loud now ----
+
+    def _shape_census(self, form, body=None, expr='shape["opts"]', methods="", extra="", arg=None):
+        """A module copy planted the way the ruling-2 test plants: TENTH_RING, a reader SdkBackend._tenth writing the tenth
+        row from `expr` over `shape = <arg>`, and `_tenth_shape(<param>)` whose body follows `e = <origin>` (declared
+        form: the parameter's key, declared a source; helper form: a source read under DEFAULT_SOURCES); `%(P)s` a second
+        read of the parameter, `%(O)s` the origin, `%(PARAM)s` the parameter's name."""
+        param, origin, mode = self.FORMS[form]
+        sub = {"P": mode, "O": origin, "PARAM": param}
+        fn = "" if body is None else "\ndef _tenth_shape(%s):\n    e = %s\n%s" % (param, origin, body % sub)
+        arg = (arg or "_tenth_shape(%(PARAM)s)") % sub
+        path = self._copy(lambda s: self._with_format(s).replace(
+            self.METHOD_ANCHOR, (methods % sub) + self._reader(arg, expr % sub) + self.METHOD_ANCHOR) + fn + (extra % sub))
+        return Census((path, CREDENTIALS_PY), self._declared() if form == "declared" else DEFAULT_SOURCES)
+
+    def _assert_tenth_quiet(self, c):
+        """The refusal side of a rule: the plant is read, nothing fails, and the tenth row carries no env (nine rows)."""
+        self.assertEqual(c.failures, [])
+        self.assertEqual(len(c.content_rows), 9)
+        self.assertEqual([sorted(dc.taint) for dc in c.door_calls if dc.owner == "_tenth"], [[]])
+
+    def test_the_env_under_the_source_key_is_followed_to_its_roots_so_a_second_road_to_the_value_carries_it(self):
+        """Ruling 2's lens (2026-09-19): the declaration marked the value under the source key when it was a bare Name or
+        attribute, so any other shape of the same value under another key crossed clean while the return was located:
+        the origin read twice (ai), two locals from one origin (aj), `e or {}` (ak), `dict(e)` (al), a comprehension over
+        it, the launch shape's own form (am), a tuple index (an), a walrus (ac), and a namedtuple or holder class built
+        from it (r, s), seven of them quiet in the declared form. The taint follows the value to its ROOTS now (the Names,
+        attribute chains and constant-keyed subscripts it derives from, a local followed to its assignments, a constructor's
+        arguments), so each is a tenth content row. The store forms the declaration reads are pinned one by one, each the
+        only road to the value (the return located by a literal holding an empty env): `dict(env=e)`, `d.update(env=e)`,
+        `d.setdefault("env", e)`, `d.__setitem__("env", e)`, `operator.setitem(d, "env", e)`, `d["env"] = e`, and the bare
+        Name store (a copy from the Name itself). Declared form: only the declaration can taint these."""
+        plants = {
+            "ai: the origin read twice, under env and under opts": ('    return {"env": %(O)s, "opts": %(O)s}\n', ""),
+            "aj: two locals from the origin": ('    f = %(O)s\n    return {"env": e, "opts": f}\n', ""),
+            "ak: e or {} under env, e under opts": ('    return {"env": e or {}, "opts": e}\n', ""),
+            "al: dict(e) under env, e under opts": ('    return {"env": dict(e), "opts": e}\n', ""),
+            "am: a comprehension over e under env, e under opts": ('    return {"env": {k: v for k, v in e.items() if k}, "opts": e}\n', ""),
+            "an: a tuple index under both keys": ('    t = (e,)\n    return {"env": t[0], "opts": t[0]}\n', ""),
+            "ac: a walrus under env, its target under opts": ('    return {"env": (x := e), "opts": x}\n', ""),
+            "r: a namedtuple built from e, one field under each key": ('    p = _TenthPair(e, e)\n    return {"env": p.left, "opts": p.right}\n',
+                                                                       '\nimport collections\n_TenthPair = collections.namedtuple("_TenthPair", "left right")\n'),
+            "s: a holder class built from e, one attribute under each key": ('    b = _TenthBox(e, e)\n    return {"env": b.left, "opts": b.right}\n',
+                                                                             '\nclass _TenthBox:\n    def __init__(self, left, right):\n        self.left = left\n        self.right = right\n'),
+            "store: dict(env=e)": ('    return dict(env=e, opts=e)\n', ""),
+            "store: d.update(env=e)": ('    d = {"env": {}, "mode": %(P)s}\n    d.update(env=e)\n    d["opts"] = e\n    return d\n', ""),
+            "store: d.setdefault(env, e)": ('    d = {"env": {}, "mode": %(P)s}\n    d.setdefault("env", e)\n    d["opts"] = e\n    return d\n', ""),
+            "store: d.__setitem__(env, e)": ('    d = {"env": {}, "mode": %(P)s}\n    d.__setitem__("env", e)\n    d["opts"] = e\n    return d\n', ""),
+            "store: operator.setitem(d, env, e)": ('    d = {"env": {}, "mode": %(P)s}\n    operator.setitem(d, "env", e)\n    d["opts"] = e\n    return d\n', "\nimport operator\n"),
+            "store: d[env] = e": ('    d = {"env": {}, "mode": %(P)s}\n    d["env"] = e\n    d["opts"] = e\n    return d\n', ""),
+            "store: the Name itself copied": ('    d = {"env": e}\n    d["opts"] = e\n    return d\n', ""),
+            # the holder's whole mark (m2e), the only road when the value under the key has no root the walk reaches (a
+            # call into a function of the files) and the holder is used whole under another key
+            "holder: a dict holding a value the roots cannot reach, used whole": ('    d = {"env": _tenth_make(e)}\n    return {"env": {}, "opts": list(d.values())}\n',
+                                                                                    "\ndef _tenth_make(x):\n    return dict(x)\n"),
+        }
+        for label, (body, extra) in plants.items():
+            with self.subTest(variant=label):
+                self._assert_tenth_found(self._shape_census("declared", body, extra=extra), "self")
+
+    def test_nested_targets_lambdas_generators_and_reflected_stores_carry_the_env_with_the_value(self):
+        """Ruling 2's lens, the mechanics the value crossed by: a nested tuple target (`(k, v), = d.items()`,
+        `for i, (k, v) in enumerate(d.items())`, `*_rest, (k, v) = list(d.items())`), which a one-level flatten left
+        unbound; a re-key through a for over items into a dict built in place; a lambda bound to a local and called by
+        its name; a generator's yield fed to dict(); `operator.setitem`; a value held by `setattr(self, "n", e)` or
+        `self.__dict__["n"] = e` and re-keyed by another method; the source called through `getattr(self, "name")(...)`;
+        and the reader reading the attribute source by `getattr(sess, "env_vars")` or `vars(sess)["env_vars"]`. Each in
+        the forms the lens ran it in, each a tenth content row: the target is flattened to its leaves, a yield is a
+        return, a lambda is its local's callee, a spelled reflection is read as the attribute or the call it names."""
+        both = {
+            "k: (k, v), = d.items()": dict(body='    d = {"env": e}\n    (k, v), = d.items()\n    return {"env": e, "opts": v}\n'),
+            "x: for i, (k, v) in enumerate(d.items())": dict(body='    d = {"env": e}\n    out = {"env": e}\n    for i, (k, v) in enumerate(d.items()):\n        out["opts"] = v\n    return out\n'),
+            "bc: *_rest, (k, v) = list(d.items())": dict(body='    d = {"env": e}\n    *_rest, (k, v) = list(d.items())\n    return {"env": e, "opts": v}\n'),
+            "w: a for over items re-keying into a dict built in place": dict(body='    d = {"env": e}\n    out = {}\n    for k, v in d.items():\n        out["opts" if k == "env" else k] = v\n    return out\n'),
+            "u: a lambda bound to a local, called by its name": dict(body='    f = lambda: {"opts": e}\n    return {"env": e, **f()}\n'),
+            "v: a generator yielding the pair, fed to dict()": dict(body='    def _gen():\n        yield ("opts", e)\n    return {"env": e, **dict(_gen())}\n'),
+            "ao: operator.setitem re-keying": dict(body='    d = {"env": e}\n    operator.setitem(d, "opts", e)\n    return d\n', extra="\nimport operator\n"),
+            "ap: setattr holding the value, re-keyed by another method": dict(
+                methods='    def _tenth_shape(self, %(PARAM)s):\n        e = %(O)s\n        setattr(self, "_tenth_held", e)\n        return {"env": e}\n\n'
+                        '    def _tenth_other(self):\n        return {"opts": self._tenth_held}\n\n', arg="self._tenth_other()"),
+            "aq: self.__dict__ holding the value, re-keyed by another method": dict(
+                methods='    def _tenth_shape(self, %(PARAM)s):\n        e = %(O)s\n        self.__dict__["_tenth_held"] = e\n        return {"env": e}\n\n'
+                        '    def _tenth_other(self):\n        return {"opts": self._tenth_held}\n\n', arg="self._tenth_other()"),
+            "ae: the source called through getattr by the reader": dict(
+                methods='    def _tenth_shape(self, %(PARAM)s):\n        e = %(O)s\n        return {"env": e, "opts": e}\n\n',
+                arg='getattr(self, "_tenth_shape")(%(PARAM)s)'),
+        }
+        for label, kw in both.items():
+            for form in self.FORMS:
+                with self.subTest(variant=label, form=form):
+                    self._assert_tenth_found(self._shape_census(form, **kw), "self")
+        for label, arg in (("ax: the reader reads getattr(sess, 'env_vars')", 'getattr(sess, "env_vars")'),
+                           ("ay: the reader reads vars(sess)['env_vars']", 'vars(sess)["env_vars"]')):
+            with self.subTest(variant=label, form="helper"):
+                self._assert_tenth_found(self._shape_census("helper", arg=arg, expr="shape"), "self")
+
+    def test_a_whole_value_use_of_a_dict_sources_return_reads_the_env_and_a_keyed_read_reads_its_own_key(self):
+        """The bound the ruling-2 commit disclosed (a whole-value use of a dict source's return, `str(shape)` or
+        `shape.values()`, outside the census) is inside it now: a value has a WHOLE set and a CARRIED set (what a read of one
+        non-source key yields), for a local, a parameter, a return and an attribute alike, so `str(shape)`, `shape.values()`
+        and a whole dict held on an attribute carry the env while `shape["mode"]`, `.get`, `.pop` and `.setdefault` of another
+        key, `(shape or {}).get("mode")` and a scalar attribute stored from a keyed read stay clean, and the head stays at nine
+        (the first draft gave every attribute a whole set and read 95 content rows, since attributes are keyed by name across
+        every receiver; an attribute takes a whole set only from a dict by shape). The refusal side of the ruling-2 rule is
+        pinned beside it: the located local's boundary excludes the key (m2k); a holder found through a conditional is located
+        (m2i); `os.environ` is nobody's per-session source (ah). And the three unpinned branches of the location test, each
+        loud as the whole return: a local nothing stored the key into (m2g2), a conditional with one branch unlocated (m2g3),
+        a dict(...) call without the key (m2g4)."""
+        shape = '    return {"env": e, "mode": %(P)s}\n'
+        loud = {
+            "av: sorted(str(shape))": dict(body=shape, expr="sorted(str(shape))"),
+            "aw: list(shape.values())": dict(body=shape, expr="list(shape.values())"),
+            "the return held whole on an attribute, read whole by another method": dict(
+                body=shape, methods='    def _tenth_hold(self, %(PARAM)s):\n        self._tenth_shape_held = _tenth_shape(%(PARAM)s)\n\n',
+                arg="self._tenth_shape_held", expr="sorted(str(shape))"),
+            "the return passed whole to a helper that stringifies it": dict(
+                body=shape, extra="\ndef _tenth_text(d):\n    return str(d)\n", expr="sorted(_tenth_text(shape))"),
+        }
+        for label, kw in loud.items():
+            for form in self.FORMS:
+                with self.subTest(variant=label, form=form):
+                    self._assert_tenth_found(self._shape_census(form, **kw), "self")
+        quiet = {
+            "shape[mode]": dict(body=shape, expr='shape["mode"]'),
+            "shape.get(mode)": dict(body=shape, expr='str(shape.get("mode"))'),
+            "shape.setdefault(mode, None)": dict(body=shape, expr='str(shape.setdefault("mode", None))'),
+            "shape.pop(mode, None)": dict(body=shape, expr='str(shape.pop("mode", None))'),
+            "(shape or {}).get(mode)": dict(body=shape, expr='str((shape or {}).get("mode"))'),
+            "a scalar attribute stored from a keyed read": dict(
+                body=shape, methods='    def _tenth_hold(self, %(PARAM)s):\n        self._tenth_mode = _tenth_shape(%(PARAM)s)["mode"]\n\n',
+                arg="self._tenth_mode", expr="str(shape)"),
+            "m2k: the located local's boundary excludes the key": dict(body='    d = {"env": e, "mode": %(P)s}\n    return d\n', expr='shape["mode"]'),
+            "m2i: a holder found through a conditional is located": dict(
+                body='    d = {"env": {}, "mode": %(P)s} if %(P)s else {"env": {}}\n    d["opts"] = e\n    return d\n'),
+            "ah: os.environ under another key is no per-session source": dict(body='    return {"env": e, "opts": os.environ.copy()}\n'),
+        }
+        for label, kw in quiet.items():
+            with self.subTest(variant=label, form="declared"):
+                self._assert_tenth_quiet(self._shape_census("declared", **kw))
+        unlocated = {
+            "m2g2: a local nothing stored the key into": '    d = {"mode": %(P)s}\n    d["opts"] = e\n    return d\n',
+            "m2g3: a conditional with one branch unlocated": '    return {"env": {}, "mode": %(P)s} if %(P)s else {"opts": e}\n',
+            "m2g4: a dict(...) call without the key": '    return dict(mode=%(P)s, opts=e)\n',
+        }
+        for label, body in unlocated.items():
+            with self.subTest(variant=label, form="declared"):
+                self._assert_tenth_found(self._shape_census("declared", body), "self")
+        head = census(CENSUS_FILES)
+        self.assertEqual(sorted(a for a, t in head.attr_whole.items() if "env" in t), ["_launched_env", "_launching", "env_vars"],
+                         "at this head the shape held whole on _launching and the two env source attributes are the whole-env attributes")
+        self.assertEqual(sorted(a for a, t in head.attr_taint.items() if "env" in t), ["_launched_env", "env_vars"],
+                         "and no attribute's carried set gained env: the keyed readers of _launching stay clean")
+
+    def test_a_source_name_spelled_as_a_string_outside_a_followed_reflection_is_a_failure(self):
+        """The door had this rule (its name as a string outside `getattr(x, "_log")` fails) and no source did, so a source
+        reached by reflection under a computed name went unread. Every string constant spelling a source's identifier (an
+        attribute, a function, a module-level name; the 'env' key excepted, a key being spelled at every read) outside the
+        reflected read or store the census follows (`getattr(x, "n"[, d])`, `setattr(x, "n", v)`, `vars(x)["n"]`,
+        `x.__dict__["n"]` and its `.get`/`.setdefault`/`.pop`) is a failure named by site; a store by reflection under a name
+        the census cannot place (`setattr(self, name, e)`, `self.__dict__[name] = e`) is a failure when the value is tainted.
+        The followed forms are read as the attribute or the call they name (the previous test's ap, aq, ae, ax, ay)."""
+        with self.subTest(case="an attribute source's name in a module constant handed to getattr"):
+            c = self._shape_census("helper", arg="getattr(sess, _TENTH_ATTR)", expr="shape", extra='\n_TENTH_ATTR = "env_vars"\n')
+            self.assertEqual([(k, b) for k, b, _ln, _t in c.failures], [("source-name-string", "sdk_backend.py")])
+            self.assertIn("'env_vars' is a string outside a reflected read or store", c.failures[0][3])
+            self.assertEqual(len(c.content_rows), 9, "the row is read but untainted: the string is what is loud")
+        with self.subTest(case="a declared source function's name in a constant handed to getattr"):
+            c = self._shape_census("declared", methods='    def _tenth_shape(self, raw):\n        e = raw["vars"]\n        return {"env": e, "opts": e}\n\n',
+                                   arg="getattr(self, _TENTH_FN)(raw)", extra='\n_TENTH_FN = "_tenth_shape"\n')
+            self.assertEqual([(k, b) for k, b, _ln, _t in c.failures], [("source-name-string", "sdk_backend.py")])
+        for label, store in (("setattr under a computed name", 'setattr(self, name, e)'),
+                             ("self.__dict__ under a computed name", 'self.__dict__[name] = e')):
+            with self.subTest(case=label):
+                c = self._shape_census("declared", methods='    def _tenth_shape(self, raw, name):\n        e = raw["vars"]\n        %s\n        return {"env": e}\n\n'
+                                       '    def _tenth_other(self):\n        return {"opts": self._tenth_held}\n\n' % store, arg="self._tenth_other()")
+                self.assertEqual([(k, b) for k, b, _ln, _t in c.failures], [("reflection-store", "sdk_backend.py")])
+                self.assertIn("a name the census cannot place", c.failures[0][3])
+        with self.subTest(case="the head spells no source's name as a string and stores nothing by a computed name"):
+            head = census(CENSUS_FILES)
+            self.assertEqual([f for f in head.failures if f[0] in ("source-name-string", "reflection-store")], [])
+            idents = set(DEFAULT_SOURCES["attr"]) | {q.split(".")[-1] for _b, q in DEFAULT_SOURCES["func"]} | {n for _b, n in DEFAULT_SOURCES["name"]}
+            self.assertEqual(head._source_idents, idents, "every attribute, function and name source by its identifier")
+            self.assertGreaterEqual(len(idents), 30)
+            self.assertNotIn("env", head._source_idents)
+
+    def test_the_alias_resolution_walks_every_concrete_class_of_the_receiver_and_reads_reflection_and_the_class_object(self):
+        """Ruling 4's lens (2026-09-19): thirteen receivers of the planted `_ring = _log` resolved silently to the other
+        binding. The resolution walks every class an instance of the receiver's type can be (the class and each subclass,
+        each by its own MRO: a mixin's self is an instance of the class it is mixed into), so a mixin into the writer's class
+        is a door and a mixin into both classes is the loud ambiguity; a type every instance satisfies (`object`, `Any`, a
+        Protocol, a class defining __getattr__) types nothing, so those receivers are untyped and fail; an annotated
+        parameter reassigned in the body is what its assignments make it; a class object as receiver (a class name, `cls`,
+        `type(self)`, `self.__class__`) reads the message after the explicit self; the alias's name spelled in
+        `getattr(x, "_ring")` resolves like `x._ring`, and spelled anywhere else is the door-name-string failure. Beside
+        the lens's arms, the unpinned typed forms (an attribute annotation, Optional, a union, a keyword-only parameter),
+        the collision record's other two hows, and, with no alias at all, `cls._log(be or 'x', msg, problem=True)` in a
+        classmethod, whose literal head hid the row from the unreduced pin while its message was read as `be or 'x'`."""
+        alias = "    _ring = _log\n\n"
+        call = lambda recv, indent, first=None: "%s%s._ring(%s%s, problem=True, %s)\n" % (indent, recv, (first + ", ") if first else "", self.MSG, self.RING)
+        benign = '    def _tenth_plain(self):\n        self._ring("tenth: plain", problem=False)\n\n'
+
+        def plant(backend="", session="", api="", tail="", head="", with_alias=True, with_benign=False):
+            return self._copy(lambda s: (self._with_format(s).replace(self.METHOD_ANCHOR, (alias if with_alias else "") + (benign if with_benign else "") + backend + self.METHOD_ANCHOR)
+                                         .replace(self.SESSION_ANCHOR, session + self.SESSION_ANCHOR).replace(self.API_ANCHOR, api + self.API_ANCHOR)
+                                         .replace("class SdkBackend:\n", head + "class SdkBackend:\n" if not head.endswith("SdkBackend(_TenthBase):\n") else head)) + tail)
+
+        def tenth(c):
+            return [dc.lineno for dc in c.door_calls if dc.owner == "_tenth"]
+
+        doors = {
+            "03: self in a mixin mixed into the writer's class": dict(tail="\nclass _TenthMixin:\n    def _tenth(self, sess):\n" + call("self", " " * 8) + "\nclass _TenthBackend(_TenthMixin, SdkBackend):\n    pass\n"),
+            "23a: getattr(self, '_ring')(...) in the writer's class": dict(backend="    def _tenth(self, sess):\n        getattr(self, '_ring')(%s, problem=True, %s)\n\n" % (self.MSG, self.RING)),
+            "m4c: the class name as receiver, the message after the explicit self": dict(tail="\ndef _tenth(be, sess):\n" + call("SdkBackend", " " * 4, first="be")),
+            "24a: type(self) as receiver": dict(backend="    def _tenth(self, sess):\n" + call("type(self)", " " * 8, first="self") + "\n"),
+            "24b: self.__class__ as receiver": dict(backend="    def _tenth(self, sess):\n" + call("self.__class__", " " * 8, first="self") + "\n"),
+            "m4d3: an attribute annotation": dict(tail="\ndef _tenth(be: kernel.SdkBackend, sess):\n" + call("be", " " * 4)),
+            "m4d4: Optional[SdkBackend]": dict(tail="\ndef _tenth(be: Optional[SdkBackend], sess):\n" + call("be", " " * 4)),
+            "m4d5: SdkBackend | None": dict(tail="\ndef _tenth(be: SdkBackend | None, sess):\n" + call("be", " " * 4)),
+            "m4l: a keyword-only annotated parameter": dict(tail="\ndef _tenth(sess, *, be: SdkBackend):\n" + call("be", " " * 4)),
+        }
+        for label, kw in doors.items():
+            with self.subTest(arm=label):
+                c = self._census(plant(**kw))
+                self._assert_tenth_found(c, "alias")
+                self.assertEqual([dc.lineno for dc in c.unreduced if dc.owner == "_tenth"], [])
+        with self.subTest(arm="23b: getattr(be, '_ring', None) handed to a helper that calls it"):
+            c = self._census(plant(tail="\ndef _tenth_helper(sess, log):\n    log(%s, problem=True, %s)\n\n\ndef _tenth(be: SdkBackend, sess):\n    _tenth_helper(sess, log=getattr(be, '_ring', None))\n" % (self.MSG, self.RING)))
+            self.assertEqual(c.failures, [])
+            self.assertIn(("_tenth_helper", "TENTH_RING", False), c.content_identities())
+            self.assertEqual(len(c.content_rows), 10)
+            self.assertEqual([dc.kind for dc in c.door_calls if dc.owner == "_tenth_helper"], ["param"])
+        uncalled = ("door-escapes", "sdk_backend.py", "class alias _ring of SdkBackend is never called")
+        others = {
+            "m4g4: a subclass rebinding the name as a method, self in the subclass": dict(tail="\nclass _TenthSub(SdkBackend):\n    def _ring(self, line, **kw):\n        pass\n\n    def _tenth(self, sess):\n" + call("self", " " * 8)),
+            "35: a mixin mixed only into ApiHealth, using the deque": dict(tail="\nclass _TenthMixin:\n    def _tenth(self, ev):\n        self._ring.append(ev)\n\nclass _TenthHealth(_TenthMixin, ApiHealth):\n    pass\n"),
+            "Optional[ApiHealth]": dict(tail="\ndef _tenth(h: Optional[ApiHealth], sess):\n" + call("h", " " * 4)),
+        }
+        for label, kw in others.items():
+            with self.subTest(arm=label):
+                c = self._census(plant(**kw))
+                self.assertEqual([(k, b, t) for k, b, _ln, t in c.failures], [uncalled], "the call is the other binding's, so the alias is called nowhere")
+                self.assertEqual(tenth(c), [])
+                self.assertEqual(len(c.content_rows), 9)
+        ambiguous = {
+            "03b: a mixin mixed into both classes": dict(tail="\nclass _TenthMixin:\n    def _tenth(self, sess):\n" + call("self", " " * 8) + "\nclass _TenthBackend(_TenthMixin, SdkBackend):\n    pass\n\nclass _TenthHealth(_TenthMixin, ApiHealth):\n    pass\n", why="admits both bindings"),
+            "19: a __getattr__ proxy typed by its constructor": dict(tail="\nclass _TenthProxy:\n    def __init__(self, be: SdkBackend):\n        self._be = be\n\n    def __getattr__(self, n):\n        return getattr(self._be, n)\n\n\ndef _tenth(be: SdkBackend, sess):\n    p = _TenthProxy(be)\n" + call("p", " " * 4), why="is untyped"),
+            "20a: x: object": dict(tail="\ndef _tenth(x: object, sess):\n" + call("x", " " * 4), why="is untyped"),
+            "20b: x: Any": dict(tail="\ndef _tenth(x: Any, sess):\n" + call("x", " " * 4), why="is untyped"),
+            "20c: x: typing.Any": dict(tail="\ndef _tenth(x: typing.Any, sess):\n" + call("x", " " * 4), why="is untyped"),
+            "20d: x: 'Any'": dict(tail="\ndef _tenth(x: 'Any', sess):\n" + call("x", " " * 4), why="is untyped"),
+            "21a: a Protocol of the file declaring the name": dict(tail="\nclass _TenthRingLike(Protocol):\n    def _ring(self, line, **kw) -> None: ...\n\n\ndef _tenth(x: _TenthRingLike, sess):\n" + call("x", " " * 4), why="is untyped"),
+            "21b: an abstract base binding the name, the writer's class a subclass owning the alias": dict(
+                head="class _TenthBase:\n    def _ring(self, line, **kw):\n        raise NotImplementedError\n\n\nclass SdkBackend(_TenthBase):\n",
+                tail="\ndef _tenth(x: _TenthBase, sess):\n" + call("x", " " * 4), why="admits both bindings"),
+            "22: an annotated parameter reassigned in the body": dict(tail="\ndef _tenth(h: ApiHealth, be, sess):\n    h = be\n" + call("h", " " * 4), why="is untyped"),
+            "37: self._be bound in __init__ from a parameter typed object": dict(tail="\nclass _TenthHolder:\n    def __init__(self, be: object):\n        self._be = be\n\n    def _tenth(self, sess):\n" + call("self._be", " " * 8), why="is untyped"),
+            "m4e2: a local with one constructor assignment and one untyped": dict(tail="\ndef _tenth(state_dir, x, sess):\n    h = ApiHealth(state_dir)\n    if x:\n        h = x\n" + call("h", " " * 4), why="is untyped"),
+        }
+        for label, kw in ambiguous.items():
+            why = kw.pop("why")
+            with self.subTest(arm=label):
+                c = self._census(plant(with_benign=True, **kw))
+                kinds = [(k, b) for k, b, _ln, _t in c.failures]
+                self.assertEqual(kinds, [("door-alias-ambiguous", "sdk_backend.py")], "the loud ambiguity, and no other failure (the benign call keeps the alias called)")
+                text = c.failures[0][3]
+                self.assertIn("the receiver is untyped" if why == "is untyped" else "the receiver's type admits both bindings", text)
+                self.assertIn("SdkBackend._ring (a class-body alias of the door, line", text)
+                self.assertIn("ApiHealth._ring (an attribute bound in __init__)", text)
+                self.assertEqual(tenth(c), [], "not counted as a door: named as a failure instead")
+                self.assertEqual(len(c.content_rows), 9)
+        with self.subTest(arm="m4j: the collision record's other hows, a method and a class-body name"):
+            c = self._census(plant(with_benign=True, tail="\nclass _TenthByMethod:\n    def _ring(self, line, **kw):\n        pass\n\n\nclass _TenthByName:\n    _ring = None\n"))
+            self.assertEqual(c.failures, [])
+            self.assertEqual(c.alias_collisions, {"_ring": ["ApiHealth._ring (an attribute bound in __init__)", "_TenthByMethod._ring (a method)", "_TenthByName._ring (a class-body name)"]})
+        with self.subTest(arm="the alias's name spelled as a string outside getattr"):
+            c = self._census(plant(with_benign=True, tail="\n_TENTH_ATTR = '_ring'\n\n\ndef _tenth(be: SdkBackend, sess):\n    getattr(be, _TENTH_ATTR)(%s, problem=True, %s)\n" % (self.MSG, self.RING)))
+            self.assertEqual([(k, b) for k, b, _ln, _t in c.failures], [("door-name-string", "sdk_backend.py")])
+            self.assertIn("a door alias's name '_ring' is a string outside getattr(x, '_ring')", c.failures[0][3])
+        for label, body in (("R05e: cls._log(be or 'tenth', msg, problem=True) in a classmethod", "    @classmethod\n    def _tenth(cls, be, sess):\n        cls._log(be or 'tenth', %s, problem=True, %s)\n\n"),
+                            ("type(self)._log(self, msg, ...)", "    def _tenth(self, sess):\n        type(self)._log(self, %s, problem=True, %s)\n\n"),
+                            ("getattr(self, '_log')(msg, ...)", "    def _tenth(self, sess):\n        getattr(self, '_log')(%s, problem=True, %s)\n\n")):
+            with self.subTest(arm=label):
+                c = self._census(plant(backend=body % (self.MSG, self.RING), with_alias=False))
+                self._assert_tenth_found(c, "typed")
+                self.assertEqual([dc.lineno for dc in c.unreduced if dc.owner == "_tenth"], [])
+        head = census(CENSUS_FILES)
+        self.assertEqual((head.class_alias_doors, head.module_alias_doors, head.alias_collisions), ({}, {}, {}),
+                         "product code binds no alias of the door at class or module scope: the census tells the bindings apart by scope, and no rename was needed")
 
 
 class LogQuietlyAtRuntime(_Backend):

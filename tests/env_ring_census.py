@@ -19,7 +19,12 @@ by resolution and not by name:
   2. CALLS REACHING IT. Every call resolving to the writer: `self.<door>` inside the writer's class; `<any>.<door>` on
      another receiver (the backend held by a session, a `be` parameter); `<Class>.<door>(self, ...)`, unbound, its
      message read after the explicit self; `self.<door>` inside a class that binds the
-     attribute in its __init__ from a parameter (ApiHealth), followed through every constructor call; a call through
+     attribute in its __init__ from a parameter (ApiHealth), followed through every constructor call;
+     `<class object>.<door>(self, ...)` through `cls` in a classmethod, `type(self)` or `self.__class__`, the plain
+     function, its message read after the explicit self like the class name's (the rulings' lens: `cls._log(be or 'x',
+     msg, ...)` was read with `be or 'x'` as its message, whose literal head hid the row from the unreduced pin);
+     `getattr(x, "<door>")(...)` and `getattr(x, "<alias>")(...)`, a call through reflection with the name spelled,
+     resolved as `x.<door>(...)`; a call through
      a PARAMETER (`log(...)`) followed through every call site of the enclosing function, positional or keyword,
      through `getattr(x, "<door>", None)`, `partial`, a conditional expression and a forwarded parameter, through a
      default argument (`log=_log` in the writer's class body, `log=SdkBackend._log` at module level) and
@@ -28,14 +33,22 @@ by resolution and not by name:
      body, called as `self._ring_door(...)`) or at MODULE scope (`_RING = SdkBackend._log` or
      `getattr(SdkBackend, "_log")` at import, called by its bare name). A class alias whose name ANOTHER class also
      binds (the lens's `_ring = _log` in the writer's class beside ApiHealth's `self._ring` deque) is two bindings the
-     AST tells apart by SCOPE (ruling 4 of review round 6): `self.<name>` in the alias's class, or in a subclass
-     through the MRO, is the alias, a door; `self.<name>` in a class that binds the name itself (an attribute bound in
-     __init__, a method, a class-body name) is that class's binding, no door; a typed receiver (a class name, a
-     parameter annotated with a class of the files, a string annotation included, a local assigned from a constructor
-     call, a `self.<attr>` bound in __init__ from one of these) resolves by its class the same way; an untyped
-     receiver resolves to the alias when no other class binds the name, and where one does it is the loud
-     door-alias-ambiguous failure, its remedy naming both bindings. Whether the message comes first or after an
-     explicit self is read from the binding (bound through an instance or getattr on one; unbound through the class).
+     AST tells apart by SCOPE (ruling 4 of review round 6): the receiver's classes are typed (`self` or `cls`, the
+     enclosing class; a class name; `type(x)` and `x.__class__`; a parameter annotated with a class of the files, a
+     string annotation, an Optional, a union and a keyword-only parameter included, unless the body reassigns it, when
+     every assignment counts too; a local every assignment of which is a constructor call or another typed
+     expression; a `self.<attr>` bound in __init__ from one of these), and EVERY class an instance of a typed receiver
+     can be is decided by its own MRO, the class and each subclass of it (a mixin's self is an instance of whatever
+     the mixin is mixed into): the first class of the MRO that owns the alias makes it the alias, a door; the first
+     that binds the name itself (an attribute bound in __init__, a method, a class-body name) makes it that binding,
+     no door. All door is a door; all not is not; both at once (a mixin mixed into the writer's class and into
+     ApiHealth; a receiver typed by a base that binds the name while the writer's class, its subclass, owns the alias)
+     is the loud door-alias-ambiguous failure naming both bindings and the remedy. A receiver the walk cannot type
+     (no annotation; `object`, `Any` or a string of either, which every instance satisfies; a Protocol of the files;
+     a class defining __getattr__ or __getattribute__, a proxy; an annotated parameter reassigned from an untyped
+     value) resolves to the alias when no other class binds the name, and where one does it is the same failure.
+     Whether the message comes first or after an explicit self is read from the binding (bound through an instance or
+     getattr on one; unbound through a class object).
   3. CONDUITS. A function whose door call's message is one of its own parameters (SdkSession._log_quietly,
      problem_row) is a conduit: each of its call sites is a door call whose message is the argument it passes, whose
      problem= is the inner call's when that is a constant, or the site's own argument when the inner call forwards a
@@ -50,9 +63,10 @@ by resolution and not by name:
      forwarded, an attribute bound in __init__ that a method calls, an alias that is called (a module alias by its
      bare name in some function of its module, a class alias as an attribute call). A door value the walk cannot
      follow (one that escapes through a return, a container, an unresolvable callee, an alias nothing calls) is a
-     FAILURE named by site, never a drop: a pin that cannot see must say so. So is the door's name spelled as a
-     string anywhere but the getattr form the walk follows (`operator.attrgetter("_log")`, `LOG_ATTR = "_log"`,
-     `vars(be)["_log"]`: a door reached by reflection), and the ring's name spelled as a string at all.
+     FAILURE named by site, never a drop: a pin that cannot see must say so. So is the door's name, or a door
+     alias's, spelled as a string anywhere but the getattr form the walk follows (`operator.attrgetter("_log")`,
+     `LOG_ATTR = "_log"`, `vars(be)["_log"]`, `ATTR = "_ring"`: a door reached by reflection), and the ring's name
+     spelled as a string at all.
   6. TAINT. A door call is VALUE-TAINTED when its message or its ring text carries a value derived from a per-session
      env source: the data road's sources (the env attributes of a session, the 'env' key of a registry row, launch
      shape or request body, the flag-settings constants and helpers, the reserved and credential name sets and the
@@ -63,26 +77,48 @@ by resolution and not by name:
      direction for a guard), through tuple returns by position, and into a nested function or lambda from the
      enclosing scope; through augmented assignment (`names += k`); through an add in place (`parts.append(k)`,
      `seen.extend(names)`, `d.setdefault(k, v)`, `d.update(...)`: the argument's taint marks the receiver, a local, a
-     module-level name for every reader in its module, or an attribute); through an attribute store (`self.x = v`
-     marks `.x` for every reader of `.x` on any receiver in the files, the direction that finds a value stored in one
-     method and read in another; the ring attribute itself excepted, being the sink); and through a dict return or
-     store per key: a dict carries "env" alone, and only what sits under a key that is NOT a source (the per-session
-     env's own key, 'env', is a source at every READ, by subscript, `.get`, `.pop` or `.setdefault`, so a dict does
-     not carry it; a value re-keyed under any other name crosses with the dict). The census does NOT follow the pick
-     tag across a dict return: a pick that crosses one is OUTSIDE the census, and the existence population is the
-     direct readers of the surface set by construction. That is a bound on the census's reach, not a property of the
-     kernel (ruling 3 of review round 6; followed whole, a session snapshot would carry the pending picks to every
-     reader of every other field). A source FUNCTION whose every return is a dict (the launch shape) is a source at
-     its env key, not whole, and the value it stores under that key is the env BY DECLARATION (ruling 2 of review
-     round 6): the Name or attribute it is stored from carries the tag from there, and so does the dict holding it,
-     whole, so a copy under a second key, a re-key by pop, an update, a splat, a comprehension over its items, a local
-     alias, an attribute held for another method and a helper in a chain all carry the env with the value, while what
-     crosses the dict's boundary still excludes the key; where the census cannot locate the env inside such a return
-     (no source key in the literal, a comprehension whose keys it cannot track, a local nothing stored the key into)
-     the whole return carries the tag, the over-approximating side, never a drop. A whole-value use of such a return
-     by a READER (`str(shape)`, `shape.values()`) is outside the census: the rule taints the key's readers, not the
-     dict. `_options`' return is opaque (the whole options dict; its env overlay is a source of its own), and reads of
-     the kernel's _pending_ops carry no value taint (a mixed container of every parked op kind).
+     module-level name for every reader in its module, or an attribute; `operator.setitem(d, k, v)` is
+     `d.__setitem__(k, v)`); through a store by reflection with the name spelled (`setattr(x, "n", v)`,
+     `x.__dict__["n"] = v`, `x.__dict__.setdefault("n", v)` are stores into `.n`; under a name the census cannot place
+     a tainted value is a reflection-store FAILURE); through an attribute store (`self.x = v` marks `.x` for every
+     reader of `.x` on any receiver in the files, the direction that finds a value stored in one method and read in
+     another; the ring attribute itself excepted, being the sink), read back by `.x`, `getattr(x, "x")`, `vars(x)["x"]`
+     or `x.__dict__["x"]` alike (a source attribute read by any of these is a source read; a SOURCE'S NAME spelled as
+     a string anywhere else is a source-name-string failure, the door's own rule); through a nested tuple target to
+     its leaves (`(k, v), = d.items()`, `for i, (k, v) in ...`, `*_rest, (k, v) = ...`); into a lambda bound to a local
+     and called by its name, and out of a generator's yields, which are its returns. Every value has two sets: the
+     WHOLE value's, and what a read of ONE non-source key of it yields (its CARRIED set: a local's, a parameter's from
+     its call sites, a return's, an attribute's), so a dict return or store carries "env" across its boundary only
+     from what sits under a key that is NOT a source (the per-session env's own key, 'env', is a source at every
+     READ, by subscript, `.get`, `.pop` or `.setdefault`, so a keyed read of another key, `shape["mode"]`,
+     `shape.get("mode")`, `(shape or {}).get("mode")`, yields the carried set), while a whole-value use of the same
+     dict (`str(shape)`, `shape.values()`, a loop over it, a splat, a pass to a helper that stringifies it, the dict
+     held whole on an attribute and read back whole) yields the env with everything else; an identity test against
+     None (`x is None`) yields nothing, a truth about x and no value of it. The census does NOT follow the pick tag
+     across a dict return: a pick that crosses one is OUTSIDE the census, and the existence population is the direct
+     readers of the surface set by construction. That is a bound on the census's reach, not a property of the kernel
+     (ruling 3 of review round 6; followed whole, a session snapshot would carry the pending picks to every reader of
+     every other field). A source FUNCTION whose every return is a dict (the launch shape) is a source at its env
+     key, not whole, and the value it stores under that key (a literal's, `dict(env=v)`, `d["env"] = v`,
+     `d.update(env=v)`, `d.setdefault("env", v)`, `operator.setitem(d, "env", v)`) is the env BY DECLARATION (ruling 2
+     of review round 6): the taint follows the VALUE to its ROOTS, the Names, attribute chains and constant-keyed
+     subscripts it derives from, a local followed to its own assignments, a walrus target, a constructor's arguments
+     (a namedtuple or holder built from it), through comprehensions, `dict(e)`, `e or {}`, a tuple index and a second
+     read of the origin, so a Name root is tainted in the function, an attribute root for every reader, and any other
+     root wherever the same access is spelled again in the function; the dict holding the key is tainted whole; and
+     where the census cannot locate the env inside such a return (no source key in the literal, a conditional with an
+     unlocated branch, a dict(...) call without the key, a local nothing stored the key into) the whole return
+     crosses with the tag, the over-approximating side, never a drop. Three bounds of the walk, stated as such: the
+     roots are not followed backward through a call into a function of the files (its return is analysed forward
+     from its parameters; a value copied under the source key by such a helper roots in nothing); an attribute takes
+     a WHOLE set only from a store whose value is a dict by shape at the store (a literal, dict(...), a call to a
+     function returning dicts, a local built as one), since attributes are keyed by NAME over every receiver and a
+     scalar attribute given an over-approximated whole set handed the env to every reader of that name (95 content
+     rows at the head), so a dict reaching an attribute only through a parameter is read there by its carried set;
+     and a reflected read under a COMPUTED name (`getattr(x, name)`) is read as no attribute at all, which is why the
+     spelled forms are the followed ones and a source's name in any other string fails. `_options`' return is opaque
+     (the whole options dict; its env overlay is a source of its own), and reads of the kernel's _pending_ops carry no
+     value taint (a mixed container of every parked op kind).
   7. REDUCTION. Every door call's message is reduced to its literal head(s): a string constant, an f-string's leading
      text, the left side of a `%` or `+`, a `str()` wrap, a local followed to every assignment (a tuple unpacking to
      its position), a module-level string constant by name, a helper followed into its returns, and a conduit's
@@ -291,13 +327,14 @@ class ScopeFn:
 
 
 class Mod:
-    __slots__ = ("path", "base", "src", "tree", "top_defs", "classes", "top_assigns", "top_lists", "fns")
+    __slots__ = ("path", "base", "src", "tree", "top_defs", "classes", "top_assigns", "top_lists", "fns", "imports")
 
     def __init__(self, path):
         self.path = os.path.realpath(path)
         self.base = os.path.basename(path)
         self.src, self.tree = parsed(path)
         self.top_defs, self.classes, self.top_assigns, self.top_lists, self.fns = {}, {}, {}, set(), []
+        self.imports = set()      # the names `import` and `from ... import` bind at module level (os, json, deque)
 
 
 class DoorCall:
@@ -359,6 +396,10 @@ class Census:
         self.ident_consts = []   # (Mod, Constant node, enclosing Fn or None) for every string constant spelling an identifier
         self.all_fns = []
         self.failures = []       # (kind, base, lineno, text)
+        self._failed_sites = set()
+        # every identifier a source is spelled by, for the string-constant rule (the key source 'env' excepted: a key
+        # is spelled as a string at every read by nature)
+        self._source_idents = set(sources["attr"]) | {q.split(".")[-1] for _b, q in sources["func"]} | {n for _b, n in sources["name"]}
         for f in self.files:
             self._index(f)
         self._resolve_all_calls()
@@ -478,6 +519,15 @@ class Census:
                 if fn is not None:
                     fn.returns.append(child.value)
                     self.fn_of[id(child)] = fn
+            elif isinstance(child, (ast.Yield, ast.YieldFrom)):
+                # a generator's yields are its returns: what its consumer receives (`dict(_gen())`, a for over it);
+                # blind-spot lens of review round 6: a yielded ("opts", e) crossed into a dict with its taint unread
+                if fn is not None and child.value is not None:
+                    fn.returns.append(child.value)
+            elif isinstance(child, (ast.Import, ast.ImportFrom)):
+                if fn is None and cls is None:
+                    for alias in child.names:
+                        mod.imports.add((alias.asname or alias.name).split(".")[0])
             elif fn is not None:
                 if isinstance(child, ast.Call):
                     fn.calls.append(child)
@@ -560,11 +610,26 @@ class Census:
         return fn.assigned().get(name, [])
 
     @staticmethod
+    def _leaves(t):
+        """The leaf targets of an assignment or loop target: a nested tuple or list is flattened to any depth (blind-spot
+        lens of review round 6: `(k, v), = d.items()`, `for i, (k, v) in enumerate(d.items())` and
+        `*_rest, (k, v) = list(d.items())` bound their inner names past a one-level flatten, so the env under v went
+        unread). A starred name stays starred (its reader unwraps it)."""
+        if isinstance(t, (ast.Tuple, ast.List)):
+            out = []
+            for el in t.elts:
+                out.extend(Census._leaves(el))
+            return out
+        if isinstance(t, ast.Starred) and isinstance(t.value, (ast.Tuple, ast.List)):
+            return Census._leaves(t.value)
+        return [t]
+
+    @staticmethod
     def _targets(st):
         if isinstance(st, ast.Assign):
             out = []
             for t in st.targets:
-                out.extend(t.elts if isinstance(t, (ast.Tuple, ast.List)) else [t])
+                out.extend(Census._leaves(t))
             return out
         if isinstance(st, (ast.AnnAssign, ast.AugAssign, ast.NamedExpr)):
             return [st.target]
@@ -606,14 +671,31 @@ class Census:
     def resolve_callee(self, call, fn):
         """The Fn(s) a call may reach, with how it was addressed ('name', 'self', 'attr', 'class') for argument binding."""
         f = call.func
+        if isinstance(f, ast.Call) and self._getattr_name(f) is not None and f.args:
+            # `getattr(x, "<name>")(...)`: a call through reflection with the name spelled, resolved as `x.<name>(...)`
+            # (blind-spot lens of review round 6: a source method called this way had its return read as clean)
+            f = ast.Attribute(value=f.args[0], attr=self._getattr_name(f), ctx=ast.Load())
         if isinstance(f, ast.Name):
             if self.is_param(f.id, fn) is not None:
                 return []
             for s in self.scope_chain(fn):
                 if f.id in s.nested:
                     return [(x, "name") for x in s.nested[f.id]]
-                if any(self._assigns_name(s, f.id)):
-                    return []
+                sts = list(self._assigns_name(s, f.id))
+                if sts:
+                    # a local bound to a lambda (`f = lambda: {...}; f()`) or to a nested def's name is that function
+                    # (blind-spot lens of review round 6: a lambda re-keying the env, called by its name, went unread)
+                    out = []
+                    for st in sts:
+                        v = self._value_for(st, f.id)
+                        if isinstance(v, ast.Lambda) and id(v) in self.fn_by_node:
+                            out.append((self.fn_by_node[id(v)], "name"))
+                        elif isinstance(v, ast.Name):
+                            for s2 in self.scope_chain(fn):
+                                if v.id in s2.nested:
+                                    out.extend((x, "name") for x in s2.nested[v.id])
+                                    break
+                    return out
             mod = self.mod_of(fn)
             if f.id in mod.top_defs:
                 return [(mod.top_defs[f.id], "name")]
@@ -678,6 +760,75 @@ class Census:
         for name, d in callee.defaults.items():
             out.setdefault(name, d)
         return out
+
+    @staticmethod
+    def _getattr_name(call):
+        """The spelled name of `getattr(x, "<name>"[, default])`, else None."""
+        if isinstance(call, ast.Call) and isinstance(call.func, ast.Name) and call.func.id == "getattr" \
+                and 2 <= len(call.args) <= 3 and isinstance(call.args[1], ast.Constant) and isinstance(call.args[1].value, str):
+            return call.args[1].value
+        return None
+
+    def _class_object(self, x):
+        """Whether an attribute's receiver is a CLASS OBJECT, so that `<x>.<door>` is the plain function and a call
+        through it supplies self explicitly and the message second: a class name; `cls` (a classmethod's class);
+        `type(self)`; `self.__class__` (blind-spot lens of review round 6: `cls._log(be or 'x', msg, ...)` in a
+        classmethod was read with `be or 'x'` as its message, and the literal head hid the row from the unreduced
+        pin)."""
+        if isinstance(x, ast.Name):
+            return x.id == "cls" or (x.id in self.classes_by_name and x.id != "self")
+        if isinstance(x, ast.Call) and isinstance(x.func, ast.Name) and x.func.id == "type" and len(x.args) == 1:
+            return True
+        return isinstance(x, ast.Attribute) and x.attr == "__class__"
+
+    @staticmethod
+    def _reflected_attr(node):
+        """(receiver, attribute name, [extra arguments]) for an attribute read by REFLECTION with the name spelled:
+        `getattr(x, "n"[, d])`, `vars(x)["n"]`, `x.__dict__["n"]`, `x.__dict__.get("n"[, d])` / `.setdefault("n", v)` /
+        `.pop("n"[, d])`; else None. Read as `x.n` (blind-spot lens of review round 6: `getattr(sess, "env_vars")` and
+        `vars(sess)["env_vars"]` were no source read, and the reflection guard knew the door's name alone)."""
+        if isinstance(node, ast.Call):
+            name = Census._getattr_name(node)
+            if name is not None:
+                return (node.args[0], name, list(node.args[2:]))
+            f = node.func
+            if isinstance(f, ast.Attribute) and f.attr in ("get", "setdefault", "pop") and isinstance(f.value, ast.Attribute) \
+                    and f.value.attr == "__dict__" and node.args and isinstance(node.args[0], ast.Constant) \
+                    and isinstance(node.args[0].value, str):
+                return (f.value.value, node.args[0].value, list(node.args[1:]))
+            return None
+        if isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Constant) and isinstance(node.slice.value, str):
+            v = node.value
+            if isinstance(v, ast.Call) and isinstance(v.func, ast.Name) and v.func.id == "vars" and len(v.args) == 1:
+                return (v.args[0], node.slice.value, [])
+            if isinstance(v, ast.Attribute) and v.attr == "__dict__":
+                return (v.value, node.slice.value, [])
+        return None
+
+    @staticmethod
+    def _reflection_follows(node, up):
+        """Whether a string constant spelling a name sits where the census reads it as that attribute (the forms
+        _reflected_attr reads, plus `setattr(x, "n", v)`, which the in-place store pass reads)."""
+        if isinstance(up, ast.Call) and isinstance(up.func, ast.Name) and up.func.id in ("getattr", "setattr") \
+                and len(up.args) >= 2 and up.args[1] is node:
+            return True
+        if isinstance(up, ast.Subscript) and up.slice is node:
+            v = up.value
+            if isinstance(v, ast.Call) and isinstance(v.func, ast.Name) and v.func.id == "vars":
+                return True
+            if isinstance(v, ast.Attribute) and v.attr == "__dict__":
+                return True
+        if isinstance(up, ast.Call) and isinstance(up.func, ast.Attribute) and up.func.attr in ("get", "setdefault", "pop") \
+                and isinstance(up.func.value, ast.Attribute) and up.func.value.attr == "__dict__" and up.args and up.args[0] is node:
+            return True
+        return False
+
+    def _fail(self, kind, base, lineno, text):
+        """A failure named by site, recorded once (the taint pass runs to a fixpoint and would otherwise repeat it)."""
+        key = (kind, base, lineno)
+        if key not in self._failed_sites:
+            self._failed_sites.add(key)
+            self.failures.append((kind, base, lineno, text))
 
     def _resolve_all_calls(self):
         self.callers = collections.defaultdict(list)     # Fn -> [(call, caller Fn, via)]
@@ -839,13 +990,31 @@ class Census:
                 self.ambiguous_aliases.add(name)
                 self.alias_collisions[name] = sorted(elsewhere)
 
+    OPAQUE_TYPES = frozenset({"object", "Any"})    # annotations every instance satisfies: they type nothing
+
+    def _opaque_class(self, c):
+        """A class of the files that types its instances structurally or forwards attributes, so that a receiver of it
+        can be any object: a Protocol (`class X(Protocol)`), or a class defining __getattr__ or __getattribute__ (a
+        proxy). Blind-spot lens of review round 6: a receiver typed by a Protocol declaring the alias, and a proxy
+        forwarding to a backend, each resolved to the other binding silently."""
+        return any(b.split("[")[0].split(".")[-1] == "Protocol" for b in c.bases) \
+            or "__getattr__" in c.methods or "__getattribute__" in c.methods
+
     def receiver_classes(self, e, fn, depth=0):
         """The classes an attribute's receiver can be an instance of, or None when the walk cannot type it: `self` or
-        `cls` (the enclosing class); a class name (an unbound access on the class itself); a parameter annotated with a
-        class of the files (`be: SdkBackend`, the string form `backend: "SdkBackend"`, an Optional or a union of one);
-        a local every assignment of which is a constructor call or another typed expression; and `self.<attr>` bound
-        in __init__ from a typed expression, through the MRO. A list may be empty (a typed receiver of no class of the
-        files: `x: int`), which is typed all the same."""
+        `cls` (the enclosing class); a class name (an unbound access on the class itself); `type(x)` and `x.__class__`
+        (x's classes); a parameter annotated with a class of the files (`be: SdkBackend`, the string form
+        `backend: "SdkBackend"`, an Optional or a union of one), unless the body reassigns it, when every assignment
+        counts too; a local every assignment of which is a constructor call or another typed expression; and
+        `self.<attr>` bound in __init__ from a typed expression, through the MRO. A list may be empty (a typed receiver
+        of no class of the files: `x: int`), which is typed all the same; `object`, `Any` and a Protocol or proxy class
+        of the files type nothing (None)."""
+        r = self._receiver_classes(e, fn, depth)
+        if r and any(self._opaque_class(c) for c in r):
+            return None
+        return r
+
+    def _receiver_classes(self, e, fn, depth=0):
         if depth > 4 or e is None:
             return None
         if isinstance(e, ast.Name):
@@ -854,7 +1023,22 @@ class Census:
                 return [c] if c is not None else []
             owner = self.is_param(e.id, fn)
             if owner is not None:
-                return self._annotation_classes(getattr(owner, "annotations", {}).get(e.id))
+                ann = self._annotation_classes(getattr(owner, "annotations", {}).get(e.id))
+                sts = list(self._assigns_name(owner, e.id)) if owner.kind != "scope" else []
+                if not sts:
+                    return ann
+                # an annotated parameter REASSIGNED in the body is what the assignments make it, the annotation
+                # included (blind-spot lens of review round 6: `h: ApiHealth` then `h = be` kept the annotation's type)
+                if ann is None:
+                    return None
+                out = list(ann)
+                for st in sts:
+                    v = self._value_for(st, e.id)
+                    r = self.receiver_classes(v, owner, depth + 1) if v is not None and not isinstance(v, tuple) else None
+                    if r is None:
+                        return None
+                    out.extend(r)
+                return out
             for s in self.scope_chain(fn):
                 sts = list(self._assigns_name(s, e.id))
                 if sts:
@@ -871,10 +1055,14 @@ class Census:
             return None
         if isinstance(e, ast.Call):
             f = e.func
+            if isinstance(f, ast.Name) and f.id == "type" and len(e.args) == 1:
+                return self.receiver_classes(e.args[0], fn, depth + 1)
             name = f.id if isinstance(f, ast.Name) else (f.attr if isinstance(f, ast.Attribute) else None)
             if name in self.classes_by_name and not (isinstance(f, ast.Name) and self.is_param(name, fn) is not None):
                 return list(self.classes_by_name[name])
             return None
+        if isinstance(e, ast.Attribute) and e.attr == "__class__":
+            return self.receiver_classes(e.value, fn, depth + 1)
         if isinstance(e, ast.Attribute) and isinstance(e.value, ast.Name) and e.value.id == "self":
             c = self.class_of(fn)
             if c is None:
@@ -917,6 +1105,8 @@ class Census:
             return sides[0] + sides[1]
         else:
             return None
+        if name in self.OPAQUE_TYPES:
+            return None           # `object`, `Any`, `typing.Any`, "Any": every instance satisfies it, so it types nothing
         return list(self.classes_by_name.get(name, []))
 
     def _alias_resolution(self, e, fn):
@@ -932,34 +1122,47 @@ class Census:
         recv = self.receiver_classes(e.value, fn)
         if recv is None:
             if name in self.alias_collisions:
-                self._ambiguous_site(e, fn)
+                self._ambiguous_site(e, fn, "the receiver is untyped")
                 return "not"
             return "door"
+        decided = set()
         for c in recv:
-            decided = None
-            for k in self.mro(c):
-                if any(k is o for o in owners):
-                    decided = "door"
-                    break
-                if name in k.bindings or name in k.methods or name in k.class_assigns:
-                    decided = "not"
-                    break
-            if decided == "door":
-                return "door"
-            if decided is None and any(any(s is o for o in owners) for s in self.subclasses(c)):
-                return "door"
+            # every class an instance of c can be: c itself and each subclass of it (self in a mixin is an instance of
+            # the class the mixin is mixed into; a parameter typed by a base is an instance of the base or a subclass),
+            # each decided by its own MRO (blind-spot lens of review round 6: a mixin mixed into the writer's class
+            # resolved to the deque, and a mixin mixed into both classes resolved silently to no door)
+            for k in [c] + self.subclasses(c):
+                d = self._binding_of(k, name, owners)
+                if d is not None:
+                    decided.add(d)
+        if decided == {"door"}:
+            return "door"
+        if len(decided) == 2:
+            self._ambiguous_site(e, fn, "the receiver's type admits both bindings")
         return "not"
 
-    def _ambiguous_site(self, e, fn):
-        if id(e) in self._ambiguous_seen:
+    def _binding_of(self, cls, name, owners):
+        """'door' | 'not' | None: what `<an instance of cls>.<name>` is, by the MRO: the first class that owns the alias
+        is the door, the first that binds the name itself (an attribute bound in __init__, a method, a class-body name)
+        is that binding; None when no class of the MRO does either."""
+        for k in self.mro(cls):
+            if any(k is o for o in owners):
+                return "door"
+            if name in k.bindings or name in k.methods or name in k.class_assigns:
+                return "not"
+        return None
+
+    def _ambiguous_site(self, e, fn, why):
+        key = (fn.base, e.lineno, ast.unparse(e))
+        if key in self._ambiguous_seen:
             return
-        self._ambiguous_seen.add(id(e))
+        self._ambiguous_seen.add(key)
         name = e.attr
         both = ["%s.%s (a class-body alias of the door, line %d)" % (c.name, name, v.lineno) for c, v in self.class_alias_doors[name]] \
             + self.alias_collisions[name]
         self.failures.append(("door-alias-ambiguous", fn.base, e.lineno,
-                              "%s in %s: the receiver is untyped and %s is bound twice, %s; type the receiver (an annotation "
-                              "naming the class, a constructor call) or rename one binding" % (ast.unparse(e), fn.qual, name, " and ".join(both))))
+                              "%s in %s: %s and %s is bound twice, %s; type the receiver (an annotation "
+                              "naming the class, a constructor call) or rename one binding" % (ast.unparse(e), fn.qual, why, name, " and ".join(both))))
 
     def door_value(self, e, fn, seen=None):
         """'door' | 'not' | 'unfollowed' for an expression used as a value (or as a callee)."""
@@ -983,9 +1186,14 @@ class Census:
             return "door"
         if isinstance(e, ast.Call):
             f = e.func
-            if isinstance(f, ast.Name) and f.id == "getattr" and len(e.args) >= 2 and isinstance(e.args[1], ast.Constant) \
-                    and e.args[1].value == door:
+            name = self._getattr_name(e)
+            if name == door:
                 return "door"
+            if name is not None and name in getattr(self, "class_alias_doors", {}):
+                # `getattr(x, "<alias>")`: the alias's name spelled, resolved by x's scope like `x.<alias>` (blind-spot
+                # lens of review round 6: the reflection guard read the door's own name only)
+                return self._alias_resolution(ast.Attribute(value=e.args[0], attr=name, ctx=ast.Load(), lineno=e.lineno,
+                                                            col_offset=e.col_offset), fn)
             if (isinstance(f, ast.Name) and f.id == "partial") or (isinstance(f, ast.Attribute) and f.attr == "partial"):
                 return self.door_value(e.args[0], fn, seen) if e.args else "not"
             return "not"
@@ -1047,18 +1255,16 @@ class Census:
         seen = seen if seen is not None else set()
         door = self.door
         if isinstance(e, ast.Attribute):
-            if e.attr == door:
-                unbound = isinstance(e.value, ast.Name) and e.value.id in self.classes_by_name and e.value.id not in ("self", "cls")
-                return "unbound" if unbound else "bound"
-            if e.attr in self.class_alias_doors:
-                unbound = isinstance(e.value, ast.Name) and e.value.id in self.classes_by_name and e.value.id not in ("self", "cls")
-                return "unbound" if unbound else "bound"      # the alias is the writer's function; instance access binds it
+            if e.attr == door or e.attr in self.class_alias_doors:
+                # the alias is the writer's function: access through an instance binds it, through the class object
+                # (a class name, cls, type(self), self.__class__) it is the plain function and the message comes second
+                return "unbound" if self._class_object(e.value) else "bound"
             return None
         if isinstance(e, ast.Call):
             f = e.func
-            if isinstance(f, ast.Name) and f.id == "getattr" and len(e.args) >= 2 and isinstance(e.args[1], ast.Constant) and e.args[1].value == door:
-                unbound = isinstance(e.args[0], ast.Name) and e.args[0].id in self.classes_by_name
-                return "unbound" if unbound else "bound"
+            name = self._getattr_name(e)
+            if name == door or (name is not None and name in self.class_alias_doors):
+                return "unbound" if self._class_object(e.args[0]) else "bound"
             if self._is_partial(e) and e.args:
                 b = self.door_binding(e.args[0], fn, seen)
                 return "bound" if b == "unbound" and len(e.args) > 1 else b    # partial(SdkBackend._log, be) supplies self
@@ -1109,6 +1315,9 @@ class Census:
                             if isinstance(st.value, (ast.Tuple, ast.List)) and i < len(st.value.elts):
                                 return st.value.elts[i]
                             return ("index", st.value, i)
+                        if isinstance(el, (ast.Tuple, ast.List, ast.Starred)) and any(
+                                isinstance(leaf, ast.Name) and leaf.id == name for leaf in Census._leaves(el)):
+                            return ("index", st.value, i)       # bound from inside the i-th element: read whole
             return None
         if isinstance(st, (ast.AnnAssign, ast.NamedExpr)):
             return st.value
@@ -1133,7 +1342,12 @@ class Census:
             for call in fn.calls:
                 f = call.func
                 kind = None
-                if isinstance(f, ast.Attribute) and f.attr == door:
+                gname = self._getattr_name(f) if isinstance(f, ast.Call) else None
+                if gname is not None and (gname == door or gname in self.class_alias_doors):
+                    # `getattr(x, "<door or alias>")(...)`: the door called through reflection with the name spelled
+                    if self.door_value(f, fn) == "door":
+                        kind = "typed" if gname == door else "alias"
+                elif isinstance(f, ast.Attribute) and f.attr == door:
                     dv = self.door_value(f, fn)
                     if dv == "unfollowed":
                         self.failures.append(("door-unresolved", fn.base, call.lineno,
@@ -1279,7 +1493,8 @@ class Census:
         if isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Load):
             return node.attr == door or (node.attr in self.class_alias_doors and self.door_value(node, fn) == "door")
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "getattr":
-            return len(node.args) >= 2 and isinstance(node.args[1], ast.Constant) and node.args[1].value == door
+            name = self._getattr_name(node)
+            return name == door or (name is not None and name in self.class_alias_doors and self.door_value(node, fn) == "door")
         if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load) and node.id == door:
             sc = self.scope_of(node)
             if isinstance(sc, ast.ClassDef):
@@ -1330,14 +1545,22 @@ class Census:
         door = self.door
         self.door_value_sites = []     # (base, lineno, kind, fn)
         self.log_param_fns = set()     # Fns whose parameter is bound to a door somewhere
+        alias_names = set(self.class_alias_doors) | {name for _path, name in self.module_alias_doors}
         for mod, node, _fn in self.ident_consts:
             up = self.parents.get(node)
-            if node.value == door:
+            if node.value == door or node.value in alias_names:
                 followed = (isinstance(up, ast.Call) and isinstance(up.func, ast.Name) and up.func.id == "getattr"
                             and len(up.args) >= 2 and up.args[1] is node)
                 if not followed:
-                    self.failures.append(("door-name-string", mod.base, node.lineno, "the door's name %r is a string outside "
-                                          "getattr(x, %r): %s" % (door, door, ast.unparse(up)[:60] if up is not None else "?")))
+                    what = "the door's name" if node.value == door else "a door alias's name"
+                    self.failures.append(("door-name-string", mod.base, node.lineno, "%s %r is a string outside "
+                                          "getattr(x, %r): %s" % (what, node.value, node.value, ast.unparse(up)[:60] if up is not None else "?")))
+            elif node.value in self._source_idents and not self._reflection_follows(node, up):
+                # a SOURCE's name spelled as a string anywhere but the reflected read or store the census follows
+                # (`ATTR = "env_vars"; getattr(sess, ATTR)`): a source reached by reflection the walk cannot see, so
+                # the string is the failure (blind-spot lens of review round 6: the door had this rule, no source did)
+                self.failures.append(("source-name-string", mod.base, node.lineno, "a source's name %r is a string outside a "
+                                      "reflected read or store the census follows: %s" % (node.value, ast.unparse(up)[:60] if up is not None else "?")))
             elif node.value == self.RING_ATTR:
                 self.failures.append(("ring-name-string", mod.base, node.lineno, "the ring's name %r is a string: %s"
                                       % (self.RING_ATTR, ast.unparse(up)[:60] if up is not None else "?")))
@@ -1419,7 +1642,8 @@ class Census:
                     # a class-body alias: called as an attribute (`self.<alias>(...)`, `<typed>.<alias>(...)`) anywhere
                     # the receiver resolves to the alias (a call resolving to another class's binding of the name is
                     # no call of the alias)
-                    called = any(isinstance(c.func, ast.Attribute) and c.func.attr == name and self.door_value(c.func, f) == "door"
+                    called = any((isinstance(c.func, ast.Attribute) and c.func.attr == name and self.door_value(c.func, f) == "door")
+                                 or (self._getattr_name(c) == name and self.door_value(c, f) == "door")     # getattr(x, "<alias>"), followed
                                  for f in self.all_fns for c in f.calls)
                     how = "class alias %s of %s" % (name, fn.cls.name)
                 if called:
@@ -1531,16 +1755,25 @@ class Census:
         if isinstance(node, ast.Call):
             for callee, _via in self.callees.get(id(node), []):
                 tag = s["func"].get((callee.base, callee.qual))
-                if tag and not self._returns_dicts(callee):
-                    # a source function that returns a DICT (the launch shape) is a source at its env key, a read of
-                    # its own ('env' in the key sources), not whole: its other keys carry what its return carries
+                if tag:
+                    # a source function's call read WHOLE (expr_taint is the whole-value context): a function returning
+                    # a DICT (the launch shape) holds the env under its key, so `str(shape)` or `shape.values()` carries
+                    # it, while a read of one of its OTHER keys goes through _keyed_taint to the return's carried set
                     return tag
+        ra = self._reflected_attr(node)
+        if ra is not None and ra[1] in s["attr"]:
+            return s["attr"][ra[1]]          # `getattr(sess, "env_vars")`, `vars(sess)["env_vars"]`: the attribute by reflection
+        dt = self._decl_node_tags.get(id(node))
+        if dt:
+            return dt          # a root of the value a declared dict source stores under the source key (_declare_roots)
         return None
 
     def _returns_dicts(self, callee):
-        """Every return of `callee` is dict-valued (a literal, a comprehension, dict(...), a local built as one)."""
+        """Every return of `callee` is dict-valued (a literal, a comprehension, dict(...), a local built as one, a call
+        to a function that returns dicts)."""
         hit = self._dict_returners.get(callee)
         if hit is None:
+            self._dict_returners[callee] = False      # pessimistic while computing: a return through a cycle is no dict
             hit = self._dict_returners[callee] = bool(callee.returns) and all(self._dict_valued(r, callee) for r in callee.returns)
         return hit
 
@@ -1580,6 +1813,9 @@ class Census:
                 elif isinstance(f, ast.Attribute) and f.attr in ("setdefault", "__setitem__") and len(n.args) >= 2 \
                         and isinstance(n.args[0], ast.Constant) and n.args[0].value in keys:
                     out.append((f.value, n.args[1]))
+                elif ((isinstance(f, ast.Name) and f.id == "setitem") or (isinstance(f, ast.Attribute) and f.attr == "setitem")) \
+                        and len(n.args) >= 3 and isinstance(n.args[1], ast.Constant) and n.args[1].value in keys:
+                    out.append((n.args[0], n.args[2]))       # operator.setitem(d, "env", v)
             stack.extend(ast.iter_child_nodes(n))
         for st in fn.assigns:
             if isinstance(st, (ast.Assign, ast.AnnAssign)) and st.value is not None:
@@ -1663,17 +1899,42 @@ class Census:
                     if gt:
                         tags |= gt
                 continue
+            if isinstance(node, ast.Compare) and all(isinstance(op, (ast.Is, ast.IsNot)) for op in node.ops) \
+                    and all(isinstance(cmp, ast.Constant) and cmp.value is None for cmp in node.comparators):
+                # `x is None`, `x is not None`: an identity test against None is a truth value about x, never a value
+                # of x, so a shape held whole in x (`launching = self._launching`) does not reach the flag it sets
+                continue
+            if isinstance(node, ast.Subscript) and isinstance(node.ctx, ast.Load) and isinstance(node.slice, ast.Constant) \
+                    and node.slice.value not in self.sources["key"] and self._reflected_attr(node) is None:
+                # a read of ONE key that is no source key: what the container's carried set holds (the values under
+                # its other keys), not the container whole; `shape["mode"]` after `shape = self._launch_shape(sess)`
+                tags |= self._keyed_taint(node.value, fn)
+                continue
+            ra = self._reflected_attr(node)
+            if ra is not None:
+                # `getattr(x, "n")`, `vars(x)["n"]`, `x.__dict__["n"]`: the attribute by reflection, read whole, plus
+                # the default's own taint
+                tags |= self.attr_taint.get(ra[1], set()) | self.attr_whole.get(ra[1], set())
+                for a in ra[2]:
+                    tags |= self.expr_taint(a, fn)
+                continue
+            kr = self._keyed_read(node)
+            if kr is not None and kr[1] not in self.sources["key"]:
+                # `d.get("mode")`, `d.pop("mode")`, `d.setdefault("mode", x)`: a keyed read by method, plus its defaults
+                tags |= self._keyed_taint(kr[0], fn)
+                for a in node.args[1:]:
+                    tags |= self.expr_taint(a, fn)
+                continue
             if isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Load):
-                at = self.attr_taint.get(node.attr)
-                if at:
-                    tags |= at
+                # an attribute read whole: what any store put there, whole (its keyed reads take attr_taint alone)
+                tags |= self.attr_taint.get(node.attr, set()) | self.attr_whole.get(node.attr, set())
             if isinstance(node, ast.Call):
                 res = self.callees.get(id(node), [])
                 if res:
                     for callee, _via in res:
                         if (callee.base, callee.qual) in self.sources["opaque_returns"]:
                             continue
-                        rt = self.ret_taint.get(callee)
+                        rt = self.ret_whole.get(callee)
                         if rt:
                             for v in rt.values():
                                 tags |= v
@@ -1689,11 +1950,16 @@ class Census:
 
     def _taint(self):
         self.tainted_names = {}      # Fn -> {name: set(tags)} (parameters and locals alike; the WHOLE value's taint)
-        self.carried_names = {}      # Fn -> {name: set(tags)} a local's taint minus what sits under a SOURCE key of a dict
-        self.ret_taint = {}          # Fn -> {"all"|index: set(tags)}
-        self.attr_taint = {}         # attribute name -> set(tags) stored into `<x>.<attr>` anywhere
+        self.carried_names = {}      # Fn -> {name: set(tags)} what a read of one non-source key of the name yields: its
+        #                              taint minus what sits under a SOURCE key of a dict (the whole set for a non-dict)
+        self.ret_taint = {}          # Fn -> {"all"|index: set(tags)} what CROSSES a return's dict boundary (a keyed read)
+        self.ret_whole = {}          # Fn -> {"all"|index: set(tags)} the returned value WHOLE (`str(shape)`, `shape.values()`)
+        self.attr_taint = {}         # attribute name -> set(tags) stored into `<x>.<attr>` anywhere, what a keyed read yields
+        self.attr_whole = {}         # attribute name -> set(tags) the stored value whole
         self._dict_returners = {}    # Fn -> whether every return is dict-valued (a source at its env key, not whole)
         self.global_taint = {}       # (module path, name) -> set(tags) stored into a module-level name from a function
+        self._decl_node_tags = {}    # id(node) -> tag: the structural roots of a declared dict source's env (_declare_roots)
+        self._decl_roots = {}        # Fn -> (Name roots, attribute roots) of the value it stores under the source key
         self._grown_attrs, self._grown_globals = set(), set()
         work = collections.deque(self.all_fns)
         queued = set(id(f) for f in self.all_fns)
@@ -1742,33 +2008,39 @@ class Census:
         carried = self.carried_names.setdefault(fn, {})
         self._newly_tainted_callees = []
         before = {k: set(v) for k, v in names.items()}
+        before_carried = {k: set(v) for k, v in carried.items()}
         before_ret = {k: set(v) for k, v in self.ret_taint.get(fn, {}).items()}
+        before_whole = {k: set(v) for k, v in self.ret_whole.get(fn, {}).items()}
         mod = self.mod_of(fn)
         decl = self._declared_dict_source(fn)
         for _ in range(6):
             grew = False
             if decl:
                 # a source FUNCTION whose returns are dicts is a source at its env key, not whole, so the value it stores
-                # under that key is the env BY DECLARATION (ruling 2 of review round 6): the Name or attribute it is
-                # stored from carries the tag from here (a copy or re-key under another name carries it with it), and so
-                # does the dict holding it, WHOLE (an iteration over its items, a splat, a pop of it carries the env),
-                # while what crosses the dict's boundary still excludes the key (the read of the key is a source of its
-                # own). Six of the round's ten re-keying variants were quiet without this: the declaration was dropped
-                # for a dict returner, so an origin that was no source read (a parameter) reached another key clean.
-                for holder, value in self._source_key_stores(fn):
-                    v = value.value if isinstance(value, ast.Starred) else value
-                    if isinstance(v, ast.Name):
-                        grew |= self._store(fn, mod, names, carried, v, {decl}, {decl})
-                    elif isinstance(v, ast.Attribute):
-                        grew |= self._mark_attr(v.attr, {decl})
-                    if isinstance(holder, ast.Name):
-                        grew |= self._mark(names, holder.id, {decl})
+                # under that key is the env BY DECLARATION (ruling 2 of review round 6), and the taint follows the VALUE
+                # to its ROOTS (_roots: the Names, attribute chains and constant-keyed subscripts the value derives from,
+                # a local followed to its own assignments, a walrus target): a Name root is tainted in the function, an
+                # attribute root for every reader of the attribute, and any other root structurally, so a second read of
+                # the origin under another key, a copy through `dict(e)` or `e or {}`, a comprehension over the value, a
+                # tuple index, a second local from the same origin and a walrus all carry the env with it. The dict
+                # holding the key is tainted WHOLE (an iteration over its items, a splat, a pop of it carries the env)
+                # while what crosses its boundary still excludes the key (the read of the key is a source of its own).
+                # Six of the round's ten re-keying variants were quiet before the declaration marked the value; seven
+                # of the lens's further variants were quiet while it marked a bare Name or attribute alone.
+                name_roots, attr_roots, holders = self._declare_roots(fn, decl)
+                for r in name_roots:
+                    grew |= self._store(fn, mod, names, carried, r, {decl}, {decl})
+                for r in attr_roots:
+                    grew |= self._mark_attr(r.attr, {decl})
+                for holder in holders:
+                    grew |= self._mark(names, holder, {decl})
             for st in fn.assigns:
                 value = st.value
                 if value is None:
                     continue
                 vt = self.expr_taint(value, fn)
                 ct = self._container_taint(value, fn)
+                dv = self._dict_valued(value, fn)
                 if isinstance(st, ast.AugAssign):
                     grew |= self._store(fn, mod, names, carried, st.target, vt, ct)
                     continue
@@ -1776,51 +2048,81 @@ class Census:
                 for t in targets:
                     if isinstance(t, (ast.Tuple, ast.List)):
                         for i, el in enumerate(t.elts):
+                            edv = False
                             if isinstance(value, (ast.Tuple, ast.List)) and i < len(value.elts):
-                                et = self.expr_taint(value.elts[i], fn)
+                                et, ec = self.expr_taint(value.elts[i], fn), self._container_taint(value.elts[i], fn)
+                                edv = self._dict_valued(value.elts[i], fn)
                             elif isinstance(value, ast.Call) and self.callees.get(id(value)):
-                                et = self.expr_taint(("index", value, i), fn)
+                                et, ec = self.expr_taint(("index", value, i), fn), self._container_taint(("index", value, i), fn)
                             else:
-                                et = vt
-                            grew |= self._store(fn, mod, names, carried, el, et, et)
+                                et, ec = vt, vt
+                            for leaf in self._leaves(el):        # a nested tuple target takes its element whole
+                                grew |= self._store(fn, mod, names, carried, leaf, et, ec, edv)
                     else:
-                        grew |= self._store(fn, mod, names, carried, t, vt, ct)
+                        grew |= self._store(fn, mod, names, carried, t, vt, ct, dv)
             for node in fn.loops():
                 if isinstance(node, (ast.For, ast.AsyncFor, ast.comprehension)):
                     it = self.expr_taint(node.iter, fn)
                     if it:
-                        for el in (node.target.elts if isinstance(node.target, (ast.Tuple, ast.List)) else [node.target]):
+                        for el in self._leaves(node.target):
                             grew |= self._store(fn, mod, names, carried, el, it, it)
                 elif isinstance(node, (ast.With, ast.AsyncWith)):
                     for item in node.items:
                         if item.optional_vars is not None:
                             it = self.expr_taint(item.context_expr, fn)
                             if it:
-                                grew |= self._store(fn, mod, names, carried, item.optional_vars, it, it)
-            # in-place adds: `parts.append(k)`, `seen.extend(names)`, `d.setdefault(k, v)`, `self.x.append(v)`
+                                for el in self._leaves(item.optional_vars):
+                                    grew |= self._store(fn, mod, names, carried, el, it, it)
+            # in-place adds: `parts.append(k)`, `seen.extend(names)`, `d.setdefault(k, v)`, `self.x.append(v)`; and the
+            # stores by reflection, `operator.setitem(d, k, v)` (d.__setitem__), `setattr(x, "n", v)` (x.n = v) and
+            # `x.__dict__.setdefault("n", v)` (blind-spot lens of review round 6: each went unread as a store)
             for call in fn.calls:
                 f = call.func
-                if not (isinstance(f, ast.Attribute) and f.attr in self.MUTATING_METHODS):
+                recv, method, cargs = None, None, None
+                if isinstance(f, ast.Attribute) and f.attr in self.MUTATING_METHODS:
+                    recv, method, cargs = f.value, f.attr, list(call.args)
+                elif ((isinstance(f, ast.Name) and f.id in ("setitem", "setattr")) or (isinstance(f, ast.Attribute) and f.attr == "setitem")) \
+                        and len(call.args) >= 3:
+                    if isinstance(f, ast.Name) and f.id == "setattr":
+                        svt = self.expr_taint(call.args[2], fn)
+                        if svt:
+                            if isinstance(call.args[1], ast.Constant) and isinstance(call.args[1].value, str):
+                                grew |= self._mark_attr(call.args[1].value, self._container_taint(call.args[2], fn),
+                                                        svt if self._dict_valued(call.args[2], fn) else None)
+                            else:
+                                self._fail("reflection-store", fn.base, call.lineno, "a tainted value is stored by %s, a name the "
+                                           "census cannot place" % ast.unparse(call)[:60])
+                        continue
+                    recv, method, cargs = call.args[0], "__setitem__", list(call.args[1:])
+                if recv is None:
                     continue
-                args = [a for a in call.args] + [k.value for k in call.keywords]
+                args = cargs + [k.value for k in call.keywords]
                 vt = set()
                 for a in args:
                     vt |= self.expr_taint(a, fn)
                 if not vt:
                     continue
-                if f.attr in ("setdefault", "__setitem__") and call.args and isinstance(call.args[0], ast.Constant) \
-                        and call.args[0].value in self.sources["key"]:
+                if method in ("setdefault", "__setitem__") and cargs and isinstance(cargs[0], ast.Constant) \
+                        and cargs[0].value in self.sources["key"]:
                     ct = set()                       # stored under a source key: a source at the read
-                elif f.attr == "update":
+                elif method == "update":
                     ct = set()
-                    for a in call.args:
+                    for a in cargs:
                         ct |= self._container_taint(a, fn)
                     for k in call.keywords:
                         if k.arg not in self.sources["key"]:
                             ct |= self.expr_taint(k.value, fn)
                 else:
                     ct = vt
-                grew |= self._store(fn, mod, names, carried, f.value, vt, ct)
+                if isinstance(recv, ast.Attribute) and recv.attr == "__dict__" and method in ("setdefault", "__setitem__") and cargs:
+                    if isinstance(cargs[0], ast.Constant) and isinstance(cargs[0].value, str):
+                        # `x.__dict__.setdefault("n", v)`: the attribute n, whole when v is a dict by shape
+                        grew |= self._mark_attr(cargs[0].value, ct, vt if any(self._dict_valued(a, fn) for a in cargs[1:]) else None)
+                    else:
+                        self._fail("reflection-store", fn.base, call.lineno, "a tainted value is stored through %s, a name the "
+                                   "census cannot place" % ast.unparse(call)[:60])
+                    continue
+                grew |= self._store(fn, mod, names, carried, recv, vt, ct, method in ("setdefault", "__setitem__", "update"))
             if not grew:
                 break
         # returns. A dict-valued return carries "env" alone, and only what sits under a key that is NOT a source
@@ -1831,42 +2133,312 @@ class Census:
         # the direct readers of the surface set by construction. That bounds the census's reach and says nothing of
         # the kernel (ruling 3 of review round 6); followed whole, a session snapshot would carry the pending picks to
         # every reader of every other field (946 functions' returns at the round's head).
+        # Two sets per return: what CROSSES the dict's boundary (ret_taint, what a keyed read of the result yields) and the
+        # value WHOLE (ret_whole, what `str(shape)`, `shape.values()`, a loop over it or a second dict built from it reads).
         rt = self.ret_taint.setdefault(fn, {})
+        rw = self.ret_whole.setdefault(fn, {})
         for r in fn.returns:
             if r is None:
                 continue
             if isinstance(r, (ast.Tuple, ast.List)):
                 for i, el in enumerate(r.elts):
-                    t = self._return_taint(el, fn)
+                    t, w = self._return_taint(el, fn), self._return_whole(el, fn)
                     if t:
                         rt.setdefault(i, set()).update(t)
+                    if w:
+                        rw.setdefault(i, set()).update(w)
             else:
-                t = self._return_taint(r, fn)
-                if decl and not self._locates_source_key(r, fn):
-                    # the declared source returns a dict in which the census cannot locate the env (no source key in the
-                    # literal, a comprehension whose keys it cannot track, a local nothing stored the key into): the
-                    # whole return carries the tag, the over-approximating side, never a drop
-                    t = set(t) | {decl}
+                t, w = self._return_taint(r, fn), self._return_whole(r, fn)
+                if decl:
+                    # the declared source's return holds the env, WHOLE, always; across its boundary only where the census
+                    # cannot locate the key (no source key in the literal, a comprehension whose keys it cannot track, a
+                    # local nothing stored the key into): then the whole return crosses with the tag, the
+                    # over-approximating side, never a drop
+                    w = set(w) | {decl}
+                    if not self._locates_source_key(r, fn):
+                        t = set(t) | {decl}
                 if t:
                     rt.setdefault("all", set()).update(t)
-        # calls: taint the callees' parameters
+                if w:
+                    rw.setdefault("all", set()).update(w)
+        # calls: taint the callees' parameters, whole and carried (what a keyed read of the parameter yields)
         for call in fn.calls:
             for callee, via in self.callees.get(id(call), []):
                 b = self.bind_args(call, callee, via)
                 cn = self.tainted_names.setdefault(callee, {})
+                cc = self.carried_names.setdefault(callee, {})
                 for p, v in b.items():
                     if v is callee.defaults.get(p):
                         continue
                     t = self.expr_taint(v, fn)
-                    if t and not t <= cn.get(p, set()):
+                    if not t:
+                        continue
+                    if not t <= cn.get(p, set()):
                         cn.setdefault(p, set()).update(t)
                         self._newly_tainted_callees.append(callee)
-        return names != before or self.ret_taint.get(fn, {}) != before_ret
+                    c = self._container_taint(v, fn)
+                    if c and not c <= cc.get(p, set()):
+                        cc.setdefault(p, set()).update(c)
+                        self._newly_tainted_callees.append(callee)
+        return (names != before or carried != before_carried or self.ret_taint.get(fn, {}) != before_ret
+                or self.ret_whole.get(fn, {}) != before_whole)
 
     def _return_taint(self, expr, fn):
+        """What a return CARRIES across its boundary (its carried set), less the pick tag when the return is a dict (the
+        census does not follow the pick tag across a dict return: ruling 3 of review round 6)."""
         if self._dict_valued(expr, fn):
             return self._container_taint(expr, fn) & self.ENV_ONLY
+        return self._container_taint(expr, fn)
+
+    def _return_whole(self, expr, fn):
+        """The returned value WHOLE: for a dict, every tag its values carry (the env under its own key included), less the
+        pick tag by the same bound; for anything else the same as _return_taint."""
+        if self._dict_valued(expr, fn):
+            return self.expr_taint(expr, fn) & self.ENV_ONLY
         return self.expr_taint(expr, fn)
+
+    def _keyed_read(self, node):
+        """(receiver, key) for `x.get("k")`, `x.pop("k"[, d])`, `x.setdefault("k", v)` with a constant key, else None."""
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in self.KEY_READS \
+                and node.args and isinstance(node.args[0], ast.Constant):
+            return (node.func.value, node.args[0].value)
+        return None
+
+    def _keyed_taint(self, x, fn):
+        """What a read of ONE non-source key of `x` yields: a local's or parameter's carried set (its taint minus what
+        sits under a source key of a dict; the whole set for a non-dict), a module name's stored set, an attribute's
+        stored carried set, a call's carried return, the union over a conditional's or a BoolOp's values
+        (`(launching or {}).get("mode")`); anything else whole (a key the census cannot see past)."""
+        if isinstance(x, ast.BoolOp):
+            out = set()
+            for v in x.values:
+                out |= self._keyed_taint(v, fn)
+            return out
+        if isinstance(x, ast.IfExp):
+            return self._keyed_taint(x.body, fn) | self._keyed_taint(x.orelse, fn) | self.expr_taint(x.test, fn)
+        if isinstance(x, ast.Name):
+            for s in self.scope_chain(fn):
+                cn = self.carried_names.get(s, {})
+                if x.id in cn:
+                    return set(cn[x.id])
+                if x.id in s.all_params() or x.id in s.assigned():
+                    return set()
+            gt = self.global_taint.get((self.mod_of(fn).path, x.id))
+            return set(gt) if gt else set()
+        if isinstance(x, ast.Attribute) and isinstance(x.ctx, ast.Load):
+            return set(self.attr_taint.get(x.attr, set()))
+        if isinstance(x, ast.Call):
+            res = self.callees.get(id(x), [])
+            if res:
+                out = set()
+                for callee, _via in res:
+                    if (callee.base, callee.qual) in self.sources["opaque_returns"]:
+                        continue
+                    for v in self.ret_taint.get(callee, {}).values():
+                        out |= v
+                return out
+        return self.expr_taint(x, fn)
+
+    def _roots(self, expr, fn, depth=0, seen=None):
+        """The ROOTS a value derives from: the Names, attribute chains (`self.x`, `sess.env_vars`) and constant-keyed
+        subscripts (`raw["vars"]`, `t[0]`) at its leaves, a local followed to its own assignments (`e = raw["vars"]`
+        roots e in raw["vars"]; `t = (e,)` roots t[0] in e; a `self.<attr>` in what __init__ or any method stores there), a
+        walrus rooting its target too; through a comprehension's iterables (its own targets excluded), a call's receiver
+        and arguments, an operator's operands, a conditional's two values, a container's elements. Not through a
+        condition, a comparison or a lambda (they select or judge a value, they do not supply it), and not to a subscript's
+        or attribute's base (raw in raw["vars"] is the parameter, whose other keys are not the env; sess in
+        sess.env_vars is the session)."""
+        seen = seen if seen is not None else set()
+        out = []
+        if depth > 6 or expr is None:
+            return out
+        if isinstance(expr, tuple):
+            return self._roots(expr[1], fn, depth + 1, seen)
+
+        def follow_name(name, scope_fn):
+            for s in self.scope_chain(scope_fn):
+                sts = list(self._assigns_name(s, name))
+                if sts:
+                    for st in sts:
+                        k = ("assign", id(st), name)
+                        if k in seen:
+                            continue
+                        seen.add(k)
+                        out.extend(self._roots(self._value_for(st, name), s, depth + 1, seen))
+                    return
+                if name in s.all_params():
+                    return
+
+        if isinstance(expr, ast.Name):
+            out.append(expr)
+            follow_name(expr.id, fn)
+            return out
+        if isinstance(expr, ast.Attribute):
+            # the chain is the root (self._launched_env, sess.env_vars); its stores are not followed backward (the value
+            # stored on `self._launched_env` was read from a dict holding the env under its key, and that dict is not the
+            # env: the first draft of this walk marked `_launching` an env attribute that way and every keyed reader of
+            # it with the env) and its base is not a root, except that a LOCAL base built by a constructor or a factory
+            # the census cannot resolve (`p = _Pair(e, e)`, a namedtuple; `b = _Box(e, e)`) holds its arguments, so the
+            # field read `p.left` roots in them
+            out.append(expr)
+            if isinstance(expr.value, ast.Name):
+                for s in self.scope_chain(fn):
+                    sts = list(self._assigns_name(s, expr.value.id))
+                    if sts:
+                        for st in sts:
+                            v = self._value_for(st, expr.value.id)
+                            if not isinstance(v, ast.Call):
+                                continue
+                            k = ("ctor", id(v))
+                            if k in seen:
+                                continue
+                            seen.add(k)
+                            res = self.callees.get(id(v), [])
+                            if not res or all(via == "self" and c.name == "__init__" for c, via in res):
+                                for a in v.args:
+                                    out.extend(self._roots(a, s, depth + 1, seen))
+                                for kw in v.keywords:
+                                    out.extend(self._roots(kw.value, s, depth + 1, seen))
+                        break
+                    if expr.value.id in s.all_params():
+                        break
+            return out
+        if isinstance(expr, ast.Subscript):
+            if not isinstance(expr.slice, ast.Constant):
+                return self._roots(expr.value, fn, depth + 1, seen)
+            out.append(expr)
+            base, key = expr.value, expr.slice.value
+            if isinstance(base, ast.Name):
+                for s in self.scope_chain(fn):
+                    sts = list(self._assigns_name(s, base.id))
+                    if sts:
+                        for st in sts:
+                            k = ("assign", id(st), base.id, key)
+                            if k in seen:
+                                continue
+                            seen.add(k)
+                            v = self._value_for(st, base.id)
+                            if isinstance(v, (ast.Tuple, ast.List)):
+                                if isinstance(key, int) and 0 <= key < len(v.elts):
+                                    out.extend(self._roots(v.elts[key], s, depth + 1, seen))
+                            elif isinstance(v, ast.Dict):
+                                for kk, vv in zip(v.keys, v.values):
+                                    if isinstance(kk, ast.Constant) and kk.value == key:
+                                        out.extend(self._roots(vv, s, depth + 1, seen))
+                            elif v is not None:
+                                out.extend(self._roots(v, s, depth + 1, seen))
+                        break
+                    if base.id in s.all_params():
+                        break
+            return out
+        if isinstance(expr, ast.NamedExpr):
+            out.append(expr.target)
+            out.extend(self._roots(expr.value, fn, depth + 1, seen))
+            return out
+        if isinstance(expr, (ast.ListComp, ast.SetComp, ast.GeneratorExp, ast.DictComp)):
+            bound = {leaf.id for g in expr.generators for leaf in self._leaves(g.target) if isinstance(leaf, ast.Name)}
+            for g in expr.generators:
+                out.extend(self._roots(g.iter, fn, depth + 1, seen))
+            parts = [expr.key, expr.value] if isinstance(expr, ast.DictComp) else [expr.elt]
+            for p in parts:
+                out.extend(r for r in self._roots(p, fn, depth + 1, seen) if not (isinstance(r, ast.Name) and r.id in bound))
+            return out
+        if isinstance(expr, ast.IfExp):
+            return self._roots(expr.body, fn, depth + 1, seen) + self._roots(expr.orelse, fn, depth + 1, seen)
+        if isinstance(expr, ast.BoolOp):
+            for v in expr.values:
+                out.extend(self._roots(v, fn, depth + 1, seen))
+            return out
+        if isinstance(expr, ast.Call):
+            if self.callees.get(id(expr)):
+                # a call into a function of the files: its result is the callee's RETURN, analysed forward from its
+                # parameters, and its arguments and receiver are not the value (`self.backend._launch_shape(self)` is
+                # neither the backend nor the session); a value copied through such a helper under the source key is
+                # therefore not followed back to the helper's argument (a bound of this walk, stated in the docstring)
+                return out
+            if isinstance(expr.func, ast.Attribute):
+                out.extend(self._roots(expr.func.value, fn, depth + 1, seen))      # e.items(), e.copy(), os.environ.copy()
+            for a in expr.args:
+                out.extend(self._roots(a, fn, depth + 1, seen))                    # dict(e), sorted(e), copy.deepcopy(e)
+            for kw in expr.keywords:
+                out.extend(self._roots(kw.value, fn, depth + 1, seen))
+            return out
+        if isinstance(expr, ast.Dict):
+            for k, v in zip(expr.keys, expr.values):
+                if k is not None:
+                    out.extend(self._roots(k, fn, depth + 1, seen))
+                out.extend(self._roots(v, fn, depth + 1, seen))
+            return out
+        if isinstance(expr, (ast.Tuple, ast.List, ast.Set)):
+            for el in expr.elts:
+                out.extend(self._roots(el, fn, depth + 1, seen))
+            return out
+        if isinstance(expr, (ast.Starred, ast.Await, ast.FormattedValue, ast.UnaryOp)):
+            return self._roots(getattr(expr, "value", None) or getattr(expr, "operand", None), fn, depth + 1, seen)
+        if isinstance(expr, ast.JoinedStr):
+            for v in expr.values:
+                out.extend(self._roots(v, fn, depth + 1, seen))
+            return out
+        if isinstance(expr, ast.BinOp):
+            return self._roots(expr.left, fn, depth + 1, seen) + self._roots(expr.right, fn, depth + 1, seen)
+        return out
+
+    @staticmethod
+    def _shape(node):
+        """A hashable key for a root's SHAPE, context ignored, so a second spelling of the same access matches it:
+        Name -> its id; an attribute chain -> its base's shape and the attribute; a constant-keyed subscript -> its
+        base's shape and the key; anything else -> its unparsed text."""
+        if isinstance(node, ast.Name):
+            return ("name", node.id)
+        if isinstance(node, ast.Attribute):
+            return ("attr", Census._shape(node.value), node.attr)
+        if isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Constant):
+            return ("sub", Census._shape(node.value), repr(node.slice.value))
+        return ("other", ast.unparse(node))
+
+    def _declare_roots(self, fn, decl):
+        """Once per declared dict source: the roots of every value it stores under a source key (_roots), split into
+        the Names to taint in the function (a local, a parameter; a module-level name is matched structurally instead,
+        since a constant that filters the env is not the env), the attributes to taint for every reader (a chain not
+        rooted in an imported module: os.environ is nobody's per-session state) and the holders to taint whole; every
+        other root (a constant-keyed subscript, a chain rooted in a module) is matched by SHAPE over the function's
+        body, nested defs and lambdas included, and each matching node reads as a source (_decl_node_tags)."""
+        hit = self._decl_roots.get(fn)
+        if hit is not None:
+            return hit
+        mod = self.mod_of(fn)
+        name_roots, attr_roots, holders, shapes = {}, {}, [], set()
+        for holder, value in self._source_key_stores(fn):
+            v = value.value if isinstance(value, ast.Starred) else value
+            for r in self._roots(v, fn):
+                if isinstance(r, ast.Name):
+                    local = any(r.id in s.all_params() or r.id in s.assigned() for s in self.scope_chain(fn))
+                    if local:
+                        name_roots.setdefault(r.id, r)
+                    else:
+                        shapes.add(self._shape(r))
+                elif isinstance(r, ast.Attribute):
+                    base = r
+                    while isinstance(base, ast.Attribute):
+                        base = base.value
+                    if isinstance(base, ast.Name) and base.id in mod.imports:
+                        shapes.add(self._shape(r))
+                    else:
+                        attr_roots.setdefault(r.attr, r)
+                        shapes.add(self._shape(r))
+                else:
+                    shapes.add(self._shape(r))
+            if isinstance(holder, ast.Name):
+                holders.append(holder.id)
+            elif isinstance(holder, ast.Attribute):
+                attr_roots.setdefault(holder.attr, holder)
+        if shapes:
+            for node in ast.walk(fn.node):
+                if isinstance(node, (ast.Name, ast.Attribute, ast.Subscript)) and isinstance(getattr(node, "ctx", None), ast.Load) \
+                        and self._shape(node) in shapes:
+                    self._decl_node_tags[id(node)] = decl
+        hit = self._decl_roots[fn] = (list(name_roots.values()), list(attr_roots.values()), holders)
+        return hit
 
     def _container_taint(self, value, fn):
         """What a value carries ACROSS a container boundary (a return, an attribute store): for a dict literal, the
@@ -1894,11 +2466,37 @@ class Census:
             return tags
         if isinstance(value, ast.IfExp):
             return self._container_taint(value.body, fn) | self._container_taint(value.orelse, fn)
-        if isinstance(value, ast.Name) and self._dict_valued(value, fn):
-            for s in self.scope_chain(fn):
-                if value.id in s.all_params() or value.id in s.assigned():
-                    return set(self.carried_names.get(s, {}).get(value.id, set()))
-            return set()
+        if isinstance(value, ast.Name):
+            # a name's CARRIED set, whatever it holds (for a non-dict the same as its whole set: _store gives a local
+            # both, a loop or with target both, a call site gives a parameter both); a module-level name's stored set
+            return self._keyed_taint(value, fn)
+        if isinstance(value, ast.Attribute) and isinstance(value.ctx, ast.Load):
+            return set(self.attr_taint.get(value.attr, set()))     # the attribute's carried set, never its whole set
+        if isinstance(value, tuple):        # ("index", call, i): a tuple-unpacked position of a call's return
+            _k, call, i = value
+            res = self.callees.get(id(call), []) if isinstance(call, ast.Call) else []
+            if res:
+                out = set()
+                for callee, _via in res:
+                    rt = self.ret_taint.get(callee, {})
+                    out |= rt.get(i, set()) | rt.get("all", set())
+                return out
+            return self.expr_taint(value, fn)
+        if isinstance(value, ast.Call):
+            res = self.callees.get(id(value), [])
+            if res:
+                # a call's CARRIED return: what crosses the callee's dict boundary, plus a non-dict source function's tag
+                # whole (a list of names crosses whole); a dict source's tag sits under its key and does not cross
+                out = set()
+                for callee, _via in res:
+                    if (callee.base, callee.qual) in self.sources["opaque_returns"]:
+                        continue
+                    for v in self.ret_taint.get(callee, {}).values():
+                        out |= v
+                    tag = self.sources["func"].get((callee.base, callee.qual))
+                    if tag and not self._returns_dicts(callee):
+                        out.add(tag)
+                return out
         return self.expr_taint(value, fn)
 
     def _dict_valued(self, expr, fn, depth=0):
@@ -1910,6 +2508,11 @@ class Census:
             return True
         if isinstance(expr, ast.Call) and isinstance(expr.func, ast.Name) and expr.func.id == "dict":
             return True
+        if isinstance(expr, ast.Call):
+            # a call whose every callee returns dicts (the launch shape held in a local): what crosses from the local
+            # is the call's carried return, and a whole-value use of it reads the return whole
+            res = self.callees.get(id(expr), [])
+            return bool(res) and all(self._returns_dicts(c) for c, _via in res)
         if isinstance(expr, ast.IfExp):
             return self._dict_valued(expr.body, fn, depth + 1) and self._dict_valued(expr.orelse, fn, depth + 1)
         if isinstance(expr, ast.Name):
@@ -1923,12 +2526,17 @@ class Census:
             return True
         return False
 
-    def _store(self, fn, mod, names, carried, target, tags, ctags):
+    def _store(self, fn, mod, names, carried, target, tags, ctags, dict_value=False):
         """`tags` flow into `target` (a Name, a `<x>.<attr>`, a subscript, a starred name): a local of fn takes them
         (its carried set takes `ctags`, what crosses a dict boundary); a module-level name (declared global, or a module
         list mutated in place) takes them for every reader in the module; an attribute takes `ctags` for every reader
-        of `.<attr>` in the three files. A subscript store under a constant SOURCE key ('env') marks the container
-        whole (a whole-value use reads it) but not its carried set (the read of that key is a source of its own)."""
+        of `.<attr>` in the three files, and `tags` as its WHOLE set only when the value stored is a dict by shape
+        (`dict_value`: a literal, dict(...), a call to a function returning dicts, a local built as one) or the store is
+        under a source key: attributes are keyed by NAME over every receiver, so a scalar attribute (`mode`) given the
+        whole set of an over-approximated local would hand the env to every reader of that name in the files (the
+        first draft of the whole set did, and read 95 content rows at the head). A subscript store under a constant
+        SOURCE key ('env') marks the container whole (a whole-value use reads it) but not its carried set (the read of
+        that key is a source of its own)."""
         if not tags:
             return False
         root, src_key = target, False
@@ -1939,7 +2547,18 @@ class Census:
                 src_key = True
             root = root.value
         if isinstance(root, ast.Attribute):
-            return self._mark_attr(root.attr, set() if src_key else ctags)
+            attr = root.attr
+            t0 = target.value if isinstance(target, ast.Starred) else target
+            if attr == "__dict__" and isinstance(t0, ast.Subscript) and t0.value is root:
+                # `x.__dict__["n"] = v`: an attribute store by reflection, followed by the spelled name; a computed name
+                # the census cannot place is a failure when the value is tainted
+                if isinstance(t0.slice, ast.Constant) and isinstance(t0.slice.value, str):
+                    attr = t0.slice.value
+                else:
+                    self._fail("reflection-store", fn.base, t0.lineno, "a tainted value is stored through %s, a name the census "
+                               "cannot place" % ast.unparse(t0)[:60])
+                    return False
+            return self._mark_attr(attr, set() if src_key else ctags, tags if (src_key or dict_value) else None)
         if not isinstance(root, ast.Name):
             return False
         name = root.id
@@ -1953,15 +2572,24 @@ class Census:
             self._mark(carried, name, ctags)
         return grew
 
-    def _mark_attr(self, attr, tags):
-        if not tags or attr == self.RING_ATTR:
+    def _mark_attr(self, attr, tags, whole=None):
+        """`tags` is what a keyed read of `<x>.<attr>` yields (attr_taint), `whole` what the attribute read whole yields
+        (attr_whole; the same set when not given)."""
+        if attr == self.RING_ATTR:
             return False          # the ring is the sink; what its rows carry is the population itself, not a source
+        grew = False
         cur = self.attr_taint.get(attr, set())
-        if tags <= cur:
-            return False
-        self.attr_taint[attr] = cur | tags
-        self._grown_attrs.add(attr)
-        return True
+        if tags and not tags <= cur:
+            self.attr_taint[attr] = cur | tags
+            grew = True
+        w = tags if whole is None else whole
+        curw = self.attr_whole.get(attr, set())
+        if w and not w <= curw:
+            self.attr_whole[attr] = curw | w
+            grew = True
+        if grew:
+            self._grown_attrs.add(attr)
+        return grew
 
     def _mark_global(self, mod, name, tags):
         if not tags:
