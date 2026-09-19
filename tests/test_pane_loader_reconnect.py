@@ -127,6 +127,22 @@ fire('romp:firstpaintreleased');   // the show's release render painted
 out.released = { live30: live30(), gone: CLS.has('gone') };
 fire('romp:firstpaintheld');
 out.heldAgain = { live30: live30() };
+// the latch (review round 3, fresh-2): a socket blip WHILE the hold stands. wsdown's show() re-arms the failsafe (upstream's listener,
+// registered first); ours, after it, stands the timer down again. wsup's hide() fades the sheet; ours re-shows it.
+fire('romp:wsdown');
+out.heldDown = { live30: live30(), gone: CLS.has('gone') };
+fire('romp:wsup');
+out.heldUp = { live30: live30(), gone: CLS.has('gone') };
+fire('romp:firstpaintreleased');
+out.releasedAfterBlip = { live30: live30(), gone: CLS.has('gone') };
+TIMERS.forEach((t) => { if (t.live && t.ms === 30000) { t.live = false; t.fn(); } });   // the release re-armed the failsafe: 30 s later it fires
+out.after30Released = { gone: CLS.has('gone') };
+// the blip BEFORE the hold word (the refuter's amendment): wsdown then wsup before any frame fades the sheet; the hold word re-shows it
+const CLS2 = new Set(['gone']); CLS.clear(); CLS.add('x'); CLS.delete('x');   // a fresh sheet state for the second page: up
+fire('romp:wsdown'); fire('romp:wsup');
+out.blipBeforeHold = { gone: CLS.has('gone'), live30: live30() };
+fire('romp:firstpaintheld');
+out.heldAfterBlip = { gone: CLS.has('gone'), live30: live30() };
 console.log(JSON.stringify(out));
 """
 
@@ -156,18 +172,38 @@ class PaneLoaderFirstPaintHold(unittest.TestCase):
     def test_the_held_first_paint_stands_the_sheet_down_from_its_timer_and_the_release_re_arms_it(self):
         o = self._run()
         self.assertEqual(o["boot"], {"live30": 1, "gone": False, "listeners": ["romp:firstpaintheld", "romp:firstpaintreleased", "romp:wsdown", "romp:wsfresh", "romp:wsup"]},
-                         "at load the sheet is up with its 30 s failsafe armed, and the two hold events are listened for beside the socket's")
+                         "at load the sheet is up with its 30 s failsafe armed, and the two hold events are listened for beside the socket's (wsdown and wsup each carry a second, fork listener since round 3: the latch)")
         self.assertEqual(o["held"], {"live30": 0, "gone": False}, "the hold clears the failsafe: the sheet stands with no timer")
         self.assertFalse(o["after30"]["gone"], "30 s later the sheet is still up (before this the failsafe faded it over the empty list, and the tap revealed a blank pane)")
         self.assertEqual(o["released"], {"live30": 1, "gone": False}, "the release re-arms the 30 s backstop; the render's first child, not this event, retires the sheet (the observer)")
         self.assertEqual(o["heldAgain"]["live30"], 0, "a second hold word stands it down again (the bundle sends one per hold)")
 
-    def test_the_two_listener_lines_are_inserted_beside_the_socket_ones(self):
+    def test_a_socket_blip_under_the_hold_neither_re_arms_the_failsafe_nor_fades_the_sheet_and_the_hold_word_re_shows_a_faded_sheet(self):
+        # fresh-2 (review round 3, 2026-09-19): the "stands with no timer" guarantee held only while the socket never blipped: romp:wsdown's
+        # show() re-armed the 30 s failsafe and romp:wsup's hide() faded the sheet, while the bundle tells the loader once per hold, so a drop
+        # and redial under the hold undid the mechanism extra6-2 was ruled to close. The latch: `held` set by the hold word (which also re-shows
+        # a sheet a blip before it faded), cleared by the release; two fork listeners after upstream's stand the socket's arms down while held.
+        o = self._run()
+        self.assertEqual(o["heldDown"], {"live30": 0, "gone": False}, "wsdown under the hold: upstream's show() re-armed the failsafe, the fork listener after it stood it down again; the sheet stays up")
+        self.assertEqual(o["heldUp"], {"live30": 0, "gone": False}, "wsup under the hold: upstream's hide() faded the sheet, the fork listener re-showed it; no timer")
+        self.assertEqual(o["releasedAfterBlip"], {"live30": 1, "gone": False}, "the release clears the latch and re-arms the 30 s backstop")
+        self.assertTrue(o["after30Released"]["gone"], "…which fades the sheet 30 s later as before (the latch is off)")
+        self.assertEqual(o["blipBeforeHold"], {"gone": True, "live30": 0}, "a blip BEFORE the hold word (wsdown, wsup: hide() fades the sheet; the wsdown's re-arm was cleared by hide())")
+        self.assertEqual(o["heldAfterBlip"], {"gone": False, "live30": 0}, "the hold word re-shows the faded sheet and stands it with no timer (the refuter's amendment: without the re-show the sheet stayed faded over the still-empty list)")
+
+    def test_the_fork_listener_lines_are_inserted_beside_the_socket_ones(self):
         js = km._pane_spin("feed-list")
-        self.assertIn("window.addEventListener('romp:firstpaintheld',function(){clearTimeout(fail);});", js)
-        self.assertIn("window.addEventListener('romp:firstpaintreleased',function(){arm();});", js)
-        self.assertLess(js.index("window.addEventListener('romp:wsup',function(){hide();});"), js.index("romp:firstpaintheld"), "after the wsup line")
-        self.assertLess(js.index("romp:firstpaintreleased"), js.index("window.addEventListener('romp:wsfresh'"), "before the wsfresh line: the upstream lines are inserted around, not changed")
+        self.assertIn("var held=false;window.addEventListener('romp:firstpaintheld',function(){held=true;clearTimeout(fail);o.classList.remove('gone');});", js)
+        self.assertIn("window.addEventListener('romp:firstpaintreleased',function(){held=false;arm();});", js)
+        self.assertIn("window.addEventListener('romp:wsdown',function(){if(held)clearTimeout(fail);});", js, "the fork's wsdown listener (round 3): the failsafe upstream's show() re-armed is cleared while held")
+        self.assertIn("window.addEventListener('romp:wsup',function(){if(held)o.classList.remove('gone');});", js, "the fork's wsup listener: the sheet upstream's hide() faded is re-shown while held")
+        # upstream's text stands: its own wsdown and wsup lines, unchanged, BEFORE ours (same-target listeners run in registration order, so the fork's arms run after upstream's)
+        self.assertIn("window.addEventListener('romp:wsdown',function(){if(ready()){badge(true);}else{show();}});", js)
+        self.assertIn("window.addEventListener('romp:wsup',function(){hide();});", js)
+        self.assertLess(js.index("window.addEventListener('romp:wsup',function(){hide();});"), js.index("var held=false;"), "after the wsup line")
+        self.assertLess(js.index("romp:firstpaintheld"), js.index("window.addEventListener('romp:wsdown',function(){if(held)"), "the hold word's listener, then the fork's two socket listeners")
+        self.assertLess(js.index("window.addEventListener('romp:wsup',function(){if(held)"), js.index("window.addEventListener('romp:wsfresh'"), "before the wsfresh line: the upstream lines are inserted around, not changed")
+        self.assertEqual(js.count("addEventListener('romp:wsdown'"), 2); self.assertEqual(js.count("addEventListener('romp:wsup'"), 2)
 
 
 if __name__ == "__main__":

@@ -65344,9 +65344,16 @@ def _pane_spin(cid, ignore_id=""):
             # paint-gate.ts firstPaintHeld) nobody can see the sheet, so it stands with no timer (a failsafe firing then
             # faded it over the still-empty list, and the tap revealed a blank pane); the release render re-arms the 30 s
             # backstop, and its first child retires the sheet through the observer above. Both events are the bundle's
-            # (feed.ts), dispatched once per hold.
-            "window.addEventListener('romp:firstpaintheld',function(){clearTimeout(fail);});"
-            "window.addEventListener('romp:firstpaintreleased',function(){arm();});"
+            # (feed.ts), dispatched once per hold. A LATCH, not a one-shot (review round 3, fresh-2): the hold word sets
+            # `held` and re-shows a sheet a blip had faded before the word (the socket's wsup hide() above); two fork
+            # listeners after the upstream ones stand the socket's arms down while held: a wsdown's show() re-armed the 30 s
+            # failsafe (cleared again here, same-target listeners run in registration order, so this runs after it), and a
+            # wsup's hide() faded the sheet over the still-empty list (re-shown here). The release clears the latch and re-arms.
+            "var held=false;"
+            "window.addEventListener('romp:firstpaintheld',function(){held=true;clearTimeout(fail);o.classList.remove('gone');});"
+            "window.addEventListener('romp:firstpaintreleased',function(){held=false;arm();});"
+            "window.addEventListener('romp:wsdown',function(){if(held)clearTimeout(fail);});"
+            "window.addEventListener('romp:wsup',function(){if(held)o.classList.remove('gone');});"
             "window.addEventListener('romp:wsfresh',function(){badge(false);});})();</script>")
 
 
