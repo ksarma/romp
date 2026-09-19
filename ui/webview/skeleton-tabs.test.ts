@@ -3,7 +3,7 @@
 // it is pinned at the source in skeleton-tabs-wiring.test.ts. Synthetic ids only.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
-import { newSkeletonState, applyTabOrderSkeleton, onStatus, holdStatus, onFull, onDismiss, onSocketUp, nextPrefetch,
+import { newSkeletonState, applyTabOrderSkeleton, onStatus, holdStatus, onFull, onDismiss, onSocketUp, onLayoutWord, nextPrefetch,
          renderKind, gateOnFrame, gateOnStrip, gateOnShow, type SkeletonState } from "./skeleton-tabs";
 
 const A = "11111111-2222-3333-4444-aaaaaaaaaaaa";
@@ -246,7 +246,7 @@ test("T6: a return on the phone (the owner's decision, 2026-09-19): the redial r
   assert.equal(gateOnStrip(st, [B, C], A), false, "…not even a strip that lists no local want (an ended stored tab): the hold outranks the strip's opening");
   assert.equal(nextPrefetch(st, A, none, false, all), null, "no background ask on the redial before A's full");
   assert.equal(gateOnFrame(st, A, [A]), false, "A's full applied on the new socket: the visible tab alone reloads, the gate stays closed");
-  assert.equal(nextPrefetch(st, A, none, false, all), null, "the chain does not re-download B and C (17 to 22 MB on the owner's board, for tabs nobody asked for)");
+  assert.equal(nextPrefetch(st, A, none, false, all), null, "the chain does not re-download B and C, tabs nobody asked for");
   // the user taps B: the click road asks for its full at once (render.ts showActive's skeleton-click, never gated), B loads
   onFull(st, B);
   assert.equal(gateOnShow(st, B), false, "the tap onto the now-whole B opens nothing either");
@@ -270,6 +270,41 @@ test("T6: a return on the phone (the owner's decision, 2026-09-19): the redial r
   assert.equal(newSkeletonState().returnHold, false, "a fresh state holds nothing: the boot dial sends no wsup, so a cold open's chain is untouched");
 });
 
+test("T6b (review round 3, 2026-09-19, extra8-1): the hold follows the shell's LAYOUT WORD: a flip to the desktop after a phone redial lifts it and the shown tab opens the gate; a flip to the phone after a desktop redial sets it and nextPrefetch stops; before any redial the word holds nothing", () => {
+  // the phone's redial, then a rotation to the desktop inside the socket's life: the grid gets its chain (before this the hold outlived the layout)
+  const st = newSkeletonState();
+  applyTabOrderSkeleton(st, [B, C], [A, B, C]);
+  onSocketUp(st, true);
+  onFull(st, A);   // the redial's one full applied (A is the shown tab); the hold kept the gate closed
+  assert.equal(gateOnFrame(st, A, [A]), false, "held: A's full opens nothing on the phone");
+  assert.equal(nextPrefetch(st, A, none, false, all), null);
+  assert.equal(onLayoutWord(st, false), true, "the desktop word lifts a standing hold, and says so");
+  assert.equal(st.returnHold, false);
+  assert.equal(gateOnShow(st, A), true, "…so the shown tab, whose full applied on this socket, opens the gate now (render.ts arms the chain on it)");
+  assert.equal(nextPrefetch(st, A, none, false, all), B, "the chain runs on the desktop grid");
+  assert.equal(onLayoutWord(st, false), false, "a repeat desktop word lifts nothing (nothing stood)");
+  // the desktop's redial, then a rotation to the phone with the gate open and the chain mid-way: the hold sets and nextPrefetch stops
+  const st2 = newSkeletonState();
+  applyTabOrderSkeleton(st2, [B, C], [A, B, C]);
+  onSocketUp(st2, false);
+  gateOnFrame(st2, A, [A]);
+  assert.equal(nextPrefetch(st2, A, none, false, all), B, "the desktop chain is running");
+  assert.equal(onLayoutWord(st2, true), false, "the phone word sets the hold (no lift to report)");
+  assert.equal(st2.returnHold, true);
+  assert.equal(nextPrefetch(st2, A, none, false, all), null, "…and the chain stops with the gate still open: nextPrefetch reads the hold (the refuter's no-op finding: setting the hold alone did nothing here before)");
+  assert.equal(onLayoutWord(st2, false), true, "the flip back lifts it");
+  assert.equal(nextPrefetch(st2, A, none, false, all), B, "…and the chain resumes (the gate never closed)");
+  // a cold open (no redial yet): the layout word holds nothing in either direction
+  const st3 = newSkeletonState();
+  applyTabOrderSkeleton(st3, [B, C], [A, B, C]);
+  gateOnFrame(st3, A, [A]);
+  assert.equal(onLayoutWord(st3, true), false);
+  assert.equal(st3.returnHold, false, "a phone word before any redial holds nothing: a cold open's chain is never held");
+  assert.equal(nextPrefetch(st3, A, none, false, all), B);
+  assert.equal(st3.redialed, false);
+  onSocketUp(st3, true);
+  assert.equal(st3.redialed, true, "the redial is recorded for later words");
+});
 test("F4 and F7 (review round 1, 2026-09-19): a want on another host is not this chain's to wait for; the local strip opens the gate, on the boot dial and after a local-only redial", () => {
   const R = "TESTHOST:11111111-2222-3333-4444-eeeeeeeeeeee";   // the stored tab lives on another kernel: its full comes over that host's relay socket
   const st = newSkeletonState();

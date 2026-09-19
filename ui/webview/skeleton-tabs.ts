@@ -40,11 +40,16 @@ export interface SkeletonState {
   // 22 MB on the owner's board) for tabs nobody had asked for. Set by onSocketUp when the pane's shell is the phone layout (the one
   // layout read, at render.ts's wsup arm, the redial's frame); while it stands no opener (gateOnFrame, gateOnStrip, gateOnShow) opens
   // the gate. The boot dial sends no wsup, so a cold open's chain is untouched; the desktop passes false and keeps its chain.
+  // RE-DECIDED ON THE LAYOUT WORD (review round 3, 2026-09-19, extra8-1): the shell re-tells its panes word on every media-query flip
+  // with the layout in it (kernel panesMsg `mob`), and onLayoutWord below sets the hold from that word and the redial record, so a
+  // flip to the desktop inside the socket's life lifts the hold (the grid gets its chain) and a flip to the phone after a redial sets
+  // it; before this the layout was sampled once at the wsup arm and the hold outlived it in both directions.
   returnHold: boolean;
+  redialed: boolean;   // a wsup has arrived on this page (onSocketUp ran): the hold's precondition, since a cold open's chain is never held
 }
 
 export function newSkeletonState(): SkeletonState {
-  return { ids: new Set(), order: [], status: new Map(), loaded: new Set(), gate: false, returnHold: false };
+  return { ids: new Set(), order: [], status: new Map(), loaded: new Set(), gate: false, returnHold: false, redialed: false };
 }
 
 /** A full `session` frame applied (render.ts upsert). Opens the gate when `id` is one of `wants`, the tab the strip shows as
@@ -172,6 +177,18 @@ export function onSocketUp(st: SkeletonState, phone?: boolean): void {
   st.loaded.clear();
   st.gate = false;   // …and the chain waits again for the active tab's first frame on the new socket (stage 0): a redial re-skeletons every other tab, and the visible one's full comes first
   st.returnHold = phone === true;   // …and on the phone it does not run again on this socket: the other tabs reload when tapped (the owner's decision, 2026-09-19)
+  st.redialed = true;   // the hold's precondition for a later layout word (onLayoutWord)
+}
+
+/** The shell's LAYOUT word (kernel panesMsg `mob`, re-told on every media-query flip; render.ts's panes handler passes it): the hold is
+ *  re-decided from it and the redial record, so it never outlives the layout (review round 3, 2026-09-19, extra8-1). `phone` true after
+ *  a redial holds (a flip to the phone inside the socket's life: the other tabs reload when tapped, as a phone redial's do); false lifts
+ *  (a flip to the desktop: the grid gets its chain back). Before any redial nothing is held whatever the word (a cold open's chain is
+ *  never held). Returns whether a STANDING hold was lifted now, so the caller can open the gate for the shown tab and arm the chain. */
+export function onLayoutWord(st: SkeletonState, phone: boolean): boolean {
+  const was = st.returnHold;
+  st.returnHold = st.redialed && phone;
+  return was && !st.returnHold;
 }
 
 /** The one skeleton to fetch in this idle callback, or null. Null while the page is hidden (bytes and work
@@ -179,10 +196,11 @@ export function onSocketUp(st: SkeletonState, phone?: boolean): void {
  *  time: a 1 MB full ahead of the active tab's 2 KB tail on a slow link delays that tail; one bounds it), and
  *  when nothing is left. Otherwise the first id of the kernel's order still held, not the active tab (its own
  *  click path asks), and in the current view (a view-hidden tab loads on click instead). Null too while the start gate is
- *  closed (`st.gate`, stage 0): the visible tab's first frame has not applied on this socket and the strip lists it. */
+ *  closed (`st.gate`, stage 0): the visible tab's first frame has not applied on this socket and the strip lists it, and while the
+ *  return hold stands (`st.returnHold`, the owner's decision of 2026-09-19, re-decided on the shell's layout word since round 3). */
 export function nextPrefetch(st: SkeletonState, activeId: string | null, inFlight: ReadonlySet<string>,
                              hidden: boolean, inView: (id: string) => boolean): string | null {
-  if (hidden || !st.gate) return null;
+  if (hidden || !st.gate || st.returnHold) return null;   // …and while the return hold stands (review round 3, extra8-1: a hold set on a layout word after the gate opened must stop the chain too; before this only the openers read the hold, so a flip to the phone mid-socket held nothing)
   for (const id of st.ids) if (inFlight.has(id)) return null;
   for (const id of st.order) {
     if (!st.ids.has(id) || id === activeId) continue;

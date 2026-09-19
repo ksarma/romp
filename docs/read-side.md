@@ -303,7 +303,11 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   first connection, a kernel restart and a dropped link while the app is in
   the foreground included, because the phone cannot tell a return's redial
   from a restart's, and a tab that loads when tapped costs nothing on either.
-  The desktop's redial keeps today's chain.
+  The desktop's redial keeps today's chain, and the hold follows the layout
+  (since 2026-09-19): the shell re-tells its panes word with the layout on every
+  flip across the phone breakpoint, so a rotation to the desktop inside the
+  socket's life lifts the hold and the grid gets its chain, and a rotation to the
+  phone after a redial sets it.
 - **The Outline pane's ages run on the kernel's clock.** Its timestamps are the
   kernel's, so the pane never reads the browser's clock against them: it anchors
   on the frame's `now` paired with the moment that frame arrived from the wire

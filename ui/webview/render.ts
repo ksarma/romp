@@ -51,7 +51,7 @@ import { CHIP_LABEL, chipWords, statusChip, type ChipState } from "./status-chip
 import { isClearCmd, openTopTitles, clearConfirmDetail, endConfirmDetail, RENAME_SUBLINE, END_SESSION_STANDING } from "./clear-confirm";
 import { prebuildPlan, type ViewState } from "./prebuild";
 import { historyMarks, historyBands, windowSpans, HIST_H, HIST_GAP } from "./glow-history";
-import { newSkeletonState, applyTabOrderSkeleton, onStatus, holdStatus, onFull, onDismiss, onSocketUp, nextPrefetch, renderKind, gateOnFrame, gateOnStrip, gateOnShow } from "./skeleton-tabs";
+import { newSkeletonState, applyTabOrderSkeleton, onStatus, holdStatus, onFull, onDismiss, onSocketUp, onLayoutWord, nextPrefetch, renderKind, gateOnFrame, gateOnStrip, gateOnShow } from "./skeleton-tabs";
 import { reconcileTabOrder, adoptArrival } from "./tab-order";
 import { writeViewOrder } from "./view-order";
 import { planStrip, readTabGroups, writeTabGroups, setSectionCollapsed, sectionRef, isPinned, setPinned, isHidden, setHidden, prunePinned, reachableFrom, headWords,
@@ -14196,11 +14196,12 @@ function cancelPrebuild(): void {
 function paneHidden(): boolean {
   try { return (window.parent !== window && (window.innerWidth === 0 || window.innerHeight === 0)) || (window as PaneHiddenHost).__rompPaneHidden === true; } catch { return false; }
 }
-// The shell's LAYOUT, read once per redial at the wsup arm (the owner's decision of 2026-09-19: after a return on the phone the
-// other chat tabs reload only when tapped, so the redial's chain is held there; skeleton-tabs.ts onSocketUp's returnHold). The
-// shell publishes window.__rompMobileOn in its head, read off window.parent the way paneHidden reads the shell's hidden word
-// above; a standalone page or the VS Code webview has no shell and reads false (the desktop's chain). The start gate itself
-// reads no layout: this is the return's one read.
+// The shell's LAYOUT, read at the wsup arm (the owner's decision of 2026-09-19: after a return on the phone the other chat tabs
+// reload only when tapped, so the redial's chain is held there; skeleton-tabs.ts onSocketUp's returnHold). The shell publishes
+// window.__rompMobileOn in its head, read off window.parent the way paneHidden reads the shell's hidden word above; a standalone
+// page or the VS Code webview has no shell and reads false (the desktop's chain). The start gate itself reads no layout. The
+// hold's SECOND read is the shell's own layout word (panes `mob`, the panes handler below, review round 3): the shell re-tells it on
+// every media-query flip, so a flip inside the socket's life re-decides the hold instead of the arm's sample outliving the layout.
 function phoneShell(): boolean {
   try { const p = window.parent as unknown as { __rompMobileOn?: unknown }; return window.parent !== window && typeof p.__rompMobileOn === "function" && !!(p.__rompMobileOn as () => unknown)(); } catch { return false; }
 }
@@ -20249,6 +20250,7 @@ listenForFrames(perfFrameHandler("chat", (m) => vscodeApi?.postMessage(m), (e: M
       for (const k of Object.keys(m.on)) on[k] = m.on[k] === true;
       panesOn = on;
       if (wasChatOff && on.chat === true) schedulePrebuild();   // the shell shows the chat tab: the idle chain re-arms on the word too (the belt beside the visibility flip's hook, for a browser whose observer does not run over a hidden iframe; runPrebuild re-reads paneHidden() at fire time, so a word ahead of the observer costs one null pass)
+      if (typeof m.mob === "boolean" && onLayoutWord(skeletonTabs, m.mob) && activeId && gateOnShow(skeletonTabs, activeId)) schedulePrebuild();   // the shell's LAYOUT word (review round 3, extra8-1): the return hold is re-decided on every flip (skeleton-tabs.ts onLayoutWord), and a hold lifted by a flip to the desktop opens the gate for the shown tab whose full applied on this socket and arms the chain; a flip to the phone after a redial sets the hold, which nextPrefetch reads
     }
     // which panes exist to bring forward (the Files control's setting): whole-set replace as well
     const avail: Record<string, boolean> = {};
