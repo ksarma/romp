@@ -755,6 +755,37 @@ class TheSweepIsItsOwnBoundedReader(_WalkHarness):
         self.assertEqual(self.fb.sent, [], "nothing sent")
 
 
+class TheRecorderNamesTheAsker(unittest.TestCase):
+    def test_a_load_inside_a_stand_in_wrapper_is_named_for_the_wrapper_and_its_hand_off_for_the_caller(self):
+        """_caller's contract over a stand-in, not the composition of the real boundary set (setUp's guard over the judge's three
+        wrappers holds that): a boundary frame is stepped over only while it sits at its pass-through call. `wrapper` is the
+        stand-in, two body lines: a call to `other`, off the hand-off line, and the hand-off `return loader()`; both callees
+        record their asker through _caller with `wrapper` as the one boundary. The load written in the wrapper's own body is
+        named for the wrapper, in this file; the hand-off is named for this method, the wrapper's caller. The (function, file)
+        pairs are asserted and not the lines, so a reformatting of this body changes nothing (review round 2, tests-2: the
+        conditional step-over landed with no case that failed without it; stepped over unconditionally, the in-body call is
+        named for this method as well, which is the red this case gives)."""
+        seen = []
+
+        def wrapper(loader):
+            other()                                       # a load written in the wrapper's own body, off the hand-off line
+            return loader()                               # the hand-off: the one line the recorder steps over
+
+        boundary = ((wrapper.__code__, _pass_through_lines(wrapper, "loader")),)
+
+        def other():
+            seen.append(("in the body",) + _caller(inspect.currentframe(), boundary))
+
+        def loader():
+            seen.append(("the hand-off",) + _caller(inspect.currentframe(), boundary))
+
+        wrapper(loader)
+        here = os.path.basename(os.path.realpath(__file__))
+        self.assertEqual([(what, fn, f) for what, fn, f, _ln in seen],
+                         [("in the body", "wrapper", here), ("the hand-off", self._testMethodName, here)],
+                         "a load inside a stand-in wrapper's body is named for the wrapper, its hand-off for the wrapper's caller: %r" % seen)
+
+
 class TheCountersOneSite(unittest.TestCase):
     def test_the_walk_has_one_shared_load_site_and_the_counter_is_bumped_beside_it(self):
         """A census over the look's own source (the gate decorator unwraps): one shared load by either spelling of the shared
