@@ -476,6 +476,89 @@ def restore_env(name, prior):
         os.environ[name] = prior
 
 
+# No test may leave the kernel's backend singleton changed, or over a directory that is gone (2026-09-19).
+# kernel.py builds its SdkBackend lazily: the first km._sdk() call constructs it over jd.STATE as it stands
+# at that moment and caches it in km._sdk_backend for the life of the process (_sdk_locked), and every
+# later reader in the worker (the chat signature's fork component, the registry readers, the restart
+# routes) takes that one object. A test that points jd.STATE at a sandbox and reaches km._sdk(), through
+# a card build or a route, builds the singleton over its sandbox; a tearDown that restores jd.STATE and
+# removes the sandbox without touching the singleton leaves every later test's backend over a removed
+# directory. Its fork_children then stats a registry that is gone, answers {} on the OSError and scans no
+# registry, so a derivation counting registry stats read 0 against 39 in a module that did nothing wrong
+# (tests/test_kernel_delta_send.py after tests/test_kernel.py::ViewBuilder, 2026-09-19); the module alone
+# passes, and a kernel load between cause and victim hides it, since re-executing kernel.py resets the
+# singleton. This fixture names the cause: it reads the singleton before each test and after its teardown
+# and fails the test that left a different object there, or one whose state_dir is no longer a directory.
+# Transition-based like _shared_state_restored above, and the ONE allowance is derived from the transition,
+# never from a list of test names: None before and, after, a backend over jd.STATE as it stands with that
+# directory present is a worker's lazy first build of the singleton under the run root, the kernel's own
+# design, leaving nothing dangling. WHICH test performs that first build is a property of the run (the
+# xdist scheduler, the subset selected, the module order), not of the test: the census that found
+# ViewBuilder saw three first builders across four workers, a different test on each, so a name list could
+# never be right. A test that installs a fake or a rebuilt backend and puts back the OBJECT it found is
+# quiet; one that puts back an equal backend (the same state_dir, another object) is not, because the
+# readers hold the object, its threads and its registry state, not its path. The kernel re-execution rule
+# is the judge fixture's: a test that loads the kernel under its shared name re-executes kernel.py into
+# the one module object, whose module-level `_sdk_backend = None` resets the singleton, so identities are
+# not compared for that test (the function object _sdk_locked is the marker; a re-execution replaces it),
+# while a backend present after the reload is the test's own build and a state_dir that is not a
+# directory is still named. A value with no state_dir (a test's fake) has no path to check. Only the
+# kernel loaded under its SHARED name is read: a kernel a module loads under a private name (load_source
+# under romp_kernel_<x>) has an _sdk_backend of its own, so a lazy build under a rebound state through that
+# handle lands there and the shared singleton stays untouched (the browser-driven served modules load
+# their kernels this way, and their first run under this fixture tripped nothing); the private name
+# isolates the kernel's globals and NOT jd's, since
+# judge.py loads under its shared name even when the kernel is private, so a test that assigns jd.STATE
+# through a private kernel handle is moving the shared judge state (_shared_state_restored's concern, not
+# this one's). Cost: two dict reads per test, and one isdir when a backend is present.
+def _sdk_singleton():
+    """(km._sdk_backend as it stands, marker) for the kernel loaded under its shared name, the marker being
+    the function object kernel.py defines for the lazy build (a re-execution replaces it); (None, None)
+    when no module has loaded the kernel as romp_kernel yet."""
+    km = sys.modules.get("romp_kernel")
+    if km is None:
+        return None, None
+    d = vars(km)
+    return d.get("_sdk_backend"), d.get("_sdk_locked")
+
+
+def _sdk_singleton_text(be):
+    if be is None:
+        return "None (not built)"
+    if be is False:
+        return "False (the build failed)"
+    state_dir = getattr(be, "state_dir", None)
+    return "%s over %s" % (type(be).__qualname__, "no state_dir" if state_dir is None else state_dir)
+
+
+@pytest.fixture(autouse=True)
+def _sdk_singleton_restored(request):
+    be0, marker_before = _sdk_singleton()
+    yield
+    be1, marker_after = _sdk_singleton()
+    state_dir = getattr(be1, "state_dir", None) if be1 else None
+    gone = state_dir is not None and not os.path.isdir(str(state_dir))
+    changed = False
+    if marker_after is marker_before and be1 is not be0:     # not re-executed: whatever differs, this test did
+        km = sys.modules.get("romp_kernel")
+        jd_state = getattr(vars(km).get("jd"), "STATE", None) if km is not None else None
+        first_build = (be0 is None and state_dir is not None and not gone
+                       and jd_state is not None and str(state_dir) == str(jd_state))
+        changed = not first_build
+    if not (changed or gone):
+        return
+    if changed:
+        what = "changed after its teardown: before %s, after %s%s" % (
+            _sdk_singleton_text(be0), _sdk_singleton_text(be1),
+            ", whose state_dir is no longer a directory" if gone else "")
+    else:
+        what = "over a directory that no longer exists: %s" % _sdk_singleton_text(be1)
+    pytest.fail("%s left the kernel's backend singleton (km._sdk_backend) %s. A test that reaches km._sdk() "
+                "under a sandboxed jd.STATE builds the kernel's backend singleton over the sandbox, and every "
+                "later test's backend reads that root after the sandbox is removed: save km._sdk_backend "
+                "before the sandbox and put it back in tearDown, with jd.STATE." % (request.node.nodeid, what),
+                pytrace=False)
+
 # No test report may carry a process-environment VALUE, or a credential-shaped token (2026-09-05). A
 # test that renders an env mapping in an assertion (assertNotIn on os.environ, on a _judge_env() copy
 # of it, on a launch env) prints the whole mapping when it fails, and on a developer's box that
