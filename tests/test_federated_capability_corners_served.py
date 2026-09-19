@@ -24,8 +24,11 @@ under the size guard, so a caps-ignoring kernel emits a real patch; a todo chang
 frame's remainder and the guard sends a whole frame instead, which is why tests/test_federated_feed_delta_served.py
 never sees a patch) where the remote serves the route, a todo (POST /usertodo) where it serves that alone, else a
 transcript append. The notice is a completed card, not a needs-you one, on purpose: a needs-you card also flips the
-session's needs-input state, which lands in the frame's remainder a cycle later as a whole frame, and that frame would
-catch an old bundle up and hide the freeze this lab is meant to show. The visible observable is the card on the hub's
+session's needs-input state, which lands in the frame's remainder a cycle later, and on THIS board that remainder move
+crosses as a whole frame (the size guard sends a change whole when the changed cards plus the whole remainder reach 0.6 of
+the frame, which the lab's ledger rows and scalars, about 78 percent of an 18.5 KB frame, meet; a card-heavy board patches
+the flip too: tests/test_view_deltas.py CatchUpRoadsOfAWholeFrameClient), and that frame would catch an old bundle up and
+hide the freeze this lab is meant to show. The visible observable is the card on the hub's
 feed page ([data-key="a:notice:..."]) or, for a transcript append, two: the appended pair's bar on the remote lane of
 the hub's TIMELINE page (those corners open the timeline too and read the drawn bars off its SVG), and the text of api's
 provisional row on the hub's Outline, which swaps from the seed's last prompt to the appended one. The Outline lists a
@@ -557,7 +560,10 @@ class _Corner(unittest.TestCase):
         frame of the same vintage keys asks as the table does, so no row names the feed."""
         self._control()
         self.assertTrue(self._sends("timeline", "relay", "needSlot"), "a bars patch resynced on the timeline relay socket: the row is that patch's")
-        why = "bars judging dictlist:k is a list" + (" @" + self.remote_sha if self.remote_sha else "")
+        # the expected why is DERIVED from the hub's /tunnels row, so its build tag is guarded present: a row naming no
+        # kernelSha would make the expectation tagless and let a tagless actual row pass for the wrong reason
+        self.assertTrue(self.remote_sha, "the hub's /tunnels row names the remote's build (kernelSha), the tag the expected row is built from: %r" % (self.hub_row,))
+        why = "bars judging dictlist:k is a list @" + self.remote_sha
         self.assertEqual(self._unkeyed_base_rows(), [{"host": HOST, "ev": "delta-unkeyed-base", "why": why}],
                          "the first bars patch onto the refused seed is said once, by the timeline page's conn, naming the remote's build "
                          "(the hub's row: %r); rows by kind: %r"
@@ -851,14 +857,23 @@ class CornerOldLocal(_Corner):
     (this checkout). The dial carries delta=1 and no caps, the remote serves the feed as slot patches, and the old
     bundle decodes none: a user sees the remote host's rows frozen where its first full frame put them, no toast, no
     banner; the Outline files a delta-unapplied row per patch and posts a needSlot to the LOCAL kernel (which
-    resyncs its own slot, never the remote's), the feed and Waiting panes drop the patches silently. The remote's own
-    whole-frame fallbacks (the size guard, a redial, a change that moves the remainder) catch the board up now and
-    then, which is why the card is a completed one here (a needs-you card's state flip sends such a frame a cycle
-    later and the old page shows the card 1.8 s late instead of never). PR 815 changes no kernel, so it repairs this
-    corner through the hub's bundle alone: the hub reloads its page onto the new bundle. A remote-side guard (whole
-    feed frames to a relay socket that announces no cap; the module docstring says why it is not taken here) would
-    also cover the old hub's feed during a mixed-build window, not its timeline. This is the production state of a
-    dashboard served by a box that has not taken PR 815, and the record of the phone's 86 rows in 2.4 minutes."""
+    resyncs its own slot, never the remote's), the feed and Waiting panes drop the patches silently. The old page moves
+    only when the remote serves a change WHOLE, and the roads to that, measured against the encoder (review round 4 of
+    PR 815 driving km._send_slot on a synthetic 8-session board, 2026-09-19; pinned in tests/test_view_deltas.py
+    CatchUpRoadsOfAWholeFrameClient), are a relay redial (a fresh upstream socket is served whole once), the size guard
+    on a change that moves the frame's remainder while the changed cards plus the whole remainder reach 0.6 of the
+    frame (this board meets it: its ledger rows and scalars are about 78 percent of an 18.5 KB frame, so a needs-you
+    card's state flip a cycle later crosses whole here and the old page shows the card 1.8 s late instead of never; a
+    card-heavy board does not, and there the same flip is a patch and drops: the kernel's recorded live board, 660
+    cards, has a 17 percent remainder in 5.76 MB), and an encoder error; an unkeyable collection is never frozen at all
+    (such a remote sends whole frames always). The busier the board, the less often an old page catches up, and every
+    change confined to the cards drops on every board. That is why the card is a completed one here: on this board a
+    needs-you card's whole frame would hide the freeze. PR 815 changes no kernel, so it repairs this corner through the
+    hub's bundle alone: the hub reloads its page onto the new bundle. A remote-side guard (whole feed frames to a relay
+    socket that announces no cap; the module docstring says why it is not taken here) would also cover the old hub's
+    feed during a mixed-build window, not its timeline. This is the production state of a dashboard served by a box
+    that has not taken PR 815, where the catch-up is rarer than on this board: the phone's 86 rows in 2.4 minutes were
+    rev 1 to 86 monotone, a board that caught up not once in the window."""
 
     @classmethod
     def _knobs(cls):
