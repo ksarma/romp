@@ -4775,7 +4775,12 @@ class Disclosed(unittest.TestCase):
     thing present, through the machinery the name groups use, km._PerfStats, pp.fold, pe.export_document and pe.usage_block,
     never a fixture. Every such clause is listed in CONDITIONAL_CLAIMS with the pin that holds it, and the test named for the
     list holds each listed clause present in the paragraph, so a clause reworded moves the list and the list says where its
-    pin lives; the three wordings that check found false are held absent (DROPPED_WORDINGS). The clause slicing of the name
+    pin lives; the four wordings the checks found false are held absent (DROPPED_WORDINGS). Since the second closing check
+    (2026-09-19) every check an entry names is a (name, bears) pair, the bears a "reds when" statement of the state the check
+    goes red on: that check found the remote family's clause false (the paragraph said it collapsed to one row; the kernel
+    collapses the host and keeps the route, one row per remote operation) while its entry named two checks that existed and
+    passed, both about the host folding to a star and neither about one row, so a name alone proved the pin tracked the code
+    and nothing about whether the prose did; the statement is what lets the list be read clause by clause. The clause slicing of the name
     groups is unchanged: the http sentence and the words "the `usage` block, which adds no number a plain export lacks:" sit
     between the bounds sentence and "every leaf under `usage`", outside every clause, and inside the usage clause http and
     perf are written without backticks, so the per-clause reverse direction still holds every backticked name to a live key
@@ -4802,70 +4807,131 @@ class Disclosed(unittest.TestCase):
     SPELLED = {8: "eight", 9: "nine", 10: "ten", 11: "eleven", 12: "twelve"}   # the counts the bounds sentence could spell
     STAMP = datetime(2026, 9, 19, 12, 0, tzinfo=timezone.utc)                  # one export minute for a pair of documents compared whole
     # The paragraph's conditional ("X only when Y") and per-Z ("one per Z") claims, each as its words read in the flattened
-    # paragraph and the pin that holds it by a document without the condition. Two clauses have no needle here: "so two
-    # uploads from one kernel remain linkable by design" is a consequence, not a property of a document, and is the
-    # paragraph's end mark (_paragraph); the request sentence before "What does travel" (no hostname, account or filename
-    # anywhere in the request, and no second file) is pinned over a recording receiver in tests/test_perf_upload.py.
+    # paragraph, the pin that holds it by a document without the condition, and its checks, each a (name, bears) pair: the
+    # name resolves through _check_exists, and bears states, starting "reds when", the falsifying state the check goes red on,
+    # in terms of a document or a key, never the check's name again. The second closing check (2026-09-19) is why the pair:
+    # the remote family's entry named two checks, both true and both about the host folding to a star, and neither bore on
+    # the clause's claim that the family collapsed to ONE ROW, which was false; a mutation campaign over the list passed all
+    # its entries, proving each pin tracks the CODE and nothing about whether the PROSE does, and a check named without what
+    # it reds on cannot be asked the second question. Two clauses have no needle here: "so two uploads from one kernel remain
+    # linkable by design" is a consequence, not a property of a document, and is the paragraph's end mark (_paragraph); the
+    # request sentence before "What does travel" (no hostname, account or filename anywhere in the request, and no second
+    # file) is pinned over a recording receiver in tests/test_perf_upload.py.
     CONDITIONAL_CLAIMS = (
         ("the `malloc` block's `arena`, `fordblks`, `hblkhd` and `uordblks`, null with no leaves under it where the C library has no mallinfo2",
          "_check with km._MALLINFO2 patched None: the raw and the public malloc are None and none of the four is a process name "
          "walked; live, where the handle resolved, the block is a dict and all four are walked",
-         ("Disclosed._check", "Disclosed.test_every_leaf_of_process_heap_gc_and_usage_an_upload_carries_is_named_in_its_own_blocks_clause_of_the_references_disclosure")),
+         (("Disclosed._check",
+           "reds when the snapshot taken with the mallinfo2 handle None carries a malloc block or any of the four leaves under "
+           "process, or when the live snapshot, the handle resolved, carries malloc as anything but a dict of all four"),
+          ("Disclosed.test_every_leaf_of_process_heap_gc_and_usage_an_upload_carries_is_named_in_its_own_blocks_clause_of_the_references_disclosure",
+           "reds when a leaf under process on the wire is unnamed in the process clause or a name there is no live key, the four "
+           "malloc names excused exactly where the fold's malloc is null"))),
         ("plus, on macOS alone, `rss_peak_kb`",
          "_check: ('process', 'rss_peak_kb') is walked exactly when sys.platform is darwin; this box's snapshot is the document "
          "without the condition, and the one with it is producible on darwin alone (the kernel's _process_stats writes it there)",
-         ("Disclosed._check",)),
+         (("Disclosed._check",
+           "reds when the fold carries rss_peak_kb under process off darwin, or lacks it on darwin, or when the process clause "
+           "stops naming the leaf with its platform"),)),
         ("per generation under `stats`, `collections`, `collected` and `uncollectable`",
          "_check: heap.gc.stats has one entry per generation the interpreter reports (len(gc.get_stats())) and each entry exactly "
          "those three leaves; the name walk skips digit keys as positions, so a table short a generation kept every name pin green",
-         ("Disclosed._check",)),
+         (("Disclosed._check",
+           "reds when heap.gc.stats on the wire has more or fewer entries than the interpreter reports generations, or an entry "
+           "whose keys are not exactly collections, collected and uncollectable"),)),
         ("per generation under `gen`, `collections`, `collectedLast`, `msLast`, `msMax` and `msSum`",
          "_check: gc.gen has one row per generation, keyed by its index, and each row exactly those five leaves; the gc block's own "
          "shape pin (tests/test_perf_gc_block.py, Shape, GEN_KEYS) holds the same at the collector",
-         ("Disclosed._check", "test_perf_gc_block:Shape")),
+         (("Disclosed._check",
+           "reds when gc.gen on the wire has a row under anything but each generation's index, or a row whose keys are not exactly "
+           "the five leaves"),
+          ("test_perf_gc_block:Shape",
+           "reds when the collector's snapshot writes gc.gen with rows other than one per generation or a row with keys other "
+           "than GEN_KEYS"))),
         ("memory-fraction bounds coarsened to a power of two (`hydrated.capBytes` among them)",
          "_check: the fold's bound-keyed leaves classified by pp.MEMORY_FRACTION_BOUNDS and pp.CONSTANT_BOUNDS, the count the "
          "sentence spells is the fractions', an unclassified leaf red",
-         ("Disclosed._check", "Disclosed.test_the_two_labels_the_earlier_bounds_pin_swapped_are_checked_by_execution_against_the_kernel")),
+         (("Disclosed._check",
+           "reds when a bound-keyed leaf of the fold is in neither classification, when a classified bound is off the wire, when "
+           "hydrated.capBytes is not among the fractions, or when the count the paragraph spells is not the fractions' count"),
+          ("Disclosed.test_the_two_labels_the_earlier_bounds_pin_swapped_are_checked_by_execution_against_the_kernel",
+           "reds when pusher.stageRingMax, which scales with MemTotal by execution, is classified as a constant, or "
+           "memos.judgingBand.bound, the kernel's literal row cap, as a fraction"))),
         ("the uptime rounded down to the minute",
          "tests/test_perf_export.py UptimeRounding, and the upload's denylist refusal of an uptime typed to the second",
-         ("test_perf_export:UptimeRounding",
-          "test_perf_upload:Cli.test_an_edited_file_with_the_uptime_to_the_second_is_refused_naming_the_value_path_and_never_the_number")),
+         (("test_perf_export:UptimeRounding",
+           "reds when a folded document carries uptime_s off a whole minute, or rounded up, wherever the key sits"),
+          ("test_perf_upload:Cli.test_an_edited_file_with_the_uptime_to_the_second_is_refused_naming_the_value_path_and_never_the_number",
+           "reds when a file whose uptime_s is typed to the second is sent, or its refusal line prints the number"))),
         ("the `http` table in every export, with or without `--usage`: one row per route the kernel has served since it started",
          "test_the_http_table_travels_in_every_export...: export_document(usage=False) has no usage block and its perf.http is "
          "the served rows, 68 keys from the served snapshot and {} from a fresh collector",
-         ("Disclosed.test_the_http_table_travels_in_every_export_one_row_per_route_served_with_a_count_and_a_millisecond_total",)),
-        ("the bundle, media, glossary and remote families collapsed to one row each, and one `other` row for whatever is off the register or past the table's cap",
-         "test_the_http_table_travels_in_every_export...: a request off the register folds to `other`; the families' collapse is "
-         "_perf_http_key's and http_public_key's (Collector's fold-to-other test; RouteRegisterCopy in tests/test_perf_export.py) "
-         "and the cap is Collector's http-cap test",
-         ("Disclosed.test_the_http_table_travels_in_every_export_one_row_per_route_served_with_a_count_and_a_millisecond_total",
-          "test_perf_stats:Collector.test_http_keys_outside_the_route_table_fold_to_other",
-          "test_perf_stats:Collector.test_http_keys_are_capped_and_ws_adds_no_time", "test_perf_export:RouteRegisterCopy")),
+         (("Disclosed.test_the_http_table_travels_in_every_export_one_row_per_route_served_with_a_count_and_a_millisecond_total",
+           "reds when a plain export of the served snapshot lacks the http table or a served route's row, carries a row for a "
+           "route not served, or when a fresh collector's plain export has any row"),)),
+        ("the bundle, media and glossary families collapsed to one row each",
+         "test_the_remote_family_keeps_one_row_per_operation_with_the_host_collapsed: two names each under /dist/, /media/ and "
+         "/glossary/, served through the kernel's key function and exported plain, give GET /dist/*, GET /media/* and "
+         "GET /glossary/*, one row each with count 2 and no second key of the family",
+         (("Disclosed.test_the_remote_family_keeps_one_row_per_operation_with_the_host_collapsed",
+           "reds when two bundle, media or glossary names key as two rows in the plain export's http table"),
+          ("test_perf_stats:Collector.test_http_key_is_method_plus_normalized_path",
+           "reds when two /dist/ names key differently at the kernel"))),
+        ("the remote family collapsed by host alone, the host's name replaced by a star and the route kept, so a kernel attached to a peer "
+         "carries one row per remote operation it served there, `GET /remote/*/sessions`, say, and no host name in any key",
+         "Disclosed.test_the_remote_family_keeps_one_row_per_operation_with_the_host_collapsed: a collector served GET /remote/TESTHOST/sessions "
+         "twice, GET /remote/TESTHOST/feed, POST /remote/TESTHOST/send, GET /remote/TESTHOST2/sessions and a bare GET /remote/TESTHOST, folded "
+         "and exported plain, carries exactly four remote rows keyed by operation, the two hosts' sessions requests summed under one row, and "
+         "no key carrying either host; an older kernel's raw host-bearing keys fold to the same rows",
+         (("Disclosed.test_the_remote_family_keeps_one_row_per_operation_with_the_host_collapsed",
+           "reds when the remote operations fold to one row, the family collapsing, or when any key of the plain export's http table "
+           "carries a host name, the host no longer collapsing"),
+          ("test_perf_stats:Collector.test_http_keys_outside_the_route_table_fold_to_other",
+           "reds when GET /remote/<host>/sessions stops keying as GET /remote/*/sessions at the kernel's key function: the host kept "
+           "or the route dropped"),
+          ("test_perf_export:RouteRegisterCopy.test_every_key_the_kernel_can_produce_passes_and_nothing_else_does",
+           "reds when the shared module stops admitting a per-operation remote key or admits one carrying a host"))),
+        ("and one `other` row for whatever is off the register or past the table's cap",
+         "test_the_http_table_travels_in_every_export...: a request off the register folds to `other` through the kernel's key "
+         "function and through the fold's collapse of an older kernel's raw path; the cap is Collector's http-cap test",
+         (("Disclosed.test_the_http_table_travels_in_every_export_one_row_per_route_served_with_a_count_and_a_millisecond_total",
+           "reds when an off-register request writes its path as a row"),
+          ("test_perf_stats:Collector.test_http_keys_are_capped_and_ws_adds_no_time",
+           "reds when keys past the cap take rows of their own"))),
         ("each row that route's request `count` and millisecond total `ms`",
          "test_the_http_table_travels_in_every_export...: every row of the plain export's perf.http has exactly count and ms",
-         ("Disclosed.test_the_http_table_travels_in_every_export_one_row_per_route_served_with_a_count_and_a_millisecond_total",)),
+         (("Disclosed.test_the_http_table_travels_in_every_export_one_row_per_route_served_with_a_count_and_a_millisecond_total",
+           "reds when a row of the plain export's http table carries a key beside count and ms, lacks one, or holds other than the "
+           "requests' count and their millisecond total"),)),
         ("whoever made the requests (the counter records the route and the time and nothing about the client)",
          "test_the_http_table_travels_in_every_export...: _PerfStats.http_request takes (path, dt) and no client, the whole executable "
          "content of the clause; the makers the closing check at the re-run's head read at the call sites were prose no document "
          "could falsify and left the paragraph at its verification",
-         ("Disclosed.test_the_http_table_travels_in_every_export_one_row_per_route_served_with_a_count_and_a_millisecond_total",)),
+         (("Disclosed.test_the_http_table_travels_in_every_export_one_row_per_route_served_with_a_count_and_a_millisecond_total",
+           "reds when the counter's signature takes a third parameter, a client's name reaching the table"),)),
         ("only when `--usage` was given, the `usage` block",
          "test_the_usage_block_is_written_only_with_the_flag...: export_document(usage=False) writes no usage and its top level "
          "is within the envelope and perf; usage=True writes pp.fold(pe.usage_block(snap)) and changes nothing else",
-         ("Disclosed.test_the_usage_block_is_written_only_with_the_flag_and_every_leaf_of_it_is_recomputed_from_a_plain_export",)),
+         (("Disclosed.test_the_usage_block_is_written_only_with_the_flag_and_every_leaf_of_it_is_recomputed_from_a_plain_export",
+           "reds when a plain export carries a usage key, or when the flag changes any key of the document but usage"),)),
         ("which adds no number a plain export lacks",
          "test_the_usage_block_is_written_only_with_the_flag...: the whole block recomputed from the plain export's perf alone "
          "equals the --usage export's, on planted counts, over the current snapshot shape and the older one (parses.bySid, no "
          "perSession), where no parsed count is written since the per-sid table is one the plain export drops; the road's side "
          "in tests/test_perf_upload.py over the older shape",
-         ("Disclosed.test_the_usage_block_is_written_only_with_the_flag_and_every_leaf_of_it_is_recomputed_from_a_plain_export",
-          "test_perf_upload:Cli.test_a_plain_export_sends_the_http_table_with_a_count_and_ms_per_route_served_and_no_usage_block_which_is_those_counts_relabelled")),
+         (("Disclosed.test_the_usage_block_is_written_only_with_the_flag_and_every_leaf_of_it_is_recomputed_from_a_plain_export",
+           "reds when a leaf of the --usage block differs from the same leaf recomputed from the plain export's perf alone, over the "
+           "four snapshot shapes, a number the flag alone gives"),
+          ("test_perf_upload:Cli.test_a_plain_export_sends_the_http_table_with_a_count_and_ms_per_route_served_and_no_usage_block_which_is_those_counts_relabelled",
+           "reds when the --usage body a recording receiver saw carries a usage leaf the plain body's http rows and leaves do not "
+           "give, or a parsed count from the per-sid table the plain body drops"))),
         ("the `sessions` block's `parsed`, `chatBuilt` and `stamped`, each a copy or a count of a leaf under perf that travels anyway",
          "test_the_usage_block_is_written_only_with_the_flag...: parsed is parses.perSession.sessions, stamped is "
          "caches.session_stamp.entries, chatBuilt is len(builds.chat.bySession), each read from the plain export; an older "
          "snapshot's per-sid table travels in no export and gives no parsed count",
-         ("Disclosed.test_the_usage_block_is_written_only_with_the_flag_and_every_leaf_of_it_is_recomputed_from_a_plain_export",)),
+         (("Disclosed.test_the_usage_block_is_written_only_with_the_flag_and_every_leaf_of_it_is_recomputed_from_a_plain_export",
+           "reds when parsed, stamped or chatBuilt differs from the plain export's parses.perSession.sessions, "
+           "caches.session_stamp.entries or the length of builds.chat.bySession"),)),
         ("or, where the snapshot gives no parsed count, `parsedUnavailable` in place of `parsed` with one of two fixed strings, "
          "predates-parses.perSession for a snapshot saved before the kernel counted parsed sessions (no perSession block under parses)",
          "_check: the older shape's block (perSession removed, the per-sid table in its place) carries the leaf with that value "
@@ -4873,10 +4939,21 @@ class Disclosed(unittest.TestCase):
          "population; test_the_usage_block_is_written_only_with_the_flag...: the leaf is derived from the plain export's perf "
          "having no perSession and the recomputation equals the block over the three shapes; the export child over the three "
          "shapes in tests/test_perf_export.py and the older shape's export read at a recording receiver in tests/test_perf_upload.py",
-         ("Disclosed._check", "Disclosed.test_the_usage_block_is_written_only_with_the_flag_and_every_leaf_of_it_is_recomputed_from_a_plain_export",
-          "test_perf_export:Usage.test_the_parsed_counts_absence_is_stated_in_place_of_the_count_and_only_then",
-          "test_perf_export:Cli.test_a_snapshot_from_before_the_per_session_count_exports_the_absence_leaf_and_a_current_one_the_count",
-          "test_perf_upload:Cli.test_a_plain_export_sends_the_http_table_with_a_count_and_ms_per_route_served_and_no_usage_block_which_is_those_counts_relabelled")),
+         (("Disclosed._check",
+           "reds when the older shape's block, perSession removed, lacks parsedUnavailable with the value predates-parses.perSession "
+           "or carries parsed, or when the current shape's block carries the leaf"),
+          ("Disclosed.test_the_usage_block_is_written_only_with_the_flag_and_every_leaf_of_it_is_recomputed_from_a_plain_export",
+           "reds when the leaf derived from a plain export whose parses has no perSession differs from the --usage block's, in "
+           "presence or in value"),
+          ("test_perf_export:Usage.test_the_parsed_counts_absence_is_stated_in_place_of_the_count_and_only_then",
+           "reds when usage_block over a snapshot with no perSession writes a parsed count, no leaf, or the leaf with another value, "
+           "or writes the leaf beside a count"),
+          ("test_perf_export:Cli.test_a_snapshot_from_before_the_per_session_count_exports_the_absence_leaf_and_a_current_one_the_count",
+           "reds when the export child's --usage file over the older shape lacks the leaf with the predates value or carries parsed, "
+           "or over the current shape carries the leaf"),
+          ("test_perf_upload:Cli.test_a_plain_export_sends_the_http_table_with_a_count_and_ms_per_route_served_and_no_usage_block_which_is_those_counts_relabelled",
+           "reds when the older shape's --usage body at a recording receiver lacks the line naming parsedUnavailable with the predates "
+           "value, or the plain body carries it"))),
         ("and perSession.sessions-not-a-number for a snapshot whose perSession block is there but carries no number under sessions",
          "_check: the malformed shape's block (the served snapshot's count replaced by a digit string) carries the leaf with that "
          "value, never the predates reason, and no parsed (the ruling of 2026-09-19 on the leaf: one reason over two causes was "
@@ -4884,10 +4961,18 @@ class Disclosed(unittest.TestCase):
          "export's perf carrying a perSession whose sessions is not a number, and the recomputation equals the block; every "
          "corner of the shape in tests/test_perf_export.py (Usage), the export child there (Cli) and the shape's export read at "
          "a recording receiver in tests/test_perf_upload.py",
-         ("Disclosed._check", "Disclosed.test_the_usage_block_is_written_only_with_the_flag_and_every_leaf_of_it_is_recomputed_from_a_plain_export",
-          "test_perf_export:Usage.test_a_per_session_block_whose_count_is_not_a_number_is_told_so_and_never_that_the_snapshot_is_old",
-          "test_perf_export:Cli.test_a_snapshot_from_before_the_per_session_count_exports_the_absence_leaf_and_a_current_one_the_count",
-          "test_perf_upload:Cli.test_a_plain_export_sends_the_http_table_with_a_count_and_ms_per_route_served_and_no_usage_block_which_is_those_counts_relabelled")),
+         (("Disclosed._check",
+           "reds when the malformed shape's block, the count a digit string, carries the predates reason, a parsed count or no leaf"),
+          ("Disclosed.test_the_usage_block_is_written_only_with_the_flag_and_every_leaf_of_it_is_recomputed_from_a_plain_export",
+           "reds when the leaf derived from a plain export whose perSession carries no number under sessions differs from the "
+           "--usage block's, in presence or in value"),
+          ("test_perf_export:Usage.test_a_per_session_block_whose_count_is_not_a_number_is_told_so_and_never_that_the_snapshot_is_old",
+           "reds when usage_block over a perSession whose sessions is not a number writes the predates reason, a count or no leaf"),
+          ("test_perf_export:Cli.test_a_snapshot_from_before_the_per_session_count_exports_the_absence_leaf_and_a_current_one_the_count",
+           "reds when the export child's --usage file over the malformed shape carries the predates reason or no leaf"),
+          ("test_perf_upload:Cli.test_a_plain_export_sends_the_http_table_with_a_count_and_ms_per_route_served_and_no_usage_block_which_is_those_counts_relabelled",
+           "reds when the malformed shape's --usage body at a recording receiver lacks the line naming the leaf with its own reason "
+           "or carries the predates reason"))),
         ("and where the snapshot's count is a number no double can hold (a NaN, an infinity or an integer past about 1.8e308), "
          "`parsed` null with no `parsedUnavailable` beside it, null being the export's output for every such number, so the "
          "`sessions` block carries exactly one of three, a `parsed` count, `parsed` null or `parsedUnavailable` in the count's "
@@ -4897,34 +4982,59 @@ class Disclosed(unittest.TestCase):
          "a sum over (a count a double holds, parsed null, the leaf) equal to one; test_perf_export:Usage drives the corners "
          "(2**1024, the first integer float() cannot hold, and a NaN, an infinity and 1e400 as the loader reads them) through the "
          "fold and the export document, with the largest integer a double holds kept as a count",
-         ("Disclosed._check", "test_perf_export:Usage.test_a_count_no_double_can_hold_is_null_in_the_counts_place_with_no_leaf_beside_it")),
+         (("Disclosed._check",
+           "reds when the fourth document, the count replaced by 2**1024, carries anything but parsed null with no leaf beside it, "
+           "when the same number under perf is not null, or when any of the four documents holds other than exactly one of a count "
+           "a double holds, parsed null and the leaf"),
+          ("test_perf_export:Usage.test_a_count_no_double_can_hold_is_null_in_the_counts_place_with_no_leaf_beside_it",
+           "reds when 2**1024, a NaN, an infinity or 1e400 under sessions exports as anything but parsed null, when a leaf is written "
+           "beside the null, or when the largest integer a double holds is not kept as a count"))),
         ("the `actions` block's one count per action route served, the http row's count under the route's name",
          "_check holds the population (53 names); test_the_usage_block_is_written_only_with_the_flag... the values (the http "
          "rows' counts); test_a_usage_count_is_present_only_for_a_route... one key per route served and none for an unserved one",
-         ("Disclosed._check", "Disclosed.test_the_usage_block_is_written_only_with_the_flag_and_every_leaf_of_it_is_recomputed_from_a_plain_export",
-          "Disclosed.test_a_usage_count_is_present_only_for_a_route_the_kernel_has_served")),
+         (("Disclosed._check",
+           "reds when the served snapshot's actions block has a key that is no action route of the register less the housekeeping "
+           "posts, or lacks one"),
+          ("Disclosed.test_the_usage_block_is_written_only_with_the_flag_and_every_leaf_of_it_is_recomputed_from_a_plain_export",
+           "reds when an action count differs from the plain export's POST row count under the route's feature name, on planted counts"),
+          ("Disclosed.test_a_usage_count_is_present_only_for_a_route_the_kernel_has_served",
+           "reds when an action route the collector never served has a key in the block, or a served one's count is not its requests"))),
         ("the `views` block's one count per pane route served, the http row's count under the route's name",
          "as the actions: _check the 15 names, test_the_usage_block_is_written_only_with_the_flag... the values, "
          "test_a_usage_count_is_present_only_for_a_route... served routes alone",
-         ("Disclosed._check", "Disclosed.test_the_usage_block_is_written_only_with_the_flag_and_every_leaf_of_it_is_recomputed_from_a_plain_export",
-          "Disclosed.test_a_usage_count_is_present_only_for_a_route_the_kernel_has_served")),
+         (("Disclosed._check",
+           "reds when the served snapshot's views block has a key that is no pane route, or lacks one"),
+          ("Disclosed.test_the_usage_block_is_written_only_with_the_flag_and_every_leaf_of_it_is_recomputed_from_a_plain_export",
+           "reds when a view count differs from the plain export's GET row count under the pane route's feature name, on planted counts"),
+          ("Disclosed.test_a_usage_count_is_present_only_for_a_route_the_kernel_has_served",
+           "reds when a pane route the collector never served has a key in the block, or a served one's count is not its requests"))),
         ("a count is present only for a route the kernel has served since it started",
          "test_a_usage_count_is_present_only_for_a_route...: a fresh collector's usage_block has actions {} and views {}; one "
          "POST /send and two GET /feed give {'send': 1} and {'feed': 2}",
-         ("Disclosed.test_a_usage_count_is_present_only_for_a_route_the_kernel_has_served",)),
+         (("Disclosed.test_a_usage_count_is_present_only_for_a_route_the_kernel_has_served",
+           "reds when a fresh collector's usage block carries any action or view key, a zero for an unserved route among them, or "
+           "when one POST /send and two GET /feed give other than {'send': 1} and {'feed': 2}"),)),
         ("and the kernel commit when the export carried one",
          "test_the_kernel_commit_travels_only_when...: a snapshot with every COMMIT_KEYS key removed exports no kernel_commit; "
          "kernel_sha 'abcdef1234567' exports 'abcdef123456'",
-         ("Disclosed.test_the_kernel_commit_travels_only_when_the_export_carried_one",)),
+         (("Disclosed.test_the_kernel_commit_travels_only_when_the_export_carried_one",
+           "reds when a snapshot with every commit key removed exports a kernel_commit, or one with a sha exports none, another "
+           "spelling than its first twelve characters, or the sha under perf"),)),
         ("the list is every leaf of those four blocks in a fresh Linux export of 2026-09-19, with the one leaf macOS adds and the usage counts from a kernel that served every route",
          "_check: BLOCKS has four, and the register's 53 action names and 15 pane names are asserted",
-         ("Disclosed._check",)),
+         (("Disclosed._check",
+           "reds when a leaf under process, heap, gc or usage on the wire is unnamed in its block's clause, when a name in a clause "
+           "is no live key of its block, or when the register's action and pane names differ from the 53 and 15 the clause was "
+           "written over"),)),
     )
     # The three wordings the closing check at the re-run's head found false and the paragraph dropped: two provenance claims (the code
     # posts action routes from a relaying kernel, a session's hook and a failed send's retry, and polls pane routes from a
     # peer kernel and a bus start, so neither "the user's own actions" nor "one count per pane opened" is what the counts
-    # mean) and the head that conditioned every usage leaf on the flag while a plain export carried the same numbers.
-    DROPPED_WORDINGS = ("the user's own actions", "one count per pane opened", "only when `--usage` was given, every leaf under `usage`")
+    # mean) and the head that conditioned every usage leaf on the flag while a plain export carried the same numbers. The
+    # fourth (the second closing check, 2026-09-19) put the remote family beside the bundle, media and glossary families as
+    # collapsed to one row each, while _perf_http_key collapses the host alone and keeps the route, one row per remote operation.
+    DROPPED_WORDINGS = ("the user's own actions", "one count per pane opened", "only when `--usage` was given, every leaf under `usage`",
+                        "remote families collapsed to one row each")
 
     @classmethod
     def _check_exists(cls, check):
@@ -5369,9 +5479,12 @@ class Disclosed(unittest.TestCase):
         paragraph's parenthetical says (the counter records the route and the time and nothing about the client) and the
         whole executable content of "whoever made the requests": the makers the closing check at the re-run's head read at
         the call sites (the dashboard, the CLI, a relaying kernel, a session's tool call, a hook, a peer's poll) were prose
-        no document could falsify and left the paragraph at its verification. The families' collapse
-        and the cap are Collector's (the fold-to-other test, the http-cap test) and RouteRegisterCopy's in
-        tests/test_perf_export.py. Fails on: the table dropped from a plain export or written only with --usage; a row
+        no document could falsify and left the paragraph at its verification. The families' collapse, the bundle, media and
+        glossary families to one row each and the remote family to one row per operation with the host a star, is held by
+        documents in test_the_remote_family_keeps_one_row_per_operation_with_the_host_collapsed (the second closing check,
+        2026-09-19, found the paragraph saying the remote family collapsed to one row like the other three while the two
+        checks its entry named held the host folding and nothing about one row); the cap is Collector's http-cap test.
+        Fails on: the table dropped from a plain export or written only with --usage; a row
         gaining or losing a field; a zero row for an unserved route; a client name reaching the counter."""
         served = self._served_snapshot()
         plain = pe.export_document(served, usage=False, now=self.STAMP)
@@ -5391,6 +5504,49 @@ class Disclosed(unittest.TestCase):
         self.assertEqual(pp.fold(st.snapshot())["http"], {"other": {"count": 1, "ms": 1.0}})
         self.assertEqual(list(inspect.signature(km._PerfStats.http_request).parameters), ["self", "path", "dt"],
                          "the counter takes the key and the duration and knows no client")
+
+    def test_the_remote_family_keeps_one_row_per_operation_with_the_host_collapsed(self):
+        """The second closing check (2026-09-19) found the paragraph saying the remote family collapsed to one row like the
+        bundle, media and glossary families, while _perf_http_key collapses the HOST alone and keeps the route, so a kernel
+        attached to one peer carries one row per remote operation it served there (220 of the register image's 457 keys are
+        METHOD /remote/*<route> forms the sentence's enumeration omitted); and the clause's two named checks, both true, held
+        the host folding to a star and nothing about ONE ROW, so the pin tracked the code while the prose did not. This holds
+        the corrected sentence by documents. A fresh collector served through the kernel's key function with GET
+        /remote/TESTHOST/sessions twice, GET /remote/TESTHOST/feed, POST /remote/TESTHOST/send, GET /remote/TESTHOST2/sessions
+        and a bare GET /remote/TESTHOST, plus two names each under /dist/, /media/ and /glossary/, and exported plain: the
+        remote rows are exactly four, keyed by operation, the two hosts' sessions requests summed under one row and the bare
+        host path a row of its own; no key of the kernel's own table or of the export carries either host; and each of the
+        three families is one row with count 2 and no second key. Then a second collector fed an older kernel's raw
+        host-bearing keys folds through the public fold to the same one row per operation with no host. Fails on: the remote
+        branch of _perf_http_key collapsing to the bare family (the four-row assertion: one row, count 6); the branch keeping
+        the host (the no-host assertion, read at the kernel's table, since the fold would collapse the host on its own); the
+        shared module's http_public_key collapsing an older kernel's remote key to the bare family (the raw half)."""
+        st = km._PerfStats()
+        for method, path in (("GET", "/remote/TESTHOST/sessions"), ("GET", "/remote/TESTHOST/sessions"), ("GET", "/remote/TESTHOST/feed"),
+                             ("POST", "/remote/TESTHOST/send"), ("GET", "/remote/TESTHOST2/sessions"), ("GET", "/remote/TESTHOST"),
+                             ("GET", "/dist/a.js"), ("GET", "/dist/b.js"), ("GET", "/media/x.png"), ("GET", "/media/y.png"),
+                             ("GET", "/glossary/A"), ("GET", "/glossary/B")):
+            st.http_request(km._perf_http_key(method, path), 0.001)
+        snap = st.snapshot()
+        plain = pe.export_document(snap, usage=False, now=self.STAMP)["perf"]["http"]
+        remote = {k: row["count"] for k, row in plain.items() if k.partition(" ")[2].startswith("/remote/")}
+        self.assertEqual(remote, {"GET /remote/*/sessions": 3, "GET /remote/*/feed": 1, "POST /remote/*/send": 1, "GET /remote/*": 1},
+                         "one row per remote operation, the hosts summed under it, the bare host path its own row: four rows, not one")
+        hosted = sorted(k for k in list(snap["http"]) + list(plain) if "TESTHOST" in k)
+        self.assertFalse(hosted, "a host name in a key of the kernel's http table or of the plain export's: %s" % hosted)   # by boolean
+        self.assertEqual(set(snap["http"]), set(plain), "the kernel's own keys are the public form already; the fold has nothing to collapse")
+        for fam in ("GET /dist/*", "GET /media/*", "GET /glossary/*"):
+            self.assertEqual(plain[fam]["count"], 2, "%s: two names, one row" % fam)
+            self.assertEqual([k for k in plain if k.startswith(fam[:-1])], [fam], "a second key of the %s family" % fam)
+        self.assertEqual(len(plain), 7, "four remote rows and three family rows, nothing else: %s" % sorted(plain))
+        # an older kernel's snapshot carried the raw host-bearing keys; the public fold collapses them itself (http_public_key)
+        # to the same one row per operation, the hosts summed, no host in the key
+        old = km._PerfStats()
+        old.http_request("GET /remote/TESTHOST/sessions", 0.001)
+        old.http_request("GET /remote/TESTHOST2/sessions", 0.001)
+        folded = pp.fold(old.snapshot())["http"]
+        self.assertEqual(set(folded), {"GET /remote/*/sessions"}, "the fold's own collapse of an older kernel's keys: one row per operation, no host")
+        self.assertEqual(folded["GET /remote/*/sessions"]["count"], 2, "the two hosts' requests summed under the operation")
 
     def test_a_usage_count_is_present_only_for_a_route_the_kernel_has_served(self):
         """The paragraph's "a count is present only for a route the kernel has served since it started" and "one count per
@@ -5428,11 +5584,16 @@ class Disclosed(unittest.TestCase):
     def test_every_conditional_claim_of_the_paragraph_is_listed_with_its_pin_and_the_falsified_wordings_are_gone(self):
         """Each clause in CONDITIONAL_CLAIMS is in the paragraph as listed, so a clause reworded or removed moves the list and
         the list names the pin that holds it (the question the closing check at the re-run's head asked, 2026-09-19: for each clause, the executable
-        check that would falsify it, and whether it exists). And the three wordings that check found false are absent: "the
-        user's own actions" (a relaying kernel, a session's hook and a failed send's retry post action routes too), "one count
-        per pane opened" (a peer kernel's poll and a bus start read pane routes too) and the head "only when `--usage` was
-        given, every leaf under `usage`" (a plain export carries the same numbers in perf.http). Fails on: a needle reworded;
-        a dropped wording restored."""
+        check that would falsify it, and whether it exists), and every check is a (name, bears) pair whose name resolves and
+        whose bears starts "reds when" and states the falsifying state (the second closing check, 2026-09-19: the remote
+        clause's entry named two checks that existed and passed and bore on nothing about the family collapsing to one row,
+        the false claim; a name alone cannot be asked what it bears on, so the form requires the statement). And the four
+        wordings the checks found false are absent: "the user's own actions" (a relaying kernel, a session's hook and a failed
+        send's retry post action routes too), "one count per pane opened" (a peer kernel's poll and a bus start read pane
+        routes too), the head "only when `--usage` was given, every leaf under `usage`" (a plain export carries the same
+        numbers in perf.http) and "remote families collapsed to one row each" (the host collapses, the route stays). Fails on:
+        a needle reworded; a dropped wording restored; a check named without a bears statement, or with one that does not
+        start "reds when"; a check given as a bare name."""
         para = self._paragraph()
         for words in self.DROPPED_WORDINGS:                      # first, so a restored wording is named as such; by boolean, so a
             self.assertFalse(words in para, "a wording the closing check at the re-run's head found false is back in the paragraph: %r" % words)   # failure never dumps the page
@@ -5440,7 +5601,13 @@ class Disclosed(unittest.TestCase):
             self.assertTrue(words in para, "a conditional clause of the disclosure paragraph was reworded or removed: %r; its pin: %s" % (words, pin))
             self.assertTrue(checks, "a listed clause names no check: %r" % words)
             for check in checks:
-                self.assertTrue(self._check_exists(check), "the check named for a clause is gone, so the clause stands without it: %r -> %s" % (words, check))
+                self.assertTrue(isinstance(check, tuple) and len(check) == 2,
+                                "a check is a (name, bears) pair, the name and what it reds on, not %r: %r" % (check, words))
+                name, bears = check
+                self.assertTrue(self._check_exists(name), "the check named for a clause is gone, so the clause stands without it: %r -> %s" % (words, name))
+                self.assertTrue(isinstance(bears, str) and bears.startswith("reds when"),
+                                "a check named without what it bears on (a statement starting 'reds when' of the state it goes red on): "
+                                "%r -> %s: %r" % (words, name, bears))
         self.assertFalse(self._check_exists("Disclosed.test_no_such_pin"), "the resolver reds on a name that is not there")
         self.assertFalse(self._check_exists("test_perf_export:NoSuchClass"))
         self.assertFalse(self._check_exists("test_perf_export:UptimeRounding.test_no_such_case"))

@@ -1298,8 +1298,9 @@ class Cli(unittest.TestCase):
         http table as travelling in every export and reduces the --usage clause to the packaging it does. The conditioning is
         pinned here on the ROAD, as documents: the export child writes a plain export from a snapshot that served action and
         pane routes and the upload child sends it, and the body the recorder saw has no top-level usage key and carries, for
-        every route the snapshot served, one http row with exactly the keys count and ms (the glossary and remote families
-        collapsed to one row each as the kernel collapses them, the off-register key as `other`, the counts summed under the
+        every route the snapshot served, one http row with exactly the keys count and ms (the glossary family collapsed to one
+        row and the remote family to one row per operation with the host collapsed, as the kernel collapses them, the snapshot's
+        one remote key being GET /remote/TESTHOST/sessions, the off-register key as `other`, the counts summed under the
         collapsed key); the same snapshot exported with --usage and sent carries the usage block, whose actions and views
         equal the http rows' counts under the feature names, whose one session count is the length of a list the plain body
         carries and whose uptime bucket is the bucket of the uptime it carries, so the block adds no number the plain body
