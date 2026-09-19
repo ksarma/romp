@@ -3,7 +3,7 @@ title: The phone shell leaves no empty band between the composer and the keyboar
 status: candidate
 where: kernel/kernel.py (_LANDING_MOBILE_JS fit and kbOpen; the mobile media block's body rule); tests/test_kernel_mobile.py; tests/test_shell_viewport_fit.py; tests/test_keyboard_gap_served.py; tests/keyboard_gap_browser.mjs
 added: 2026-09-19
-pr:
+pr: 858
 tier: fix
 offered:
 closed:
