@@ -5658,7 +5658,22 @@ function parentMobile(): boolean | undefined {
 // Feed-tab tap hours later, a card move on no new information): the show that follows the reveal consumes it in
 // releasePaint's tail; a flip to hidden (the shell's word, or the observer's) drops it; a second reveal replaces or drops it; a re-tell
 // of the same word (the shell's socket events) changes nothing. No timer.
+// THE BOUND (review round 3, 2026-09-19, extra9-1): a park is made only while the shell's last word has this pane on screen or no word
+// has arrived (paint-gate.ts revealDecision's fifth input); with the pane off screen by the shell's word the reveal is DROPPED at the
+// tap and said (revealDropped below), since no show of this gesture is coming and the next one would be an unrelated later tap. THE
+// LOSING ARM (extra9-2): the itemId and sid ride beside the key (pendingReveal, written in the park arm alone and read at the consume
+// alone, so the key stays the one latch its retirements clear); at the consume a card the release paint stamped under another key (an
+// ask folded into its turn's group card while the park stood) is found through the plan's answer for the itemId, and a card the paint
+// did not stamp at all drops with the sid kept in the breadcrumb, never through openSession (a deferred session switch on an unrelated
+// tap was rejected in round 1).
 let pendingRevealKey: string | null = null;
+let pendingReveal: { itemId: string; sid: string } = { itemId: "", sid: "" };
+// a reveal this pane could not land, said as a breadcrumb (client-diag.jsonl, the column-flip tripwire's channel): ids only, no card text.
+// `why` offscreen: dropped at the tap with the pane off screen by the shell's word; unpainted: parked, and the release paint stamped the
+// card under no key (`key` the parked key, `painted` the plan's answer at the release, null for none)
+function revealDropped(data: { itemId: string; sid: string; why: "offscreen" | "unpainted"; key?: string; painted?: string | null }): void {
+  vscodeApi?.postMessage({ type: "clientDiag", surface: "feed", what: "reveal-dropped", data });
+}
 // the pane loader's hold (review round 2, D3): while the FIRST paint is owed nobody can see the pane, so the pane's own loader
 // (kernel _pane_spin) stands with no timer, told once per hold by `romp:firstpaintheld`, and re-arms its 30 s backstop on
 // `romp:firstpaintreleased`, dispatched once, after the release render has painted (a release that re-held dispatches nothing).
@@ -5693,8 +5708,11 @@ function releasePaint(): void {
   skipFlipOnce = true;
   render();
   if (firstHoldTold && !firstHoldReleased && !paintDirty) { firstHoldReleased = true; try { window.dispatchEvent(new Event("romp:firstpaintreleased")); } catch { /* no Event constructor */ } }   // the first paint landed: the pane loader's backstop resumes (D3)
-  // a jump that arrived under the phone's first-paint hold lands on the paint it waited for (the revealCard handler parks it)
-  if (pendingRevealKey !== null && !paintDirty) { const k = pendingRevealKey; pendingRevealKey = null; const t = cardByKey(k); if (t) jumpToCard(t); }
+  // a jump that arrived under the phone's first-paint hold lands on the paint it waited for (the revealCard handler parks it). The
+  // losing arm (review round 3, extra9-2): the parked key not stamped, ask the plan for the card's key NOW (paintedKeyOf over the model
+  // this paint rendered: the same derivation renderBody consumed, so a card folded into its group while the park stood scrolls to the
+  // group card, g:<turnId>); no key at all, the card left the board or the view: the jump drops, said with the sid kept, never openSession
+  if (pendingRevealKey !== null && !paintDirty) { const k = pendingRevealKey, r = pendingReveal; pendingRevealKey = null; let t = cardByKey(k), painted: string | null = k; if (!t) { painted = paintedKeyOf(r.itemId); t = painted ? cardByKey(painted) : null; } if (t) jumpToCard(t); else revealDropped({ itemId: r.itemId, sid: r.sid, why: "unpainted", key: k, painted }); }
 }
 // Match the key STRUCTURALLY, never an interpolated attribute selector: a crafted push-card value with a quote or bracket
 // would throw a SyntaxError inside querySelector and abort the caller, dropping its fallback too (review find on #940,
@@ -6616,7 +6634,7 @@ listenForFrames(perfFrameHandler("feed", (m) => vscodeApi?.postMessage(m), (e: M
     if (m.on && typeof m.on === "object") {
       const was = feedShellOn;
       feedShellOn = m.on.feed === true;
-      if (was === true && !feedShellOn) pendingRevealKey = null;   // the pane's flip to hidden retires a parked jump (D5); a re-tell of the same word changes nothing
+      if (was !== false && !feedShellOn) pendingRevealKey = null;   // the pane's flip to hidden retires a parked jump (D5), and so does the FIRST word when it says hidden (review round 3, extra9-1: a park made before any word, the load-order race, has no show of its own coming then); a re-tell of the same word changes nothing
       if (feedShellOn && paintDirty && parentMobile() === true) { revealShown = true; releasePaint(); }
     }
     return;
@@ -6643,14 +6661,21 @@ listenForFrames(perfFrameHandler("feed", (m) => vscodeApi?.postMessage(m), (e: M
     // under this key (paintedKeyOf: the render's own plan, so a satellite, a filtered or lens-hidden card and a turn-group
     // member, none of which the paint lands as a:<itemId>, take the base's open road at the tap; review round 2, 2026-09-19)
     // for the paint that lands (the pane's show word, the panes handler above), never the card-gone fallback for it; else
-    // the fallback. The shell's own tab switch, or none, is unchanged: this pane decides only what it says about the card.
-    const decision = revealDecision(!!target, paintDirty, paintedKeyOf(String(m.itemId || "")) === key, !!m.sid);
+    // the fallback. The park is bounded by the shell's word (review round 3, extra9-1): with this pane OFF screen by the last panes
+    // word the reveal is dropped and said, since nothing in this gesture shows the pane (the bell's Log row now switches the tab
+    // before it posts, so its reveal finds the board painted; the notification landing's /reveal put the session in front already).
+    // The shell's own tab switch, or none, is unchanged: this pane decides only what it says about the card.
+    const itemId = String(m.itemId || ""), sid = String(m.sid || "");
+    const decision = revealDecision(!!target, paintDirty, paintedKeyOf(itemId) === key, !!m.sid, feedShellOn);
     pendingRevealKey = decision === "park" ? key : null;   // this gesture's park, or none: a second reveal replaces or drops an earlier park whatever road it takes (D5, review round 2 closeout: written in the park arm alone, an open or a card-gone reveal left the first park standing and the next show jumped to the older gesture's card)
+    if (decision === "park") pendingReveal = { itemId, sid };   // the losing arm's record, read at the consume alone
     if (decision === "jump" && target) {
       jumpToCard(target);
     } else if (decision === "open") {
       frameGesture = !!m.gesture;   // the bell click or the notification tap behind this frame is the reader's gesture (round three)
       try { vscodeApi?.postMessage({ type: "openSession", id: String(m.sid) }); } finally { frameGesture = false; }
+    } else if (decision === "drop") {
+      revealDropped({ itemId, sid, why: "offscreen" });
     }
     return;
   }

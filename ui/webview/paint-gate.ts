@@ -46,10 +46,19 @@ export function firstPaintHeld(hasContent: boolean, phone: boolean | undefined, 
 // that key (a delegation satellite, a card the session filter, the search box or the tag lens hides, a turn-group member):
 // open its session when one is named, else nothing, the base's road at the base's moment, the tap. Pure, so the test's
 // world and feed.ts decide by the same function.
-export type RevealDecision = "jump" | "park" | "open" | "none";
-export function revealDecision(targetFound: boolean, paintDirty: boolean, willPaint: boolean, hasSid: boolean): RevealDecision {
+//
+// THE PARK'S BOUND (review round 3, 2026-09-19, extra9-1): a park is a jump waiting for a show that this gesture will bring, so
+// it is made only while the pane is on screen or its place is unknown (`shellOn` true or undefined: the shell's last panes word for
+// this pane; undefined before one arrives, the load-order race, and true with the browser tab hidden and the Feed tab in front,
+// both retired by the pane's visibility events). When the shell's last word says the pane is OFF screen and this gesture shows no
+// tab (the phone's notification landing, whose /reveal has already put the session in front) the decision is `drop`: no park,
+// since nothing in the gesture will show the pane and the next show would be an unrelated later tap, hours on, scrolling to a
+// card the reader had moved past (the round-2 failure); and no openSession either (the landing did that, and a deferred or
+// duplicate session switch was rejected in round 1). feed.ts says the drop as a breadcrumb.
+export type RevealDecision = "jump" | "park" | "open" | "none" | "drop";
+export function revealDecision(targetFound: boolean, paintDirty: boolean, willPaint: boolean, hasSid: boolean, shellOn: boolean | undefined): RevealDecision {
   if (targetFound) return "jump";
-  if (paintDirty && willPaint) return "park";
+  if (paintDirty && willPaint) return shellOn === false ? "drop" : "park";
   return hasSid ? "open" : "none";
 }
 

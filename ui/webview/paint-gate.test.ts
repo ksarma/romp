@@ -112,14 +112,22 @@ test("the zero-viewport probe off a window: a framed pane at 0 by 0 has been hid
   assert.equal(viewportHiddenSinceLoad(top(0, 0)), false, "a top-level page is its own parent: the probe never applies");
 });
 
-test("a reveal's decision (review round 1 F2, executed since round 2): a found card is jumped to; a card the paint will stamp under an owed paint is parked, never opened; a card it will not stamp, or a gone one, opens its session when one is named", () => {
-  assert.equal(revealDecision(true, false, true, true), "jump", "the painted board has the card");
-  assert.equal(revealDecision(true, true, true, true), "jump", "found wins whatever else is true");
-  assert.equal(revealDecision(false, true, true, true), "park", "the phone's first-paint hold: unpainted, and the paint will stamp it");
-  assert.equal(revealDecision(false, true, true, false), "park", "…with or without a session named");
-  assert.equal(revealDecision(false, true, false, true), "open", "unpainted and the paint will NOT stamp it under this key (review round 2, 2026-09-19: a satellite, a filtered or lens-hidden card, a turn-group member, a gone card): open its session at the tap, the base's road");
-  assert.equal(revealDecision(false, false, true, true), "open", "painted, not found, though the plan would stamp it (unfolded a beat late): the base's fallback");
-  assert.equal(revealDecision(false, false, false, true), "open", "gone from a painted board");
-  assert.equal(revealDecision(false, false, false, false), "none", "gone and no session named: nothing");
-  assert.equal(revealDecision(false, true, false, false), "none");
+test("a reveal's decision (review round 1 F2, executed since round 2; the park's bound since round 3): a found card is jumped to; a card the paint will stamp under an owed paint is parked while the pane is on screen or its place is unknown, dropped while the shell's word has it off screen, never opened; a card it will not stamp, or a gone one, opens its session when one is named", () => {
+  // the columns: (targetFound, paintDirty, willPaint, hasSid, shellOn), shellOn the shell's last panes word for this pane (undefined before one)
+  for (const on of [true, undefined, false] as const) {
+    assert.equal(revealDecision(true, false, true, true, on), "jump", "the painted board has the card (shellOn " + on + ")");
+    assert.equal(revealDecision(true, true, true, true, on), "jump", "found wins whatever else is true (shellOn " + on + ")");
+    assert.equal(revealDecision(false, true, false, true, on), "open", "unpainted and the paint will NOT stamp it under this key (review round 2, 2026-09-19: a satellite, a filtered or lens-hidden card, a turn-group member, a gone card): open its session at the tap, the base's road, whatever the shell's word (shellOn " + on + ")");
+    assert.equal(revealDecision(false, false, true, true, on), "open", "painted, not found, though the plan would stamp it (unfolded a beat late): the base's fallback (shellOn " + on + ")");
+    assert.equal(revealDecision(false, false, false, true, on), "open", "gone from a painted board (shellOn " + on + ")");
+    assert.equal(revealDecision(false, false, false, false, on), "none", "gone and no session named: nothing (shellOn " + on + ")");
+    assert.equal(revealDecision(false, true, false, false, on), "none", "(shellOn " + on + ")");
+  }
+  // the park and its bound (review round 3, 2026-09-19, extra9-1): unpainted and the paint will stamp it
+  assert.equal(revealDecision(false, true, true, true, true), "park", "the pane on screen by the shell's word with the browser tab hidden: the tab's return is this gesture's show");
+  assert.equal(revealDecision(false, true, true, false, true), "park", "…with or without a session named");
+  assert.equal(revealDecision(false, true, true, true, undefined), "park", "no word from the shell yet (the load-order race): the first word or show consumes it");
+  assert.equal(revealDecision(false, true, true, false, undefined), "park");
+  assert.equal(revealDecision(false, true, true, true, false), "drop", "the pane OFF screen by the shell's word and this gesture shows no tab (the phone's notification landing): no park for an unrelated later show, and no openSession either (the landing put the session in front): dropped, said by the caller");
+  assert.equal(revealDecision(false, true, true, false, false), "drop", "…with or without a session named");
 });

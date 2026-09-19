@@ -3065,7 +3065,8 @@ CLIENT_DIAG_KEYS = {
                        "dh", "last", "cls", "fromTail", "atBottom", "where", "removed", "added", "reAdded", "shBefore", "shAfter", "st",
                        "top", "bot", "dTop", "dBot", "lo", "hi", "edge", "why", "notice", "nav", "kind", "keep", "reland")),
     "strip": frozenset(("ok", "tunnels", "err", "open", "base")),
-    "feed": frozenset(("id", "from", "to", "ev", "buildId", "predicted", "appeared", "gone", "total")),
+    "feed": frozenset(("id", "from", "to", "ev", "buildId", "predicted", "appeared", "gone", "total",
+                       "itemId", "sid", "why", "key", "painted")),                                                 # reveal-dropped (review round 3, 2026-09-19): a bell or notification reveal the feed could not land (ids only; why offscreen or unpainted, key the parked key, painted the plan's answer at the release or null)
     "outline": frozenset(("buildId", "slot", "rev")),
     "waiting": frozenset(("buildId",)),
     "kernel": frozenset(("app", "kind", "reconnect", "iid", "cid", "host", "sid", "type", "span", "events", "bytes", "head", "missing",
@@ -65991,6 +65992,11 @@ row.addEventListener('click',function(){close();
 // reveal at this dashboard). A shell socket that is down says so in the Log rather than dropping the click.
 if(!feedHere()){jumpChat(n.tgt.sid||'');return;}
 try{window.__rompPaneToggle&&window.__rompPaneToggle('feed',true);}catch(e){}
+// [fork] review round 3 (2026-09-19, extra9-1): the jump SHOWS the pane on the phone too (the browseFiles relay's precedent in
+// _LANDING_SETTINGS_JS): show() runs the feed's synchronous show hook, so its held board is painted and its panes word posted in
+// this click's task, BEFORE the revealCard message below, and the feed finds the card at the tap; nothing parks on this road.
+// On the desktop the tab switch is inert (the grid ignores the tab classes), as it is for the browseFiles relay.
+try{window.__rompMobileTab&&window.__rompMobileTab('feed');}catch(e){}
 var f=document.getElementById('f-feed');
 try{f&&f.contentWindow&&f.contentWindow.postMessage({romp:'revealCard',itemId:n.tgt.itemId||'',sid:n.tgt.sid||'',gesture:true},'*');}catch(e){}});}
 row.appendChild(tx);row.appendChild(tm);row.appendChild(del);list.appendChild(row);})(NOTES[i],i);

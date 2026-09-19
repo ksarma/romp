@@ -65,10 +65,11 @@ const EL = {};
   EL[id] = withCls(mkEl(id));
 });
 const POSTED = [];   // what the shell posts into the feed iframe (revealCard)
-EL['f-feed'].contentWindow = { postMessage: (msg) => POSTED.push(msg) };
+EL['f-feed'].contentWindow = { postMessage: (msg) => { POSTED.push(msg); if (msg.romp === 'revealCard') SEQ.push('post'); } };
 const SETTINGS_POSTED = [];   // what it posts into the settings iframe: the unread count for the gear's Open log button (the gear's own page since 2026-09-10)
 EL['f-settings'].contentWindow = { postMessage: (msg) => SETTINGS_POSTED.push(msg) };
 const TOGGLES = [];  // window.__rompPaneToggle calls (revealing the feed pane on a jump)
+const SEQ = [];      // the jump's steps in order: the pane toggle, the tab switch (window.__rompMobileTab, review round 3) and the post into the feed
 const SENT = [];     // what the shell socket is asked to send (a jump with the Feed pane off here: openSession)
 let SHELL_OK = true, FEED_OFF = false;   // the socket is open; the gear's Panes section has the Feed pane off in this browser
 EL['rail-errs']._num = mkEl('');   // the <text class=rerr-n> INSIDE each bell svg (the in-bell count)
@@ -78,7 +79,8 @@ const BODY = new Set(['po-chat', 'po-feed', 'po-timeline']);   // fleet pane hid
 const WL = {};
 global.window = {
   addEventListener: (k, f) => { (WL[k] = WL[k] || []).push(f); },
-  __rompPaneToggle: (k, to) => TOGGLES.push(k + ':' + to),
+  __rompPaneToggle: (k, to) => { TOGGLES.push(k + ':' + to); SEQ.push('toggle:' + k + ':' + to); },
+  __rompMobileTab: (t) => SEQ.push('tab:' + t),   // the mobile script's show(): on the phone the pane's tab comes forward (round 3, extra9-1)
   __rompShellSend: (m) => { SENT.push(m); return SHELL_OK; },
   __rompPaneEnabled: (k) => !(k === 'feed' && FEED_OFF),   // the head script's reader of the Panes setting, stubbed
 };
@@ -149,8 +151,10 @@ out.afterMany = { num: bellNum() };
 post({ romp: 'notify', kind: 'stalled', text: 'api \u2014 stalled: held', sid: 'TESTSID', itemId: 'TESTSID:g9' });
 const jumpRow = EL['rerr-list'].children[0];
 out.jump = { linky: jumpRow.className.indexOf('link') >= 0 };
+SEQ.length = 0;
 jumpRow.fire('click');
 out.jump.closed = EL['rerr-back'].hidden;
+out.jump.seq = SEQ.slice();
 out.jump.posted = POSTED.filter((m) => m.romp === 'revealCard').pop() || null;   // paint() also posts the unread count (T290)
 out.unseenPosts = SETTINGS_POSTED.filter((m) => m.romp === 'logUnseen').map((m) => m.n);
 out.unseenToFeed = POSTED.filter((m) => m.romp === 'logUnseen').length;   // none: the feed page hosts no gear
@@ -303,6 +307,14 @@ class ErrorCenterExecutes(unittest.TestCase):
         self.assertIn(1, self.out["unseenPosts"]); self.assertIn(0, self.out["unseenPosts"])
         self.assertEqual(self.out["unseenToFeed"], 0, "the count rides into the settings iframe (the gear's own page), not the feed")
         self.assertIn("feed:true", a["toggles"], "the feed pane is revealed for the jump")
+        # review round 3 (2026-09-19, extra9-1): the jump SHOWS the feed's tab on the phone (window.__rompMobileTab('feed'), the browseFiles
+        # relay's precedent) between the toggle and the post, so the shell's show() paints the feed's held board and posts its panes word in
+        # this click's task, before the revealCard message: the feed finds the card at the tap and parks nothing on this road
+        self.assertEqual(a["seq"], ["toggle:feed:true", "tab:feed", "post"], "the order inside the click: reveal the pane, show its tab, then post the jump")
+        js = km._LANDING_ERRS_JS
+        self.assertIn("try{window.__rompMobileTab&&window.__rompMobileTab('feed');}catch(e){}", js)
+        self.assertLess(js.index("__rompPaneToggle('feed',true)"), js.index("__rompMobileTab('feed')"))
+        self.assertLess(js.index("__rompMobileTab('feed')"), js.index("{romp:'revealCard',itemId:n.tgt.itemId||''"))
         self.assertFalse(self.out["plainRowLinky"], "a kernel-minted entry with no target is not a link")
 
     def test_with_the_feed_pane_off_here_card_entries_are_not_logged_and_a_jump_opens_the_session_in_the_chat(self):

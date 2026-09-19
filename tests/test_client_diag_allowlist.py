@@ -521,6 +521,8 @@ class ClientDiagAllowlistTest(unittest.TestCase):
                 ("colflip", {"id": "g1", "from": "working", "to": "blocked", "ev": "feedDelta", "buildId": "b1", "predicted": True}),
                 ("itemset", {"appeared": 1, "gone": 0, "total": 12, "ev": "feed", "buildId": "b1"}),
                 ("feedDelta-unapplied", {"buildId": "b1"}),
+                ("reveal-dropped", {"itemId": "g1", "sid": sid, "why": "offscreen"}),   # review round 3 (2026-09-19, D5's bound): a bell or notification reveal dropped at the tap, the pane off screen by the shell's word
+                ("reveal-dropped", {"itemId": "g1", "sid": sid, "why": "unpainted", "key": "a:g1", "painted": None}),   # …or at the consume: the release paint stamped the card under no key (painted the plan's answer, null for none)
             ],
             "outline": [("feedDelta-unapplied", {"buildId": "b1"}), ("delta-unapplied", {"slot": "bars", "rev": 7})],
             "waiting": [("feedDelta-unapplied", {"buildId": "b1"})],
