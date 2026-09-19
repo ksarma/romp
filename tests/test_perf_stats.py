@@ -2691,13 +2691,15 @@ class Disclosed(unittest.TestCase):
     three session counts, the uptime bucket, one count per action route the register carries less the kernel's own
     housekeeping posts and one per pane route (53 action names and 15 view names on 2026-09-19, asserted below), and not
     to the traffic of one machine: the re-run found the paragraph naming one leaf of the eleven a lightly used kernel's
-    block carried, four of them present with no traffic at all. And the process clause's allowances are keyed on VALUES,
-    never on a platform list (finding 2): the four malloc
+    block carried, four of them present with no traffic at all. The bounds sentence is pinned live too (finding 8): the
+    count it spells is recomputed from the BOUND_KEYS-keyed leaves of the same fold, the one ring length among them set
+    aside. And the process clause's allowances are keyed on VALUES, never on a platform list (finding 2): the four malloc
     leaves are excused exactly when the live malloc value is None, and the clause checks run a second time with the
     kernel's mallinfo2 handle patched to None, the value the kernel reads on glibc before 2.33, musl and macOS."""
 
     BLOCKS = ("process", "heap", "gc", "usage")
     MALLOC_LEAVES = frozenset({"arena", "fordblks", "hblkhd", "uordblks"})
+    SPELLED = {8: "eight", 9: "nine", 10: "ten", 11: "eleven", 12: "twelve"}   # the counts the bounds sentence could spell
 
     @staticmethod
     def _paragraph():
@@ -2727,6 +2729,29 @@ class Disclosed(unittest.TestCase):
         public = pp.fold(snap)                                   # the projection on the wire (perf_export.export_document)
         usage = pp.fold(pe.usage_block(snap))                    # the fourth group, as the export writes it under --usage
         self.assertIn("pid", snap["process"], "the raw snapshot carries the pid the fold drops")
+        # finding 8: the count the bounds sentence spells is the fold's own, recomputed. Every leaf under a BOUND_KEYS
+        # name is collected; pusher/stageRingMax is a ring length, not a memory fraction, and is the one set aside
+        bounds = set()
+
+        def leaves(node, where):
+            if isinstance(node, dict):
+                for k, v in node.items():
+                    leaves(v, where + (k,))
+            elif isinstance(node, list):
+                for i, v in enumerate(node):
+                    leaves(v, where + (i,))
+            elif where and where[-1] in pp.BOUND_KEYS:
+                bounds.add(where)
+        leaves(public, ())
+        rings = {path for path in bounds if path[-1] == "stageRingMax"}
+        self.assertEqual(rings, {("pusher", "stageRingMax")}, "the one BOUND_KEYS leaf that is a ring length and not a memory fraction")
+        fractions = bounds - rings
+        self.assertIn(("heap", "hydrated", "capBytes"), fractions, "the paragraph names hydrated.capBytes as one of the bounds")
+        self.assertIn(len(fractions), self.SPELLED, "a count the sentence cannot spell: %s" % sorted(fractions))
+        bounds_sentence = ("the %s memory-fraction bounds coarsened to a power of two (`hydrated.capBytes` among them)"
+                           % self.SPELLED[len(fractions)])
+        self.assertIn(bounds_sentence, para, "the count the paragraph spells is not the fold's %d: %s" % (len(fractions), sorted(fractions)))
+        self.assertEqual(len(bounds), 11, "ten memory fractions and one ring length on 2026-09-19: %s" % sorted(bounds))
         # the four clauses, each from its "every leaf under" marker to an EXPLICIT end: process ends at heap's start, heap at
         # gc's, gc at the bounds sentence (so it and `hydrated.capBytes` sit outside every clause), usage at the kernel commit
         for block in self.BLOCKS:
@@ -2734,7 +2759,7 @@ class Disclosed(unittest.TestCase):
         starts = [para.index("every leaf under `%s`" % b) for b in self.BLOCKS]
         self.assertEqual(starts, sorted(starts), "the four clauses come in the blocks' order: process, heap, gc, usage")
         self.assertIn(", and the kernel commit", para[starts[3]:], "the usage clause ends at the kernel commit")
-        ends = [starts[1], starts[2], para.index("the ten memory-fraction bounds"), para.index(", and the kernel commit", starts[3])]
+        ends = [starts[1], starts[2], para.index(bounds_sentence), para.index(", and the kernel commit", starts[3])]
         self.assertTrue(starts[2] < ends[2] <= starts[3], "the bounds sentence sits between the gc clause and the usage clause")
         clause = {b: para[i:j] for b, i, j in zip(self.BLOCKS, starts, ends)}
         # the population of the fourth group, asserted before the clause checks so the pin is over the full block
@@ -2823,8 +2848,8 @@ class Disclosed(unittest.TestCase):
         did, the case the paragraph-wide match let through); the per-parent span is the queued road. Fails on: a gauge added
         to the kernel and not to its block's clause, naming the block and the gauge; a route added to the register and not to
         the usage clause; a block added to the kernel and not to the paragraph; a name kept in a clause after its gauge went;
-        the macOS clause removed; the malloc allowance keyed on the platform (the patched run reds on Linux); the fold
-        replaced by the raw snapshot (pid would then be demanded of a paragraph
+        the macOS clause removed; the malloc allowance keyed on the platform (the patched run reds on Linux); the bounds count
+        the paragraph spells off the fold's; the fold replaced by the raw snapshot (pid would then be demanded of a paragraph
         that describes the wire, which never carries it)."""
         self._check(self._served_snapshot())
         with mock.patch.object(km, "_MALLINFO2", None):          # the value the kernel reads where mallinfo2 is absent
