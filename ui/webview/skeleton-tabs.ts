@@ -36,9 +36,10 @@ export interface SkeletonState {
   gate: boolean;
   // THE RETURN HOLD (the owner's decision, 2026-09-19): on the phone a redial reloads the VISIBLE tab alone, and the other chat
   // tabs reload only when tapped (the click road, which no gate touches), for the socket's life. A return from the background
-  // redials with reconnect=1 and the kernel re-skeletons every other tab; before this the chain then re-downloaded them all (17 to
-  // 22 MB on the owner's board) for tabs nobody had asked for. Set by onSocketUp when the pane's shell is the phone layout (the one
-  // layout read, at render.ts's wsup arm, the redial's frame); while it stands no opener (gateOnFrame, gateOnStrip, gateOnShow) opens
+  // redials with reconnect=1 and the kernel re-skeletons every other tab; before this the chain then re-downloaded them all, about
+  // 16 to 22 MB on the owner's board, for tabs nobody asked for (by the design's per-full figures, 37 fulls at 0.44 to 0.58 MB each;
+  // no return's chain has been measured). Set by onSocketUp when the pane's shell is the phone layout (the arm's layout read, at
+  // render.ts's wsup arm, the redial's frame); while it stands no opener (gateOnFrame, gateOnStrip, gateOnShow) opens
   // the gate. The boot dial sends no wsup, so a cold open's chain is untouched; the desktop passes false and keeps its chain.
   // RE-DECIDED ON THE LAYOUT WORD (review round 3, 2026-09-19, extra8-1): the shell re-tells its panes word on every media-query flip
   // with the layout in it (kernel panesMsg `mob`), and onLayoutWord below sets the hold from that word and the redial record, so a

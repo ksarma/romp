@@ -64568,7 +64568,7 @@ function parentMobile(){try{return (window.parent!==window&&typeof window.parent
 // (observed 3/3 and 7/7 phone cold opens in review; pinned in a real engine by test_federated_dial_terms_served.py's phone pass):
 // the remote serves its whole board through the relay, the shape the main pane always had. In the window before the local open
 // (never observed) the relay dial would carry skeleton=1: with the stored tab on that host `active` names it and the remote serves
-// it whole and skeletons the rest; with the stored tab local no `active` rides and the remote's relay no-active rule
+// it whole and skeletons the rest; with the stored tab not this host's (the hub's own, or another remote's) no `active` rides and the remote's relay no-active rule
 // (_resolve_reconnect) skeletons every transcript-bearing tab, which the hub's chain loads one per ask through the relay once the
 // local gate opens. Off this pane the flag stays false: a column is SKEL already, a standalone page or the VS Code webview has no
 // shell (parentMobile undefined), the desktop's grid shows several panes and keeps the whole push. The

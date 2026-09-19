@@ -117,9 +117,10 @@ class PaneHiddenWordInBrowsers(unittest.TestCase):
             # chain re-arms on the published word's flip from hidden to shown. It runs where the observer SPOKE while the frame was
             # hidden (the word went true, then false on the re-show): Chromium and WebKit. Firefox zeroes the hidden iframe's viewport
             # and its observer does not fire for the hide (the probe carried the verdict above), so the word never went true and the
-            # re-show is no flip: the hook is inert there and the panes-word belt in render.ts is the phone's re-arm on Firefox (the
-            # served Firefox leg of tests/test_return_from_background_served.py pins that belt). Asserted per engine to what the
-            # engines do, not to what would be convenient.
+            # re-show is no flip: the hook is inert there and the panes-word belt in render.ts is the phone's re-arm on Firefox. The
+            # served Firefox leg of tests/test_return_from_background_served.py pins the OUTCOME on Firefox (it stays green with both
+            # re-arm roads removed, the round-3 record); the belt's executed witness is ui/webview/skeleton-tabs-wiring.test.ts.
+            # Asserted per engine to what the engines do, not to what would be convenient.
             self.assertEqual(shown["shown"], 0, where + "the first word (on screen) runs no hook")
             self.assertEqual(hid["shown"], 0, where + "a flip to hidden runs no hook")
             if hid["word"] is True:

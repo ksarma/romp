@@ -301,8 +301,13 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   not resume after the first tap, because the owner's answer was that the
   other tabs reload only when tapped. It covers every phone redial after the
   first connection, a kernel restart and a dropped link while the app is in
-  the foreground included, because the phone cannot tell a return's redial
-  from a restart's, and a tab that loads when tapped costs nothing on either.
+  the foreground included. The shim can tell them apart (its visibility
+  handler records `pendingWhy` before it enqueues the redial's frame), but the
+  `wsup` frame carries no reason field today, a restart's redial and a
+  foreground drop each cost one full at the tap per tab tapped under the
+  rule, and the one rule is chosen for simplicity; a drop redialed by a
+  throttled timer while the page is still hidden reads `reconnect`, so the
+  word is exact for the two named cases only.
   The desktop's redial keeps today's chain, and the hold follows the layout
   (since 2026-09-19): the shell re-tells its panes word with the layout on every
   flip across the phone breakpoint, so a rotation to the desktop inside the
