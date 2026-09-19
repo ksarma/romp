@@ -189,8 +189,10 @@ repeats what the ERRORS section already printed. CI's pytest is unpinned (the wo
 today, the test venv's version here too), and pytest's short summary prints each error's message whole when CI is set
 in the environment or at -vv and trimmed to the terminal width otherwise, so a reader that counted the boundary text's
 occurrences read 1 on a box and 2 on CI for one verdict (the CI red at the round-3 preparation head: red here with
-CI=true alone and under a CI-like install through uv, green at this head both ways). The child runs -vv so both shapes
-are one; the set read is the pin, and this paragraph the explanation beside it.
+CI=true alone and under a CI-like install through uv, green at this head both ways). The PROTECTION is the structured reads above: none of them counts occurrences,
+so the summary's shape cannot change what they read. The child also runs -vv, which is NOT a protection: it only makes a box
+run print what CI prints so a reader comparing the two by eye sees one shape; pytest may change what -vv prints and the
+readers would still hold, while a structured read removed as redundant with -vv would put the count back.
 
 Mutations of the fixture run against this module, each landed and reverted (2026-09-19; the runner compile-checks the
 mutated conftest and counts a NameError in the outer output as a crash, never as a weakening), listed by what the
@@ -844,7 +846,9 @@ def nested_run(text, follower=None, sdk_stub=False):
     -v a box saw every verdict once, in the ERRORS section, and CI saw each twice, so a count of occurrences over the
     output read 1 here and 2 there for the same one boundary verdict (CI red at the round-3 preparation head); the
     outer tests read the verdicts by the scope or test they name (boundary_scopes, boundary, verdict), never by
-    occurrence, and -vv makes a box run see what CI sees.
+    occurrence, and that is the protection; -vv is not one. It only makes a box run print what CI prints so the two
+    outputs compare by eye, and it is coupled to pytest's current behaviour; the structured reads hold whatever the
+    summary prints, and none of them is redundant with -vv.
 
     `sdk_stub` puts a stub claude_agent_sdk package, one docstring-only __init__.py written under the fresh directory,
     on the child's PYTHONPATH and names its directory in ROMP_RATCHET_SDK_STUB, so the child alone imports it: the
