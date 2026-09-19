@@ -343,8 +343,42 @@ class EntryEncodeMemo(unittest.TestCase):
         self.assertIsNot(ents3["S" + sep + "b1"][1], ents1["S" + sep + "b1"][1])
 
     def test_the_wire_fill_hands_the_collection_key_down(self):
-        import inspect
-        self.assertIn("_delta_split(kind, value, memo_key=(ftype, name))", inspect.getsource(km._delta_parts))
+        """_delta_parts hands _delta_split the memo key of every collection it splits, (frame type, collection), and the
+        count flag: False for the feed, whose one collection is the cards (walked and memoized like the bars', counted
+        under no served key: memos.wire's entries beside memos.feedComposition's card sums were the card count), True
+        for every other frame type. Pinned by EXECUTION, on a recorder standing in for _delta_split, not on the call's
+        spelling: the text pin this replaced broke when the count argument was added to that call (2026-09-19)."""
+        calls = []
+
+        def recorder(kind, value, **kw):
+            calls.append((kind, value, kw))
+            return {}, []                                    # a split's shape, (entries, key order): what the fill memoizes
+
+        km._delta_split, real = recorder, km._delta_split   # the fill reads the name from the module at call time
+        self.addCleanup(setattr, km, "_delta_split", real)
+        for store in (km._delta_parts_cache, km._delta_split_memo):
+            saved = dict(store)
+            store.clear()
+            self.addCleanup(lambda st=store, sv=saved: (st.clear(), st.update(sv)))
+        counts = {}
+        for ftype, (_, kinds) in km._DELTA_SLOTS.items():
+            payload = {name: ({} if kind.startswith(("dict", "dictlist:")) else []) for name, kind in kinds.items()}
+            payload["now"] = NOW                             # a remainder, so the payload is more than its collections
+            del calls[:]
+            self.assertIsNotNone(km._delta_parts(ftype, payload), ftype)
+            for _, _, kw in calls:
+                self.assertEqual(set(kw), {"memo_key", "count"}, "%s: no other keyword reaches the split" % ftype)
+            self.assertEqual(sorted(kw["memo_key"] for _, _, kw in calls), sorted((ftype, n) for n in kinds),
+                             "%s: one split per collection, keyed (frame type, collection)" % ftype)
+            for kind, value, kw in calls:
+                name = kw["memo_key"][1]
+                self.assertEqual(kind, kinds[name])
+                self.assertIs(value, payload[name], "the collection object itself: the memo's identity key")
+            counts[ftype] = [kw["count"] for _, _, kw in calls]
+        self.assertEqual(counts.pop("feed"), [False], "the feed's one collection is the cards: counted under no served key")
+        self.assertIn("bars", counts, "a second keyed frame type was split")
+        for ftype, flags in counts.items():
+            self.assertEqual(flags, [True] * len(km._DELTA_SLOTS[ftype][1]), "%s: every collection counts" % ftype)
 
     def test_a_memo_hit_hands_back_the_previous_split_pair_and_a_miss_mints_one_pair(self):
         """A split's (object, json) pair is a tuple that holds a dict, which the collector tracks for life, and a split's
