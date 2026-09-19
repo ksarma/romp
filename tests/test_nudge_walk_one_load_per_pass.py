@@ -2169,7 +2169,7 @@ class TheCensusOverEveryForm(unittest.TestCase):
         counted, limits, gated = 0, {}, []
         for fid, form, body, dotted, needs, sites, jds, limit in _LOADER_FORMS:
             self.assertEqual(limit is None, bool(sites), "%s (%s): a form the census counts names no limit and a form it misses names one" % (fid, form))
-            self.assertIn(limit, (None,) + tuple(_LIMITS), "%s (%s): the limit is one of the stated four" % (fid, form))
+            self.assertIn(limit, (None,) + tuple(_LIMITS), "%s (%s): the limit is one of the stated %d classes of _LIMITS" % (fid, form, len(_LIMITS)))
             if needs and sys.version_info[:2] < needs:
                 with self.assertRaises(SyntaxError, msg="%s (%s): gated to %d.%d and later, so its syntax must not compile on %s (the gate is "
                                                         "checked on the side it refuses)" % (fid, form, needs[0], needs[1], here)):
