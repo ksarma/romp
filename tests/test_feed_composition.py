@@ -1796,7 +1796,9 @@ class AccountingGuard(unittest.TestCase):
             self.assertEqual(err.getvalue().count("feed composition: the accounting raised"), 1, err.getvalue())
             self.assertIn("RuntimeError: synthetic estimator fault", err.getvalue())
             self.assertEqual(km._wire_stats["feed_cards_miss"] - s0["feed_cards_miss"], 1)
-            self.assertIsInstance(km._feed_cards_memo[2], Exception, "the fault is memoized in the estimates' slot")
+            self.assertEqual(km._feed_cards_memo[2], ("RuntimeError", "synthetic estimator fault"),
+                             "the fault is memoized in the estimates' slot as its type name and message, never the "
+                             "exception (kernel-2: the exception's traceback pinned the pass's frame in the memo)")
             refill = dict(feed)
             refill["ledgers"] = [_ledger(tops=1)]
             parts2 = km._feed_parts(refill)                 # the same asks list: a memo hit
@@ -1821,9 +1823,13 @@ class AccountingGuard(unittest.TestCase):
         self._guarded(_feed(n=3), mock.patch.object(km, "_ask_fields_est", side_effect=RuntimeError("synthetic estimator fault")))
 
     def test_the_guard_covers_every_call_site_the_wire_serve_and_the_push_included(self):
-        """_feed_wire_now (a `ready` or a re-base on a client-less kernel) over a cached build whose estimator raises
-        returns the wire tuple (fails before: the raise propagated out of it), and the real _push hands a feed-slot
-        client the frame while the fault is counted."""
+        """The three _feed_parts call sites under a raising estimator: _feed_wire_now (a `ready` or a re-base on a
+        client-less kernel) over a cached build returns the wire tuple (fails before: the raise propagated out of it);
+        the real _push hands a feed-slot client the frame while the fault is counted; and _feed_first, the cold
+        kernel's first frame, driven directly (its caller, _push's cold branch, gates on a boot mark this module never
+        sets), hands the pane the frame, leaves the wire tuple and counts the fault (tests-2 of the second round: the
+        test's name claimed this leg and never drove it; it reds when the guard is removed, the RuntimeError
+        propagating out of _feed_first with `failed` still 0)."""
         feed = _feed(n=2)
         comp = km._FeedComposition()
         err = io.StringIO()
@@ -1841,11 +1847,98 @@ class AccountingGuard(unittest.TestCase):
             self.assertEqual((comp.failed, comp.passes), (1, 0))
             km._feed_cards_memo = None
             received = _drive_push(self, ("feed", "waiting"), feed)
-        self.assertEqual({app for app, types in received.items() if "feed" in types}, {"feed", "waiting"},
-                         "the feed-slot clients receive the frame while the estimates fault")
-        self.assertGreaterEqual(comp.failed, 2)
+            self.assertEqual({app for app, types in received.items() if "feed" in types}, {"feed", "waiting"},
+                             "the feed-slot clients receive the frame while the estimates fault")
+            self.assertGreaterEqual(comp.failed, 2)
+            # the third call site: the cold kernel's first frame, over a fixture whose estimator raises
+            km._feed_cards_memo = None
+            km._feed_wire = None
+            failed0, s0, frames = comp.failed, dict(km._wire_stats), []
+            client = {"app": "feed", "alive": True, "sent": {}, "send": lambda s: frames.append(json.loads(s))}
+            with mock.patch.object(km, "_cached_feed", lambda now, live, sig, connect=False: dict(feed, now=now)), \
+                    mock.patch.object(km, "_fleet_view_sig", lambda now, live: ("SIG",)):
+                self.assertTrue(km._feed_first(NOW, {}, [client], False))
+            self.assertEqual([f.get("type") for f in frames], ["feed"], "the cold kernel's first frame reaches the pane")
+            self.assertEqual(len(frames[0]["asks"]), 2)
+            self.assertEqual(km._wire_stats["feed_first"] - s0["feed_first"], 1)
+            self.assertEqual(comp.failed - failed0, 1, "the fault is counted at the third call site too")
+            self.assertIsNotNone(km._feed_wire, "the wire tuple is left for the next frame")
+            self.assertEqual(km._feed_wire[5][3], json.dumps(_rest_of(feed), sort_keys=True))
         self.assertEqual(comp.passes, 0)
-        self.assertEqual(err.getvalue().count("feed composition: the accounting raised"), 1)
+        self.assertEqual(err.getvalue().count("feed composition: the accounting raised"), 1, "said once across the three")
+        self.assertNotIn("Traceback", err.getvalue(), err.getvalue())
+
+    def test_a_faulted_build_retains_no_frame_of_the_pass_through_the_memo(self):
+        """kernel-2 of the second round: the memo holds the fault's type name and message, never the exception (fails
+        before: the exception's traceback, parked in the module global, pinned the whole _feed_parts frame, the frame
+        dict, the per-ledger strings and the remainder string with it, until the next miss; and with_traceback(None)
+        alone leaves a raise from inside an except pinning the same frame through its __context__). Two faults, a
+        plain raise and a chained one; after each, with every reference of the test's own dropped and the collector
+        run, a weak reference to the frame dict (a dict subclass, so it can be weakly referenced) is dead, and the
+        memo's slot is the pair."""
+        import gc
+        import weakref
+
+        class Frame(dict):
+            pass
+
+        def plain(asks):
+            raise RuntimeError("synthetic estimator fault")
+
+        def chained(asks):
+            try:
+                raise KeyError("inner")
+            except KeyError:
+                raise RuntimeError("synthetic estimator fault")
+        for name, raiser in (("a plain raise", plain), ("a raise from inside an except", chained)):
+            comp = km._FeedComposition()
+            err = io.StringIO()
+            with mock.patch.object(km, "_FEED_COMP", comp), mock.patch.dict(km.FEED_PROJECTIONS, {"phoneFace": raiser}), \
+                    redirect_stderr(err):
+                km._feed_cards_memo = None
+                frame = Frame(_feed(n=2))
+                ref = weakref.ref(frame)
+                parts = km._feed_parts(frame)
+                self.assertEqual((comp.failed, comp.passes), (1, 0), name)
+                self.assertEqual(km._feed_cards_memo[2], ("RuntimeError", "synthetic estimator fault"), name)
+                self.assertIs(km._feed_cards_memo[0], frame["asks"], "the memo keeps the asks list, by design")
+                del frame, parts
+                gc.collect()
+                self.assertIsNone(ref(), "%s: the faulted pass's frame dict is retained through the memo" % name)
+            km._feed_cards_memo = None
+
+    def test_the_wire_row_reads_the_cells_slot_once_so_an_estimate_is_never_labelled_exact(self):
+        """fresh-4 of the second round: report() read the lazy cell twice, size() then materialized(), so a
+        materialization between the two (a whole frame going on the pusher's thread during a GET /perf) published
+        the ESTIMATE labelled exact 1, the one pair the reference says cannot occur. A deterministic stand-in for that
+        race: a cell whose size() materializes as a side effect. The row now takes one read of the slot (fails
+        before: bytes was the estimate and exact 1); a plain cell gives the estimate with exact 0 before text() and
+        the exact length with exact 1 after; a str body is exact."""
+        feed = _feed(n=2)
+        parts = km._feed_parts(feed)
+        est = km._feed_est(parts)
+
+        class Racing(km._LazyWire):
+            def size(self):
+                n = super().size()
+                self.text()                      # the other thread's whole-frame send, between the two reads
+                return n
+        cell = Racing(lambda: km._feed_body(feed), est, "feed_body")
+        comp = km._FeedComposition()
+        with mock.patch.object(km, "_feed_wire", (feed, feed["ledgers"], feed, cell, km._feed_sig(parts), parts)):
+            wire = comp.report()["wire"]
+        self.assertEqual(wire, {"bytes": est, "exact": 0})
+        self.assertFalse(cell.materialized(), "the row read the slot once and never through size()")
+        self.assertEqual(cell.held(), (None, est))
+        plain = km._LazyWire(lambda: km._feed_body(feed), est, "feed_body")
+        with mock.patch.object(km, "_feed_wire", (feed, feed["ledgers"], feed, plain, km._feed_sig(parts), parts)):
+            self.assertEqual(comp.report()["wire"], {"bytes": est, "exact": 0})
+            body = plain.text()
+            self.assertEqual(comp.report()["wire"], {"bytes": len(body), "exact": 1})
+            self.assertEqual(plain.held(), (body, est))
+            self.assertNotEqual(len(body), est, "the estimate sits under the body, so the two pairs differ")
+        with mock.patch.object(km, "_feed_wire", (feed, feed["ledgers"], feed, "{}", None, parts)):
+            self.assertEqual(comp.report()["wire"], {"bytes": 2, "exact": 1})
 
     def test_the_estimates_run_once_per_build_and_not_on_a_refill(self):
         """The memoization claim, by counting (tests-2): the card-field estimate and the projection estimator are

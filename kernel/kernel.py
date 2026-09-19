@@ -53617,6 +53617,13 @@ class _LazyWire:
     def materialized(self):
         return self._s is not None
 
+    def held(self):
+        """One read of the slot: (the text, or None while unmaterialized; the estimate). For a caller that reports
+        the length AND whether it is exact from the same state: size() and materialized() each read the slot, so a
+        materialization landing between the two (a whole frame going on the pusher's thread during a GET /perf)
+        paired the estimate with `exact` in memos.feedComposition's wire row (the review's third round)."""
+        return self._s, self._est
+
 
 def _wire_text(pre):
     """The bytes of a wire form that is either a str or a _LazyWire (materializing the latter)."""
@@ -54716,8 +54723,11 @@ _feed_cards_memo = None    # (a build's asks list, {itemId: json}, {app: card-fi
 #                            _delta_parts_cache: no consumer mutates a cached build's cards (they copy). The third member
 #                            is the composition probe's per-app card-field estimate (_ask_fields_est) and its projection
 #                            rows' estimates (FEED_PROJECTIONS), memoized with the cards so a refill pays none of it, or
-#                            the exception those estimates raised, memoized the same way so a refill neither re-raises
-#                            nor repeats them (2026-09-18)
+#                            the type name and message of the exception those estimates raised, as a pair, memoized the
+#                            same way so a refill neither re-raises nor repeats them (2026-09-18). The pair, never the
+#                            exception: its traceback would pin the pass's whole frame in this global (the frame dict,
+#                            the per-ledger strings, the remainder string) until the next miss, and clearing the
+#                            traceback does not free a chained exception's (the review's third round)
 _feed_dupes_said = set()   # itemIds already reported as duplicated within one build: said once per id
 
 
@@ -54933,25 +54943,29 @@ class _FeedComposition:
     is measured before the frame is designed (`phoneFace`, the phone's face frame; its `today` is the whole frame the
     phone's feed and Outline pages receive now).
 
-    Every number but one is read from the sizes _feed_parts makes for the wire anyway: the per-card strings (the cards
-    minus their tints, as _feed_est counts them), the per-ledger strings and, since this probe, the remainder's per-field
-    strings (the remainder is encoded per field and joined into the one sort_keys string it always was, byte for byte,
-    so a field's bytes come from the frame's own encode: its quoted name, the separators and its value). `frame` is
+    Every number but one is read from the STRINGS _feed_parts makes for the wire anyway, by their lengths, which this
+    probe takes (_feed_parts made no sizes before it): the per-card strings (the cards minus their tints, as _feed_est
+    counts them), the per-ledger strings and, since this probe, the remainder's per-field strings (the remainder is
+    encoded per field and joined into the one sort_keys string it always was, byte for byte, so a field's bytes come
+    from the frame's own encode: its quoted name, the separators and its value). `frame` is
     _feed_est's total, which sits under the served body by the frame's key names, separators and the cards' and nodes'
     tints; `wire` beside it is the served body's exact length once a whole frame went (_LazyWire.materialized), else
     that estimate again. The one figure not read from an encode is an app's card FIELDS (fleet.ts reads a few fields of
     each card): _ask_fields_est estimates those from lengths, and says how.
 
-    Cost per build, on the pusher's thread: the two sums _feed_est takes (one int per card and per ledger), one
-    len() per remainder field, and for the apps that read card fields an O(cards x fields) pass of len() calls, plus
-    the projections' O(cards) passes, both memoized with the cards on the build's asks list (_feed_cards_memo), so a
-    ledgers refill pays none of the card-field and projection estimates (it re-encodes the ledgers and the remainder,
-    as it always did). About two milliseconds per thousand cards per build, about a third of it the projections'
-    pass. The remainder's per-field encode costs more than the one whole encode it replaces, per field rather than
-    per byte: about one and a half times the whole-remainder encode at a 16 KB remainder and about three and a third
-    times at a 1.4 KB one, measured before the pass shared one json.JSONEncoder over its fields, which takes about
-    forty percent off that overhead. The lengths are always computed, never only while a reader is present: that
-    would add a real second encode and an undefined event.
+    Cost per build, on the pusher's thread: the two part sums (one len() per card and per ledger: the walk _feed_est
+    takes for the wire's size estimate, taken a second time here, about thirty microseconds per pass on the test
+    fixture as the second review round measured it), one len() per remainder field, and for the apps that read card
+    fields an O(cards x fields) pass of len() calls, plus the projections' O(cards) passes, both memoized with the
+    cards on the build's asks list (_feed_cards_memo), so a ledgers refill pays none of the card-field and projection
+    estimates (it re-encodes the ledgers and the remainder, as it always did, and re-takes the two sums and the
+    per-field lengths). About two milliseconds per thousand cards per build, about a third of it the projections'
+    pass; a ledgers refill pass measured at about one and four fifths times the base's refill pass in the first
+    review round, most of it the remainder's per-field encode, which costs more than the one whole encode it
+    replaces, per field rather than per byte: about one and a half times the whole-remainder encode at a 16 KB
+    remainder and about three and a third times at a 1.4 KB one, measured before the pass shared one
+    json.JSONEncoder over its fields, which takes about forty percent off that overhead. The lengths are always
+    computed, never only while a reader is present: that would add a real second encode and an undefined event.
 
     Paste-safe: identifier keys (the frame's own field names, the kernel's app names), numbers only, and the tables
     are published FOLDED (public_table, in report(), on the last and the lifetime tables alike): the sums `frame`,
@@ -55076,14 +55090,19 @@ class _FeedComposition:
         out["apps"] = {app: dict(row) for app, row in t["apps"].items()}
         return out
 
-    def fail(self, exc):
+    def fail(self, kind, msg):
+        """A pass whose accounting raised: counted under `failed` and said once, from the exception's type name and
+        message, never the exception object. _feed_parts memoizes a fault in the estimates' slot as this pair: an
+        exception carries its traceback, and a traceback parked in a module global pins the _feed_parts frame it was
+        raised in (the frame dict, the per-ledger strings, the remainder string, the per-field pairs) until the next
+        cards miss; with_traceback(None) alone does not release a raise from inside an except, whose __context__
+        holds the same frame through its own traceback (the review's third round)."""
         with self.lock:
             self.failed += 1
             first = not self.said
             self.said = True
         if first:
-            sys.stderr.write("feed composition: the accounting raised (%s: %s); the frame is unaffected\n"
-                             % (type(exc).__name__, exc))
+            sys.stderr.write("feed composition: the accounting raised (%s: %s); the frame is unaffected\n" % (kind, msg))
 
     def report(self):
         with self.lock:
@@ -55094,8 +55113,10 @@ class _FeedComposition:
         wire = {}
         if w is not None:
             body = w[3]
-            wire = {"bytes": _wire_len(body),
-                    "exact": 1 if (isinstance(body, str) or body.materialized()) else 0}
+            s, est = (body, None) if isinstance(body, str) else body.held()   # ONE read of the cell's slot: a size()
+            wire = {"bytes": len(s) if s is not None else est,                # then a materialized() read let a
+                    "exact": 1 if s is not None else 0}                       # materialization between the two pair
+                                                                              # the estimate with `exact` (fresh-4)
         return {"passes": passes, "failed": failed, "lifetime": life, "last": last or {}, "wire": wire}
 
 
@@ -55138,7 +55159,7 @@ def _feed_parts(feed):
             askf = {app: _ask_fields_est(asks, fs) for app, fs in _FEED_APP_ASK_FIELDS.items()}   # card-field and
             askf.update((name, est(asks)) for name, est in FEED_PROJECTIONS.items())          # projection estimates,
         except Exception as e:                                                               # once per build; a raise
-            askf = e                                                                         # is memoized in their
+            askf = (type(e).__name__, str(e))                                                # is memoized in their
         _feed_cards_memo = (asks, cards, askf)                                               # slot (counted below)
         _wire_bump("feed_cards_miss")
         if len(cards) != len(asks):
@@ -55178,20 +55199,20 @@ def _feed_parts(feed):
     else:
         rest_ms = json.dumps(rest, sort_keys=True, default=dflt)
         by = {"other": len(rest_ms)}
-    if isinstance(askf, Exception):
-        # the card-field and projection estimates raised on this build (the memo holds the exception in their slot):
-        # counted under `failed` and said once, record() skipped for this pass, and every refill of the same build
-        # counts it again from the memo without running the estimates, so a faulted build never re-raises and never
-        # records under-counted rows. Nothing above this line reads askf: the frame goes out unchanged at every call
-        # site (the pusher's fill, _feed_wire_now, the cards-first path).
-        _FEED_COMP.fail(askf)
+    if isinstance(askf, tuple):
+        # the card-field and projection estimates raised on this build (the memo holds the fault's type name and
+        # message in their slot): counted under `failed` and said once, record() skipped for this pass, and every
+        # refill of the same build counts it again from the memo without running the estimates, so a faulted build
+        # never re-raises and never records under-counted rows. Nothing above this line reads askf: the frame goes
+        # out unchanged at every call site (the pusher's fill, _feed_wire_now, the cards-first path).
+        _FEED_COMP.fail(*askf)
     else:
         try:
             _FEED_COMP.record(sum(map(len, cards.values())), len(cards),
                               sum(map(len, leds.values())) if leds else 0, len(leds) if leds else 0, leds is not None,
                               len(rest_ms), by, askf)
         except Exception as e:
-            _FEED_COMP.fail(e)
+            _FEED_COMP.fail(type(e).__name__, str(e))
     return cards, leds, rest, rest_ms
 
 
