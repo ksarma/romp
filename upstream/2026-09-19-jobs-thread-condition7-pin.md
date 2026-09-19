@@ -3,7 +3,7 @@ title: Jobs stage 1 follow-up: the nudge walk's shared goal-store loads are coun
 status: candidate
 where: kernel/kernel.py (the shared read in `_auto_nudge_session`, `_NUDGE_WALK_STATS`, the `_PerfStats` gloss); docs/reference.md (the `jobs` block and the `memos.nudgeWalk` entry); tests/test_nudge_walk_one_load_per_pass.py (new)
 added: 2026-09-19
-pr:
+pr: 842
 tier: fix
 offered:
 closed:
