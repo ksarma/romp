@@ -3808,7 +3808,14 @@ default, with the session counts, the user's actions and the panes opened
 keys the snapshot already carries. Before writing, the document is searched,
 every key, string value and number (a number by the spelling the export
 writes, so a listed digit run inside a counter is found however the file
-spelled it), for the strings only this machine knows (its hostname, user and home
+spelled it; since 2026-09-19 a listed entry is applied to a number only when
+it carries a digit run of seven or more digits, so a listed run of seven or
+more matching a number's wire spelling refuses the export and the upload,
+while a shorter listed digit run is checked in keys and string values and not
+in numbers, and one stderr line says how many entries that is: on a real
+export a listed run of four digits matched some number by coincidence about
+one time in four, one of seven digits about one time in 7,000, so below
+seven a match said nothing about the private value), for the strings only this machine knows (its hostname, user and home
 directory, the session ids and working directories in the state directory's
 registry, and the lines of `~/.config/romp/private-strings.txt` when that
 file exists, the list the repository's pre-push hook reads, one string per
@@ -3902,7 +3909,8 @@ is about 7; the checks below recurse one level per frame and this is the one
 file romp reads that a person names, so a deeper file is refused in one line
 that names the bound before any check walks it). It must also pass the
 export's own scan, walk and denylist check again, as it stands, since you may
-have edited it. The
+have edited it (the scan's seven-digit floor for a listed entry over a number
+applies here too, since 2026-09-19). The
 rule is the export's: the public form is paste-safe, not unlinkable, and the
 file is held to the export's own fold, not only to its checks. What the
 export dropped or coarsened is refused (a `t` put back on a split row, a
