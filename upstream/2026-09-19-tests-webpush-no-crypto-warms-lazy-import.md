@@ -3,7 +3,7 @@ title: The webpush _no_crypto helper warms the bindings lazy import before hidin
 status: candidate
 where: tests/test_kernel_webpush.py (_no_crypto; SubscribeRoutes.test_a_subscription_minted_inside_the_block_still_reaches_the_route)
 added: 2026-09-19
-pr:
+pr: 835
 tier: docs
 offered:
 closed:
