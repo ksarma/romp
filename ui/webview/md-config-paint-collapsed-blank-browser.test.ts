@@ -1,5 +1,5 @@
-// The blank scenes of md-config-paint-collapsed-blank.test.ts over the REAL bundle in headless Chromium: marked with the one
-// configuration (md-config.ts), the sanitizer (md-sanitize.ts) and paintRendered, the DOM built as the viewer's mdBlock builds it,
+// The blank scenes of md-config-paint-collapsed-blank.test.ts over the REAL bundle in headless Chromium: the viewer's parse (viewerHtml,
+// file-view.ts) under the one configuration (md-config.ts), the sanitizer (md-sanitize.ts) and paintRendered, the DOM built as the viewer's mdBlock builds it,
 // laid out under feed.css's prose rules. The browser is the oracle (the Slice 4 review, rounds 11 and 12), read NODE BY NODE: every
 // whitespace-only text node is held across the paint and measured before it and again in the painted layout (a Range over the
 // node, its client rects' widths summed, the reading the painter's layout-time trim makes), and a node below the top level must
@@ -32,13 +32,13 @@ const requireCjs = createRequire(path.join(EXT, "package.json"));
 const UI = path.resolve(EXT, "..", "ui", "webview");
 const FEED = fs.readFileSync(path.join(UI, "feed.css"), "utf8");
 
-/** marked with the viewer's grammar, the sanitizer and the paint, bundled as the webview build bundles them. */
+/** The viewer's parse (file-view.ts viewerHtml, marked with the viewer's grammar), the sanitizer and the paint, bundled as the webview build bundles them. */
 function bundle(): string {
   const esbuild = requireCjs("esbuild");
   const r = esbuild.buildSync({
     stdin: {
-      contents: 'import { marked } from "marked";\nimport { applyMdConfig } from "./md-config";\nimport { sanitizeMd } from "./md-sanitize";\n'
-        + 'import { paintRendered } from "./anchor-map";\napplyMdConfig();\n(window as any).__romp = { marked, sanitizeMd, paintRendered };\n',
+      contents: 'import { viewerHtml } from "./file-view";\nimport { applyMdConfig } from "./md-config";\nimport { sanitizeMd } from "./md-sanitize";\n'
+        + 'import { paintRendered } from "./anchor-map";\napplyMdConfig();\n(window as any).__romp = { viewerHtml, sanitizeMd, paintRendered };\n',
       resolveDir: UI, loader: "ts", sourcefile: "paint-collapsed-blank-probe.ts",
     },
     bundle: true, write: false, format: "iife", platform: "browser", target: "es2020",
@@ -81,7 +81,7 @@ const HELPERS = `
 const BLANK = /^[\\s\\u200b-\\u200d\\u2060-\\u2064\\ufeff]*$/;
 const PAINT_OPTS = { trim: true };
 const width = (t) => { const r = document.createRange(); r.selectNodeContents(t); let w = 0; for (const b of Array.from(r.getClientRects())) w += b.width; return Math.round(w * 100) / 100; };
-window.__render = (src) => { const md = document.getElementById("md"); md.replaceChildren(...Array.from(window.__romp.sanitizeMd(window.__romp.marked.parse(src)).childNodes)); return md.innerHTML; };
+window.__render = (src) => { const md = document.getElementById("md"); md.replaceChildren(...Array.from(window.__romp.sanitizeMd(window.__romp.viewerHtml(src)).childNodes)); return md.innerHTML; };
 window.__wsNodes = () => { const md = document.getElementById("md"); const out = []; const held = []; const w = document.createTreeWalker(md, NodeFilter.SHOW_TEXT);
   for (let t = w.nextNode(); t; t = w.nextNode()) { if (!BLANK.test(t.data)) continue; held.push(t);
     out.push({ parent: t.parentNode.tagName, top: t.parentNode === md, text: t.data, w: width(t) }); }

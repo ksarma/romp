@@ -1,5 +1,5 @@
 // The whitespace rule of the Rendered paint (anchor-map.ts skipBlockWs and trimCollapsedMarks) over the REAL bundle in headless
-// Chromium: marked with the one configuration (md-config.ts), the sanitizer (md-sanitize.ts) and paintRendered, the DOM built as
+// Chromium: the viewer's parse (viewerHtml, file-view.ts) under the one configuration (md-config.ts), the sanitizer (md-sanitize.ts) and paintRendered, the DOM built as
 // the viewer's mdBlock builds it, laid out under feed.css's prose rules. The browser is the oracle here for what
 // md-config-paint-rendered-space.test.ts pins over a stand-in (the Slice 4 review, round 10; the layout-time trim since round
 // 12): a whitespace-only text node is measured BEFORE the paint (a Range around it), and the paint must leave it marked when it
@@ -41,13 +41,13 @@ const requireCjs = createRequire(path.join(EXT, "package.json"));
 const UI = path.resolve(EXT, "..", "ui", "webview");
 const FEED = fs.readFileSync(path.join(UI, "feed.css"), "utf8");
 
-/** marked with the viewer's grammar, the sanitizer and the paint, bundled as the webview build bundles them. */
+/** The viewer's parse (file-view.ts viewerHtml, marked with the viewer's grammar), the sanitizer and the paint, bundled as the webview build bundles them. */
 function bundle(): string {
   const esbuild = requireCjs("esbuild");
   const r = esbuild.buildSync({
     stdin: {
-      contents: 'import { marked } from "marked";\nimport { applyMdConfig } from "./md-config";\nimport { sanitizeMd } from "./md-sanitize";\n'
-        + 'import { paintRendered } from "./anchor-map";\napplyMdConfig();\n(window as any).__romp = { marked, sanitizeMd, paintRendered };\n',
+      contents: 'import { viewerHtml } from "./file-view";\nimport { applyMdConfig } from "./md-config";\nimport { sanitizeMd } from "./md-sanitize";\n'
+        + 'import { paintRendered } from "./anchor-map";\napplyMdConfig();\n(window as any).__romp = { viewerHtml, sanitizeMd, paintRendered };\n',
       resolveDir: UI, loader: "ts", sourcefile: "paint-rendered-space-probe.ts",
     },
     bundle: true, write: false, format: "iife", platform: "browser", target: "es2020",
@@ -83,7 +83,7 @@ const r2 = (n: number): number => Math.round(n * 100) / 100;
  *  nodes measured, a layout read, the paint with each mark measured, and the panel's unpaint (file-comments.ts unpaint: the mark's
  *  children back in place, the parent normalized). */
 const HELPERS = `
-window.__render = (src) => { const md = document.getElementById("md"); md.replaceChildren(...Array.from(window.__romp.sanitizeMd(window.__romp.marked.parse(src)).childNodes)); return md.innerHTML; };
+window.__render = (src) => { const md = document.getElementById("md"); md.replaceChildren(...Array.from(window.__romp.sanitizeMd(window.__romp.viewerHtml(src)).childNodes)); return md.innerHTML; };
 window.__wsNodes = () => { const md = document.getElementById("md"); const out = []; const w = document.createTreeWalker(md, NodeFilter.SHOW_TEXT);
   for (let t = w.nextNode(); t; t = w.nextNode()) { if (!/^\\s*$/.test(t.data)) continue; const r = document.createRange(); r.selectNodeContents(t); const b = r.getBoundingClientRect();
     out.push({ parent: t.parentNode.tagName, top: t.parentNode === md, text: t.data, w: Math.round(b.width * 100) / 100 }); } return out; };

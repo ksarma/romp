@@ -1,5 +1,5 @@
 // A footnote definition's body is a paragraph inside its div (md-config.ts footnoteDef, the Slice 4 review, round 10), over the
-// REAL bundle in headless Chromium: marked with the one configuration, the sanitizer and paintRendered, the DOM built as the
+// REAL bundle in headless Chromium: the viewer's parse (viewerHtml, file-view.ts) under the one configuration, the sanitizer and paintRendered, the DOM built as the
 // viewer's mdBlock builds it, the page under the whole feed sheet. Before this the body rendered as inline content directly under
 // `div.md-footnote`, and the Rendered paint (anchor-map.ts skipBlockWs) skipped each whitespace-only text node under the DIV as
 // white space between blocks: a highlight from the paragraph before `[^1]: **a** *b*` to the paragraph after painted `a` and `b`
@@ -23,13 +23,13 @@ const requireCjs = createRequire(path.join(EXT, "package.json"));
 const UI = path.resolve(EXT, "..", "ui", "webview");
 const FEED = fs.readFileSync(path.join(UI, "feed.css"), "utf8").replace(/@import[^;]*;/g, "");   // the KaTeX import: fonts the page does not need
 
-/** marked with the viewer's grammar, the sanitizer and the paint, bundled as the webview build bundles them. */
+/** The viewer's parse (file-view.ts viewerHtml, marked with the viewer's grammar), the sanitizer and the paint, bundled as the webview build bundles them. */
 function bundle(): string {
   const esbuild = requireCjs("esbuild");
   const r = esbuild.buildSync({
     stdin: {
-      contents: 'import { marked } from "marked";\nimport { applyMdConfig } from "./md-config";\nimport { sanitizeMd } from "./md-sanitize";\n'
-        + 'import { paintRendered } from "./anchor-map";\napplyMdConfig();\n(window as any).__romp = { marked, sanitizeMd, paintRendered };\n',
+      contents: 'import { viewerHtml } from "./file-view";\nimport { applyMdConfig } from "./md-config";\nimport { sanitizeMd } from "./md-sanitize";\n'
+        + 'import { paintRendered } from "./anchor-map";\napplyMdConfig();\n(window as any).__romp = { viewerHtml, sanitizeMd, paintRendered };\n',
       resolveDir: UI, loader: "ts", sourcefile: "footnote-paint-probe.ts",
     },
     bundle: true, write: false, format: "iife", platform: "browser", target: "es2020",
@@ -48,7 +48,7 @@ try { pw = requireCjs("playwright"); } catch { pw = null; }
  *  nodes with their rendered boxes and whether a mark holds them, the top-level layout, the footnote's box against its
  *  paragraph's, and the paint from the paragraph before to the paragraph after (the panel's gesture). */
 const HELPERS = `
-window.__render = (src) => { const md = document.getElementById("md"); md.replaceChildren(...Array.from(window.__romp.sanitizeMd(window.__romp.marked.parse(src)).childNodes)); return md.innerHTML; };
+window.__render = (src) => { const md = document.getElementById("md"); md.replaceChildren(...Array.from(window.__romp.sanitizeMd(window.__romp.viewerHtml(src)).childNodes)); return md.innerHTML; };
 window.__ws = (under) => { const root = under ? document.querySelector(under) : document.getElementById("md"); const out = []; const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT); let n;
   while ((n = w.nextNode())) { if (!n.data.length || n.data.trim() !== "") continue; const r = document.createRange(); r.selectNodeContents(n); const b = r.getBoundingClientRect(); const p = n.parentElement;
     out.push({ parent: p.tagName + (p.className ? "." + p.className : ""), data: n.data, w: Math.round(b.width * 100) / 100, h: Math.round(b.height * 100) / 100, inMark: !!p.closest("mark") }); }

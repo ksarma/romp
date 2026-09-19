@@ -20,7 +20,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { inspect } from "node:util";
-import { marked } from "marked";
+import { viewerHtml } from "./file-view";   // the viewer's parse (mdBlock's recipe: marked's lexer, the literal-tags rule of md-literal-tags.ts, the per-call walk, its parser), the stand-in's too
 import { applyMdConfig } from "./md-config";   // the one markdown configuration, applied here as the viewer applies it
 import {
   mapRawSelection, paintRendered, paintChangesRaw, paintChangesRendered, unpaintChanges, chipLabel,
@@ -134,7 +134,7 @@ function buildRaw(text: string): FakeElement {
 function buildRendered(text: string): FakeElement {
   const doc = new FakeDocument();
   const box = doc.createElement("div"); box.setAttribute("class", "fileview-md");
-  for (const n of parseHTML(doc, marked.parse(text) as string)) box.appendChild(n);
+  for (const n of parseHTML(doc, viewerHtml(text))) box.appendChild(n);
   return box;
 }
 const El = (n: FakeNode) => n as unknown as Element;

@@ -15,7 +15,7 @@ import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
-import { marked } from "marked";
+import { viewerHtml } from "./file-view";   // the viewer's parse (mdBlock's recipe: marked's lexer, the literal-tags rule of md-literal-tags.ts, the per-call walk, its parser), the stand-in's too
 import { applyMdConfig } from "./md-config";   // the one markdown configuration, applied here as the viewer applies it
 
 const requireCjs = createRequire(__filename);
@@ -75,7 +75,7 @@ async function probe(t: any, engine: "chromium" | "firefox", sheetName: string):
     const errors: string[] = [];
     page.on("pageerror", (e: Error) => { errors.push(e.message); });
     const js = bundle();
-    const html = marked.parse(SOURCE) as string;
+    const html = viewerHtml(SOURCE);
     await page.route("http://romp.test/**", (route: any) => {
       const u = new URL(route.request().url());
       if (u.pathname === "/page") return route.fulfill({ status: 200, contentType: "text/html; charset=utf-8", body: PAGE(html) });
