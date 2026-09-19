@@ -1746,6 +1746,8 @@ class ReexecutionThenTheRunRootRemoved(_NestedRun, unittest.TestCase):
         self.assertTrue(text.endswith(", " + GONE), text)
         self.assertIn(SHARED_STATE, self.out)
         self.assertIn("is not a directory after the test reloaded the judge", self.out)
+        self.assertRegex(self.out, r"errors while tearing down <TestCaseFunction test_a_\w+> \(2 sub-exceptions\)",
+                         "the ratchet's verdict and the judge's fold into one exception group on the one item")
 
     def test_the_class_and_module_ends_are_quiet_on_the_named_object(self):
         self.assertIsNone(boundary(self.out, "::Cases"), self.out)
