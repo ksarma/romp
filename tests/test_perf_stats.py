@@ -16,7 +16,6 @@ import collections
 import concurrent.futures
 import copy
 import fcntl
-import hashlib
 import inspect
 import io
 import json
@@ -1503,6 +1502,30 @@ class PushRowsByPurpose(unittest.TestCase):
         self.assertIn("push", foreign_row, "the foreign block names the push stages as a second family")
 
 
+# git's own wording for a tree with no repository above it; the one nonzero exit that is a skip (the constant
+# tests/test_entrypoints_executable.py uses for the same call)
+NOT_A_REPOSITORY = "not a git repository"
+
+
+def _git_bytes(root, *args):
+    """git's stdout, as bytes, for `git -C root args`. Skips the caller only when git is not installed or says `root`
+    is not in a repository; any other failure is an AssertionError carrying git's stderr and exit code, never a skip
+    (the shape of tests/test_entrypoints_executable.py's _index, whose docstring says why: a skip there would disarm
+    the check while the run stays green). stdout stays bytes because a -z listing is split on NUL; stderr alone is
+    decoded, with errors replaced, so git's words reach the message whatever their encoding."""
+    try:
+        proc = subprocess.run(["git", "-C", str(root), *args], capture_output=True, timeout=60)
+    except FileNotFoundError:
+        raise unittest.SkipTest("git is not installed; the routing sweep cannot list the tree")
+    if proc.returncode != 0:
+        stderr = proc.stderr.decode(errors="replace").strip()
+        if NOT_A_REPOSITORY in stderr:
+            raise unittest.SkipTest("not a git checkout (git %s exited %d: %s)" % (" ".join(args), proc.returncode, stderr))
+        raise AssertionError("git %s exited %d in %s, so the routing sweep cannot list the tree and the check would be "
+                             "disarmed; fix the checkout rather than skipping:\n%s" % (" ".join(args), proc.returncode, root, stderr))
+    return proc.stdout
+
+
 class RoutingStatements(unittest.TestCase):
     """Every place in the tree that names a routed block (stagesForeign, pusher.cycleJobsMs, pusher.connectPush.stagesMs, or
     their attributes) is where a sentence about the routing can live, and two review rounds found such a sentence wrong
@@ -1522,8 +1545,10 @@ class RoutingStatements(unittest.TestCase):
     untracked file git does not ignore is read too: ui/out-tests, the webview test build's output, is not ignored, so
     its compiled files are read when it exists; no ui/webview source names a block today, so no copy there can, and a
     source that starts to would red this pin on a machine holding the build output before it did in CI. The scan
-    takes a shared file lock and the plant test below an exclusive one: pytest-xdist can run the three tests on
-    different workers at once, and a sibling's scan during the plant would read the plant and red.
+    takes a file lock shared and the plant test below takes it exclusive: pytest-xdist can run the tests on different
+    workers at once, and a sibling's scan during the plant would read the plant and red. The lock is one file per
+    checkout, in its git dir, so an xdist worker, a second pytest run, or a run under its own TMPDIR all wait on the
+    same inode (the first version sat in the per-process temp root tests/__init__.py mints and serialised nothing).
 
     What PLACES counts, since PR 797's closing check asked for the derivation: one entry per text file in the tree
     above whose text matches BLOCKS at least once, however many times it matches, so the count the sweep holds is the
@@ -1539,12 +1564,25 @@ class RoutingStatements(unittest.TestCase):
               "tests/test_jobs_thread_split.py", "tests/test_perf_stats.py", "upstream/2026-09-18-stage-attribution.md"}
     PROBE = 8192                                  # bytes read for the NUL probe: a png, a font, a recording fails it in its header
 
+    @classmethod
+    def _lock_path(cls, root):
+        # The lock is a property of the CHECKOUT, not of the run: `git rev-parse --absolute-git-dir` is one path for
+        # every process over this worktree (an xdist worker, a second pytest run, a run under its own TMPDIR), and in
+        # a linked worktree it is <main>/.git/worktrees/<name>, so sibling worktrees lock apart. It is also OUTSIDE the
+        # scanned tree, on purpose: a lock file anywhere inside the worktree, plans/ or the root, would be an untracked,
+        # unignored file, and this scan reads exactly those. The first version sat in tempfile.gettempdir(), which
+        # tests/__init__.py repoints to a private root per process, so every process locked a different inode and
+        # nothing waited.
+        return Path(os.fsdecode(_git_bytes(root, "rev-parse", "--absolute-git-dir").strip())) / "romp-routing-sweep.lock"
+
+    @classmethod
     @contextlib.contextmanager
-    def _tree_lock(self, exclusive):
-        """The repo root, held under a file lock every test process of this tree shares (the lock file sits in the temp
-        dir under the root's hash; flock, so a process that dies drops it)."""
+    def _tree_lock(cls, exclusive):
+        """The repo root, held under a file lock that lives in the checkout's git dir (one per linked worktree), shared
+        by every process over this tree whatever its TMPDIR, and outside the scanned tree; flock, so a process that
+        dies drops it."""
         root = Path(HERE).parent
-        lock = Path(tempfile.gettempdir()) / ("romp-routing-sweep-%s.lock" % hashlib.sha1(str(root).encode()).hexdigest()[:12])
+        lock = cls._lock_path(root)
         with open(lock, "a+") as fh:
             fcntl.flock(fh, fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH)
             try:
@@ -1621,6 +1659,55 @@ class RoutingStatements(unittest.TestCase):
             after = self._scan(root)
             self.assertNotIn(rel, sorted(after), "the plant is gone")
             self._pin_swept_set(after); self._pin_no_retired_wording(after)                          # green again
+
+    def test_the_lock_is_one_file_for_every_process_of_this_tree(self):
+        """A second process over this checkout with its own TMPDIR and no record of this run's system temp dir (the
+        two-sweep-slots case a run-keyed lock misses) computes the same lock path, and its exclusive hold is seen here:
+        a non-blocking flock in either mode is refused while it holds, a shared waiter stays blocked until it lets go
+        and gets in after. Event based, no sleep: the child says when it holds and is told when to release."""
+        root = Path(HERE).parent
+        holder = ("import sys\n"
+                  "from tests.test_perf_stats import RoutingStatements as R\n"
+                  "with R._tree_lock(exclusive=True) as root:\n"
+                  "    print(R._lock_path(root), flush=True)\n"
+                  "    sys.stdin.readline()\n")
+        child_tmp = tempfile.mkdtemp()                                # under this process's run root, swept with it
+        env = dict(os.environ, TMPDIR=child_tmp)
+        env.pop("ROMP_TESTS_SYSTEM_TMPDIR", None)                     # so the child's tests/__init__.py records its own
+        errlog = open(os.path.join(child_tmp, "holder-stderr.log"), "w+b")   # a file, not a pipe: the kernel load may talk
+        child = subprocess.Popen([sys.executable, "-c", holder], cwd=root, env=env, stdin=subprocess.PIPE,
+                                 stdout=subprocess.PIPE, stderr=errlog, text=True)
+        entered = threading.Event()
+
+        def waiter():
+            with self._tree_lock(exclusive=False):
+                entered.set()
+        thread = threading.Thread(target=waiter, daemon=True)
+        try:
+            line = child.stdout.readline()
+            if not line:
+                errlog.seek(0)
+                self.fail("the holder printed no lock path; its stderr:\n%s" % errlog.read().decode(errors="replace"))
+            self.assertEqual(Path(line.strip()), self._lock_path(root),
+                             "two processes with different TMPDIRs compute one lock path")
+            with open(self._lock_path(root), "a+") as fh:
+                with self.assertRaises(BlockingIOError, msg="the holder's exclusive lock refuses a shared try here"):
+                    fcntl.flock(fh, fcntl.LOCK_SH | fcntl.LOCK_NB)
+                with self.assertRaises(BlockingIOError, msg="and an exclusive try"):
+                    fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            thread.start()
+            self.assertFalse(entered.wait(0.5), "a shared waiter is blocked while the holder holds")
+            child.stdin.write("\n"); child.stdin.flush()               # the holder releases and exits
+            self.assertTrue(entered.wait(30), "the waiter gets in once the holder lets go")
+            self.assertEqual(child.wait(30), 0)
+        finally:                                                      # a failing step never leaves a holder behind
+            try:
+                child.communicate(timeout=60)                         # closes its stdin, so the holder's readline ends
+            except subprocess.TimeoutExpired:
+                child.kill(); child.communicate()
+            if thread.is_alive():
+                thread.join(60)
+            errlog.close()
 
     def test_this_modules_top_keys_comment_names_both_families(self):
         line = next(l for l in Path(__file__).read_text().splitlines() if l.strip().startswith('"stagesForeign",'))
