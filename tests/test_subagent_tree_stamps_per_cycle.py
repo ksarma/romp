@@ -5,9 +5,12 @@ The walk memo (tests/test_subagent_tree_memo.py) made a read of a session's suba
 directory instead of a listing. But the agent-file lookup's memo (_subagent_file) re-validates a hit by stat-ing every
 directory its walk read, which for a nested or missing agent's file is the whole tree, and _awaiting_nest resolves
 every awaiting agent's file once per _session_awaiting call; so one call over A such agents paid (A + 1) x D directory
-stats with nothing changed, and the pusher makes up to five such calls per session per cycle (the chat, feed and
-timeline builds and the chips), the jobs pass one more. On the deployed kernel _dir_stamp's one os.stat was 28 percent
-of the pusher's samples (py-spy, 2026-09-19; the user 2026-09-05, who wanted the one-core kernel investigated).
+stats with nothing changed (when there are two or more such agents, or a command row whose owner is read from their
+transcripts; a single agent with no command row is excluded from its own owner lookup and paid D alone), and the
+pusher makes up to five such calls per session per cycle (the chat, feed and timeline builds and the chips), the jobs
+pass one more. On one deployed kernel _dir_stamp's one os.stat was the top self frame of a 20 s py-spy profile, 28
+percent of the samples by that profile's reading, and another's memo counters showed 24.5 million validation lstats in
+6.8 hours over 1,294 directories (2026-09-19; the user 2026-09-05, who wanted the one-core kernel investigated).
 
 The fix keys the validation on the event a time window would have stood in for: the cycle and the pass. Each opens a
 thread-confined scope (_subagent_scope_open in _pusher_cycle and _jobs_cycle, closed in their finally blocks); the

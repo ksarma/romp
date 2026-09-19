@@ -35257,11 +35257,14 @@ def _subagent_tree_charge(kind, t0):
 # eviction event inside the cycle (a root leaving _SUBAGENT_TREES moves _SUBAGENT_TREES_GEN and every open scope empties itself;
 # in steady state that is a session departing). The walk memo made a call cost one lstat per known directory instead of a
 # listing, and _subagent_file's hit path re-stats every directory its walk read, which for a nested or missing agent's file is
-# the whole tree; so one _session_awaiting over A such agents paid (A+1) x D directory stats with nothing changed, and it runs
-# up to five times per session per pusher cycle (the chat, feed and timeline builds and the chips) and once per jobs pass (the
-# nudge look). Measured on the deployed kernel (py-spy, 2026-09-19):
-# _dir_stamp's one os.stat was 28% of the pusher's samples, and the memo's own counters showed 24.5 million validation lstats in
-# 6.8 hours over 1,294 directories (the user 2026-09-05, who wanted the one-core kernel investigated). The cycle and the pass
+# the whole tree; so one _session_awaiting over A such agents paid (A+1) x D directory stats with nothing changed: the tree's D
+# lstats plus D stats per agent whose launches() is consulted, which is every agent when there are two or more (each is
+# excluded from its own owner lookup, so a single agent with no command row paid D alone) or when a command row's owner is
+# read from the agents' transcripts; and it runs up to five times per session per pusher cycle (the chat, feed and timeline
+# builds and the chips) and once per jobs pass (the nudge look). Measured on two deployed kernels (2026-09-19): on one,
+# _dir_stamp's one os.stat was the top self frame of a 20 s py-spy profile, 28% of the samples by that profile's reading; on
+# the other, the memo's own counters showed 24.5 million validation lstats in 6.8 hours over 1,294 directories (the user
+# 2026-09-05, who wanted the one-core kernel investigated). The cycle and the pass
 # are the events a time window would have stood in for (the repo's design rule): the thread's slot opens at the cycle's start
 # and closes in its finally, the first reader of a tree in the cycle validates or walks it, and every later reader on that
 # thread in the cycle is served the pair, stat for stat what the first reader saw. A change on disk after that validation (a
