@@ -552,10 +552,11 @@ class Collector(unittest.TestCase):
         is by tick counts. So a mark over a sub-millisecond stage reads exactly 0 on the marks no update fell in and a whole
         tick on the others, and only the sum over a window estimates the CPU, which is why the row and the reference say to
         read the block over a window and never off one cycle. 300 spins of about 0.3 ms of CPU each (pure arithmetic,
-        calibrated by wall clock: a thread-CPU clock read inside the spin would itself update the runtime, and 0 of 200
-        spins read zero with one), each bracketed by _thread_cpu and _cpu_delta: at least one mark reads 0 (111 of 200 did
-        when measured on a HZ=1000 kernel), some mark reads above 0, and the marks' sum tracks time.thread_time over the
-        whole window (read once at each end) within a few ticks."""
+        calibrated by wall clock: a thread-CPU clock read inside the spin would itself update the runtime, and no mark
+        would read 0), each bracketed by _thread_cpu and _cpu_delta: at least one mark reads 0, some mark reads above 0,
+        and the marks' sum tracks time.thread_time over the whole window (read once at each end) within a few ticks. The
+        property is what this test, the docstring row and the reference state; no copy carries a count of the zero
+        marks, which is one run's reading (the row and the reference point here)."""
         if km._RUSAGE_THREAD is None:
             self.skipTest("no per-thread rusage on this platform: the block is served empty")
 

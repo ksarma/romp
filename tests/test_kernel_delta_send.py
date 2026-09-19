@@ -637,6 +637,47 @@ class ByteIdenticalFrames(unittest.TestCase):
         self.assertEqual(d["waited"], 0)
         self.assertEqual((d["warmEligible"], d["warmBlockedByOutline"], d["heldBody"]), (0, 0, 0), "no connected chat client: no census")
 
+    def test_the_per_tab_counts_the_cost_derivation_uses_hold_by_execution(self):
+        """The kernel's stages_cpu_ms block comment derives the instrumentation's cost from counts per tab and per push (the
+        microsecond figures live in docs/reference.md alone); this pins the counts, so the derivation cannot go stale
+        (2026-09-19 review: the measured figures sat in four hand-maintained copies). Over one tab through six cycles,
+        rebuilt and served alternately, per cycle: a served tab opens one signature scope, folds one per-tab note whose
+        pre-flight read is its one compare, calls no re-read note, and reads the thread clock 8 times (the chat
+        container's pair, the signature seam's, the deps sub-seam's and the send seam's); a rebuilt tab opens two scopes
+        (the pre-build and the post-build signature), folds the note and one claim re-read note, counts two compares when
+        the entry it met was cached (the cold first cycle met none, so its note and its re-read note counted nothing), and
+        reads the clock 12 times (the build seam's pair and the post-build signature's pair more). The spies wrap the
+        kernel's own callables under their module names, which is how _chat_build_sig, the seams and _cpu_delta reach
+        them; an extra clock read at any seam or a second re-read note on the claim road moves a count and reds this."""
+        ps = km._PERF_STATS
+        calls = {"scope": 0, "note": 0, "compare": 0, "clock": 0}
+        real = {"scope": km._chat_sig_scope, "note": km._chat_sig_note_pre, "compare": km._chat_sig_note_compare,
+                "clock": km._thread_cpu}
+
+        def spy(name):
+            def wrapped(*a, **kw):
+                calls[name] += 1
+                return real[name](*a, **kw)
+            return wrapped
+        marks = []                                      # the counters as each cycle opens; the run's end closes the last
+
+        def mark(_i):
+            marks.append((dict(calls), km._chat_sig_stats_report()))
+        with mock.patch.object(km, "_chat_sig_scope", spy("scope")), mock.patch.object(km, "_chat_sig_note_pre", spy("note")), \
+                mock.patch.object(km, "_chat_sig_note_compare", spy("compare")), mock.patch.object(km, "_thread_cpu", spy("clock")):
+            _wire, same, _rows = self._run(km._chat_diff, perf=ps, between=mark)
+            marks.append((dict(calls), km._chat_sig_stats_report()))
+        self.assertEqual(same, [False, True, False, True, False, True], "premise: rebuilt, served, alternating")
+        self.assertEqual(len(marks), 7, "a mark before each of the six cycles and one at the end")
+        per_cycle = [dict({k: c1[k] - c0[k] for k in calls}, **{k: r1[k] - r0[k] for k in ("pre", "post", "compares")})
+                     for (c0, r0), (c1, r1) in zip(marks, marks[1:])]
+        served = {"scope": 1, "note": 1, "compare": 0, "clock": 8, "pre": 1, "post": 0, "compares": 1}
+        rebuilt = {"scope": 2, "note": 1, "compare": 1, "clock": 12, "pre": 1, "post": 1, "compares": 2}
+        cold = dict(rebuilt, compares=0)
+        self.assertEqual(per_cycle, [cold, served, rebuilt, served, rebuilt, served],
+                         "the derivation's counts per cycle kind: cold rebuild, served, warm rebuild, served, warm rebuild, served")
+        self.assertEqual(calls["clock"], 3 * 12 + 3 * 8, "the fake-clock test's 60 reads, counted here through _thread_cpu itself")
+
     def _connected(self, **kw):
         """A connected chat client (in km._clients) that the targeted push may send to: ready, proto 2, a send sink."""
         frames = []
@@ -1573,11 +1614,12 @@ class ChatSigHelpers(unittest.TestCase):
         open on one thread sees none of another thread's reads (2026-09-19 review, tests-3; both passed every test when
         replaced by objects shared across threads). Event-gated: thread one opens the scope and waits; thread two, outside
         any scope, makes three stats, two registry reads and a names-read count; thread one then makes one stat and one
-        registry read and closes. The fold reads stats 1, regReads 1, namesReads 0. A shared kernel accumulator folds every
-        thread's stats while any scope is open, thread two's three and the test process's own background stats included,
-        so it reads well above 1 (12 measured, 2026-09-19); a shared backend counter reads 3; a shared names count reads
-        1. The stats are real calls through the kernel's os.stat wrapper, under the outside interception, whose rule
-        agrees."""
+        registry read and closes. Asserted: the fold reads (stats, regReads, namesReads) = (1, 1, 0), the scope's own
+        thread's reads alone. Each shared replacement reds that pin by construction: a kernel accumulator shared across
+        threads folds thread two's three stats and its names count too (and any stat the test process makes in the
+        background, so its stats reading is not a fixed number), and a shared backend counter folds thread two's two
+        registry reads, so regReads reads 3. The stats are real calls through the kernel's os.stat wrapper, under the
+        outside interception, whose rule agrees."""
         sb = self._reg_reader()
         td = tempfile.TemporaryDirectory(); self.addCleanup(td.cleanup)
         p = os.path.join(td.name, "f")
