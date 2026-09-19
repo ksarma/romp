@@ -47451,8 +47451,8 @@ def build_feed(now, live_map=None):
             "column": "needs_input",
             "tree": []})
     # QUARANTINED PEER MAIL (per-host trust model): mail from a DIRECTED federated host is held, never
-    # auto-injected — each is a human decision (approve/deny/edit), so it surfaces as a needs-you card
-    # that stands until decided: the cleared ledger is not read for it (2026-09-19, its docstring says why).
+    # auto-injected — each is a human decision (approve/deny/edit), so it surfaces as a needs-you card.
+    # A hold stands until decided: the cleared ledger is not read for it (2026-09-19, its docstring says why).
     asks.extend(_quarantine_cards(now))
     # NOTICE CARDS (T370, plans/notice-cards.md): a producer's card, posted without the judges; read live from the
     # per-session notice files (a stat-keyed, byte-bounded memo), the newest revision per key, minus the cleared ids
@@ -50092,6 +50092,125 @@ def _parked_handoffs(now, alive_sids):
     return out
 
 
+_HOLD_UNREADABLE_SAID = set()    # (path, errno) of a held file that could not be read AND could not be moved aside: said once per run
+
+
+def _corrupt_aside_name(f):
+    """`<name>.corrupt-<utc stamp>[-n]` beside `f`: the naming every store romp moves a bad file aside in wears (the state
+    files' _state_quarantine, the goal store, the ledgers, the postal bus's _list_json_records), so one convention reads
+    across them all and a `.json` listing never meets the file again."""
+    stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    aside, n = f.with_name("%s.corrupt-%s" % (f.name, stamp)), 0
+    while aside.exists():                            # a second one in the same second
+        n += 1
+        aside = f.with_name("%s.corrupt-%s-%d" % (f.name, stamp, n))
+    return aside
+
+
+def _say_hold_unreadable_once(f, exc):
+    """One stderr line per (file, errno) per kernel run for a held file the listing had to skip AND could not move aside
+    (the bus's _say_unreadable_once): the feed rebuilds on every push, so a line per build would bury the log, and the
+    file stays in place, so every build meets it again."""
+    key = (str(f), getattr(exc, "errno", None))
+    if key in _HOLD_UNREADABLE_SAID:
+        return
+    _HOLD_UNREADABLE_SAID.add(key)
+    sys.stderr.write("romp-kernel: held mail: %s could not be read or parsed and could not be moved aside (%s); skipped "
+                     "and left in place, the other held messages are on the board\n" % (f.name, _errno_text(exc)))
+
+
+def _note_hold_dir_fault(qdir, exc):
+    """The held-mail directory could not be LISTED: loud once per fault episode, the way _note_state_fault says a state
+    file that could not be read (one stderr line and one bell row under the refused kind, keyed in _state_fault_seen on
+    the path and the fault text), quiet until a listing succeeds or finds the directory absent (_clear_state_fault), when
+    the next fault is a new episode. Before this the listing returned nothing and said nothing, so an unreadable
+    directory drew a clean board with every hold invisible (2026-09-19)."""
+    text = ("the held-mail directory (postal/quarantine) could not be listed (%s); every held message is off the board "
+            "until it can be read again, and none was delivered or dropped" % _errno_text(exc))
+    if _state_fault_seen.get(str(qdir)) == text:
+        return
+    _state_fault_seen[str(qdir)] = text
+    sys.stderr.write("romp-kernel: %s\n" % text)
+    try:
+        _sync_notice(text, ok=False, kind="refused")
+    except Exception:
+        pass
+
+
+def _held_records(qdir, now):
+    """Every READABLE hold under `qdir` as (mid, at, record), in file-name order: the postal bus's _list_json_records
+    shape, ported whole (2026-09-19). A file that cannot be read, is not JSON, is not an object, has no string `mid`, or
+    carries an `at` that is not an integer is moved aside ONCE to `<name>.corrupt-<utc stamp>` beside the others, with
+    one stderr line and one bell row (the refused kind) naming the file and the reason, and the listing goes on with
+    the rest; the `.json` listing never meets it again. The bus's precondition comes with it: the file's stat is taken
+    BEFORE the read, and a file whose stat moved by the time the parse failed was rewritten under the read (the bus
+    publishes a hold by rename) and is left for the next build, so a torn READ of a healthy record is never moved
+    aside; a file that cannot be moved either stays, skipped and said once per (file, errno). The listing is
+    os.listdir, never Path.glob: on this Python the glob swallows a PermissionError and yields nothing, which is how an
+    unreadable directory read as an empty one. An absent directory is nothing held; any other listing fault is said
+    (_note_hold_dir_fault) and the build goes on without the holds, the board kept.
+    Before this the reader's try wrapped json.loads alone: a non-object raised AttributeError and a non-integer `at`
+    ValueError out of every feed build, a torn file or a record with no mid was skipped silently forever with the file
+    left in place, and the directory fault returned a clean board."""
+    try:
+        names = sorted(n for n in os.listdir(qdir) if n.endswith(".json"))
+    except FileNotFoundError:
+        _clear_state_fault(qdir)
+        return []
+    except OSError as e:
+        _note_hold_dir_fault(qdir, e)
+        return []
+    _clear_state_fault(qdir)
+    out = []
+    for name in names:
+        f = qdir / name
+        st = None
+        try:
+            st = f.stat()
+            rec = json.loads(f.read_text())
+            if not isinstance(rec, dict):
+                raise ValueError("not a JSON object")
+            mid = rec.get("mid")
+            if not mid or not isinstance(mid, str):
+                raise ValueError("no message id")
+            at = rec.get("at") or now
+            try:
+                at = int(at)
+            except (TypeError, ValueError):
+                raise ValueError("`at` is a %s, not an integer" % type(at).__name__) from None
+        except FileNotFoundError:
+            continue                                 # decided between the listing and the read: the bus removed it
+        except OSError as e:
+            if st is None:                           # the stat itself failed: no fingerprint to move by
+                _say_hold_unreadable_once(f, e)
+                continue
+            reason, fault = "unreadable, %s" % _errno_text(e), e
+        except ValueError as e:
+            reason, fault = str(e), None
+        else:
+            out.append((mid, at, rec))
+            continue
+        try:
+            cur = f.stat()
+            if (cur.st_ino, cur.st_mtime_ns, cur.st_size) != (st.st_ino, st.st_mtime_ns, st.st_size):
+                continue                             # rewritten under the read: a torn read, not a torn file
+            aside = _corrupt_aside_name(f)
+            os.replace(f, aside)
+        except FileNotFoundError:
+            continue                                 # decided meanwhile
+        except OSError as e:
+            _say_hold_unreadable_once(f, fault if fault is not None else e)
+            continue
+        text = ("held mail: %s could not be %s (%s); moved aside to %s, the other held messages are on the board"
+                % (f.name, "read" if fault is not None else "parsed", reason, aside.name))
+        sys.stderr.write("romp-kernel: %s\n" % text)
+        try:
+            _sync_notice(text, ok=False, kind="refused")
+        except Exception:
+            pass
+    return out
+
+
 def _quarantine_cards(now):
     """Inbound mail from a DIRECTED federated host (per-host trust model), HELD for a human decision:
     approve (deliver, optionally after editing), or deny (drop). Never auto-injects the peer's content
@@ -50103,32 +50222,24 @@ def _quarantine_cards(now):
     message's only surface while the file stayed undelivered); the footer's Clear-all is server-side
     and hands _clear_all every ask id, this card's included, so one click hid every held message and
     its badge count while the files sat undelivered. Read here as a rule rather than filtered at that
-    handler, so every present and future Clear door is covered without naming one. Best-effort []."""
-    qdir = jd.STATE / "postal" / "quarantine"
+    handler, so every present and future Clear door is covered without naming one. The directory is
+    read through _held_records (2026-09-19), the bus's own listing shape: a record it cannot read is
+    moved aside and said, a directory it cannot list is said, and the build keeps the board either
+    way. The other fields are coerced to text here so a hand-edited value of another type cannot
+    raise out of the build either. [] when nothing is held or nothing could be read."""
     out = []
-    try:
-        files = sorted(qdir.glob("*.json"))
-    except OSError:
-        return out
-    for f in files:
-        try:
-            rec = json.loads(f.read_text())
-        except (OSError, ValueError):
-            continue
-        mid = rec.get("mid") or ""
-        if not mid:
-            continue
+    for mid, t, rec in _held_records(jd.STATE / "postal" / "quarantine", now):
         item_id = "quarantine:" + mid
-        frm, to, origin = rec.get("frm") or "?", rec.get("to") or "?", rec.get("origin") or "?"
-        t = int(rec.get("at") or now)
+        to_id = str(rec.get("toId") or "")
+        frm, to, origin = str(rec.get("frm") or "?"), str(rec.get("to") or "?"), str(rec.get("origin") or "?")
         # COMPACT card (the user 2026-07-26): what you're approving is a delivery to THIS session, so
         # the card reads as one line under the recipient's name — "New message" + a dim sender/gist
         # line — and the full body lives in the click-through decision modal. The gist is the same
         # 90-char collapse the federation gossip uses (there is no courier summary at hold time: the
         # courier only judges mail AFTER delivery, which is exactly what hasn't happened yet).
         out.append({
-            "itemId": item_id, "sid": rec.get("toId") or "", "name": to,
-            "color": _name_color(rec.get("toId") or ""),
+            "itemId": item_id, "sid": to_id, "name": to,
+            "color": _name_color(to_id),
             "text": "New message",
             "t": t, "live": False,
             "turnId": item_id, "origin": None,

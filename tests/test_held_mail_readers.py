@@ -11,6 +11,7 @@ aside once with the other holds still built, and name a record with no message i
 Synthetic only: a hermetic temp state root, placeholder session ids, invented hold and notice text, TESTHOST. Every root
 this module mints writes `off` into <root>/session-hosts (repo rule, 2026-09-11) and no goals are minted."""
 import contextlib
+import inspect
 import io
 import json
 import os
@@ -97,6 +98,14 @@ def _asks(feed, prefix):
     return [a for a in feed["asks"] if str(a["itemId"]).startswith(prefix)]
 
 
+def _qcards(now):
+    """The reader at HEAD takes (now); the fails-before run over the base commit meets the older (now, cleared) and gets
+    the empty set there, so that run fails on the reader's defects and not on the signature."""
+    if len(inspect.signature(km._quarantine_cards).parameters) == 1:
+        return km._quarantine_cards(now)
+    return km._quarantine_cards(now, set())
+
+
 class ClearAllLeavesHolds(unittest.TestCase):
     """F1: the feed footer's Clear-all posts {type: "clearAll"} with no filter; the kernel builds the feed and hands
     _clear_all EVERY ask id, a held message's included. The reader used to honour the cleared ledger for a hold, so one
@@ -168,7 +177,7 @@ class ClearAllLeavesHolds(unittest.TestCase):
         km.Handler._dispatch_ws(None, {"type": "quarantineDecision", "mid": "qc-hold-1", "action": "approve",
                                        "sid": SID}, self.client)
         self.assertEqual([m for m in self.sent if m.get("type") == "quarantineRefused"], [])
-        self.assertEqual(km._quarantine_cards(self.now), [], "decided: the file is gone, so the card is")
+        self.assertEqual(_qcards(self.now), [], "decided: the file is gone, so the card is")
         self.assertEqual(_asks(self._feed(), "quarantine:"), [])
 
 
@@ -240,6 +249,172 @@ class NoticeRowTypeFault(unittest.TestCase):
         with contextlib.redirect_stderr(io.StringIO()):
             rows = km._notice_rows_unlocked(SID)
         self.assertEqual([r["key"] for r in rows], ["figure"])
+
+
+class HeldMailReader(unittest.TestCase):
+    """F3, F4 and F5, one fix with three faces: the quarantine directory reader. F3: a fault listing the directory returned
+    [] with nothing said, so an unreadable directory drew a clean board with every hold invisible (and on this Python the
+    glob swallowed the PermissionError itself, so the reader's except never even ran). F4: the try wrapped json.loads
+    alone, so a hold file whose JSON is not an object raised AttributeError, and a non-integer `at` ValueError, out of
+    _quarantine_cards and build_feed. F5: a torn file, or a record with no mid, was skipped silently forever with the file
+    left in place. The port of the postal bus's _list_json_records, precondition included: an unreadable record is moved
+    aside ONCE to <name>.corrupt-<utc stamp> with a line naming the file, the other holds stay on the board, a file
+    rewritten under the read is left for the next build, and a directory fault names itself (one stderr line and one bell
+    row under the refused kind, once per episode) instead of returning an empty board."""
+
+    def setUp(self):
+        self.r = _Root()
+        self.now = int(time.time())
+        self._modes = []
+        getattr(km, "_HOLD_UNREADABLE_SAID", set()).clear()
+        km._state_fault_seen.clear()
+        with km._SYNC_LOCK:
+            del km._SYNC_NOTICES[:]
+
+    def tearDown(self):
+        for p, mode in self._modes:                  # restore every mode this test changed, so the root can be removed
+            try:
+                os.chmod(p, mode)
+            except OSError:
+                pass
+        self.r.close()
+
+    def _chmod(self, p, mode):
+        self._modes.append((p, 0o700))
+        os.chmod(p, mode)
+
+    def _cards(self):
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            cards = _qcards(self.now)
+        return cards, err.getvalue()
+
+    def _refused(self):
+        return [r for r in km._sync_notice_rows() if r["kind"] == "refused"]
+
+    def _asides(self, stem):
+        return sorted(p.name for p in self.r.qdir.iterdir() if p.name.startswith(stem + ".json.corrupt-"))
+
+    def _skip_as_root(self):
+        if os.geteuid() == 0:
+            self.skipTest("SKIPPED LOUDLY: running as root, so a mode of 000 does not refuse the read this test injects")
+
+    def test_an_unlistable_directory_is_a_named_fault_not_a_clean_board(self):
+        self._skip_as_root()
+        self.r.write_hold("qc-1")
+        self._chmod(self.r.qdir, 0)
+        cards, log = self._cards()
+        self.assertEqual(cards, [], "nothing could be read...")
+        rows = self._refused()
+        self.assertEqual(len(rows), 1, "...and the fault is on the board's bell, under the refused kind")
+        self.assertIn("postal/quarantine", rows[0]["text"], "it names the directory")
+        self.assertIn("could not be listed", rows[0]["text"])
+        self.assertIn("Permission denied", rows[0]["text"])
+        self.assertIn("none was delivered or dropped", rows[0]["text"])
+        self.assertEqual(log.count("could not be listed"), 1, "and stderr carries the same line")
+        cards, log = self._cards()                   # the next build meets the same fault: quiet, one episode
+        self.assertEqual((cards, log, len(self._refused())), ([], "", 1))
+        self._chmod(self.r.qdir, 0o700)
+        cards, log = self._cards()                   # readable again: the holds are back and the episode ends
+        self.assertEqual([c["itemId"] for c in cards], ["quarantine:qc-1"])
+        self.assertNotIn(str(self.r.qdir), km._state_fault_seen)
+        self._chmod(self.r.qdir, 0)
+        cards, log = self._cards()                   # a new fault is a new episode: said again
+        self.assertEqual(len(self._refused()), 2)
+        self.assertEqual(log.count("could not be listed"), 1)
+
+    def test_a_missing_directory_is_nothing_held_and_no_fault(self):
+        cards, log = self._cards()
+        self.assertEqual((cards, log, self._refused()), ([], "", []))
+
+    def test_a_non_object_hold_moves_aside_and_the_other_holds_stand(self):
+        self.r.write_hold("qc-good")
+        (self.r.qdir / "qc-list.json").write_text(json.dumps([1, 2, 3]))
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            feed = km.build_feed(self.now)           # the whole build survives it (it raised AttributeError before)
+        self.assertEqual([c["itemId"] for c in _asks(feed, "quarantine:")], ["quarantine:qc-good"])
+        self.assertFalse((self.r.qdir / "qc-list.json").exists(), "moved aside...")
+        self.assertEqual(len(self._asides("qc-list")), 1, "...to <name>.json.corrupt-<stamp> beside the others")
+        self.assertTrue((self.r.qdir / "qc-good.json").exists(), "the readable hold is untouched")
+        log = err.getvalue()
+        self.assertIn("qc-list.json could not be parsed (not a JSON object)", log)
+        self.assertIn("moved aside to qc-list.json.corrupt-", log)
+        rows = self._refused()
+        self.assertEqual(len(rows), 1, "and the bell carries it")
+        self.assertIn("qc-list.json", rows[0]["text"])
+
+    def test_a_non_integer_at_moves_aside_naming_the_type_not_the_text(self):
+        self.r.write_hold("qc-good")
+        self.r.write_hold("qc-when", at="yesterday-at-noon")
+        cards, log = self._cards()
+        self.assertEqual([c["itemId"] for c in cards], ["quarantine:qc-good"])
+        self.assertEqual(len(self._asides("qc-when")), 1)
+        self.assertIn("qc-when.json could not be parsed (`at` is a str, not an integer)", log)
+        self.assertNotIn("yesterday-at-noon", log)
+
+    def test_a_torn_file_moves_aside_once_and_is_not_read_again(self):
+        self.r.write_hold("qc-good")
+        (self.r.qdir / "qc-torn.json").write_text('{"mid": "qc-torn", "to": "web", "at": 10')
+        cards, log = self._cards()
+        self.assertEqual([c["itemId"] for c in cards], ["quarantine:qc-good"])
+        self.assertEqual(len(self._asides("qc-torn")), 1)
+        self.assertIn("qc-torn.json could not be parsed", log)
+        cards, log = self._cards()                   # the next build: the listing never meets the file again
+        self.assertEqual([c["itemId"] for c in cards], ["quarantine:qc-good"])
+        self.assertEqual((log, len(self._asides("qc-torn")), len(self._refused())), ("", 1, 1))
+
+    def test_a_record_with_no_mid_is_named(self):
+        self.r.write_hold("qc-good")
+        (self.r.qdir / "qc-nomid.json").write_text(json.dumps({"to": "web", "toId": SID, "frm": "api", "at": 1000}))
+        (self.r.qdir / "qc-intmid.json").write_text(json.dumps({"mid": 7, "to": "web", "at": 1000}))
+        cards, log = self._cards()
+        self.assertEqual([c["itemId"] for c in cards], ["quarantine:qc-good"])
+        self.assertIn("qc-nomid.json could not be parsed (no message id)", log)
+        self.assertIn("qc-intmid.json could not be parsed (no message id)", log, "a mid that is not text is no mid")
+        self.assertEqual((len(self._asides("qc-nomid")), len(self._asides("qc-intmid"))), (1, 1))
+
+    def test_a_file_rewritten_under_the_read_is_left_for_the_next_build(self):
+        # the precondition: the stat taken before the read must still match when the parse fails, else a writer's
+        # atomic publish raced the read and the healthy new bytes must not be moved aside
+        self.r.write_hold("qc-good")
+        p = self.r.qdir / "qc-race.json"
+        p.write_text('{"mid": "qc-race", "to": "web", "at": 10')
+        real_loads = km.json.loads
+
+        def racing_loads(text, *a, **kw):
+            if text.startswith('{"mid": "qc-race"') and not text.endswith("}"):
+                self.r.write_hold("qc-race", body="the second publish, whole")   # a different size: the stat moves
+            return real_loads(text, *a, **kw)
+        km.json.loads = racing_loads
+        try:
+            cards, log = self._cards()
+        finally:
+            km.json.loads = real_loads
+        self.assertEqual([c["itemId"] for c in cards], ["quarantine:qc-good"], "the torn read carded nothing...")
+        self.assertTrue(p.exists(), "...and the rewritten file stands where it is")
+        self.assertEqual((self._asides("qc-race"), log, self._refused()), ([], "", []))
+        cards, log = self._cards()                   # the next build reads the new bytes
+        self.assertEqual([c["itemId"] for c in cards], ["quarantine:qc-good", "quarantine:qc-race"])
+
+    def test_a_file_that_cannot_be_moved_aside_is_said_once_and_left(self):
+        self._skip_as_root()
+        self.r.write_hold("qc-good")
+        (self.r.qdir / "qc-torn.json").write_text('{"mid": "qc-torn", "to": "web", "at": 10')
+        self._chmod(self.r.qdir, 0o500)              # listable and readable, but no rename inside it
+        cards, log = self._cards()
+        self.assertEqual([c["itemId"] for c in cards], ["quarantine:qc-good"], "the readable hold stands")
+        self.assertTrue((self.r.qdir / "qc-torn.json").exists(), "the file could not be moved: it stays")
+        self.assertIn("qc-torn.json could not be read or parsed and could not be moved aside", log)
+        self.assertIn("Permission denied", log)
+        self.assertEqual(log.count("qc-torn.json"), 1)
+        cards, log = self._cards()                   # said once per (file, errno), not per build
+        self.assertEqual((log, [c["itemId"] for c in cards]), ("", ["quarantine:qc-good"]))
+
+    def test_the_directory_is_listed_never_globbed(self):
+        src = inspect.getsource(km._held_records)
+        self.assertIn("os.listdir(qdir)", src, "the listing raises on an unreadable directory")
+        self.assertNotIn(".glob(", src, "Path.glob swallows a PermissionError on this Python and yields nothing")
 
 
 if __name__ == "__main__":
