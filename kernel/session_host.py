@@ -31,10 +31,13 @@ helpers come from sdk_backend, which imports without the SDK and runs nothing at
 """
 from __future__ import annotations
 import asyncio
+import errno
 import json
 import os
+import re
 import signal
 import socket
+import stat
 import sys
 import time
 import traceback
@@ -504,32 +507,82 @@ class PipeCliTransport:
         return self.proc.returncode if self.proc else None
 
 
+# The AF_UNIX path budget. sun_path is 108 bytes on Linux and 104 on macOS, and CPython's bind and connect refuse a
+# path that does not fit with its terminating NUL ("AF_UNIX path too long", socketmodule's getsockaddrarg), so the
+# longest path either side can use is one byte less. A published socket path over this is one the kernel can never
+# connect to, and _serve_socket checks the PUBLISHED path against it before the bind: the bind's own check was the
+# only enforcement of the budget on that path while the bind took the published name, and it moved onto the temp
+# name when the temp got a name of its own, so at a published path of exactly 108 bytes the temp bound, the rename
+# published an unreachable socket and the host logged socket-ready and kept its lease and its CLI, where the code
+# before failed the bind loudly (the review of this fix, 2026-09-19). tests/test_session_host.py SocketBudget derives
+# the number by binding throwaway sockets at the lengths around it, so this is a measured limit, not an assumed one.
+SOCK_PATH_MAX = 103 if sys.platform == "darwin" else 107
+
+_TEMP_DIGITS = "0123456789abcdefghijklmnopqrstuv"        # base 32 as int(s, 32) reads it back
+_TEMP_NAME = re.compile(r"^([0-9a-v]{5})[0-9a-v]{4}\.tmp$")
+
+
+def _b32(n: int, width: int) -> str:
+    digits = []
+    while n:
+        n, r = divmod(n, 32)
+        digits.append(_TEMP_DIGITS[r])
+    return "".join(reversed(digits)).rjust(width, "0")
+
+
 def sock_names(sid: str) -> tuple[str, str]:
-    """The control socket's two file names under `hosts/`: the published `<sid8>.sock` and the temp `<sid8>.tmp`
-    it is bound at first (2026-09-18, the review of the owner-only bind). The temp is one byte SHORTER than the
-    published name, on purpose: the socket path budget is sun_path (107 usable bytes on Linux, 103 on macOS), the
-    published path is that budget, and a deep test root (the sweep's xdist nesting) puts `hosts/<sid8>.sock` at
-    107 exactly, so a temp name longer than the published one fails the bind there (a directory beside the socket
-    did, the first shape of this fix). tests/test_session_host.py pins the bound."""
-    return sid[:8] + ".sock", sid[:8] + ".tmp"
+    """The control socket's two file names under `hosts/`: the published `<sid8>.sock` (the name the kernel's host_sock
+    builds) and a fresh WRITER-UNIQUE temp it is bound at first: this process's pid in five base-32 digits (pid_max is
+    2^22 on Linux, four digits and a bit), 20 random bits in four more, then `.tmp`. Unique to the writer as write_reg's
+    and write_lease's temps are (kernel/sdk_backend.py), so the rename can only ever publish the socket this host bound:
+    the fixed `<sid8>.tmp` of the first cut was the shared-name hazard (the review of this fix, 2026-09-19: a second
+    host for the sid unlinking and rebinding that name between the first host's bind and its rename made the first
+    publish, and report ready on, a socket it never created). Exactly the published name's length, 13 bytes for the
+    uuid sids the kernel mints (host_sock takes the first 8 characters), because the published path IS the socket path
+    budget on the box's deepest test root (SOCK_PATH_MAX; the sweep's xdist nesting puts `hosts/<sid8>.sock` at 107
+    exactly), so a temp longer than the published name would fail the bind where the published name fits. A sid shorter
+    than 8 characters is not a shape the kernel produces: its temp is longer than its published name, and a temp over
+    the budget fails the bind loudly (socket-bind-failed) rather than publishing anything. tests/test_session_host.py
+    SocketMode pins the form, the length and the uniqueness."""
+    rnd = int.from_bytes(os.urandom(3), "big") >> 4
+    return sid[:8] + ".sock", _b32(os.getpid(), 5) + _b32(rnd, 4) + ".tmp"
+
+
+def temp_owner_pid(name: str) -> int | None:
+    """The pid a socket temp name (sock_names) embeds, or None for any other name: _serve_socket's stale-temp sweep
+    unlinks a temp only when its owner is gone, and touches no name whose form this code did not mint."""
+    m = _TEMP_NAME.match(name)
+    return int(m.group(1), 32) if m else None
 
 
 def hosts_dir(state_dir) -> Path:
-    """`<state>/hosts/`, made owner-only (0700) and kept so: the directory that holds every host's control socket, the
-    temp name each socket is bound at (`_serve_socket`), and the per-session `hosts/<sid>/` directories. Both creators
-    go through here (the kernel's write_spawn_spec, whose mkdir of `hosts/<sid>/` with parents=True used to leave
-    `hosts/` itself at the umask's mode, and the host's own bind), so the mode is set by code, not by the umask of the
-    process that happened to create it. mkdir's mode passes through the umask, so a chmod follows whenever the mode
-    read back is not 0700; an EXISTING loose `hosts/` (every install before 2026-09-19 made it at the umask's mode) is
-    tightened the same way on the next spawn or bind, since we own it and its contents are ours alone (the state root
-    is 0700 for the same reason, kernel/judge.py; the judge scratch dir's repair is the precedent). Pinned by
-    tests/test_host_transport.py SpawnSpec.test_hosts_is_owner_only_by_code_and_a_loose_one_is_tightened (the
-    kernel's road, under a 000 umask) and tests/test_session_host.py SocketMode.test_hosts_is_owner_only_once_the_host_binds
-    and HostProcess.test_a_real_host_leaves_hosts_owner_only (the host's road, in-process and as a real process)."""
+    """`<state>/hosts/`, made owner-only (0700), REFUSED when it is not ours, and kept so: the directory that holds every
+    host's control socket, the temp name each socket is bound at (`_serve_socket`), and the per-session `hosts/<sid>/`
+    directories. Both creators go through here (the kernel's write_spawn_spec in kernel/host_transport.py, whose mkdir
+    of `hosts/<sid>/` with parents=True used to leave `hosts/` itself at the umask's mode, and the host's own bind), so
+    the mode is set by code, not by the umask of the process that happened to create it. The checks are
+    kernel/judge.py's _ensure_judge_scratch, taken whole (the review of this fix, 2026-09-19: the first cut named that
+    precedent and took half of it, a stat through a symlink and a chmod never read back): lstat, not stat, so a symlink
+    planted at the path is refused instead of passing every check on behalf of its target; a directory another uid owns
+    is refused; a loose one we own is tightened (every install before 2026-09-19 made it at the umask's mode, 0775 under
+    the 002 the live host runs at: ours, so a repair, not a guess), and the mode is read back, so a tighten that did not
+    take raises instead of returning. Loud on every refusal: the host's road logs socket-bind-failed (step hosts-dir) and
+    exits, and the kernel's spawn fails before it writes a spec. Pinned by tests/test_host_transport.py
+    SpawnSpec.test_hosts_is_owner_only_by_code_and_a_loose_one_is_tightened and
+    SpawnSpec.test_a_symlink_at_hosts_or_a_tighten_that_does_not_take_fails_the_spawn (the kernel's road, under a 000
+    umask) and tests/test_session_host.py HostsDir, SocketMode.test_hosts_is_owner_only_once_the_host_binds and
+    HostProcess.test_a_real_host_leaves_hosts_owner_only (the host's road, in-process and as a real process)."""
     d = Path(state_dir) / "hosts"
     d.mkdir(mode=0o700, parents=True, exist_ok=True)
-    if (os.stat(d).st_mode & 0o777) != 0o700:
-        os.chmod(d, 0o700)
+    st = os.lstat(d)                            # lstat, not stat: a symlink planted in our place would
+    if not stat.S_ISDIR(st.st_mode):            # otherwise pass every check below on behalf of its target
+        raise OSError("hosts directory %s is not a directory" % d)
+    if st.st_uid != os.geteuid():
+        raise OSError("hosts directory %s belongs to uid %d, not to us (uid %d)" % (d, st.st_uid, os.geteuid()))
+    if st.st_mode & 0o077:                      # ours, but loose: an install from before the fix, a stray umask
+        os.chmod(d, 0o700)                      # we own it, so tightening is a repair, not a guess
+        if os.lstat(d).st_mode & 0o077:
+            raise OSError("hosts directory %s stays group/world-accessible" % d)
     return d
 
 
@@ -981,43 +1034,74 @@ class SessionHost:
                     self._send(self.attached, {"t": "fault", "kind": "write-failed", "text": type(e).__name__})
 
     # ── life ──
-    async def _serve_socket(self) -> None:
-        """Serve `hosts/<sid8>.sock` owner-only from the moment the path exists. asyncio.start_unix_server binds
-        and listens at the umask's mode, and until 2026-09-18 the chmod to 0600 came one line after the bind, so
-        the published path stood at the umask's mode for the gap (PR 789's round 1, finding fresh-5: the last
-        member of the create-then-tighten class that PR closed for the kernel's credential files; behind the
-        owner-only state root and a masking umask, so a window, not a live hole). The bind takes the temp name
-        `hosts/<sid8>.tmp` beside the published one (sock_names); the temp is tightened by PATH (fchmod on the
-        listening descriptor is a no-op for a bound AF_UNIX socket on Linux, verified 2026-09-18: the descriptor
-        is the socket, not the file); os.rename then moves it onto the published path, which is therefore born
-        0600. A connect through the new name reaches the same listening socket (AF_UNIX resolves a path to its
-        inode), so the kernel keeps connecting to the one documented path (docs/reference.md) and no process-wide
-        umask moves. During its brief life at the umask's mode the temp is guarded by the directory it lives in:
-        `hosts/` is owner-only BY CODE (hosts_dir, called here and by the kernel's write_spawn_spec, 0700 whatever
-        the umask, an existing loose one tightened; pinned by tests/test_session_host.py
-        SocketMode.test_hosts_is_owner_only_once_the_host_binds and HostProcess.test_a_real_host_leaves_hosts_owner_only
-        and by tests/test_host_transport.py SpawnSpec.test_hosts_is_owner_only_by_code_and_a_loose_one_is_tightened),
-        so nothing outside the uid can traverse to the temp; behind it stand the state root's own 0700
-        (kernel/judge.py at import, pinned by tests/test_judge_scratch_private.py) and the umask itself (002 or
-        022 already excludes the group and other write an AF_UNIX connect needs). The published path never exists
-        at a loose mode. The temp is in the SAME directory and one byte shorter than the published name because
-        the published path is the socket path budget (sun_path, 107 usable bytes on Linux): a deep test root sits
-        at 107 exactly, and both longer shapes tried first (a temp inside `hosts/<sid>/`, then a 0700 directory
-        beside the socket) failed the bind there (the review of this fix, 2026-09-18). A stale published path and
-        a stale temp a dead host left are unlinked before the bind (the rename would replace the former anyway);
-        a bind that fails is loud: a `socket-bind-failed` row here, then main()'s host-crashed. Cleanup of the
-        published path is unchanged: asyncio's Server.close never unlinks a path on 3.12, and 3.13's cleanup
-        compares the bound path's inode and finds the temp gone, so run()'s own unlink stays the one."""
-        hosts_dir(self.state_dir)                       # `hosts/` 0700 before anything is bound in it
-        for stale in (self.sock_path, self.sock_tmp):
+    def _sweep_stale_temps(self) -> None:
+        """Socket temps (sock_names) whose owner is gone, unlinked: a host killed between its bind and its rename leaves
+        one (a bind that fails unlinks its own). A temp whose pid is alive is another host's, mid-bind, and is left alone,
+        as is any name whose form this code did not mint; a signal-0 probe is the liveness test, and a pid the kernel has
+        since reused keeps its dead owner's temp until that pid is gone too (one owner-only file in a 0700 directory, the
+        leftover class a killed host's published socket already was). The first cut unlinked a fixed temp name here, which
+        is what made the name shared (the review of this fix, 2026-09-19)."""
+        for p in self.sock_path.parent.glob("*.tmp"):
+            pid = temp_owner_pid(p.name)
+            if pid is None or pid == os.getpid():
+                continue
             try:
-                stale.unlink()
-            except OSError:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                try:
+                    p.unlink()
+                except OSError:
+                    pass
+            except OSError:                          # a live process of another uid: not ours to judge
                 pass
+
+    async def _serve_socket(self) -> None:
+        """Serve `hosts/<sid8>.sock` owner-only from the moment the path exists, or fail loudly and serve nothing.
+        asyncio.start_unix_server binds and listens at the umask's mode, and until 2026-09-18 the chmod to 0600 came one
+        line after the bind, so the published path stood at the umask's mode for the gap (PR 789's round 1, finding
+        fresh-5: the last member of the create-then-tighten class that PR closed for the kernel's credential files;
+        behind the owner-only state root, the one guard then, so a window, not a live hole). The bind takes a
+        writer-unique temp name beside the published one (sock_names: the pid and random digits, the published name's
+        length); the temp is tightened by PATH (fchmod on the listening descriptor is a no-op for a bound AF_UNIX socket
+        on Linux, verified 2026-09-18: the descriptor is the socket, not the file); os.rename then moves it onto the
+        published path, which is therefore born 0600. A connect through the new name reaches the same listening socket
+        (AF_UNIX resolves a path to its inode), so the kernel keeps connecting to the one documented path
+        (docs/reference.md) and no process-wide umask moves. During its brief life at the umask's mode (0775 under the
+        002 the live host runs at, measured 2026-09-19; 0755 under 022) the temp has ONE guard, the mode of the
+        directory it is bound in: `hosts/` is owner-only BY CODE (hosts_dir, called here and by the kernel's
+        write_spawn_spec, 0700 whatever the umask, a symlink or a foreign owner refused, an existing loose one tightened
+        and the tighten read back), so nothing outside the uid can reach the temp's name. The umask is not a guard and
+        the first cut's claim that it was one was false for the umask we run: 002 leaves the group write bit, the
+        permission an AF_UNIX connect needs (the review of this fix, 2026-09-19; pinned by tests/test_session_host.py
+        SocketMode's umask cases, which stat the temp at its chmod). The published path never exists at a loose mode.
+        The published path's LENGTH is checked here against SOCK_PATH_MAX before anything is bound: the bind's own
+        check was the budget's only enforcement while the bind took the published name, and binding a temp moved it
+        onto the temp's name (the module comment at SOCK_PATH_MAX; the first cut published an unreachable socket at
+        exactly 108 bytes). A stale published path a dead host left is unlinked (the rename would replace it anyway),
+        and stale temps whose owners are gone are swept (_sweep_stale_temps). Every failure on this road is loud and
+        leaves nothing: a `socket-bind-failed` row naming the step, the error class, its errno and the path's length
+        (never the error's text, which carries the path: host.log carries no spec field), then run() ends the CLI and
+        drops the lease and main() logs host-crashed, so the kernel's spawn wait reads an exit, not a socket. Cleanup
+        of the published path is unchanged: asyncio's Server.close never unlinks a path on 3.12, and 3.13's cleanup
+        compares the bound path's inode and finds the temp gone, so run()'s own unlink stays the one."""
+        step, n = "hosts-dir", len(os.fsencode(str(self.sock_path)))
         server = None
         try:
+            hosts_dir(self.state_dir)                   # `hosts/` 0700 and ours before anything is bound in it
+            step = "budget"
+            if n > SOCK_PATH_MAX:                       # the published path is what the kernel connects to: its length is the one that counts
+                raise OSError(errno.ENAMETOOLONG, "AF_UNIX path too long")
+            step = "prelude"
+            try:
+                self.sock_path.unlink()                 # a dead host's published socket
+            except OSError:
+                pass
+            self._sweep_stale_temps()
+            step = "bind"
             server = await asyncio.start_unix_server(self._on_client, path=str(self.sock_tmp))
+            step = "chmod"
             os.chmod(self.sock_tmp, 0o600)
+            step = "rename"
             os.rename(self.sock_tmp, self.sock_path)
         except OSError as e:
             if server is not None:
@@ -1026,10 +1110,11 @@ class SessionHost:
                 self.sock_tmp.unlink()
             except OSError:
                 pass
-            self.log("socket-bind-failed", error=type(e).__name__, text=str(e)[:200])
+            self.log("socket-bind-failed", step=step, error=type(e).__name__, errno=e.errno, pathLen=n, limit=SOCK_PATH_MAX,
+                     at=self._where(e))
             raise
         self._server = server
-        self.log("socket-ready", sock=str(self.sock_path.name))
+        self.log("socket-ready", sock=self.sock_path.name, tmp=self.sock_tmp.name, pathLen=n)
 
     async def run(self) -> int:
         self._stop = asyncio.Event()
@@ -1048,7 +1133,24 @@ class SessionHost:
             self.log("cli-spawn-failed", error=type(e).__name__)
             self.exit_info = {"t": "exit", "code": None, "signal": None, "cause": "spawn-failed", "error": type(e).__name__}
             return 1
-        await self._serve_socket()
+        try:
+            await self._serve_socket()
+        except OSError:
+            # a host that could not publish its socket holds nothing: the CLI it spawned ends with it and its lease goes,
+            # so the kernel's spawn wait reads the exit (code 1, main()'s host-crashed after the socket-bind-failed row)
+            # and its orphan recovery finds no holder to wait on (the review of this fix, 2026-09-19: at a published path
+            # over the budget the first cut logged socket-ready and kept both the lease and the CLI, and nothing could
+            # ever connect)
+            try:
+                await self.transport.close()
+            except Exception:
+                pass
+            try:
+                self.lease_api["remove_lease"](self.state_dir, self.sid)
+            except Exception:
+                pass
+            self.journal.close()
+            raise
         tasks = [asyncio.ensure_future(self._journal_writer()), asyncio.ensure_future(self._read_cli()),
                  asyncio.ensure_future(self._beat()), asyncio.ensure_future(self._self_answer_loop()),
                  asyncio.ensure_future(self._grace_loop()), asyncio.ensure_future(self._stdin_pump())]
@@ -1103,8 +1205,11 @@ def main(argv=None) -> int:
     host = SessionHost(argv[0])
     try:
         return asyncio.run(host.run())
-    except Exception:
-        host.log("host-crashed", error=traceback.format_exc().splitlines()[-1][:200])
+    except Exception as e:
+        # the class and the failing frame, never the text: an OSError's text carries the path it failed on, a spec field
+        # (the state root), and host.log carries no spec field (the review of this fix, 2026-09-19, which found the
+        # bind-failure road writing the root's absolute path here through this row)
+        host.log("host-crashed", error=type(e).__name__, at=SessionHost._where(e))
         return 1
 
 

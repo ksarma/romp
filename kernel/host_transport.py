@@ -161,7 +161,10 @@ def write_spawn_spec(state_dir, sid: str, spec: dict) -> Path:
     pull-in, 2026-09-16, found the first cut moving the three login names alone.
     `hosts/` itself is made 0700 first (sh.hosts_dir: this is the road that creates it on
     a fresh state root, and until 2026-09-19 the mkdir with parents=True left it at the umask's mode; the
-    host's control socket is bound in that directory, so its mode is the guard on the socket's temp name)."""
+    host's control socket is bound in that directory, so its mode is the one guard on the socket's temp name).
+    hosts_dir raises (OSError) for a `hosts/` that is a symlink, belongs to another uid, or stays loose after
+    its chmod, and this spawn then fails before a spec is written: the failure surfaces as the launch error,
+    never as a host started over a directory we do not own (the review of the socket-mode fix, 2026-09-19)."""
     sh.hosts_dir(state_dir)
     d = host_dir(state_dir, sid)
     d.mkdir(mode=0o700, parents=True, exist_ok=True)

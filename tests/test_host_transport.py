@@ -174,6 +174,34 @@ class SpawnSpec(unittest.TestCase):
         self.assertEqual(sh.hosts_dir(loose), Path(loose) / "hosts", "the helper both creators call, idempotent")
         self.assertEqual(stat.S_IMODE(os.stat(Path(loose) / "hosts").st_mode), 0o700)
 
+    def test_a_symlink_at_hosts_or_a_tighten_that_does_not_take_fails_the_spawn(self):
+        """hosts_dir takes the judge scratch precedent whole (the socket-mode fix's round 1, 2026-09-19: the first cut
+        stat'd through a symlink and never read the mode back after its chmod). The kernel's road: a symlink planted at
+        hosts/ fails write_spawn_spec with OSError before any spec is written, and the link's target is not chmod'd
+        through it; a chmod that does not take (a no-op os.chmod over a loose hosts/) fails it too instead of returning
+        with the directory still loose."""
+        self.addCleanup(os.umask, os.umask(0o000))
+        spec = {"sid": SID, "name": "web", "version": "abc12345", "state_dir": "/state", "protocol": 1}
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, True)
+        target = Path(root) / "elsewhere"
+        target.mkdir(mode=0o755)
+        (Path(root) / "hosts").symlink_to(target)
+        with self.assertRaises(OSError) as cm:
+            ht.write_spawn_spec(root, SID, spec)
+        self.assertIn("not a directory", str(cm.exception))
+        self.assertEqual(sorted(p.name for p in target.iterdir()), [], "no spec written through the link")
+        self.assertEqual(stat.S_IMODE(os.stat(target).st_mode), 0o755, "the target's mode untouched")
+        loose = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, loose, True)
+        (Path(loose) / "hosts").mkdir(mode=0o755)
+        with mock.patch.object(os, "chmod", lambda *a, **k: None):
+            with self.assertRaises(OSError) as cm:
+                ht.write_spawn_spec(loose, SID, spec)
+        self.assertIn("stays group/world-accessible", str(cm.exception))
+        self.assertEqual(stat.S_IMODE(os.lstat(Path(loose) / "hosts").st_mode), 0o755)
+        self.assertFalse((Path(loose) / "hosts" / SID).exists(), "the spawn stopped at the directory")
+
     @unittest.skipUnless(SDK, "the SDK is not importable here")
     def test_the_spec_fields_track_what_the_sdk_transport_reads(self):
         import claude_agent_sdk._internal.transport.subprocess_cli as scli
