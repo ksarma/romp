@@ -7796,8 +7796,8 @@ Round 1 made the second rule; the second review added the other three, the armed
 and the composer's. At rest, during the wait and during the print Escape is left alone, and the viewer's own closes the
 card. The button is disabled until the body is in (P7).
 
-P2. **Over gated placeholders the bar arms instead of printing; then every picture is awaited, with an ask after 8 s if
-one is still loading; then window.print.** The machine is `step`, a pure function over a state (disabled, resting,
+P2. **Over gated placeholders the bar arms instead of printing; then every picture that reaches the paper is awaited, with
+an ask after 8 s if one is still loading; then window.print.** The machine is `step`, a pure function over a state (disabled, resting,
 armed, preparing, stalled, printing; the first is P7's, the fifth the deadline's ask) and an event (press, escape,
 choose, prepare, ready, printed, the host's body report, P7's `body`, the driver's `recount` after a repaint under the
 armed line, and the ask's `stalled`, `anyway` and `keep`) that returns the next state and the act the driver performs;
@@ -7809,14 +7809,30 @@ print block, which hides every `.fileview > .fileview-err`, keeps the line off t
 another host is not loaded." or "N pictures from other hosts are not loaded.", with **Print with them** and **Print
 without them**; a second press or Escape disarms. The press arms rather than prints, a two-click shape, for decision 8's
 reason: the gate is a privacy choice, so a print never fetches from a host outside the list unless the person chose it.
-"With them" calls `loadGatedHost` for every host every printable placeholder names (the rule below), the function the
-placeholder's own click runs, so the requests are the ones a click on each placeholder makes. Each word button carries a
+"With them" restores exactly the placeholders it counted, each through `loadGatedFigure` (figure-gate.ts), the gate's
+restore of ONE placeholder: the figure's moved attributes back under their names, on it and on its descendants, and the
+figure back in the placeholder's place, the same restore a click's `loadGatedHost` runs for each placeholder of a host,
+WITHOUT adding the host to the document's `loadedHosts`. So the requests are the ones those figures make, one fetch per
+restored placeholder, and the grant is this print's alone: a placeholder inside a closed fold or under `hidden` that
+names the same host stands as it is, and the next paint of the page gates the host's figures again, since every paint
+reads the loaded set (a Reload of the note and a later note naming the host, both landing as placeholders:
+file-print-egress-browser.test.ts cases (7) to (11)). A click on a placeholder
+keeps its host-wide, page-life meaning (decision 8: `loadGatedHost` adds the host to `loadedHosts` and `regateFigures`
+restores every placeholder waiting on it). Before the round-2 review (2026-09-19) "with them" loaded by host through
+`loadGatedHost`, the click's road, so a host one printable and one folded placeholder shared had both restored and the
+folded picture fetched for a print that never shows it, and `loadedHosts` held the host for the page.
+figure-gate.test.ts executes the two roads apart over a stand-in: the one-placeholder restore puts the moved attributes
+back on the figure and its descendants and the figure in the placeholder's place, the loaded set unchanged and a second
+placeholder naming the host untouched, and answers false for an element that is no placeholder; the click's
+`loadGatedHost` adds the host. Each word button carries a
 title. "Print with them"'s names the hosts the press grants, once each in the order the placeholders name them
 (`withTitle`; "Load the pictures from a.test and b.test, then print" over two hosts, "those hosts" with none known): the
 line counts pictures, and a placeholder naming two hosts says "and 1 more host" in its own label, so the title is the
-one place the hosts a press grants can be read together before the press. "Print without them"'s is `WITHOUT_TITLE`,
-"Print with their placeholders as they are". The hosts are read at the arm and kept (`armedHosts`): "with them" loads
-that list and no other, so the title and the loads are one list by construction. A body repainted under the armed line
+one place the hosts a press grants can be read together before the press (a host one of them redirects to is reached as
+the click reaches it and named nowhere: open point 7). "Print without them"'s is `WITHOUT_TITLE`,
+"Print with their placeholders as they are". The placeholders are read at the arm and kept (`armedGates`, re-read at
+each recount), with the hosts they name (`armedHosts`, `hostsOf`): "with them" restores that list and no other (one no
+longer in the body is skipped, `host.body.contains`), so the title and the restores are one list by construction. A body repainted under the armed line
 (seen by P7's observer: a Reload landing, a Rendered or Raw pick) has its placeholders counted again (the driver's
 `recount`): over placeholders the line stands with the new count and the title with the new hosts, rewritten in place,
 the keyboard where it was; over none the line goes, since the question it asked is moot, and the next press prints.
@@ -7827,22 +7843,40 @@ it: the viewer's own gate handlers on the body, `loadGate` and `gateKeys`) is co
 hears the activation on the card in the bubble phase (`onGateAct`), after the body's handler restored the picture, so
 the count and the title follow the one just loaded, and the last one gone disarms; before this the count stood as the
 press left it until a repaint (the review's consolidation, 2026-09-19). Only a placeholder that reaches the paper is
-counted, named and loaded (`printable`, the third review, 2026-09-19): one inside a closed `<details>`, a typed one or a
-folded callout (`> [!type]-`, md-config.ts), outside that details' own summary, or under a `hidden` attribute whatever
-its value, is left out of the count, of the title and of the hosts "with them" loads, since the print never shows it; a
-picture under an inline `display: none` is printable, since the sanitizer strips that style (md-sanitize.ts
-`colorOnlyStyle` keeps colour declarations alone) and the picture prints. Before this every placeholder in the body was
-counted and every host it named was loaded, so a print fetched from hosts for pictures that were not on the paper (a
-probe over five hosts, one picture each in the open body, a closed typed details, a folded callout, a hidden div and a
-display:none div: all five hosts asked, two pictures printed; after the rule, two hosts asked, the same two pictures). A
+counted, named and restored (`figurePrintable`: `printable` on the placeholder and `figureHidden` on the figure it
+wraps; the third review and the round-2 review, 2026-09-19). The walk (`printable`) leaves out one inside a closed
+`<details>`, a typed one or a folded callout (`> [!type]-`, md-config.ts), outside that details' own summary, or under a
+`hidden` attribute whatever its value, since the print never shows it; a picture under an inline `display: none` is
+printable, since the sanitizer strips that style (md-sanitize.ts `colorOnlyStyle` keeps colour declarations alone) and
+the picture prints. Then the browser's own answer, where it can be asked (`rendered`: `checkVisibility` with visibility
+and opacity read, and at least one client rect; null on a stand-in under node or an engine without the API, where the
+walk alone decides): the walk knows two hidings and the sanitizer keeps others it does not, so a placeholder the browser
+does not render, one inside a ruby's `<rp>`, a `<canvas>`'s fallback content, a `popover` not shown, an svg `<image>`
+inside `<defs>`, an author's class a sheet rule hides, falls to NOT printable, the unknown side answered against the
+fetch. And the figure the placeholder wraps must carry none of the kept attributes that would hide it once restored
+(`figureHidden`: `hidden` whatever its value and `popover` on any element; on an svg `display="none"`, `visibility`
+hidden or collapse, `opacity` zero), an enumeration, since the sheet hides every child of a placeholder but its label
+while it is gated and the browser cannot be asked about the figure; every other kept attribute leaves the figure on the
+paper as far as the flow reads, an svg's `transform`, `clip-path`, `mask` and `filter` among them (open point 8).
+Before the third review every placeholder in the body was counted and every host it named was loaded, so a print
+fetched from hosts for pictures that were not on the paper (a probe over five hosts, one picture each in the open body,
+a closed typed details, a folded callout, a hidden div and a display:none div: all five hosts asked, two pictures
+printed; after the rule, two hosts asked, the same two pictures); before the round-2 review the walk alone answered, so
+a placeholder inside a ruby's `<rp>`, a `<canvas>`'s fallback content or a `popover`, an `<img hidden>` inside its
+placeholder and an svg with `display="none"`, `visibility="hidden"` or `opacity="0"` were counted, named and, on "with
+them", fetched (file-print-armed-browser.test.ts case (D), a census over every kept tag of the sanitizer's profile and
+every kept hiding attribute, one gated picture per shape on a host of its own: the title names a host only when the
+browser renders the placeholder and the figure carries no hiding attribute, and "Print with them" then asks exactly the
+named hosts; FAILS BEFORE recorded in its title). A
 fold the person opens or closes under the armed line is counted again (the details' `toggle` event, which does not
-bubble, heard on the card in the capture phase), as a repaint is. Two things about that load the owner should know. The
-gate loads by host: `loadGatedHost` adds the host to the document's `loadedHosts` and `regateFigures` restores every
-placeholder waiting on it, so a host one printable placeholder and one folded placeholder share is restored in both by
-the one load, while a host only folded or hidden placeholders name is never loaded by a print. And a host "with them"
-loads is granted for the rest of the page exactly as a click on the placeholder grants it: `loadedHosts` is per document
-(decision 8's page-life ruling, `allowedFigureHosts`), so a file opened later in the same page loads that host's figures
-with no placeholder. A word button of the line that holds the keyboard when the line goes hands it to the Print button,
+bubble, heard on the card in the capture phase), as a repaint is. The two roads are kept apart on purpose: the print's
+restore is per placeholder and for this print alone (above), where a click's `loadGatedHost` grants the host for the rest
+of the page, since `loadedHosts` is per document (decision 8's page-life ruling, `allowedFigureHosts`), so after a click
+a file opened later in the same page loads that host's figures with no placeholder, and after a print it does not.
+file-print-egress-browser.test.ts case (7) reads the two counts apart over one host named by an open and a folded
+placeholder, both routes answering: per host, one host asked and one request; per placeholder, the open one's URL once
+and the folded one's never, the folded placeholder standing at the print; and a Reload of the same note afterwards shows
+both placeholders again and asks nothing. A word button of the line that holds the keyboard when the line goes hands it to the Print button,
 the trigger, as the Outline popover's Escape does for its button, never to the document's body, where the browser's
 fixup would drop it; not at the close, where the card goes with the line. When the disarm is the body going out (P7) the
 button is not enabled, so the keyboard goes to the viewer's body through the host's `takeKeyboard`, the changed-on-disk
@@ -7873,20 +7907,25 @@ so "without them" waits on nothing for a placeholder. The wait, its count on the
 ask cover the pictures that reach the paper alone: `collectPictures` filters each of its three collections by
 `printable`, the rule the placeholders are counted by (the `<img>` itself; the `<video>` for its poster; the svg
 `<image>` element), so a picture inside a closed fold or under `hidden` is neither awaited, counted, set eager nor asked
-about (the shared-host probe, 2026-09-19). Such a picture can still be loading during the wait, since the gate restores
-by host: "with them" loads the host, `regateFigures` restores every placeholder naming it, a folded one beside a
-printable one, and the browser fetches an `<img>` the fold hides. Before this the wait read every picture in the body,
-so a host two placeholders shared, one in the open body and one inside a closed `<details>`, with the folded picture's
-route slow, had the line read "Preparing 2 pictures…", the deadline ask "1 picture has not loaded." about the folded
-picture, one the print never shows, and nothing print until the person answered; the fourth review's open point 6,
-whether the wait should read the same rule, is taken by this one. file-print-egress-browser.test.ts case (6) executes
-that shape with the folded picture's route parked (FAILS BEFORE, run at the module before the fix: the line read two
-pictures, the ask stood at the deadline and nothing printed): after "with them" the line reads one picture, the print
-fires at the open picture's load, under the deadline, with the folded picture still parked and both placeholders
-restored by the host's load, no ask, and the host is asked once per URL (the two requests are the gate's restore of
-both placeholders, which the rule leaves as it was). file-print.test.ts executes the three collections over a body
-stand-in: a picture under `hidden`, on itself or an ancestor, or inside a closed details is left out of each, a lazy one
-among them is not set eager, and a summary's picture and one inside an open details are collected. The line reads
+about (the shared-host probe, 2026-09-19), and the browser's answer is read through it too, so a picture the browser
+does not render (a ruby's `<rp>`, a `<canvas>`'s fallback content, a `popover` not shown, an svg `<image>` inside
+`<defs>`) is not awaited, not set eager and not probed. Such a picture can still be loading during the wait when its
+host is allowed (the gear's list, or a host a click loaded for the page), since the browser fetches an `<img>` the fold
+hides at the render; "with them" does not restore it (the per-placeholder restore above). Before this the wait read
+every picture in the body, so a host two placeholders shared, one in the open body and one inside a closed `<details>`,
+with the folded picture's route slow, had the line read "Preparing 2 pictures…", the deadline ask "1 picture has not
+loaded." about the folded picture, one the print never shows, and nothing print until the person answered; the fourth
+review's open point 6, whether the wait should read the same rule, is taken by this one.
+file-print-egress-browser.test.ts case (6) executes that shape with the folded picture's route parked: after "with
+them" the line reads one picture, the print fires at the open picture's load, under the deadline, with the folded
+placeholder standing, its URL never asked (the parked route holds nothing) and every `<img>` in the body complete, no
+ask, and the host asked once, for the open placeholder's URL (FAILS BEFORE, twice: at the module before the printable
+filter the line read two pictures, the ask stood at the deadline and nothing printed; at the module before the
+per-placeholder restore the host was loaded whole, the folded URL asked and parked, and no placeholder stood at the
+print). file-print.test.ts executes the three collections over a body stand-in: a picture under `hidden`, on itself or
+an ancestor, or inside a closed details is left out of each, a lazy one among them is not set eager, and a summary's
+picture and one inside an open details are collected; and, with the browser's answers on the stand-ins, a picture with
+no box or without a rect is left out, its lazy attribute kept, and not probed. The line reads
 "Preparing 1 picture…" or "Preparing N pictures…"
 meanwhile. Beside the words the line carries the viewer's loader, the swirl, the wordmark and the three pulsing dots
 (`.fileview-load`, the markup file-view.ts's waits use, hidden from the status's announcement), inline on the words' row
@@ -7909,7 +7948,8 @@ under a null deadline; the state carries `untimed`), until every pending picture
 that open-ended wait, where the timed wait's Escape stays the viewer's, which closes the card. Nothing listens under the
 ask: "Keep waiting" reads the body as it stands then, so a picture that landed meanwhile is not waited on again, and
 with none left loading the print runs at once. A failed picture (its error event) settles and prints as its label, then
-as now. Before this the print ran at the deadline, and a chosen picture still loading printed as an empty box with no
+as now. Before this the print ran at the deadline, as the contract's clause (b) had it (the ask is the build's departure
+from that clause, the third review's ruling), and a chosen picture still loading printed as an empty box with no
 gap and no label, nothing telling the person: a route that never answers raises no error event, so no label stood in for
 it. Why: the design rule keys on the event, the load, and not on the clock, and a silent wrong outcome is worse than a
 refusal, so the clock's one act is to ask. The wait is aimed at the body as it stands and re-aimed in two cases: when
@@ -7935,8 +7975,15 @@ third review the claim was held by a census of the deadline's writers in the sou
 left green with every leg. The line's count follows each re-aim, rewritten in place
 when the wait's line stands (`preparingLine`, which finds the line by its loader: the words alone change, and the loader
 beside them is the one the wait put up). A repaint under the ask counts the new body's pictures still loading again
-(`recountAsk`, through the wait's own collection, the listeners taken off again): the line's count follows in place, and
-none loading prints, as a re-aim does. The machine holds its phase through the repaint (a `body` event with the body in
+(`recountAsk`, through the wait's own collection, the listeners taken off again, then the machine's `stalled` with the
+count): over any the line's count follows in place; over none the question is moot and the flow rests, the line gone,
+so the person may press again. A repaint under the ask NEVER prints, since it is no answer to the ask (the round-2
+review, 2026-09-19: before this the count of none was read as the print act, so a Reload landing, a Rendered or Raw pick
+or the editor's exit under the ask ran window.print with neither button pressed, over the Raw view in one case;
+file-print-driver-browser.test.ts case (13) drives a Reload landing a body with no picture, then a landing with two
+parked pictures, the count rewritten in place to two, then a Raw pick under the ask, FAILS BEFORE recorded in its title;
+file-print.test.ts's verdict case asserts `stalled` with nothing loading disarms and rests where the earlier case
+asserted a print, and with one loading asks again). The machine holds its phase through the repaint (a `body` event with the body in
 is `none` during the wait); the re-aim is the driver's, as the collection is. With no placeholder and every picture
 complete the press prints at once, inside the click's own task. Then `window.print()`; on afterprint, or at once when
 print returns, the bar rests. The button carries `data-print` with the phase while it is not resting, `.on` and
@@ -7985,8 +8032,11 @@ close takes the line with the card. The page's own window.print never runs for a
 out of scope: with the panel open the body holds the pdf.js canvases and no frame, so Print opens the /file tab and the
 PDF prints from there, never the canvases with their comments (a frame kept under a notice after the panel's chunk
 failed to load prints itself, since the detector finds it); while the pages flow's loader alone holds the body, before
-page 1 is drawn, Print is disabled (P7), and over a kept frame under the attempt's loader it stays live and a press
-takes this road, as it does over the drawn pages (file-view-print-takings-browser.test.ts case 5); the project's
+page 1 is drawn, Print stays live too, since the kind is known to be a PDF (P7's one exception) and this road reads
+nothing from the body, so a press or the chord opens the /file tab at once; over a kept frame under the attempt's loader
+it is live and a press takes this road, as it does over the drawn pages (file-view-print-takings-browser.test.ts case 5;
+its reload leg, FAILS BEFORE at the round-2 head: disabled over the pages loader, the chord swallowed and no tab, where
+the build before the derived readiness opened the tab); the project's
 out-of-scope line, the PDF viewer, stands, since nothing in the viewer changed. Verified in the full Chromium build: the
 blob frame's window is same-origin, its document reports application/pdf at the blob URL, and its print is a function
 the parent may call and replace. Not verified, since headless Chromium opens no print dialog: that the real call prints
@@ -8004,11 +8054,25 @@ prints itself, or opens in a new tab to print from when the browser cannot print
 what the printed page leaves out is unchanged and still true: the print line is a `.fileview-err` row the block hides.
 
 P6. **Nothing leaves the machine that did not before.** No kernel change, no new route, no server-side render. "With
-them" makes the requests a click on each placeholder makes, and only for a placeholder that reaches the paper (P2's
-printable rule): a host only a folded or hidden placeholder names is not asked; the probe asks for a URL a poster or svg
+them" restores exactly the placeholders it counted, one at a time through the gate's one-placeholder restore, so the
+requests are the fetches those figures make, one per restored placeholder, and only for a placeholder that reaches the
+paper (P2's `figurePrintable` rule): a placeholder that does not reach the paper is not restored and its URL is not
+asked, whether its host is shared with a printable placeholder or named by it alone; and the print grants no host for
+the page, so a later paint gates the host's figures again, where a click grants the host for the page (decision 8).
+file-print-egress-browser.test.ts case (7) reads the counts apart over one host named by an open and a folded
+placeholder, both routes answering: per host, one host asked and one request; per placeholder, the open one's URL once
+and the folded one's never; and a Reload of the same note afterwards shows both placeholders again and asks nothing
+(before the round-2 review the host was loaded whole, so the folded URL was asked too and the host stayed granted);
+cases (8) to (11) read the same on one host carrying four placeholders, on two hosts, and beside a click, whose host
+lands as a picture in a later note where a printed host lands as a placeholder. A
+host a granted placeholder's route redirects to is reached as the placeholder's own click reaches it and named nowhere
+(open point 7). The probe asks for a URL a poster or svg
 image element already fetched, and asks once per URL for one press (P2's probe cache: file-print-driver-browser.test.ts
-case (10) counts one request per URL after the press, where the review had measured 337); a lazy picture set eager
-fetches its own URL; a PDF's tab is the URL the modified click already opens.
+case (10) counts one request per URL after the press, where the review had measured 337); a lazy picture that reaches
+the paper and is set eager fetches its own URL, a request the press causes for a picture the browser had deferred (the
+URL the render gave it: a note's own picture goes to the /file route, and a picture on an unlisted host is a placeholder
+whose img has no src and fetches nothing), and a lazy picture off the paper is left as it is; a PDF's tab is
+the URL the modified click already opens.
 
 P7. **Print is disabled until the body is in.** The flow starts in a `disabled` phase and the button wears
 `aria-disabled` and the sheets' disabled dress (`.fileview-btn:disabled, .fileview-btn[aria-disabled="true"]`, one rule
@@ -8021,42 +8085,99 @@ dropped the keyboard on the document's body); a press there changes nothing, and
 browser's raw print does not run over the loader either. Whether the body is in is DERIVED, read off the body's element
 children by the flow itself (`bodyReady`, exported: a MutationObserver on the body's child list feeds the machine's
 `body` event after every paint, and a press reads the body again first, so a swap in the press's own task is seen before
-the observer runs), so no paint reports anything and no road depends on being wired by hand (the round's correctness-2
+the observer runs; file-print-driver-browser.test.ts case (14) executes the press-time read in both directions, the
+loader swapped in and a press in one task printing nothing, the content put back and a press in one task printing), so
+no paint reports anything and no road depends on being wired by hand (the round's correctness-2
 and fresh-1, 2026-09-19: the first build's `bodyIn` reports held on the roads someone wired, the Comments panel's PDF
 pages flow reported nothing and its button was live over its loader, and the plain fallback editor reported in and
-printed one clipped page). Not in: while a `.fileview-load` is a child of the body (the open's own loader, the editor's
-chunk wait, the pages flow's loader before page 1 is drawn), while `textarea.fileview-editor` is a child (the plain
-fallback editor, a scrollable control of which a print shows one clipped page), or while `.fileview-err` is all the body
-holds (the fetch's failure pane, a picture that would not decode, the URL viewer's failure); an empty body is not in
-either. In: any other child, the rendered root, the code block, a line over content (an empty file's, a render that
-fell), a picture's box, a PDF frame's column (the pages attempt over a KEPT frame puts its loader inside that column, so
-the frame stays the content and the button stays live, and a press takes the PDF road), the pages' host once page 1
-removed the loader, and the CodeMirror mount, which the round measured prints the whole file (6 to 7 pages of a hundred
-paragraphs) and stays live. The body going out while the bar is armed or the wait runs disarms: the line goes, the wait
+printed one clipped page). The element children are read through `children`, else through `childNodes` filtered to
+element nodes, since the DOM stand-ins of the node suites drive the real viewer over bodies with `childNodes` alone, and
+the observer is constructed only where the document has the API (`typeof MutationObserver === "function"`, the guard
+`watchBodyWidth` puts on ResizeObserver), the press's own read serving alone under a stand-in (the round-2 review,
+2026-09-19: the bare construction and the `children` read threw at every open in those suites; the run is recorded in
+the Tests list). Each child is classed by its `<tag>.<class>` (`rootKind`) against three CLOSED lists the flow exports,
+`READY_ROOTS` (the rendered root, the code block, a picture's box, a PDF frame's column, the pages' host, the CodeMirror
+mount), `NOT_READY_ROOTS` (the loader, the plain fallback editor's textarea) and `LINE_ROOTS` (the `.fileview-err`
+line); the tag and the class are both read, so the rendered root's class on another tag is unknown, and a root's element
+may carry more classes than its own. Not in: while a `.fileview-load` is a child of the body (the open's own loader, the
+editor's chunk wait, the pages flow's loader before page 1 is drawn) and the kind is a document's, while
+`textarea.fileview-editor` is a child (the plain fallback editor, a scrollable control of which a print shows one clipped
+page), while `.fileview-err` is all the body holds (the fetch's failure pane, a picture that would not decode, the URL
+viewer's failure), or while a child none of the three lists names stands, whatever else does; an empty body is not in
+either. In: a content root standing with no wait root and no unknown child beside it, the rendered root, the code block,
+a line over content (an empty file's, a render that fell), a picture's box, a PDF frame's column (the pages attempt over
+a KEPT frame puts its loader inside that column, so the frame stays the content and the button stays live, and a press
+takes the PDF road), the pages' host once page 1 removed the loader, and the CodeMirror mount, which the round measured
+prints the whole file (6 to 7 pages of a hundred paragraphs) and stays live. The unknown child answers NOT in, the safe
+side (the round-2 review, 2026-09-19: the first derivation read every child it had not seen as content, the permissive
+side for a print button, so an unwired pane would have had a live button and a silent print of whatever stood; the
+census below is what makes a root the viewer gains a red test rather than a dead button). The PDF kind is the one
+exception, for the loader: `bodyReady` takes the file's kind (the host's `kind`, read at every observer callback and at
+the press through the driver's `ready`), and for a PDF the loader (`PDF_LOADER_ROOT`, `div.fileview-load`) reads as
+content, so the Comments panel's pages attempt with no frame kept, the loader alone in the body, leaves Print live and a
+press or the chord takes the PDF road at once (`pdfFrameWindow` finds no frame, so the /file tab), as the build before
+the derived readiness did, since that road reads nothing from the body (the round-2 review: the derivation had disabled
+Print and swallowed the chord there); the editor's textarea, a failure pane alone (a reload of the PDF that failed), an
+empty body and an unknown child stay not in for a PDF too. The body going out while the bar is armed or the wait runs
+disarms: the line goes, the wait
 is cancelled, the button disables, and a word button of the line that held the keyboard hands it to the viewer's body
 (P2); a print already running ends with the button disabled. `data-print` reads `disabled` meanwhile. A PDF before its
 bytes land is covered the same way: nothing prints until the frame's column is in. Before the first build the button was
 live from the bar's build, and a press while the loader held the body printed the loader page (the first build's second
-open point). The shapes are executed under node by file-print.test.ts's `bodyReady` test (fourteen bodies), the open's
+open point). The shapes are executed under node by file-print.test.ts's `bodyReady` test (the roots alone and beside
+each other, the unknown child alone and beside content, the class on another tag, a root with more classes, a bare div,
+and the PDF kind over the loader, the loader with the pages' host, the column, a failure pane alone, the textarea, an
+empty body and an unknown child) and its `rootKind` and `childNodes` cases, the open's
 own loader in Chromium by file-print-browser.test.ts case 6 (aria-disabled alone, the property false, the keyboard
 staying on the button through a forced click, a programmatic click and the chord), and every taking and seating after a
 paint that held the file by file-view-print-takings-browser.test.ts: a failed reload while armed and during the wait,
 Edit's chunk wait, the plain fallback, Cancel and the real mount, imgFailed's pane, the URL viewer's failure, and the
-pages flow over a kept frame, over page 1 and through a reload with the pages up. A child `bodyReady` has never seen
-reads as content on purpose: a false not-ready would lock the button with no road out, where a false ready is a press
-that prints what stands. So the fallthrough is guarded by a census rather than changed (the shared-host probe,
-2026-09-19): file-print.ts exports the roots the viewer seats in the body as three lists, `READY_ROOTS` (the rendered
-root, the code block, a picture's box, a PDF frame's column, the pages' host, the CodeMirror mount), `NOT_READY_ROOTS`
-(the loader, the plain fallback editor's textarea) and `LINE_ROOTS` (the `.fileview-err` line), and file-print.test.ts's
+pages flow over a kept frame, over page 1 and through a reload with the pages up (the button live over the pages loader
+with the kind a PDF, a press and the chord each opening the tab). The lists are guarded by a census, so a root the
+viewer gains is classed on purpose or not at all (the shared-host probe, 2026-09-19; the round-2 review turned the
+unknown side to not in): file-print.test.ts's
 census reads file-view.ts, resolves every `body.replaceChildren`, `body.prepend` and `body.appendChild` site's seated
 expression down to the `el("<tag>", "<class>")` that builds it (the sites are the lines
 `grep -nP '(?<!document\.)\bbody\.(replaceChildren|prepend|appendChild)\(' ui/webview/file-view.ts` prints; the census
 derives the roots from them rather than listing them by hand, and prints the derived set with its lines as a
-diagnostic), holds that set equal to the three lists, and executes `bodyReady` over each root as its list says and over
-an unlisted child, which reads as content. A root the viewer gains fails the census until it is listed, so it is classed
-on purpose or not at all. Today the census derives nine roots: `div.fileview-md`, `div.fileview-code`,
+diagnostic), holds that set equal to the three lists, and executes `bodyReady` over each root as its list says, over an
+unlisted child alone and beside every content root (not in), and under the PDF kind over each wait and line root (the
+loader alone in, the rest not). A root the viewer gains fails the census until it is listed, and file-view.ts's own
+comment at the install says so. Today the census derives nine roots: `div.fileview-md`, `div.fileview-code`,
 `div.fileview-imgbox`, `div.fileview-pdffall`, `div.fileview-pdfhost`, `div.fileview-cm`, `div.fileview-load`,
 `textarea.fileview-editor` and `div.fileview-err`.
+
+**Derivations and their unknown cases.** Each rule the follow-on derives from the page rather than reads from a report
+is listed here with the answer it gives a case it does not know and the executed case that pins that answer (the
+round-2 review's ruling, 2026-09-19: enumerate on the safe side and pin the unknown case, since a derivation whose
+unknown case takes the permissive answer moves a defect rather than closing it). `bodyReady` and `rootKind` (P7): a
+child none of the three lists names is unknown, and the body is not in over it, whatever stands beside it; a stand-in
+without a `localName` is unknown too, so a stand-in body is never in by accident; the PDF kind excepts the loader alone
+(file-print.test.ts, the `bodyReady`, `rootKind` and census cases). The body's children (P7): a body that reports
+neither `children` nor `childNodes` has no children the flow can read and is not in (the `childNodes` case). The
+observer (P7): a document without `MutationObserver` gets none, and the press's own read of the body is what the
+button's dress follows (the population run in the Tests list, 560 of 560 after the guard). `printable` and `rendered`
+(P2): where the browser cannot be asked (no `checkVisibility` or `getClientRects`: a stand-in under node, an engine
+without the API) the walk alone decides, the permissive side there, taken because no browser answer exists (Chromium,
+which the legs run, has both); where it can, a placeholder it does not render is not printable, so a hiding the walk
+does not know falls to not printable, the side against the fetch (the `rendered` case under node;
+file-print-armed-browser.test.ts case (D) in Chromium over every kept tag and hiding attribute). `figureHidden` (P2):
+the enumeration names the kept attributes that hide a gated figure itself, and every other kept attribute or value
+leaves the figure on the paper as far as the flow reads, the PERMISSIVE side, taken because the sheet hides every child
+of a placeholder but its label while it is gated and the browser cannot be asked about the figure; an svg's
+`transform`, `clip-path`, `mask` and `filter` can hide its paint and are not read (the `figureHidden` case: each named
+attribute and value true; `display` on an `<img>`, a zero `width`, `inert`, a faint `opacity` and the other `display`
+and `visibility` values false; open point 8). `figurePrintable` (P2): both must hold, and a placeholder with no figure
+inside answers for itself (the `figurePrintable` case). `collectPictures` (P2): each of its three collections reads
+`printable`, the browser's answer included, so a picture the browser does not render is not awaited, not set eager and
+not probed (the two `collectPictures` cases over the printable rule and over the browser's answer). `step` under the
+ask (P2): a `stalled` with nothing loading disarms and rests, never prints (the verdict case;
+file-print-driver-browser.test.ts case (13)). `isPrintKeys` (P1): every key or modifier set it does not name is not the
+chord and is left to the browser, so the flow prevents no key it does not know (the `isPrintKeys` case over other keys
+and modifier sets). `pdfFrameWindow` (P4): no frame, a withheld window, a window left at about:blank, a `print` that is
+no function or a window that throws answer null, and the press takes the tab road (the `pdfFrameWindow` case). The
+kind (P4): a press with no kind, the URL viewer's, is a document's (the PDF kind case). `withTitle` (P2): with no host
+known the title names "those hosts" (file-print-driver-browser.test.ts's node case).
 
 **Tests.** `ls ui/webview/file-print*.test.ts` lists the follow-on's six modules, and
 tools/markdown-viewer-plan-print.test.mjs holds this section to the tree: every module that listing produces is named
@@ -8074,8 +8195,12 @@ P7's derived readiness against `bodyReady`, the observer, the press's read and t
 aria-disabled rule against the bar's precedent; the loader on the wait's line against the flow, both sheets and the
 parity pin; the two titles and the kept hosts; the focus hand-back; P4's window between the frame's insertion and its
 document against the viewer's report; P5's palette clause against the guide; the count in the listing sentence above
-against the listing; the takings module's name; open point 2's Chromium clause against the driver leg; and open point
-5's order against the panel's constructor, the viewer's action walk and the flow's first exception.
+against the listing; the takings module's name; open point 2's Chromium clause against the driver leg; open point
+5's order against the panel's constructor, the viewer's action walk and the flow's first exception; and, since the
+round-2 review, the one-placeholder restore against the flow's activate and the gate's two functions, the observer's
+guard and the children read, `stalled` over none as a disarm, the closed lists with the PDF exception and the census's
+unknown side, the Derivations paragraph's answers against their statements and the cases it names, and the population
+count in the Tests list recomputed by the listing it names.
 tools/markdown-viewer-plan-print-vocabulary.test.mjs holds this section's words to CONTEXT.md's File comment entry: what
 the Comments panel draws over a PDF page is called comments here, never `annotation`, which that entry lists under
 _Avoid_ (a review finding, 2026-09-19).
@@ -8083,21 +8208,34 @@ _Avoid_ (a review finding, 2026-09-19).
 - ui/webview/file-print.test.ts, under node with no DOM: `step` over every phase and event (the wait's verdict among
   them, `ready` with `why` and the count: settled prints, the deadline with pictures pending stalls and the deadline
   with none prints; Print anyway prints; Keep waiting resumes through the driver's prepare into an open-ended wait, or a
-  print with nothing left; Escape or a second press under the ask disarms; a repaint under the ask counts again or
-  prints over none; Escape cancels the open-ended wait and is left alone during the timed one), the words, the chord,
-  `settlePictures` over fake pictures and a fake clock (the incomplete pictures alone are waited on; load or error
-  settles each; the deadline resolves with listeners off; a null deadline sets no timer and the events alone end the
-  wait; nothing pending resolves at once with no timer; cancel), the 8 s constant and its seam, `collectPictures` over a
-  body stand-in (a lazy img set eager before the wait listens, an eager or unmarked one left as it is; the printable
-  rule over each of the three collections: a picture under hidden or inside a closed details left out and a lazy one
-  among them not set eager, a summary's picture and an open details' collected), `bodyReady` over
-  fourteen body stand-ins (the loader as content, the plain fallback editor and a failure line alone not in; a rendered
-  root, code, a line over content, a picture's box, a PDF frame's column with or without the pages' host, the host
-  alone, the CodeMirror mount in; an empty body not in; a loader among any children not in), the PDF press and
-  `pdfFrameWindow` over window stand-ins, and the disabled phase (every other event changes nothing there; the body's
-  arrival rests; the body going out from rest, the armed line, the wait or the print disarms and disables), and the
-  census of the body's roots (P7: the viewer's seating sites read from file-view.ts and resolved to their roots, the set
-  held equal to the flow's three lists, `bodyReady` executed over each root and over an unlisted child).
+  print with nothing left; Escape or a second press under the ask disarms; a repaint under the ask counts again over any
+  and rests over none, never printing, FAILS BEFORE: the count of none was the print act; Escape cancels the open-ended
+  wait and is left alone during the timed one), the words, the chord (`isPrintKeys` over the chord's keys and over other
+  keys and modifier sets, none of which is the chord), `settlePictures` over fake pictures and a fake clock (the
+  incomplete pictures alone are waited on; load or error settles each; the deadline resolves with listeners off; a null
+  deadline sets no timer and the events alone end the wait; nothing pending resolves at once with no timer; cancel), the
+  8 s constant and its seam, `collectPictures` over a body stand-in (a lazy img set eager before the wait listens, an
+  eager or unmarked one left as it is; the printable rule over each of the three collections: a picture under hidden or
+  inside a closed details left out and a lazy one among them not set eager, a summary's picture and an open details'
+  collected; the browser's answer through the same rule: a picture with no box or without a rect left out, its lazy
+  attribute kept, not probed), the printable rule's unknown side (`rendered` null where the browser cannot be asked and
+  false for no box or no rect, `printable` false there and the walk's own answer standing whatever the browser says;
+  `figureHidden` over each kept hiding attribute and value and over the attributes and values that leave the figure on
+  the paper; `figurePrintable` over the placeholder's and the figure's answers together), `bodyReady` over body
+  stand-ins (the roots alone and beside each other as the three lists say; an unlisted child alone and beside content,
+  the rendered root's class on another tag and a bare div not in, FAILS BEFORE: content; a root with more classes in; an
+  empty body not in; a loader among any children not in for a document; the PDF kind: the loader alone and the loader
+  with the pages' host in, FAILS BEFORE: not in, the column in, a failure pane alone, the textarea, an empty body and an
+  unlisted child not in), `rootKind` over each list, an unlisted class, a class on another tag, no class and no
+  localName, the children read through `children`, else `childNodes` filtered to elements (FAILS BEFORE: the read of
+  `children` threw over a stand-in body), and neither not in, the PDF press and `pdfFrameWindow` over window stand-ins
+  (the frame's window when it holds the PDF; null with no frame, a withheld window, about:blank, a print that is no
+  function, a window that throws), a press with no kind a document's, the disabled phase (every other event changes
+  nothing there; the body's arrival rests; the body going out from rest, the armed line, the wait or the print disarms
+  and disables), and the census of the body's roots (P7: the viewer's seating sites read from file-view.ts and resolved
+  to their roots, the set held equal to the flow's three lists, `bodyReady` executed over each root as its list says,
+  over an unlisted child alone and beside every content root, not in, and under the PDF kind over each wait and line
+  root, the loader alone in).
 - ui/webview/file-print-browser.test.ts, headless Chromium over the real viewer through real-viewer-leg.ts: a gated note
   on the pane (the chord and the button arm; Escape and a second press disarm and leave the card up; "Print without
   them" keeps the placeholder, makes no request to the host and prints once a parked picture lands; "Print with them"
@@ -8152,7 +8290,13 @@ _Avoid_ (a review finding, 2026-09-19).
   ran to its deadline and the bar asked); and the settle's re-aim under the press's deadline (a second parked picture
   inserted inside the rendered root mid-wait, the observer silent and the line still counting one; the first released,
   the settle's re-aim finding the second with no print; the ask between 1900 and 3000 ms after the press and under
-  1600 ms after the release; Print anyway then prints once with the inserted picture still loading).
+  1600 ms after the release; Print anyway then prints once with the inserted picture still loading); a repaint under
+  the deadline's ask (a Reload landing a body with nothing to wait on makes the question moot and the flow rests with
+  nothing printed, and the next press prints at once, FAILS BEFORE: window.print ran with neither button pressed; a
+  landing with two pictures still loading keeps the ask with its count rewritten in place to two; a Raw pick under the
+  ask rests too, FAILS BEFORE: it printed the Raw view); and the press-time read of the body (the loader swapped in and a
+  press in one task prints nothing with the button reading disabled; the content put back and a press in one task
+  prints; over the open's own loader, content swapped in and a press in one task prints).
 - ui/webview/file-print-armed-browser.test.ts, under node first (the machine's `recount` event; `ownsEscape` over
   stand-ins: the keyboard inside a menu or a dialog, an open popup's trigger anywhere in the scope whatever the target,
   not an aria-expanded alone, not a scope with none; `printable` over stand-in trees: the open body, a closed details
@@ -8163,6 +8307,13 @@ _Avoid_ (a review finding, 2026-09-19).
   typed fold opened under the armed line is counted again and closed again is not, "Print with them" asks exactly those
   two hosts (FAILS BEFORE: all five were asked) and the three other hosts are never asked, and the PDF Chromium prints
   holds exactly two pictures, counted as the PDF's image objects over one-colour PNGs;
+  (D) the printable rule's unknown side, a census: one gated picture per kept tag of the sanitizer's profile (the void
+  elements aside), per svg container inside an svg and per kept attribute that hides (`popover`, `inert`, `hidden` in
+  both spellings, `open`, an svg's `display`, `visibility` and `opacity`), on a host of its own each; a press, and the
+  title names a host only when the browser renders its placeholder and the figure it wraps carries no hiding attribute:
+  a placeholder inside a ruby's rp, a canvas's fallback content or a popover, an `<img hidden>` inside its placeholder
+  and an svg with display none, visibility hidden or opacity 0 are not named (FAILS BEFORE: the walk alone named them),
+  and "Print with them" then asks exactly the named hosts, each shape's row printed as a diagnostic;
   (A) a Reload landing under the armed line is counted again (the same line reads the new count and the
   title names the new hosts, "Print with them" loads those hosts and never a host the title did not name; a landing on a
   new host alone names it alone and the old host is never asked; a landing with no placeholder disarms and the next
@@ -8184,17 +8335,26 @@ _Avoid_ (a review finding, 2026-09-19).
   with the mount in the body); a picture opened directly whose reload will not decode (imgFailed's pane disables; good
   bytes seat it again and the chord prints); the URL viewer's failure; the Comments panel's PDF pages flow (the attempt
   over a kept frame leaves the button live and a press opens the /file tab; page 1 drawn, live and the same road; a
-  reload with the pages up puts the loader alone in the body and disables the button until page 1 is drawn again, a
-  press and the chord opening nothing meanwhile). FAILS BEFORE, at the code before the third review: case 1's `disabled`
-  property read true and the keyboard landed on the document's body; case 2's plain fallback read live and a press
-  printed one clipped page; case 5's reload left the button live over the loader and the press opened the tab.
+  reload with the pages up puts the loader alone in the body with the kind known to be a PDF, and the button stays live,
+  a press and the chord each opening the tab at once). FAILS BEFORE, at the code before the third review: case 1's
+  `disabled` property read true and the keyboard landed on the document's body; case 2's plain fallback read live and a
+  press printed one clipped page. Case 5's reload leg, at the round-2 head: disabled over the pages loader, the chord
+  swallowed and no tab; the outcome it asserts now, the live button and the tab, is the one the code before the third
+  review gave too, there by a button live over every loader, here by the PDF kind alone (a document's loader still
+  disables, case 2).
 - ui/webview/file-print-egress-browser.test.ts, headless Chromium over the real viewer under a request intercept (the
   round's second roster item): what leaves the page on every road through the flow, counted rather than assured. Every
   request Playwright reports for the page goes into one ledger, each road (an act, then six frames and a 250 ms settle)
   is the ledger's delta between two marks, a request is classed as local (the page's origin), third-party (any other
-  http or https host, by host and path) or other (a blob: or data: URL), and each road's row is asserted as strings and
-  numbers and printed as one diagnostic line of a fixed shape ("egress | road | third-party: ... | local: ... | other:
-  ... | printed: ..."), the rows summing to the ledger at each page's end. The roads: (1) five placeholders on five
+  http or https host, by host and path) or other (a blob: or data: URL), and each road's row holds the third-party hosts
+  asked, the requests per URL, the placeholders whose URL was fetched split into those that reach the paper and those
+  that do not (each page's placeholders, their URLs and where each stands are read off the rendered DOM before the roads
+  and asserted, so the split is the page's), the page-life grant where a road lands a second note naming the host (its
+  figure lands as a placeholder, so the document's loaded set does not hold the host, or as a picture, so it does), what
+  printed, and the local and other tallies, asserted as strings and numbers and printed as one diagnostic line of a
+  fixed shape ("egress | road | hosts: ... | per-url: ... | placeholders: printable ... / not ... | grant: ... | printed:
+  ... | local: ... | other: ..."), the rows summing to the ledger at each page's end (the round-2 review's per-host and
+  per-placeholder columns, 2026-09-19). The roads: (1) five placeholders on five
   hosts, two printable (the render asks the origin alone; a press then Escape, a press then a second press and Print
   without them ask nothing; Print with them asks the two printable hosts once each and the three others never); (2) two
   placeholders, one activated by hand under the armed line (its host once, the line and the title narrowing) and Print
@@ -8206,17 +8366,54 @@ _Avoid_ (a review finding, 2026-09-19).
   navigation to the blob and the /file tab through the stubbed window.open; the full Chromium build's own PDF viewer
   resources, the set printed beside the count, its frame's print asking nothing, then the tab once print is taken from
   that window); (6) a host two placeholders share, one in the open body and one inside a closed `<details>`, the folded
-  picture's route parked (Print with them asks the host once per URL, the wait counts the open picture alone and prints
-  at its load under the deadline with the folded picture still parked and no ask; FAILS BEFORE: the line read two
-  pictures, the deadline asked about the folded one and nothing printed). Written beside this records commit by the
-  round's egress work.
+  picture's route parked (Print with them restores the open placeholder alone and asks the host for its URL once; the
+  folded placeholder stands, its URL never asked, so the parked route holds nothing; the wait counts the open picture
+  and prints at its load, under the deadline, with no ask; FAILS BEFORE the per-placeholder restore: the host was loaded
+  whole and the folded URL asked and parked; before the printable filter: the line read two pictures, the deadline asked
+  about the folded one and nothing printed); (7) the same page with both routes answering, the per-host and the
+  per-placeholder counts read apart (Print with them asks the host once, for the open placeholder's URL alone: per host,
+  one host asked and one request; per placeholder, one of two restored, the open one's URL once and the folded one's
+  never, the folded placeholder standing at the print; a Reload of the same note afterwards shows both placeholders
+  again and asks nothing, since the print granted the host nothing for the page; FAILS BEFORE: the host was loaded
+  whole, both URLs asked, and the Reload showed no placeholder); (8) one host, four placeholders (the open body; a
+  closed typed `<details>`; a folded callout; a hidden div), every route answering (a press counts one picture and names
+  the one host; Escape, the chord and Print without them ask nothing, four placeholders standing at that print; Print
+  with them asks the host once, for the open placeholder's URL, the three others standing and never asked; a second
+  note naming the host then lands as a placeholder and asks nothing: no page-life grant); (9) the same page with the
+  open picture's route parked (a second note landed during the wait lands as a placeholder, so nothing waits and the
+  print runs at once over it; the deadline into the ask then Print anyway, the open picture incomplete and the request
+  still parked; the ask then Keep waiting and the release; the ask then a second note landed under it, which never
+  prints, the flow resting over the landing's placeholder and the next press arming over it; the host asked once per
+  page, at the with-them click alone, and the second note a placeholder every time); (10) a printable and a folded
+  placeholder on one host and a second host with a folded placeholder alone (the line counts one and names the first
+  host alone; Print with them asks the first host once and the second never; a second note naming both hosts lands as
+  two placeholders); (11) two hosts, each with a printable placeholder and one that never reaches the paper (the first
+  host's body placeholder activated by hand under the armed line loads that host whole, its folded URL asked too, the
+  click's road; Print with them then asks the second host once, for its open placeholder alone; a second note naming
+  both hosts lands the clicked host's figure as a picture, asked once, the click's page-life grant, and the printed
+  host's as a placeholder, asked nothing). The leg's rows are the report's tables, printed as `egress |` lines.
 - tests/test_guide_print_palette_chord.py, Python: the guide's palette clause against the palette's default binding,
   its dispatcher's wiring on the pane documents and the flow's listener.
 - The standing print, gate and bar suites, run at each part's tip as the commit messages record:
   ui/webview/fileview-parity.test.ts (the block byte-equal, and since the consolidation the wait line's loader rule,
   `.fileview-print-line .fileview-load`, byte-equal too) and file-view-print-browser.test.ts (the block byte-equal),
-  file-view-print-inks-browser.test.ts, file-view-print-marks-browser.test.ts, figure-gate.test.ts,
-  file-view-figures-gate-browser.test.ts, pdf-new-tab.test.ts, button-vocab.test.ts, file-view.test.ts.
+  file-view-print-inks-browser.test.ts, file-view-print-marks-browser.test.ts, figure-gate.test.ts (since the round-2
+  review with the one-placeholder restore's case: `loadGatedFigure` over a stand-in puts the moved attributes back on
+  the figure and its descendants and the figure in the placeholder's place, the loaded set unchanged, a second
+  placeholder on the host untouched, an element that is no placeholder left alone and answered false, and the click's
+  `loadGatedHost` adds the host, for contrast), file-view-figures-gate-browser.test.ts, pdf-new-tab.test.ts,
+  button-vocab.test.ts, file-view.test.ts.
+- The node modules that drive the real viewer over the repo's DOM stand-ins, the 39 that
+  `grep -l 'openFileView\|openUrlView' ui/webview/*.test.ts | grep -v browser` lists, each run in its own capped scope
+  at the round-2 review (the review's ui-1, 2026-09-19): at be1db1ba7, the head before the round's fixes, 24 modules and
+  210 of their 560 cases were red, every failure the bare `new MutationObserver` at the install or the read of
+  `children` over a stand-in body, modules the review found green at the base; after the guard and the `childNodes`
+  read, 560 of 560. A construction-time break in `installFilePrint` shows only in a module that opens the viewer over a
+  stand-in whose document lacks the API: none of the seven print modules does (file-print.test.ts runs with no DOM, the
+  rest in Chromium), and the standing suites named above that name the viewer, file-view.test.ts and pdf-new-tab.test.ts,
+  were green in the same run; the 24 red modules were ones this list does not name, file-view-pdf, file-view-reload,
+  file-view-outline, file-view-text-size, filebrowse and fileview-chip among them. This population is the selection that
+  sees such a break wherever it lands, and the full UI suite before READY is the standing rule.
 
 **Open points for the owner.**
 
@@ -8265,3 +8462,10 @@ _Avoid_ (a review finding, 2026-09-19).
    in that order, "Print with them" made the same two, the title read "Load the pictures from redirecting.test, then
    print", and the page's markup named `elsewhere.test` nowhere). Whether a redirect off the named host should be
    refused, followed or reported is a ruling. Pre-existing, the gate's; the print inherits it. Recorded, not fixed.
+8. The figure half of the printable rule answers on the permissive side. `figureHidden` (P2) enumerates the kept
+   attributes that hide a gated figure itself (`hidden`, `popover`, an svg's `display="none"`, `visibility` hidden or
+   collapse, `opacity` zero) and leaves every other kept attribute on the paper, since the sheet hides every child of a
+   placeholder but its label while it is gated and the browser cannot be asked about the figure: an svg whose
+   `transform`, `clip-path`, `mask` or `filter` hides its paint is counted, its host named in the title, and its
+   picture fetched on "Print with them" for a print that shows nothing of it. The host is one the person chose and the
+   fetch is the figure's own; whether the flow should read those attributes too is a ruling. Recorded, not fixed.

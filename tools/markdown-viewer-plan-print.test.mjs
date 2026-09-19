@@ -70,7 +70,7 @@ const RULE_IMG = '.fileview-img { max-width: 100%; max-height: 100vh; border-rad
 test('the section states the ask, what existed, seven decisions, the tests and the open points, in that order, with no em dash', () => {
   const marks = ['The user asked (2026-09-19) for a print from the viewer that carries the file\'s pictures', '**What existed.**', '**Decisions.**',
     'P1. **A Print glyph button in the viewer bar, beside Download and in its shape, and Ctrl/Cmd+P runs the same flow.**',
-    'P2. **Over gated placeholders the bar arms instead of printing; then every picture is awaited, with an ask after 8 s if one is still loading; then window.print.**',
+    'P2. **Over gated placeholders the bar arms instead of printing; then every picture that reaches the paper is awaited, with an ask after 8 s if one is still loading; then window.print.**',
     'P3. **A picture opened directly prints fitted to the page.**',
     'P4. **A PDF prints itself: the frame\'s own print when the frame holds the document, else the /file URL in a new tab and a line saying so.**',
     'P5. **The guide\'s printing sentence.**',
@@ -124,7 +124,7 @@ test('P1: the flow module builds a Print glyph button in Download\'s shape with 
 
 // ── P2: the words, the wait and the deadline ───────────────────────────────────────────────────────
 
-test('P2: the words the section quotes are the module\'s literals, the deadline is 8 s, the gates load through loadGatedHost, and the line is a hidden .fileview-err row', () => {
+test('P2: the words the section quotes are the module\'s literals, the deadline is 8 s, the placeholders are restored one by one through loadGatedFigure, and the line is a hidden .fileview-err row', () => {
   const one = literalAfter(flow, 'return n === 1 ? ');
   assert.equal(one, '1 picture from another host is not loaded.');
   assert.ok(section.includes('reading "' + one + '" or "N pictures from other hosts are not loaded."'));
@@ -136,8 +136,9 @@ test('P2: the words the section quotes are the module\'s literals, the deadline 
   assert.ok(section.includes('The line reads "Preparing 1 picture…" or "Preparing N pictures…" meanwhile.'));
   assert.ok(flow.includes('export const PRINT_SETTLE_MS = 8000;'), 'the deadline constant');
   assert.ok(section.includes('or at `PRINT_SETTLE_MS`, 8 s, after which the bar asks instead of printing'));
-  assert.ok(section.includes('"With them" calls `loadGatedHost` for every host every printable placeholder names (the rule below), the function the placeholder\'s own click runs'));
-  assert.ok(flow.includes('for (const h of hosts) loadGatedHost(h, doc);'), 'activate loads every named host through the gate\'s own path');
+  assert.ok(section.includes('"With them" restores exactly the placeholders it counted, each through `loadGatedFigure` (figure-gate.ts), the gate\'s restore of ONE placeholder'));
+  assert.ok(flow.includes('for (const g of armedGates) if (host.body.contains(g)) loadGatedFigure(g);'), 'activate restores each kept placeholder through the gate\'s one-placeholder restore');
+  assert.ok(!flow.includes('loadGatedHost('), 'and calls the click\'s host-wide road nowhere (the round-2 review, 2026-09-19)');
   assert.ok(section.includes('the gate is a privacy choice, so a print never fetches from a host outside the list unless the person chose it'));
   assert.ok(flow.includes('row.className = "fileview-err " + PRINT_LINE_CLASS;'), 'the line is a .fileview-err row');
   assert.ok(flow.includes('host.card.insertBefore(row, host.bar.nextSibling);'), 'right under the title bar');
@@ -250,9 +251,9 @@ test('P7: the flow starts disabled and the body event moves it, the button wears
   assert.ok(flow.includes('case "disarm": dropSettle(); dropLine(ev.kind === "body"); break;'), 'a disarm cancels a running wait');
   assert.ok(flow.includes('return { button: btn };'), 'the installer hands the host the button alone');
   // the readiness, read off the body's children by the flow: the observer and the press's own read; the viewers report nothing
-  assert.ok(flow.includes('export function bodyReady(body: BodyLike): boolean {'), 'the exported test of the body');
-  assert.ok(flow.includes('if (c.classList.contains("fileview-load")) return false;') && flow.includes('if (c.localName === "textarea" && c.classList.contains("fileview-editor")) return false;') && flow.includes('if (!c.classList.contains("fileview-err")) content = true;'), 'the loader, the plain fallback editor, a failure line alone');
-  assert.ok(flow.includes('const observer = new MutationObserver(onBody);') && flow.includes('observer.observe(host.body, { childList: true });'), 'after every paint');
+  assert.ok(flow.includes('export function bodyReady(body: BodyLike, kind: PrintKind = "document"): boolean {'), 'the exported test of the body, under the file\'s kind');
+  assert.ok(flow.includes('export const NOT_READY_ROOTS: readonly string[] = ["div.fileview-load", "textarea.fileview-editor"];') && flow.includes('export const LINE_ROOTS: readonly string[] = ["div.fileview-err"];') && flow.includes('if (k === "unknown") return false;'), 'the loader and the plain fallback editor are the wait roots, the failure line the line root, and a child none of the lists names is not in');
+  assert.ok(flow.includes('const observer = typeof MutationObserver === "function" ? new MutationObserver(onBody) : null;') && flow.includes('if (observer) observer.observe(host.body, { childList: true });'), 'after every paint, where the document has the API');
   assert.ok(flow.includes('if (ready() !== (state.phase !== "disabled")) onBody();'), 'and at each press, first');
   assert.equal(viewer.split('print.bodyIn(').length - 1, 0, 'no paint in either viewer reports the body');
   assert.equal(viewer.split('installFilePrint(').length - 1, 2, 'both viewers still install the flow');
