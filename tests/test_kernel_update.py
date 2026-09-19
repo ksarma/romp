@@ -568,6 +568,13 @@ class RunUpdate(Fresh):
         self.assertIn("the checkout moved to v0.7.0 but its install failed", script)
         self.assertIn('"advanced": true', script)
         self.assertIn("update-attempted.json", script, "the auto marker is the child's to withhold")
+        # round 3 (2026-09-19, regression-2): whether the tree moved is read from the tree, HEAD before the chain
+        # against HEAD after it, never inferred from the step (advance() returns 0 on the no-op fast-forward too)
+        self.assertIn('head0="$(git rev-parse HEAD 2>/dev/null)"', script)
+        self.assertLess(script.index('head0="$(git rev-parse HEAD'), script.index("step=preflight"), "read before the chain")
+        self.assertIn('if [ "$(git rev-parse HEAD 2>/dev/null)" != "$head0" ]; then', script)
+        self.assertIn('"advanced": false', script)
+        self.assertIn("the checkout was already on v0.7.0 (the fast-forward moved nothing)", script)
         svc = open(os.path.join(BIN, "romp-service")).read()
         self.assertIn("EXIT_IDENTITY=%d" % km._SERVICE_IDENTITY_REFUSED, svc,
                       "the code the preflight aborts on is the one bin/romp-service exits with")
@@ -862,14 +869,31 @@ class Routes(Fresh):
     def tearDownClass(cls):
         cls.srv.shutdown()
 
-    def _post(self, path, token=True, body=None, legacy=False):
-        """A POST as the banner's ARMED click sends it (2026-09-10): {"confirmed": true} unless the
-        test says otherwise. `body` is the JSON object to send; {} is the unconfirmed click. `legacy` is
-        the request the banner sent before the confirm step, fetch('/update',{method:'POST'}) with no
-        body at all: Content-Length 0 and no Content-Type, as http.client sends a bodiless POST."""
+    @staticmethod
+    def _shown_offer():
+        """The offer the banner would be showing for the kernel's current slots, as the page load derives it
+        from /update-check (a release tag first, else the main drift and its sha): round 3 of the install-rewrite
+        review (2026-09-19) had the click carry it, so the route does what the banner said. With nothing offered
+        there would be no banner to click; a stale page's click (its kernel moved on) is the shape that reaches
+        the route then, so that is what a default click carries."""
+        if km._UPDATE_AVAIL[0]:
+            return {"kind": "release", "id": km._UPDATE_AVAIL[0]}
+        if km._MAIN_DRIFT[0] or km._MAIN_DRIFT[1]:
+            return {"kind": "main", "id": km._MAIN_DRIFT[0] or km._MAIN_DRIFT[1]}
+        return {"kind": "release", "id": "v0.0.1"}
+
+    def _post(self, path, token=True, body=None, legacy=False, offer=None):
+        """A POST as the banner's ARMED click sends it (2026-09-10): {"confirmed": true, "offer": {...}} unless
+        the test says otherwise. `offer` names the offer the click carries; None sends the one the banner would
+        show for the kernel's current slots (_shown_offer). `body` is the whole JSON object to send, as given ({}
+        is the unconfirmed click). `legacy` is the request the banner sent before the confirm step,
+        fetch('/update',{method:'POST'}) with no body at all: Content-Length 0 and no Content-Type, as
+        http.client sends a bodiless POST."""
         import urllib.request, urllib.error
         headers = {"X-Romp-Token": km.TOKEN} if token else {}
-        data = None if legacy else json.dumps({"confirmed": True} if body is None else body).encode()
+        if body is None:
+            body = {"confirmed": True, "offer": self._shown_offer() if offer is None else offer}
+        data = None if legacy else json.dumps(body).encode()
         req = urllib.request.Request("http://127.0.0.1:%d%s" % (self.port, path), method="POST",
                                      data=data, headers=headers)
         try:
@@ -940,9 +964,10 @@ class Routes(Fresh):
     def test_post_update_on_a_kernel_that_is_not_the_primary_converges_main_drift_though_a_release_is_known(self):
         # round 2 of the install-rewrite review (2026-09-18, regression-2's real defect): with a release tag known, a
         # non-primary's click was refused before the drift branch even when the click was the drift converge, which is
-        # this kernel's own and legitimate there. On a non-primary the release is never this kernel's to run, so a
-        # known tag does not outrank drift: the click converges, and the release's refusal is the answer only when
-        # there is no drift to converge (the test after this one).
+        # this kernel's own and legitimate there. Round 3 (2026-09-19, kernel-1): the click carries the offer the
+        # banner showed, so a MAIN-DRIFT click converges on a non-primary with a release known, as here, and a
+        # RELEASE click there is refused naming the primary whatever drift stands (the test after this one); round
+        # 2's route re-derived the action from the slots, and the release banner's click ran the drift converge.
         km._UPDATE_AVAIL[0] = "v0.7.0"
         km._MAIN_DRIFT[0], km._MAIN_DRIFT[1] = "aaaa1111", ""
         ran = []
@@ -952,7 +977,7 @@ class Routes(Fresh):
                                    side_effect=lambda kind, immediate=False, manager_port=None, target="":
                                        ran.append((kind, immediate, target))), \
                  mock.patch.dict(km.os.environ, {"ROMP_KERNEL_ID": "alice"}):
-                code, body = self._post("/update")
+                code, body = self._post("/update", offer={"kind": "main", "id": "aaaa1111"})
                 self.assertEqual(code, 200, body)
                 self.assertIn("converging", body)
                 for _ in range(200):
@@ -964,6 +989,124 @@ class Routes(Fresh):
             self.assertEqual([r["action"] for r in rows], ["main-converge"], "the drift converge's own row, no self-update row")
         finally:
             km._MAIN_DRIFT[0] = ""
+            km._MAIN_CONVERGE_INFLIGHT[0] = False
+
+    def test_a_release_click_on_a_kernel_that_is_not_the_primary_never_converges_main_drift(self):
+        # round 3 of the install-rewrite review (2026-09-19, kernel-1): on a non-primary in ask mode the banner reads
+        # "romp <tag> is available" (the page load ranks a release above drift, and the ask-mode release push carries
+        # no drift at all), and round 2's route, its release branch gated to the primary, fell through to the drift
+        # branch on the confirmed click: a git pull of main and a restart of every kernel for a click that offered a
+        # release. Both roads the banner can take to that offer (the load, the push) post the same offer, so the
+        # route is the one place to pin: a release offer on a non-primary is answered naming the primary, converges
+        # nothing, launches nothing and writes no row, with drift standing or not.
+        km._UPDATE_AVAIL[0] = "v0.7.0"
+        for drift in (("aaaa1111", ""), ("", "bbbb2222"), ("", "")):
+            km._MAIN_DRIFT[0], km._MAIN_DRIFT[1] = drift
+            try:
+                with mock.patch.object(km, "_run_update", side_effect=AssertionError("the release is not this kernel's to run")), \
+                     mock.patch.object(km, "_run_main_update", side_effect=AssertionError("a release click must never converge main")), \
+                     mock.patch.dict(km.os.environ, {"ROMP_KERNEL_ID": "alice"}):
+                    code, text = self._post("/update", offer={"kind": "release", "id": "v0.7.0"})
+                self.assertEqual(code, 409, (drift, text))
+                self.assertIn("not the primary", text)
+                self.assertIn("alice", text)
+                self.assertNotIn("converg", text)
+                self.assertEqual(self._audit_rows(), [], drift)
+                self.assertFalse(km._MAIN_CONVERGE_INFLIGHT[0], "no converge was begun")
+                self.assertEqual(km._UPDATE_STATE[0], "")
+            finally:
+                km._MAIN_DRIFT[0] = km._MAIN_DRIFT[1] = ""
+
+    def test_a_click_without_an_offer_is_refused_before_any_check_and_runs_nothing(self):
+        # round 3 (2026-09-19): a body that names no offer (a page from before the click carried one, a stray POST)
+        # is refused like the unconfirmed body, on both doors, before the kernel's slots are read
+        km._UPDATE_AVAIL[0] = "v0.7.0"
+        km._MAIN_DRIFT[0] = km._MAIN_DRIFT[1] = ""
+        ran = []
+        with mock.patch.object(km, "_run_update", side_effect=lambda tag: ran.append(tag) or True), \
+             mock.patch.object(km, "_run_main_update", side_effect=lambda *a, **kw: ran.append(a)):
+            for body in ({"confirmed": True}, {"confirmed": True, "offer": None}, {"confirmed": True, "offer": "v0.7.0"},
+                         {"confirmed": True, "offer": {"kind": "release"}}, {"confirmed": True, "offer": {"kind": "release", "id": ""}},
+                         {"confirmed": True, "offer": {"kind": "tag", "id": "v0.7.0"}}, {"confirmed": True, "offer": {"kind": "main", "id": 7}}):
+                code, text = self._post("/update", body=body)
+                self.assertEqual(code, 400, (body, text))
+                self.assertIn("named no offer", text, body)
+            km._UPDATE_AVAIL[0] = ""
+            km._MAIN_DRIFT[0] = "aaaa1111"
+            code, text = self._post("/update", body={"confirmed": True})
+            self.assertEqual(code, 400, "the drift door is the same door: " + text)
+        self.assertEqual(ran, [], "nothing launched, nothing converged")
+        self.assertEqual(self._audit_rows(), [])
+        km._MAIN_DRIFT[0] = ""
+
+        class _Unread(list):
+            def __getitem__(self, i):
+                raise AssertionError("a kernel check was read before the offer refusal")
+        saved_avail, saved_drift = km._UPDATE_AVAIL, km._MAIN_DRIFT
+        km._UPDATE_AVAIL, km._MAIN_DRIFT = _Unread([""]), _Unread(["", ""])
+        try:
+            code, text = self._post("/update", body={"confirmed": True})
+        finally:
+            km._UPDATE_AVAIL, km._MAIN_DRIFT = saved_avail, saved_drift
+        self.assertEqual((code, "named no offer" in text), (400, True), "no check slot was read: " + text)
+
+    def test_an_offer_the_kernel_no_longer_makes_is_refused_naming_both_and_starts_nothing(self):
+        # round 3 (2026-09-19): the click does what the banner said or nothing. A release the banner showed that is
+        # not the one the kernel offers now (a newer one found since), a main sha that is not the drift's target
+        # (main moved on), or a main offer while the kernel offers a release alone, is refused with both named, no
+        # launch, no converge, no row; the banner re-reads the offer on that text. Both kernels, primary or not.
+        cases = (("v0.7.0", ("", ""), {"kind": "release", "id": "v0.6.9"}, ("romp v0.6.9", "romp v0.7.0")),
+                 ("", ("aaaa1111", ""), {"kind": "main", "id": "0000dead"}, ("main at 0000dead", "main at aaaa1111")),
+                 ("v0.7.0", ("", ""), {"kind": "main", "id": "aaaa1111"}, ("main at aaaa1111", "romp v0.7.0")),
+                 ("v0.7.0", ("aaaa1111", ""), {"kind": "release", "id": "v0.6.9"}, ("romp v0.6.9", "romp v0.7.0, main at aaaa1111")))
+        for kid in ("main", "alice"):
+            for tag, drift, offer, (shown, known) in cases:
+                km._UPDATE_AVAIL[0] = tag
+                km._MAIN_DRIFT[0], km._MAIN_DRIFT[1] = drift
+                try:
+                    with mock.patch.object(km, "_run_update", side_effect=AssertionError("must not launch")), \
+                         mock.patch.object(km, "_run_main_update", side_effect=AssertionError("must not converge")), \
+                         mock.patch.dict(km.os.environ, {"ROMP_KERNEL_ID": kid}):
+                        code, text = self._post("/update", offer=offer)
+                    self.assertEqual(code, 409, (kid, offer, text))
+                    self.assertIn("the banner offered %s, but this kernel now offers %s" % (shown, known), text)
+                    self.assertIn("nothing was started", text)
+                    self.assertNotIn("not the primary", text, "the mismatch is the answer, before any primary check")
+                    self.assertEqual(self._audit_rows(), [], (kid, offer))
+                    self.assertFalse(km._MAIN_CONVERGE_INFLIGHT[0])
+                    self.assertEqual(km._UPDATE_STATE[0], "")
+                    ns = [n for n in self.notices() if "no longer offers" in n["text"]]
+                    self.assertTrue(ns and not ns[-1]["ok"], "the reason is in the Log, since the banner re-offers over it")
+                finally:
+                    km._MAIN_DRIFT[0] = km._MAIN_DRIFT[1] = ""
+        # with nothing offered at all the older answer stands: the update this banner offered already ran
+        km._UPDATE_AVAIL[0] = ""
+        code, text = self._post("/update", offer={"kind": "release", "id": "v0.7.0"})
+        self.assertEqual(code, 409, text)
+        self.assertIn("no newer release or main commit known", text)
+
+    def test_on_the_primary_a_main_drift_offer_converges_though_a_release_slot_is_filled(self):
+        # round 3 (2026-09-19): the same defect on the primary. /update-check filters a DISMISSED release out of its
+        # answer, so the banner shows the drift while the route's slot still holds the tag; the route re-derived and
+        # ran the release update on a click that offered the drift. The offer decides: a main click converges.
+        km._UPDATE_AVAIL[0] = "v0.7.0"
+        km._MAIN_DRIFT[0], km._MAIN_DRIFT[1] = "", "bbbb2222"
+        ran = []
+        try:
+            with mock.patch.object(km, "_run_update", side_effect=AssertionError("the banner offered the drift, not the release")), \
+                 mock.patch.object(km, "_run_main_update",
+                                   side_effect=lambda kind, immediate=False, manager_port=None, target="":
+                                       ran.append((kind, immediate, target))):
+                code, body = self._post("/update", offer={"kind": "main", "id": "bbbb2222"})
+                self.assertEqual(code, 200, body)
+                for _ in range(200):
+                    if ran:
+                        break
+                    time.sleep(0.01)
+            self.assertEqual(ran, [("restart", True, "bbbb2222")])
+            self.assertEqual([r["action"] for r in self._audit_rows()], ["main-converge"])
+        finally:
+            km._MAIN_DRIFT[1] = ""
             km._MAIN_CONVERGE_INFLIGHT[0] = False
 
     def test_post_update_on_a_kernel_that_is_not_the_primary_with_no_drift_is_still_refused_naming_the_primary(self):
@@ -2888,6 +3031,17 @@ class ReleaseChannelMigration(unittest.TestCase):
         with open(seen) as f, open(args) as a:
             return rep, f.read().strip(), a.read().strip()
 
+    # The auto mode's once-only marker, seeded as _update_check writes it before the launch (round 3 of the
+    # install-rewrite review, 2026-09-19, tests-1 and extra6-4): the child takes it back on every leg where the tree
+    # advanced and nothing restarted, and the two restart-request legs below (not taken, curl 7; never answered,
+    # curl 28) had no pin, so both `rm -f` lines could go with the suite green. The module's STATE is shared, so the
+    # leg that keeps the marker (the request taken, curl 0) removes it after itself.
+    MARKER = "update-attempted.json"
+
+    def _seed_marker(self):
+        (km.jd.STATE / self.MARKER).write_text(json.dumps({"tag": "v9.9.9", "t": 1}))
+        self.addCleanup(lambda: (km.jd.STATE / self.MARKER).unlink(missing_ok=True))
+
     def test_the_report_says_what_the_restart_request_actually_did(self):
         # The manager door can be shut (gone, or a stale port). The report used to be written
         # BEFORE the request, claiming restarted:true — an "updated and restarted" report the
@@ -2896,6 +3050,7 @@ class ReleaseChannelMigration(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             g, inst = self._repos(tmp)
             g(inst, "checkout", "-q", "--detach", "v9.9.8")
+            self._seed_marker()
             rep, saw, args = self._run_with_manager("v9.9.9", inst, curl_exit=7)
         self.assertEqual(saw, "absent", "the report is written AFTER the restart request, never before")
         self.assertIn("--max-time 60", args, "the request is bounded: a manager that never answers cannot "
@@ -2903,13 +3058,17 @@ class ReleaseChannelMigration(unittest.TestCase):
         self.assertEqual((rep["ok"], rep["restarted"]), (True, False))
         self.assertIn("port 7777", rep["why"])
         self.assertIn("did not take the restart request", rep["why"])
+        self.assertFalse((km.jd.STATE / self.MARKER).exists(),
+                         "the tree advanced and nothing restarted: the version's one automatic try is not spent (round 3)")
         with tempfile.TemporaryDirectory() as tmp:
             g, inst = self._repos(tmp)
             g(inst, "checkout", "-q", "--detach", "v9.9.8")
+            self._seed_marker()
             rep, saw, _ = self._run_with_manager("v9.9.9", inst, curl_exit=0)
         self.assertEqual(saw, "absent")
         self.assertEqual((rep["ok"], rep["restarted"], rep.get("why")), (True, True, None),
                          "a request the manager took is the one report the next boot files")
+        self.assertTrue((km.jd.STATE / self.MARKER).exists(), "the restart WAS taken: the marker stands for that attempt")
 
     def test_a_restart_request_the_manager_never_answers_is_not_a_restart(self):
         # curl's exit 28 is its own timeout: the manager accepted the connection and never answered.
@@ -2919,6 +3078,7 @@ class ReleaseChannelMigration(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             g, inst = self._repos(tmp)
             g(inst, "checkout", "-q", "--detach", "v9.9.8")
+            self._seed_marker()
             rep, saw, args = self._run_with_manager("v9.9.9", inst, curl_exit=28)
         self.assertEqual(saw, "absent")
         self.assertIn("--max-time 60", args)
@@ -2926,6 +3086,8 @@ class ReleaseChannelMigration(unittest.TestCase):
         self.assertIn("port 7777", rep["why"])
         self.assertIn("did not answer the restart request within 60 s", rep["why"])
         self.assertNotIn("did not take", rep["why"], "a timeout is its own reason, not a refusal")
+        self.assertFalse((km.jd.STATE / self.MARKER).exists(),
+                         "the tree advanced and the restart was never answered: the try is not spent (round 3)")
 
 
 class BootOnTheTag(Fresh):
@@ -3098,6 +3260,38 @@ class AssembledUpdateRoad(Fresh):
             self.assertEqual(len(ns), 1)
             self.assertIn("the checkout moved to v9.9.9", ns[0]["text"])
             self.assertIn("nothing was restarted", ns[0]["text"])
+
+    def test_an_install_that_fails_over_a_checkout_already_on_the_tag_says_the_tree_did_not_move_and_keeps_the_marker(self):
+        # round 3 of the install-rewrite review (2026-09-19, regression-2): advance() returns 0 on the no-op
+        # fast-forward (a checkout already on the tag, the branch case _run_update's comment keeps harmless), and the
+        # install leg, keyed on the step alone, then reported that the checkout had moved to the tag and took the
+        # auto marker back over a tree that had not moved. Whether the tree moved is read from the tree.
+        with tempfile.TemporaryDirectory() as tmp:
+            clone, base, tag_sha, g = self._clone(tmp)
+            g(clone, "fetch", "-q", "origin", "refs/tags/v9.9.9:refs/tags/v9.9.9")
+            g(clone, "merge", "-q", "--ff-only", "v9.9.9")            # already on the release before the run
+            self.assertEqual(g(clone, "rev-parse", "HEAD"), tag_sha)
+            (jd.STATE / "update-attempted.json").write_text(json.dumps({"tag": "v9.9.9", "t": 1}))
+            r, env = self._run(clone, {"ROMP_TEST_INSTALL_RC": "1"})
+            self.assertEqual(g(clone, "rev-parse", "HEAD"), tag_sha, "unmoved")
+            with open(env["ROMP_TEST_INSTALL_LOG"]) as f:
+                self.assertEqual(f.read(), "ran\n", "install.sh ran from the (unmoved) tree and failed")
+            rep = self._report()
+            self.assertFalse(rep["ok"])
+            self.assertIs(rep["advanced"], False)
+            self.assertIn("the checkout was already on v9.9.9", rep["why"])
+            self.assertIn("moved nothing", rep["why"])
+            self.assertNotIn("moved to v9.9.9", rep["why"], "no claim that the tree moved")
+            self.assertTrue((jd.STATE / "update-attempted.json").exists(),
+                            "nothing advanced without a restart: the attempt ran and failed, so the try is spent and the next pass offers the banner")
+            self.assertFalse((jd.STATE / "restart-audit.jsonl").exists())
+            km._UPDATE_STATE[0] = "running"
+            km._consume_update_report(running_only=True)
+            ns = self.notices()
+            self.assertEqual(len(ns), 1)
+            self.assertIn("already on v9.9.9", ns[0]["text"])
+            self.assertIn("nothing was restarted", ns[0]["text"])
+            (jd.STATE / "update-attempted.json").unlink()
 
     def test_a_clean_run_with_no_manager_lands_on_the_tag_and_withholds_the_marker_too(self):
         with tempfile.TemporaryDirectory() as tmp:

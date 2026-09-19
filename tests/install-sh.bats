@@ -312,7 +312,8 @@ PY
 # the swallowed failure is what left the dashboard dead on :29855. ROMP_SERVICE_BIN stubs romp-service.
 _svc_stub() {   # write a fake romp-service to $1; behavior toggled by ROMP_SVC_RUNNING / ROMP_SVC_FAIL / ROMP_SVC_REWRITE_FAIL
                 # (exit 1, a reload that failed) / ROMP_SVC_REWRITE_REFUSE (exit 5, the identity refusal, with romp-service's
-                # own two lines) / ROMP_SVC_NOT_INSTALLED (status says not installed AND running; rewrite exits 3)
+                # own two lines) / ROMP_SVC_INSTALL_REFUSE (the same refusal on the install road, the marked update child's) /
+                # ROMP_SVC_NOT_INSTALLED (status says not installed AND running; rewrite exits 3)
     cat > "$1" <<'SH'
 #!/usr/bin/env bash
 echo "$1" >> "$ROMP_SVC_LOG"
@@ -321,6 +322,8 @@ case "$1" in
           [[ -n "${ROMP_SVC_RUNNING:-}" ]] && echo "running"
           [[ -n "${ROMP_SVC_DYING:-}" ]] && echo "loaded but not running (last exit code: 134); launchd keeps respawning it — check /tmp/manager.log" ;;
   install) [[ -n "${ROMP_SVC_FAIL:-}" ]] && { echo "romp-service: bootstrap lost the drain-race" >&2; exit 1; }
+           [[ -n "${ROMP_SVC_INSTALL_REFUSE:-}" ]] && { echo "romp-service: the login service unit on disk and this environment disagree; nothing was rewritten:" >&2
+                                                       echo "  ROMP_STATE_DIR: the file carries /srv/second, this environment carries /srv/other" >&2; exit 5; }
            [[ -n "${ROMP_SVC_HELD:-}" ]] && { echo "romp-service: the agent's manager exited at once because a manager is ALREADY serving on :7432 outside the login service" >&2; exit 3; } ;;
   rewrite) [[ -n "${ROMP_SVC_REWRITE_FAIL:-}" ]] && { echo "romp-service: the unit was written but systemd did NOT reload it" >&2; exit 1; }
            [[ -n "${ROMP_SVC_REWRITE_REFUSE:-}" ]] && { echo "romp-service: the login unit on disk and this environment disagree; nothing was rewritten:" >&2
@@ -516,6 +519,69 @@ EOF
     [[ "$output" == *"romp-service install FAILED"* ]]
     [[ "$output" == *"dashboard will be dead"* ]]
     grep -qx install "$TEST_DIR/svc.log"
+}
+
+@test "install.sh: a REFUSED service install (exit 5) ends the run saying nothing was written, with romp-service's own lines reaching the operator, no retry line and no dead-dashboard claim" {
+    # Round 3 of the review (2026-09-19; correctness-2, tests-2, regression-1, kernel-2, extra5-1, extra8-1): round 2 taught
+    # the install road to exit 5 (the marked update child keeps an installed unit's identity there) and branched the
+    # REWRITE road on it, while this road folded the 5 into the generic failure class: a false end state (the dashboard is
+    # not dead: nothing was attempted, and whatever manager is serving keeps serving) and a retry line naming the command
+    # whose unmarked run re-bakes the unit from the retrying shell, the move the refusal had just prevented.
+    unset ROMP_NO_SERVICE
+    _svc_stub "$TEST_DIR/romp-service"
+    export ROMP_SVC_LOG="$TEST_DIR/svc.log" ROMP_SVC_INSTALL_REFUSE=1   # not running + install exits 5
+    mkdir -p "$HOME/.local/state/romp"
+    printf 'tok123\n' > "$HOME/.local/state/romp/serve-token"            # a token on disk: another manager's, never printed here
+    ROMP_SERVICE_BIN="$TEST_DIR/romp-service" run "$ROMP_DIR/install.sh"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp-service install refused to change the login service's identity"* ]]
+    [[ "$output" == *"nothing was written or loaded"* ]]
+    [[ "$output" == *"whatever manager is serving keeps serving"* ]]
+    [[ "$output" == *"the login service unit on disk and this environment disagree"* ]]           # romp-service's own lines
+    [[ "$output" == *"ROMP_STATE_DIR: the file carries /srv/second, this environment carries /srv/other"* ]]
+    [[ "$output" != *"Retry by hand"* ]]
+    [[ "$output" != *"will be dead"* ]]
+    [[ "$output" != *"NOT running"* ]]
+    [[ "$output" != *"install FAILED"* ]]
+    # the run stops there, before the closing report and the tokened link (the convention the arms state)
+    [[ "$output" != *"ROMPHOME"* ]]
+    [[ "$output" != *"romp url"* ]]
+    [[ "$output" != *"tok123"* ]]
+    grep -qx install "$TEST_DIR/svc.log"
+}
+
+@test "install.sh: the closing dashboard link names the port of the state root's serve-port record, then ROMP_KERNEL_PORT, then the default" {
+    # Round 3 of the review (2026-09-19, extra6-7): ROMP_KERNEL_PORT is in the kernel's update child's scrub list (the
+    # rewrite compares it against the unit's line), and the closing link was its only reader here, so on a renumbered
+    # install every self-update's log carried a link naming 29855, a port nothing served. The kernel's own serve-port
+    # record beside the token is the authoritative answer for a caller with the state root and no shell variable.
+    unset ROMP_NO_SERVICE ROMP_KERNEL_PORT
+    _svc_stub "$TEST_DIR/romp-service"
+    export ROMP_SVC_LOG="$TEST_DIR/svc.log" ROMP_SVC_RUNNING=1
+    mkdir -p "$ROMP_STATE_DIR"
+    printf 'tok123\n' > "$ROMP_STATE_DIR/serve-token"
+    printf '31855\n' > "$ROMP_STATE_DIR/serve-port"
+    ROMP_SERVICE_BIN="$TEST_DIR/romp-service" run "$ROMP_DIR/install.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"http://127.0.0.1:31855/?token=tok123"* ]]
+    [[ "$output" != *"29855"* ]]
+    # the record outranks the environment's variable (the record is what the kernel serves on; the variable is what a
+    # shell was told), and without the record the variable stands, then the default (the tokened-link case above)
+    ROMP_KERNEL_PORT=31856 ROMP_SERVICE_BIN="$TEST_DIR/romp-service" run "$ROMP_DIR/install.sh"
+    [[ "$output" == *"http://127.0.0.1:31855/?token=tok123"* ]]
+    rm -f "$ROMP_STATE_DIR/serve-port"
+    ROMP_KERNEL_PORT=31856 ROMP_SERVICE_BIN="$TEST_DIR/romp-service" run "$ROMP_DIR/install.sh"
+    [[ "$output" == *"http://127.0.0.1:31856/?token=tok123"* ]]
+    # a record that is not a port is skipped, never printed
+    printf 'garbage\n' > "$ROMP_STATE_DIR/serve-port"
+    ROMP_SERVICE_BIN="$TEST_DIR/romp-service" run "$ROMP_DIR/install.sh"
+    [[ "$output" == *"http://127.0.0.1:29855/?token=tok123"* ]]
+    # the ROMP_NO_SERVICE road's bare URL reads the same record
+    printf '31857\n' > "$ROMP_STATE_DIR/serve-port"
+    ROMP_NO_SERVICE=1 run "$ROMP_DIR/install.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"http://127.0.0.1:31857/"* ]]
+    [[ "$output" != *"token="* ]]
 }
 
 # ── The closing dashboard link (the user 2026-07-25, who wanted installing alone to be

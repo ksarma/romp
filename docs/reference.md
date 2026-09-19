@@ -41,9 +41,12 @@ self-update runs from the primary kernel only (the manager tells each kernel its
 `ROMP_KERNEL_ID`; `main` is the primary): its `install.sh` rewrites the login service's unit, and there
 is one unit, the primary's, so a `kernels.json` profile's or a `/ensure` kernel's dashboard answers the
 confirmed click with a line naming the primary, and its automatic mode files one notice per release
-instead of running it. On such a kernel a known release does not outrank main drift: with drift
-pending, the click converges the drift, which is that kernel's own, and the line naming the primary is
-the answer only when there is no drift to converge. The gear's
+instead of running it. The banner's confirmed click carries the offer the banner showed (a release
+and its tag, or main drift and its sha), and the kernel does that and nothing else: on such a kernel a
+release click is answered with the line naming the primary, a main-drift click converges the drift,
+which is that kernel's own, and a click whose offer is no longer what the kernel offers (a newer
+release found since, main moved on) is refused naming both, nothing started, while the banner re-reads
+the current offer. The gear's
 **Automatic updates** control (under *Updates & debug*) decides what happens: *Check and
 ask* shows the banner, *Install automatically* converges on its own, and *Off* stops both the
 checks and the banners, so a machine whose owner merges to `main` all day hears nothing about it
@@ -1133,7 +1136,8 @@ it: a unit with no `PATH` line gets none, the `service.env` path is compared
 only when the deploying shell set `ROMP_SERVICE_ENV_FILE` or
 `ROMP_SERVICE_ENV` (otherwise the unit's line stands, and a unit with no line
 reads the kernel's default), and the state root the rewrite journals under is
-the unit's `ROMP_STATE_DIR` line, else the default under `$HOME`.
+the file's `ROMP_STATE_DIR` line, else (macOS) the directory of the plist's
+`StandardOutPath`, else the default under `$HOME`.
 `romp-service install` is the way to change them.
 
 ### The manager's control port
@@ -1549,7 +1553,24 @@ the checkout, so a deploy the rewrite would refuse moves nothing first; its
 detached child is marked (`ROMP_UPDATE_CHILD=1`), and on the install road
 (the manager not running under the service) `romp-service install` from that
 child keeps an installed unit's identity the same way, where a person's
-install bakes what their shell sets. After the reload, on the install road
+install bakes what their shell sets, and refuses a disagreement with the same
+code, exit 5, on which `install.sh` says that nothing was written or loaded
+and that the serving manager is untouched, and ends the run with no retry
+line, as it does for the rewrite road's refusal. On macOS the rewrite reads
+the plist through `plutil` when one is present (any XML layout, or binary);
+without it, only the one-line form `romp-service` writes, and a plist in any
+other form (re-saved by `plutil -convert`, PlistBuddy, `defaults write` or
+Xcode) is refused with exit 5 rather than read as a plist with no entries,
+since a reader that cannot parse a file must not report its values as absent;
+`romp-service install` from the owning shell and clone writes it afresh.
+Every value the plist carries is XML-escaped once on write and decoded once
+on read, so a path with `&`, `<`, `>` or `"` compares equal to the shell that
+installed it and is unchanged by any number of rewrites. On Linux an instance
+`Environment=` line the unit carries goes back as written, quoted or not, and
+an install writes a value with whitespace, a `%`, a backslash or a double
+quote in systemd's quoted form (`Environment="KEY=..."`, the backslash and
+the quote escaped, `%` doubled), so systemd reads the value whole where an
+unquoted one ends at the first space. After the reload, on the install road
 and the rewrite road alike, `romp-service` reads systemd's
 `NeedDaemonReload` flag back and the `FragmentPath` systemd loads the unit
 from, and says on stderr, at exit 0, when systemd still holds an older

@@ -21,7 +21,9 @@
 #                             update can tell the refusal from a reload that failed, exit 1). Exit 3 when none is
 #                             installed. `rewrite --check` runs the installed and identity checks alone and writes,
 #                             reloads and journals nothing: the kernel's update runs it BEFORE it fetches the release
-#                             and moves the checkout, so a deploy the rewrite would refuse moves nothing first.
+#                             and moves the checkout, so a deploy the rewrite would refuse moves nothing first. A plist
+#                             the reader cannot parse (re-saved by another tool, and no plutil to read it) is refused
+#                             with the same code, never read as a plist with no entries (round 3, 2026-09-19).
 # Safe + idle-free: the kernel is hardened (Origin gate + token) and the producer is
 # presence-gated (zero model calls when no browser is connected). Runs as a USER-level
 # agent (no root). PATH + ROMP_DIR are baked into the unit so the service finds
@@ -61,6 +63,10 @@ SYSTEMD_DIR="${ROMP_SYSTEMD_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user}
 NO_LOAD="${ROMP_SERVICE_NO_LOAD:-}"
 LAUNCHCTL="${ROMP_LAUNCHCTL:-launchctl}"
 SYSTEMCTL="${ROMP_SYSTEMCTL:-systemctl}"
+# The plist reader's parser (round 3 of the install-rewrite review, 2026-09-19): plutil, which every mac has and which
+# reads a plist in any of its forms, XML in any layout or binary. ROMP_PLUTIL names another (a stub on a Linux test
+# host), or a path that does not exist to run the one-line fallback on a mac that has the real one.
+PLUTIL="${ROMP_PLUTIL:-plutil}"
 # systemctl --user finds the user manager through XDG_RUNTIME_DIR (its bus is $XDG_RUNTIME_DIR/bus) or through
 # DBUS_SESSION_BUS_ADDRESS; a login shell has both, a clean shell has neither. The re-install that keeps a session's
 # ROMP_* variables and PATH out of the unit (`env -i HOME=... PATH=... romp-service install`; write_unit bakes every
@@ -157,10 +163,52 @@ _INSTANCE_VARS=(ROMP_SERVE_PORT ROMP_KERNEL_PORT ROMP_POSTAL_PORT ROMP_MANAGER_P
 EXIT_IDENTITY=5
 _SVC_PATH="$PATH"           # the PATH the writers bake: this environment's on an install, the file's on a rewrite (empty: no line)
 _SVC_PATH_LINE=""           # on a rewrite, the unit's own PATH line as written (quoted or not), written back as it is
-_KEEP_INSTANCE=()           # on a rewrite, the file's value per _INSTANCE_VARS index (empty: no line)
+_KEEP_INSTANCE=()           # on a rewrite, the file's value per _INSTANCE_VARS index (empty: no line), decoded for the compare
+_KEEP_INSTANCE_LINE=()      # on a rewrite of the unit, the unit's own line per index, written back as it is (round 3, 2026-09-19:
+                            # a quoted line read for the compare was re-emitted unquoted, and systemd cut its value at the space)
 _KEEP_ON=""                 # non-empty once _keep_identity ran: _instance_value reads _KEEP_INSTANCE, not the environment
+# The file's noun in every message of the rewrite road, one per OS (round 3, 2026-09-19: the --check line said "login
+# service" where the refusal on the same road said "login agent" or "login unit")
+_SVC_NOUN="login service unit"; [[ "$os" == Darwin ]] && _SVC_NOUN="login agent"
 _instance_value() {   # $1 a variable of _INSTANCE_VARS, $2 its index: the value the writers bake, empty for no line
     if [[ -n "$_KEEP_ON" ]]; then printf '%s' "${_KEEP_INSTANCE[$2]:-}"; else printf '%s' "${!1:-}"; fi
+}
+# XML character data, one escape on write and one unescape on read (round 3 of the review, 2026-09-19). The plist
+# writer escaped the service.env path alone and the reader undid nothing, so a path with & compared unequal to the
+# shell that installed it (a refusal over a path it never changed) and gained a layer of &amp; on every rewrite from
+# a clean shell; and every other value (ExecStart, ROMP_DIR, PATH, the instance entries, the log paths) went in raw,
+# where a & would have given launchd a plist it cannot parse. Now every value the plist carries goes through
+# _xml_escape on the way in, and the one-line reader below through _xml_unescape on the way out (plutil hands back
+# decoded text itself), so the compare sees the value the agent's manager sees. &amp; is undone LAST, or a literal
+# "&lt;" in a value would decode twice.
+_xml_escape() { printf '%s' "$1" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g; s/"/\&quot;/g'; }
+_xml_unescape() { printf '%s' "$1" | sed "s/&lt;/</g; s/&gt;/>/g; s/&quot;/\"/g; s/&apos;/'/g; s/&amp;/\\&/g"; }
+# The text inside a quoted Environment= item, as systemd unquotes it (systemd.syntax(7), Quoting: C-style escapes,
+# of which the writers here produce \\ and \"): left to right, one pass, so \\\" reads as \" and not as a quote
+# ended early. Other escapes are kept as written; the writers never produce them.
+_unit_unescape() {
+    local s="$1" out="" c
+    while [[ -n "$s" ]]; do
+        c="${s:0:1}"
+        if [[ "$c" == \\ && ${#s} -ge 2 ]]; then
+            case "${s:1:1}" in \\|\") out+="${s:1:1}"; s="${s:2}"; continue ;; esac
+        fi
+        out+="$c"; s="${s:1}"
+    done
+    printf '%s' "$out"
+}
+# One Environment= line for the unit, $1 the name and $2 the value, in the form systemd reads back as exactly that value
+# (round 3 of the review, 2026-09-19; systemd.exec(5) Environment= and systemd.syntax(7) Quoting): a plain value goes
+# unquoted, as every unit this wrote before; a value with whitespace, a double quote, a backslash or a percent sign is
+# wrapped in double quotes as one item, since an unquoted item ends at whitespace (systemd cut a Claude config dir
+# with a space at the space), with the backslash and the double quote escaped (C-style, the two escapes the quoted form
+# needs) and % doubled, because Environment= undergoes specifier expansion quoted or not (%h is the home directory and
+# an unknown %z drops the assignment). The same form _service_env_override has written for the service.env path.
+_unit_env_line() {
+    case "$2" in
+        *[[:space:]\"%]*|*\\*) printf 'Environment="%s=%s"' "$1" "$(printf '%s' "$2" | sed 's/\\/\\\\/g; s/"/\\"/g; s/%/%%/g')" ;;
+        *) printf 'Environment=%s=%s' "$1" "$2" ;;
+    esac
 }
 _same_path() {   # $1 $2: the same path as written, or the same place once resolved (a clone reached through a symlinked directory)
     [[ "$1" == "$2" ]] && return 0
@@ -175,11 +223,58 @@ _same_path() {   # $1 $2: the same path as written, or the same place once resol
     fi
     [[ -n "$a" && "$a" == "$b" ]]
 }
+# The plist reader's form, set by _plist_readable before any plist value is read: `plutil` (the parser; any XML layout,
+# binary) or `grep` (romp's own one-line layout alone). A reader that cannot parse a file must not report its values
+# as absent (round 3 of the review, 2026-09-19): the one-line grep read a plist any macOS tool had re-saved (plutil
+# -convert, PlistBuddy, defaults write, Xcode write key and string on separate lines; a binary plist has no tags at
+# all) as a plist with no PATH entry, no instance entries, no service.env entry, no log paths and, in the binary case,
+# no ExecStart, so the rewrite dropped the first three, moved the log paths to the $HOME default and re-pointed the
+# agent at the deploying clone, at exit 0 with the success line, and `rewrite --check` blessed both. So the plist's
+# form is asserted first, on the entry every plist romp ever wrote carries: Label, with the value LABEL, on one line
+# in the fallback (ROMP_SUPERVISED, which arrived later, is a SECOND marker there: present in the text but not on one
+# line is the re-saved form too; requiring it alone would refuse the plist of a box that installed before it existed);
+# through plutil, that Label extracts at all. A plist that fails the assertion is refused with EXIT_IDENTITY by the
+# callers, nothing read out of it, and the refusal says the form and the route (`romp-service install` from the
+# owning shell and clone writes a fresh plist in romp's form).
+_PLIST_READ=""
+_plist_readable() {
+    local label
+    if command -v "$PLUTIL" >/dev/null 2>&1; then
+        _PLIST_READ=plutil
+        label="$("$PLUTIL" -extract Label raw -o - "$PLIST" 2>/dev/null)" || label=""
+        if [[ -n "$label" && "$label" != "$LABEL" ]]; then
+            echo "romp-service: the $_SVC_NOUN's plist ($PLIST) is not romp's: $PLUTIL reads its Label as $label, not $LABEL; nothing was rewritten." >&2
+            echo "  To write it afresh in romp's form, run romp-service install from the shell and clone that should own the service (the header says what it bakes); that restarts the manager." >&2
+            return 1
+        elif [[ -z "$label" ]]; then
+            echo "romp-service: the $_SVC_NOUN's plist ($PLIST) is not one this rewrite can read: $PLUTIL could not extract its Label entry (not a plist launchd would load, or one with no Label); nothing was rewritten." >&2
+            echo "  To write it afresh in romp's form, run romp-service install from the shell and clone that should own the service (the header says what it bakes); that restarts the manager." >&2
+            return 1
+        fi
+        return 0
+    fi
+    _PLIST_READ=grep
+    if ! grep -aqF "<key>Label</key><string>$LABEL</string>" "$PLIST" 2>/dev/null; then
+        echo "romp-service: the $_SVC_NOUN's plist ($PLIST) is not in the one-line form romp writes (its Label entry is not <key>Label</key><string>$LABEL</string> on one line), and no plutil is available here to read another form; nothing was rewritten. A plist re-saved by another tool (plutil -convert, PlistBuddy, defaults write, Xcode) reads this way." >&2
+        echo "  To write it afresh in romp's form, run romp-service install from the shell and clone that should own the service (the header says what it bakes); that restarts the manager." >&2
+        return 1
+    fi
+    if grep -aqF '<key>ROMP_SUPERVISED</key>' "$PLIST" 2>/dev/null && ! grep -aqF '<key>ROMP_SUPERVISED</key><string>' "$PLIST" 2>/dev/null; then
+        echo "romp-service: the $_SVC_NOUN's plist ($PLIST) is not in the one-line form romp writes (its ROMP_SUPERVISED entry is split across lines), and no plutil is available here to read another form; nothing was rewritten." >&2
+        echo "  To write it afresh in romp's form, run romp-service install from the shell and clone that should own the service (the header says what it bakes); that restarts the manager." >&2
+        return 1
+    fi
+    return 0
+}
 # A value from the file romp itself wrote. $1 = unit | plist; $2 = ExecStart (the manager the service runs, the `up`
 # stripped), PATH, ROMP_DIR, ROMP_SERVICE_ENV_FILE (the unit's EnvironmentFile= line, its doubled % undone; the
-# plist's override key, which a default install does not write) or an instance variable. Empty for no such line.
+# plist's override key, which a default install does not write), StandardOutPath (the plist's log path) or an instance
+# variable. Empty for no such line. The value is DECODED (round 3 of the review, 2026-09-19): the unit's quoted form
+# has its quotes, its \\ and \" escapes and its doubled % undone, the plist's text its XML entities (plutil decodes
+# itself), so the identity compare reads what the service's manager reads; the writers encode again, once. The plist
+# road is read only after _plist_readable said how (the callers refuse first when it cannot).
 _file_value() {
-    local key="$2" line=""
+    local key="$2" line="" i=0 prev="" arg kp
     if [[ "$1" == unit ]]; then
         case "$key" in
             ExecStart) line="$(grep -m1 '^ExecStart=' "$UNIT" 2>/dev/null || true)"; line="${line#ExecStart=}"; line="${line% up}" ;;
@@ -187,13 +282,34 @@ _file_value() {
             # the unquoted form romp writes, and the quoted form systemd also reads (Environment="PATH=..."), which a
             # hand-edited unit carries (round 2 of the review, 2026-09-18: the quoted line read as absent and was dropped)
             *) line="$(grep -m1 -E "^Environment=\"?$key=" "$UNIT" 2>/dev/null || true)"; line="${line#Environment=}"
-               if [[ "$line" == \"* ]]; then line="${line#\"}"; line="${line%\"}"; fi
-               line="${line#"$key="}" ;;
+               if [[ "$line" == \"* ]]; then line="${line#\"}"; line="${line%\"}"; line="$(_unit_unescape "$line")"; fi
+               line="${line#"$key="}"; line="${line//%%/%}" ;;
         esac
     else
+        if [[ -z "$_PLIST_READ" ]]; then _plist_readable || return 1; fi
         case "$key" in
-            ExecStart) line="$(awk '/<string>up<\/string>/ { sub(/^[[:space:]]*<string>/, "", prev); sub(/<\/string>[[:space:]]*$/, "", prev); print prev; exit } { prev = $0 }' "$PLIST" 2>/dev/null || true)" ;;
-            *) line="$(grep -m1 "<key>$key</key><string>" "$PLIST" 2>/dev/null || true)"; line="${line#*<string>}"; line="${line%</string>*}" ;;
+            ExecStart)
+                if [[ "$_PLIST_READ" == plutil ]]; then
+                    # the argument before `up` in ProgramArguments, whatever precedes it (the launcher since the node
+                    # copy exists; the manager alone before it); indexed one at a time, so no count semantics are relied on
+                    while (( i < 16 )); do
+                        arg="$("$PLUTIL" -extract "ProgramArguments.$i" raw -o - "$PLIST" 2>/dev/null)" || break
+                        if [[ "$arg" == up ]]; then line="$prev"; break; fi
+                        prev="$arg"; i=$((i + 1))
+                    done
+                else
+                    line="$(awk '/<string>up<\/string>/ { sub(/^[[:space:]]*<string>/, "", prev); sub(/<\/string>[[:space:]]*$/, "", prev); print prev; exit } { prev = $0 }' "$PLIST" 2>/dev/null || true)"
+                    line="$(_xml_unescape "$line")"
+                fi ;;
+            *)
+                if [[ "$_PLIST_READ" == plutil ]]; then
+                    kp="EnvironmentVariables.$key"
+                    case "$key" in Label|StandardOutPath|StandardErrorPath) kp="$key" ;; esac
+                    line="$("$PLUTIL" -extract "$kp" raw -o - "$PLIST" 2>/dev/null)" || line=""
+                else
+                    line="$(grep -a -m1 -F "<key>$key</key><string>" "$PLIST" 2>/dev/null || true)"; line="${line#*<string>}"; line="${line%</string>*}"
+                    line="$(_xml_unescape "$line")"
+                fi ;;
         esac
     fi
     printf '%s' "$line"
@@ -206,6 +322,9 @@ _file_value() {
 # environment class to the command that had just refused it.
 _keep_identity() {
     local kind="$1" v i=0 fv ev bad_env="" bad_clone=""
+    # the plist's FORM before any value is read out of it (round 3 of the review, 2026-09-19: a plist the reader
+    # could not parse read as one with no entries, and every absence below was then taken at its word)
+    if [[ "$kind" == plist ]]; then _plist_readable || return 1; fi
     fv="$(_file_value "$kind" ExecStart)"
     if [[ -n "$fv" ]]; then
         if _same_path "$fv" "$MANAGER"; then MANAGER="$fv"; else bad_clone+="  ExecStart: the file runs $fv, this clone would write $MANAGER"$'\n'; fi
@@ -235,6 +354,7 @@ _keep_identity() {
         bad_env+="  $which: the file reads $fv, this environment names $ev"$'\n'
     fi
     _KEEP_INSTANCE=()
+    _KEEP_INSTANCE_LINE=()
     for v in "${_INSTANCE_VARS[@]}"; do
         fv="$(_file_value "$kind" "$v")"; ev="${!v:-}"
         if [[ -n "$fv" && -n "$ev" && "$fv" != "$ev" ]]; then
@@ -243,12 +363,16 @@ _keep_identity() {
                 *) bad_env+="  $v: the file carries $fv, this environment carries $ev"$'\n' ;;
             esac
         fi
-        _KEEP_INSTANCE[$i]="$fv"; i=$((i + 1))
+        _KEEP_INSTANCE[$i]="$fv"
+        # the unit's own line, quoted or not, for the writer to replay as it is (round 3, 2026-09-19): the decoded
+        # value above is for the compare; re-encoding it would double a % the administrator wrote for a specifier
+        _KEEP_INSTANCE_LINE[$i]=""
+        if [[ -n "$fv" && "$kind" == unit ]]; then _KEEP_INSTANCE_LINE[$i]="$(grep -m1 -E "^Environment=\"?$v=" "$UNIT" 2>/dev/null || true)"; fi
+        i=$((i + 1))
     done
     _KEEP_ON=1
     if [[ -n "$bad_clone$bad_env" ]]; then
-        local what="unit"; [[ "$kind" == plist ]] && what="agent"
-        echo "romp-service: the login $what on disk and this environment disagree; nothing was rewritten:" >&2
+        echo "romp-service: the $_SVC_NOUN on disk and this environment disagree; nothing was rewritten:" >&2
         printf '%s%s' "$bad_clone" "$bad_env" >&2
         echo "  A rewrite keeps the file's own values." >&2
         if [[ -n "$bad_env" ]]; then
@@ -290,25 +414,33 @@ _path_line() {
         [[ -n "$_SVC_PATH" ]] || return 0
         if [[ "$1" == unit ]]; then printf '%s\n' "$_SVC_PATH_LINE"; return 0; fi
     elif [[ "$1" == unit ]]; then
-        printf 'Environment=PATH=%s\n' "$_SVC_PATH"; return 0
+        _unit_env_line PATH "$_SVC_PATH"; printf '\n'; return 0
     fi
-    printf '    <key>PATH</key><string>%s</string>\n' "$_SVC_PATH"
+    printf '    <key>PATH</key><string>%s</string>\n' "$(_xml_escape "$_SVC_PATH")"
 }
 
 # The SET ones, formatted for the platform: $1 = plist (EnvironmentVariables dict pairs) or
 # unit (systemd Environment= lines). Each line is newline-TERMINATED; the callers decide what
 # the empty case looks like, because the two files want different things there. The value is
-# the environment's on an install and the file's on a rewrite (_instance_value).
+# the environment's on an install and the file's on a rewrite (_instance_value). Written in the form the reader
+# accepts (round 3 of the review, 2026-09-19): on a rewrite of the unit the unit's own line goes back as written,
+# quoted or not, the way PATH's does; on an install a value with whitespace or a character systemd would read as
+# an escape or a specifier is quoted and escaped (_unit_env_line), a plain one goes unquoted as before; every plist
+# value is XML-escaped once.
 _instance_env_block() {
     local v out="" i=0 val
     for v in "${_INSTANCE_VARS[@]}"; do
-        val="$(_instance_value "$v" "$i")"; i=$((i + 1))
-        [[ -n "$val" ]] || continue
-        if [[ "$1" == plist ]]; then
-            out+="    <key>$v</key><string>$val</string>"$'\n'
-        else
-            out+="Environment=$v=$val"$'\n'
+        val="$(_instance_value "$v" "$i")"
+        if [[ -n "$val" ]]; then
+            if [[ "$1" == plist ]]; then
+                out+="    <key>$v</key><string>$(_xml_escape "$val")</string>"$'\n'
+            elif [[ -n "$_KEEP_ON" && -n "${_KEEP_INSTANCE_LINE[$i]:-}" ]]; then
+                out+="${_KEEP_INSTANCE_LINE[$i]}"$'\n'
+            else
+                out+="$(_unit_env_line "$v" "$val")"$'\n'
+            fi
         fi
+        i=$((i + 1))
     done
     printf '%s' "$out"
 }
@@ -365,6 +497,11 @@ write_plist() {
     if [[ -n "$_plist_envf" ]]; then _plist_envf+=$'\n'; fi
     local _plist_path; _plist_path="$(_path_line plist)"
     if [[ -n "$_plist_path" ]]; then _plist_path+=$'\n'; fi
+    # every value XML-escaped once (_xml_escape says why); the one-line <key>K</key><string>V</string> layout is what
+    # the fallback reader matches, so the entries stay on one line each
+    local _x_launcher _x_manager _x_dir _x_log
+    _x_launcher="$(_xml_escape "$LAUNCHER")"; _x_manager="$(_xml_escape "$MANAGER")"
+    _x_dir="$(_xml_escape "$ROMP_DIR")"; _x_log="$(_xml_escape "$LOG")"
     cat > "$PLIST.tmp" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -373,20 +510,20 @@ write_plist() {
   <key>Label</key><string>$LABEL</string>
   <key>ProgramArguments</key>
   <array>
-    <string>$LAUNCHER</string>
-    <string>$MANAGER</string>
+    <string>$_x_launcher</string>
+    <string>$_x_manager</string>
     <string>up</string>
   </array>
   <key>EnvironmentVariables</key>
   <dict>
-${_plist_path}    <key>ROMP_DIR</key><string>$ROMP_DIR</string>
+${_plist_path}    <key>ROMP_DIR</key><string>$_x_dir</string>
     <key>ROMP_SUPERVISED</key><string>1</string>
 ${_plist_envf}${_plist_env}  </dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
   <key>ThrottleInterval</key><integer>60</integer>
-  <key>StandardOutPath</key><string>$LOG</string>
-  <key>StandardErrorPath</key><string>$LOG</string>
+  <key>StandardOutPath</key><string>$_x_log</string>
+  <key>StandardErrorPath</key><string>$_x_log</string>
 </dict>
 </plist>
 EOF
@@ -913,7 +1050,7 @@ case "${1:-status}" in
       *) echo "romp-service: unsupported OS '$os'" >&2; exit 1 ;;
     esac
     if [[ "${2:-}" == --check ]]; then
-        echo "  The login service on disk and this environment agree; a rewrite would keep its identity (nothing written: --check)."
+        echo "  The $_SVC_NOUN on disk and this environment agree; a rewrite would keep its identity (nothing written: --check)."
         exit 0
     fi
     # The row this writes, action service-rewrite, is attribution (who ran the deploy), never a restart request: the

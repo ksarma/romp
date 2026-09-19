@@ -12235,11 +12235,18 @@ def _run_update(tag):
     # stopped and whether the checkout moved (round 2: one report for every failure hid the half-done state, the
     # tree on <tag> with the old code running). The success leg is the restart above; each failure leg is its own
     # report, and the install leg, the one that fails with the tree already moved, withholds the auto marker.
+    # Whether the tree MOVED is read from the tree, HEAD before the chain against HEAD after it, never inferred from
+    # the step (round 3 of the install-rewrite review, 2026-09-19): advance() returns 0 on the no-op fast-forward too
+    # (a checkout already on or past the tag, the branch case the comment above keeps harmless), and keyed on the
+    # step alone the install leg claimed the checkout had moved to the tag and took the marker back over a tree that
+    # had not moved at all. An install that fails with the tree unmoved is a failure like the fetch's: the report
+    # says the tree did not move, and the marker stays (that attempt ran and failed; the next pass offers the banner).
     script = (
         "cd %s || exit 1\n" % q(str(ROOT))
         + "{ echo; echo \"== romp self-update to %s ==\"; date; } >> %s 2>&1\n" % (tag, log)
         + advance
         + preflight
+        + "head0=\"$(git rev-parse HEAD 2>/dev/null)\"\n"
         + "step=preflight\n"
         + "preflight && step=fetch && git fetch %s refs/tags/%s:refs/tags/%s >> %s 2>&1 && step=advance && advance "
           "&& step=install && ./install.sh >> %s 2>&1 && step=done\n" % (_release_remote(), tag, tag, log, log)
@@ -12258,11 +12265,18 @@ def _run_update(tag):
         + "    advance) " + report({"ok": False, "tag": tag,
                                     "why": "the fast-forward onto %s failed; the checkout did not move" % tag})
         + "    ;;\n"
-        + "    install) " + unmark
-        + "    " + report({"ok": False, "tag": tag, "advanced": True,
-                           "why": "the checkout moved to %s but its install failed, so the running romp is still the "
-                                  "previous release; update.log has install.sh's output, and the new code runs once "
-                                  "./install.sh succeeds in the clone and romp is restarted" % tag})
+        + "    install)\n"
+        + "      if [ \"$(git rev-parse HEAD 2>/dev/null)\" != \"$head0\" ]; then\n"
+        + "        " + unmark
+        + "        " + report({"ok": False, "tag": tag, "advanced": True,
+                               "why": "the checkout moved to %s but its install failed, so the running romp is still the "
+                                      "previous release; update.log has install.sh's output, and the new code runs once "
+                                      "./install.sh succeeds in the clone and romp is restarted" % tag})
+        + "      else\n"
+        + "        " + report({"ok": False, "tag": tag, "advanced": False,
+                               "why": "the checkout was already on %s (the fast-forward moved nothing) and its install "
+                                      "failed, so the running romp is unchanged; update.log has install.sh's output" % tag})
+        + "      fi\n"
         + "    ;;\n"
         + "  esac\n"
         + "fi\n")
@@ -70485,7 +70499,12 @@ _UPD_JS = (
     "(function(){var box=document.getElementById('rupd');if(!box)return;"
     "var msg=box.querySelector('.rup-msg'),go=document.getElementById('rupd-go'),dm=document.getElementById('rupd-dismiss'),"
     "cx=document.getElementById('rupd-cancel'),lbl=document.getElementById('rupd-armed'),cf=document.getElementById('rupd-confirm');"
-    "var dismissedTag='',curTag='',waiting=false,bootNow='',armed=false,impact=null,press=false,arms=0,plain=null,failedEnd=false;"
+    # curTag and curKind are the OFFER this window shows (round 3 of the install-rewrite review, 2026-09-19): the
+    # identifier (a release tag, or a main sha) and its kind ('release', or 'main' for either drift form). The
+    # confirm posts both, so the kernel does what this banner said and nothing else: until then the route
+    # re-derived the action from its own slots at click time, and a banner reading "romp <tag> is available" on a
+    # non-primary kernel ran the main-drift converge (a pull of main and a restart of every kernel) on its click
+    "var dismissedTag='',curTag='',curKind='',waiting=false,bootNow='',armed=false,impact=null,press=false,arms=0,plain=null,failedEnd=false;"
     # Two clicks, never one (2026-09-10): a single click POSTed /update, and a click that only meant to
     # focus the dashboard window landed on the button and restarted every session on the box, cutting
     # every turn in flight. The first click ARMS the banner: the Update button gives its place to a
@@ -70672,7 +70691,7 @@ _UPD_JS = (
     "if(state==='running'){waiting=true;go.hidden=true;dm.hidden=true;"
     "show(manager===false?'romp is updating on disk; restart it yourself when it finishes':'romp is updating \\u2014 the dashboard reloads when it restarts\\u2026');poll();return;}"
     "if(boot&&bootNow&&boot!==bootNow)return;"
-    "if(waiting||!tag||tag===dismissedTag)return;curTag=tag;failedEnd=false;go.hidden=false;go.disabled=false;dm.hidden=false;"
+    "if(waiting||!tag||tag===dismissedTag)return;curTag=tag;curKind=drift?'main':'release';failedEnd=false;go.hidden=false;go.disabled=false;dm.hidden=false;"
     "if(drift==='pull')show('new romp commits are on main ('+tag+') \\u2014 Update pulls them and restarts romp.');"
     "else if(drift==='restart')show('romp '+tag+' is ready on disk \\u2014 Update restarts romp onto it.');"
     "else show('romp '+tag+' is available'+(cur?' \\u2014 you are on '+cur:'')+'.');}"
@@ -70687,7 +70706,7 @@ _UPD_JS = (
     # restarted, until Not now. A wait in progress reloads instead, above: the new life is the update's
     "window.__rompUpdBoot=function(b){if(!b)return;if(!bootNow){bootNow=b;return;}"
     "if(b!==bootNow){bootNow=b;impact=null;if(waiting){location.reload();return;}"
-    "if(box.classList.contains('show')){disarm();box.classList.remove('show');curTag='';failedEnd=false;}}};"
+    "if(box.classList.contains('show')){disarm();box.classList.remove('show');curTag='';curKind='';failedEnd=false;}}};"
     # a non-ok answer is not the update state (waiting, bootNow and the failed/done words would be written from its body)
     "function poll(){fetch('/update-check',{cache:'no-store'}).then(function(r){if(!r.ok)throw new Error('/update-check answered HTTP '+r.status);return r.json();}).then(function(d){"
     "if(!waiting)return;"
@@ -70720,7 +70739,7 @@ _UPD_JS = (
     # restart. Round 6 had the failed ending's Not now post the tag the
     # clicking window had offered (the refused target) and an empty tag from a pushed window, which the
     # kernel ignores, so one message dismissed durably in one window and nothing in another
-    "if(d.failed){waiting=false;var again=!!(d.tag||(d.drift&&d.driftSha));go.hidden=!again;go.disabled=false;dm.hidden=false;failedEnd=true;if(!again)curTag='';show('The update did not finish: '+d.failed);return;}"
+    "if(d.failed){waiting=false;var again=!!(d.tag||(d.drift&&d.driftSha));go.hidden=!again;go.disabled=false;dm.hidden=false;failedEnd=true;if(!again){curTag='';curKind='';}show('The update did not finish: '+d.failed);return;}"
     # the kernel words the step by case (`romp refresh` exits 1 with no manager, where `romp up` is
     # the step; review find, 2026-09-08); the fallback is the manager case, for an older kernel
     "if(d.updated){waiting=false;failedEnd=false;go.hidden=true;dm.hidden=false;show('romp updated to '+d.updated+' on disk'+(d.why?', but '+d.why:'')"
@@ -70736,14 +70755,21 @@ _UPD_JS = (
     "cf.onclick=function(e){if(!armed)return;if(e&&e.detail>1)return;"
     "waiting=true;failedEnd=false;disarm();go.disabled=true;dm.hidden=true;"
     "show((impact&&impact.manager===false)?'Updating romp on disk, this can take a minute; restart it yourself when it finishes':'Updating romp \\u2014 this can take a minute; the dashboard reloads when it restarts\\u2026');"
-    "fetch('/update',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirmed:true})}).then(function(r){"
+    # the offer this window shows rides the post (curKind, curTag: the comment at the top), so the route does what
+    # the banner said; a route that offers something else now answers 409 naming both, and the banner re-reads the
+    # offer (reoffer below) instead of leaving Update over an identifier the kernel no longer offers
+    "fetch('/update',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirmed:true,offer:{kind:curKind,id:curTag}})}).then(function(r){"
     "if(!r.ok)return r.text().then(function(t){throw new Error(t||('HTTP '+r.status));});poll();})"
     "['catch'](function(e){waiting=false;var em=String((e&&e.message)||e);"
     # 'nothing known' is not an error — it means the update this prompt offered already ran (another
     # window, a converge, a peer's push): retire quietly, file the fact in the Log, and let the reload
     # banner (already raised by that very restart) carry the one action left (the user 2026-08-15).
-    "if(/no newer release or main commit/.test(em)){box.classList.remove('show');curTag='';failedEnd=false;"
+    "if(/no newer release or main commit/.test(em)){box.classList.remove('show');curTag='';curKind='';failedEnd=false;"
     "if(window.__rompNotify)window.__rompNotify('sync','the update this prompt offered already ran \\u2014 nothing left to do');return;}"
+    # the offer this window showed is not what the kernel offers now (a newer release since, main moved): the kernel
+    # started nothing and said so; this window drops the stale offer, shows the reason and re-reads the current
+    # offer, which then stands beside it with a fresh Update (round 3 of the install-rewrite review, 2026-09-19)
+    "if(/^the banner offered /.test(em)){curTag='';curKind='';go.hidden=true;dm.hidden=false;show(em);reoffer(em);return;}"
     "go.disabled=false;dm.hidden=false;"
     "show('Could not start the update: '+em);});};"
     "cx.onclick=function(){disarm(true,true);};"
@@ -70803,16 +70829,20 @@ _UPD_JS = (
     "try{fetch('/update-dismiss',{method:'POST',headers:{'Content-Type':'application/json'},"
     "body:JSON.stringify({tag:curTag})}).catch(function(){});}catch(e){}};"
     # a page loaded while the update runs records no counts: the kernel answers none in that state (the
-    # registry read is skipped while no label can be worded) and the next arm re-reads
-    "fetch('/update-check',{cache:'no-store'}).then(function(r){if(!r.ok)throw new Error('/update-check answered HTTP '+r.status);return r.json();}).then(function(d){"
+    # registry read is skipped while no label can be worded) and the next arm re-reads. The same read serves
+    # the re-offer after the route refused a stale offer (`pre`: the refusal's text, kept in front of the
+    # current offer's so the reason stays readable; round 3 of the install-rewrite review, 2026-09-19)
+    "function reoffer(pre){fetch('/update-check',{cache:'no-store'}).then(function(r){if(!r.ok)throw new Error('/update-check answered HTTP '+r.status);return r.json();}).then(function(d){"
     "bootNow=(d&&d.boot)||'';"
     "if(d&&d.state==='running'){waiting=true;go.hidden=true;dm.hidden=true;"
     "show(d.manager===false?'romp is updating on disk; restart it yourself when it finishes':'romp is updating \\u2014 the dashboard reloads when it restarts\\u2026');poll();return;}"
     "note(d);"
     # a page loaded AFTER the push re-derives the pending offer — release or main drift alike
     "if(d&&d.mode==='ask'){if(d.tag)offer(d.cur||'',d.tag);"
-    "else if(d.drift&&d.driftSha)offer(d.cur||'',d.driftSha,d.drift);}})"
-    "['catch'](function(e){});})();")
+    "else if(d.drift&&d.driftSha)offer(d.cur||'',d.driftSha,d.drift);"
+    "if(pre&&curTag)msg.textContent=pre+' '+msg.textContent;}})"
+    "['catch'](function(e){});}"
+    "reoffer();})();")
 
 
 def _update_block():
@@ -73784,15 +73814,49 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(400, "the update starts only from a confirmed click on the banner "
                                       "(click Update, then the restart it turns into); reload the dashboard "
                                       "and try again", "text/plain")
+                # The click carries the OFFER the banner showed (round 3 of the install-rewrite review, 2026-09-19):
+                # {"offer": {"kind": "release" | "main", "id": <the tag, or the sha>}}, and the route does what the
+                # banner said or refuses. Until then the route re-derived the action from the kernel's slots at click
+                # time, with a pending release outranking drift, and the two could disagree with the banner: round 2
+                # gated the release branch to the primary while the banner still ranked the release first, so on a
+                # non-primary kernel in ask mode a banner reading "romp <tag> is available" fell through to the
+                # main-drift converge, a git pull of main and a restart of every kernel, on a confirmed click; and on
+                # the primary a banner showing main drift (the release dismissed, so /update-check offered none)
+                # ran the release update, since the route's slot still held the tag. A body without the offer is
+                # refused as the unconfirmed one is (a page from before this carries none; reload). An offer that
+                # is not what the kernel offers NOW (a newer release found since, main moved, the offer consumed by
+                # another window) is refused, naming both, and the banner re-reads the offer; never a guess.
+                offer = b.get("offer")
+                okind = offer.get("kind") if isinstance(offer, dict) else None
+                oid = offer.get("id") if isinstance(offer, dict) else None
+                if okind not in ("release", "main") or not isinstance(oid, str) or not oid:
+                    return self._send(400, "the click named no offer (the banner sends the release or the main commit it "
+                                      "showed, and the kernel does only what the banner said); reload the dashboard and "
+                                      "try again", "text/plain")
                 tag = _UPDATE_AVAIL[0]
-                # The release outranks drift on the PRIMARY. On a non-primary kernel the release is never this
-                # kernel's to run (round 1 of the install-rewrite review: its install would rewrite the primary's
-                # login unit), so a known tag does not outrank drift here: the click goes to the drift branch, its
-                # own converge, and the release's refusal is the answer only when there is no drift to converge
-                # (round 2, 2026-09-18: a known tag refused a non-primary's drift click before the drift branch,
-                # with the release's text, when the click had nothing to do with the release).
+                # ONE snapshot of what the kernel found: the kind and the commit it advertised come
+                # from the same read, so a slot emptied meanwhile (a refusal re-arming, a sync
+                # landing) can never pair a "pull" with an empty target, an unbound move
+                d0, d1 = _MAIN_DRIFT[0], _MAIN_DRIFT[1]
+                if not tag and not (d0 or d1):
+                    return self._send(409, "no newer release or main commit known to this kernel", "text/plain")
+                if (okind == "release" and oid != tag) or (okind == "main" and oid != (d0 or d1)):
+                    shown = ("romp %s" % oid) if okind == "release" else ("main at %s" % oid)
+                    known = ", ".join(x for x in (("romp %s" % tag) if tag else "", ("main at %s" % (d0 or d1)) if (d0 or d1) else "") if x)
+                    _sync_notice("an update click offered %s, which this kernel no longer offers (it offers %s); nothing "
+                                 "was started, and the banner re-reads the offer" % (shown, known), ok=False)
+                    return self._send(409, "the banner offered %s, but this kernel now offers %s; nothing was started. The "
+                                      "banner re-reads the offer." % (shown, known), "text/plain")
+                # The release is never a non-primary kernel's to run (round 1 of the install-rewrite review: its
+                # install would rewrite the primary's login unit): a release click there is refused naming the
+                # primary, before the audit row. A main-drift click is that kernel's own and converges (round 2),
+                # and since the click carries the banner's offer the two never cross.
                 primary = _is_primary_kernel()
-                if tag and primary:
+                if okind == "release" and not primary:
+                    return self._send(409, "this kernel is not the primary (ROMP_KERNEL_ID=%s): start the update "
+                                      "from the primary kernel's dashboard; its install rewrites the login "
+                                      "service's unit" % os.environ.get("ROMP_KERNEL_ID", ""), "text/plain")
+                if okind == "release":
                     if _UPDATE_STATE[0] != "running":
                         _audit_restart_request("self-update", tag=tag, addr=str(self.client_address[0]),
                                                via="update-confirmed")
@@ -73806,11 +73870,9 @@ class Handler(BaseHTTPRequestHandler):
                                               % tag, "text/plain")
                         _send_to_app("shell", _running_push(os.environ.get("ROMP_MANAGER_PORT")))
                     return self._send(200, json.dumps({"ok": True, "state": _UPDATE_STATE[0]}), "application/json")
-                # ONE snapshot of what the kernel found: the kind and the commit it advertised come
-                # from the same read, so a slot emptied meanwhile (a refusal re-arming, a sync
-                # landing) can never pair a "pull" with an empty target — an unbound move
-                d0, d1 = _MAIN_DRIFT[0], _MAIN_DRIFT[1]
-                kind = "pull" if d0 else ("restart" if d1 else "")
+                # the main-drift converge the banner offered: its kind from the snapshot above, whose target the
+                # click's id was checked against (so a "pull" is never paired with an empty target)
+                kind = "pull" if d0 else "restart"
                 if kind:
                     # one converge at a time (review round 5 of the confirm step, 2026-09-10): the flag is
                     # taken here, before the thread starts and the running push goes out, so a poll landing
@@ -73849,12 +73911,6 @@ class Handler(BaseHTTPRequestHandler):
                         return self._send(500, "romp could not start the converge: %s" % e, "text/plain")
                     _send_to_app("shell", _running_push(mp))
                     return self._send(200, json.dumps({"ok": True, "state": "converging"}), "application/json")
-                if tag and not primary:
-                    # round 1 of the install-rewrite review (2026-09-18): before the audit row, so a refused
-                    # click leaves no self-update row; the text names where the update runs from
-                    return self._send(409, "this kernel is not the primary (ROMP_KERNEL_ID=%s): start the update "
-                                      "from the primary kernel's dashboard; its install rewrites the login "
-                                      "service's unit" % os.environ.get("ROMP_KERNEL_ID", ""), "text/plain")
                 return self._send(409, "no newer release or main commit known to this kernel", "text/plain")
             if u.path == "/notify-all":
                 # the master bell's toggle (the user 2026-08-09). Kernel-authoritative: the click
