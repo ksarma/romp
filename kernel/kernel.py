@@ -47412,8 +47412,9 @@ def build_feed(now, live_map=None):
             "column": "needs_input",
             "tree": []})
     # QUARANTINED PEER MAIL (per-host trust model): mail from a DIRECTED federated host is held, never
-    # auto-injected — each is a human decision (approve/deny/edit), so it surfaces as a needs-you card.
-    asks.extend(_quarantine_cards(now, cleared))
+    # auto-injected — each is a human decision (approve/deny/edit), so it surfaces as a needs-you card
+    # that stands until decided: the cleared ledger is not read for it (2026-09-19, its docstring says why).
+    asks.extend(_quarantine_cards(now))
     # NOTICE CARDS (T370, plans/notice-cards.md): a producer's card, posted without the judges; read live from the
     # per-session notice files (a stat-keyed, byte-bounded memo), the newest revision per key, minus the cleared ids
     asks.extend(_notice_cards(now, cleared))
@@ -50052,12 +50053,18 @@ def _parked_handoffs(now, alive_sids):
     return out
 
 
-def _quarantine_cards(now, cleared):
+def _quarantine_cards(now):
     """Inbound mail from a DIRECTED federated host (per-host trust model), HELD for a human decision:
     approve (deliver, optionally after editing), or deny (drop). Never auto-injects the peer's content
     — that IS the point of directed trust. Reads the bus's quarantine dir directly (plain JSON files,
-    so it works even if the bus is momentarily down); itemId 'quarantine:<mid>' rides cleared.jsonl so
-    a Clear dismisses the card (the held file stays until an explicit approve/deny). Best-effort []."""
+    so it works even if the bus is momentarily down). A hold is DECIDED, never dismissed (2026-09-19):
+    the card stands until the bus removes the held file on Approve or Deny, and the cleared ledger is
+    not consulted for it, whichever door wrote its id there. The card's own Clear and the session
+    header's Clear already refuse a hold on the client (feed.ts clearable: clearing would hide the
+    message's only surface while the file stayed undelivered); the footer's Clear-all is server-side
+    and hands _clear_all every ask id, this card's included, so one click hid every held message and
+    its badge count while the files sat undelivered. Read here as a rule rather than filtered at that
+    handler, so every present and future Clear door is covered without naming one. Best-effort []."""
     qdir = jd.STATE / "postal" / "quarantine"
     out = []
     try:
@@ -50073,8 +50080,6 @@ def _quarantine_cards(now, cleared):
         if not mid:
             continue
         item_id = "quarantine:" + mid
-        if item_id in cleared:
-            continue
         frm, to, origin = rec.get("frm") or "?", rec.get("to") or "?", rec.get("origin") or "?"
         t = int(rec.get("at") or now)
         # COMPACT card (the user 2026-07-26): what you're approving is a delivery to THIS session, so
@@ -76200,7 +76205,9 @@ class Handler(BaseHTTPRequestHandler):
         elif msg and msg.get("type") == "clearAll":
             d = build_feed(int(time.time())) if _task_tracking_on() else _feed_off_frame(int(time.time()))   # off (T404 round two, low 8): no build; nothing to clear
             # `items` (the old stream deliverables) is no longer a payload key; indexing it raised before
-            # _clear_all ever ran, so Clear-all cleared nothing and only the receive loop's stderr line knew
+            # _clear_all ever ran, so Clear-all cleared nothing and only the receive loop's stderr line knew.
+            # A held message's id rides the batch too and is inert there: _quarantine_cards never reads the
+            # ledger (a hold is decided, never dismissed), so this door needs no list of what not to clear.
             _gesture_store_refusal(client, "clear",
                                    _clear_all([a["itemId"] for a in d["asks"]]
                                               + [c["itemId"] for c in (d.get("items") or [])]))

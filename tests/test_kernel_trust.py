@@ -171,7 +171,7 @@ class QuarantineCards(unittest.TestCase):
 
     def test_builds_a_needs_you_card(self):
         self._write_held("qc-1")
-        cards = km._quarantine_cards(2000, set())
+        cards = km._quarantine_cards(2000)
         self.assertEqual(len(cards), 1)
         c = cards[0]
         self.assertEqual(c["itemId"], "quarantine:qc-1")
@@ -186,7 +186,7 @@ class QuarantineCards(unittest.TestCase):
         """The card reads "New message" under the RECIPIENT session's name, with the bus-style 90-char
         gist for the one-line body (the user 2026-07-26 — the full body lives in the decision modal)."""
         self._write_held("qc-4", body="  ship   the\nparser fix  " + "x" * 200)
-        c = km._quarantine_cards(2000, set())[0]
+        c = km._quarantine_cards(2000)[0]
         self.assertEqual(c["text"], "New message")
         gist = c["blocked"]["gist"]
         self.assertTrue(gist.startswith("ship the parser fix"), gist)
@@ -197,7 +197,7 @@ class QuarantineCards(unittest.TestCase):
         the recipient's host, which for a locally-held message is THIS machine — a local sid has no host
         prefix, so the payload has to name it or the receiving end cannot be named at all."""
         self._write_held("qc-5")
-        c = km._quarantine_cards(2000, set())[0]
+        c = km._quarantine_cards(2000)[0]
         b = c["blocked"]
         for k in ("origin", "frm", "to", "body", "gist"):
             self.assertIn(k, b, "the card names %s" % k)
@@ -209,13 +209,25 @@ class QuarantineCards(unittest.TestCase):
         import inspect
         self.assertIn('"selfHost": _self_host(),', inspect.getsource(km.build_feed))
 
-    def test_cleared_card_is_hidden(self):
+    def test_a_hold_is_decided_never_dismissed_so_no_ledger_hides_it(self):
+        """The inverse of the pin this replaced (2026-09-19): the reader used to take the cleared ledger and skip a hold
+        whose id it held, and the footer's Clear-all wrote every ask id there, so one click hid every held message
+        server-side while the files stayed undelivered. The reader takes no ledger now; a hold's card leaves the board
+        only when the bus removes the file on Approve or Deny. The handler-driven case (Clear-all over a hold and an
+        ordinary card, then Undo, then the decision) is tests/test_held_mail_readers.py's."""
         self._write_held("qc-2")
-        self.assertEqual(km._quarantine_cards(2000, {"quarantine:qc-2"}), [])
+        with (km.jd.STATE / "cleared.jsonl").open("a") as f:
+            f.write(json.dumps({"id": "quarantine:qc-2", "t": 1500.0, "op": "clear"}) + "\n")
+        km._CLEARED_MEMO["slot"] = None
+        self.assertIn("quarantine:qc-2", km._cleared_ids(), "the ledger holds the id (some door wrote it)")
+        cards = km._quarantine_cards(2000)
+        self.assertEqual([c["itemId"] for c in cards], ["quarantine:qc-2"], "and the card stands regardless")
+        (km.jd.STATE / "cleared.jsonl").unlink()
+        km._CLEARED_MEMO["slot"] = None
 
     def test_no_dir_is_empty(self):
         # nothing held → no cards, no crash
-        self.assertEqual(km._quarantine_cards(2000, set()), [])
+        self.assertEqual(km._quarantine_cards(2000), [])
 
 
 class QuarantineRefusal(unittest.TestCase):
