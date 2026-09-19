@@ -2678,6 +2678,26 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   stderr, as in `heap`; the tallies themselves need none. The kernel-samples
   rows carry the same generation-2 tallies as `gcGen2Collections` and
   `gcGen2MsSum`, cumulative, to difference per interval beside `rssKb`.
+  The kernel raises the third threshold once at boot to
+  `ROMP_GC_GEN2_THRESHOLD` (default 1,000; 0 keeps CPython's own thresholds;
+  a value that is not a non-negative integer is said once on stderr and the
+  default applied), leaving the first two as CPython set them. A full
+  collection needs the generation-2 count over that threshold AND the
+  objects promoted since the last full collection over a quarter of the
+  long-lived total; at CPython's default of 10 the count gate never bound (a
+  production kernel at 6.8 h up read counts of 175 against 10), so the
+  quarter rule alone timed full collections: 103 an hour, one every 35 s,
+  each about 3 s holding the interpreter lock, 8.5% of a core. At 1,000 the
+  collector's own generation-1 count (5.6 a second measured there) keeps
+  them at least 1,001 generation-1 collections apart, at that rate at least
+  179 s, at most about 20 an hour; each pause's length is unchanged. The
+  event is the collector's count, never a clock. On a collector where the
+  third threshold is not the generation-2 trigger (the free-threaded build;
+  CPython 3.14.0 to 3.14.4, whose incremental collector ignores it) the
+  kernel says so once on stderr, a line prefixed `romp-kernel: gc gen2
+  threshold:`, and leaves the thresholds. Read the result back in
+  `heap.gc.thresholds` (and this block's `thresholds`) and in `gen.2`'s
+  `collections` over `uptime_s`.
 - `jobs`: the jobs thread, which runs the housekeeping (the sweeps, the
   reminder walk, the interrupt tick, the persists, the pause and retry
   family) off the pusher since 2026-09-13, so no browser frame waits on a
