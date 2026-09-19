@@ -770,6 +770,45 @@ class PublicForm(unittest.TestCase):
         self.assertEqual(r.stderr, "", "no list, nothing said")
         self.assertEqual(json.loads(r.stdout)["buckets"][0]["spendUsd"], 1234.5678, "without the list the value is a measurement like any other")
 
+    def test_a_listed_entry_with_an_exponent_beyond_any_double_prints_under_a_finite_address_space_with_one_line_and_no_traceback(self):
+        """The refusable input of the closing re-run (2026-09-19, finding 5) through the third caller of the shared list reader:
+        ROMP_PRIVATE_STRINGS naming a list of 1e-1000000000 alone, the entry whose plain decimal expansion asked for a billion
+        digits (format(Decimal(text), 'f') writes about as many digits as the exponent, so the work was exponential in an
+        entry's length while PRIVATE_STRINGS_MAX bounded only the file) and took `romp perf export --public` and `romp perf
+        upload` down with an uncaught MemoryError at b3df460d5; this verb shares machine_probes and died the same way. The
+        list's second line is 1e-10000000000000000000, whose exponent (10**19) the decimal module refuses to construct (past
+        decimal.MAX_EMAX, about 1e18): the bound's first cut asked Decimal(text).adjusted() bare and this verb died on it with
+        an uncaught InvalidOperation too (the re-run's verification, rc 1). Now, over the ordinary fixture: rc 0, stdout
+        parses as JSON and is the public document, stderr exactly the one skip line (pp.LIST_EXPANSION_SKIPPED: 2 of 2, list
+        lines 1 and 2, the bound 324) and Traceback, MemoryError and InvalidOperation in neither stream. THE CHILD RUNS UNDER A
+        FINITE ADDRESS-SPACE CAP (RLIMIT_AS, 1.5 GiB, set by the child itself in its prelude before the verb's code runs; the
+        report's reproduction used 768 MiB, ulimit -v 786432, which the free-threaded 3.14t interpreter maps past before any
+        code runs, and 2 GiB lets the billion-digit expansion complete, so the export module's cap and this one are 1.5 GiB
+        on every interpreter, the reasons measured at the export module's ADDRESS_SPACE_CAP), so with the bound removed the
+        input fails fast under the cap with a MemoryError rather than allocating without bound. The export road pins the same
+        list in its own module;
+        the upload road in its. Dropping `and expansion_bounded(text)` from number_spellings' guard reds this with rc 1 and
+        the traceback; the try/except removed from expansion_bounded reds it with rc 1 and InvalidOperation in stderr."""
+        xdg = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, xdg, True)
+        listed = os.path.join(xdg, "private-strings.txt")
+        with open(listed, "w", encoding="utf-8") as fh:
+            fh.write("1e-1000000000\n1e-10000000000000000000\n")
+        env = {k: v for k, v in os.environ.items() if not k.startswith("ROMP_") and k not in ("CLAUDE_CODE_SESSION_ID", "XDG_CONFIG_HOME")}
+        env.update({"XDG_STATE_HOME": xdg, "HOME": "/home/tester", "USER": "tester", "LOGNAME": "tester", "ROMP_KERNEL_PORT": "1",
+                    "ROMP_PRIVATE_STRINGS": listed})
+        cap = 1536 * 1024 * 1024                                            # the export module's ADDRESS_SPACE_CAP, and why
+        child = ("import resource, runpy, socket, sys; resource.setrlimit(resource.RLIMIT_AS, (%d, %d)); "
+                 "socket.gethostname = lambda: 'TESTHOST.example'; sys.argv = sys.argv[1:]; runpy.run_path(sys.argv[0], run_name='__main__')" % (cap, cap))
+        argv = [sys.executable, "-c", child, os.path.join(BIN, "romp-restart-metrics"), "--json", "--public", "--anchor", "2026-09-10",
+                "--tz", TZ, "--no-live", "--state", str(self.state)]
+        r = subprocess.run(argv, capture_output=True, text=True, timeout=60, env=env)
+        self.assertEqual(r.returncode, 0, r.stdout[-500:] + r.stderr)
+        self.assertEqual(r.stderr, pp.LIST_EXPANSION_SKIPPED % (2, 2, "list lines 1 and 2", 324) + "\n", "the skip line and nothing else")
+        for word in ("Traceback", "MemoryError", "InvalidOperation", "1e-1000000000", "1e-10000000000000000000"):
+            self.assertNotIn(word, r.stdout + r.stderr, word)
+        self.assertIs(json.loads(r.stdout)["public"], True, "and the public document was printed")
+
     def test_public_without_json_is_refused(self):
         err = io.StringIO()
         with mock.patch("sys.stderr", err):

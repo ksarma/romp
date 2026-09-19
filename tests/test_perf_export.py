@@ -200,15 +200,32 @@ CHILD = ("import runpy, socket, sys; socket.gethostname = lambda: %r; sys.argv =
          "runpy.run_path(sys.argv[0], run_name='__main__')" % HOSTNAME)
 
 
-def _run(args, env_extra=None, state=None):
+# A finite cap on a child's virtual address space (RLIMIT_AS, bytes) for the refusable-input cases: 1.5 GiB. The closing
+# re-run's reproduction used 768 MiB (ulimit -v 786432) when a listed 1e-1000000000 asked for a billion digits and the head
+# died with a MemoryError, and 768 MiB is enough for the fixed child on 3.10, 3.12 and 3.13; the free-threaded 3.14t
+# interpreter maps about 1 GiB of address space before any code runs (VmSize 1085112 kB, measured 2026-09-19) and died
+# importing hashlib under 768 MiB. The cap must also stay UNDER what the billion-digit expansion needs, or the guard's
+# removal no longer fails fast: under 2 GiB format(Decimal('1e-1000000000'), 'f') completes (1000000002 characters in
+# 1.3 s, measured on 3.12 and 3.14t) and the child then grinds past the subprocess timeout; under 1.5 GiB it raises
+# MemoryError in under a second on both (0.68 s and 0.64 s). One cap for every build, 1.5 GiB: room for 3.14t's baseline,
+# none for the expansion.
+ADDRESS_SPACE_CAP = 1536 * 1024 * 1024
+
+
+def _run(args, env_extra=None, state=None, address_space=None):
     """bin/romp-perf-export as a child, hermetic: the suite's interpreter, a private state root, a synthetic
-    HOME, USER and hostname (CHILD), no live kernel port and no token unless the caller says so."""
+    HOME, USER and hostname (CHILD), no live kernel port and no token unless the caller says so. `address_space`, in
+    bytes, caps the child's virtual address space (RLIMIT_AS), set by the CHILD ITSELF in its prelude before the verb's
+    code runs, not through preexec_fn: a fork hook in a parent that may be running a kernel's threads (the ServedKernel
+    cases can share a worker with these) is the documented deadlock hazard, and the cap lands on the same process either
+    way."""
     env = {k: v for k, v in os.environ.items() if not k.startswith("ROMP_") and k not in ("CLAUDE_CODE_SESSION_ID", "XDG_CONFIG_HOME")}
     state = state or tempfile.mkdtemp()      # no XDG_CONFIG_HOME: the child resolves the private list under its synthetic HOME, never this machine's
     env.update({"XDG_STATE_HOME": os.path.dirname(state) if os.path.basename(state) == "romp" else state,
                 "HOME": HOME, "USER": "tester", "LOGNAME": "tester", "ROMP_KERNEL_PORT": "1"})
     env.update(env_extra or {})
-    return subprocess.run([sys.executable, "-c", CHILD, EXPORT] + list(args), capture_output=True, text=True, timeout=60, env=env)
+    child = CHILD if address_space is None else "import resource; resource.setrlimit(resource.RLIMIT_AS, (%d, %d)); " % (address_space, address_space) + CHILD
+    return subprocess.run([sys.executable, "-c", child, EXPORT] + list(args), capture_output=True, text=True, timeout=60, env=env)
 
 
 SYNTHETIC_PROBES = [("hostname", "testhost"), ("username", "tester"), ("home directory", HOME)]
@@ -1483,8 +1500,10 @@ class Cli(unittest.TestCase):
         never carries a spelling; the wire spelling is still what the writer puts in the file. Decimal of the text, not of the
         value: Decimal(value) is the double's exact binary expansion (Decimal(1e+23) is 99999999999999991611392, never the
         100000000000000000000000 a reader recovers from the text). An entry that underflows to zero (1000000e-400, seven
-        digits) expands to its long plain fraction and to no bare 0, so it refuses no number carrying a zero (the first cut's
-        int() road spelled str(int(0.0))). Dropping the Decimal spelling reds A on 1.234567e+16 (its first case), B on
+        digits, leading exponent -394) is outside pp.EXPANSION_EXPONENT_MAX and keeps its ONE spelling since the closing re-run
+        of 2026-09-19 (the bound test beside this one), so it expands to no long plain fraction and to no bare 0, and refuses no
+        number carrying a zero (the first cut's int() road spelled str(int(0.0))). Dropping the Decimal spelling reds A on
+        1.234567e+16 (its first case), B on
         1.234567e-05, C on 1.5e-05 and F on 1e+23; the int() spelling back reds E and the 1e+23 pin; scanning a probe by its
         text alone reds D on the integer leaf and G on both leaves; Decimal of the value reds F on 1e+23 (and the
         number_spellings pins); a Hit per spelling reds the single-Hit assertion on D over 1.234567e+16 (both spellings carry a
@@ -1524,9 +1543,10 @@ class Cli(unittest.TestCase):
         self.assertEqual([pp.numeric_probe(s) for s in pp.number_spellings("1.5e-05", pp._number_value("1.5e-05"))], [False, True],
                          "a listed 1.5e-05 is armed as its expansion alone")
         self.assertEqual([pp.numeric_probe(s) for s in pp.number_spellings("1e+16", pp._number_value("1e+16"))], [False, True])
-        underflow = pp.number_spellings("1000000e-400", pp._number_value("1000000e-400"))
-        self.assertEqual((len(underflow), underflow[0], underflow[1][:2], underflow[1].strip("0."), "0" in underflow), (2, "1000000e-400", "0.", "1", False),
-                         "an entry that underflows to 0.0 expands to its long plain fraction and never to a bare 0")
+        self.assertEqual(pp._number_value("1000000e-400"), 0.0, "the entry underflows to a finite zero, so the finite check alone would expand it")
+        self.assertEqual(pp.number_spellings("1000000e-400", pp._number_value("1000000e-400")), ("1000000e-400",),
+                         "an entry that underflows to 0.0 has its leading exponent at -394, outside the bound, so it keeps its one spelling: no long "
+                         "plain fraction (the head before the closing re-run expanded it) and never a bare 0")
         for value in (5000.0, 0.037, 2.5, 180.0, 1.37e11, 409600, 100.5, 0.0, 1234.5678, 12345678e-4, -4242424):
             self.assertEqual(pp.number_spellings(json.dumps(value), value), (json.dumps(value),), "no exponent, one spelling: %r" % (value,))
         for text in (".5678", "1234567.", "1e400", "12345670000000000", "1234567", "+4242424", "(12345678)", "1234 5678"):
@@ -1534,6 +1554,109 @@ class Cli(unittest.TestCase):
                              "a fragment, an overflow, a plus, an integer or a text json cannot read keeps its one spelling: %r" % (text,))
         self.assertEqual(pp.number_spellings("12345678e-4", pp._number_value("12345678e-4")), ("12345678e-4", "1234.5678"),
                          "a listed exponent form is applied as its plain spelling too")
+
+    def test_the_plain_expansion_is_bounded_by_the_exponent_and_an_entry_beyond_any_double_keeps_its_one_spelling_said_once(self):
+        """THE EXPANSION BOUND (the closing re-run of 2026-09-19, finding 5; the comment at pp.EXPANSION_EXPONENT_MAX).
+        format(Decimal(text), 'f') writes about as many digits as the exponent, so the expansion's work is exponential in an
+        ENTRY'S LENGTH while PRIVATE_STRINGS_MAX bounds only the file: a listed 1e-1000000000, thirteen characters, asked for a
+        billion digits and took `romp perf export --public` and `romp perf upload` down with an uncaught MemoryError.
+        number_spellings expands only when the leading digit's exponent, Decimal(text).adjusted(), has magnitude at most 324
+        (pp.expansion_bounded), the bound derived from the double: 5e-324 is the smallest positive double (adjusted -324) and
+        repr(sys.float_info.max) the largest (308), so every finite leaf's wire spelling is inside it, and an entry outside it
+        is the spelling of no leaf and expands longer than any leaf's spelling, so skipping it loses no protection. Pinned at
+        the edge with literals: 1e-324 (adjusted -324, inside; json reads it as 0.0) has two spellings and the second is 326
+        characters, 0. then zeros then 1; 5e-324 and the largest double have two; 1e-325 (adjusted -325) has one; 1000000e-400
+        (adjusted -394) has one. The bound is symmetric, 324 in magnitude, so on the positive side it admits exponents 309 to
+        324 that no double reaches (1e+309 and 1e+324 expand, to at most 325 digits, harmless; 1e+325 does not). THE GUARD'S
+        OWN LIMIT (the re-run's verification): the decimal module refuses to construct an exponent past decimal.MAX_EMAX,
+        about 1e18, with InvalidOperation, while json reads the same text as 0.0, so 1e-10000000000000000000 (exponent 10**19,
+        23 characters) and 1e- followed by sixty thousand nines (which the reader's 64 KiB admits) reached the guard and killed
+        all three verbs with that traceback where the first cut asked Decimal(text).adjusted() bare; expansion_bounded reads
+        the refusal as False and each keeps its one spelling with no exception. machine_probes says once which listed entries
+        kept their one spelling for this reason (pp.LIST_EXPANSION_SKIPPED, by list line, never the text, never the path),
+        BEFORE the under-floor line, since the skip explains why the entry has one spelling, which the floor line then judges:
+        a list of the two MAX_EMAX entries gets the skip line, 2 of 2, list lines 1 and 2, and nothing else (each carries
+        twenty-one or more digits as written, so it is armed as itself, not under the floor, and the probe is the entry as
+        written); a list of 1e-400 alone gets the skip line and then the under-floor line (1 of 1, list line 1: its one
+        spelling has four digits). The skip counts only an entry WRITTEN with an exponent: a plain decimal of 403 characters,
+        0. then four hundred zeros then 1 (adjusted -401, no e), is armed by its 402 digits, is never expanded (no exponent in
+        the text) and gets no line, so a long plain decimal is never reported as written with an exponent. An overflow (1e400,
+        infinity) keeps the older silent road: _number_value is None, nothing expands, no skip line, and the floor line alone
+        counts its four digits. THE BILLION-DIGIT ENTRY IS NOT FORMATTED IN THIS PROCESS: 1e-1000000000 stays in the
+        expansion_bounded truth table (that call never formats) and in the three children under their address-space caps
+        (the export and restart modules, and the upload module), where a removed guard fails fast with a MemoryError under the
+        cap; an in-process number_spellings call on it would, with the guard removed, format a billion digits inside the
+        pytest worker and then die building the diff (the re-run's verification saw the worker OOM-killed at 8 GB), a red by
+        the process dying rather than by assertion. Dropping `and expansion_bounded(text)` from number_spellings' guard reds
+        the one-spelling pin on 1e-325 (a 327-character second spelling), the MAX_EMAX pins (InvalidOperation out of format's
+        Decimal) and the three children; the try/except removed from expansion_bounded reds the MAX_EMAX truth-table pins and
+        the two-entry skip line with InvalidOperation in the message; a bound of 323 reds the two-spelling pins on 1e-324 and
+        5e-324 (a real leaf excluded); a bound of 325 reds the one-spelling pin on 1e-325; dropping the skip line reds the
+        stderr equalities; writing it after the under-floor line reds the 1e-400 order; dropping the `e` in the text from the
+        skip's filter reds the long plain decimal's silence."""
+        self.assertEqual(pp.number_spellings("1e-325", 0.0), ("1e-325",), "adjusted -325: outside the bound, one spelling")
+        two = pp.number_spellings("1e-324", 0.0)
+        self.assertEqual(len(two), 2, "adjusted -324: inside the bound, two spellings (a bound of 323 excludes the smallest double's exponent)")
+        self.assertEqual((two[0], len(two[1]), two[1][:2], two[1][-1], set(two[1][2:-1])), ("1e-324", 326, "0.", "1", {"0"}),
+                         "the expansion is 326 characters, 0. then zeros then 1")
+        self.assertEqual(len(pp.number_spellings("5e-324", 5e-324)), 2, "the smallest positive double is expanded")
+        self.assertEqual(len(pp.number_spellings("5e-324", 5e-324)[1]), 326, "the longest leaf expansion there is")
+        self.assertEqual(len(pp.number_spellings(repr(sys.float_info.max), sys.float_info.max)), 2, "and the largest double")
+        self.assertEqual(pp.number_spellings("1000000e-400", 0.0), ("1000000e-400",), "adjusted -394: one spelling")
+        past = "1e-10000000000000000000"                                    # exponent 10**19, past decimal.MAX_EMAX: the constructor refuses it
+        long_past = "1e-" + "9" * 60000                                     # 60003 characters, inside the reader's 64 KiB bound
+        for text in (past, long_past):
+            with self.assertRaises(pp.InvalidOperation, msg=text[:30]):
+                pp.Decimal(text)
+            self.assertEqual(pp._number_value(text), 0.0, "json reads it as a finite zero, so the finite check alone would reach the guard")
+            self.assertIs(pp.expansion_bounded(text), False, "a construction the decimal module refuses is beyond the bound by construction")
+            self.assertEqual(pp.number_spellings(text, 0.0), (text,), "one spelling, and no exception")
+        for text, adjusted, bounded in (("1e-1000000000", -1000000000, False), ("1e-325", -325, False), ("1e-324", -324, True), ("5e-324", -324, True),
+                                        (repr(sys.float_info.max), 308, True), ("1000000e-400", -394, False), ("1e-400", -400, False),
+                                        ("1.5e-05", -5, True), ("1e+16", 16, True), ("1e+308", 308, True), ("1e+309", 309, True),
+                                        ("1e+324", 324, True), ("1e+325", 325, False)):
+            self.assertEqual(pp.Decimal(text).adjusted(), adjusted, text)
+            self.assertIs(pp.expansion_bounded(text), bounded, text)
+        skip = pp.LIST_EXPANSION_SKIPPED % (1, 1, "list line 1", 324) + "\n"
+        self.assertEqual(skip, "romp: 1 of 1 private-strings entries (list line 1) are written with an exponent beyond 324, further than any number "
+                               "in an export reaches, so each is checked by its own text and not by its plain decimal expansion\n",
+                         "the literal the upload road pins, rendered from the module's template")
+        listed = os.path.join(self.state, "list.txt")
+        env = {"HOME": HOME, "USER": "tester", "ROMP_PRIVATE_STRINGS": listed}
+        with open(listed, "w", encoding="utf-8") as fh:
+            fh.write(past + "\n" + long_past + "\n")
+        err = io.StringIO()
+        with mock.patch.object(pp.socket, "gethostname", return_value="TESTHOST.example"), contextlib.redirect_stderr(err):
+            probes = pp.machine_probes(None, env=env)
+        self.assertEqual(err.getvalue(), pp.LIST_EXPANSION_SKIPPED % (2, 2, "list lines 1 and 2", 324) + "\n",
+                         "the skip line and nothing else: twenty-one and sixty thousand digits as written, so each entry is armed as itself")
+        self.assertEqual([(p.text, p.line) for p in probes if p.kind == pp.PRIVATE_KIND], [(past, 1), (long_past, 2)], "the probes are the entries as written")
+        for word in (past, "InvalidOperation", "Traceback", listed):
+            self.assertNotIn(word, err.getvalue(), "the line names no entry's text, no exception and not the list's path: %s" % word[:30])
+        with open(listed, "w", encoding="utf-8") as fh:
+            fh.write("1e-400\n")
+        err = io.StringIO()
+        with mock.patch.object(pp.socket, "gethostname", return_value="TESTHOST.example"), contextlib.redirect_stderr(err):
+            pp.machine_probes(None, env=env)
+        self.assertEqual(err.getvalue(), skip + pp.LIST_UNDER_NUMERIC_FLOOR % (1, 1, "list line 1", 7, 7) + "\n",
+                         "skipped, then under the floor by its one spelling of four digits: two lines in that order")
+        plain = "0." + "0" * 400 + "1"                                      # adjusted -401 and no exponent written: armed by 402 digits, never expanded
+        with open(listed, "w", encoding="utf-8") as fh:
+            fh.write(plain + "\n")
+        err = io.StringIO()
+        with mock.patch.object(pp.socket, "gethostname", return_value="TESTHOST.example"), contextlib.redirect_stderr(err):
+            probes = pp.machine_probes(None, env=env)
+        self.assertEqual(err.getvalue(), "", "a long plain decimal carries no exponent: not skipped, not under the floor, nothing said")
+        self.assertEqual([(p.text, p.line) for p in probes if p.kind == pp.PRIVATE_KIND], [(plain, 1)], "and the probe is the entry as written")
+        self.assertEqual(pp.number_spellings(plain, pp._number_value(plain)), (plain,), "one spelling: no exponent in the text, nothing to expand")
+        with open(listed, "w", encoding="utf-8") as fh:
+            fh.write("1e400\n")
+        err = io.StringIO()
+        with mock.patch.object(pp.socket, "gethostname", return_value="TESTHOST.example"), contextlib.redirect_stderr(err):
+            pp.machine_probes(None, env=env)
+        self.assertEqual(err.getvalue(), pp.LIST_UNDER_NUMERIC_FLOOR % (1, 1, "list line 1", 7, 7) + "\n",
+                         "an overflow was never expanded: no skip line, the floor line alone")
+        self.assertEqual(pp.EXPANSION_EXPONENT_MAX, 324, "the constant the edge pins above derive from, last so that a moved bound reds on behaviour first")
 
     def test_a_listed_digit_run_under_seven_digits_is_not_applied_to_a_number_and_one_of_seven_is_with_its_list_line(self):
         """THE NUMERIC FLOOR (2026-09-19, the comment at pp.NUMERIC_PROBE_MIN_DIGITS; its predicate corrected by the closing delta
@@ -2145,6 +2268,36 @@ class Cli(unittest.TestCase):
             self.assertFalse(os.path.exists(os.path.join(self.state, "perf-exports")), repr(plant))
         r = _run(["--public", "--from", self.src], state=self.state)
         self.assertEqual(r.returncode, 0, r.stderr + " (without the list, the counter is a number like any other)")
+
+    def test_a_listed_entry_with_an_exponent_beyond_any_double_exports_under_a_finite_address_space_with_one_line_and_no_traceback(self):
+        """The refusable input of the closing re-run (2026-09-19, finding 5) through the export child: ROMP_PRIVATE_STRINGS
+        naming a list of 1e-1000000000, the entry whose plain decimal expansion asked for a billion digits and took the
+        verb down with an uncaught MemoryError at b3df460d5 (rc 1, no file, a traceback ending in number_spellings' format
+        call), while cd3b4cfab exported the same list with rc 0, and, on line 2, 1e-10000000000000000000, the entry whose
+        exponent (10**19) the decimal module refuses to construct (past decimal.MAX_EMAX, about 1e18), which the first cut of
+        the bound read bare and died on with an uncaught InvalidOperation out of expansion_bounded (the re-run's verification:
+        rc 1 and a traceback from this verb, the upload and restart-metrics alike, on 3.10, 3.12, 3.13 and 3.14t). Now: rc 0,
+        the file written, stdout the path and size line, and stderr EXACTLY the one skip line (pp.LIST_EXPANSION_SKIPPED: 2 of
+        2, list lines 1 and 2, the bound 324), with Traceback, MemoryError and InvalidOperation in neither stream and neither
+        entry's text in either. THE CHILD RUNS UNDER A FINITE ADDRESS-SPACE CAP
+        (ADDRESS_SPACE_CAP, RLIMIT_AS of 1.5 GiB: the report's reproduction set 768 MiB with ulimit -v 786432, which the
+        free-threaded 3.14t interpreter exceeds before any code runs, and 2 GiB lets the billion-digit expansion complete, so
+        the cap is 1.5 GiB on every interpreter), so the refusable input fails fast under a bound, a MemoryError in under a
+        second, rather than allocating without bound when the guard is removed. Dropping
+        `and expansion_bounded(text)` from number_spellings' guard reds this with the MemoryError traceback under the cap; the
+        try/except removed from expansion_bounded reds it with rc 1 and InvalidOperation in stderr."""
+        listed = os.path.join(self.xdg, "private-strings.txt")
+        with open(listed, "w", encoding="utf-8") as fh:
+            fh.write("1e-1000000000\n1e-10000000000000000000\n")
+        r = _run(["--public", "--from", self.src], env_extra={"ROMP_PRIVATE_STRINGS": listed}, state=self.state, address_space=ADDRESS_SPACE_CAP)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(r.stderr, pp.LIST_EXPANSION_SKIPPED % (2, 2, "list lines 1 and 2", 324) + "\n", "the skip line and nothing else")
+        for word in ("Traceback", "MemoryError", "InvalidOperation", "1e-1000000000", "1e-10000000000000000000"):
+            self.assertNotIn(word, r.stdout + r.stderr, word)
+        m = re.match(r"^(\S+) \((\d+) bytes\)\n$", r.stdout)
+        self.assertIsNotNone(m, r.stdout)
+        self.assertEqual(os.path.dirname(m.group(1)), os.path.join(self.state, "perf-exports"))
+        self.assertEqual(os.path.getsize(m.group(1)), int(m.group(2)), "the file is written")
 
     def test_a_fifo_at_the_private_strings_path_is_no_list_said_on_stderr_and_the_export_returns_at_once(self):
         """The private list must be a REGULAR file (pp.open_regular: opened O_NONBLOCK, fstat'ed, S_ISREG required); anything

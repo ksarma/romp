@@ -124,9 +124,14 @@ def _env(state, home=HOME, extra=None):
     return env
 
 
-def _run(args, state, home=HOME, extra=None, stdin=subprocess.DEVNULL):
-    """bin/romp-perf-upload as a child under the pinned hostname (CHILD), stdin /dev/null (not a terminal) unless given."""
-    return subprocess.run([sys.executable, "-c", CHILD, UPLOAD] + list(args), capture_output=True, text=True, timeout=60,
+def _run(args, state, home=HOME, extra=None, stdin=subprocess.DEVNULL, address_space=None):
+    """bin/romp-perf-upload as a child under the pinned hostname (CHILD), stdin /dev/null (not a terminal) unless given.
+    `address_space`, in bytes, caps the child's virtual address space (RLIMIT_AS) for a refusable input that could allocate
+    without bound, set by the CHILD ITSELF in its prelude before the verb's code runs and never through preexec_fn: this
+    parent runs the loopback Receiver's server thread, a fork hook in a threaded parent is the documented deadlock hazard,
+    and the cap lands on the same process either way (the export module's _run takes the same shape)."""
+    child = CHILD if address_space is None else "import resource; resource.setrlimit(resource.RLIMIT_AS, (%d, %d)); " % (address_space, address_space) + CHILD
+    return subprocess.run([sys.executable, "-c", child, UPLOAD] + list(args), capture_output=True, text=True, timeout=60,
                           env=_env(state, home, extra), stdin=stdin)
 
 
@@ -1368,6 +1373,46 @@ class Cli(unittest.TestCase):
             self.assertNotIn("4242424", r.stdout + r.stderr, literal)
             self.assertEqual(r.stdout, "", literal)
         self.assertEqual(self.fake.requests, [], "no seven-digit spelling was sent")
+
+    def test_a_listed_entry_with_an_exponent_beyond_the_doubles_range_is_checked_by_its_own_text_in_one_line_and_never_a_traceback(self):
+        """The refusable input of the closing re-run's finding 5 (2026-09-19), on the upload road, under an address-space
+        cap. A list of exactly one entry, 1e-1000000000, gave the head before the fix an uncaught MemoryError out of
+        format(Decimal(text), "f"): the plain expansion of an exponent-spelled entry has as many digits as the exponent, so
+        PRIVATE_STRINGS_MAX bounded the FILE and not the WORK, which grows with an entry's exponent. With the bound
+        (perf_public.EXPANSION_EXPONENT_MAX, 324: the smallest double is 5e-324 and the largest about 1.8e+308, so no number
+        an export carries is written further out) the entry keeps its own text as its one spelling, a fresh export is sent,
+        rc 0, one request whose body is the export's bytes, stdout the summary and the receipt line, and stderr EXACTLY the
+        one advisory line, perf_public.LIST_EXPANSION_SKIPPED with the count, the list's length and the entries' list lines
+        (never their text), pasted here whole so the module and the road agree; Traceback, MemoryError and InvalidOperation in
+        no stream. The list's second line is 1e-10000000000000000000, whose exponent (10**19) the decimal module refuses to
+        construct (past decimal.MAX_EMAX, about 1e18): the bound's first cut asked Decimal(text).adjusted() bare and this verb
+        died on it with an uncaught InvalidOperation (the re-run's verification, rc 1, zero requests), so the line reads 2 of
+        2, list lines 1 and 2. The child runs under RLIMIT_AS of 1.5 GiB on Linux, set in its own prelude and not through a
+        fork hook (_run: the parent runs the loopback Receiver's server thread, and a preexec_fn in a threaded parent is the
+        documented deadlock hazard); 1.5 GiB is the export module's ADDRESS_SPACE_CAP for its measured reasons (the
+        free-threaded 3.14t interpreter maps about 1 GiB before any code runs and died importing hashlib under 768 MiB, and
+        under 2 GiB the billion-digit expansion completes and the mutated child grinds to the timeout; under 1.5 GiB it raises
+        MemoryError in under a second), so the mutation, the bound removed, fails fast with the MemoryError the re-run saw
+        instead of filling the box; elsewhere the case still pins the one line and no traceback. This case is run inside a
+        memory-capped scope by the sweep's own rule for a refusable input that could allocate without bound."""
+        base = ["--yes", "--receiver", self.fake.url]
+        os.makedirs(os.path.join(self.home, ".config", "romp"))
+        with open(os.path.join(self.home, ".config", "romp", "private-strings.txt"), "w", encoding="utf-8") as fh:
+            fh.write("1e-1000000000\n1e-10000000000000000000\n")
+        line = ("romp: 2 of 2 private-strings entries (list lines 1 and 2) are written with an exponent beyond 324, further than any number in an "
+                "export reaches, so each is checked by its own text and not by its plain decimal expansion\n")
+        self.assertEqual(line, pp.LIST_EXPANSION_SKIPPED % (2, 2, pp.list_lines_phrase([1, 2]), pp.EXPANSION_EXPONENT_MAX) + "\n",
+                         "the literal here is the module's line with its numbers and the entries' list lines")
+        self.assertEqual(pp.EXPANSION_EXPONENT_MAX, 324)
+        cap = 1536 * 1024 * 1024 if sys.platform.startswith("linux") else None   # the export module's ADDRESS_SPACE_CAP, and why
+        r = _run([self.file] + base, self.state, home=self.home, address_space=cap)
+        for word in ("Traceback", "MemoryError", "InvalidOperation", "1e-1000000000", "1e-10000000000000000000"):
+            self.assertNotIn(word, r.stdout + r.stderr, word)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(r.stderr, line, "the one advisory line and nothing else: each entry is at the floor by its own digits as written")
+        self.assertEqual(len(self.fake.requests), 1)
+        self.assertEqual(self.fake.requests[0][2], self.data, "the export's bytes: neither entry's own text is in any number of a fresh export")
+        self.assertEqual(r.stdout, "%s (%d bytes) to %s/v1/upload\n" % (self.file, len(self.data), self.fake.url) + SUCCESS % (RECEIPT, 180))
 
     def test_a_listed_entry_carrying_other_characters_is_applied_to_a_number_by_its_token_run_and_refused_before_any_request(self):
         """The alphabet is not asked of the numeric arm (the closing delta, 2026-09-19). A listed (12345678), eight digits inside

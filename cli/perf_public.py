@@ -102,7 +102,10 @@ the path and the reason, since a check that turns itself off must say so) are se
 the finished document, case-insensitively (a number by its wire spelling, json.dumps, the spelling the export's writer
 puts in the file and the upload puts on the wire, and, when that spelling carries an exponent, by its plain decimal
 expansion too, number_spellings, so a listed digit run inside a numeric leaf is found however the file spelled it, the
-fourth review round and the closing delta, 2026-09-19; a bool and null are not scanned; a listed string is applied to a
+fourth review round and the closing delta, 2026-09-19; an expansion is taken only for an exponent within
+EXPANSION_EXPONENT_MAX, 324 in magnitude, which every double's spelling is within, so a listed 1e-1000000000 keeps its one
+spelling and machine_probes says so once, LIST_EXPANSION_SKIPPED, where the unbounded expansion took the export and the upload
+down with a MemoryError, the closing re-run of 2026-09-19; a bool and null are not scanned; a listed string is applied to a
 NUMBER only when some spelling of it, the entry as listed or the plain decimal expansion of an entry written with an
 exponent, carries at least NUMERIC_PROBE_MIN_DIGITS digits, seven, counted across the whole spelling (numeric_probe:
 1234.5678 has eight, (12345678) has eight and is applied by its token run; never the longest run, never the character
@@ -154,7 +157,7 @@ import re
 import socket
 import stat
 import sys
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 OTHER = "other"
 
@@ -810,6 +813,32 @@ NUMBER_CHARS = frozenset("+-.0123456789e")
 # hex letter in it matches no number spelling (json spells `e` only after one digit or a pointed mantissa and before a
 # signed exponent, and never a, b, c, d or f). So the floor's one effect is on the private list.
 NUMERIC_PROBE_MIN_DIGITS = 7
+# THE EXPANSION BOUND (the closing re-run of 2026-09-19). number_spellings spells an exponent-written number out in plain
+# decimal with format(Decimal(text), 'f'), which writes about as many digits as the exponent, so that work is exponential in
+# an ENTRY'S LENGTH while PRIVATE_STRINGS_MAX bounds only the FILE: a 13-character entry, 1e-1000000000, asks for a billion
+# digits (measured at the closing re-run: 1e-400 is 402 characters, 1e-100000 is 100002, 1e-10000000 is 10000002, and
+# 1e-1000000000 a MemoryError that took `romp perf export --public` and `romp perf upload` down with a traceback, where
+# cd3b4cfab exported the same list with rc 0). The bound is stated against the thing that grows, the exponent, and is derived
+# from the double: the smallest positive double is 5e-324 and the largest 1.7976931348623157e+308 (sys.float_info.max), so
+# every finite leaf's repr, which is what json.dumps writes, has its leading digit's exponent (Decimal(text).adjusted()) in
+# [-324, 308]. A listed entry outside that range is the spelling of no leaf, and its plain expansion is longer than any leaf's
+# spelling (the longest leaf expansion is 5e-324 at 326 characters), so no leaf spelling holds it as a substring and no leaf's
+# digit groups equal its token run: skipping its expansion loses no protection, and the expansion's length is then at most
+# 325 characters plus the mantissa's own digits, linear in the entry's length. The bound is symmetric, 324 in magnitude, so its positive
+# side admits exponents 309 to 324 that no double reaches; those expand to at most 325 digits, harmless, and a one-sided bound
+# would buy nothing. The bound is asked before any expansion
+# (expansion_bounded, in number_spellings itself; Decimal construction is instant for any exponent the decimal module
+# accepts, and only format expands), so
+# identifier_hits, which expands every probe and every leaf, never formats an unbounded entry either; machine_probes says
+# once which listed entries kept their one spelling for this reason (LIST_EXPANSION_SKIPPED, by list line). THE GUARD'S OWN
+# LIMIT: the decimal module refuses to construct a number whose exponent is past decimal.MAX_EMAX (999999999999999999, about
+# 1e18, the same on 3.10 through 3.14t) and raises InvalidOperation before adjusted() can run, while json reads the same
+# text as the finite float 0.0, so a 22-character entry such as 1e-9999999999999999999 reached the guard and killed all
+# three verbs with that traceback at the closing re-run's verification (2026-09-19), one exponent longer than the pinned
+# input; expansion_bounded reads the refusal as beyond the bound, which it is by construction, and such an entry takes the
+# same skip line. An entry that
+# overflows to infinity (1e400; _number_value None) keeps the older silent road: it was never expanded, and nothing is said.
+EXPANSION_EXPONENT_MAX = 324
 # The machine-local list of strings that must never be published: the file the repository's pre-push hook reads
 # (.githooks/pre-push, scan_identifiers), one string per line, a `#` starting a comment, surrounding whitespace
 # dropped, blanks skipped, resolved as the hook resolves it (private_strings_path). Plainly absent on a clone that never
@@ -841,6 +870,11 @@ PRIVATE_STRINGS_FILE = os.path.join("romp", "private-strings.txt")
 PRIVATE_STRINGS_MAX = 64 * 1024
 LIST_OVER_BOUND = "romp: the private-strings list is over %d bytes; entries past the bound are not checked" % PRIVATE_STRINGS_MAX
 LIST_NOT_IN_FORCE = "romp: %d of %d private-strings entries did not become probes and are not checked; the list is not fully in force"
+# The count, the list's length, the skipped entries' LIST LINES (list_lines_phrase) and the bound (EXPANSION_EXPONENT_MAX):
+# written once, BEFORE LIST_UNDER_NUMERIC_FLOOR, since the skip explains why such an entry has one spelling, which the floor
+# line then judges (a listed 1e-400 is skipped and then counted under the floor, two lines in that order). Never the text.
+LIST_EXPANSION_SKIPPED = ("romp: %d of %d private-strings entries (%s) are written with an exponent beyond %d, further than any number in an "
+                          "export reaches, so each is checked by its own text and not by its plain decimal expansion")
 # The count, the list's length, the counted entries' LIST LINES (list_lines_phrase), the floor twice. The line names the
 # entries it counts by the line of the list each is on and never by its text (the text is what the list exists to keep off
 # every output, stderr included; a refusal names its entry the same way, Hit.line), and it does not name the list's path:
@@ -1043,6 +1077,26 @@ def _number_value(text):
     return value if isinstance(value, int) or math.isfinite(value) else None
 
 
+def expansion_bounded(text):
+    """Is the exponent of the number `text` spells within EXPANSION_EXPONENT_MAX, so that its plain decimal expansion
+    (number_spellings) is bounded in length: the exponent of its leading digit, Decimal(text).adjusted(), has magnitude at
+    most 324 (`5e-324`, -324, and `1.7976931348623157e+308`, 308, the two ends of the double, are within; `1e-325`, -325,
+    `1000000e-400`, -394, `1e+325` and `1e-1000000000` are not; the bound is symmetric, so `1e+309` to `1e+324` are within
+    it too, past any double and harmless at up to 325 digits). Decimal construction is instant for any exponent the decimal
+    module accepts; only format expands, and this is asked before it (the comment at the constant). Past the module's own
+    limit, an exponent whose magnitude exceeds decimal.MAX_EMAX (about 1e18: `1e-9999999999999999999`, `1e-` followed by
+    sixty thousand nines), the constructor raises InvalidOperation, and that refusal is read as False here: such an entry
+    is beyond the bound by construction, and reading it any other way killed all three verbs with the traceback at the
+    closing re-run's verification (2026-09-19). A context with the trap off would hand back a non-finite or a clamped
+    Decimal instead, so the finite check stands beside the exponent's. `text` is a spelling json reads as a finite number:
+    number_spellings asks this only after _number_value or the leaf itself has said so."""
+    try:
+        d = Decimal(text)
+    except InvalidOperation:                                # an exponent past decimal.MAX_EMAX: beyond the bound by construction
+        return False
+    return d.is_finite() and abs(d.adjusted()) <= EXPANSION_EXPONENT_MAX
+
+
 def number_spellings(text, value=None):
     """Every spelling a reader recovers a number's value from, distinct, `text` first: the spellings identifier_hits scans
     a number leaf by and applies an armed listed entry as. `text` is the wire spelling (json.dumps(node) for a leaf; the
@@ -1064,10 +1118,15 @@ def number_spellings(text, value=None):
     entry is expanded the same way and the floor is decided PER SPELLING (identifier_hits applies numeric_probe to each):
     a listed 1.5e-05 is armed as its expansion 0.000015 and not as itself, a listed 1e+16 as 10000000000000000, and an
     expansion that carries fewer digits than the entry is not armed (a listed 1.0000000e+2 is armed as itself and as
-    100.00000, both harmless, and never as 100). An entry that underflows to zero (1000000e-400) expands to its long
-    plain fraction and to no `0`."""
+    100.00000, both harmless, and never as 100). An entry whose leading exponent is outside EXPANSION_EXPONENT_MAX
+    (1000000e-400, adjusted -394; 1e-1000000000, which asked for a billion digits and took two verbs down with a
+    MemoryError at the closing re-run of 2026-09-19) keeps its one spelling, and never a `0` (the exact zero it underflows
+    to is the first cut's int() road, dropped), and machine_probes says so (LIST_EXPANSION_SKIPPED); within the bound the
+    expansion is at most 326 characters (5e-324), so the work here is linear in the text's length (the comment at
+    EXPANSION_EXPONENT_MAX: the head before the re-run formatted any exponent, and PRIVATE_STRINGS_MAX bounded the file
+    while the work was exponential in an entry's length)."""
     out = [text]
-    if isinstance(value, float) and math.isfinite(value) and "e" in text:
+    if isinstance(value, float) and math.isfinite(value) and "e" in text and expansion_bounded(text):
         plain = format(Decimal(text), "f")
         if plain not in out:
             out.append(plain)
@@ -1121,8 +1180,19 @@ def machine_probes(state_dir=None, env=None):
     entries carrying a letter); an entry of seven or more digits with such a character (zz4242424, (12345678)) is
     applied to numbers by its token run and is not what the line is about. Both numbers in the line run over listed
     LINES, so a repeated entry is counted once per line while the probes dedupe it to one (a list of 1234.56, 1234.56
-    and 424242 says 3 of 3, list lines 1, 2 and 3). See the module docstring for why session names are not probes, and
-    why a listed string that is also romp vocabulary refuses on purpose."""
+    and 424242 says 3 of 3, list lines 1, 2 and 3). BEFORE that line, when a listed entry is written with an exponent
+    beyond EXPANSION_EXPONENT_MAX (1e-1000000000: further than any number in an export reaches, and an expansion that
+    asked for a billion digits and took this reader's two verbs down with a MemoryError, the closing re-run of
+    2026-09-19), LIST_EXPANSION_SKIPPED says once how many of how many kept their one spelling for that reason, by list
+    line, never the text and never the path; the skip explains why such an entry has one spelling, which the floor line
+    then judges (a listed 1e-400 is skipped and then counted under the floor, two lines in that order; a listed
+    1e-1000000000 carries eleven digits as written, so it is armed as itself and only the skip line is written; an entry
+    whose exponent the decimal module itself refuses to construct, past decimal.MAX_EMAX at about 1e18, such as
+    1e-9999999999999999999, is beyond the bound by construction and takes the same skip line, where at the closing re-run's
+    verification the guard's own InvalidOperation killed the three verbs). An
+    entry that overflows (1e400, infinity) was never expanded and nothing is said of it, as before. See the module
+    docstring for why session names are not probes, and why a listed string that is also romp vocabulary refuses on
+    purpose."""
     env = os.environ if env is None else env
     out = []
 
@@ -1148,6 +1218,10 @@ def machine_probes(state_dir=None, env=None):
     if dropped:
         sys.stderr.write(LIST_NOT_IN_FORCE % (dropped, len(listed)) + "\n")
     texts = [(line, str(s or "").strip().lower()) for line, s in listed]
+    skipped = [line for line, t in texts                                    # exponent-written, finite, and beyond the bound: one spelling, said first
+               if isinstance(_number_value(t), float) and "e" in t and not expansion_bounded(t)]
+    if skipped:
+        sys.stderr.write(LIST_EXPANSION_SKIPPED % (len(skipped), len(listed), list_lines_phrase(skipped), EXPANSION_EXPONENT_MAX) + "\n")
     under = [line for line, t in texts                                      # spelled like a number, and armed by no spelling: the arm's other side
              if number_shaped(t) and not any(numeric_probe(s) for s in number_spellings(t, _number_value(t)))]
     if under:                                                               # the counted entries by their list lines, never their text or the path

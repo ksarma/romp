@@ -3812,9 +3812,14 @@ expansion too, so a listed digit run inside a counter is found however the
 file spelled it; since 2026-09-19 a listed entry is applied to a number only
 when it, or the plain decimal spelling of an entry written with an exponent,
 carries seven or more digits, counted across the whole spelling, so 1234.5678
-has eight and a listed 1.5e-05 reaches the floor as 0.000015: such an entry
-matching a number, as a substring of the number's spelling or as its run of
-whole digit groups, refuses the export and the upload, an entry spelled like
+has eight and a listed 1.5e-05 reaches the floor as 0.000015, while an entry
+written with an exponent beyond 324, further than any number an export can
+carry (the smallest double is 5e-324, the largest about 1.8e+308), keeps its
+own spelling alone and is not expanded, since its expansion would run to as
+many digits as the exponent, and one stderr line says so by the entry's list
+line, never its text: an entry that reaches the floor and matches a number,
+as a substring of the number's spelling or as its run of whole digit groups,
+refuses the export and the upload, an entry spelled like
 a number with fewer digits in every spelling is checked in keys and string
 values and not in numbers, and one stderr line says how many entries that is,
 which by the line of the list each is on (the first six lines, then a count
