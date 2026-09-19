@@ -12,9 +12,12 @@ increments on the hot paths and no formatting until a read.
 Drives the REAL Handler over HTTP and the REAL _push with stubbed builders (the test_color_route.py
 and test_tab_meta_push.py patterns). Synthetic fixtures only: placeholder UUIDs, invented names."""
 import base64
+import codecs
 import collections
 import concurrent.futures
 import copy
+import fcntl
+import gc
 import inspect
 import io
 import json
@@ -22,12 +25,14 @@ import os
 import re
 import sys
 import tempfile
+import tracemalloc
 import threading
 import time
 import types
 import unittest
 import shutil
 import socket
+import stat
 import subprocess
 import urllib.request
 from unittest import mock
@@ -150,11 +155,14 @@ def _number_word(n):
 # open cycle (ownership outlives the cycle: kernel-1, round two); a bare _push in a test always has a cycle open before it
 # (false of 21 modules: extra6-1, round two); a push stage from a thread that is not the pusher and not a connect push (a
 # thread identity, not ownership: round one's wording); the pass jobs' rows keep their values because the housekeeping was
-# the jobs thread's alone from the start (false of the part rows: round one).
+# the jobs thread's alone from the start (false of the part rows: round one); a bare _push is foreign because no cycle
+# is open when it runs (openness, where the rule is the thread's registration as an owner, which cycle() leaves standing,
+# so the pusher's own thread between two cycles writes the flat rows: PR 797's closing check).
 RETIRED_WORDINGS = {"push-inside-cycle": "inside its " + "cycle",
                     "bare-push-opens-cycle": "_push in a test " + "opens a cycle first",
                     "pusher-identity": "neither the pusher " + "nor a connect push",
-                    "housekeeping-already-alone": "already ran on the " + "jobs thread alone"}
+                    "housekeeping-already-alone": "already ran on the " + "jobs thread alone",
+                    "bare-push-no-open-cycle": "_push with no " + "cycle open"}
 
 
 def _burn_cpu(seconds):
@@ -208,12 +216,18 @@ _STACK_FRAME_DIRS = (os.path.dirname(threading.__file__),   # where a sampled fr
 
 
 def _assert_stack_sample(tc, row):
-    """`row` is a stack sample of a live thread: at least one frame, each in _thread_stacks' "function (file:line)" form and
-    naming a file the standard library or this repo ships. No frame is pinned by position or by function (2026-09-19): a
-    thread parked on an Event is sampled at wait, at the lock acquire inside it (Condition.__enter__ on the way into
-    Event.wait), at a helper wait calls (_release_save, _is_owned), or in run before wait, and the innermost-frame pins
-    that stood in four tests here read `wait (` and went red on the free-threaded 3.14 build when the sampler caught
-    __enter__ (3 module runs of 10)."""
+    """`row` is a stack sample of a live thread: at least one frame, each in _thread_stacks' "function (file:line)" form,
+    with a file of that name in one of _STACK_FRAME_DIRS. That is what the check verifies and no more: kernel.py formats
+    a frame's file with os.path.basename, so the check is that a file of that BASENAME exists directly in one of the
+    listed directories (the standard library's top directory, where threading.py lives; this repo's root, its kernel/,
+    bin/, cli/ and tests/), not that the frame came from it. A basename collision passes (a frame from any kernel.py
+    anywhere is taken for this repo's), and a frame in a standard-library subpackage (concurrent/futures/thread.py, say:
+    no thread.py sits directly in any of those directories) would fail it. No frame is pinned by
+    position or by function (2026-09-19): a thread parked on an Event is sampled at wait, at the lock acquire inside it
+    (Condition.__enter__ on the way into Event.wait), at a helper wait calls (_release_save, _is_owned), or in run
+    before wait, and the innermost-frame pins that stood in four tests here read `wait (` and went red on the
+    free-threaded 3.14 build when the sampler caught __enter__ (in some module runs there and not in others; no tally is
+    kept, since none recomputes)."""
     tc.assertTrue(row["frames"], row)
     for f in row["frames"]:
         m = _STACK_FRAME.fullmatch(f)
@@ -1931,6 +1945,96 @@ class PushRowsByPurpose(unittest.TestCase):
         self.assertIn("push", foreign_row, "the foreign block names the push stages as a second family")
 
 
+# git's own wording for a tree with no repository above it; the one nonzero exit that is a skip (the constant
+# tests/test_entrypoints_executable.py uses for the same call)
+NOT_A_REPOSITORY = "not a git repository"
+
+
+def _git_bytes(root, *args, env=None):
+    """git's stdout, as bytes, for `git -C root args`. Skips the caller only when git is not installed or says `root`
+    is not in a repository; any other failure is an AssertionError carrying git's stderr and exit code, never a skip
+    (the shape of tests/test_entrypoints_executable.py's _index, whose docstring says why: a skip there would disarm
+    the check while the run stays green). stdout stays bytes because a -z listing is split on NUL; stderr alone is
+    decoded, with errors replaced, so git's words reach the message whatever their encoding. `env`, when given, is the
+    whole environment for the call, and None is this process's. Every call that must read the repository AT A PATH
+    passes one _git_env_scrubbed built, since git obeys a hook's GIT_DIR and GIT_INDEX_FILE over `-C`: the scratch
+    repos' every call, the live tree's two listings (the scan's and the healer's) and the lock path's rev-parse. The
+    ambient calls are the tests' own premise reads, which show the exported repository winning over `-C`."""
+    try:
+        proc = subprocess.run(["git", "-C", str(root), *args], capture_output=True, timeout=60, env=env)
+    except FileNotFoundError:
+        raise unittest.SkipTest("git is not installed; the routing sweep cannot list the tree")
+    if proc.returncode != 0:
+        stderr = proc.stderr.decode(errors="replace").strip()
+        if NOT_A_REPOSITORY in stderr:
+            raise unittest.SkipTest("not a git checkout (git %s exited %d: %s)" % (" ".join(args), proc.returncode, stderr))
+        raise AssertionError("git %s exited %d in %s, so the routing sweep cannot list the tree and the check would be "
+                             "disarmed; fix the checkout rather than skipping:\n%s" % (" ".join(args), proc.returncode, root, stderr))
+    return proc.stdout
+
+
+def _git_env_scrubbed(global_config=False):
+    """A copy of this process's environment with every GIT_* variable removed and GIT_TEST_* kept (the ScratchCheckout
+    shape in tests/test_entrypoints_executable.py). git obeys a hook's GIT_DIR and GIT_INDEX_FILE over `-C`, so a call
+    that must read the repository AT A PATH, not the one the caller's hook is running in, scrubs first: the scratch
+    repos' every git call, the lock path's rev-parse (round 2's fresh-4), and the live tree's two listings, the scan's
+    and the healer's (round 3: the same rule grepped across the module's other git calls found the healer listing the
+    tracked set under the ambient environment, so under a hook's foreign GIT_DIR that set was the hook's index and a
+    plant-named file this checkout TRACKS was judged untracked and unlinked, with every test green). The scrub removes
+    the two overrides tests/conftest.py exports, GIT_CONFIG_GLOBAL and GIT_CONFIG_NOSYSTEM, with the rest; by default
+    they are put back, so the call reads no global or system config, conftest's rule for every test's git, and a
+    developer's global excludes cannot thin a listing. The lock path alone passes global_config=True and reads the
+    developer's global config on purpose: a global safe.directory must resolve a dubious-ownership checkout, and
+    core.worktree is the only other key that could move rev-parse's answer (a listing over such a checkout fails with
+    git's safe.directory hint, never a skip, so nothing is disarmed)."""
+    env = {name: value for name, value in os.environ.items() if not name.startswith("GIT_") or name.startswith("GIT_TEST_")}
+    if not global_config:
+        env.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
+    return env
+
+
+def _scratch_repo(test):
+    """A git repository of its own under the run's temp root (removed with the test, and swept with the root either way)
+    for a pin that needs a listed file the live tree must not hold: a file placed in it is untracked and unignored, so
+    `git ls-files --others --exclude-standard` lists it and RoutingStatements._scan reads it, with no lock taken and no
+    write into the checkout. Returns the directory and the environment its git init ran with, every GIT_* variable
+    scrubbed but GIT_TEST_* and no global or system config read (the ScratchCheckout shape in
+    tests/test_entrypoints_executable.py, whose env() says why: a hook's GIT_INDEX_FILE would otherwise send the scratch
+    repo's operations into this checkout's index); every git call over the scratch repo passes that environment too,
+    the listing in _scan through its env keyword. The first version scrubbed for the init alone, and a listing over
+    the scratch repo under a hook's GIT_DIR and GIT_INDEX_FILE was this checkout's index, every path skipped at the
+    open, so the pins stayed green over a listing that was not the scratch repo's. The init goes through _git_bytes, so
+    a box without git skips the test (the first version's subprocess.run raised FileNotFoundError out of it, and the
+    no-git world was five errors beside the skips the docstrings promised; round 3) and any other failure carries git's
+    words; the not-a-repository skip cannot fire here, since init needs none."""
+    d = Path(tempfile.mkdtemp())
+    test.addCleanup(shutil.rmtree, d, ignore_errors=True)
+    env = _git_env_scrubbed()
+    _git_bytes(d, "init", "-q", env=env)
+    return d, env
+
+
+def _traced_delta(fn):
+    """(result, peak): fn()'s result and tracemalloc's peak during it as a DELTA from what was held when it started (the
+    tests/test_reader_stream_peak.py idiom). A tracer already running (PYTHONTRACEMALLOC, -X tracemalloc, an earlier
+    test) is used and left running: start() is a no-op then and would neither reset the peak nor be ours to stop. The
+    delta, not the absolute peak, because reset_peak() sets the peak to what is held NOW, so under a running tracer the
+    absolute figure is everything the process holds and a bound over it reds whatever fn() did."""
+    gc.collect()
+    tracing = tracemalloc.is_tracing()
+    if not tracing:
+        tracemalloc.start()
+    try:
+        tracemalloc.reset_peak()
+        held = tracemalloc.get_traced_memory()[0]
+        out = fn()
+        cur, peak = tracemalloc.get_traced_memory()
+    finally:
+        if not tracing:
+            tracemalloc.stop()
+    return out, peak - held
+
+
 class RoutingStatements(unittest.TestCase):
     """Every place in the tree that names a routed block (stagesForeign, pusher.cycleJobsMs, pusher.connectPush.stagesMs, or
     their attributes) is where a sentence about the routing can live, and two review rounds found such a sentence wrong
@@ -1938,50 +2042,881 @@ class RoutingStatements(unittest.TestCase):
     therefore derived here from the tree, not listed: the files that name a block are found by reading them, pinned as a
     set so a new one turns the test red until it is swept, and none of them may carry a wording a round retired
     (RETIRED_WORDINGS at the top of this module). The truth of what the files say is measured by the routing tests above
-    (PushRowsByPurpose, JobRowsByOwner); this test holds only the scope and the retired wordings."""
+    (PushRowsByPurpose, JobRowsByOwner); this test holds only the scope and the retired wordings.
 
-    ROOTS = ("kernel", "bin", "cli", "docs", "upstream", "tests", "scripts", "ui/webview")
-    TEXT = (".py", ".md", ".bats", ".ts", ".js", ".mjs", ".sh", ".css", ".html", ".txt", ".toml", ".yml", ".yaml", "")
-    SKIP_DIRS = {"node_modules", "dist", "out-tests", "__pycache__", "assets"}
+    The tree is every text file git tracks or would track (PR 797's closing check, 2026-09-19): `git ls-files --cached
+    --others --exclude-standard` at the repo root, so an untracked file is swept before it is committed, no directory
+    excluded, symlinks skipped (bin/romp-kernel points at the kernel). A file is text when its first PROBE bytes (8 KiB)
+    hold no NUL and the whole of it decodes as UTF-8; it is read in CHUNK-byte pieces through an incremental decoder,
+    and only a file that names a block is read whole, so for a file that names none the scan holds a few pieces at
+    most, raw and decoded, whatever its size (the CHUNK comment has the shape, and the text pin measures it each run
+    over the widest content), and for each file that does (the PLACES files) its bytes plus its decoded text, which
+    Python holds at one, two or four bytes a character by the widest character in the file (a file holding a character
+    outside the Basic Multilingual Plane decodes at four), so up to five times its bytes; only the unmatched-file cost
+    is pinned. No size limit is needed and none is applied. The eight-directory walk this replaced omitted every other directory and the
+    root files (when this was written: tools/, vscode-extension/, ui/ outside ui/webview, plans/, vendor/, assets/, the
+    root files, .github/, hooks/, claude/, overrides/, postal/, .githooks/), and inside its eight roots it read only a
+    suffix allowlist and pruned named directories (docs/assets, and the .json, .bash, .csv and .svg files among the
+    omitted); none of them named a block when this was written, so the pin was complete by luck and would not have
+    caught a statement added there. No count of any of this is quoted here: the counts move with every commit, and a
+    count needs a head a clone may not hold. The census for the tree you have is a command: `git ls-files -z --cached
+    --others --exclude-standard` at the repo root, split on NUL; drop the symlinks; drop a file whose first PROBE bytes
+    hold a NUL; drop a file that does not decode as UTF-8; count the rest and sum their bytes. The old walk's gap is
+    that listing bucketed against the walk's definition: its roots (kernel, bin, cli, docs, upstream, tests, scripts,
+    ui/webview), its suffix allowlist (.py .md .bats .ts .js .mjs .sh .css .html .txt .toml .yml .yaml, and no suffix)
+    and its pruned names (node_modules, dist, out-tests, __pycache__, assets, and any directory whose name starts with
+    a dot): a listed file outside every root, or inside one with another suffix or under a pruned name, is a file the
+    walk never read. No directory list is kept. An untracked file git does not ignore is
+    read too: a scratch note, a saved diff, an editor backup, a .orig or .rej a merge left, a caption under docs/assets
+    (none of those is ignored here), so a machine holding one reds this pin before CI does; the webview test build's
+    output, vscode-extension/out-tests, is ignored by vscode-extension/.gitignore and never read, and ui/out-tests does
+    not exist. The scan takes a file lock shared and the plant test below takes it exclusive: pytest-xdist can run the
+    tests on different workers at once, and a sibling's scan during the plant would read the plant and red. The lock is
+    one file per checkout, in its git dir, so an xdist worker, a second pytest run, or a run under its own TMPDIR all
+    wait on the same inode (the first version sat in the per-process temp root tests/__init__.py mints and serialised
+    nothing).
+
+    What PLACES counts, since PR 797's closing check asked for the derivation: one entry per text file in the tree
+    above whose text matches BLOCKS at least once, however many times it matches, so the count the sweep holds is the
+    size of PLACES, a set of files. The block-name regex is a one-directional proxy: it finds the files that NAME a
+    routed block, and a file can state the routing without naming one (the ledger entry that recorded this sweep,
+    upstream/2026-09-19-stage-attribution-followup.md, does), so such
+    prose is outside the sweep whatever the file set. `git ls-files -z --cached --others --exclude-standard | xargs -0 grep -I -l -E
+    '<the BLOCKS pattern>'` at the repo root approximates it (run it beside the test and compare: over this tree it has
+    listed the same files plus the bin/romp-kernel symlink the scan skips) and is not the scan's rule (checked on GNU
+    grep 3.11, `grep --version`; another grep's -I may differ): grep -I drops a file when it meets a NUL byte in what
+    it has read before the first match, so a NUL after the scan's 8 KiB probe hides a file the scan reads, and grep -I
+    has no UTF-8 requirement, so it lists a file the scan skips on a decode error; the edges test constructs one of
+    each in a scratch repo, and whether the live tree holds one is what running both shows. No count of statements is
+    held anywhere: a statement has no
+    unit a regex fixes (a line matching BLOCKS, an occurrence of it and a sentence give three different numbers over the
+    same files), and the sweep needs the files to read, not a tally."""
+
     BLOCKS = re.compile(r"stagesForeign|cycleJobsMs|connectPush\.stagesMs|stages_foreign|cycle_jobs_ms|connect_stages_ms")
     # the places a routing sentence lives today; a file added here has been read against the measured cells
     PLACES = {"bin/romp", "docs/reference.md", "kernel/kernel.py", "tests/test_first_cycle_stage_split.py",
               "tests/test_jobs_thread_split.py", "tests/test_perf_stats.py", "upstream/2026-09-18-stage-attribution.md",
               "upstream/2026-09-18-chat-signature-stage1.md",   # its stages_cpu_ms clause names connectPush.stagesMs (2026-09-19 review, fresh-2)
               "tests/test_single_flight_builds.py"}             # its pushes test asserts a connect push's seam wall lands on connectPush.stagesMs
+    PROBE = 8192                                  # the bytes read first from every file; a NUL among them ends the read, so a png, a
+    #                                               font or a recording costs its header and nothing more
+    CHUNK = 8 * PROBE                             # the bytes read per piece after the probe. A piece is held raw and decoded at once,
+    #                                               its text at one, two or four bytes a character by the widest character in it,
+    #                                               and its bytes twice for a moment as the next piece is read, so a piece can cost
+    #                                               several times CHUNK and the text pin's 128 x PROBE bound needs CHUNK well under
+    #                                               it: the pin measures the scan's delta each run over a file with a character
+    #                                               outside the Basic Multilingual Plane in every piece, the widest content, a few
+    #                                               times CHUNK on 3.12 and more on the free-threaded 3.14t, whose allocator books
+    #                                               more per call; a piece of 128 x PROBE cannot meet the bound (round 2's refuters,
+    #                                               who corrected the ruled 1 MiB piece)
+    OVERLAP = 32                                  # characters of the previous piece searched with the start of the next, so a block
+    #                                               name across a piece boundary is found. A name split across a boundary leaves at
+    #                                               most all but one of its characters on one side, so the overlap must be at least
+    #                                               one less than the longest BLOCKS alternative (connectPush.stagesMs, 20 characters);
+    #                                               the constants test derives that length from BLOCKS and pins this value and this
+    #                                               spelling against it, and the edges test splits the longest alternative at both
+    #                                               extremes across both seams. The retired-wording regex runs over the whole text
+    #                                               of a matched file and needs no overlap.
 
-    def _places(self):
-        root = Path(HERE).parent
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        # A plant exists only while its owner holds the exclusive lock, so whatever the glob finds under that lock is a
+        # dead run's leftover (pytest-timeout's os._exit, which CI's --timeout-method=thread uses, a SIGKILL, a scope
+        # stop: none of them reaches the plant test's finally); a match git tracks is skipped. Safe ONLY because the
+        # lock is one file per checkout: under a per-process lock this could delete a sibling's live plant.
+        cls._no_repository = None
+        try:
+            with cls._tree_lock(exclusive=True) as root:
+                cls._remove_stale_plants(root)
+        except unittest.SkipTest as skip:
+            # A checkout without git metadata: the lock path's rev-parse skipped. Recorded rather than raised, so only
+            # the tests that read the live tree skip (each through _live_tree, with this reason) and the scratch-repo,
+            # mock and wording tests still run; raised from here it skipped all of them as one line (round 2's fresh-2).
+            cls._no_repository = str(skip)
+
+    _no_repository = None                         # setUpClass's record of the lock path's skip, read by _live_tree
+
+    def _live_tree(self):
+        """The repo root for a test that reads the live checkout, or a skip carrying the lock path's reason when
+        setUpClass found no repository. Called first in such a test; a test that needs no repository never calls it."""
+        if self._no_repository:
+            self.skipTest(self._no_repository)
+        return Path(HERE).parent
+
+    @classmethod
+    def _remove_stale_plants(cls, root, env=None):
+        """Unlink every UNTRACKED REGULAR FILE in plans/ named like a plant, and nothing else; `env` is the environment
+        for the git call (a scratch repo's; None for the live tree, which is listed under _git_env_scrubbed() as well,
+        because the tracked set decides what is deleted: under a hook's foreign GIT_DIR the ambient listing was the
+        hook's index, empty of this checkout's plans/, so a plant-named file this checkout TRACKS was judged untracked
+        and unlinked from the working tree with every test green, round 2's fresh-4 road on the one destructive call).
+        A match git tracks is content, whoever wrote it. A directory or a symlink is not this test's plant (the plant
+        test writes a regular file), and unlinking a directory raised IsADirectoryError out of setUpClass and errored
+        the class on every run until a human deleted it, the shape the healer exists to end (round 2's Cluster B)."""
+        if env is None:
+            env = _git_env_scrubbed()
+        tracked = {entry for entry in _git_bytes(root, "ls-files", "-z", "--cached", "--", "plans", env=env).split(b"\0") if entry}
+        for old in (root / "plans").glob("routing-sweep-plant-*.md"):
+            if os.fsencode(str(old.relative_to(root))) in tracked or old.is_symlink() or not old.is_file():
+                continue
+            old.unlink(missing_ok=True)
+
+    @classmethod
+    def _lock_path(cls, root):
+        # The lock is a property of the CHECKOUT, not of the run: `git rev-parse --absolute-git-dir` is one path for
+        # every process over this worktree (an xdist worker, a second pytest run, a run under its own TMPDIR), and in
+        # a linked worktree it is <main>/.git/worktrees/<name>, so sibling worktrees lock apart. It is also OUTSIDE the
+        # scanned tree, on purpose: a lock file anywhere inside the worktree, plans/ or the root, would be an untracked,
+        # unignored file, and this scan reads exactly those. The first version sat in tempfile.gettempdir(), which
+        # tests/__init__.py repoints to a private root per process, so every process locked a different inode and
+        # nothing waited. Resolved under the scrubbed git environment (GIT_* removed, GIT_TEST_* kept) and NOT under
+        # the scratch repos' config overrides: a hook's GIT_DIR moves rev-parse to the hook's repository, and did move
+        # the lock there, so two processes over one checkout stopped sharing an inode (round 2's fresh-4); a
+        # machine-wide config does not move the git dir, and a global safe.directory must still resolve a
+        # dubious-ownership checkout: this is the one git call in a test run that reads the developer's global config,
+        # since the scrub drops conftest's GIT_CONFIG_GLOBAL and GIT_CONFIG_NOSYSTEM overrides with the rest and
+        # global_config=True leaves them out (every other call here puts them back; _git_env_scrubbed says which keys
+        # can matter). The residual: a checkout reachable ONLY through an exported GIT_DIR resolves nothing here, and
+        # its tests that read the live tree skip with rev-parse's reason.
+        return Path(os.fsdecode(_git_bytes(root, "rev-parse", "--absolute-git-dir", env=_git_env_scrubbed(global_config=True)).strip())) / "romp-routing-sweep.lock"
+
+    @classmethod
+    @contextlib.contextmanager
+    def _tree_lock(cls, exclusive, root=None):
+        """The repo root, held under a file lock that lives in the checkout's git dir (one per linked worktree), shared
+        by every process over this tree whatever its TMPDIR, and outside the scanned tree; flock, so a process that
+        dies drops it. A checkout without git metadata skips the tests that read the live tree, each with the lock
+        path's reason (the listing's skip, no git or no repository, met here first, in setUpClass, and recorded there;
+        pytest reports the skips per test, so no test is lost), while the scratch-repo, mock and wording tests still
+        run. A tree nested inside another repository is not that case and does not skip: rev-parse resolves the
+        enclosing repository's git dir. `root` is the live checkout unless a test passes a scratch repo, to pin the
+        lock file's creation there rather than read the live one, which whichever runner came first created."""
+        root = Path(HERE).parent if root is None else root
+        lock = cls._lock_path(root)
+        # The lock file is permanent and zero bytes: created once, by the first runner, under their umask (0o666 before
+        # it), and never removed, because removing a lock file races its next taker (a process holding the old inode
+        # holds a lock nobody who opens the new one can see). flock needs no write access, so every later runner,
+        # another user included, opens it read-only and locks it; the first version's open(lock, "a+") needed write
+        # permission and errored the class on a read-only lock file (round 2's fresh-3).
+        fd = os.open(lock, os.O_RDONLY | os.O_CREAT, 0o666)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH)
+            try:
+                yield root
+            finally:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
+
+    @staticmethod
+    def _flocks_this_process_holds(path):
+        """'READ' or 'WRITE' for every flock THIS process holds on `path`, read from /proc/locks (Linux: one line per lock,
+        "N: FLOCK ADVISORY WRITE <pid> <maj>:<min>:<inode> 0 EOF"). The composition pins below use it because a
+        non-blocking try on a second descriptor cannot tell this process's hold from a sibling xdist worker's: a
+        sibling's hold refuses the try whatever this process holds, so such a pin stayed green over a _places that
+        scanned outside its lock."""
+        ino = os.stat(path).st_ino
+        held = []
+        with open("/proc/locks") as fh:
+            for line in fh:
+                f = line.split()
+                if len(f) >= 6 and f[1] == "FLOCK" and int(f[4]) == os.getpid() and int(f[5].split(":")[2]) == ino:
+                    held.append(f[3])
+        return held
+
+    def _scan(self, root, env=None):
+        """{relative path: text} for every text file under `root` that git tracks or would track and that names a block;
+        `env` is the environment for the git call (a scratch repo's; None for the live tree, which is listed under
+        _git_env_scrubbed() as well: under a hook's foreign GIT_DIR the ambient listing was the hook's repository, and
+        every PLACES entry was reported gone)."""
+        # A skip only where the precedent skips (no git, no repository); a dubious-ownership 128 fails with git's
+        # safe.directory hint instead of a bare exit code, because a skip there would disarm the sweep while the run
+        # stays green.
+        if env is None:
+            env = _git_env_scrubbed()
+        listing = _git_bytes(root, "ls-files", "-z", "--cached", "--others", "--exclude-standard", env=env)
         found = {}
-        for top in self.ROOTS:
-            for dirpath, dirnames, filenames in os.walk(root / top):
-                dirnames[:] = [d for d in dirnames if d not in self.SKIP_DIRS and not d.startswith(".")]
-                for fn in filenames:
-                    path = Path(dirpath) / fn
-                    if path.suffix not in self.TEXT or path.is_symlink():
+        # A name git lists is bytes. fsdecode keeps an undecodable byte as a surrogate (surrogateescape on POSIX), so the
+        # file is still read under its real name (os.fsencode gives the bytes back at the open) and a pin failure prints
+        # it in a %r; never errors="ignore" or "replace", which would point at a path that does not exist and drop the
+        # file silently. Decoded per entry, so any failure here stays bound to the entry it came from; the first version
+        # decoded the joined listing strictly, and one such name errored every test here naming an offset and no file.
+        for entry in listing.split(b"\0"):
+            if not entry:
+                continue
+            rel = os.fsdecode(entry)
+            path = root / rel
+            if path.is_symlink():
+                continue
+            try:
+                with open(path, "rb") as fh:
+                    head = fh.read(self.PROBE)
+                    if b"\0" in head:                 # a binary: its header is all that was read
                         continue
-                    try:
-                        text = path.read_text()
-                    except (UnicodeDecodeError, OSError):
+                    # The text rule is decided in pieces (the probe, then CHUNK bytes at a time) through an incremental
+                    # decoder, which holds a character straddling a piece boundary until its bytes arrive, so a file that
+                    # names no block costs a few pieces raw and decoded whatever its size (the CHUNK comment has the
+                    # shape). A block name straddling a boundary is found on the seam: the last OVERLAP characters of the
+                    # previous piece joined to the first OVERLAP of this one. A piece's text is let go once its seam is
+                    # kept, before the next piece is read and decoded, so one decoded piece is held at a time rather than
+                    # two. Only a matched file is read whole, since the pins need its text.
+                    decoder = codecs.getincrementaldecoder("utf-8")()
+                    tail, chunk, matched = "", head, False
+                    while chunk:
+                        try:
+                            text = decoder.decode(chunk)
+                        except UnicodeDecodeError:      # not UTF-8: skipped, as a whole-file decode failure skips it
+                            break
+                        if self.BLOCKS.search(text) or self.BLOCKS.search(tail + text[:self.OVERLAP]):
+                            matched = True
+                            break
+                        tail = text[-self.OVERLAP:] if len(text) >= self.OVERLAP else (tail + text)[-self.OVERLAP:]
+                        text = None
+                        chunk = fh.read(self.CHUNK)
+                    if not matched:                   # skipped either way, so the decoder needs no final flush
                         continue
-                    if self.BLOCKS.search(text):
-                        found[str(path.relative_to(root))] = text
+                    fh.seek(0)
+                    raw = fh.read()
+            except OSError:                           # in the index, gone from the working tree (the open is what raises)
+                continue
+            try:
+                text = raw.decode()                   # the rule stays: the WHOLE file decodes, or the file is skipped
+            except UnicodeDecodeError:
+                continue
+            found[rel] = text
         return found
 
+    def _places(self):
+        with self._tree_lock(exclusive=False) as root:
+            return self._scan(root)
+
+    def _pin_swept_set(self, found):
+        # Direction-aware: the two sides of the set difference want different remedies, and one sentence for both sent a
+        # contributor whose scratch note the scan had read to add it to PLACES, then red again once the note was deleted
+        # (round 1). %r throughout, so a name holding a surrogate (a non-UTF-8 name, fsdecoded) prints.
+        extra = sorted(set(found) - self.PLACES)
+        gone = sorted(self.PLACES - set(found))
+        parts = []
+        if extra:
+            parts.append("names a routed block and is not in PLACES: %r. The scan reads every text file git tracks or would "
+                         "track, so an untracked, unignored file counts: your own scratch (a note, a saved diff, an editor "
+                         "backup, a .orig or .rej) is removed from the tree or ignored (git's local exclude file, `git rev-parse "
+                         "--git-path info/exclude`), a new source or doc is read against the measured cells and then added to "
+                         "PLACES" % extra)
+        if gone:
+            parts.append("in PLACES and no longer names a routed block, or gone from the tree: %r. Remove it from PLACES (or "
+                         "restore the file)" % gone)
+        if parts:
+            self.fail("; ".join(parts))
+
+    def _pin_no_retired_wording(self, found):
+        # One pattern per phrase: its words in order with any run of whitespace between them, newlines and tabs included,
+        # which is what collapsing the text with " ".join(text.split()) matched before, at the cost of a second copy of
+        # every matched file's words; the regex reads the text in place. re.escape keeps a phrase's punctuation literal
+        # (one of them carries an underscore; the phrase itself is not written here, since this file is swept too).
+        patterns = {key: re.compile(r"\s+".join(re.escape(word) for word in phrase.split())) for key, phrase in RETIRED_WORDINGS.items()}
+        for rel, text in sorted(found.items()):
+            for key, phrase in sorted(RETIRED_WORDINGS.items()):
+                if patterns[key].search(text):
+                    # self.fail with the path, not assertNotIn or assertIsNone: the first would print the whole file, the
+                    # second the match object ahead of the words that matter; the scope clause, as in the swept-set pin
+                    self.fail("%r carries a wording a review round retired (%s): %r; the scan reads every text file git tracks "
+                              "or would track, so an untracked, unignored file counts and is removed or ignored rather than "
+                              "swept" % (rel, key, phrase))
+
     def test_the_files_that_name_a_routed_block_are_the_swept_set(self):
-        found = self._places()
-        self.assertEqual(set(found), self.PLACES, "a file names a routed block and is not in the sweep (or left it): %r" % sorted(set(found) ^ self.PLACES))
+        self._live_tree()
+        self._pin_swept_set(self._places())
 
     def test_no_swept_file_carries_a_retired_wording(self):
-        for rel, text in sorted(self._places().items()):
-            joined = " ".join(text.split())
-            for key, phrase in sorted(RETIRED_WORDINGS.items()):
-                self.assertFalse(phrase in joined, "%s carries a wording a review round retired (%s): %r" % (rel, key, phrase))
-                #                                    not assertNotIn: its failure message would print the whole file
+        self._live_tree()
+        self._pin_no_retired_wording(self._places())
+
+    def test_the_file_set_is_read_from_the_tree_not_listed(self):
+        """A file planted in plans/, a directory the replaced walk never entered, naming a block and carrying a retired
+        wording, is found by the scan and reds both pins; without it both are green. Both states are measured in this one
+        test under the exclusive lock, the plant removed in a finally, its name unique to this process. A plant a killed
+        run left behind is removed by setUpClass before any test here scans, so a plant-named file in plans/ is a test
+        artifact, never content."""
+        self._live_tree()
+        with self._tree_lock(exclusive=True) as root:
+            clean = self._scan(root)
+            self._pin_swept_set(clean); self._pin_no_retired_wording(clean)                          # green without the plant
+            missing = sorted(self.PLACES)[0]
+            with self.assertRaises(AssertionError) as gone:                                          # the other direction, off the same scan
+                self._pin_swept_set({k: v for k, v in clean.items() if k != missing})
+            self.assertIn(missing, str(gone.exception), "a swept file that is gone is named")
+            self.assertIn("Remove it from PLACES", str(gone.exception), "with its own remedy")
+            self.assertNotIn("tracks or would track", str(gone.exception), "and not the extra clause")
+            plant = root / "plans" / ("routing-sweep-plant-%d-%s.md" % (os.getpid(), os.urandom(4).hex()))
+            rel = str(plant.relative_to(root))
+            try:
+                plant.write_text("A planted note naming stagesForeign, " + RETIRED_WORDINGS["push-inside-cycle"].replace(" ", "\n  ", 1) + ".\n")
+                #                the phrase broken across a line, so the whitespace-flexible match is exercised, not only the single-space form
+                planted = self._scan(root)
+                self.assertIn(rel, sorted(planted), "the scan reads the tree, untracked files included: the plant is found")
+                #                    the paths, not the dict: a failure would otherwise print seven files' text
+                with self.assertRaises(AssertionError) as swept:
+                    self._pin_swept_set(planted)
+                self.assertIn(rel, str(swept.exception), "the swept-set pin names the plant")
+                self.assertIn("tracks or would track", str(swept.exception), "and says the scan reads untracked files")
+                self.assertIn("removed from the tree or ignored", str(swept.exception), "and sends scratch out of the tree, not into PLACES")
+                self.assertNotIn("Remove it from PLACES", str(swept.exception), "the plant is an extra, so only that clause prints")
+                with self.assertRaises(AssertionError) as worded:
+                    self._pin_no_retired_wording(planted)
+                self.assertIn(rel, str(worded.exception), "the wording pin names the plant")
+                self.assertIn("push-inside-cycle", str(worded.exception), "and the wording it carries")
+                self.assertIn("tracks or would track", str(worded.exception), "and says the scan reads untracked files")
+            finally:
+                plant.unlink(missing_ok=True)
+            after = self._scan(root)
+            self.assertNotIn(rel, sorted(after), "the plant is gone")
+            self._pin_swept_set(after); self._pin_no_retired_wording(after)                          # green again
+
+    def test_a_plant_left_by_a_killed_run_is_removed_before_any_scan(self):
+        """A plant with a pid that is never this process (1), the shape a run killed inside the plant window leaves, is
+        removed by the healer setUpClass runs, and the tree scans green after it. The healer's placement is pinned on
+        setUpClass's source: inside the plant test it would heal only from the second run, since the wording pin sorts
+        first and reads the leftover (round 1's refuters ran both placements: it reds the wording pin there and nothing
+        here)."""
+        self._live_tree()
+        with self._tree_lock(exclusive=True) as root:
+            stale = root / "plans" / "routing-sweep-plant-1-stale0000.md"
+            try:
+                stale.write_text("A planted note naming stagesForeign, " + RETIRED_WORDINGS["push-inside-cycle"] + ".\n")
+                self._remove_stale_plants(root)
+                self.assertFalse(stale.exists(), "the healer removes a plant whose owner is not this process")
+                after = self._scan(root)
+                self.assertNotIn("plans/routing-sweep-plant-1-stale0000.md", sorted(after), "and the scan no longer sees it")
+                self._pin_swept_set(after); self._pin_no_retired_wording(after)                      # green once healed
+            finally:
+                stale.unlink(missing_ok=True)
+        source = inspect.getsource(RoutingStatements.setUpClass)
+        self.assertIn("with cls._tree_lock(exclusive=True)", source, "the healer runs under the exclusive lock")
+        self.assertIn("cls._remove_stale_plants(root)", source, "and is called from setUpClass, before any test here scans")
+        #             the call forms, not the names: a comment in setUpClass naming the helper must not satisfy this pin
+
+    def test_a_binary_file_is_rejected_on_its_first_bytes_not_read_whole(self):
+        """A 64 MiB sparse file whose first bytes hold a NUL and a block name after it (a probe-less scan would list it)
+        costs the scan its header and nothing more: the tracemalloc delta during the scan (its peak minus what was held
+        when it started, the tests/test_reader_stream_peak.py idiom, so a tracer already running does not red it) stays
+        under 128 x PROBE. The test measures that delta each run and prints it on failure; no run's value is quoted here.
+        Measured with tracemalloc per call, not ru_maxrss: that is a process high-water mark an earlier test can already
+        have raised past 64 MiB, which would let a scan that reads the blob whole pass."""
+        d, env = _scratch_repo(self)
+        (d / "control.md").write_text("a control note naming stagesForeign\n")    # so the absence below cannot pass vacuously
+        with open(d / "blob.bin", "wb") as fh:
+            fh.write(b"\0" * 16 + b"stagesForeign")
+            fh.truncate(64 * 2**20)
+        found, delta = _traced_delta(lambda: self._scan(d, env=env))
+        listed = os.fsdecode(_git_bytes(d, "ls-files", "-z", "--others", "--exclude-standard", env=env)).split("\0")
+        self.assertIn("blob.bin", listed, "git lists the blob, so the scan met it (a machine-wide ignore of .bin would hide it)")
+        self.assertIn("control.md", sorted(found))
+        self.assertNotIn("blob.bin", sorted(found), "a NUL in the first bytes rejects the file")
+        #                            the paths, not the dict: a failure would otherwise print the decoded blob, 64 MiB of it
+        self.assertLess(delta, 128 * self.PROBE, "the scan read the blob past its first bytes: delta %d bytes" % delta)
+
+    def test_a_large_text_file_that_names_no_block_costs_a_chunk_not_its_size(self):
+        """The text road of the same bound: a 64 MiB untracked, unignored text file that names no block costs the scan a
+        few pieces, not its size. Its content is the widest the decoder produces (lines of plain text with one character
+        outside the Basic Multilingual Plane in every CHUNK bytes, so every piece the scan decodes holds one and is a
+        str of four bytes a character; round 3, after a pin over plain ASCII was found to measure the easiest content,
+        which a wider CHUNK could pass while such a file broke the bound). The tracemalloc delta during the scan (the
+        tests/test_reader_stream_peak.py idiom, as in the blob pin above) stays under 128 x PROBE, recomputed every run
+        and printed on failure; a scan that read the file whole and decoded it whole held the bytes and the text both
+        (round 2's Cluster C, the half of round 1's size-bound ruling that had not landed)."""
+        d, env = _scratch_repo(self)
+        (d / "control.md").write_text("a control note naming stagesForeign\n")    # so the absence below cannot pass vacuously
+        line = b"a line of plain text that names no routed block\n"
+        piece = (line * (self.CHUNK // len(line) + 1))[:self.CHUNK]                # exactly CHUNK bytes, written 64 MiB's worth of times
+        piece = "\U0001F5BC".encode() + piece[4:]                                  # the one astral character per piece, four bytes of UTF-8
+        self.assertEqual(len(piece), self.CHUNK)
+        self.assertGreater(max(map(ord, piece.decode())), 0xFFFF, "a piece holds a character outside the Basic Multilingual Plane")
+        with open(d / "big.txt", "wb") as fh:
+            for _ in range(64 * 2**20 // self.CHUNK):
+                fh.write(piece)
+        self.assertEqual((d / "big.txt").stat().st_size, 64 * 2**20)
+        found, delta = _traced_delta(lambda: self._scan(d, env=env))
+        listed = os.fsdecode(_git_bytes(d, "ls-files", "-z", "--others", "--exclude-standard", env=env)).split("\0")
+        self.assertIn("big.txt", listed, "git lists the file, so the scan met it (a machine-wide ignore of .txt would hide it)")
+        self.assertIn("control.md", sorted(found))
+        self.assertNotIn("big.txt", sorted(found), "a file naming no block is not in the result")
+        self.assertLess(delta, 128 * self.PROBE, "the scan held more than a piece of a file that names no block: delta %d bytes" % delta)
+
+    def test_a_path_whose_name_is_not_utf8_is_read_and_named(self):
+        """One listed path whose NAME is not valid UTF-8 (git ls-files -z emits the raw bytes) used to error every test
+        here with a UnicodeDecodeError naming an offset into the joined listing and no file. The file is read under its
+        real name, and a failure of EITHER pin names it in a %r, surrogate and all, in a message that encodes as strict
+        UTF-8, which is what xdist's transport does to a report: the wording pin's first version formatted the path with
+        %s, so a bad-named file carrying a retired wording put a lone surrogate into its message, and under -n 4 the
+        failure was never reported (UnicodeEncodeError in the worker, INTERNALERROR ending the session in some runs),
+        the shape this test exists to refuse, in the other pin."""
+        d, env = _scratch_repo(self)
+        name = b"notes-caf\xe9.md"                                                # latin-1 e-acute, not UTF-8
+        with open(os.path.join(os.fsencode(str(d)), name), "wb") as fh:
+            fh.write(b"a note naming stagesForeign, " + RETIRED_WORDINGS["push-inside-cycle"].replace(" ", "\n  ", 1).encode() + b".\n")
+            #        the retired phrase broken across a line, so the wording pin reds on the file too
+        found = self._scan(d, env=env)                                            # must not raise
+        rel = os.fsdecode(name)                                                   # 'notes-caf\udce9.md'
+        self.assertIn(rel, sorted(found), "the file is read under its real name")
+        with self.assertRaises(AssertionError) as swept:
+            self._pin_swept_set(found)
+        with self.assertRaises(AssertionError) as worded:
+            self._pin_no_retired_wording(found)
+        for pin, failure in (("swept-set", swept.exception), ("wording", worded.exception)):
+            try:
+                str(failure).encode("utf-8")                                      # strict, as xdist's transport encodes a report
+            except UnicodeEncodeError as e:
+                self.fail("the %s pin's message holds a lone surrogate, so a worker could not report it: %s" % (pin, e))
+            #          str(e) spells the character as an escape, so this message itself encodes
+            self.assertIn(repr(rel), str(failure), "the %s pin names the file, surrogate and all" % pin)
+
+    def test_the_scan_skips_for_a_missing_git_or_repository_only(self):
+        """The listing's git call follows tests/test_entrypoints_executable.py's _index: git off PATH and a tree with no
+        repository skip; every other nonzero exit fails with git's own words and the exit code, never a skip, since a
+        skip there would disarm the sweep while the run stays green. The mock replaces the only subprocess call _scan
+        makes, so nothing is read and no lock is needed."""
+        root = Path(HERE).parent
+
+        def completed(stderr):
+            return subprocess.CompletedProcess(args=["git"], returncode=128, stdout=b"", stderr=stderr)
+        with mock.patch.object(subprocess, "run", side_effect=FileNotFoundError("git")):
+            with self.assertRaises(unittest.SkipTest):
+                self._scan(root)
+        with mock.patch.object(subprocess, "run",
+                               return_value=completed(b"fatal: not a git repository (or any of the parent directories): .git")):
+            with self.assertRaises(unittest.SkipTest):
+                self._scan(root)
+        # every other nonzero exit is a failure that carries git's words; a skip there is the hole this test pins, so it
+        # is a failure of the test, never a skip of it (the precedent's index_failure shape)
+        with mock.patch.object(subprocess, "run",
+                               return_value=completed(b"fatal: detected dubious ownership in repository at '/a/checkout'")):
+            try:
+                self._scan(root)
+            except unittest.SkipTest as skip:
+                self.fail("the scan skipped instead of failing: %s" % skip)
+            except AssertionError as failed:
+                message = str(failed)
+            else:
+                self.fail("the scan returned a listing instead of failing")
+        self.assertIn("dubious ownership", message, "the failure carries git's words")
+        self.assertIn("exited 128", message, "and the exit code")
+
+    def test_a_scratch_repo_skips_when_git_is_not_installed(self):
+        """The no-git world the lock's docstring describes, for the scratch-repo tests: _scratch_repo's init skips the
+        test through _git_bytes (round 3; the first version's bare subprocess.run raised FileNotFoundError, so a box
+        without git had five errors where the docstring promised skips). The mock replaces the only subprocess call the
+        fixture makes before it returns, so no repository is created; the temp directory it minted is removed by the
+        cleanup it registered first."""
+        with mock.patch.object(subprocess, "run", side_effect=FileNotFoundError("git")):
+            with self.assertRaises(unittest.SkipTest) as skipped:
+                _scratch_repo(self)
+        self.assertIn("git is not installed", str(skipped.exception), "the skip names the cause")
+
+    def test_the_lock_path_skips_for_a_missing_repository_only(self):
+        """The lock path's own skip road, pinned directly (round 2's fresh-2): a tree with no repository skips, through
+        _git_bytes; a dubious-ownership 128 fails with git's words, never a skip, since setUpClass records a skip as
+        'no repository' and would otherwise let a broken checkout pass its live-tree tests as skipped. The mock
+        replaces the only subprocess call _lock_path makes, so nothing is locked."""
+        root = Path(HERE).parent
+
+        def completed(stderr):
+            return subprocess.CompletedProcess(args=["git"], returncode=128, stdout=b"", stderr=stderr)
+        with mock.patch.object(subprocess, "run",
+                               return_value=completed(b"fatal: not a git repository (or any of the parent directories): .git")):
+            with self.assertRaises(unittest.SkipTest):
+                RoutingStatements._lock_path(root)
+        with mock.patch.object(subprocess, "run",
+                               return_value=completed(b"fatal: detected dubious ownership in repository at '/a/checkout'")):
+            try:
+                RoutingStatements._lock_path(root)
+            except unittest.SkipTest as skip:
+                self.fail("the lock path skipped instead of failing: %s" % skip)
+            except AssertionError as failed:
+                message = str(failed)
+            else:
+                self.fail("the lock path resolved instead of failing")
+        self.assertIn("dubious ownership", message, "the failure carries git's words")
+        self.assertIn("exited 128", message, "and the exit code")
+
+    def test_setupclass_records_a_missing_repository_instead_of_skipping_the_class(self):
+        """setUpClass turns the lock path's SkipTest into a record, _no_repository, that _live_tree reads: raised from
+        setUpClass it skipped all of the class as one line, the tests that need no repository included (round 2's
+        fresh-2). The record's PRIOR value is registered for restoring before the call, so a failure here cannot leave
+        the class marked and a checkout without a repository keeps its record: the first version restored None, and in
+        such a checkout the later live-tree tests of the same process lost the record, so the healer-composition test,
+        which runs the real setUpClass, failed instead of skipping (round 3, executed in an archive copy of the tree;
+        under xdist the two tests landed on different workers and the red did not show). A skip that escapes setUpClass
+        is caught and FAILED here: raised inside a test it would read as this test skipping, the skipping-pin shape (the
+        precedent's index_failure)."""
+        self.addCleanup(setattr, RoutingStatements, "_no_repository", RoutingStatements._no_repository)
+        with mock.patch.object(RoutingStatements, "_lock_path", side_effect=unittest.SkipTest("no repo")):
+            try:
+                RoutingStatements.setUpClass()
+            except unittest.SkipTest as skip:
+                self.fail("setUpClass raised the skip instead of recording it: %s" % skip)
+        self.assertEqual(RoutingStatements._no_repository, "no repo", "the skip's reason is recorded on the class")
+        with self.assertRaises(unittest.SkipTest) as skipped:
+            self._live_tree()
+        self.assertEqual(str(skipped.exception), "no repo", "and a live-tree test skips with it")
+
+    def test_the_lock_is_one_file_for_every_process_of_this_tree(self):
+        """A second process over this checkout with its own TMPDIR and no record of this run's system temp dir (the
+        two-sweep-slots case a run-keyed lock misses) computes the same lock path, and its exclusive hold is seen here:
+        a non-blocking flock in either mode is refused while it holds, a shared waiter stays blocked until it lets go
+        and gets in after. Event based: the child says when it holds and is told when to release; the one timed step is
+        the 0.5 s bound on the negative check that the waiter is still blocked, which a working lock cannot fail and a
+        missing one fails at once."""
+        root = self._live_tree()
+        holder = ("import sys\n"
+                  "from tests.test_perf_stats import RoutingStatements as R\n"
+                  "with R._tree_lock(exclusive=True) as root:\n"
+                  "    print(R._lock_path(root), flush=True)\n"
+                  "    sys.stdin.readline()\n")
+        child_tmp = tempfile.mkdtemp()                                # under this process's run root, swept with it
+        env = dict(os.environ, TMPDIR=child_tmp)
+        env.pop("ROMP_TESTS_SYSTEM_TMPDIR", None)                     # so the child's tests/__init__.py records its own
+        errlog = open(os.path.join(child_tmp, "holder-stderr.log"), "w+b")   # a file, not a pipe: the kernel load may talk
+        child = subprocess.Popen([sys.executable, "-c", holder], cwd=root, env=env, stdin=subprocess.PIPE,
+                                 stdout=subprocess.PIPE, stderr=errlog, text=True)
+        entered = threading.Event()
+
+        def waiter():
+            with self._tree_lock(exclusive=False):
+                entered.set()
+        thread = threading.Thread(target=waiter, daemon=True)
+        try:
+            line = child.stdout.readline()
+            if not line:
+                errlog.seek(0)
+                self.fail("the holder printed no lock path; its stderr:\n%s" % errlog.read().decode(errors="replace"))
+            self.assertEqual(Path(line.strip()), self._lock_path(root),
+                             "two processes with different TMPDIRs compute one lock path")
+            with open(self._lock_path(root), "rb") as fh:                 # read-only, as _tree_lock opens it
+                with self.assertRaises(BlockingIOError, msg="the holder's exclusive lock refuses a shared try here"):
+                    fcntl.flock(fh, fcntl.LOCK_SH | fcntl.LOCK_NB)
+                with self.assertRaises(BlockingIOError, msg="and an exclusive try"):
+                    fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            thread.start()
+            self.assertFalse(entered.wait(0.5), "a shared waiter is blocked while the holder holds")
+            child.stdin.write("\n"); child.stdin.flush()               # the holder releases and exits
+            self.assertTrue(entered.wait(30), "the waiter gets in once the holder lets go")
+            self.assertEqual(child.wait(30), 0)
+        finally:                                                      # a failing step never leaves a holder behind
+            try:
+                child.communicate(timeout=60)                         # closes its stdin, so the holder's readline ends
+            except subprocess.TimeoutExpired:
+                child.kill(); child.communicate()
+            if thread.is_alive():
+                thread.join(60)
+            errlog.close()
+
+    def test_the_lock_path_ignores_an_exported_git_dir(self):
+        """The lock path is resolved under the scrubbed git environment: with a GIT_DIR exported (a hook's, here a scratch
+        repo's), `git -C <root> rev-parse --absolute-git-dir` under the ambient environment answers the exported
+        repository, and a lock path built from that landed the lock in the hook's git dir, so two processes over one
+        checkout stopped sharing an inode (round 2's fresh-4, round 1's high on a new road). Both directions are run:
+        the ambient call moves, the lock path does not."""
+        root = self._live_tree()
+        d, env = _scratch_repo(self)
+        before = RoutingStatements._lock_path(root)
+        with mock.patch.dict(os.environ, {"GIT_DIR": str(d / ".git")}):
+            moved = os.fsdecode(_git_bytes(root, "rev-parse", "--absolute-git-dir").strip())
+            self.assertEqual(os.path.realpath(moved), os.path.realpath(d / ".git"),
+                             "the premise: under the ambient environment the exported GIT_DIR wins over -C")
+            self.assertEqual(RoutingStatements._lock_path(root), before, "and the lock path is unmoved by it")
+
+    def test_the_lock_is_taken_on_a_read_only_lock_file(self):
+        """The lock file is permanent, created by whichever runner came first under their umask, so a later runner may
+        meet one it cannot write (another user's, or a read-only git dir). flock needs no write access: the lock is taken
+        in both modes on a lock file of mode 0o444, where the first version's open(lock, "a+") raised PermissionError
+        and errored the class (round 2's fresh-3). The chmod touches the lock file in the git dir, outside the scanned
+        tree, and is restored by addCleanup; a kill in the window leaves 0o444, which the open tolerates."""
+        root = self._live_tree()
+        lock = self._lock_path(root)
+        mode = stat.S_IMODE(os.stat(lock).st_mode)
+        self.addCleanup(os.chmod, lock, mode)
+        try:
+            os.chmod(lock, 0o444)
+        except PermissionError as e:
+            self.skipTest("the lock file is not ours to chmod: %s" % e)
+        with self._tree_lock(exclusive=True) as held:
+            self.assertEqual(held, root)
+        with self._tree_lock(exclusive=False) as held:
+            self.assertEqual(held, root)
+
+    def test_the_lock_file_is_created_without_execute_bits_and_off_the_scanned_tree(self):
+        """Two properties of the lock file stated in the comments and pinned by nothing before round 3. The explicit
+        mode: os.open creates it 0o666 before the umask, so whatever the umask it has no execute bit and its owner can
+        read it (with the mode dropped, os.open's default 0o777 mints it executable under any umask that leaves a read
+        bit). The placement: the lock sits in the git dir, off the tree the scan lists, so `git ls-files --cached
+        --others --exclude-standard` over the checkout never lists it (inside the tree it would be an untracked,
+        unignored file this scan reads, the trap the _lock_path comment names). In a scratch repo, whose git dir has no
+        lock yet, so the creation is this test's own; the live checkout's lock was created by whichever runner came
+        first and says nothing about the code as it is now."""
+        d, env = _scratch_repo(self)
+        lock = RoutingStatements._lock_path(d)
+        self.assertFalse(lock.exists(), "a fresh scratch repo has no lock file yet, so the open below creates it")
+        with RoutingStatements._tree_lock(exclusive=True, root=d) as held:
+            self.assertEqual(held, d)
+        mode = stat.S_IMODE(os.stat(lock).st_mode)
+        self.assertEqual(mode & 0o111, 0, "no execute bit, whatever the umask: mode %o" % mode)
+        self.assertTrue(mode & 0o400, "readable by its owner: mode %o" % mode)
+        listed = _git_bytes(d, "ls-files", "-z", "--cached", "--others", "--exclude-standard", env=env).split(b"\0")
+        self.assertFalse(any(lock.name.encode() in entry for entry in listed),
+                         "the lock file is off the tree the scan lists: %r" % [os.fsdecode(e) for e in listed if lock.name.encode() in e])
+
+    def test_places_scans_while_holding_the_shared_lock(self):
+        """The composition, not its halves: _places reads the tree INSIDE its shared hold. The lock test above pins the
+        key and the primitive, and a _places that took the shared lock, dropped it and then scanned left every test here
+        green (round 2's two-direction sweep), with the sibling-scan red the lock exists to prevent open again."""
+        self._live_tree()
+        if not os.path.exists("/proc/locks"):
+            self.skipTest("/proc/locks is how a process's own flocks are read")
+        seen = []
+
+        def probe(root):
+            seen.append(self._flocks_this_process_holds(self._lock_path(root)))
+            return {}
+        with mock.patch.object(RoutingStatements, "_scan", side_effect=probe):
+            self._places()
+        self.assertEqual(seen, [["READ"]], "_places scans while this process holds the shared lock")
+
+    def test_the_healer_runs_while_holding_the_exclusive_lock(self):
+        """The composition, not its halves: setUpClass calls the healer INSIDE its exclusive hold. The source pin in the
+        stale-plant test checks that both call forms appear in setUpClass, and a healer moved to just after the with
+        block satisfies it (round 2's two-direction sweep); that is the placement the setUpClass comment warns could
+        delete a sibling's live plant. The healer is patched with a probe that records, from /proc/locks, the flock
+        modes this process holds on the lock file when it is called, so no plant is touched."""
+        self._live_tree()
+        if not os.path.exists("/proc/locks"):
+            self.skipTest("/proc/locks is how a process's own flocks are read")
+        seen = []
+
+        def probe(root):
+            seen.append(self._flocks_this_process_holds(self._lock_path(root)))
+        with mock.patch.object(RoutingStatements, "_remove_stale_plants", side_effect=probe):
+            RoutingStatements.setUpClass()
+        self.assertEqual(seen, [["WRITE"]], "setUpClass calls the healer while this process holds the exclusive lock")
+
+    def test_the_healer_removes_only_an_untracked_regular_plant(self):
+        """The glob's other edges, in a scratch repo rather than by a file written into the checkout (round 2's extra4-1:
+        the first version wrote a control file into the live plans/ and removed it only in a finally, round 1's defect 2
+        in the healer's own test). Narrowing the glob reds the stale-plant test; widening it to every *.md left every
+        test here green while setUpClass deleted every tracked file in plans/ from the working tree (round 2's
+        two-direction sweep), and a destructive operation whose scope can widen silently needs a guard on that side. Of
+        five plans/ entries the healer removes exactly one, the untracked regular plant: a plant git tracks (the index
+        is enough, no commit and no identity) is content whoever wrote it; a directory and a symlink named like a plant
+        are not this test's plant, and unlinking the directory raised out of setUpClass and errored the class on every
+        run; a file off the glob, the prefix shared and the shape not, is not touched."""
+        d, env = _scratch_repo(self)
+        plans = d / "plans"
+        plans.mkdir()
+        tracked = plans / "routing-sweep-plant-1-tracked00.md"
+        tracked.write_text("a tracked plan named like a plant\n")
+        _git_bytes(d, "add", "--", "plans/routing-sweep-plant-1-tracked00.md", env=env)
+        stale = plans / "routing-sweep-plant-1-stale0000.md"
+        stale.write_text("a dead run's leftover\n")
+        directory = plans / "routing-sweep-plant-1-dir00000.md"
+        directory.mkdir()
+        other = plans / "routing-sweep-other-1.md"
+        other.write_text("a plans/ note off the glob\n")
+        link = plans / "routing-sweep-plant-1-link0000.md"
+        link.symlink_to(other.name)
+        RoutingStatements._remove_stale_plants(d, env=env)                                       # must not raise
+        self.assertFalse(stale.exists(), "the untracked regular plant is removed")
+        self.assertTrue(tracked.exists(), "a plant git tracks survives")
+        self.assertTrue(directory.is_dir(), "a directory named like a plant survives")
+        self.assertTrue(link.is_symlink(), "a symlink named like a plant survives")
+        self.assertTrue(other.exists(), "a plans/ file off the glob survives")
+
+    def test_a_scratch_repos_git_runs_with_its_scrubbed_environment_not_the_callers(self):
+        """Every git call over a scratch repo runs with the environment _scratch_repo scrubbed for its init (round 2; the
+        first version scrubbed the init alone). Two things a caller's environment can hold, set here together: a hook's
+        GIT_DIR and GIT_INDEX_FILE for this checkout, which git obeys over `-C` (a scratch listing under them was this
+        checkout's index, every path skipped at the open, so the pins stayed green over a listing that was not the
+        scratch repo's), and a global config whose excludes hide the scratch file, which the ambient
+        environment honours and the scrubbed one, with no global config, does not."""
+        root = self._live_tree()
+        git_dir = os.fsdecode(_git_bytes(root, "rev-parse", "--absolute-git-dir").strip())
+        hostile = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, hostile, ignore_errors=True)
+        (hostile / "excludes").write_text("*.md\n")
+        (hostile / "gitconfig").write_text("[core]\n\texcludesFile = %s\n" % (hostile / "excludes"))
+        with mock.patch.dict(os.environ, {"GIT_DIR": git_dir, "GIT_INDEX_FILE": os.path.join(git_dir, "index"),
+                                          "GIT_CONFIG_GLOBAL": str(hostile / "gitconfig")}):
+            d, env = _scratch_repo(self)
+            (d / "note.md").write_text("a note naming stagesForeign\n")
+            listed = [entry for entry in _git_bytes(d, "ls-files", "-z", "--cached", "--others", "--exclude-standard",
+                                                    env=env).split(b"\0") if entry]
+            found = self._scan(d, env=env)
+        self.assertEqual(listed, [b"note.md"], "the scratch repo's listing is its own: not this checkout's index, and not "
+                                               "thinned by the caller's excludes")
+        self.assertEqual(sorted(found), ["note.md"], "and the scan over it reads that listing")
+
+    def test_the_live_tree_listings_ignore_an_exported_git_dir_and_a_global_config(self):
+        """The healer's and the scan's listings with no env, the live tree's road, resolve under the scrubbed environment
+        as the lock path does (round 3: round 2's fresh-4 rule grepped across the module's other git calls). In a
+        scratch repo standing for the checkout, with a second scratch repo's .git exported as GIT_DIR (a hook's) and
+        HOME moved to a directory whose .gitconfig excludes every .md (the developer's global config; it has to come
+        through HOME, since GIT_CONFIG_GLOBAL is itself a GIT_* variable the scrub drops): a plant-named file the first
+        repo TRACKS and its own .gitignore also names is listed by its own index and, read from the exported index, is
+        an ignored other, so the ambient `ls-files --cached -- plans` is empty (the premise, executed) and the healer
+        under it unlinked a tracked file while the scan under it found nothing; and an untracked note the global
+        excludes name is listed only with conftest's config overrides back in the environment, which the scrub puts
+        there. The scrubbed healer keeps the tracked plant, and the scrubbed scan reads both files."""
+        d, env = _scratch_repo(self)
+        other, _ = _scratch_repo(self)
+        home = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, home, ignore_errors=True)
+        (home / "excludes").write_text("*.md\n")
+        (home / ".gitconfig").write_text("[core]\n\texcludesFile = %s\n" % (home / "excludes"))
+        (d / ".gitignore").write_text("plans/\n")
+        (d / "plans").mkdir()
+        rel = "plans/routing-sweep-plant-1-tracked00.md"
+        tracked = d / rel
+        tracked.write_text("a tracked plan named like a plant, naming stagesForeign\n")
+        _git_bytes(d, "add", "-f", "--", rel, env=env)                                         # -f: its .gitignore names plans/
+        (d / "note.md").write_text("an untracked note naming stagesForeign\n")
+        with mock.patch.dict(os.environ, {"GIT_DIR": str(other / ".git"), "HOME": str(home), "XDG_CONFIG_HOME": str(home / "xdg")}):
+            self.assertEqual(_git_bytes(d, "ls-files", "-z", "--cached", "--", "plans"), b"",
+                             "the premise: under the ambient environment the exported GIT_DIR's index answers, and it holds nothing")
+            RoutingStatements._remove_stale_plants(d)                                          # env=None: the live tree's road
+            self.assertTrue(tracked.exists(), "a plant git tracks survives the healer under an exported foreign GIT_DIR")
+            self.assertEqual(sorted(self._scan(d)), ["note.md", rel],
+                             "the scan with no env lists this repo's index, not the exported repository's, and the "
+                             "developer's global excludes do not thin it")
+
+    def test_the_scrub_drops_git_variables_keeps_git_test_ones_and_puts_the_config_overrides_back(self):
+        """_git_env_scrubbed's three clauses, each pinned by nothing before round 3: a GIT_* variable is dropped, a
+        GIT_TEST_* one and any other name are kept, conftest's two config overrides are back unless global_config is
+        asked for, and then they are absent whatever the caller exported. Membership is asserted as a bool, never with
+        assertIn over the mapping: a failure would otherwise print the whole environment, keys a report must not carry."""
+        with mock.patch.dict(os.environ, {"GIT_PROBE_DROPPED": "1", "GIT_TEST_PROBE_KEPT": "1", "PROBE_KEPT": "1",
+                                          "GIT_CONFIG_GLOBAL": "/nonexistent/gitconfig", "GIT_CONFIG_NOSYSTEM": "0"}):
+            scrubbed = _git_env_scrubbed()
+            with_global = _git_env_scrubbed(global_config=True)
+        self.assertFalse("GIT_PROBE_DROPPED" in scrubbed, "a GIT_* variable is dropped")
+        self.assertEqual(scrubbed.get("GIT_TEST_PROBE_KEPT"), "1", "a GIT_TEST_* variable is kept")
+        self.assertEqual(scrubbed.get("PROBE_KEPT"), "1", "and so is every other name")
+        self.assertEqual((scrubbed.get("GIT_CONFIG_GLOBAL"), scrubbed.get("GIT_CONFIG_NOSYSTEM")), (os.devnull, "1"),
+                         "the config overrides are conftest's, not the caller's")
+        self.assertFalse("GIT_PROBE_DROPPED" in with_global, "a GIT_* variable is dropped with global_config too")
+        self.assertEqual(with_global.get("GIT_TEST_PROBE_KEPT"), "1", "and a GIT_TEST_* one kept")
+        self.assertEqual((with_global.get("GIT_CONFIG_GLOBAL"), with_global.get("GIT_CONFIG_NOSYSTEM")), (None, None),
+                         "with global_config the overrides are out, the caller's included")
+
+    def test_the_lock_path_alone_reads_the_global_config_and_the_two_listings_do_not(self):
+        """The composition the scrub pin above cannot see: which of the three live-tree git calls asks for which
+        environment. The mock records the env each call hands subprocess.run; the lock path's rev-parse runs without
+        conftest's config overrides (a global safe.directory must resolve a dubious-ownership checkout), the scan's and
+        the healer's listings run with them, and none of the three carries a GIT_DIR the caller exported. The root is
+        an empty temp directory, so the healer's glob finds nothing and nothing live is touched under the mock."""
+        root = Path(tempfile.mkdtemp())                                                        # under the run's root, swept with it
+        seen = []
+
+        def record(argv, **kwargs):
+            seen.append((argv[3], kwargs["env"]))                                              # argv: git -C <root> <subcommand> ...
+            return subprocess.CompletedProcess(args=argv, returncode=0, stdout=b"", stderr=b"")
+        with mock.patch.dict(os.environ, {"GIT_DIR": "/a/hooks/repository/.git"}):
+            with mock.patch.object(subprocess, "run", side_effect=record):
+                RoutingStatements._lock_path(root)
+                self._scan(root)
+                RoutingStatements._remove_stale_plants(root)
+        self.assertEqual([subcommand for subcommand, env in seen], ["rev-parse", "ls-files", "ls-files"],
+                         "one git call each: the lock path's rev-parse, the scan's listing, the healer's listing")
+        for i, (subcommand, env) in enumerate(seen):
+            self.assertFalse("GIT_DIR" in env, "call %d (%s) runs without the caller's GIT_DIR" % (i, subcommand))
+        self.assertFalse("GIT_CONFIG_GLOBAL" in seen[0][1], "the lock path's rev-parse reads the global config")
+        for i in (1, 2):
+            self.assertEqual(seen[i][1].get("GIT_CONFIG_GLOBAL"), os.devnull, "listing %d does not" % i)
+
+    def test_the_scan_honours_ignores_and_reads_a_nul_only_past_the_probe(self):
+        """The text rule's other edges, each stated in the class docstring and, before round 2, pinned by nothing: an
+        ignored file naming a block is not read (--exclude-standard); a NUL at byte PROBE-1 rejects a file and a NUL at
+        byte PROBE does not (the file is read whole and found, the case the docstring says grep -I hides); content that
+        is not UTF-8 is skipped, never read with a replacement character. Round 3's chunked read adds its seams: the
+        longest BLOCKS alternative split at both extremes, all but its last character before byte PROBE (the probe's
+        end) and its first character alone before byte PROBE + CHUNK (the first piece's end), is found across both, so
+        an overlap one character short of what the longest name needs reds here (the first fixtures split a shorter
+        name near its middle and stayed green at an overlap the longest name outgrew); and a file whose match sits in
+        the first piece with a byte that is not UTF-8 two pieces later is skipped, because the rule is that the WHOLE
+        file decodes, not the part read up to the match. In a scratch repo, so the live tree holds none of it."""
+        d, env = _scratch_repo(self)
+        (d / ".gitignore").write_text("ignored.md\n")
+        (d / "ignored.md").write_text("an ignored note naming stagesForeign\n")
+        prefix = b"a note naming stagesForeign\n"
+        name = max((a.replace("\\", "") for a in self.BLOCKS.pattern.split("|")), key=len).encode()   # the longest alternative
+        (d / "edge-nul.md").write_bytes(prefix + b"x" * (self.PROBE - 1 - len(prefix)) + b"\0\n")   # NUL at index PROBE-1
+        (d / "late-nul.md").write_bytes(prefix + b"x" * (self.PROBE - len(prefix)) + b"\0\n")       # NUL at index PROBE
+        (d / "latin1.md").write_bytes(b"caf\xe9 naming stagesForeign\n")
+        (d / "seam-head.md").write_bytes(b"x" * (self.PROBE - len(name) + 1) + name + b"\n")        # all but its last character before PROBE
+        (d / "seam-chunk.md").write_bytes(b"x" * (self.PROBE + self.CHUNK - 1) + name + b"\n")      # its first character before PROBE + CHUNK
+        (d / "latin1-late.md").write_bytes(prefix + b"x" * (self.PROBE + 2 * self.CHUNK) + b"caf\xe9\n")
+        self.assertEqual((d / "edge-nul.md").read_bytes().index(b"\0"), self.PROBE - 1)
+        self.assertEqual((d / "late-nul.md").read_bytes().index(b"\0"), self.PROBE)
+        self.assertEqual((d / "seam-head.md").read_bytes().index(name), self.PROBE - len(name) + 1)
+        self.assertEqual((d / "seam-chunk.md").read_bytes().index(name), self.PROBE + self.CHUNK - 1)
+        self.assertGreater((d / "latin1-late.md").read_bytes().index(b"\xe9"), self.PROBE + 2 * self.CHUNK)
+        self.assertEqual(sorted(self._scan(d, env=env)), ["late-nul.md", "seam-chunk.md", "seam-head.md"],
+                         "ignored, NUL-in-probe and non-UTF-8 files are skipped, a NUL past the probe is read, a block name "
+                         "across either seam is found, and a bad byte after a match still skips the file")
+
+    def test_the_wording_pin_needs_whitespace_between_the_words(self):
+        """The pattern's other edge: two words of a retired phrase run together are not the phrase. The plant test pins
+        the wide direction (a phrase broken across a line matches), and a pattern of zero or more whitespace between the
+        words passed every test here (round 2's two-direction sweep). The literal is split so this module, which is
+        swept, does not carry the phrase."""
+        near = {"near-miss.md": "A note: inside its" + "cycle, never the phrase.\n"}
+        self._pin_no_retired_wording(near)                                                       # must not raise
 
     def test_this_modules_top_keys_comment_names_both_families(self):
         line = next(l for l in Path(__file__).read_text().splitlines() if l.strip().startswith('"stagesForeign",'))
         self.assertIn("push stage", line + " ", "the TOP_KEYS comment names the push family beside the jobs family")
+
+    def test_probe_is_eight_kib_and_every_spelling_of_it_reads_the_constant(self):
+        """PROBE's VALUE, pinned by nothing before round 3: every fixture here derives from self.PROBE, so halving the
+        constant left every test green while the prose spelled a probe the code no longer used (round 2's Cluster D).
+        The value is eight kibibytes, a whole number of them, and every '<n> KiB' or '<n>KiB' in this class's source
+        (docstrings and comments; read through inspect.getsource, so the pin is indentation-relative and 3.13's
+        docstring dedent does not move it) spells that value and no other: every KiB figure in the class is taken to be
+        the probe, so another quantity spelled in KiB here reds until it is written another way. The literal appears
+        once, at the assignment, which must stay a literal (a product there reds this count), so a typed copy in a
+        comment reds here rather than drifting. The value is written as a product below so this pin is not itself the
+        second literal."""
+        self.assertEqual(RoutingStatements.PROBE, 8 * 1024)
+        self.assertEqual(RoutingStatements.PROBE % 1024, 0, "a whole number of KiB, or the rendered spelling below would round")
+        spelled = "%d KiB" % (RoutingStatements.PROBE // 1024)
+        source = inspect.getsource(RoutingStatements)
+        hits = ["%s KiB" % n for n in re.findall(r"\b(\d+)\s?KiB\b", source)]         # both spacings read as one
+        self.assertTrue(hits, "the class spells the probe in KiB somewhere; a pin over no spelling would pass vacuously")
+        self.assertEqual(set(hits), {spelled}, "every KiB spelling in the class is the constant's value")
+        self.assertEqual(source.count(str(RoutingStatements.PROBE)), 1, "the literal appears once, at the assignment")
+        self.assertTrue("one-directional proxy" in RoutingStatements.__doc__,          # assertTrue, not assertIn: a failure
+                        "the class docstring says the block-name regex finds the files that NAME a block and no other "
+                        "prose (round 1's fresh-2)")                                       # would otherwise print the whole docstring
+
+    def test_overlap_covers_the_longest_block_name_and_the_comment_spells_it(self):
+        """OVERLAP's WIDTH, pinned by nothing before round 3: the first seam fixtures split a shorter name near its middle,
+        so an overlap the longest alternative had outgrown left every test green while the scan missed that name across
+        a seam (Cluster D's one-direction shape, on the overlap). A name split across a piece boundary leaves at most all
+        but one of its characters on one side, and the seam search joins the last OVERLAP characters of the previous
+        piece to the first OVERLAP of the next, so OVERLAP must be at least one less than the longest alternative's
+        length. The length is derived from BLOCKS, which this pin first requires to be a flat alternation of literals
+        (the split on | and the unescape assume that; a group or a class added to it needs this derivation rewritten),
+        and the OVERLAP comment's '(<name>, <n> characters)' spelling is checked against both, so a longer alternative
+        added to BLOCKS reds here until the overlap and the comment follow it."""
+        alternatives = [a.replace("\\", "") for a in RoutingStatements.BLOCKS.pattern.split("|")]
+        self.assertEqual("|".join(re.escape(a) for a in alternatives), RoutingStatements.BLOCKS.pattern,
+                         "BLOCKS is a flat alternation of literals, which the derivation below assumes")
+        longest = max(alternatives, key=len)
+        self.assertGreaterEqual(RoutingStatements.OVERLAP, len(longest) - 1,
+                                "the overlap covers the longest block name split one character short of a piece boundary")
+        source = inspect.getsource(RoutingStatements)
+        hits = re.findall(r"\(([\w.]+), (\d+) characters\)", source)
+        self.assertEqual(hits, [(longest, str(len(longest)))],
+                         "the OVERLAP comment spells the longest alternative and its length, once, and they are BLOCKS's")
 
 
 class ProcessStatsFallback(unittest.TestCase):
@@ -3647,8 +4582,9 @@ class PushStages(unittest.TestCase):
     the first push and as cached on the second (same transcript, background tab), and the timeline
     client's bars go out in the send stage. setUp opens the pusher's cycle on the module collector
     first (2026-09-18): stage() credits a push stage to the thread that owns the pusher's cycle, and
-    the "push" mark _push carries is no owner, so a bare _push with no cycle open counts under
-    stagesForeign and the flat rows read zero. Before that line the real-push test was green only
+    the "push" mark _push carries is no owner, so a bare _push from a thread that opened no cycle,
+    and so was never registered as an owner, counts under stagesForeign and the flat rows read zero.
+    Before that line the real-push test was green only
     through a leak: PusherRecords drove the real _pusher_cycle, whose cycle_begin registered this
     thread as the pusher's owner, and never restored the owner map, so the registration reached
     every class after it (red with this class run alone). That leak is closed at its source, a
