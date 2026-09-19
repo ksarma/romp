@@ -55019,8 +55019,9 @@ class _FeedComposition:
     `cardFields`, a row beside its `projected`.
 
     Cost per build, on the pusher's thread: the two part sums (one len() per card and per ledger: the walk _feed_est
-    takes for the wire's size estimate, taken a second time here, about thirty microseconds per pass on the test
-    fixture as the second review round measured it), one len() per remainder field, and for the apps that read card
+    takes for the wire's size estimate, taken a second time here; measured at 1.8 microseconds per pass on the 60-card
+    test fixture and 22.6 at a thousand cards, both boards with two ledgers, best of seven runs of two hundred passes;
+    the second review round's thirty was the thousand-card board's figure), one len() per remainder field, and for the apps that read card
     fields an O(cards x fields) pass of len() calls, plus the projections' O(cards) passes, both memoized with the
     cards on the build's asks list (_feed_cards_memo), so a ledgers refill pays none of the card-field and projection
     estimates (it re-encodes the ledgers and the remainder, as it always did, and re-takes the two sums and the
