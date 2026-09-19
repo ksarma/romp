@@ -6,7 +6,8 @@ onclose retry redials 2 s later carrying reconnect=1 (the caps frame latched rea
 read against the frames the FIRST socket received.
 
 The expectation is derived from the drive (tests/test_federated_dial_terms_served.py expected_relay_caps), so this lab
-passes with either landing order of the client change and the kernel's generation stamp: a first full carrying gen means
+passes with either landing order of the client change and the kernel's generation stamp (the branch is drive_pair's: a
+frame carrying a gen key the client reads as none fails rather than passing the undeclared arm): a first full carrying gen means
 the redial declares held:feed:<gen>.<rev>, the frames after it are a composed feedDelta and no {type:"feed"}, and the
 remote counts one adopt and no undeclared eviction; a full carrying none (every kernel in this repo today) means
 caps=feedDelta alone on the redial and a whole {type:"feed"} frame after it, today's counted full, which is what this lab
@@ -78,6 +79,7 @@ const hook = () => {
           if (m && m.type !== "ka") {
             const f = { sock: idx, t: String(m.type), slot: m.slot ? String(m.slot) : "" };
             for (const k of ["gen", "newGen", "base", "rev", "through"]) if (typeof m[k] === "number" || (typeof m[k] === "string" && (k === "gen" || k === "newGen"))) f[k] = m[k];   // the revs as numbers, the gens as the kernel's strings; no content
+            if ("gen" in m) f.genKey = true;   // the key's presence, whatever its value: drive_pair tells an unreadable gen from none
             window.__frames.push(f);
           }
         } catch (e) {}
@@ -250,7 +252,8 @@ class FederatedRelayRedial(unittest.TestCase):
         first, _redial = self._relay()
         frames = self._frames_of(first[0])
         self.assertIn("feed", [f["t"] for f in frames], "the first relay socket received the remote's full frame: %r" % (frames,))
-        return _dial.held_pair(frames, "feed")
+        # drive_pair, not held_pair: a kernel stamping a gen the client reads as none would otherwise pass the undeclared arm green
+        return _dial.drive_pair(self, frames, "feed")
 
     # ---- the assertions ----
     def test_the_page_redialed_the_relay_it_closed_with_reconnect(self):
@@ -274,15 +277,17 @@ class FederatedRelayRedial(unittest.TestCase):
     def test_the_frames_after_the_redial_match_the_declaration(self):
         pair = self._first_pair()
         _first, redial = self._relay()
-        kinds = [(f["t"], f.get("base"), f.get("through")) for f in self._frames_of(redial[0])]
+        frames = self._frames_of(redial[0])
+        kinds = [(f["t"], f.get("base"), f.get("through"), f.get("newGen")) for f in frames]
         types = [k[0] for k in kinds]
         if pair is None:
             self.assertIn("feed", types, "an undeclared redial is served the whole frame, today's counted full: %r" % (kinds,))
         else:
             self.assertNotIn("feed", types, "a declared redial is composed, never served whole: %r" % (kinds,))
-            composed = [k for k in kinds if k[0] == "feedDelta" and k[2] is not None]
-            self.assertEqual(len(composed), 1, "one composed feedDelta: %r" % (kinds,))
-            self.assertEqual(composed[0][1], pair[1], "stamped base r, the declared rev")
+            composed = _dial.composed_frames(frames, "feed")
+            self.assertEqual(len(composed), 1, "one composed feedDelta, the frame carrying newGen; a per-cycle delta in the 1.5 s window the "
+                                               "driver waits after the redial carries through and no newGen and is not counted: %r" % (kinds,))
+            self.assertEqual(composed[0].get("base"), pair[1], "stamped base r, the declared rev")
 
     def test_the_remote_counts_the_redial_as_the_declaration_says(self):
         pair = self._first_pair()

@@ -109,6 +109,30 @@ def held_pair(frames, slot):
     return pair
 
 
+def drive_pair(tc, frames, slot):
+    """held_pair over a lab's recorded drive, telling "no gen key" from "a gen key the client reads as none". A hook records
+    `genKey` (a bool: the frame carried a `gen` key, whatever its value; no content) beside the parsed stamp fields, and
+    _stamp_field drops a gen the client would refuse (view-deltas.ts genOf: a number, an empty string, a '.' or ','), so
+    held_pair alone reads a kernel stamping an unreadable gen exactly as one stamping none. None only when NO recorded frame
+    carried the key (a kernel before the stamp: the leg's skip-and-branch case); a frame carried the key but no pair parsed
+    is a failure on `tc`: the kernel stamped a gen the client reads as none, or a stamped full was followed by a gen-less
+    one (the rollback shape), neither of which a leg may pass green as "undeclared"."""
+    pair = held_pair(frames, slot)
+    if pair is None and any(f.get("genKey") for f in frames):
+        tc.fail("a frame carried a gen key but no pair parsed for %r: the kernel stamped a gen the client reads as none "
+                "(view-deltas.ts genOf), or a stamped full was followed by a gen-less one: %r" % (slot, frames))
+    return pair
+
+
+def composed_frames(frames, slot):
+    """The recorded deltas of `slot` whose `newGen` parsed (_stamp_field): the composed frame a declaring dial earns. A
+    per-cycle K2 delta carries `through` (equal to its rev) and no `newGen`, so `through` never tells a composed frame; the
+    labs count the composed frame by this and never by `through`."""
+    delta = "feedDelta" if slot == "feed" else "delta"
+    return [f for f in frames if f.get("t") == delta and (slot == "feed" or f.get("slot") == "bars")
+            and _stamp_field(f, "newGen") is not None]
+
+
 def expected_relay_caps(prev_frames):
     """The caps term a relay dial carries: REMOTE_DIAL_CAPS, then held:feed:<g>.<r> and held:bars:<g>.<r> for the pairs the
     host's EARLIER relay sockets left the conn (held_pair over their recorded frames in arrival order: the client keeps a
@@ -314,6 +338,7 @@ await page.addInitScript(() => {
           if (m && m.type !== "ka") {
             const f = { sock: idx, t: String(m.type), slot: m.slot ? String(m.slot) : "" };
             for (const k of ["gen", "newGen", "base", "rev", "through"]) if (typeof m[k] === "number" || (typeof m[k] === "string" && (k === "gen" || k === "newGen"))) f[k] = m[k];   // the revs as numbers, the gens as the kernel's strings; no content
+            if ("gen" in m) f.genKey = true;   // the key's presence, whatever its value: drive_pair tells an unreadable gen from none
             window.__frames.push(f);
           }
         } catch (e) {}
@@ -395,6 +420,32 @@ class HeldPairRule(unittest.TestCase):
                   {"t": "delta", "slot": "lanes", "gen": GEN3, "base": 1, "rev": 2}, {"t": "feed", "gen": GEN}]
         self.assertEqual(held_pair(frames, "bars"), (GEN3, 1), "another slot's patch and the feed full do not move the bars pair")
         self.assertEqual(held_pair(frames, "feed"), (GEN, 0))
+
+    def test_drive_pair_skips_on_no_gen_key_and_fails_on_an_unparsed_one(self):
+        # the labs' skip-and-branch read: None only when no recorded frame carried a gen key (the leg skips or takes the undeclared
+        # arm); a gen key present with a pair parsed is that pair; a gen key present and no pair parsed (a gen the client reads
+        # as none, which a hook's record drops) fails, never "undeclared"
+        self.assertIsNone(drive_pair(self, [{"t": "feed"}], "feed"), "no gen key on any frame: a kernel before the stamp")
+        self.assertIsNone(drive_pair(self, [{"t": "feed"}, {"t": "caps"}, {"t": "feedDelta", "base": 0, "rev": 1}], "feed"))
+        self.assertEqual(drive_pair(self, [{"t": "feed", "gen": GEN, "genKey": True}], "feed"), (GEN, 0))
+        with self.assertRaises(AssertionError):
+            drive_pair(self, [{"t": "feed", "gen": GEN_STAMP + ".7", "genKey": True}], "feed")   # the key with a gen genOf refuses
+        with self.assertRaises(AssertionError):
+            drive_pair(self, [{"t": "feed", "genKey": True}], "feed")   # the same frame as a hook records it: the value dropped, the key noted
+        with self.assertRaises(AssertionError):
+            drive_pair(self, [{"t": "feed", "gen": GEN, "genKey": True}, {"t": "feed"}], "feed")   # a stamped full then a gen-less one
+
+    def test_composed_frames_are_the_deltas_carrying_newGen(self):
+        # a per-cycle K2 delta carries through and no newGen, so through never tells a composed frame; a newGen the client reads as
+        # none (a '.' in it) is no composed frame either
+        per_cycle = {"t": "feedDelta", "gen": GEN, "base": 0, "rev": 1, "through": 1}
+        composed = {"t": "feedDelta", "gen": GEN, "newGen": GEN2, "base": 1, "rev": 4, "through": 4}
+        bad = {"t": "feedDelta", "gen": GEN, "newGen": GEN_STAMP + ".9", "base": 4, "rev": 5, "through": 5}
+        self.assertEqual(composed_frames([{"t": "feed", "gen": GEN}, per_cycle], "feed"), [], "through and no newGen: not composed")
+        self.assertEqual(composed_frames([{"t": "feed", "gen": GEN}, per_cycle, composed, bad], "feed"), [composed])
+        bars = {"t": "delta", "slot": "bars", "gen": GEN3, "newGen": GEN2, "base": 0, "rev": 2, "through": 2}
+        self.assertEqual(composed_frames([{"t": "bars", "gen": GEN3}, bars, composed], "bars"), [bars], "the bars slot reads bars patches alone")
+        self.assertEqual(composed_frames([], "feed"), [])
 
     def test_expected_relay_caps_is_the_decoder_word_plus_each_held_member_and_fails_on_an_empty_drive(self):
         self.assertEqual(expected_relay_caps(None), "feedDelta", "a first dial: no socket before it")

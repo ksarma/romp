@@ -11,12 +11,13 @@ base rev and no {type:"feed"}, the kernel counts one adopt per declaring dial an
 row (client-diag.jsonl, surface kernel: _note_ws_open's record of every accept) classes the dial a relay (client["kind"],
 from the relay=1 term) and reads its reconnect term.
 
-The pair is derived from the drive (held_pair over the first socket's frames; the gen is the kernel's string). A kernel
-whose full carries no gen (every kernel in this repo today) leaves no pair to declare, so this leg has no drive and SKIPS,
-saying so, after the executed part: a first dial that receives no full at all is an empty drive and fails, and the first
-dials' wsopen rows are read (kind relay, no reconnect, an iid stated). The leg rides whichever of the client change and the
-kernel's generation stamp lands second, and runs whole then; the client half's own pins are the federation tests under
-ui/webview.
+The pair is derived from the drive (drive_pair over the first socket's frames; the gen is the kernel's string). The leg
+skips only when no served frame carried a gen key (every kernel in this repo today stamps none), saying so, after the
+executed part: a first dial that receives no full at all is an empty drive and fails, the first dials' wsopen rows are read
+(kind relay, no reconnect, an iid stated), and a gen key present with no pair parsed FAILS (a kernel stamping a gen the
+client reads as none would otherwise skip for good). The leg lives in PR C in skip-and-branch form and runs whole under a
+kernel that stamps its frames (the design's sequencing item (iii), as the design's author edits it); the client half's own
+pins are the federation tests under ui/webview.
 
 Loads no romp code in-process (the kernel is a subprocess), so this module carries no state-isolation preamble and is not
 scanned by tests/test_state_isolation_order.py. Synthetic only: placeholder uuids, hostname TESTHOST, the notes-api demo's
@@ -92,6 +93,8 @@ def _record(m):
         v = _dial._stamp_field(m, k)
         if v is not None:
             f[k] = v
+    if "gen" in m:
+        f["genKey"] = True   # the key's presence, whatever its value (no content): drive_pair tells an unreadable gen from none
     return f
 
 
@@ -196,10 +199,10 @@ class RelayDialDeclaresHeldPair(unittest.TestCase):
         for tag, extra in (("1", "&reconnect=1&proto=1"), ("2", "")):
             iid = IID_BASE + tag
             frames = self._first_dial(iid, "w1" + tag)
-            drives.append((tag, extra, iid, _dial.held_pair(frames, "feed")))
+            drives.append((tag, extra, iid, _dial.drive_pair(self, frames, "feed")))
         if all(pair is None for _tag, _extra, _iid, pair in drives):
-            raise unittest.SkipTest("the attached kernel's fulls carry no gen at this base, so the first dials left no pair to declare and the "
-                                    "declaring relay dial has no drive; the leg runs whole once the kernel stamps its frames")
+            raise unittest.SkipTest("no frame carried a gen key: the attached kernel's fulls carry no gen at this base, so the first dials left no "
+                                    "pair to declare and the declaring relay dial has no drive; the leg runs whole once the kernel stamps its frames")
         for tag, extra, iid, pair in drives:
             self.assertIsNotNone(pair, "every first dial was served under a stamped full, or none was: %r" % (drives,))
             wire0 = self._wire()
@@ -210,11 +213,12 @@ class RelayDialDeclaresHeldPair(unittest.TestCase):
                 got, _buf2 = _frames_until(s2, buf2, lambda m: m.get("type") in ("feed", "feedDelta"), 20)
             finally:
                 s2.close()
-            kinds = [(f["t"], f.get("base"), f.get("through")) for f in got]
+            kinds = [(f["t"], f.get("base"), f.get("through"), f.get("newGen")) for f in got]
             self.assertNotIn("feed", [k[0] for k in kinds], "a declaring dial is composed, never served whole (%r): %r" % (extra, kinds))
-            composed = [k for k in kinds if k[0] == "feedDelta" and k[2] is not None]
-            self.assertEqual(len(composed), 1, "one composed feedDelta (%r): %r" % (extra, kinds))
-            self.assertEqual(composed[0][1], pair[1], "stamped base r, the declared rev")
+            composed = _dial.composed_frames(got, "feed")
+            self.assertEqual(len(composed), 1, "one composed feedDelta, the frame carrying newGen; a per-cycle delta carries through and no "
+                                               "newGen and is not counted (%r): %r" % (extra, kinds))
+            self.assertEqual(composed[0].get("base"), pair[1], "stamped base r, the declared rev")
             wire = self._wire()
             self.assertEqual((wire.get("resume.feed.adopt") or 0) - (wire0.get("resume.feed.adopt") or 0), 1,
                              "one adopt for the one declaring dial of this drive (%r): %r" % (extra, wire))
