@@ -376,21 +376,6 @@ SCRATCH_K = SCRATCH_HEAD + textwrap.dedent('''\
 
         def test_a_builds_over_the_class_root(self):
             assert km._sdk().state_dir == Two.root
-
-    class Three(unittest.TestCase):
-        @classmethod
-        def setUpClass(cls):
-            cls.saved_state = jd.STATE
-            cls.root = sandbox()
-            jd.STATE = cls.root                       # moved for the tests; the singleton Two put back stays over the run root
-
-        @classmethod
-        def tearDownClass(cls):
-            jd.STATE = cls.saved_state
-            shutil.rmtree(cls.root)
-
-        def test_a_does_nothing_under_a_singleton_over_the_run_root(self):
-            assert km._sdk_backend is not None and km._sdk_backend.state_dir != jd.STATE
 ''')
 
 SCRATCH_L = SCRATCH_HEAD + textwrap.dedent('''\
@@ -504,6 +489,21 @@ SCRATCH_N = SCRATCH_HEAD + textwrap.dedent("""\
         def test_a_the_lazy_first_build(self):
             assert km._sdk_backend is None
             assert km._sdk().state_dir == jd.STATE
+
+    class Sandboxed(unittest.TestCase):
+        @classmethod
+        def setUpClass(cls):
+            cls.saved_state = jd.STATE
+            cls.root = sandbox()
+            jd.STATE = cls.root                       # moved for the tests, no build: One's singleton stays over the run root
+
+        @classmethod
+        def tearDownClass(cls):
+            jd.STATE = cls.saved_state
+            shutil.rmtree(cls.root)
+
+        def test_a_does_nothing_under_a_singleton_over_the_run_root(self):
+            assert km._sdk_backend is not None and km._sdk_backend.state_dir != jd.STATE
 
     class Two(unittest.TestCase):
         def test_a_leaves_none(self):
@@ -990,13 +990,6 @@ class ClassScopedRoot(_NestedRun, unittest.TestCase):
         self.assertIsNone(boundary(self.out, "::Two"), self.out)
         self.assertIsNone(boundary(self.out, ""), "the module end is quiet on the object the class end named: %s" % self.out)
 
-    def test_a_class_that_moves_jd_state_and_never_builds_is_quiet(self):
-        # Three's tests run under a singleton whose state_dir is not jd.STATE, a picture the first-window report would
-        # name only at the worker's first window; here a test window made it, judged there, and Three is quiet.
-        self.assertRatchetPassed("Three", "test_a_does_nothing_under_a_singleton_over_the_run_root")
-        self.assertIsNone(inherited(self.out, "Three", "test_a_does_nothing_under_a_singleton_over_the_run_root", head=INHERITED_KEPT))
-        self.assertIsNone(boundary(self.out, "::Three"), self.out)
-
 
 class ModuleTeardownRemovesTheDirectory(_NestedRun, unittest.TestCase):
     SCRATCH = SCRATCH_L
@@ -1117,8 +1110,15 @@ class BoundaryYieldsToTheTestsOwnWindows(_NestedRun, unittest.TestCase):
         self.assertRatchetPassed("Four", "test_a_the_lazy_rebuild")
         self.assertRatchetPassed("Five", "test_b_the_lazy_rebuild")
 
+    def test_a_class_that_moves_jd_state_and_never_builds_is_quiet(self):
+        # Sandboxed's test runs under an unnamed singleton whose state_dir is not jd.STATE, the picture the first-window
+        # report names at the worker's first window only; here One.a's window made it, judged there, and nothing is said.
+        self.assertRatchetPassed("Sandboxed", "test_a_does_nothing_under_a_singleton_over_the_run_root")
+        self.assertIsNone(inherited(self.out, "Sandboxed", "test_a_does_nothing_under_a_singleton_over_the_run_root", head=INHERITED_KEPT))
+        self.assertIsNone(boundary(self.out, "::Sandboxed"), self.out)
+
     def test_no_class_or_module_boundary_is_accused_of_what_its_tests_did(self):
-        for scope in ("::One", "::Two", "::Three", "::Four", "::Five", ""):
+        for scope in ("::One", "::Sandboxed", "::Two", "::Three", "::Four", "::Five", ""):
             self.assertIsNone(boundary(self.out, scope), "a boundary that did nothing is accused: %s" % self.out)
         self.assertIsNone(boundary(self.out, "::Follow", module="test_scratch2.py"), self.out)
         self.assertIsNone(boundary(self.out, "", module="test_scratch2.py"), self.out)
