@@ -3629,16 +3629,31 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   walk order and each one's identity (inode, mtime, size, ctime) taken before
   it was listed, served while every identity stands because a directory
   entry's creation, removal or renaming moves its parent's stamps and every
-  parent is in the list, with `hit` and `miss` (trees vouched for by one stat
-  per known directory against trees walked), `evict` (roots dropped because
-  no alive session's transcript names them, on every jobs pass and, as a
-  belt, after each feed build and from the tracking-off frame), `dirStats`
-  (the stats validations paid), `walkMs` and `validateMs` (the time in each,
-  every thread), and the gauges `roots` (entries) and `dirs` (directories
-  held); a directory stamped within the last two seconds, or one whose
-  listing failed, is stored unvouched and walked again until it is quiet and
-  lists cleanly, the racy-stamp rule, since a filesystem stamps with a
-  coarser clock than the wall clock and a failure moves no stamp;
+  parent is in the list, and validated at most once per pusher cycle and
+  once per jobs pass (since 2026-09-19: the thread's cycle scope holds the
+  validated pair and each directory's stamp for the rest of the cycle, so
+  every later reader of the tree on that thread, the agent-file lookup's
+  stamp re-check included, pays no stat; a change on disk after the
+  validation is seen by the next cycle's first reader, one cycle later at
+  most; a thread outside a cycle, a WS or HTTP handler's build or the
+  act-now nudge pass, reads per call as before), with `hit` and `miss`
+  (trees vouched for by one stat per known directory against trees walked),
+  `evict` (roots dropped because no alive session's transcript names them,
+  on every jobs pass and, as a belt, after each feed build and from the
+  tracking-off frame), `dirStats` (the directory stats both validators
+  paid: the tree validation's lstat per known directory and the agent-file
+  lookup's stat per directory its stamp re-check takes; before 2026-09-19
+  it counted the lstat half alone, so a figure from before that change and
+  one from after are not one series, and since then the figure per cycle
+  or pass is bounded by the directories held, not by the readers), `walkMs`
+  and `validateMs` (the time in each, every thread), and the gauges `roots`
+  (entries) and `dirs` (directories held); a directory stamped within the
+  last two seconds, or one whose listing failed, is stored unvouched and
+  walked again until it is quiet and lists cleanly, the racy-stamp rule,
+  since a filesystem stamps with a coarser clock than the wall clock and a
+  failure moves no stamp (and such a tree, like a missing root or a stamp
+  whose stat fails, is not held for the cycle either: nothing failed is
+  served);
   `nudgeGate` is the auto-nudge walk's
   planner-placement gate, derived once per (parse, store) and served while
   both stand, and on this fork while `cleared.jsonl` stands too, its stat a
