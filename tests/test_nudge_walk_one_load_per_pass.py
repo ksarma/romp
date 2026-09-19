@@ -11,7 +11,7 @@ restored the floor, so this pin holds both.
 
 The walk's load is its one decision read, `jd.load_goals_shared_or_fault(sid)` in `_auto_nudge_session`, the read ruling
 A counted (its wording: every alive session walked wake-only with exactly one load_goals_shared_or_fault and zero plain
-load_goals in the decision path). Two witnesses count it. By execution: a recorder stands on `jd.load_goals_shared`, the
+load_goals in the decision path). Three witnesses count it. By execution: a recorder stands on `jd.load_goals_shared`, the
 one door both of the judge's boundary wrappers reach (`load_goals_shared_or_fault` hands the name to `_or_fault`, which
 resolves it from the judge's globals at call time, so every spelling of the shared read arrives at this door), and a
 second recorder on `jd.load_goals`, the writer's door. Each records the call with its caller's function, file and line,
@@ -24,9 +24,14 @@ reaches the store through the judge's loaders during the pass is caught and name
 judge's own file reader and parser) is outside the recorders and outside the claim. The window: each pass, the
 `_auto_nudge_tick` call (the records are cleared before it and read after it), so a load elsewhere in the process (a
 builder, a handler, the perf snapshot the test reads after its last pass) is outside the window and is not this test's
-claim. By the served counter: `memos.nudgeWalk.loads`, bumped at the walk's one call site, must move by the walk's count
-per pass. A skipped look repeats its verdict and writes nothing (the wake-only memo of PR 784), so it needs no data: the
-recorder sees no call from either.
+claim. By the store's own counters, a witness keyed on the store rather than on a list of doors: every call that reaches
+the shared cache's branch moves exactly one of hit, miss, compare_miss, absent and fallback in `jd.shared_store_stats()`,
+so per pass the delta of those five must equal the walk's, the gate's and the sweep's recorded calls together; a load
+through a door the recorders do not wrap, or through a reference to the real door taken before a recorder stood, is
+noticed even though it cannot be named. The two witnesses answer different questions: the recorders say who loaded, the
+delta says that something did. By the served counter: `memos.nudgeWalk.loads`, bumped at the walk's one call site, must
+move by the walk's count per pass. A skipped look repeats its verdict and writes nothing (the wake-only memo of PR 784),
+so it needs no data: the recorder sees no call from either.
 
 The gate's load is `_nudge_placement_gate`'s currency check after a derivation (upstream's since the 2026-09-09 fold; ruling
 A listed it as open, to be offered upstream, never edited here): one call per DERIVED session, none when the gate is served
@@ -55,8 +60,12 @@ the walk's bound (2 per session against 1) and the census (2 sites against 1) (3
 at the top of `_awaiting_wake_outcomes` reds the sweep's bound in every case (1 against 0 owned records) (4 failed, 2
 passed); the sweep's read duplicated reds the sweep case on its bound (2 against 1) (2 failed, 4 passed); the sweep's read
 moved to the writer door reds the sweep case (no sweep load where 1 is asserted) (2 failed, 4 passed). The outer spelling
-at the pass-loop site names `_auto_nudge_pass`, never the judge's `_or_fault`. The assertion texts name the mechanism and
-are in the commit message.
+at the pass-loop site names `_auto_nudge_pass`, never the judge's `_or_fault`. The store's counters: a reference to the
+real door bound at kernel import (`_REAL_LGS = jd.load_goals_shared`) and called per session in the pass loop is
+invisible to the recorders and reds the reconciliation on every pass whose looks run, the counters two calls over the
+recorded ones (4 failed, 2 passed); a phantom walk record appended by the recorder without a call through reds it the
+other way, the recorded calls over the counters (3 failed, 3 passed). The assertion texts name the mechanism and are in
+the commit message.
 
 Drives the real pass (_auto_nudge_tick) over two alive sessions with real transcript files and real goal stores, on the
 suite's fake clock (the pass takes `now`). SYNTHETIC fixtures only; a PRIVATE synthetic sid pair (the goal-store fixture
@@ -91,6 +100,10 @@ H = 3600
 WALK = ("_auto_nudge_session", "gated")   # the walk's look: its body and its gate wrapper (_nudge_look_gated's inner function)
 GATE = ("_nudge_placement_gate",)         # the placement gate's post-derivation currency check: a second loader, counted apart
 SWEEP = ("_awaiting_wake_outcomes",)      # the wake sweep after the per-session loop: a third reader, one shared load per wake record it owns
+# The shared cache's per-call counters: load_goals_shared bumps exactly one of these per call that reaches the cache's branch
+# (judge.py, the door's body). Not summed: unreadable_journal, corrupt, dup and refuse are second bumps on a fill; evict and
+# poisoned are not calls; entries, bytes and off are gauges.
+SHARED_CALL_KEYS = ("hit", "miss", "compare_miss", "absent", "fallback")
 KERNEL_FILE = os.path.basename(os.path.realpath(km.__file__))   # the kernel's real file: it is loaded from bin/romp-kernel, a symlink
 JUDGE_FILE = os.path.basename(os.path.realpath(jd.__file__))
 
@@ -286,11 +299,15 @@ class _WalkHarness(unittest.TestCase):
         the sids parsed. The recorders stand on the judge's two doors, `jd.load_goals_shared` and `jd.load_goals`, and
         attribute through its boundary frames by code identity, so a shared load from any other function during the pass
         fails here, named by function, file and line, and the sweep is held to its bound per sid; a reader below the doors
-        is outside the claim. `calls` carries the shared records (sid, function, file, line) for a case's own assertions."""
+        is outside the claim. The shared cache's call counters are reconciled against the recorded calls (`shared`, the
+        delta over SHARED_CALL_KEYS), so a load through a door the recorders do not wrap is noticed, unnamed. `calls`
+        carries the shared records (sid, function, file, line) for a case's own assertions."""
         before = {k: km._NUDGE_WALK_STATS[k] for k in self.KEYS}
         gate0 = dict(km._NUDGE_GATE_STATS)
+        s0 = jd.shared_store_stats()
         self.calls.clear(); self.writer.clear(); self.parsed.clear()
         km._auto_nudge_tick(now, {sid: {"state": ""} for sid in SIDS})
+        s1 = jd.shared_store_stats()
         d = {k: km._NUDGE_WALK_STATS[k] - before[k] for k in self.KEYS}
         d["memo"] = tuple(km._NUDGE_GATE_STATS[k] - gate0[k] for k in ("served", "derived"))
         d["walk"] = {sid: sum(1 for s, c, _f, _ln in self.calls if s == sid and c in WALK) for sid in SIDS}
@@ -308,6 +325,11 @@ class _WalkHarness(unittest.TestCase):
                                  "wake-set, not failed, moot or answered, not muted, and whose sid the walk did not visit or visited "
                                  "under a wedge gate), none for a sid with no owned record; it runs after the per-session loop in the "
                                  "same pass and memos.nudgeWalk.loads does not count it" % sid[-4:])
+        d["shared"] = {k: s1[k] - s0[k] for k in SHARED_CALL_KEYS if s1[k] != s0[k]}
+        self.assertEqual(sum(d["shared"].values()), sum(d["walk"].values()) + sum(d["gate"].values()) + sum(d["sweep"].values()),
+                         "every shared-store call moves one of the five counters; a difference is a load through a door the recorder "
+                         "does not wrap (unnamed by construction) or a recorded call that took no read: counters %r against walk %r, "
+                         "gate %r, sweep %r" % ((d["shared"],) + tuple({k[-4:]: v for k, v in d[m].items()} for m in ("walk", "gate", "sweep"))))
         d["calls"] = list(self.calls)
         d["writer"] = len(self.writer)
         d["parsedSids"] = sorted(self.parsed)
@@ -328,6 +350,7 @@ class OneSharedLoadPerAliveSessionPerPass(_WalkHarness):
         self.assertEqual((p1["gate"], p1["memo"]), ({SID_A: 1, SID_B: 1}, (0, 2)),
                          "the placement gate's currency check loads once per derived session, and here every gate derived (condition 7, the gate's bound)")
         self.assertEqual(p1["writer"], 0, "zero plain load_goals in the decision path")
+        self.assertEqual(p1["shared"], {"hit": 2, "miss": 2}, "the store's counters: each walk read fills (a miss), each gate check hits")
         for sid in SIDS:
             self.assertIsNotNone(self._row(sid), "a wake-mode memo row stands for %s" % sid[-4:])
         # (b) nothing changed: every look skips, and a skipped look repeats its verdict and needs no data
@@ -337,7 +360,7 @@ class OneSharedLoadPerAliveSessionPerPass(_WalkHarness):
         self.assertEqual(p2["gate"], {SID_A: 0, SID_B: 0},
                          "the placement gate makes no currency check on a skipped look: it is never reached (condition 7, the gate's bound)")
         self.assertEqual((p2["looks"], p2["skippedParses"], p2["parses"]), (2, 2, 0), p2)
-        self.assertEqual((p2["loads"], p2["writer"]), (0, 0), "and the counter does not move")
+        self.assertEqual((p2["loads"], p2["writer"], p2["shared"]), (0, 0, {}), "and neither the counter nor the store's counters move")
         # (a) again with the gate SERVED: the ledger is the tenth keyed file, so its move re-evaluates every session once while
         # the parse and the store stand; the walk loads once per session and the gate not at all
         os.utime(jd.STATE / "auto-nudge.json", (NOW + 8, NOW + 8))
@@ -347,12 +370,12 @@ class OneSharedLoadPerAliveSessionPerPass(_WalkHarness):
                          "the walk takes exactly one shared load per alive session when its look reaches the store (condition 7, the walk's bound)")
         self.assertEqual((p3["gate"], p3["memo"]), ({SID_A: 0, SID_B: 0}, (2, 0)),
                          "the placement gate is served and makes no currency check (condition 7, the gate's bound)")
-        self.assertEqual((p3["loads"], p3["writer"]), (2, 0), "the counter moves by the walk's two, no writer load")
+        self.assertEqual((p3["loads"], p3["writer"], p3["shared"]), (2, 0, {"hit": 2}), "the counter moves by the walk's two, no writer load, two hits")
         # (b) again
         p4 = self._pass(NOW + 15)
         self.assertEqual((p4["walk"], p4["gate"]), ({SID_A: 0, SID_B: 0}, {SID_A: 0, SID_B: 0}),
                          "the walk takes no shared load on a skipped look, and the placement gate is never reached (condition 7, both bounds)")
-        self.assertEqual((p4["skippedParses"], p4["loads"]), (2, 0))
+        self.assertEqual((p4["skippedParses"], p4["loads"], p4["shared"]), (2, 0, {}))
         # one session's transcript moves: its look runs and derives (the parse key moved), the other's skips; per session
         pa = Path(self.rows[SID_A]["path"])
         pa.write_text(pa.read_text() + json.dumps({"type": "user", "uuid": "aaaaaaaa", "timestamp": "2026-09-10T00:01:00Z",
@@ -365,7 +388,7 @@ class OneSharedLoadPerAliveSessionPerPass(_WalkHarness):
                          "the walk, per session: one load for the look that reached the store, none for the one that skipped (condition 7, the walk's bound)")
         self.assertEqual((p5["gate"], p5["memo"]), ({SID_A: 1, SID_B: 0}, (0, 1)),
                          "the placement gate, per session: the moved parse derives once and checks once, the skipped session not at all (condition 7, the gate's bound)")
-        self.assertEqual((p5["loads"], p5["writer"]), (1, 0))
+        self.assertEqual((p5["loads"], p5["writer"], p5["shared"]), (1, 0, {"hit": 2}), "the walk's one and the gate's one, both hits")
         for name, p in (("p1", p1), ("p2", p2), ("p3", p3), ("p4", p4), ("p5", p5)):
             for sid in SIDS:
                 self.assertLessEqual(p["walk"][sid], 1, "%s %s: the walk takes at most one shared load per alive session per pass (condition 7, the walk's bound)" % (name, sid[-4:]))
@@ -393,7 +416,7 @@ class OneSharedLoadPerAliveSessionPerPass(_WalkHarness):
                          "the walk takes no load on a look a state gate ends before the store read (condition 7, the walk's bound)")
         self.assertEqual((p1["gate"], p1["memo"]), ({SID_A: 0, SID_B: 0}, (0, 0)),
                          "and the placement gate, never reached, checks nothing (condition 7, the gate's bound)")
-        self.assertEqual((p1["loads"], p1["writer"]), (0, 0))
+        self.assertEqual((p1["loads"], p1["writer"], p1["shared"]), (0, 0, {}), "no counter and no store counter moves")
         for sid in SIDS:
             self.assertEqual(self._row(sid)[-1], "working", "the verdict recorded, file-keyed, for %s" % sid[-4:])
         p2 = self._pass(NOW + 5)
@@ -444,18 +467,22 @@ class TheSweepIsItsOwnBoundedReader(_WalkHarness):
                          "the walk and the gate as on any first pass: the record is SID_C's, a sid neither look is about, and the "
                          "counter counts the walk alone")
         self._one_sweep_load(p1, "p1")
+        self.assertEqual(p1["shared"], {"hit": 2, "miss": 3}, "the walk's two fills and the sweep's one, the gate's two hits")
         p2 = self._pass(NOW + 5)
         self.assertEqual((p2["walk"], p2["gate"], p2["loads"]), ({SID_A: 0, SID_B: 0}, {SID_A: 0, SID_B: 0}, 0),
                          "the looks skip: nothing of theirs moved")
         self._one_sweep_load(p2, "p2")                    # the sweep keeps no memo: one read per owned record per pass
+        self.assertEqual(p2["shared"], {"hit": 1}, "the sweep's read alone, a hit on the store it filled last pass")
         self.assertEqual(self.fb.sent, [], "nothing sent: the node is gone, so the record is inert and the sweep continues past it")
 
     def test_no_store_file(self):
         self._seed_wake_record(store_file=False)
         p1 = self._pass(NOW)
         self._one_sweep_load(p1, "p1")
+        self.assertEqual(p1["shared"], {"hit": 2, "miss": 2, "absent": 1}, "the sweep's read is the absent case: one call, one counter")
         p2 = self._pass(NOW + 5)
         self._one_sweep_load(p2, "p2")
+        self.assertEqual(p2["shared"], {"absent": 1})
         self.assertEqual(self.fb.sent, [], "nothing sent: the fresh store has no node for the record")
 
 
