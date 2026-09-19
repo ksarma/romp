@@ -3803,7 +3803,8 @@ takes its `kernel_sha` (git's short sha, a `-dirty` suffix for a checkout with
 uncommitted edits stripped); a `/version` that does not answer leaves the
 envelope without one, and a saved snapshot carries one only when it was
 written beside it. `--usage` adds a `usage` block, off by
-default, with the session counts, the user's actions and the panes opened
+default, with the session counts, the action routes served (the user's actions
+and an attached kernel's posts) and the panes opened
 (from the http table's route counts) and the kernel's uptime bucket, all from
 keys the snapshot already carries. Before writing, the document is searched,
 every key, string value and number (a number by the spelling the export
@@ -3984,7 +3985,9 @@ content, and that is paste-safe, not unlinkable: the per-process and
 per-machine measurements the export keeps go with it, every leaf under
 `process` (`rss_kb`, `rss_anon_kb`, `hwm_kb`, `cpu_s`, `threads`, `gc_gen2`,
 `allocated_blocks`, the `malloc` block's `arena`, `fordblks`, `hblkhd` and
-`uordblks`, and the fixed string `source`) plus, on macOS alone, `rss_peak_kb`
+`uordblks`, null with no leaves under it where the C library has no mallinfo2,
+glibc before 2.33, musl and macOS among them, and the fixed string `source`)
+plus, on macOS alone, `rss_peak_kb`
 (the peak resident size), every leaf under `heap`
 (`allocatedBlocks`, `assemblyEntries`, `judgeUsageRows`, `lazyIndexes`,
 `materializedLruSlots`, `parseSlots`, `tracing`, the `builtChat` block's
@@ -3995,10 +3998,30 @@ the `gc` block's `enabled`, `counts`, `thresholds` and, per generation under
 `gc` (`hooked`, `frozen`, `errors`, `counts`, `thresholds` and, per generation
 under `gen`, `collections`, `collectedLast`, `msLast`, `msMax` and `msSum`),
 the ten memory-fraction bounds coarsened to a power of two (`hydrated.capBytes`
-among them), the uptime rounded down to the minute and, with `--usage` alone,
-its bucket under `usage`, and the kernel commit (the list is every leaf of
-those three blocks in a fresh Linux export of 2026-09-19, with the one leaf
-macOS adds), so two uploads from one kernel remain linkable by design. The
+among them), the uptime rounded down to the minute and, only when `--usage` was
+given, every leaf under `usage` (the uptime's bucket `kernelUptime`, the `sessions` block's
+`parsed`, `chatBuilt` and `stamped`, the `actions` block's one count per request
+served on an action route, named for the route (the user's own actions from the
+dashboard or the CLI; `push.relay`, `restart` and `tunnels.pull` can be an
+attached kernel's post, `redial` a failed send's retry), `color`, `compact`,
+`down`, `emoji`, `end`,
+`flag`, `fleet-restart`, `fork`, `fork-comment`, `fork-promote`, `group`,
+`interrupt`, `judge-settings`, `logins`, `mesh-settings`, `move`, `new`,
+`notify-all`, `notify-turns`, `order`, `pinnote`, `push.relay`,
+`push.subscribe`, `push.test`, `push.unsubscribe`, `redial`, `rename`,
+`restart`, `reveal`, `send`, `tag`, `tunnels`, `tunnels.askpull`,
+`tunnels.autoupdate`, `tunnels.checkin`, `tunnels.detach`, `tunnels.forget`,
+`tunnels.pull`, `tunnels.start`, `tunnels.trust`, `tunnels.trust-mirror`,
+`tunnels.trust-remote`, `tunnels.update`, `unpinnote`, `update`,
+`update-dismiss`, `usertodo`, `usertodo.context`, `usertodo.withdraw`, `views`,
+`walk-root`, `watch` and `watch-pr`, and the `views` block's one count per pane
+opened, `chat`, `feed`, `timeline`, `fleet`, `waiting`, `analytics`, `files`,
+`file`, `usage`, `usage.fleet`, `spend.detail`, `session-events`, `handoff`,
+`views` and `tunnels`; a count is present only for a route the kernel has
+served since it started), and the kernel commit (the list is every leaf of
+those four blocks in a fresh Linux export of 2026-09-19, with the one leaf
+macOS adds and the usage counts from a kernel that served every route), so two
+uploads from one kernel remain linkable by design. The
 one answer accepted is `201` with
 a JSON body of exactly `{"receipt": <uuid4>, "retention_days": <integer>,
 "av": "ok"|"skipped"}`, printed as `uploaded: receipt <uuid> (kept <N> days;

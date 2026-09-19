@@ -47,6 +47,7 @@ os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
 os.environ.setdefault("ROMP_SERVE_TOKEN", "test-token-DO-NOT-USE")
 km = load_source("romp_kernel_perf", os.path.join(BIN, "romp-kernel"))
 pp = load_source("romp_perf_public", os.path.join(os.path.dirname(HERE), "cli", "perf_public.py"))   # the paste-safe walk
+pe = load_source("romp_perf_export_stats", os.path.join(BIN, "romp-perf-export"))   # the export verb: usage_block and the routes it counts
 
 SID = "11111111-2222-3333-4444-555555555555"
 # A PRIVATE synthetic sid for the goal-store tests: load_goals replays the per-sid override journal,
@@ -2671,48 +2672,78 @@ class ServedSnapshotIsPasteSafe(unittest.TestCase):
 
 class Disclosed(unittest.TestCase):
     """The upload's disclosure paragraph in docs/reference.md (the one a user reads before typing yes: what does travel is
-    the file's content, paste-safe, not unlinkable) names every leaf of the process, heap and gc blocks an upload carries,
-    pinned against the LIVE collector through the public fold, never a fixture. The closing check (2026-09-19) added three
-    leaves to a temp copy of the kernel one at a time (process/vm_data_kb, heap/hydrated/evicted, process/malloc/keepcost)
+    the file's content, paste-safe, not unlinkable) names every leaf of the process, heap, gc and usage blocks an upload
+    carries, pinned against the LIVE collector through the public fold, never a fixture. The closing check (2026-09-19) added
+    three leaves to a temp copy of the kernel one at a time (process/vm_data_kb, heap/hydrated/evicted, process/malloc/keepcost)
     and each travelled to a recording receiver over the real export-then-upload road while the reference's fixed-substring
     pin in tests/test_perf_upload.py stayed at 2 passed: a pin that reads no snapshot cannot see an added leaf. The population
     cannot come from that module's own export either: its planted_snapshot is an old-kernel document (process cpu_s, rss_kb,
     threads; heap tracing; no gc), so a pin over it enumerates four names and misses every real gauge. This module already
-    loads the kernel (km) and the shared public shape (pp) and owns the process block's shape pins, so the pin lives here.
-    What goes stale when a gauge is added is the DISCLOSURE, not the protection: the recomputing paste-safety walk and the
-    fold protect an added leaf whatever its name (the closing check's probe gauge carrying a path and a uuid folded to
-    `other` and no identifier reached the wire). This pin is what makes the paragraph move with the snapshot."""
+    loads the kernel (km), the shared public shape (pp) and, since the closing re-run, the export verb (pe, for the usage
+    block), and owns the process block's shape pins, so the pin lives here. What goes stale when a gauge is added is the
+    DISCLOSURE, not the protection: the recomputing paste-safety walk and the fold protect an added leaf whatever its name
+    (the closing check's probe gauge carrying a path and a uuid folded to `other` and no identifier reached the wire). This
+    pin is what makes the paragraph move with the snapshot.
 
-    def test_every_leaf_of_process_heap_and_gc_an_upload_carries_is_named_in_its_own_blocks_clause_of_the_references_disclosure(self):
-        """Every key under process, heap and gc of a live snapshot's public form (pp.fold, the projection the export writes
-        and the upload sends: it drops pid, so the paragraph need not name it), the leaves AND the blocks the walk descends
-        through (malloc, builtChat, hydrated, imgCache, heap's gc and its stats, gc's gen; the generation indexes, digit
-        strings, excepted), is named in backticks INSIDE ITS OWN BLOCK'S CLAUSE of the paragraph, the text from "every leaf
-        under `process`" to "every leaf under `heap`", from there to "every leaf under `gc`", and from there to the bounds
-        clause. Per block and not anywhere in the paragraph, because the paragraph names `bytes` and `entries` for two heap
-        blocks and they are the commonest gauge names in the whole fold (caches, recordCache, chatPages, fileSlice), so a
-        process-level `bytes` or a new process/cache block with `entries` would have passed a paragraph-wide match with the
-        suite green (the closing delta's verifier planted both: process/bytes = 4242 and process/cache/entries = 7 travelled
-        and the paragraph-wide pin stayed at 1 passed). Naming the blocks too is what makes a new block red by its own name
-        before its leaves are asked for. AND THE OTHER DIRECTION: every backticked name inside a clause is a live key of that
-        block, or the block's own name, or, in the process clause off darwin, `rss_peak_kb`, so a leaf the kernel stops
-        writing cannot stay disclosed as travelling. The darwin-only leaf rss_peak_kb is named with its platform in so many
-        words, so the pin holds on every CI platform, and is in the live keys exactly on darwin. Fails on: a gauge added to the
-        kernel and not to its block's clause, naming the block and the gauge (a reused name included); a block added to the
-        kernel and not to the paragraph; a name kept in a clause after its gauge went; the macOS clause removed; the fold
-        replaced by the raw snapshot (pid would then be demanded of a paragraph that describes the wire, which never carries
-        it)."""
+    FOUR GROUPS since the closing re-run (2026-09-19, its finding 7, the one it ranked highest): the usage block, which
+    travels with --usage alone, is pinned as the fourth, over a snapshot whose http table has served every action route and
+    every pane route once (_served_snapshot), so its clause is held to the WHOLE population the export can write, the
+    three session counts, the uptime bucket, one count per action route the register carries less the kernel's own
+    housekeeping posts and one per pane route (53 action names and 15 view names on 2026-09-19, asserted below), and not
+    to the traffic of one machine: the re-run found the paragraph naming one leaf of the eleven a lightly used kernel's
+    block carried, four of them present with no traffic at all. And the process clause's allowances are keyed on VALUES,
+    never on a platform list (finding 2): the four malloc
+    leaves are excused exactly when the live malloc value is None, and the clause checks run a second time with the
+    kernel's mallinfo2 handle patched to None, the value the kernel reads on glibc before 2.33, musl and macOS."""
+
+    BLOCKS = ("process", "heap", "gc", "usage")
+    MALLOC_LEAVES = frozenset({"arena", "fordblks", "hblkhd", "uordblks"})
+
+    @staticmethod
+    def _paragraph():
+        """The disclosure paragraph, flattened to single spaces so a rewrap changes nothing."""
         text = " ".join(Path(HERE).parent.joinpath("docs", "reference.md").read_text(encoding="utf-8").split())
         start = text.index("What does travel is the file's content")
-        para = text[start:text.index("so two uploads from one kernel remain linkable by design", start)]
-        blocks = ("process", "heap", "gc")
-        starts = [para.index("every leaf under `%s`" % b) for b in blocks]
-        self.assertEqual(starts, sorted(starts), "the three clauses come in the blocks' order")
-        ends = starts[1:] + [para.index("the ten memory-fraction bounds")]
-        clause = {b: para[i:j] for b, i, j in zip(blocks, starts, ends)}
-        snap = km._PerfStats().snapshot()
+        return text[start:text.index("so two uploads from one kernel remain linkable by design", start)]
+
+    @staticmethod
+    def _served_snapshot():
+        """A live snapshot whose http table has served every route the usage block counts once: every POST route of the
+        register (pp.HTTP_ROUTES, the kernel's own) that is not the kernel's housekeeping (pe.ACTION_SKIP) and every pane
+        route (pe.VIEW_ROUTES), each key in the register's own `METHOD /path` shape so http_key_ok admits it and usage_block
+        counts it; 68 rows on 2026-09-19, under the collector's HTTP_PATHS cap, so none folds to `other`."""
+        st = km._PerfStats()
+        for route in pp.HTTP_ROUTES["POST"]:
+            if route not in pe.ACTION_SKIP:
+                st.http_request("POST " + route, 0.001)
+        for route in pe.VIEW_ROUTES:
+            st.http_request("GET " + route, 0.001)
+        return st.snapshot()
+
+    def _check(self, snap):
+        """The clause checks over one snapshot `snap`, both directions, all four groups; called once over the live
+        collector and once with the kernel's mallinfo2 handle patched to None. Returns the public fold."""
+        para = self._paragraph()
         public = pp.fold(snap)                                   # the projection on the wire (perf_export.export_document)
+        usage = pp.fold(pe.usage_block(snap))                    # the fourth group, as the export writes it under --usage
         self.assertIn("pid", snap["process"], "the raw snapshot carries the pid the fold drops")
+        # the four clauses, each from its "every leaf under" marker to an EXPLICIT end: process ends at heap's start, heap at
+        # gc's, gc at the bounds sentence (so it and `hydrated.capBytes` sit outside every clause), usage at the kernel commit
+        for block in self.BLOCKS:
+            self.assertIn("every leaf under `%s`" % block, para, "the paragraph has no `%s` clause" % block)
+        starts = [para.index("every leaf under `%s`" % b) for b in self.BLOCKS]
+        self.assertEqual(starts, sorted(starts), "the four clauses come in the blocks' order: process, heap, gc, usage")
+        self.assertIn(", and the kernel commit", para[starts[3]:], "the usage clause ends at the kernel commit")
+        ends = [starts[1], starts[2], para.index("the ten memory-fraction bounds"), para.index(", and the kernel commit", starts[3])]
+        self.assertTrue(starts[2] < ends[2] <= starts[3], "the bounds sentence sits between the gc clause and the usage clause")
+        clause = {b: para[i:j] for b, i, j in zip(self.BLOCKS, starts, ends)}
+        # the population of the fourth group, asserted before the clause checks so the pin is over the full block
+        actions = {pe._feature_name(r) for r in pp.HTTP_ROUTES["POST"] if r not in pe.ACTION_SKIP}
+        views = {pe._feature_name(r) for r in pe.VIEW_ROUTES}
+        self.assertEqual(set(usage["actions"]), actions, "one count per action route the register carries, less the housekeeping posts")
+        self.assertEqual(set(usage["views"]), views, "one count per pane route")
+        self.assertLessEqual({"parsed", "chatBuilt", "stamped"}, set(usage["sessions"]), sorted(usage["sessions"]))
+        self.assertIn("kernelUptime", usage, sorted(usage))
         keys = set()                                             # (block, key) for every leaf and every block the walk descends through
 
         def walk(block, node):
@@ -2724,24 +2755,80 @@ class Disclosed(unittest.TestCase):
             elif isinstance(node, list):
                 for x in node:
                     walk(block, x)
-        for block in blocks:
-            self.assertIsInstance(public[block], dict, block)
-            walk(block, public[block])
+        groups = {"process": public["process"], "heap": public["heap"], "gc": public["gc"], "usage": usage}
+        for block in self.BLOCKS:
+            self.assertIsInstance(groups[block], dict, block)
+            walk(block, groups[block])
         self.assertGreaterEqual(len(keys), 40, sorted(keys))       # the three blocks of 2026-09-19 carry far more than the fixture's four
         for block, name in sorted(keys):
             self.assertTrue(re.search(r"`%s`" % re.escape(name), clause[block]),
                             "an upload carries `%s` under `%s` and the `%s` clause of the disclosure paragraph in docs/reference.md "
                             "does not name it" % (name, block, block))
-        for block in blocks:
+        for block in self.BLOCKS:
             live = {name for b, name in keys if b == block} | {block}
-            if block == "process" and sys.platform != "darwin":
-                live.add("rss_peak_kb")                          # named with its platform: disclosed for the Mac, not live here
+            if block == "process":
+                if "rss_peak_kb" not in public["process"]:
+                    # excused exactly when the fold carries no such leaf: the darwin-only leaf is named with its platform in
+                    # so many words, the kernel writes it on darwin alone (_process_stats), and the assertion after the clause
+                    # checks holds the paragraph's words against that rule. Keyed on the VALUE, like the malloc allowance
+                    # below: the re-run's verification found this one still keyed on sys.platform under a docstring saying
+                    # the process clause's allowances were keyed on values
+                    live.add("rss_peak_kb")
+                if public["process"].get("malloc") is None:
+                    # named for the libc that has them; where the kernel's _MALLINFO2 is None (glibc before 2.33, musl,
+                    # macOS) _malloc_stats returns None, the fold keeps "malloc": null and the four leaves do not travel.
+                    # Keyed on the VALUE the fold carries, never on sys.platform: a platform list goes stale at the fifth libc
+                    live |= self.MALLOC_LEAVES
             for name in re.findall(r"`([^`]+)`", clause[block]):
                 self.assertIn(name, live, "the `%s` clause names `%s`, which no upload from this kernel carries there" % (block, name))
         self.assertNotIn(("process", "pid"), keys, "the fold drops pid; the paragraph describes the wire")
         self.assertIn("on macOS alone, `rss_peak_kb`", clause["process"], "the darwin-only leaf is named with its platform, in its block's clause")
+        # the paragraph's words, "on macOS alone", held against the kernel's own platform rule (kernel/kernel.py _process_stats
+        # writes the leaf under darwin alone; Collector's shape pin holds the same): not an allowance, and the one place this
+        # test names a platform, since the paragraph's words do
         self.assertEqual(("process", "rss_peak_kb") in keys, sys.platform == "darwin", sorted(keys))
+        # after both directions, so a route added to the register is first named by the forward direction as the leaf the
+        # usage clause does not carry, and then moves this count and the class docstring's figures
+        self.assertEqual((len(actions), len(views)), (53, 15), "the register on 2026-09-19; a route added moves this and the clause")
+        return public
 
+    def test_every_leaf_of_process_heap_gc_and_usage_an_upload_carries_is_named_in_its_own_blocks_clause_of_the_references_disclosure(self):
+        """Every key under process, heap and gc of a live snapshot's public form (pp.fold, the projection the export writes
+        and the upload sends: it drops pid, so the paragraph need not name it), and every key of the usage block the export
+        writes under --usage (pp.fold over pe.usage_block, from a snapshot that served every action and pane route), the
+        leaves AND the blocks the walk descends through (malloc, builtChat, hydrated, imgCache, heap's gc and its stats, gc's
+        gen, usage's sessions, actions and views; the generation indexes, digit strings, excepted), is named in backticks
+        INSIDE ITS OWN BLOCK'S CLAUSE of the paragraph, the text from "every leaf under `process`" to "every leaf under
+        `heap`", from there to "every leaf under `gc`", from there to the bounds sentence, and from "every leaf under `usage`"
+        to the kernel commit. Per block and not anywhere in the paragraph, because the paragraph names `bytes` and `entries`
+        for two heap blocks and they are the commonest gauge names in the whole fold (caches, recordCache, chatPages,
+        fileSlice), so a process-level `bytes` or a new process/cache block with `entries` would have passed a paragraph-wide
+        match with the suite green (the closing delta's verifier planted both: process/bytes = 4242 and process/cache/entries
+        = 7 travelled and the paragraph-wide pin stayed at 1 passed). Naming the blocks too is what makes a new block red by
+        its own name before its leaves are asked for. AND THE OTHER DIRECTION: every backticked name inside a clause is a
+        live key of that block, or the block's own name, or one of two value-keyed allowances in the process clause:
+        `rss_peak_kb` when the fold carries no such leaf (the darwin-only leaf is named with its platform in so many words;
+        the kernel writes it on darwin alone, which Collector's shape pin and the assertion after the clause checks hold, the
+        one place this test names a platform, since the paragraph's words do), and the four malloc leaves when the live
+        malloc value is None (mallinfo2 absent: glibc before 2.33, musl, macOS), so the pin holds wherever the kernel runs,
+        keyed on the value it reads and never on a list of platforms, and a leaf the kernel stops writing cannot stay
+        disclosed as travelling, except the excused names: the four malloc leaves stay disclosed as conditional when the
+        kernel never reads mallinfo2 (a kernel whose _malloc_stats returned None unconditionally would leave this pin green),
+        and Collector's shape pin, malloc must read where _MALLINFO2 resolved, is what catches that. The clause checks run twice: over
+        the live collector, and with km._MALLINFO2 patched to None (the value simulation the closing re-run accepted for the
+        branch the kernel attributes to those libcs, asserted to have taken: the snapshot's malloc is None and the fold keeps
+        the null), so the allowance's branch is exercised on every platform. Fails on: a gauge added
+        to the kernel and not to its block's clause, naming the block and the gauge (a reused name included); a route added to the register and not to
+        the usage clause; a block added to the kernel and not to the paragraph; a name kept in a clause after its gauge went;
+        the macOS clause removed; the malloc allowance keyed on the platform (the patched run reds on Linux); the fold
+        replaced by the raw snapshot (pid would then be demanded of a paragraph
+        that describes the wire, which never carries it)."""
+        self._check(self._served_snapshot())
+        with mock.patch.object(km, "_MALLINFO2", None):          # the value the kernel reads where mallinfo2 is absent
+            snap = self._served_snapshot()
+            self.assertIsNone(snap["process"]["malloc"], "the simulation took: _malloc_stats returns None where _MALLINFO2 is None")
+            self.assertIsNone(pp.fold(snap)["process"]["malloc"], "and the fold keeps the null: the four leaves do not travel")
+            self._check(snap)
 
 if __name__ == "__main__":
     unittest.main()

@@ -2349,11 +2349,17 @@ class Docs(unittest.TestCase):
         malloc block and the fixed string process/source, and every leaf under heap and gc), so the sentence lists every leaf
         under process, heap and gc that a fresh Linux export of 2026-09-19 carried, plus the one leaf macOS adds (rss_peak_kb, the
         peak resident size, which the kernel writes on darwin alone and which reaches the wire like every other measurement;
-        the closing check found the paragraph false on a Mac), and says the usage bucket travels only with --usage. WHAT IS
+        the closing check found the paragraph false on a Mac), says the four malloc leaves are null where the C library has
+        no mallinfo2 (the closing re-run found the disclosure pin red wherever that is, glibc before 2.33, musl and macOS,
+        with the leaves disclosed as travelling), and says every leaf under usage travels only with --usage, the session
+        counts and one count per action and pane route beside the uptime bucket (the re-run found the paragraph naming one
+        leaf of eleven there). WHAT IS
         PINNED WHERE: this case pins the WORDING and the macOS clause's PLACEMENT (the process parenthetical is one needle
         and the clause is another that must follow it OUTSIDE the closing parenthesis, so the parenthetical the reader has
         already scanned is not silently widened); the LEAF POPULATION is pinned live in tests/test_perf_stats.py (Disclosed),
-        over a real km._PerfStats().snapshot() through the public fold, because a fixed list here cannot see an added leaf:
+        over a real km._PerfStats().snapshot() through the public fold, the usage block from a snapshot that served every
+        route the export counts, because a fixed list here cannot see an added leaf (this case holds the usage clause's
+        PREFIX alone, up to the session counts; the route names are Disclosed's):
         the closing check added three leaves to a temp copy of the kernel one at a time and each travelled to a recording
         receiver over the real export-then-upload road while this case stayed at 2 passed; what went stale was the
         disclosure, not the protection: the recomputing paste-safety walk folded the probe gauge's path and uuid to `other`
@@ -2362,14 +2368,17 @@ class Docs(unittest.TestCase):
         text = self._flat("docs", "reference.md")     # asserted by boolean, so a failure names the words and never dumps the page
         self.assertFalse("Nothing about the machine travels" in text, "the blanket promise is still in the reference")
         process = ("every leaf under `process` (`rss_kb`, `rss_anon_kb`, `hwm_kb`, `cpu_s`, `threads`, `gc_gen2`, `allocated_blocks`, "
-                   "the `malloc` block's `arena`, `fordblks`, `hblkhd` and `uordblks`, and the fixed string `source`)")
+                   "the `malloc` block's `arena`, `fordblks`, `hblkhd` and `uordblks`, null with no leaves under it where the C library "
+                   "has no mallinfo2, glibc before 2.33, musl and macOS among them, and the fixed string `source`)")   # mallinfo2 unbackticked: not a key
         darwin = " plus, on macOS alone, `rss_peak_kb` (the peak resident size)"
         for words in ("The request carries nothing that names the machine beyond the file: no hostname, account or filename anywhere in it, "
                       "and no second file; the receiver names the stored object itself. What does travel is the file's content, and that is "
                       "paste-safe, not unlinkable:",
                       process, darwin, process + darwin,        # the clause follows the parenthetical, outside it
                       "the ten memory-fraction bounds coarsened to a power of two",
-                      "the uptime rounded down to the minute and, with `--usage` alone, its bucket under `usage`", "the kernel commit",
+                      "the uptime rounded down to the minute and, only when `--usage` was given, every leaf under `usage` (the uptime's bucket "
+                      "`kernelUptime`, the `sessions` block's `parsed`, `chatBuilt` and `stamped`",       # the clause's prefix; its population is Disclosed's
+                      "the kernel commit",
                       "so two uploads from one kernel remain linkable by design"):
             self.assertTrue(words in text, "not in the reference: " + words)
 
