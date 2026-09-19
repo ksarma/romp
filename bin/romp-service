@@ -167,19 +167,35 @@ _INSTANCE_VARS=(ROMP_SERVE_PORT ROMP_KERNEL_PORT ROMP_POSTAL_PORT ROMP_MANAGER_P
 # where a person's install bakes what their shell sets: the child's environment is not a person's shell, and it dropped
 # the ports and the Claude config dir from an installed unit while re-baking the state root (the round's probes).
 EXIT_IDENTITY=5
-_SVC_PATH="$PATH"           # the PATH the writers bake: this environment's on an install, the file's on a rewrite (empty: no line)
+_SVC_PATH="$PATH"           # the PATH the writers bake: this environment's on an install, the file's on a rewrite
+_SVC_PATH_SET=1             # whether a PATH line is written at all: always on an install; on a rewrite, whether the file has one
 _SVC_PATH_LINE=""           # on a rewrite, the unit's own PATH line as written (quoted or not), written back as it is
-_KEEP_INSTANCE=()           # on a rewrite, the file's value per _INSTANCE_VARS index (empty: no line), decoded as systemd or
-                            # launchd decodes it, for the compare and for the writer (the addendum to round 3, 2026-09-19: round 3
-                            # replayed the unit's own line as written so that a specifier it carried would not be doubled; a
-                            # specifier is refused now, so every value the reader accepts goes back through the one writer,
-                            # _unit_word, and reads back as the same value)
+_KEEP_INSTANCE=()           # on a rewrite, the file's value per _INSTANCE_VARS index, decoded as systemd or launchd decodes it,
+                            # for the compare and for the writer (the addendum to round 3, 2026-09-19: round 3 replayed the unit's
+                            # own line as written so that a specifier it carried would not be doubled; a specifier is refused now,
+                            # so every value the reader accepts goes back through the one writer, _unit_word, and reads back as
+                            # the same value)
+_KEEP_INSTANCE_SET=()       # on a rewrite, per index: non-empty when the file ASSIGNS the variable at all. Presence is carried
+                            # apart from the value (the second pass over the addendum, 2026-09-19): an EMPTY assignment,
+                            # Environment=PATH= or <key>PATH</key><string></string>, is a form the daemon reads, the variable set
+                            # to the empty string, and the value alone (empty for a missing line and an empty one alike) had it
+                            # read as absence: the line was dropped at exit 0, the daemon's reading changed from the empty string
+                            # to unset, and a shell carrying a value for the variable was not refused. Written back as written,
+                            # and compared as a value: a shell carrying a non-empty value differs from an empty assignment.
 _KEEP_ON=""                 # non-empty once _keep_identity ran: _instance_value reads _KEEP_INSTANCE, not the environment
 # The file's noun in every message of the rewrite road, one per OS (round 3, 2026-09-19: the --check line said "login
 # service" where the refusal on the same road said "login agent" or "login unit")
 _SVC_NOUN="login service unit"; [[ "$os" == Darwin ]] && _SVC_NOUN="login agent"
-_instance_value() {   # $1 a variable of _INSTANCE_VARS, $2 its index: the value the writers bake, empty for no line
+_instance_value() {   # $1 a variable of _INSTANCE_VARS, $2 its index: the value the writers bake
     if [[ -n "$_KEEP_ON" ]]; then printf '%s' "${_KEEP_INSTANCE[$2]:-}"; else printf '%s' "${!1:-}"; fi
+}
+_instance_set() {   # $1 a variable of _INSTANCE_VARS, $2 its index: exit 0 when the writers write a line for it. On an install, when
+                    # the shell sets it to a non-empty value (the header's contract: bake what is SET, and a shell's empty export
+                    # is not a setting); on a rewrite, when the file assigns it, an empty assignment included.
+    if [[ -n "$_KEEP_ON" ]]; then [[ -n "${_KEEP_INSTANCE_SET[$2]:-}" ]]; else [[ -n "${!1:-}" ]]; fi
+}
+_shown() {   # $1 a value for a message: itself, or "an empty value" where an empty string would leave the line unreadable
+    if [[ -n "$1" ]]; then printf '%s' "$1"; else printf 'an empty value'; fi
 }
 # XML character data, one escape on write and one unescape on read (round 3 of the review, 2026-09-19). The plist
 # writer escaped the service.env path alone and the reader undid nothing, so a path with & compared unequal to the
@@ -250,6 +266,24 @@ _unit_word() {
     printf '"%s"' "$v"
 }
 _unit_env_line() { printf 'Environment=%s' "$(_unit_word "$1=$2" "${3:-}")"; }   # $1 the name, $2 the value; $3 non-empty: quoted whatever the value
+# systemd's own refusal of an ExecStart= command path, string_is_safe in config_parse_exec (v255): a double quote, a
+# single quote, a backslash or a control character (below a space, or DEL) in the path is "Executable name contains
+# special characters", the unit fails to load and is never started, whatever the quoting on the line, so no writer can
+# make such a path run. The second pass over the addendum (2026-09-19) found the round-trip test installing the manager
+# at such a path and its oracle reading the path back, a reading no systemd produces. So the path is refused before
+# anything is written (EXIT_IDENTITY through the callers: nothing written, the reason and the remedy named), on install
+# and on rewrite, from _unit_scan for a hand line and from _exec_path_refuse for the path this clone would write. The
+# same characters in Environment= values and in EnvironmentFile= are fine to systemd and stay accepted. Linux only:
+# launchd puts no such rule on a program path.
+_exec_path_unsafe() {   # $1 a decoded command path: exit 0 when systemd refuses it as an executable name
+    [[ "$1" == *[\"\'\\]* || "$1" == *[[:cntrl:]]* ]]
+}
+_exec_path_refuse() {   # exit 1 (the callers exit EXIT_IDENTITY) when the manager's path this clone would write is one systemd refuses
+    _exec_path_unsafe "$MANAGER" || return 0
+    echo "romp-service: the manager's path ($MANAGER) contains a quote, a backslash or a control character, which systemd refuses in an ExecStart= executable name (Executable name contains special characters: the unit would fail to load and never start); nothing was written." >&2
+    echo "  Move the clone to a path without those characters and run romp-service install from it (the same characters are fine in ROMP_DIR and the service.env path; ExecStart's command path is the one systemd checks)." >&2
+    return 1
+}
 _unit_env_file_line() {   # EnvironmentFile=: the whole rvalue is the path, read with no quoting and no escapes but with specifier
                           # expansion, so % alone is doubled (the lens, U12: a path with a space, a quote, a backslash and & reads whole)
     printf 'EnvironmentFile=-%s' "${1//%/%%}"
@@ -275,8 +309,14 @@ _unit_env_file_line() {   # EnvironmentFile=: the whole rvalue is the path, read
 # (systemd drops the line as invalid syntax; decoded are \\ \" \' \s \n \t \r, what the writer produces and what a hand
 # writes); a line assigning one of the variables this rewrite keeps beside another assignment (the writer writes one
 # assignment a line, so the other would be lost); a second ExecStart= or EnvironmentFile= line; an ExecStart whose
-# command carries a prefix character (-, @, :, +, !, |) or whose arguments are not `up` alone. A line systemd ignores
-# (a key romp does not write, a word that is no assignment) is read as systemd reads it and is not a refusal.
+# command carries a prefix character (-, @, :, +, !, |) or whose arguments are not `up` alone; an ExecStart whose
+# command path systemd itself refuses (_exec_path_unsafe: a quote, a backslash or a control character, systemd's
+# string_is_safe in config_parse_exec, "Executable name contains special characters", on which the unit fails to load
+# and is never started), since no written form of such a path reads back on any road (the second pass over the
+# addendum, 2026-09-19: the round-trip test installed the manager at such a path and its oracle read the path back, a
+# reading no systemd produces). A line systemd ignores (a key romp does not write, a word that is no assignment) is read
+# as systemd reads it and is not a refusal. An EMPTY assignment (Environment=PATH=) is an assignment: the scan records
+# it, _unit_item's `set` mode reports it, and the writers keep it (the second pass; _KEEP_INSTANCE_SET says why).
 _U_SCANNED=""; _U_KEYS=(); _U_VALS=(); _U_LINES=(); _U_EXEC=""; _U_ENVFILE=""
 _W_WORD=""; _W_REST=""; _W_ERR=""
 _unit_refuse() {   # $1 the line number, $2 the form, $3 the remedy
@@ -363,6 +403,7 @@ _unit_scan() {
             case "$w" in [-@:+!\|]*) _unit_refuse "$n" "ExecStart's command begins with a prefix character ($w), which this rewrite would not write back" "Write the path bare, without the prefix"; return 1 ;; esac
             _unit_specifiers "$w" || { _unit_refuse "$n" "ExecStart carries the specifier $_W_ERR, which systemd expands and this reader would take literally" "Write the absolute path in its place (a literal % is written %%)"; return 1; }
             w="$_W_WORD"
+            if _exec_path_unsafe "$w"; then _unit_refuse "$n" "ExecStart's command path contains a quote, a backslash or a control character, which systemd refuses in an executable name (Executable name contains special characters), so this unit does not start" "Move the clone to a path without those characters and write the unit afresh with romp-service install from it"; return 1; fi
             _unit_first_word "$rest" || true
             [[ "$_W_WORD" == up && -z "$_W_REST" ]] || { _unit_refuse "$n" "ExecStart's arguments are not up alone (romp-manager up is what romp writes)" "Write ExecStart=<the path to romp-manager> up"; return 1; }
             _U_EXEC="$w" ;;
@@ -393,15 +434,19 @@ _unit_scan() {
     done < "$UNIT"
     _U_SCANNED=1
 }
-_unit_item() {   # $1 a name: the value the scan read for it (the last assignment), empty for none; $2 = line: its line as written instead
-    local i=0 out=""
+_unit_item() {   # $1 a name: the value the scan read for it (the last assignment), empty for none; $2 = line: its line as written
+                 # instead; $2 = set: exit 0 when the scan read an assignment of the name at all, an EMPTY one included (the second
+                 # pass over the addendum, 2026-09-19: the value alone read Environment=PATH= as no PATH line)
+    local i=0 out="" hit=""
     while (( i < ${#_U_KEYS[@]} )); do
-        if [[ "${_U_KEYS[$i]}" == "$1" ]]; then if [[ "${2:-}" == line ]]; then out="${_U_LINES[$i]}"; else out="${_U_VALS[$i]}"; fi; fi
+        if [[ "${_U_KEYS[$i]}" == "$1" ]]; then hit=1; if [[ "${2:-}" == line ]]; then out="${_U_LINES[$i]}"; else out="${_U_VALS[$i]}"; fi; fi
         i=$((i + 1))
     done
+    if [[ "${2:-}" == set ]]; then [[ -n "$hit" ]]; return; fi
     printf '%s' "$out"
 }
 _same_path() {   # $1 $2: the same path as written, or the same place once resolved (a clone reached through a symlinked directory)
+    [[ -n "$1" && -n "$2" ]] || return 1    # an empty value names no place (an empty assignment compared against a path differs)
     [[ "$1" == "$2" ]] && return 0
     local a b
     if [[ -d "$1" && -d "$2" ]]; then
@@ -437,44 +482,72 @@ _same_path() {   # $1 $2: the same path as written, or the same place once resol
 # before `<string>up</string>`: with the array collapsed onto one line it took `<key>ProgramArguments</key>` as the
 # manager's path and refused the owning clone as another clone (the lens's low). Both are refused as forms not read
 # whole, with the entry named. plutil reads every layout, so a mac is never refused over layout.
-_PLIST_READ=""
+# The second pass over the addendum (2026-09-19) swept the reads left outside this check and found two forms launchd
+# accepts that the one-line reads misread, so the array is read HERE, by both readers, and the value handed out
+# (_PLIST_EXEC), and each read key is required ONCE: a key on two lines (launchd's parser keeps one of them; the -m1
+# grep read the first) is refused; a ProgramArguments array with `up` anywhere but as its single last element (a second
+# `up`, arguments after it, an array with none, or `up` first) is refused by both readers, where the fallback took the
+# line before the first `up` and the plutil read took the argument before the first `up`, and the array with no `up`
+# read as an absent ExecStart and was re-pointed at the deploying clone. An EMPTY <string></string> is a value (the
+# entry set to the empty string): _file_present says so, and the writers keep it.
+_PLIST_READ=""; _PLIST_EXEC=""; _PLIST_EXEC_SET=""
 _PLIST_STRING_KEYS=(ROMP_SUPERVISED PATH ROMP_DIR ROMP_SERVICE_ENV_FILE StandardOutPath StandardErrorPath)
+_plist_route() { echo "  To write it afresh in romp's form, run romp-service install from the shell and clone that should own the service (the header says what it bakes); that restarts the manager." >&2; }
 _plist_readable() {
-    local label
+    local label i=0 arg prev="" last="" ups=0 k n nxt
+    _PLIST_EXEC=""; _PLIST_EXEC_SET=""
     if command -v "$PLUTIL" >/dev/null 2>&1; then
         _PLIST_READ=plutil
         label="$("$PLUTIL" -extract Label raw -o - "$PLIST" 2>/dev/null)" || label=""
         if [[ -n "$label" && "$label" != "$LABEL" ]]; then
             echo "romp-service: the $_SVC_NOUN's plist ($PLIST) is not romp's: $PLUTIL reads its Label as $label, not $LABEL; nothing was rewritten." >&2
-            echo "  To write it afresh in romp's form, run romp-service install from the shell and clone that should own the service (the header says what it bakes); that restarts the manager." >&2
-            return 1
+            _plist_route; return 1
         elif [[ -z "$label" ]]; then
             echo "romp-service: the $_SVC_NOUN's plist ($PLIST) is not one this rewrite can read: $PLUTIL could not extract its Label entry (not a plist launchd would load, or one with no Label); nothing was rewritten." >&2
-            echo "  To write it afresh in romp's form, run romp-service install from the shell and clone that should own the service (the header says what it bakes); that restarts the manager." >&2
-            return 1
+            _plist_route; return 1
         fi
+        # the array, one argument at a time (no count semantics relied on): the manager's path is the argument before
+        # `up`, whatever precedes it (the launcher since the node copy exists; the manager alone before it), and `up` is
+        # the single last argument, as romp writes it
+        while (( i < 64 )); do
+            arg="$("$PLUTIL" -extract "ProgramArguments.$i" raw -o - "$PLIST" 2>/dev/null)" || break
+            if [[ "$arg" == up ]]; then ups=$((ups + 1)); _PLIST_EXEC="$prev"; fi
+            last="$arg"; prev="$arg"; i=$((i + 1))
+        done
+        if (( ups != 1 || i < 2 )) || [[ "$last" != up ]]; then
+            echo "romp-service: the $_SVC_NOUN's plist ($PLIST) is not one this rewrite can read: $PLUTIL reads its ProgramArguments as $i arguments where romp writes the launcher, the manager's path and up (up once, last, after the manager's path); nothing was rewritten. This reader reads the array whole or not at all." >&2
+            _plist_route; return 1
+        fi
+        _PLIST_EXEC_SET=1
         return 0
     fi
     _PLIST_READ=grep
     if ! grep -aqF "<key>Label</key><string>$LABEL</string>" "$PLIST" 2>/dev/null; then
         echo "romp-service: the $_SVC_NOUN's plist ($PLIST) is not in the one-line form romp writes (its Label entry is not <key>Label</key><string>$LABEL</string> on one line), and no plutil is available here to read another form; nothing was rewritten. A plist re-saved by another tool (plutil -convert, PlistBuddy, defaults write, Xcode) reads this way." >&2
-        echo "  To write it afresh in romp's form, run romp-service install from the shell and clone that should own the service (the header says what it bakes); that restarts the manager." >&2
-        return 1
+        _plist_route; return 1
     fi
-    local k prev
-    for k in "${_PLIST_STRING_KEYS[@]}" "${_INSTANCE_VARS[@]}"; do
-        if grep -aqF "<key>$k</key>" "$PLIST" 2>/dev/null && ! grep -aqE "^[[:space:]]*<key>$k</key><string>[^<]*</string>[[:space:]]*\$" "$PLIST" 2>/dev/null; then
+    for k in Label "${_PLIST_STRING_KEYS[@]}" "${_INSTANCE_VARS[@]}"; do
+        n="$(grep -acF "<key>$k</key>" "$PLIST" 2>/dev/null || true)"
+        if [[ "$n" != 0 && "$n" != 1 ]]; then
+            echo "romp-service: the $_SVC_NOUN's plist ($PLIST) is not in the one-line form romp writes (its $k entry is on $n lines, and this reader reads one), and no plutil is available here to read another form; nothing was rewritten. This reader reads an entry whole or not at all." >&2
+            _plist_route; return 1
+        fi
+        if [[ "$k" != Label ]] && grep -aqF "<key>$k</key>" "$PLIST" 2>/dev/null && ! grep -aqE "^[[:space:]]*<key>$k</key><string>[^<]*</string>[[:space:]]*\$" "$PLIST" 2>/dev/null; then
             echo "romp-service: the $_SVC_NOUN's plist ($PLIST) is not in the one-line form romp writes (its $k entry is split across lines, or is not <key>$k</key><string>...</string> on one line), and no plutil is available here to read another form; nothing was rewritten. This reader reads an entry whole or not at all." >&2
-            echo "  To write it afresh in romp's form, run romp-service install from the shell and clone that should own the service (the header says what it bakes); that restarts the manager." >&2
-            return 1
+            _plist_route; return 1
         fi
     done
+    # the array: one <string> a line, `up` on a line of its own exactly once, a <string> element on the line before it
+    # (the manager's path) and the array's close on the line after it (so nothing follows `up`)
+    ups="$(grep -acE '^[[:space:]]*<string>up</string>[[:space:]]*$' "$PLIST" 2>/dev/null || true)"
     prev="$(awk '/^[[:space:]]*<string>up<\/string>[[:space:]]*$/ { print prev; exit } { prev = $0 }' "$PLIST" 2>/dev/null || true)"
-    if ! grep -aqE '^[[:space:]]*<string>up</string>[[:space:]]*$' "$PLIST" 2>/dev/null || ! printf '%s\n' "$prev" | grep -qE '^[[:space:]]*<string>[^<]*</string>[[:space:]]*$'; then
-        echo "romp-service: the $_SVC_NOUN's plist ($PLIST) is not in the one-line form romp writes (its ProgramArguments array is not one <string> a line ending in <string>up</string>), and no plutil is available here to read another form; nothing was rewritten. This reader reads the array whole or not at all." >&2
-        echo "  To write it afresh in romp's form, run romp-service install from the shell and clone that should own the service (the header says what it bakes); that restarts the manager." >&2
-        return 1
+    nxt="$(awk 'f { print; exit } /^[[:space:]]*<string>up<\/string>[[:space:]]*$/ { f = 1 }' "$PLIST" 2>/dev/null || true)"
+    if [[ "$ups" != 1 ]] || ! printf '%s\n' "$prev" | grep -qE '^[[:space:]]*<string>[^<]*</string>[[:space:]]*$' || ! printf '%s\n' "$nxt" | grep -qE '^[[:space:]]*</array>[[:space:]]*$'; then
+        echo "romp-service: the $_SVC_NOUN's plist ($PLIST) is not in the one-line form romp writes (its ProgramArguments array is not one <string> a line ending in <string>up</string>, with up once and last), and no plutil is available here to read another form; nothing was rewritten. This reader reads the array whole or not at all." >&2
+        _plist_route; return 1
     fi
+    prev="${prev#*<string>}"; prev="${prev%</string>*}"
+    _PLIST_EXEC="$(_xml_unescape "$prev")"; _PLIST_EXEC_SET=1
     return 0
 }
 # A value from the file romp itself wrote. $1 = unit | plist; $2 = ExecStart (the manager the service runs, the `up`
@@ -484,9 +557,12 @@ _plist_readable() {
 # has its quotes, its \\ and \" escapes and its doubled % undone, the plist's text its XML entities (plutil decodes
 # itself), so the identity compare reads what the service's manager reads; the writers encode again, once. Each road
 # is read only after its reader asserted the file's form (_unit_scan, _plist_readable: the callers refuse first when it
-# cannot be read whole), and the unit's values come out of that one scan (the addendum to round 3, 2026-09-19).
+# cannot be read whole), and the unit's values come out of that one scan (the addendum to round 3, 2026-09-19), the
+# plist's ExecStart out of _plist_readable's one read of the array (the second pass, 2026-09-19). Empty for no such line
+# AND for an empty assignment: _file_present tells the two apart, and every caller that acts on absence asks it.
+_plist_keypath() { case "$1" in Label|StandardOutPath|StandardErrorPath) printf '%s' "$1" ;; *) printf 'EnvironmentVariables.%s' "$1" ;; esac; }
 _file_value() {
-    local key="$2" line="" i=0 prev="" arg kp
+    local key="$2" line=""
     if [[ "$1" == unit ]]; then
         _unit_scan || return 1
         case "$key" in
@@ -497,32 +573,45 @@ _file_value() {
     else
         if [[ -z "$_PLIST_READ" ]]; then _plist_readable || return 1; fi
         case "$key" in
-            ExecStart)
-                if [[ "$_PLIST_READ" == plutil ]]; then
-                    # the argument before `up` in ProgramArguments, whatever precedes it (the launcher since the node
-                    # copy exists; the manager alone before it); indexed one at a time, so no count semantics are relied on
-                    while (( i < 16 )); do
-                        arg="$("$PLUTIL" -extract "ProgramArguments.$i" raw -o - "$PLIST" 2>/dev/null)" || break
-                        if [[ "$arg" == up ]]; then line="$prev"; break; fi
-                        prev="$arg"; i=$((i + 1))
-                    done
-                else
-                    # the line before <string>up</string>, a <string> element on a line of its own (_plist_readable asserted it)
-                    line="$(awk '/^[[:space:]]*<string>up<\/string>[[:space:]]*$/ { sub(/^[[:space:]]*<string>/, "", prev); sub(/<\/string>[[:space:]]*$/, "", prev); print prev; exit } { prev = $0 }' "$PLIST" 2>/dev/null || true)"
-                    line="$(_xml_unescape "$line")"
-                fi ;;
+            ExecStart) line="$_PLIST_EXEC" ;;
             *)
                 if [[ "$_PLIST_READ" == plutil ]]; then
-                    kp="EnvironmentVariables.$key"
-                    case "$key" in Label|StandardOutPath|StandardErrorPath) kp="$key" ;; esac
-                    line="$("$PLUTIL" -extract "$kp" raw -o - "$PLIST" 2>/dev/null)" || line=""
+                    line="$("$PLUTIL" -extract "$(_plist_keypath "$key")" raw -o - "$PLIST" 2>/dev/null)" || line=""
                 else
+                    # exact once _plist_readable passed: the key is on ONE line, in the one-line form, so the first match is the entry
                     line="$(grep -a -m1 -F "<key>$key</key><string>" "$PLIST" 2>/dev/null || true)"; line="${line#*<string>}"; line="${line%</string>*}"
                     line="$(_xml_unescape "$line")"
                 fi ;;
         esac
     fi
     printf '%s' "$line"
+}
+# Whether the file ASSIGNS a key at all, an EMPTY assignment included: exit 0 when it does. $1 = unit | plist, $2 a key
+# of _file_value. The second pass over the addendum (2026-09-19): _file_value's empty string is a missing line and an
+# empty assignment alike, and every caller tested -n, so Environment=PATH=, Environment=CLAUDE_CONFIG_DIR= and
+# <key>PATH</key><string></string> read as absence (dropped at exit 0, the daemon's reading changed from the empty
+# string to unset, a shell carrying a value not refused). What counts as an assignment is the daemon's reading: an
+# Environment= item NAME= with nothing after it sets NAME to the empty string, and a <string></string> entry sets the
+# variable to the empty string; but an ExecStart= with an empty rvalue is systemd's reset of the command list (no
+# command), and an EnvironmentFile= whose path is empty is ignored by systemd with a warning (no file), so those two read
+# as absence, which is what systemd reads.
+_file_present() {
+    if [[ "$1" == unit ]]; then
+        _unit_scan || return 1
+        case "$2" in
+            ExecStart) [[ -n "$_U_EXEC" ]] ;;
+            ROMP_SERVICE_ENV_FILE) [[ -n "$_U_ENVFILE" ]] ;;
+            *) _unit_item "$2" set ;;
+        esac
+    else
+        if [[ -z "$_PLIST_READ" ]]; then _plist_readable || return 1; fi
+        case "$2" in
+            ExecStart) [[ -n "$_PLIST_EXEC_SET" ]] ;;
+            *)
+                if [[ "$_PLIST_READ" == plutil ]]; then "$PLUTIL" -extract "$(_plist_keypath "$2")" raw -o - "$PLIST" >/dev/null 2>&1
+                else grep -aqF "<key>$2</key><string>" "$PLIST" 2>/dev/null; fi ;;
+        esac
+    fi
 }
 # $1 = unit | plist. Reads the file's identity into the writers' inputs; on a disagreement says every differing value
 # on stderr and returns 1, the file untouched. ROMP_STATE_DIR and CLAUDE_CONFIG_DIR are paths and compare as places.
@@ -531,25 +620,32 @@ _file_value() {
 # (ExecStart, ROMP_DIR) is fixed by running from the installed clone. The same retry line for both sent the
 # environment class to the command that had just refused it.
 _keep_identity() {
-    local kind="$1" v i=0 fv ev bad_env="" bad_clone=""
+    local kind="$1" v i=0 fv ev set bad_env="" bad_clone=""
     # the file's FORM before any value is read out of it (round 3 of the review, 2026-09-19: a plist the reader
     # could not parse read as one with no entries, and every absence below was then taken at its word; the addendum
     # gave the unit the same gate, _unit_scan, which refuses a form it cannot read whole)
     if [[ "$kind" == plist ]]; then _plist_readable || return 1; else _unit_scan || return 1; fi
+    # Presence, not the value, decides whether a file value is compared and kept (the second pass over the addendum,
+    # 2026-09-19; _file_present says why): an empty assignment is a value, so an empty ExecStart string or ROMP_DIR
+    # entry is a differing clone, and an empty instance assignment against a shell that carries a value is a differing
+    # shell. The messages render the empty value as such (_shown).
     fv="$(_file_value "$kind" ExecStart)"
-    if [[ -n "$fv" ]]; then
-        if _same_path "$fv" "$MANAGER"; then MANAGER="$fv"; else bad_clone+="  ExecStart: the file runs $fv, this clone would write $MANAGER"$'\n'; fi
+    if _file_present "$kind" ExecStart; then
+        if _same_path "$fv" "$MANAGER"; then MANAGER="$fv"; else bad_clone+="  ExecStart: the file runs $(_shown "$fv"), this clone would write $MANAGER"$'\n'; fi
     fi
     fv="$(_file_value "$kind" ROMP_DIR)"
-    if [[ -n "$fv" ]]; then
-        if _same_path "$fv" "$ROMP_DIR"; then ROMP_DIR="$fv"; LAUNCHER="$ROMP_DIR/bin/romp-node-launch"; else bad_clone+="  ROMP_DIR: the file names $fv, this clone is $ROMP_DIR"$'\n'; fi
+    if _file_present "$kind" ROMP_DIR; then
+        if _same_path "$fv" "$ROMP_DIR"; then ROMP_DIR="$fv"; LAUNCHER="$ROMP_DIR/bin/romp-node-launch"; else bad_clone+="  ROMP_DIR: the file names $(_shown "$fv"), this clone is $ROMP_DIR"$'\n'; fi
     fi
-    # PATH: the file's line, or none. Empty _SVC_PATH makes the writers omit the line (round 2: a PATH-less unit took the
-    # whole caller PATH, a session's, and a hand-quoted line read as absent, so _file_value matches the quoted form and
-    # the unit's line is written back as it is).
+    # PATH: the file's line, or none. An unset _SVC_PATH_SET makes the writers omit the line (round 2: a PATH-less unit
+    # took the whole caller PATH, a session's, and a hand-quoted line read as absent, so _file_value matches the quoted
+    # form and the unit's line is written back as it is); an EMPTY PATH line is a line, kept as written.
     _SVC_PATH="$(_file_value "$kind" PATH)"
-    _SVC_PATH_LINE=""
-    if [[ -n "$_SVC_PATH" && "$kind" == unit ]]; then _SVC_PATH_LINE="$(_unit_item PATH line)"; fi
+    _SVC_PATH_SET=""; _SVC_PATH_LINE=""
+    if _file_present "$kind" PATH; then
+        _SVC_PATH_SET=1
+        if [[ "$kind" == unit ]]; then _SVC_PATH_LINE="$(_unit_item PATH line)"; fi
+    fi
     # The service.env path (round 2, departure c of round 1's body): compared only against a value this environment
     # SET, the primary name or the alias, never against the default the resolver computes from XDG_CONFIG_HOME or
     # $HOME; otherwise the file's own path is kept, and a file with no line reads the kernel's default, since that is
@@ -557,23 +653,25 @@ _keep_identity() {
     # override line, and the writer then wrote the caller's resolution.
     ev="${ROMP_SERVICE_ENV_FILE:-${ROMP_SERVICE_ENV:-}}"
     fv="$(_file_value "$kind" ROMP_SERVICE_ENV_FILE)"
-    [[ -n "$fv" ]] || fv="$HOME/.config/romp/service.env"
+    _file_present "$kind" ROMP_SERVICE_ENV_FILE || fv="$HOME/.config/romp/service.env"
     if [[ -z "$ev" ]] || _same_path "$fv" "$ev"; then
         SERVICE_ENV_FILE="$fv"
     else
         local which="ROMP_SERVICE_ENV_FILE"; [[ -n "${ROMP_SERVICE_ENV_FILE:-}" ]] || which="ROMP_SERVICE_ENV"
-        bad_env+="  $which: the file reads $fv, this environment names $ev"$'\n'
+        bad_env+="  $which: the file reads $(_shown "$fv"), this environment names $ev"$'\n'
     fi
-    _KEEP_INSTANCE=()
+    _KEEP_INSTANCE=(); _KEEP_INSTANCE_SET=()
     for v in "${_INSTANCE_VARS[@]}"; do
-        fv="$(_file_value "$kind" "$v")"; ev="${!v:-}"
-        if [[ -n "$fv" && -n "$ev" && "$fv" != "$ev" ]]; then
+        fv="$(_file_value "$kind" "$v")"; ev="${!v:-}"; set=""
+        if _file_present "$kind" "$v"; then set=1; fi
+        if [[ -n "$set" && -n "$ev" && "$fv" != "$ev" ]]; then
             case "$v" in
-                ROMP_STATE_DIR|CLAUDE_CONFIG_DIR) _same_path "$fv" "$ev" || bad_env+="  $v: the file carries $fv, this environment carries $ev"$'\n' ;;
-                *) bad_env+="  $v: the file carries $fv, this environment carries $ev"$'\n' ;;
+                ROMP_STATE_DIR|CLAUDE_CONFIG_DIR) _same_path "$fv" "$ev" || bad_env+="  $v: the file carries $(_shown "$fv"), this environment carries $ev"$'\n' ;;
+                *) bad_env+="  $v: the file carries $(_shown "$fv"), this environment carries $ev"$'\n' ;;
             esac
         fi
         _KEEP_INSTANCE[$i]="$fv"    # decoded, for the compare and for the writer: _unit_word writes it back in a form systemd reads as this value
+        _KEEP_INSTANCE_SET[$i]="$set"
         i=$((i + 1))
     done
     _KEEP_ON=1
@@ -601,26 +699,31 @@ _keep_identity() {
 # XDG_STATE_HOME into the file, so a file with no line can only be resolved here, and the caller's value (a profile's
 # update child, a session's shell) is the one that moved the primary's log paths, journaled the deploy's row under an
 # aux root and refreshed the node copy there while the primary's stayed stale (the round's probes, both directions).
+# An EMPTY assignment (the second pass over the addendum, 2026-09-19): a ROMP_STATE_DIR line set to nothing is what the
+# manager reads as unset (its default root), so the root falls through the rungs as for no line, while the writer keeps
+# the empty line (_instance_env_block); an empty StandardOutPath entry is kept as the log path the plist names, written
+# back empty, never replaced by a computed default.
 _keep_state() {
-    local sd lp=""
+    local sd lp="" lp_set=""
     sd="$(_file_value "$1" ROMP_STATE_DIR)"
-    if [[ "$1" == plist ]]; then lp="$(_file_value plist StandardOutPath)"; fi
+    if [[ "$1" == plist ]]; then lp="$(_file_value plist StandardOutPath)"; if _file_present plist StandardOutPath; then lp_set=1; fi; fi
     if [[ -z "$sd" && -n "$lp" ]]; then sd="$(dirname "$lp")"; fi
     [[ -n "$sd" ]] || sd="$HOME/.local/state/romp"
     STATE="$sd"
-    LOG="${lp:-$STATE/manager.log}"
+    if [[ -n "$lp_set" ]]; then LOG="$lp"; else LOG="$STATE/manager.log"; fi
     ROMP_NODE="$STATE/romp-node"
     DOWN_MARKER="$STATE/down-by-romp"
 }
 
 # The PATH line, formatted for the platform ($1 = plist | unit), newline-terminated; nothing when a kept file carried
-# none (round 2 of the review, 2026-09-18). On a rewrite the unit's own PATH line goes back as written, quoted or not:
-# the one value with a verbatim rule, kept where the read-write lens proved it right (U01), and safe under the rule
-# because _unit_scan has refused every form the replay would not preserve (a continuation, a specifier, a second
-# assignment on the line) before this runs.
+# none (round 2 of the review, 2026-09-18), and an EMPTY line when it carried an empty one (the second pass over the
+# addendum, 2026-09-19: presence, not the value, decides). On a rewrite the unit's own PATH line goes back as written,
+# quoted or not: the one value with a verbatim rule, kept where the read-write lens proved it right (U01), and safe
+# under the rule because _unit_scan has refused every form the replay would not preserve (a continuation, a specifier,
+# a second assignment on the line) before this runs.
 _path_line() {
     if [[ -n "$_KEEP_ON" ]]; then
-        [[ -n "$_SVC_PATH" ]] || return 0
+        [[ -n "$_SVC_PATH_SET" ]] || return 0
         if [[ "$1" == unit ]]; then printf '%s\n' "$_SVC_PATH_LINE"; return 0; fi
     elif [[ "$1" == unit ]]; then
         _unit_env_line PATH "$_SVC_PATH"; printf '\n'; return 0
@@ -640,7 +743,7 @@ _instance_env_block() {
     local v out="" i=0 val
     for v in "${_INSTANCE_VARS[@]}"; do
         val="$(_instance_value "$v" "$i")"
-        if [[ -n "$val" ]]; then
+        if _instance_set "$v" "$i"; then    # presence, so a kept empty assignment is written back empty (the second pass, 2026-09-19)
             if [[ "$1" == plist ]]; then
                 out+="    <key>$v</key><string>$(_xml_escape "$val")</string>"$'\n'
             else
@@ -1101,6 +1204,9 @@ case "${1:-status}" in
           Linux)  if [[ -f "$UNIT" ]]; then _keep_identity unit || exit "$EXIT_IDENTITY"; fi ;;
         esac
     fi
+    # a manager path systemd would refuse in ExecStart= writes no unit (the second pass over the addendum, 2026-09-19;
+    # _exec_path_unsafe says which characters and why), before the audit row, so a refused install journals nothing
+    if [[ "$os" == Linux ]]; then _exec_path_refuse || exit "$EXIT_IDENTITY"; fi
     audit_install install
     case "$os" in
       Darwin)
@@ -1255,7 +1361,10 @@ case "${1:-status}" in
         _keep_identity plist || exit "$EXIT_IDENTITY" ;;
       Linux)
         [[ -f "$UNIT" ]] || { echo "romp-service: no login service is installed (romp-service install writes and enables one)" >&2; exit 3; }
-        _keep_identity unit || exit "$EXIT_IDENTITY" ;;
+        _keep_identity unit || exit "$EXIT_IDENTITY"
+        # the path the rewrite would write (the file's own ExecStart agreed, or this clone's when the file has no ExecStart
+        # line): one systemd refuses writes no unit, on --check too (the second pass over the addendum, 2026-09-19)
+        _exec_path_refuse || exit "$EXIT_IDENTITY" ;;
       *) echo "romp-service: unsupported OS '$os'" >&2; exit 1 ;;
     esac
     if [[ "${2:-}" == --check ]]; then

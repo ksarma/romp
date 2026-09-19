@@ -1602,8 +1602,22 @@ a backslash or a `%` in systemd's quoted form (`Environment="KEY=..."`, the
 backslash and the quote escaped, `%` doubled), so systemd reads the value
 whole where a bare one ends at the first space or drops the line at an
 apostrophe; `EnvironmentFile=`'s path has its `%` doubled and nothing else,
-which is how systemd reads that line. The tests parse each written file the
-way the daemon does. After the reload, on the install road
+which is how systemd reads that line. An empty assignment
+(`Environment=PATH=`, an instance line set to nothing, an empty
+`<string></string>` entry) is a value, the variable set to the empty string:
+it is kept as written, never dropped as an absent line, and a deploying shell
+that carries a value for that variable differs from it and is refused. An
+`ExecStart` command path with a quote, a backslash or a control character is
+refused on install and on rewrite (exit 5, nothing written), since systemd
+itself refuses such an executable name and the unit would never start; the
+same characters stay accepted in `ROMP_DIR`, the instance variables and the
+`service.env` path. Without `plutil` the reader also refuses an entry it
+reads that is present on more than one line, and a `ProgramArguments` array
+in which `up` is not the single last argument; through `plutil` the array
+must have that shape too, so an array with no `up` is refused rather than
+read as an absent `ExecStart` and re-pointed at the deploying clone. The
+tests parse each written file the way the daemon does. After the reload, on
+the install road
 and the rewrite road alike, `romp-service` reads systemd's
 `NeedDaemonReload` flag back and the `FragmentPath` systemd loads the unit
 from, and says on stderr, at exit 0, when systemd still holds an older
