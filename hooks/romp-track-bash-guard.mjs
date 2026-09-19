@@ -347,7 +347,9 @@
 // through HOME at no cost; `declare -i x=5` (and `-a`, `-A`) then `$x`, `let x=5` then `$x`, a pipeline-tail assignment (which
 // zsh keeps) and a piped plain group then `$x` each refuse from a tracked cwd where the shell's value was known.
 // THE ADDENDUM (romp-manager's four items, the same day): (1) a plain top-level `HOME=<path>` assignment is the one readable
-// write to HOME (readableHomeWrites): `~` and `$HOME` in LATER commands resolve through it, a bare `cd` moves to it, and a
+// write to HOME (readableHomeWrites): `~` and `$HOME` in LATER commands resolve through it, a bare `cd` moves to it (resolved
+// against the cwd like `cd <dir>`; a bare `pushd` is no such move: bash and dash stay, zsh goes home, so it leaves the
+// directory unknown, a live overwrite since before this pass closed with it), and a
 // `$(...)` and a script handed to a named shell inherit it (the shells keep HOME exported), while the prefix form `HOME=<path>
 // cmd` stays unreadable with its own reason (unreadableExpandedNames, kind 'homePrefix'), since bash, zsh and dash expand cmd's
 // `$HOME` and `~` before the prefix applies and cmd itself runs under the new HOME; (2) the refusal for a cd under `builtin`,
@@ -3093,8 +3095,17 @@ function extract(command, ctx) {
           const m = expandGlob(a, unknownDir ? null : dir);
           a = m && m.length === 1 ? m[0] : word(a.text, false, a.raw, { marks: a.marks });
         }
-        // a bare `cd`, or a `cd ~/x`, goes to HOME: a directory the guard cannot read once the command names HOME (rule (a))
-        if (!a) { if (block) moveUnknown(block); else if (homeUnreadableNow()) moveUnknown(`an earlier bare \`${name}\` goes to HOME, and ${homeUnknownText()}`); else moveTo(valueOf('HOME')); }   // a plain `HOME=<dir>` earlier moves a bare cd to <dir>
+        // a bare `cd`, or a `cd ~/x`, goes to HOME: a directory the guard cannot read once the command names HOME (rule (a)); after a
+        // plain `HOME=<dir>` (the addendum, item 1) the bare cd is a `cd <dir>`, resolved against the current directory like any
+        // literal cd (the dollar matrix's row 2847, `HOME='p$abc'; cd; printf poison > rep.md`, moved the guard to the bare string
+        // and the relative write was judged nowhere while bash wrote the tracked folder under the cwd)
+        // A bare `pushd` is not a bare `cd`: bash exchanges the top two entries of the directory stack and fails when there is one
+        // (the shell stays), dash has no pushd (the shell stays), zsh goes to the home directory; measured 2026-09-19, when the
+        // guard read it as a move to HOME and `pushd; cp base/report.md docs/report.md` was allowed while bash and dash wrote
+        // the tracked file. Where the shell is after it is not known.
+        if (!a && name === 'pushd' && !block) block = 'an earlier bare `pushd` exchanges the top two directories of the stack, or fails when there is one (bash; dash has no pushd), or goes to HOME (zsh), so where the shell is after it is not known';
+        if (!a && !block && !homeUnreadableNow()) { const hv = valueOf('HOME'); a = word(hv, true, name, { marks: 'q'.repeat(hv.length) }); }
+        if (!a) { if (block) moveUnknown(block); else moveUnknown(`an earlier bare \`${name}\` goes to HOME, and ${homeUnknownText()}`); }
         else if (a.text === '-') moveUnknown(`an earlier \`${name} -\` returns to a directory this command did not set`);
         else if (homeWord(a)) moveUnknown(`an earlier \`${name} ${a.raw}\` goes through HOME, and ${homeUnknownText()}`);
         else if (!a.literal) moveUnknown(`an earlier \`${name}\` names ${a.raw}, a directory the shell fills in when the command runs`);

@@ -3925,12 +3925,26 @@ test("the addendum, item 1: a plain top-level `HOME=<path>` assignment is the on
     const A = ['bash', 'zsh', 'dash'];
     const n1 = path.join(w.NA, 'notes', 'n1.md');
     // readable: resolved through the assigned HOME, refused by name on the tracked note; every shell writes it
-    for (const raw of ['HOME={NA}/notes; printf poison > $HOME/n1.md', 'HOME={NA}/notes; printf poison > ~/n1.md', 'HOME={NA}/notes; cd; printf poison > n1.md', "HOME={NA}/notes; sh -c 'printf poison > ~/n1.md'", 'HOME={NA}/notes; echo $(printf poison > ~/n1.md)', 'HOME={NA}/notes; x=~/n1.md; printf poison > $x']) {
+    // (the relative `HOME=notes; cd; ...` row: the dollar matrix's row 2847 at the addendum's first head moved the guard to the bare
+    // string `notes` and bash wrote the tracked note under the cwd; a bare cd after a plain HOME= is a `cd <dir>` against the cwd)
+    for (const raw of ['HOME={NA}/notes; printf poison > $HOME/n1.md', 'HOME={NA}/notes; printf poison > ~/n1.md', 'HOME={NA}/notes; cd; printf poison > n1.md', 'HOME=notes; cd; printf poison > n1.md', "HOME={NA}/notes; sh -c 'printf poison > ~/n1.md'", 'HOME={NA}/notes; echo $(printf poison > ~/n1.md)', 'HOME={NA}/notes; x=~/n1.md; printf poison > $x']) {
       const cmd = w.fill(raw);
       const h = w.hook(cmd, w.NA);
       assert.ok(h.status === 2 && BY_NAME_RE.test(h.reason) && h.reason.includes(n1), `the plain HOME= write resolves and the write is refused by name: ${cmd}: ${h.reason.split('\n')[0]}`);
       for (const shell of shellsFor(A, raw)) assert.equal(w.run(cmd, w.NA, shell).changed, true, `${shell} writes the tracked note through the assigned HOME: ${cmd}`);
     }
+    // a bare `pushd` is not a bare `cd` (found here, a live overwrite since before this pass): bash exchanges the stack's top two entries and
+    // fails with one (the shell stays), dash has no pushd (it stays), zsh goes home; the guard now leaves the directory unknown and refuses
+    // the relative write, which bash and dash land on the tracked file from the cwd they never left
+    const pushdRow = 'pushd; cp base/report.md docs/report.md';
+    const hpd = w.hook(pushdRow, w.NA);
+    assert.ok(hpd.status === 2 && /an earlier bare `pushd` exchanges the top two directories of the stack/.test(hpd.reason) && /the directory it is relative to is not known/.test(hpd.reason), `a bare pushd leaves the directory unknown: ${hpd.reason.split('\n')[0]}`);
+    for (const shell of shellsFor(A, 'a bare pushd')) assert.equal(w.run(pushdRow, w.NA, shell).changed, shell !== 'zsh', `${shell}: ${shell === 'zsh' ? 'went home, nothing tracked written' : 'stayed put and wrote the tracked file'}`);
+    assert.equal(w.hook('HOME=notes; pushd; printf poison > n1.md', w.NA).status, 2, 'a bare pushd after a plain HOME= is unknown too, not a move to HOME');
+    // a relative HOME= naming a directory that is not there: the cd fails and the shell stays, so the guard leaves the directory unknown and refuses the relative write (the safe side), the shells writing the untracked n1.md in the cwd
+    const missing = w.hook('HOME=nosuch; cd; printf x > n1.md', w.NA);
+    assert.ok(missing.status === 2 && /names a directory the command cannot enter when I check it/.test(missing.reason), `a bare cd to a HOME that is not there leaves the directory unknown: ${missing.reason.split('\n')[0]}`);
+    for (const shell of shellsFor(A, 'a bare cd to a missing HOME')) assert.equal(w.run('HOME=nosuch; cd; printf x > n1.md', w.NA, shell).changed, false, `${shell}: the cd failed and the write landed in the cwd, untracked`);
     // readable and harmless: the value leads outside every project, so the write is allowed and lands there
     const outRow = w.fill('HOME={OUT}/h; mkdir -p ~; printf x > ~/seed.md');
     assert.equal(w.hook(outRow, w.NA).status, 0, `allowed: ${outRow}`);

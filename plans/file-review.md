@@ -3872,7 +3872,9 @@ document stands on its own, each with the reasoning it was given.
     and stated in the PR body: a `~/` value resolves through HOME at no cost; `declare -i x=5` (and `-a`, `-A`) then `$x`,
     `let x=5` then `$x`, a pipeline-tail assignment (which zsh keeps) and a piped plain group then `$x` each refuse from a
     tracked cwd where the shell's value was known. The addendum the same day, four items: a plain top-level `HOME=<path>`
-    assignment is the one readable write to HOME (`readableHomeWrites`), read for the commands after it, inherited by a
+    assignment is the one readable write to HOME (`readableHomeWrites`), read for the commands after it (a bare `cd` is
+    resolved against the cwd like `cd <dir>`; a bare `pushd`, which bash and dash fail and zsh takes home, leaves the
+    directory unknown, a live overwrite since before this pass), inherited by a
     `$(...)` and by a script handed to a named shell (the shells keep HOME exported), with the prefix form `HOME=<path> cmd`
     excluded and refused with its own reason (`unreadableExpandedNames`, kind `homePrefix`), since bash, zsh and dash expand
     cmd's `$HOME` and `~` before the prefix applies and cmd runs under the new HOME; the refusal for a cd under `builtin`,
