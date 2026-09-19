@@ -1703,13 +1703,17 @@ class Cli(unittest.TestCase):
         phrase built from the entries' positions in the count (1, 2 and 3) or from every listed line reds here; no entry's text
         is in the line, and the list's path is not. A repeated entry is counted once per line (1234.56, 1234.56, 424242: 3 of 3,
         list lines 1, 2 and 3), machine_probes' docstring's own example. The phrase alone: one line, two, three and four, the
-        last two joined by `and` and the rest by commas, one phrase inside the one line. Removing the lines from the template,
-        rendering them from the count's positions, spelling an entry's text in the line or adding the path each reds a pin here
-        by name."""
+        last two joined by `and` and the rest by commas, one phrase inside the one line, and past pp.LIST_LINES_NAMED, six, the
+        first six and `and N more` (the phrase alone here; the list-driven cases are the next test's). Removing the lines from
+        the template, rendering them from the count's positions, spelling an entry's text in the line or adding the path each
+        reds a pin here by name; so do the cap removed, a cap of five and a remainder off by one, on the phrase pins."""
         self.assertEqual(pp.list_lines_phrase([4]), "list line 4")
         self.assertEqual(pp.list_lines_phrase([3, 6]), "list lines 3 and 6")
         self.assertEqual(pp.list_lines_phrase([2, 5, 9]), "list lines 2, 5 and 9")
         self.assertEqual(pp.list_lines_phrase([2, 5, 9, 12]), "list lines 2, 5, 9 and 12")
+        self.assertEqual(pp.list_lines_phrase([2, 5, 9, 12, 15, 18]), "list lines 2, 5, 9, 12, 15 and 18", "six: the plain list")
+        self.assertEqual(pp.list_lines_phrase([2, 5, 9, 12, 15, 18, 21]), "list lines 2, 5, 9, 12, 15, 18 and 1 more", "seven: six and the rest counted")
+        self.assertEqual(pp.list_lines_phrase([2, 5, 9, 12, 15, 18, 21, 24, 27]), "list lines 2, 5, 9, 12, 15, 18 and 3 more")
         listed = os.path.join(self.state, "list.txt")
         entries = ["# strings that must never be published", "4242", "zzcoinedzz", "", "98.76", "4242424", "abc12", "1e+16", "-42.5", "zz4242424"]
         with open(listed, "w", encoding="utf-8") as fh:
@@ -1738,6 +1742,51 @@ class Cli(unittest.TestCase):
             pp.machine_probes(None, env=env)
         self.assertEqual(err.getvalue(), pp.LIST_UNDER_NUMERIC_FLOOR % (3, 3, "list lines 1, 2 and 3", 7, 7) + "\n",
                          "a repeated entry is counted once per line and named by each")
+
+    def test_the_stderr_line_names_at_most_six_list_lines_in_file_order_and_counts_the_rest(self):
+        """The cap on the enumeration (pp.LIST_LINES_NAMED, six; the review of 2026-09-19): an advisory that wraps is one nobody
+        reads, so past six counted entries the line names the first six lines in file order and counts the rest, `and N more`,
+        N the counted entries past the six. Over a list with nine counted entries on lines 2, 5, 9, 12, 15, 18, 21, 24 and 27
+        and words and comments between them (25 entries): the line is exactly the template with 9, 25, `list lines 2, 5, 9, 12,
+        15, 18 and 3 more` and the floor twice, one newline and it at the end, the counted set recomputed from the list through
+        the module's own predicates (number_shaped, numeric_probe over number_spellings) equal to those nine lines, the
+        remainder the three past six, and the lines past the cap absent by name. The same list cut to six counted entries (6 of
+        17) renders all six and counts nothing as more, so every pin at or under six holds byte for byte. The cap removed
+        (nine lines listed), a cap of five (`15 and 4 more` here, `15 and 1 more` at six) and a remainder off by one (`and 4
+        more`) each red the exact line."""
+        listed = os.path.join(self.state, "list.txt")
+        env = {"HOME": HOME, "USER": "tester", "ROMP_PRIVATE_STRINGS": listed}
+        counted_at = [2, 5, 9, 12, 15, 18, 21, 24, 27]                                   # nine counted entries, words and comments between
+        values = ["4242", "98.76", "-42.5", "1.5", "777", "12.34", "0.5", "9999", "-1"]
+        rows = [values[counted_at.index(n)] if n in counted_at else "# a comment on line %d" % n if n % 10 == 0
+                else "zz" + "abcdefghijklmnopqrstuvwxyz"[n % 26] * 3 for n in range(1, 28)]
+        with open(listed, "w", encoding="utf-8") as fh:
+            fh.write("\n".join(rows) + "\n")
+        err = io.StringIO()
+        with mock.patch.object(pp.socket, "gethostname", return_value="TESTHOST.example"), contextlib.redirect_stderr(err):
+            pp.machine_probes(None, env=env)
+        line = err.getvalue()
+        self.assertEqual(line, pp.LIST_UNDER_NUMERIC_FLOOR % (9, 25, "list lines 2, 5, 9, 12, 15, 18 and 3 more", 7, 7) + "\n",
+                         "nine counted: the first six lines in file order, then the rest counted")
+        self.assertIn("(list lines 2, 5, 9, 12, 15, 18 and 3 more) are spelled", line)
+        self.assertEqual(line.count("\n"), 1, "one line: no newline inside it")
+        self.assertTrue(line.endswith("\n"))
+        self.assertEqual(len(rows) - sum(1 for r in rows if r.startswith("#")), 25, "the list's length is every entry")
+        counted = [n for n, t in pp.private_entries(env) if pp.number_shaped(t.lower())
+                   and not any(pp.numeric_probe(sp) for sp in pp.number_spellings(t.lower(), pp._number_value(t.lower())))]
+        self.assertEqual(counted, counted_at, "the counted set is the counted set")
+        self.assertEqual(len(counted) - 6, 3, "and the remainder is the counted entries past the six named")
+        for absent in (", 21", ", 24", ", 27", "and 27", "and 9 more", "and 2 more", "and 4 more"):
+            self.assertNotIn(absent, line, "the lines past the cap are counted, not named: %s" % absent)
+        rows = rows[:18]                                                                  # six counted entries: no cap, no `more`
+        with open(listed, "w", encoding="utf-8") as fh:
+            fh.write("\n".join(rows) + "\n")
+        err = io.StringIO()
+        with mock.patch.object(pp.socket, "gethostname", return_value="TESTHOST.example"), contextlib.redirect_stderr(err):
+            pp.machine_probes(None, env=env)
+        self.assertEqual(err.getvalue(), pp.LIST_UNDER_NUMERIC_FLOOR % (6, 17, "list lines 2, 5, 9, 12, 15 and 18", 7, 7) + "\n",
+                         "six counted: every line named, none counted")
+        self.assertNotIn(" more) are", err.getvalue(), "at the cap nothing is counted as more (the template's own `or more digits` stays)")
 
     def test_the_private_strings_list_feeds_the_probes_when_present_and_is_a_no_op_absent(self):
         """The machine-local list the repository's pre-push hook reads (~/.config/romp/private-strings.txt: one string per

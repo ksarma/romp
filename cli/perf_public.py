@@ -845,6 +845,8 @@ LIST_NOT_IN_FORCE = "romp: %d of %d private-strings entries did not become probe
 # entries it counts by the line of the list each is on and never by its text (the text is what the list exists to keep off
 # every output, stderr included; a refusal names its entry the same way, Hit.line), and it does not name the list's path:
 # there is one list location, the docs name it, and a home path on stderr every run is noise (the review of 2026-09-19).
+# The enumeration is capped: the first LIST_LINES_NAMED lines in file order, then `and N more` for the rest, so the line
+# stays one line at a realistic entry count (an advisory that wraps is one nobody reads).
 LIST_UNDER_NUMERIC_FLOOR = ("romp: %d of %d private-strings entries (%s) are spelled like a number but carry fewer than %d digits, so they are "
                             "checked in keys and string values and not in numbers; a number is checked against a listed entry only when the entry, "
                             "or the plain decimal spelling of an entry written with an exponent, carries %d or more digits, and the match is against "
@@ -1005,16 +1007,26 @@ def numeric_probe(s):
     return digit_count(s) >= NUMERIC_PROBE_MIN_DIGITS
 
 
+# How many list lines LIST_UNDER_NUMERIC_FLOOR names before it counts the rest (list_lines_phrase): an advisory that wraps is
+# one nobody reads, so at a realistic entry count the line stays one line, the first six lines in file order and `and N more`.
+LIST_LINES_NAMED = 6
+
+
 def list_lines_phrase(lines):
-    """`list line 4`, `list lines 3 and 6`, `list lines 3, 6 and 9`: the ONE-BASED LINES of the private list (private_entries,
-    the number an editor shows) that LIST_UNDER_NUMERIC_FLOOR names for the entries it counts, in file order, one phrase
-    inside the one line. The line points at each counted entry this way so that it spells no entry's text (the list exists
-    to keep those off every output, stderr included; a refusal names its entry by line for the same reason, Hit.line) and
-    names no path (there is one list location, the docs name it, and a home path on stderr every run is noise; the review
-    of 2026-09-19). `lines` is never empty: the line is written only when something is counted."""
+    """`list line 4`, `list lines 3 and 6`, `list lines 3, 6 and 9`, and past LIST_LINES_NAMED lines `list lines 2, 5, 9, 12,
+    15, 18 and 3 more`: the ONE-BASED LINES of the private list (private_entries, the number an editor shows) that
+    LIST_UNDER_NUMERIC_FLOOR names for the entries it counts, in file order, one phrase inside the one line. The line points
+    at each counted entry this way so that it spells no entry's text (the list exists to keep those off every output, stderr
+    included; a refusal names its entry by line for the same reason, Hit.line) and names no path (there is one list
+    location, the docs name it, and a home path on stderr every run is noise; the review of 2026-09-19). The enumeration is
+    CAPPED: at most LIST_LINES_NAMED lines are named, the first in file order, and the rest are counted (`and N more`, N the
+    counted entries past the cap), since an advisory that wraps is one nobody reads; at or under the cap the phrase is the
+    plain list, `and` before the last line. `lines` is never empty: the line is written only when something is counted."""
     lines = [str(n) for n in lines]
     if len(lines) == 1:
         return "list line " + lines[0]
+    if len(lines) > LIST_LINES_NAMED:
+        return "list lines %s and %d more" % (", ".join(lines[:LIST_LINES_NAMED]), len(lines) - LIST_LINES_NAMED)
     return "list lines %s and %s" % (", ".join(lines[:-1]), lines[-1])
 
 
@@ -1095,7 +1107,8 @@ def machine_probes(state_dir=None, env=None):
     LIST_UNDER_NUMERIC_FLOOR says once how many of how many are checked in keys and string values and not in numbers,
     WHICH by the list line each is on (list_lines_phrase, in file order: never an entry's text, which the list exists to
     keep off every output, and never the list's path, which the docs name and which would put a home path on stderr
-    every run; the review of 2026-09-19)
+    every run; the review of 2026-09-19; at most LIST_LINES_NAMED lines named and the rest counted, `and N more`, so the
+    line stays one line however long the list)
     (the comment at the floor: below it a match in a number is coincidence, so identifier_hits does not apply such an
     entry to a number) and what does protect a number: a listed entry of seven or more digits, in its own spelling or
     its plain expansion, matched against the number's own spelling, since a listed bare run protects only a number
