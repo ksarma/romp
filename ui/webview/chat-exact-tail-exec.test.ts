@@ -293,6 +293,28 @@ test("compact mode: the window start is a unit and the plan wants an event index
   assert.ok(w3.nodes.every((n) => !n.querySelector(":scope > .turn-elapsed")));
 });
 
+test("compact mode: a continuation with no user line (the first changed event is a hidden thinking block, working flips in the same frame) takes the footer off the reply before it when the patch is told the first CHANGED event; told `len`, it names the thinking row and leaves the footer", () => {
+  // the seam's from (review round 0, low): syncViewInner passes Math.min(v.rendered, first re-rendered event); with no unit reaching the
+  // change the second term is `len`, and the plan then scans down from len - 1 to the thinking event, which has no node in compact mode
+  const thinking = (t: number) => ({ kind: "thinking", t });
+  const idle = [user(100), tool(110), reply(160)];
+  const items = [{ kind: "event", index: 0 }, { kind: "event", index: 1 }, { kind: "event", index: 2 }];
+  const w = footWorld(idle, 3, 2);
+  w.patch(w.v, w.s, 3, false, items);
+  assert.equal(w.nodes[2].querySelector(":scope > .turn-elapsed")?.textContent, "60", "the idle session's reply carries its footer");
+  w.s.events = [user(100), tool(110), reply(160), thinking(200)];   // the session resumes the same turn: a thinking atom lands, status working
+  w.patch(w.v, w.s, 3, true, items);                                 // from = the first changed event (v.rendered = 3): the plan names the reply
+  assert.equal(w.nodes[2].querySelector(":scope > .turn-elapsed"), null, "the reply is no longer the turn's last event and the session works: the footer comes off");
+  // the same shape with from = len (the first re-rendered event when no unit reaches the change): the plan names the thinking row, no node
+  const w2 = footWorld(idle, 3, 2);
+  w2.patch(w2.v, w2.s, 3, false, items);
+  w2.s.events = [user(100), tool(110), reply(160), thinking(200)];
+  w2.patch(w2.v, w2.s, 4, true, items);
+  assert.equal(w2.nodes[2].querySelector(":scope > .turn-elapsed")?.textContent, "60", "told `len`, the patch leaves the stale footer: the argument the seam must not pass");
+  assert.deepEqual(workedFooterPlan(w2.s.events, 4, 0, true, (ev: any) => ev.t ?? null), [{ unit: 3, secs: null }], "…because the plan names the hidden event");
+  assert.deepEqual(workedFooterPlan(w2.s.events, 3, 0, true, (ev: any) => ev.t ?? null), [{ unit: 2, secs: null }], "from the first changed event it names the reply");
+});
+
 // ── the stand-in's nodes inspect as their own projection (ui/test-dom-shim.ts) ────────────────────
 test("a stand-in node enumerates its primitives alone, and a dump of one names neither its children nor its parent", () => {
   const root = new FakeEl("div"), turn = new FakeEl("div", "turn"); root.appendChild(turn); turn.dataset.unit = "3"; turn.textContent = "alpha";

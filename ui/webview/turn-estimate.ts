@@ -51,7 +51,8 @@ export function meanRowHeight(rows: readonly EstRow[]): number | null {
 
 /** The heights of the turns the window holds whole, in order: from each visible user row to the next. The leading rows (a prompt
  *  above the window) and the trailing rows (the turn still open, the one streaming) are not counted; a turn with an unreported row is
- *  dropped rather than counted short. Only turn rows count (spacers, gaps and dividers are not turn content, as before). */
+ *  dropped rather than counted short. Only turn rows count (spacers, gaps and dividers are not turn content, as before). A turn of NO
+ *  height (every row reported at 0: the view has no box, an ancestor hid it) is listed as it is; perTurnEstimate refuses the figure. */
 export function completeTurnHeights(rows: readonly EstRow[]): number[] {
   const out: number[] = [];
   let open = false;                 // inside a turn (a visible user row has been seen)
@@ -84,9 +85,12 @@ export const MIN_COMPLETE_TURNS = 2;
 /** The head gap's per-turn estimate from a window's rows: the median over its complete turns when it holds at least MIN_COMPLETE_TURNS
  *  of them, else null (the caller keeps what it had). Whole pixels: rows lay out at fractions of a pixel, so two windows of the same
  *  turns can differ by a thirty-second of a pixel per turn, and a changed figure re-sizes the spacer above the reader (over a
- *  200-turn gap that thirty-second is 7 px of movement to compensate for nothing). */
+ *  200-turn gap that thirty-second is 7 px of movement to compensate for nothing). Never 0 (review round 0, high): a figure must be
+ *  positive to stand, meanRowHeight's `h > 0` and the rule the old estimator kept (a 0 is never cached). A window whose rows all
+ *  report 0 has no box (an ancestor hid it: Chromium delivers every unit at 0 with the view at width 0); read as three complete turns
+ *  of 0 px its median was 0, a figure applyMeasure takes (neither null nor the old figure) and gapHeight draws every gap at 0 px with. */
 export function perTurnEstimate(rows: readonly EstRow[]): number | null {
   const hs = completeTurnHeights(rows);
   const m = hs.length >= MIN_COMPLETE_TURNS ? median(hs) : null;
-  return m == null ? null : Math.round(m);
+  return m == null || !(m > 0) ? null : Math.round(m);
 }

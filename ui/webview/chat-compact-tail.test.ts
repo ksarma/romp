@@ -230,9 +230,17 @@ test("syncViewInner asks the plan in compact mode between the fast path and the 
   assert.match(sync, /if \(plan\.kind === "spacer"\) \{\s*\n\s*v\.spacerCountBot = total - \(v\.winEnd \?\? total\); v\.unitTotal = total; v\.rendered = len; v\.units = items; sizeSpacers\(v\); return v;/, "below a browsed window: the bottom spacer grows, as normal mode's does");
   const app = sync.slice(sync.indexOf('if (plan.kind === "append") {'), rebuild);
   assert.match(app, /const span = Math\.max\(WINDOW_TAIL, \(v\.winEnd \?\? total\) - \(v\.winStart \?\? 0\)\);/, "the span is read before the append");
-  assert.match(app, /trimUnitsFrom\(v\.el, u0\);\s*\n\s*let prevEpoch = u0 > 0 && u0 < total \? prevTimedEpoch\(s\.events, itemFirstEvent\(items\[u0\]\)\) : null;\s*\n\s*const walk = dayWalkBefore\(s, items, u0\);/, "the trim, then renderWindowItems' seeds for the first re-rendered unit");
+  // the first re-rendered unit is seeded with the rail chain a window build reaches there (railChainBefore: the seed at winStart advanced
+  // over the units before u0 by appendItem's rule; rail-chain.test.ts executes it) and the day walk's mark (dayWalkBefore), never a scan of
+  // s.events from the unit's first event, which sees hidden thinking rows and a collapsed run's last member (review round 0)
+  assert.match(app, /trimUnitsFrom\(v\.el, u0\);\s*\n(?:\s*\/\/[^\n]*\n)*\s*let prevEpoch = railChainBefore\(s, items, v\.winStart \?\? 0, u0\);\s*\n\s*const walk = dayWalkBefore\(s, items, u0\);/, "the trim, then the build's own chain and walk for the first re-rendered unit");
+  assert.doesNotMatch(app, /prevTimedEpoch\(/, "the seam scans no events for its seed");
   assert.match(app, /const turns = s\.regions \? turnOfEvents\(s\) : null;\s*\n\s*for \(let u = u0; u < total; u\+\+\) prevEpoch = appendItem\(v, s, items, u, prevEpoch, walk, working, turns\);/, "the same appendItem loop as a window build");
-  assert.match(app, /patchWorkedFooters\(v, s, u0 < total \? itemFirstEvent\(items\[u0\]\) : len, working, items\);/, "the footer patch by unit, from the first re-rendered event");
+  // the footer patch names the reply before the FIRST CHANGED EVENT (v.rendered, still pre-append here), as normal mode's `from` does: when no
+  // unit reaches the change (u0 = total: a hidden thinking block) the first re-rendered event would be `len`, and the plan would name the
+  // thinking row, which has no node, and never re-evaluate the reply before it (review round 0, low; chat-exact-tail-exec.test.ts runs the shape)
+  assert.match(app, /patchWorkedFooters\(v, s, Math\.min\(v\.rendered, u0 < total \? itemFirstEvent\(items\[u0\]\) : len\), working, items\);/, "the footer patch by unit, from the first changed event or the first re-rendered one, whichever is earlier");
+  assert.ok(app.indexOf("patchWorkedFooters(v, s, Math.min(v.rendered,") < app.indexOf("v.rendered = len;"), "…read before the bookkeeping moves v.rendered to len");
   assert.match(app, /v\.winEnd = total; v\.spacerCount = v\.winStart \?\? 0; v\.spacerCountBot = 0; v\.unitTotal = total; v\.rendered = len; v\.units = items; v\.measureDue = true;/, "the bookkeeping records the units and asks for a measure");
   assert.match(app, /if \(!\(wasAtTail && atBottom === false\)\) evictCompactTop\(v, Math\.max\(0, total - span\)\);\s*\n\s*return v;/, "the top is evicted to the span unless the reader is scrolled up (keepTop)");
   assert.match(RENDER, /v\.units = items;\s*\/\/[^\n]*\n\s*v\.measureDue = true;/, "renderWindowItems records the units its DOM holds");

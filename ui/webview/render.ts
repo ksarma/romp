@@ -13442,13 +13442,18 @@ function ensureView(id: string): View {
         // re-show, neither a change in the unit (the review's find: one switch back would have filed a row per unit
         // and burnt the minute's cap). The hide forgets the reported baselines and files nothing; the re-show
         // observation records fresh ones, like a first show. Covers the tab switch and stripAftermath's blank.
-        if (view3.el.style.display === "none") { for (const e of entries) unitHeights.delete(e.target); return; }
+        // …and an ANCESTOR's hide (the shell's display:none pane iframe, the editor's section toggle) is the same case
+        // read off the view's width: the view's own display is still "" and Chromium delivers every unit at 0 with the
+        // view at width 0 (WebKit runs no observer in a hidden frame). Read as a reflow, those zeros became the
+        // baselines and the window's figures: a median of 0 per turn, taken at once by a bottom reader, drew every gap
+        // at 0 px and the 200-turn head in none (review round 0, high). No zero enters the heights map.
+        const w = view3.el.clientWidth;
+        if (view3.el.style.display === "none" || w === 0) { for (const e of entries) unitHeights.delete(e.target); return; }
         // …and a width change reflows every unit at once (a resize, a scrollbar appearing): the new heights become
         // the baselines and nothing is filed — a hundred honest rows would say nothing about any one unit. The window's
         // figures are re-read (every row's height moved).
         // The heights recorded are BORDER-BOX (entryBoxHeight), and the window's figures are measured HERE, where the
         // heights arrive at frame end after layout, never in the render task (measureUnits; PR E).
-        const w = view3.el.clientWidth;
         if (w !== unitW) { unitW = w; for (const e of entries) unitHeights.set(e.target, entryBoxHeight(e)); view3.measureDue = true; measureUnits(view3); takeMeasureAtBottom(view3); return; }
         const changes = unitChanges(entries.map((e) => ({ target: e.target, height: entryBoxHeight(e) })), view3.el.children, unitHeights, unitOf);
         measureUnits(view3); takeMeasureAtBottom(view3);
@@ -13548,7 +13553,7 @@ function syncViewInner(id: string, atBottom?: boolean): View {
   // The figures the unit observer measured since the last paint reach the spacers and the gap units HERE, inside
   // appendActive's paint (PR E), the one caller that passes `atBottom`: it reads the scroller after this sync and follows
   // the tail or restores the reader's anchor over whatever moved, so a spacer written here is accounted for. (A
-  // follow-mode reader at the bottom took them already, at frame end, with the bottom written after: takeMeasureAtBottom.)
+  // follow-mode reader at the bottom has THIS paint asked for at frame end, so the figures reach them within a frame: takeMeasureAtBottom.)
   // A spacer written anywhere else moves the reader: a switch's or a landing's sync passes no `atBottom`, so those leave
   // the figures parked for the next tail paint or window build. Every later branch, the fast path included, sees the write.
   if (atBottom !== undefined && applyMeasure(v)) { redrawGapUnits(v); sizeSpacers(v); }
@@ -13585,11 +13590,16 @@ function syncViewInner(id: string, atBottom?: boolean): View {
       const span = Math.max(WINDOW_TAIL, (v.winEnd ?? total) - (v.winStart ?? 0));
       const u0 = plan.u0;
       trimUnitsFrom(v.el, u0);
-      let prevEpoch = u0 > 0 && u0 < total ? prevTimedEpoch(s.events, itemFirstEvent(items[u0])) : null;
-      const walk = dayWalkBefore(s, items, u0);   // the mark a walk from the top would hold here (T339), as renderWindowItems seeds it
+      // the rail chain a window build reaches at u0 (railChainBefore), so the first re-rendered unit's stamp is what a rebuild of the
+      // same rows draws; the day walk's mark likewise (dayWalkBefore, T339)
+      let prevEpoch = railChainBefore(s, items, v.winStart ?? 0, u0);
+      const walk = dayWalkBefore(s, items, u0);
       const turns = s.regions ? turnOfEvents(s) : null;
       for (let u = u0; u < total; u++) prevEpoch = appendItem(v, s, items, u, prevEpoch, walk, working, turns);
-      patchWorkedFooters(v, s, u0 < total ? itemFirstEvent(items[u0]) : len, working, items);
+      // the footer patch names the last reply BEFORE the first changed event, as normal mode's does (patchWorkedFooters(v, s, from, …)):
+      // the first changed event itself (v.rendered, still the pre-append value here) when no unit reaches it (u0 = total: the change is
+      // a hidden thinking block), else the first re-rendered unit's first event, whichever is earlier (review round 0, low)
+      patchWorkedFooters(v, s, Math.min(v.rendered, u0 < total ? itemFirstEvent(items[u0]) : len), working, items);
       v.winEnd = total; v.spacerCount = v.winStart ?? 0; v.spacerCountBot = 0; v.unitTotal = total; v.rendered = len; v.units = items; v.measureDue = true;
       if (!(wasAtTail && atBottom === false)) evictCompactTop(v, Math.max(0, total - span));
       return v;
@@ -13722,6 +13732,42 @@ function unitExit(s: Session, it: DisplayItem): number | null {
   let mx: number | null = null;
   for (const i of it.indices) { const ep = eventEpoch(s.events[i]); if (ep != null && (mx == null || ep > mx)) mx = ep; }
   return mx;
+}
+// The rail's raw previous-epoch chain, the same-minute rule's reference (timeMarker, data-prev): appendItem advances it over every row
+// it renders (`adv`: a row's epoch when it has one, else unchanged), and a window build chains it unit by unit from the seed below. The
+// compact tail's seam re-renders from a unit in the MIDDLE of the window (syncViewInner, PR E) and must seed that unit with the chain a
+// build reaches there: the seed at the window's start advanced over the units before it by appendItem's own rule (railExit), never a
+// scan of s.events (prevTimedEpoch) from the unit's first event. The scan sees rows the window never shows, a hidden thinking block (the
+// kernel stamps them), and the LAST member of a collapsed run where the chain stands on its FIRST (children advance it only when the
+// fold is open), so a reply streaming after a collapsed run that spanned a minute boundary had its stamp suppressed against a time
+// the reader cannot see, and the next rebuild of the same rows showed it with no new information (review round 0, medium).
+/** The seed a window opening at unit `unitStart` chains from: the most recent timed event before the unit's first (the back-scan walks
+ *  the whole s.events, so the first turn below the spacer is stamped against the real prior event); null at the transcript's start. */
+function railSeed(s: Session, items: DisplayItem[], unitStart: number): number | null {
+  return unitStart > 0 && unitStart < items.length ? prevTimedEpoch(s.events, itemFirstEvent(items[unitStart])) : null;
+}
+/** The chain after appendItem has rendered unit `it` from `prevEpoch`: appendItem's `adv` rule per kind. An event: its epoch when it has
+ *  one. A gap: unchanged. A tool run: its first member's, then each member's in order when the fold is open. A notice run: its anchor's,
+ *  then the members' in order when open, then the anchor's again (the walk leaves the run on its latest member). */
+function railExit(s: Session, it: DisplayItem, prevEpoch: number | null): number | null {
+  const adv = (i: number) => { const ep = eventEpoch(s.events[i]); if (ep != null) prevEpoch = ep; };
+  if (it.kind === "gap") return prevEpoch;
+  if (it.kind === "event") { adv(it.index); return prevEpoch; }
+  if (it.kind === "toolgroup") {
+    adv(it.indices[0]);
+    if (openFolds.has(toolGroupKey(s.events[it.indices[0]]))) for (const i of it.indices) adv(i);
+    return prevEpoch;
+  }
+  const anchor = itemAnchor(it, (i) => eventEpoch(s.events[i]));
+  adv(anchor);
+  if (openFolds.has(noticeGroupKey(s.events[it.indices[0]]))) { for (const i of it.indices) adv(i); adv(anchor); }
+  return prevEpoch;
+}
+/** The chain a window build over [winStart, …) reaches at unit `u0`: the seed at winStart advanced over the units before u0. */
+function railChainBefore(s: Session, items: DisplayItem[], winStart: number, u0: number): number | null {
+  let prev = railSeed(s, items, winStart);
+  for (let u = winStart; u < u0 && u < items.length; u++) prev = railExit(s, items[u], prev);
+  return prev;
 }
 // The day the WALK is in at a row (T342, the manager's review of T339): the top-of-view day-context label
 // (paintRailSticky) read the top row's own epoch, so a stale echo at the top line said "2 days ago" between rows the
@@ -13896,7 +13942,7 @@ function renderWindowItems(v: View, s: Session, items: DisplayItem[], unitStart:
   unitEnd = Math.max(unitStart, Math.min(unitEnd, total));
   while (v.el.firstChild) v.el.removeChild(v.el.firstChild);
   if (unitStart > 0) v.el.appendChild(el("div", "tx-spacer tx-spacer-top"));
-  let prevEpoch = unitStart > 0 && unitStart < total ? prevTimedEpoch(s.events, itemFirstEvent(items[unitStart])) : null;
+  let prevEpoch = railSeed(s, items, unitStart);   // the rail chain's seed (railSeed; the compact tail's seam chains from the same one)
   const walk = dayWalkBefore(s, items, unitStart);   // the mark a walk from the top would hold here (T339)
   const turns = s.regions ? turnOfEvents(s) : null;   // once per paint: every row it appends names its turn (round six)
   for (let u = unitStart; u < unitEnd; u++) prevEpoch = appendItem(v, s, items, u, prevEpoch, walk, working, turns);
@@ -13983,26 +14029,31 @@ function queueSpacerRow(sid: string, topBefore: number, topAfter: number, botBef
   });
 }
 
-/** A follow-mode reader at the bottom takes the measured figures at once, at frame end in the unit observer's callback (PR E): the
- *  spacers and gap units are written and the bottom is written after them, so the reader stays at the bottom whatever moved above
- *  (the view observer's tail-shrink follow, T262f, is the precedent for a frame-end follow write). Every other reader's figures wait
- *  for the next paint (applyMeasure in syncViewInner), where appendActive restores their anchor over the change. */
+/** A follow-mode reader at the bottom gets the measured figures on the NEXT PAINT (PR E; review round 0, medium): the unit observer
+ *  parked them (measureUnits) and this asks for appendActive's paint, whose sync takes them (applyMeasure in syncViewInner) and whose
+ *  follow writes the bottom after the spacers (followTail, "append-stick": a reader at the bottom before the sync is written back to it).
+ *  Nothing is written HERE. This runs inside the unit observer's callback, and a spacer re-size there changes the view element's height,
+ *  which v.ro (created before v.uo in ensureView, so delivered before it) has already reported this frame: the browser then raises
+ *  "ResizeObserver loop completed with undelivered notifications" as a window error event (the tab-row sentinel's precedent,
+ *  ensureTabRowObserver) and delivers v.ro's report a frame late, where the spacer's move filed as the tail's change. Every other
+ *  reader's figures wait for the next tail paint or window build, where the anchor restore covers the change; a scroller with no box
+ *  (the pane hidden) reads as the bottom and is asked for nothing. */
 function takeMeasureAtBottom(v: View): void {
   if (!v.measured || !v.stick || !v.shown || !activeId || views.get(activeId) !== v) return;
   const content = document.getElementById("content");
-  if (!content || !atBottom(content)) return;
-  if (!applyMeasure(v)) return;
-  redrawGapUnits(v); sizeSpacers(v);
-  writeScroll(content, content.scrollHeight, "spacer-follow", true);
+  if (!content || content.clientHeight <= 0 || !atBottom(content)) return;
+  scheduleAppendActive();
 }
 
 // The window's two figures, measured where the heights arrive (PR E, 2026-09-19): the unit ResizeObserver's callback
 // (ensureView), at frame end after layout, off the border-box heights it recorded (v.uh) — never a layout property, so the
 // render task forces no layout for them. Due after every window build (renderWindowItems, the compact tail append and its
 // eviction) and after a reflow; a hidden view's observer records nothing, so a view built while hidden measures on its re-show.
-// The figures WAIT in v.measured for the next paint (applyMeasure: syncViewInner, renderWindowItems, landActive), which
-// writes the spacers and gap units where appendActive's scroll maths accounts for them; nothing here touches the DOM.
-// - avgTurnH, the rows' mean over every non-spacer, non-gap child, once per view as before (the resets that clear it re-arm it);
+// The figures WAIT in v.measured for the next paint (applyMeasure: appendActive's sync in syncViewInner, or a window build in
+// renderWindowItems; a landing's sync takes none), which writes the spacers and gap units where appendActive's scroll maths
+// accounts for them; nothing here touches the DOM, and a bottom reader's paint is asked for at once (takeMeasureAtBottom).
+// - avgTurnH, the rows' mean over every non-spacer, non-gap child, once per view as before (the resets that clear it, forgetAverage,
+//   drop a parked one with it and so re-arm the measure);
 // - pxPerTurn, the head gap's per-TURN figure: the MEDIAN over the turns the window holds WHOLE (turn-estimate.ts: a visible
 //   user row to the next; the partial leading turn and the streaming trailing turn are not counted), at least two of them,
 //   else the figure stands as it was (the default until a window has two). The old figure was the window's whole height
@@ -14017,6 +14068,14 @@ function measureUnits(v: View): void {
   if (v.avgTurnH == null && v.measured?.avg == null) { const h = meanRowHeight(rows); if (h != null) v.measured = { ...v.measured, avg: h }; }
   const per = perTurnEstimate(rows);
   if (per != null && per !== (v.measured?.per ?? v.pxPerTurn)) v.measured = { ...v.measured, per };
+}
+/** A reset that wants a fresh average (the compact toggle's rerender, a re-collapse to the tail, the older-history re-anchor) clears
+ *  the figure AND the figures parked since the last paint: the build that follows takes parked figures first (applyMeasure in
+ *  renderWindowItems), so an average parked over the old rows and never taken (a reader off the bottom, an idle session) would have
+ *  become the new rows' average for the view's life, and measureUnits, seeing one held, would never have measured the new rows (review
+ *  round 0, low). One helper for every such reset, so none forgets the parked half. */
+function forgetAverage(v: View): void {
+  v.avgTurnH = undefined; v.measured = undefined;
 }
 /** The measured figures become the view's, inside a paint: true when either changed, so the caller re-sizes the spacers and
  *  re-draws the gap units (renderWindowItems does both as part of its build). The average is taken once per view. */
@@ -14204,7 +14263,7 @@ function rerenderAll(): void {
   // the bottom over the anchor restored below. One read of the DOM drives both the flag and the keep.
   if (live) av!.stick = reshowStick(av!.stick, bottom);
   const keep = live && !bottom ? captureScrollAnchor(content!, av!) : null;   // follow mode: only a true tail-sitter lands at the bottom
-  for (const v of views.values()) { while (v.el.firstChild) v.el.removeChild(v.el.firstChild); v.rendered = 0; v.stale = false; v.winStart = 0; v.winEnd = 0; v.avgTurnH = undefined; v.spacerCount = undefined; v.spacerCountBot = undefined; v.unitTotal = undefined; }
+  for (const v of views.values()) { while (v.el.firstChild) v.el.removeChild(v.el.firstChild); v.rendered = 0; v.stale = false; v.winStart = 0; v.winEnd = 0; forgetAverage(v); v.spacerCount = undefined; v.spacerCountBot = undefined; v.unitTotal = undefined; }
   showActive(keep);
   schedulePrebuild(); // rebuild every off-screen view in idle under the new setting, so switches stay instant
 }
@@ -14397,7 +14456,7 @@ function runPrebuild(deadline: IdleDeadline): void {
       // 2026-09-07). Same collapse showActive does, moved off the critical path.
       if (v && !pendingAnchor && pendingAnchorT == null
           && v.el.querySelectorAll(".turn").length > WINDOW_CAP) {
-        v.rendered = 0; v.winStart = 0; v.avgTurnH = undefined; v.stick = true;
+        v.rendered = 0; v.winStart = 0; forgetAverage(v); v.stick = true;
       }
       syncView(id); // build the hidden view now, off the critical path
       built++;
@@ -15063,7 +15122,7 @@ function showActive(keep?: { uuid: string; y: number } | null) {
   // …and a SWITCH rule only: a re-show of the view on screen never snaps it to the tail (T249)
   if (!reshow && !pendingAnchor && pendingAnchorT == null
       && v.el.querySelectorAll(".turn").length > WINDOW_CAP) {
-    v.rendered = 0; v.winStart = 0; v.avgTurnH = undefined; v.stick = true;   // → firstBuild rebuilds the tail, lands at bottom
+    v.rendered = 0; v.winStart = 0; forgetAverage(v); v.stick = true;   // → firstBuild rebuilds the tail, lands at bottom
   }
   for (const [vid, vv] of views) vv.el.style.display = vid === activeId ? "" : "none";
   if (!reshow) refreshRelativeMarkers(v.el);   // a tab shown after minutes hidden: its today labels catch up before the eye lands (T406; the minute tick skips hidden tabs)
@@ -19838,7 +19897,7 @@ function chatHead(msg: any) {
   if (msg.id !== activeId) { forget(msg.id); if (v) v.stale = true; return; }
   // re-anchor: reset the active view so it re-windows around the saved row (now further down s.events), and
   // put that row back where it was — the prepended older content sits above, off-screen, ready to scroll into.
-  if (v) { v.rendered = 0; v.winStart = 0; v.winEnd = 0; v.avgTurnH = undefined; v.spacerCount = undefined; v.spacerCountBot = undefined; v.unitTotal = undefined; }
+  if (v) { v.rendered = 0; v.winStart = 0; v.winEnd = 0; forgetAverage(v); v.spacerCount = undefined; v.spacerCountBot = undefined; v.unitTotal = undefined; }
   const anchorUuid = pendingOlderAnchor.get(msg.id);
   const keepY = pendingOlderKeepY.get(msg.id);
   forget(msg.id);

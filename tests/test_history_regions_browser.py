@@ -268,7 +268,8 @@ const spacers = await spacerRows();   // EVERY spacer row of the session, the bo
 const edges = await page.evaluate(() => { const rows = Array.from(document.querySelectorAll("#content [data-unit].turn")); const cls = (n) => n.className + "@" + n.dataset.unit; return { first: rows.slice(0, 3).map(cls), last: rows.slice(-3).map(cls), streamed: document.querySelectorAll('#content [data-uuid="aaaaaaaa-bbbb-cccc-dddd-000000000001"]').length }; });
 const received = await page.evaluate(() => (window.__bootFrames || []).slice(-14));
 const regionsNow = await page.evaluate(() => (typeof window.__rompRegions === "function" ? window.__rompRegions() : null));
-process.stdout.write("RESULT:" + JSON.stringify({ engine: process.env.ROMP_LAB_ENGINE || "chromium", before, frames, spacers, edges, received, regions: regionsNow, pageEvents: pageEvents.slice(-12) }) + "\n");
+const writers = await page.evaluate(() => window.__sent.filter((m) => m.what === "scrollwrite" && m.data).map((m) => m.data.writer));   // every attributed scroll write of the session, in order
+process.stdout.write("RESULT:" + JSON.stringify({ engine: process.env.ROMP_LAB_ENGINE || "chromium", before, frames, spacers, edges, received, regions: regionsNow, pageEvents: pageEvents.slice(-12), writers }) + "\n");
 await browser.close();
 """
 
@@ -345,9 +346,15 @@ class ServedCompactStream(WindowLab):
         self.assertTrue(all(t > 0 for t in tops), "a top spacer stood through the stream: %r" % tops)
         self.assertLessEqual(max(tops) / min(tops), 2.0, "the head spacer's height held within 2x through the stream: %r" % tops)
         self.assertGreaterEqual(len(r["spacers"]), 1, "the boot build filed its spacer row: %r" % (r["spacers"],))
+        # the loop below asserts on re-sizes AFTER the boot build (a before of 0 is the boot's own row); its population must be non-empty,
+        # or the per-re-size bound is reported checked when nothing was checked (review round 0). The served page files at least one such
+        # row: the rows' average measured off the boot build reaches the spacers in the first paint after it (the paint the frame-end take
+        # asks for with the reader at the bottom, or the kernel's status-only tail's, whichever runs first)
+        self.assertTrue(any(b > 0 for b, _ in r["spacers"]), "a re-size after the boot build filed a row with a non-zero before: %r" % (r["spacers"],))
         for before, after in r["spacers"]:
             if before > 0:
                 self.assertLessEqual(after / before, 2.0, "no single spacer re-size doubled it: %r" % (r["spacers"],))
+
 
 
 if __name__ == "__main__":

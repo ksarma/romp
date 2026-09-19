@@ -12,7 +12,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
 import { DEFAULT_TURN_PX, MAX_TURN_PX, gapHeight } from "./chat-regions";
-import { spacerRow } from "./scroll-write";
+import { spacerRow, unitChanges } from "./scroll-write";
 import { meanRowHeight, perTurnEstimate, rowsFor } from "./turn-estimate";
 import type { DisplayItem } from "./compact";
 import { hideEdges } from "../test-dom-shim";
@@ -53,21 +53,24 @@ class FakeEl {
 type Diag = Array<{ kind: string; data: any }>;
 type Writes = Array<{ top: number; writer: string; stick: boolean }>;
 type World = {
-  reads: Reads; diag: Diag; rafs: Array<() => void>; views: Map<string, any>; activeId: string | null; writes: Writes; content: { scrollTop: number };
-  sizeSpacers: (v: any) => void; measureUnits: (v: any) => void; applyMeasure: (v: any) => boolean; redrawGapUnits: (v: any) => void; takeMeasureAtBottom: (v: any) => void;
+  reads: Reads; diag: Diag; rafs: Array<() => void>; views: Map<string, any>; activeId: string | null; writes: Writes; content: { scrollTop: number; ch: number }; paints: number;
+  sizeSpacers: (v: any) => void; measureUnits: (v: any) => void; applyMeasure: (v: any) => boolean; redrawGapUnits: (v: any) => void; takeMeasureAtBottom: (v: any) => void; forgetAverage: (v: any) => void;
   gapUnitsOf: (items: DisplayItem[], per: number | undefined) => Map<number, number> | undefined; entryBoxHeight: (e: any) => number;
 };
-/** The scroller: 9,114 px tall in a 902 px viewport; `scrollTop` starts at the bottom unless a world says otherwise. Every layout read counts. */
+/** The scroller: 9,114 px tall in a 902 px viewport; `scrollTop` starts at the bottom unless a world says otherwise. Every layout read counts.
+ *  `paints` counts the appendActive paints the frame-end take asks for (scheduleAppendActive). */
 function lift(activeId: string | null, scrollTop = 9114 - 902): World {
   const js = liftBetween("function gapUnitsOf(", "function unitAtScroll(");
   const reads: Reads = { offsetHeight: 0, scrollHeight: 0, clientHeight: 0 };
   const diag: Diag = []; const rafs: Array<() => void> = []; const views = new Map<string, any>(); const writes: Writes = [];
-  const content = { scrollTop, get scrollHeight() { reads.scrollHeight++; return 9114; }, get clientHeight() { reads.clientHeight++; return 902; } };
+  const content = { scrollTop, ch: 902, get scrollHeight() { reads.scrollHeight++; return 9114; }, get clientHeight() { reads.clientHeight++; return this.ch; } };
+  const world: any = { reads, diag, rafs, views, activeId, writes, content, paints: 0 };
   const hooks = { FakeEl, views, activeId, document: { getElementById: (id: string) => (id === "content" ? content : null) },
                   raf: (cb: () => void) => { rafs.push(cb); return rafs.length; }, diag: (kind: string, data: any) => diag.push({ kind, data }),
                   spacerRow, gapHeight, rowsFor, meanRowHeight, perTurnEstimate,
                   atBottom: (c: any) => c.scrollHeight - c.scrollTop - c.clientHeight <= 2,
-                  writeScroll: (c: any, top: number, writer: string, stick = false) => { writes.push({ top, writer, stick }); c.scrollTop = Math.min(top, c.scrollHeight - c.clientHeight); } };
+                  writeScroll: (c: any, top: number, writer: string, stick = false) => { writes.push({ top, writer, stick }); c.scrollTop = Math.min(top, c.scrollHeight - c.clientHeight); },
+                  scheduleAppendActive: () => { world.paints++; } };
   const prelude = `
     const H = HOOKS;
     const HTMLElement = H.FakeEl;
@@ -75,10 +78,29 @@ function lift(activeId: string | null, scrollTop = 9114 - 902): World {
     const views = H.views; const activeId = H.activeId; const document = H.document;
     const requestAnimationFrame = H.raf; const scrollDiagRow = H.diag; const spacerRow = H.spacerRow; const gapHeight = H.gapHeight;
     const rowsFor = H.rowsFor, meanRowHeight = H.meanRowHeight, perTurnEstimate = H.perTurnEstimate;
-    const atBottom = H.atBottom, writeScroll = H.writeScroll;
+    const atBottom = H.atBottom, writeScroll = H.writeScroll, scheduleAppendActive = H.scheduleAppendActive;
   `;
-  const api = new Function("HOOKS", prelude + js + "\nreturn { sizeSpacers, measureUnits, applyMeasure, redrawGapUnits, gapUnitsOf, entryBoxHeight, takeMeasureAtBottom };")(hooks);
-  return { reads, diag, rafs, views, activeId, writes, content, ...api };
+  const api = new Function("HOOKS", prelude + js + "\nreturn { sizeSpacers, measureUnits, applyMeasure, redrawGapUnits, gapUnitsOf, entryBoxHeight, takeMeasureAtBottom, forgetAverage };")(hooks);
+  return Object.assign(world, api) as World;
+}
+/** The unit observer's callback, lifted from ensureView (the `const view3 = v;` span) over a world's measure and take: a fake
+ *  ResizeObserver hands the callback back, and `deliver` runs it with entries shaped as the browser's (border box + contentRect). */
+function liftObserver(w: World, v: any, id: string) {
+  const js = liftBetween("      const view3 = v;", "      const view2 = v;");
+  let cb: ((entries: any[]) => void) | null = null;
+  const hooks = { v, id, w, unitChanges, ResizeObserver: class { constructor(f: (entries: any[]) => void) { cb = f; } observe() {} unobserve() {} disconnect() {} } };
+  const prelude = `
+    const H = HOOKS;
+    const v = H.v, id = H.id, activeId = H.w.activeId, document = { getElementById: (x) => (x === "content" ? H.w.content : null) };
+    const ResizeObserver = H.ResizeObserver, unitChanges = H.unitChanges, entryBoxHeight = H.w.entryBoxHeight;
+    const measureUnits = H.w.measureUnits, takeMeasureAtBottom = H.w.takeMeasureAtBottom;
+    const atBottom = (c) => c.scrollHeight - c.scrollTop - c.clientHeight <= 2;
+    const scrollDiagRow = (kind, data) => H.w.diag.push({ kind, data }); const unitChangeRow = (...a) => ({ row: a });
+  `;
+  new Function("HOOKS", prelude + js)(hooks);
+  assert.ok(cb, "the unit observer was constructed");
+  const deliver = (rows: FakeEl[], h: (r: FakeEl) => number) => cb!(rows.map((r) => ({ target: r, borderBoxSize: [{ blockSize: h(r), inlineSize: 400 }], contentRect: { height: h(r) } })));
+  return { deliver, heights: v.uh as WeakMap<object, number> };
 }
 
 /** A view over `items` (a head gap as unit 0, then event units) rendered as the window [winStart, total): a top spacer, then one row per
@@ -163,8 +185,8 @@ test("a later build re-measures (not once): the figure follows the window's comp
   while (v.el.children.length > 1) v.el.removeChild(v.el.lastChild!);
   const rows3: FakeEl[] = [];
   ([["turn turn-user", 30], ["turn turn-assistant", 70], ["turn turn-user", 30], ["turn turn-assistant", 900]] as Array<[string, number]>).forEach(([cls, h], i) => { const n = new FakeEl("div", cls, h, w.reads); n.dataset.unit = String(101 + i); v.el.appendChild(n); rows3.push(n); });
-  buildOne(w, v, first.items); observe(w, v, rows3);
-  assert.equal(paintTwo(w, v), undefined); assert.equal(v.pxPerTurn, 210, "one complete turn: the figure stands");
+  buildOne(w, v, first.items); observe(w, v, rows3); paintTwo(w, v);
+  assert.equal(v.pxPerTurn, 210, "one complete turn: the figure stands");
   assert.equal(v.measured, undefined, "nothing waits");
 });
 
@@ -185,10 +207,12 @@ test("sizeSpacers and the measure read no layout property: zero offsetHeight, sc
   const { v, items, rows } = viewOver(w, 200, 301, 221, (u) => (u % 3 === 0 ? ["turn turn-user", 40] : ["turn turn-assistant", 90]));
   w.views.set("A", v);
   buildOne(w, v, items);
+  const topOne = topPx(v);
   assert.deepEqual(w.reads, { offsetHeight: 0, scrollHeight: 0, clientHeight: 0 }, "build one's spacer write read nothing");
   assert.equal(w.diag.length, 0, "the spacer row is not filed inside the paint");
   assert.equal(w.rafs.length, 1, "…it waits for the next animation frame");
   observe(w, v, rows); paintTwo(w, v);
+  const topTwo = topPx(v);
   assert.deepEqual(w.reads, { offsetHeight: 0, scrollHeight: 0, clientHeight: 0 }, "the measure read the observer's map, the paint wrote the spacers: still nothing");
   assert.ok(v.pxPerTurn! > 0 && v.avgTurnH! > 0, "…and the figures were taken from the map: " + v.pxPerTurn + " / " + v.avgTurnH);
   const before = w.diag.length;
@@ -196,8 +220,13 @@ test("sizeSpacers and the measure read no layout property: zero offsetHeight, sc
   assert.equal(w.diag.length, before + 2, "the two writes' rows, filed together");
   assert.deepEqual(w.reads, { offsetHeight: 0, scrollHeight: 1, clientHeight: 1 }, "the scroller was read once, in the frame, for both rows");
   assert.deepEqual(w.diag.map((d) => [d.kind, d.data.sid, d.data.sh, d.data.ch]), [["spacer", "A", 9114, 902], ["spacer", "A", 9114, 902]]);
-  assert.equal(w.diag[0].data.top[1], topPx(v) === w.diag[1].data.top[1] ? w.diag[0].data.top[1] : w.diag[0].data.top[1], "each row carries its own before/after");
-  assert.ok(w.diag[0].data.top[1] !== w.diag[1].data.top[1], "the second write moved the spacer again (the measured figures)");
+  // each row carries its own before/after, in that order (the tuple queueSpacerRow pushes and the frame drains): the T262j diagnosis reads
+  // which way the head spacer moved, so an inverted pair would read backwards (review round 0: the old assertion here compared a value with itself)
+  assert.deepEqual(w.diag[0].data.top, [0, topOne], "build one's row: from nothing to the first spacer");
+  assert.deepEqual(w.diag[1].data.top, [topOne, topTwo], "the paint's row: from the first spacer to the measured one");
+  assert.deepEqual(w.diag[0].data.bot, [0, 0], "no bottom spacer in this window");
+  assert.equal(w.diag[1].data.dTop, topTwo - topOne, "the delta follows the pair's order");
+  assert.ok(topOne !== topTwo, "the second write moved the spacer again (the measured figures)");
 });
 
 test("an inactive view's spacer write files no row, and a write that changes nothing files none", () => {
@@ -224,36 +253,115 @@ test("the observer's entry height is the border box (the height offsetHeight rep
 
 // ── the follow-mode take at frame end ────────────────────────────────────────────────────────────
 
-test("a follow-mode reader at the bottom takes the figures at frame end: the spacers are written and the bottom written after them; anyone else's figures wait for the paint", () => {
+test("a follow-mode reader at the bottom is given the figures on the next paint: the frame-end take asks for it and writes nothing itself; anyone else's figures wait for the tail paint", () => {
   const two: Array<[string, number]> = [["turn turn-user", 30], ["turn turn-assistant", 70], ["turn turn-user", 30], ["turn turn-assistant", 90], ["turn turn-user", 30], ["turn turn-assistant", 500]];
-  // the active, shown, follow-mode view with the reader at the bottom: the observer's delivery applies and follows
+  // the active, shown, follow-mode view with the reader at the bottom: the observer's delivery parks the figures and asks for the paint
   const w = lift("A");
   const world = viewOver(w, 200, 1 + 100 + 6, 101, (u) => two[u - 101]);
   w.views.set("A", world.v); world.v.shown = true; world.v.stick = true;
   buildOne(w, world.v, world.items); observe(w, world.v, world.rows);
   assert.ok(world.v.measured, "the figures are parked by the measure");
+  const topBefore = topPx(world.v);
   w.takeMeasureAtBottom(world.v);
-  assert.equal(world.v.measured, undefined, "…and taken at once");
+  assert.equal(w.paints, 1, "one paint asked for (scheduleAppendActive)");
+  assert.ok(world.v.measured, "…the figures still parked for it");
+  assert.equal(world.v.pxPerTurn, undefined); assert.equal(topPx(world.v), topBefore, "no spacer written inside the observer's callback (a write there re-sizes the view under its own observer: the ResizeObserver loop error)");
+  assert.deepEqual(w.writes, [], "…and no scroll written");
+  // the paint (appendActive's sync, the one that passes atBottom) takes them; its own follow writes the bottom (append-stick, scroll-keep.ts followTail)
+  paintTwo(w, world.v);
+  assert.equal(world.v.measured, undefined, "taken by the paint");
   assert.equal(world.v.pxPerTurn, 110); assert.equal(world.v.gapUnits.get(0), 200 * 110, "the gap units follow");
-  assert.deepEqual(w.writes, [{ top: 9114, writer: "spacer-follow", stick: true }], "one write, the bottom, attributed as the spacer's follow");
-  // the same reader scrolled up: nothing is taken, the figures wait for the paint (appendActive restores their anchor there)
+  assert.notEqual(topPx(world.v), topBefore, "the spacer moved in the paint");
+  w.takeMeasureAtBottom(world.v);
+  assert.equal(w.paints, 1, "nothing parked: no paint asked for");
+  // the same reader scrolled up: no paint asked for, the figures wait for the tail paint (appendActive restores their anchor there)
   const up = lift("A", 1000);
   const w2 = viewOver(up, 200, 1 + 100 + 6, 101, (u) => two[u - 101]);
   up.views.set("A", w2.v); w2.v.shown = true; w2.v.stick = false;
   buildOne(up, w2.v, w2.items); observe(up, w2.v, w2.rows); up.takeMeasureAtBottom(w2.v);
-  assert.ok(w2.v.measured, "parked"); assert.equal(w2.v.pxPerTurn, undefined); assert.deepEqual(up.writes, []);
-  // follow mode recorded but the reader not at the bottom (a stale flag): nothing is taken either
+  assert.ok(w2.v.measured, "parked"); assert.equal(w2.v.pxPerTurn, undefined); assert.deepEqual(up.writes, []); assert.equal(up.paints, 0);
+  // follow mode recorded but the reader not at the bottom (a stale flag): nothing either
   const stale = lift("A", 1000);
   const w3 = viewOver(stale, 200, 1 + 100 + 6, 101, (u) => two[u - 101]);
   stale.views.set("A", w3.v); w3.v.shown = true; w3.v.stick = true;
   buildOne(stale, w3.v, w3.items); observe(stale, w3.v, w3.rows); stale.takeMeasureAtBottom(w3.v);
-  assert.ok(w3.v.measured, "the recorded follow mode alone does not move a reader who is not at the bottom"); assert.deepEqual(stale.writes, []);
+  assert.ok(w3.v.measured, "the recorded follow mode alone does not move a reader who is not at the bottom"); assert.deepEqual(stale.writes, []); assert.equal(stale.paints, 0);
   // an inactive or hidden view: nothing
   const other = lift("B");
   const w4 = viewOver(other, 200, 1 + 100 + 6, 101, (u) => two[u - 101]);
   other.views.set("A", w4.v); w4.v.shown = true; w4.v.stick = true;
   buildOne(other, w4.v, w4.items); observe(other, w4.v, w4.rows); other.takeMeasureAtBottom(w4.v);
-  assert.ok(w4.v.measured); assert.deepEqual(other.writes, []);
+  assert.ok(w4.v.measured); assert.deepEqual(other.writes, []); assert.equal(other.paints, 0);
+  // a scroller with no box (the pane hidden: 0 - 0 - 0 reads as the bottom) is asked for nothing (review round 0, high)
+  const hidden = lift("A", 0);
+  const w5 = viewOver(hidden, 200, 1 + 100 + 6, 101, (u) => two[u - 101]);
+  hidden.views.set("A", w5.v); w5.v.shown = true; w5.v.stick = true;
+  buildOne(hidden, w5.v, w5.items); observe(hidden, w5.v, w5.rows);
+  hidden.content.ch = 0; Object.defineProperty(hidden.content, "scrollHeight", { get() { return 0; } }); hidden.content.scrollTop = 0;
+  hidden.takeMeasureAtBottom(w5.v);
+  assert.ok(w5.v.measured, "parked"); assert.equal(hidden.paints, 0, "an emptied scroller reads as the bottom and asks for nothing");
+});
+
+// ── the unit observer's callback: a view with no width is the hidden case (review round 0, high) ─
+
+test("an observer delivery with the view at width 0 (an ancestor hid it) forgets the baselines and measures nothing: no 0 enters the heights map, nothing is parked, no paint is asked for; the re-show measures", () => {
+  const two: Array<[string, number]> = [["turn turn-user", 30], ["turn turn-assistant", 70], ["turn turn-user", 30], ["turn turn-assistant", 90], ["turn turn-user", 30], ["turn turn-assistant", 500]];
+  const w = lift("A");
+  const { v, items, rows } = viewOver(w, 200, 1 + 100 + 6, 101, (u) => two[u - 101]);
+  w.views.set("A", v); v.shown = true; v.stick = true; (v.el as any).clientWidth = 800;
+  buildOne(w, v, items);
+  const { deliver, heights } = liftObserver(w, v, "A");
+  // the first delivery at a real width: baselines, the measure, the paint asked for
+  deliver(rows, (r) => r.realH);
+  assert.equal(heights.get(rows[1]), 70, "the border boxes are the baselines");
+  assert.deepEqual(v.measured, { avg: (30 + 70 + 30 + 90 + 30 + 500) / 6, per: 110 }, "the window measured");
+  assert.equal(w.paints, 1, "a bottom reader's paint asked for");
+  paintTwo(w, v);
+  assert.equal(v.pxPerTurn, 110); const gapAfter = v.gapUnits.get(0), topAfter = topPx(v);
+  // the ancestor hides the pane: every unit arrives at 0 with the view at width 0, its own display still ""
+  (v.el as any).clientWidth = 0; v.measureDue = true;
+  deliver(rows, () => 0);
+  assert.equal(heights.get(rows[1]), undefined, "the baselines are forgotten, as on the view's own hide");
+  assert.equal(v.measured, undefined, "nothing parked"); assert.equal(v.pxPerTurn, 110, "the figure stands"); assert.equal(v.gapUnits.get(0), gapAfter); assert.equal(topPx(v), topAfter);
+  assert.equal(w.paints, 1, "no paint asked for");
+  assert.equal(v.measureDue, true, "the measure still owed: the re-show pays it");
+  // the re-show at the same width: real sizes again, baselines recorded, the owed measure runs off them (nothing changed: no new figure parked)
+  (v.el as any).clientWidth = 800;
+  deliver(rows, (r) => r.realH);
+  assert.equal(heights.get(rows[1]), 70, "fresh baselines");
+  assert.equal(v.measureDue, false, "measured on the re-show"); assert.equal(v.measured, undefined, "the same figures: nothing new parked");
+  // …and what the zeros would have done, read as heights: the estimator refuses them (turn-estimate.test.ts), the map never holds them
+  assert.equal(perTurnEstimate(rowsFor(rows, (r) => r.className, () => false, () => 0)), null, "the estimator hands out no 0");
+});
+
+// ── the resets that clear the average (review round 0, low) ──────────────────────────────────────
+
+test("forgetAverage drops a parked average with the figure, so a reset's build measures the new rows instead of taking the old rows' average", () => {
+  const w = lift(null);
+  // build one over dense rows; the observer parks the average; nothing takes it (the reader landed off the bottom, the session is idle)
+  const dense = viewOver(w, 200, 1 + 100 + 4, 101, () => ["turn turn-assistant", 400]);
+  buildOne(w, dense.v, dense.items); observe(w, dense.v, dense.rows);
+  assert.equal(dense.v.measured?.avg, 400, "parked over the old rows, untaken");
+  // the reset (the compact toggle, a re-collapse, the older-history re-anchor): the figure AND the parked one go
+  w.forgetAverage(dense.v);
+  assert.equal(dense.v.avgTurnH, undefined); assert.equal(dense.v.measured, undefined);
+  // the rebuild over the new mode's rows: build (takes nothing), observe (measures the new rows), paint (takes the new average)
+  const v = dense.v;
+  while (v.el.children.length > 1) v.el.removeChild(v.el.lastChild!);
+  const rows2: FakeEl[] = [];
+  for (let i = 0; i < 4; i++) { const n = new FakeEl("div", "turn turn-assistant", 40, w.reads); n.dataset.unit = String(101 + i); v.el.appendChild(n); rows2.push(n); }
+  buildOne(w, v, dense.items);
+  assert.equal(v.avgTurnH, undefined, "the build took no parked figure");
+  observe(w, v, rows2); paintTwo(w, v);
+  assert.equal(v.avgTurnH, 40, "the new rows' average");
+  // the counter-example the reset used to produce: clearing the figure alone leaves the parked one for the build to take
+  const w2 = lift(null);
+  const d2 = viewOver(w2, 200, 1 + 100 + 4, 101, () => ["turn turn-assistant", 400]);
+  buildOne(w2, d2.v, d2.items); observe(w2, d2.v, d2.rows);
+  d2.v.avgTurnH = undefined;   // the bare reset
+  buildOne(w2, d2.v, d2.items);
+  assert.equal(d2.v.avgTurnH, 400, "the old rows' average, taken by the build, would stand for the view's life");
+  assert.equal(w.reads.offsetHeight, 0, "no layout read anywhere in this");
 });
 
 // ── source pins on what the harness does not lift ────────────────────────────────────────────────
@@ -267,9 +375,16 @@ test("render.ts: the render task's spacer code holds no layout read; the unit ob
   assert.doesNotMatch(paintSide, /offsetHeight|scrollHeight|clientHeight|getBoundingClientRect|offsetTop/, "sizeSpacers, the trim, the eviction, the measure and the apply read no layout property");
   assert.match(inFrame, /requestAnimationFrame\(\(\) => \{[\s\S]*?const sh = content \? content\.scrollHeight : 0, ch = content \? content\.clientHeight : 0;/, "the diag row's scroller read rides a frame");
   const uo = RENDER.slice(RENDER.indexOf("v.uo = new ResizeObserver((entries) => {"), RENDER.indexOf("v.mo = new MutationObserver("));
-  assert.match(uo, /unitHeights\.set\(e\.target, entryBoxHeight\(e\)\); view3\.measureDue = true; measureUnits\(view3\); takeMeasureAtBottom\(view3\); return; \}/, "a reflow records border boxes, re-measures and lets a bottom reader take the figures");
+  assert.match(uo, /unitHeights\.set\(e\.target, entryBoxHeight\(e\)\); view3\.measureDue = true; measureUnits\(view3\); takeMeasureAtBottom\(view3\); return; \}/, "a reflow records border boxes, re-measures and asks for a bottom reader's paint");
   assert.match(uo, /height: entryBoxHeight\(e\) \}\)\), view3\.el\.children, unitHeights, unitOf\);\s*\n\s*measureUnits\(view3\); takeMeasureAtBottom\(view3\);/, "…and so does every delivery");
-  assert.match(inFrame, /function takeMeasureAtBottom\(v: View\): void \{[\s\S]*?if \(!content \|\| !atBottom\(content\)\) return;[\s\S]*?writeScroll\(content, content\.scrollHeight, "spacer-follow", true\);/, "the frame-end take: at the bottom, then the bottom written");
+  assert.match(uo, /if \(view3\.el\.style\.display === "none" \|\| w === 0\) \{ for \(const e of entries\) unitHeights\.delete\(e\.target\); return; \}/, "a view with no width is the hidden case: no zero enters the map");
+  // the frame-end take decides and asks for the paint; it writes nothing inside the observer's callback (a spacer written there re-sizes the
+  // view element under v.ro, delivered earlier in the same frame: the ResizeObserver loop error, the tab-row sentinel's precedent)
+  const take = inFrame.slice(inFrame.indexOf("function takeMeasureAtBottom(v: View): void {"));
+  assert.match(take, /if \(!content \|\| content\.clientHeight <= 0 \|\| !atBottom\(content\)\) return;\s*\n\s*scheduleAppendActive\(\);\s*\n\}/, "the take: a scroller with a box, at the bottom, then the paint asked for");
+  assert.doesNotMatch(code(take), /writeScroll|sizeSpacers|redrawGapUnits|applyMeasure|style\./, "…and no write of its own");
+  assert.doesNotMatch(RENDER, /"spacer-follow"/, "the writer is gone with it (landing-settle.ts's census)");
+  assert.doesNotMatch(code(uo), /writeScroll|style\.height|sizeSpacers|redrawGapUnits/, "nothing in the unit observer's callback writes the DOM");
   // the parked figures reach the DOM in the paint that keeps the reader's place: appendActive's sync (the one caller of syncView that
   // passes atBottom, and the one that follows the tail or restores the anchor over what moved) and a window build (whose callers anchor
   // around their target after it); a switch's or a landing's sync applies nothing (a 55 px move of a bottom reader in the landing lab)
@@ -279,7 +394,11 @@ test("render.ts: the render task's spacer code holds no layout read; the unit ob
   assert.ok(land.includes("sizeSpacers(v);"), "landActive still sizes the spacers from the figures the view holds");
   assert.doesNotMatch(land, /applyMeasure|redrawGapUnits/, "…and takes no parked figure: a spacer written on show moves the reader");
   const calls = (RENDER.match(/(?<![\w.])applyMeasure\(v\)/g) || []).length;
-  assert.equal(calls, 3, "three takers: appendActive's sync, the window build, and the frame-end follow at the bottom (" + calls + ")");
+  assert.equal(calls, 2, "two takers: appendActive's sync and the window build (" + calls + "); the frame-end take asks for the first");
+  // every reset that clears the average clears the parked figures with it (forgetAverage), and none clears the figure bare
+  assert.match(RENDER, /function forgetAverage\(v: View\): void \{\s*\n\s*v\.avgTurnH = undefined; v\.measured = undefined;\s*\n\}/);
+  assert.equal((RENDER.match(/\bavgTurnH = undefined/g) || []).length, 1, "the one bare clear is the helper's");
+  assert.equal((RENDER.match(/(?<![\w.])forgetAverage\(v\);/g) || []).length, 4, "four resets: the compact toggle's rerender, the prebuild's and the switch's re-collapse, the older-history re-anchor");
   assert.match(RENDER, /import \{ rowsFor, meanRowHeight, perTurnEstimate \} from "\.\/turn-estimate";/);
   assert.match(RENDER, /interface View \{[^\n]*measured\?: \{ avg\?: number; per\?: number \};/, "the parked figures live on the view");
 });

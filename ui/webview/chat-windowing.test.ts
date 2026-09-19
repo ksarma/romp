@@ -144,7 +144,7 @@ test("a new message while scrolled UP keeps the viewport put (no backwards jump)
 test("an oversized view (window grew past the cap) re-collapses to the tail on switch", () => {
   // `!reshow &&` leads since T249: the re-collapse is a SWITCH rule, never applied to a re-show of the view on screen
   assert.match(RENDER, /if \(!reshow && !pendingAnchor && pendingAnchorT == null\s*\n?\s*&& v\.el\.querySelectorAll\("\.turn"\)\.length > WINDOW_CAP\) \{/);
-  assert.match(RENDER, /v\.rendered = 0; v\.winStart = 0; v\.avgTurnH = undefined; v\.stick = true;/);
+  assert.match(RENDER, /v\.rendered = 0; v\.winStart = 0; forgetAverage\(v\); v\.stick = true;/, "…and clears the average with any figure parked since the last paint (forgetAverage; spacer-measure.test.ts drives it)");
 });
 
 test("a deep-link off the current window renders a fresh window AROUND the target unit, then lands", () => {

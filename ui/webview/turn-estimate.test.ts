@@ -63,6 +63,21 @@ test("a hidden user row (a stripped record, the echo of a send) starts no turn: 
   assert.equal(perTurnEstimate(rows), 175);
 });
 
+test("a window whose rows all report 0 (the view has no box: an ancestor hid it) yields no figure, never 0", () => {
+  // the ancestor-hide shape (review round 0, high): Chromium delivers every unit at 0 with the view at width 0; read as heights, three
+  // complete turns of 0 px gave a median of 0, a figure applyMeasure takes (0 is neither null nor the old figure) and gapHeight draws
+  // every gap at 0 px with. The rule is meanRowHeight's `h > 0`, the one the old estimator kept: a positive figure or none
+  const zeros = [asst(0), user(0), asst(0), tool(0), user(0), asst(0), user(0), asst(0), user(0), asst(0)];
+  assert.deepEqual(completeTurnHeights(zeros), [0, 0, 0], "three complete turns, none with a height");
+  assert.equal(median([0, 0, 0]), 0, "their median is 0…");
+  assert.equal(perTurnEstimate(zeros), null, "…and the estimate refuses it: no figure, the caller keeps what it had");
+  assert.notEqual(perTurnEstimate(zeros), 0, "never 0");
+  assert.equal(gapHeight({ lo: 0, hi: 200 }, 0), 0, "what a 0 figure would have drawn: every gap at 0 px (the estimator never hands one out)");
+  assert.equal(meanRowHeight(zeros), null, "the average refuses a population of zeros the same way");
+  // a zero turn among measured ones: the median stands on the measured ones
+  assert.equal(perTurnEstimate([user(30), asst(70), user(0), asst(0), user(30), asst(50), user(30), asst(900)]), 80, "the median of 100, 0 and 80");
+});
+
 test("a turn holding a row the observer has not reported is dropped, never counted short", () => {
   const rows = [user(30), asst(70), user(30), asst(undefined), user(30), asst(50), user(30), asst(900)];
   assert.deepEqual(completeTurnHeights(rows), [100, 80], "the second turn is out: its reply has no height yet");

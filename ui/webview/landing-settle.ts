@@ -63,7 +63,8 @@ export const WRITER_CLASS: Readonly<Record<string, "reader" | "page">> = {
   "gap-fill": "page",   // a gap's page appearing in place (T386 stage 2): the reader's row written back to its offset
   "land-guess": "page",   // the jump into the gap where a landing's target will be, before its window arrives (T386 stage 2)
   "land-cancel": "page",   // the reader put back where the pre-jump moved them from, when a span-less or missing reply cannot land (T386 stage 2)
-  "spacer-follow": "page",   // a follow-mode reader at the bottom written back to it after the spacers took a measured figure at frame end (PR E, render.ts takeMeasureAtBottom)
+  // (no "spacer-follow": the frame-end take of the measured figures asks for appendActive's paint instead of writing inside the unit
+  // observer's callback, and the paint's own follow, append-stick, writes the bottom; PR E review round 0)
 };
 /** The write helper (the root) and its wrappers, with the position of the WRITER argument in each call (round six, low 1; round
  *  seven, mediums 1 and 2). The census pin (landing-settle.test.ts, through writer-census.ts on the TypeScript compiler's parser)

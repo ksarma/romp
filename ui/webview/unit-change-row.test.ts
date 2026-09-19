@@ -118,10 +118,13 @@ test("render.ts wires one observer per view over every unit, through the mutatio
   // and files nothing; a width change (every unit reflows) refreshes them and files nothing; then the fold, BEFORE
   // the active gate, so an inactive view's baselines stay current
   const uo = ev.split("v.uo = new ResizeObserver((entries) => {")[1].split("\n      });")[0];
-  assert.match(uo, /^[\s\S]*?if \(view3\.el\.style\.display === "none"\) \{ for \(const e of entries\) unitHeights\.delete\(e\.target\); return; \}/, "the hide guard is the first statement");
+  // the hide guard is the first statement after the width read, and a ZERO width is the hide (an ancestor's display:none: the view's own
+  // display is still "" and every unit arrives at 0; PR E review round 0, high): the baselines are forgotten and nothing is measured
+  const code = uo.replace(/\/\/[^\n]*/g, "").trim();
+  assert.match(code, /^const w = view3\.el\.clientWidth;\s*\n\s*if \(view3\.el\.style\.display === "none" \|\| w === 0\) \{ for \(const e of entries\) unitHeights\.delete\(e\.target\); return; \}/, "the hide guard (own display, or no width) is the first statement");
   // the heights recorded are border boxes (entryBoxHeight: the height offsetHeight reports, so the window's per-turn figure stands for rows as
   // they lay out), and a reflow re-measures the window's figures (PR E; spacer-measure.test.ts drives the measure)
-  assert.match(uo, /const w = view3\.el\.clientWidth;\s*\n\s*if \(w !== unitW\) \{ unitW = w; for \(const e of entries\) unitHeights\.set\(e\.target, entryBoxHeight\(e\)\); view3\.measureDue = true; measureUnits\(view3\); takeMeasureAtBottom\(view3\); return; \}/, "a reflow refreshes baselines, re-measures (a bottom reader taking the figures at once) and files nothing");
+  assert.match(uo, /if \(w !== unitW\) \{ unitW = w; for \(const e of entries\) unitHeights\.set\(e\.target, entryBoxHeight\(e\)\); view3\.measureDue = true; measureUnits\(view3\); takeMeasureAtBottom\(view3\); return; \}/, "a reflow refreshes baselines, re-measures (a bottom reader's paint is asked for) and files nothing");
   assert.ok(uo.indexOf('display === "none"') < uo.indexOf("w !== unitW") && uo.indexOf("w !== unitW") < uo.indexOf("const changes = unitChanges("), "hide, then reflow, then the fold");
   assert.match(uo, /const changes = unitChanges\(entries\.map\(\(e\) => \(\{ target: e\.target, height: entryBoxHeight\(e\) \}\)\), view3\.el\.children, unitHeights, unitOf\);\s*\n\s*measureUnits\(view3\); takeMeasureAtBottom\(view3\);\s*\n\s*const content = document\.getElementById\("content"\);\s*\n\s*if \(!content \|\| activeId !== id \|\| !view3\.shown\) return;/,
     "the fold and the measure run BEFORE the active/shown gate, so an inactive view's baselines and figures stay current");
