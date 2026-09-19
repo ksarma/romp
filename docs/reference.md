@@ -999,7 +999,9 @@ For `./install.sh`:
   `SDK_TESTED_VERSION` in `kernel/session_host.py`. A host that finds another
   version installed whose internals have moved refuses to start the session and
   names both versions and the script in the launch error; one whose internals
-  still resolve runs and files a problem row saying so. Notifications to a
+  still resolve runs and files a problem row saying so, once per kernel life for
+  each installed version (a later host on the same version, in any session, is a
+  kernel-log line and not a second row). Notifications to a
   phone or browser read the `cryptography` package from the same venv, so they
   stay off until it runs too.
 

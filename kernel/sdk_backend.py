@@ -12040,7 +12040,11 @@ class SdkBackend:
         # of the review, 2026-09-18): the venv's version is a machine condition, the same for every host on this box,
         # so it is reported once per kernel life like the wrapper fallback above, not once per launch (each launch was
         # appending a byte-identical error-centre entry and bumping the feed's cache key, the repetition the ring's
-        # dedupe exists to prevent). A venv repinned to ANOTHER untested version mid-life is a new pair, reported anew.
+        # dedupe exists to prevent). The key is the version PAIR and not the sid (the closing check, 2026-09-18, on the
+        # round-2 ask for a sid in the key): the row is once per pair per kernel life, so the SECOND SESSION under the
+        # same pair files no row either, and which sessions ran on it is read from the plain kernel-log line
+        # _file_sdk_untested_row writes for every later one. A venv repinned to ANOTHER untested version mid-life is a
+        # new pair, reported anew.
         self._sdk_untested_reported: set = set()
         # CLI launches since boot that the wrapper reported running WITHOUT a scope (its stderr notice,
         # see _on_cli_stderr), and when the last one was. The boot verdict above is taken once; these say
@@ -12434,16 +12438,25 @@ class SdkBackend:
                 sock.unlink()
             except OSError:
                 pass
+            # the spawn watermark (host_log_mark; the closing check of the review, 2026-09-18): host.log's size before
+            # the host exists, so the two reads below see what THIS host wrote and nothing a previous host left in the
+            # same file (a stale kernel-held lease keeps the directory, and with it the log, across launches)
+            mark = ht.host_log_mark(self.state_dir, sess.sid)
             proc = self._spawn_host(sess, spec_path, secrets)
             deadline = time.time() + ht.SOCKET_WAIT_S
             while not sock.exists():                          # loop-ok: a bounded wait on the socket appearing
                 if proc.poll() is not None:
                     # the host's last word when it left one (an SDK pin mismatch names both versions and the repin
-                    # command there; a spawn failure its exception type, with the version sentence only when the
-                    # failure is drift-shaped, and only from THIS run's rows), so the card says why, not just where to look
-                    reason = ht.host_exit_reason(self.state_dir, sess.sid)
+                    # command there; a spawn failure its exception type, with the version it ran beside it when the
+                    # host wrote that fact), so the card says why, not just where to look
+                    reason = ht.host_exit_reason(self.state_dir, sess.sid, since=mark)
                     said = "exited before serving its socket (code %s); see hosts/%s/host.log%s" % (
                         proc.returncode, sess.sid, (": " + reason) if reason else "")
+                    # The drift fact first, on its own row (fresh-1 as the closing check ruled it, 2026-09-18): a
+                    # host that imported an untested SDK wrote so before it failed, and that fact is filed whatever
+                    # the failure was, with the remedy, once per kernel life per version pair. The failure's row below
+                    # keeps the failure's own type; nothing attributes the one to the other.
+                    self._file_refused_launch_context(sess, mark)
                     # One ledger row per refused launch, under its own kind (fresh-3, round 1 of the review,
                     # 2026-09-18): a host that never serves its socket sends no hello and no exit frame, the two
                     # events that file host.log rows, so a refused launch left no session-events row at all and the
@@ -12451,6 +12464,7 @@ class SdkBackend:
                     # untested version whose internals resolve) got host.sdk-untested. Gated on the event, not on the
                     # reason text (a host that died without a row gets a row too), and never host.spawn-failed, so the
                     # one event is not counted twice; a retry that is refused again is its own launch and its own row.
+                    # This is the EXITED road; the deadline road below files its own kind.
                     problem_row(self.state_dir, "the session host for %s %s" % (sess.name, said), "host.exited-before-socket",
                                 sid=sess.sid, name=sess.name, log=self._log, code=proc.returncode)
                     raise CLIConnectionErrorLike("the session host " + said)
@@ -12460,7 +12474,19 @@ class SdkBackend:
                         proc.terminate()
                     except ProcessLookupError:
                         pass
-                    raise CLIConnectionErrorLike("the session host did not serve its socket within %.0f s; it was ended" % ht.SOCKET_WAIT_S)
+                    # The same two filings as the exited road (kernel-2, round 2 of the review, ruled MISSING by the
+                    # closing check, 2026-09-18): until then this road raised and filed nothing, so a host that wedged
+                    # before its socket (a CLI that never answered, a hang in connect) was a refused launch with no
+                    # session-events row, invisible everywhere but the card. Its own kind, because this host was ended
+                    # rather than exited and has no return code; the wait it missed rides as waitS. Its last word is
+                    # read too: a host that wrote its untested-version row and then hung has that fact to file.
+                    reason = ht.host_exit_reason(self.state_dir, sess.sid, since=mark)
+                    said = "did not serve its socket within %.0f s; it was ended; see hosts/%s/host.log%s" % (
+                        ht.SOCKET_WAIT_S, sess.sid, (": " + reason) if reason else "")
+                    self._file_refused_launch_context(sess, mark)
+                    problem_row(self.state_dir, "the session host for %s %s" % (sess.name, said), "host.never-served-socket",
+                                sid=sess.sid, name=sess.name, log=self._log, waitS=ht.SOCKET_WAIT_S)
+                    raise CLIConnectionErrorLike("the session host " + said)
                 await asyncio.sleep(0.05)
         finally:
             with self._lock:
@@ -12684,6 +12710,46 @@ class SdkBackend:
         sess._fresh_cli_stamp(spawned, ident, mark_echoes=not getattr(sess, "_deliberate_connect", False))
         self._log("host (%s): a fresh CLI %s (spawned at %d); its epoch and launch login stamped" % (sess.name, ident, spawned))
 
+    def _file_sdk_untested_row(self, sess, row: dict) -> None:
+        """One `sdk-version-untested` host.log row (the host imports claude-agent-sdk at a version other than the one
+        its private imports are written against, and the internals still resolved, so it ran) as the host.sdk-untested
+        problem row, naming both versions and the repin command; visible so the machine is repinned before a release
+        moves one. Reached from _file_host_log_rows for a host that served, and from the refused roads of
+        _host_transport_for for one that did not (the closing check of the review, 2026-09-18, ruling on fresh-1 of
+        round 2: the fact is filed on its own whenever the host wrote it, and never composed into a launch failure's
+        row as that failure's remedy).
+
+        Once per kernel life per version PAIR, keyed on (installed, tested) and NOT on the sid (_sdk_untested_reported;
+        fresh-2, round 2; the key confirmed by the closing check, 2026-09-18): the venv is the machine's, so the first
+        host to say so speaks for every host on the box, and a later host under the same pair, in this session or in
+        ANOTHER, files no row and gets one plain kernel-log line instead. That line is where the per-session fact
+        lives (which sessions ran on the untested version); the row is not per session, and a second session with no
+        row of its own is this rule working, not a filing that went missing."""
+        pair = (str(row.get("installed")), str(row.get("tested")))
+        if pair in self._sdk_untested_reported:
+            self._log("host (%s): runs claude-agent-sdk %s, not the %s it is written against (reported once above, this kernel life)"
+                      % (sess.name, pair[0], pair[1]), problem=False)
+            return
+        self._sdk_untested_reported.add(pair)
+        relation = row.get("relation")
+        prose = ("the host for %s runs claude-agent-sdk %s, %s than the %s it is written against; run %s to install the tested version "
+                 "(the venv is this machine's, so every host runs it; reported once per kernel life)"
+                 % (sess.name, row.get("installed"), relation if relation in ("newer", "older") else "other",
+                    row.get("tested"), _ht().sh.SDK_REPIN_COMMAND))
+        fields = {k: v for k, v in row.items() if k not in ("kind", "t")}
+        problem_row(self.state_dir, prose, "host.sdk-untested", sid=sess.sid, name=sess.name, log=self._log, t=row.get("t"), **fields)
+
+    def _file_refused_launch_context(self, sess, mark: int) -> None:
+        """What a host that never served its socket wrote about the SDK it ran, filed on its own: the
+        sdk-version-untested row past the spawn watermark `mark` (host_log_mark, so a previous host's row in the same
+        file is not this launch's) becomes the host.sdk-untested row through _file_sdk_untested_row. The served
+        roads file it from _file_host_log_rows at the hello and the exit; a refused launch reaches neither, so until
+        the closing check of the review (2026-09-18) the only trace of the drift on this road was a sentence composed
+        into the failure's own reason, attributed by the failure's type name."""
+        for row in _ht().host_log_rows(self.state_dir, sess.sid, since=mark):
+            if row.get("kind") == "sdk-version-untested":
+                self._file_sdk_untested_row(sess, row)
+
     def _file_host_log_rows(self, sess) -> None:
         """host.log lines not yet filed become problem rows. The position is kept in the registry beside hostAck
         (`hostLogPos: {host, pos}`, keyed by the host's identity), so a restart never re-files a row and a new
@@ -12719,22 +12785,8 @@ class SdkBackend:
             elif kind == "host.end-forced":
                 prose = "the host had to SIGKILL %s's CLI: it did not exit within the grace after stdin closed" % sess.name
             elif kind == "host.sdk-untested":
-                # a host running on an SDK other than the one its private imports were verified against (the imports
-                # still resolved, so the session runs); visible here so the machine is repinned before a release moves one.
-                # Once per kernel life per version pair (_sdk_untested_reported; fresh-2, round 2 of the review,
-                # 2026-09-18): the venv is the machine's, so the first host to say so speaks for every host; a later
-                # launch under the same pair gets one plain kernel-log line, so which sessions ran on it stays readable
-                # there, and no problem row.
-                pair = (str(row.get("installed")), str(row.get("tested")))
-                if pair in self._sdk_untested_reported:
-                    self._log("host (%s): runs claude-agent-sdk %s, not the %s it is written against (reported once above, this kernel life)"
-                              % (sess.name, pair[0], pair[1]), problem=False)
-                    continue
-                self._sdk_untested_reported.add(pair)
-                prose = ("the host for %s runs claude-agent-sdk %s, %s than the %s it is written against; run %s to install the tested version "
-                         "(the venv is this machine's, so every host runs it; reported once per kernel life)"
-                         % (sess.name, row.get("installed"), row.get("relation") if row.get("relation") in ("newer", "older") else "other",
-                            row.get("tested"), _ht().sh.SDK_REPIN_COMMAND))
+                self._file_sdk_untested_row(sess, row)      # its own filing: once per kernel life per version pair
+                continue
             else:
                 prose = "the host for %s could not spawn its CLI" % sess.name
             problem_row(self.state_dir, prose, kind, sid=sess.sid, name=sess.name, log=self._log, t=row.get("t"), **fields)

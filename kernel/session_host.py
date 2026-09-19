@@ -64,23 +64,15 @@ END_SENTINEL = object()          # on the stdin pump: close the CLI's stdin afte
 # with no check, so a release that moved one would have failed every hosted session launch with the install
 # step none the wiser (the box admin's hazard review of the pull-in, 2026-09-16). This constant is the ONE
 # declaration of the version those imports were verified against: bin/romp-sdk-setup reads it (a sed over
-# this line) and installs exactly that version, and sdk_internals() below compares the installed package to
-# it before the import. Bumping it is a deliberate act: install the new version, run the host tests on it,
-# then move the number. Format: the bare version string, double-quoted, on this one line.
+# this line) and installs exactly that version, and sdk_internals() below compares the version the host imports
+# (installed_sdk_version) to it before the import. Bumping it is a deliberate act: install the new version, run
+# the host tests on it, then move the number. Format: the bare version string, double-quoted, on this one line.
 SDK_TESTED_VERSION = "0.2.156"
 SDK_DIST = "claude-agent-sdk"                 # the distribution name importlib.metadata and pip know
 SDK_PACKAGE = "claude_agent_sdk"              # the import name; a ModuleNotFoundError naming a module under it is the SDK's own
 SDK_REPIN_COMMAND = "bin/romp-sdk-setup"      # what installs the tested version
 # (module, name) for every private SDK name this module reaches at import; the check resolves each one
 SDK_INTERNALS = (("claude_agent_sdk._internal.transport.subprocess_cli", "SubprocessCLITransport"),)
-# The exception types a spawn failure on an UNTESTED version may be read through as SDK drift (fresh-1, round 2 of
-# the review, 2026-09-18): a private name that moved (ImportError, ModuleNotFoundError), one that is there without an
-# attribute the host reads (AttributeError), or one whose signature changed (TypeError; the shape round 1's composed
-# reason was added for). host_transport.host_exit_reason attaches the version sentence and the repin remedy to a
-# cli-spawn-failed row only when the row's own type, or one in the chain it carries (`causes`, error_chain below), is
-# one of these. A missing or unreadable binary (FileNotFoundError, PermissionError, the SDK's CLINotFoundError), a
-# missing working directory, a refused connection: none of these is a version fact, and a repin cannot fix them.
-SDK_DRIFT_ERRORS = ("TypeError", "AttributeError", "ImportError", "ModuleNotFoundError")
 ERROR_CHAIN_CAP = 5                           # chained type names a row carries at most (a chain is short; a cycle is not)
 
 
@@ -90,8 +82,12 @@ def error_chain(e: "BaseException | None") -> str:
     deep. Type names only, never a message (a message could carry a line of the CLI's output or a path). "" for a
     bare exception. The SDK's connect() wraps every failure inside it as CLIConnectionError from the original (its
     subprocess_cli, verified at 0.2.156), so a drifted call inside connect reaches the host as a connection error
-    whose cause is the TypeError; the cli-spawn-failed row carries this chain so the reason composer can see the
-    drift through the wrap, and see a FileNotFoundError behind a CLINotFoundError for what it is."""
+    whose cause is the TypeError, and a missing binary as one whose cause is the FileNotFoundError; the
+    cli-spawn-failed row carries this chain (`causes`) so a reader of host.log, or of the host.spawn-failed row the
+    kernel files from it, sees what the wrap hid. A recorded fact only: nothing reads the chain to decide what a
+    failure means (the closing check of the review, 2026-09-18, retired the type-name allowlist that did; a
+    type name is not a diagnosis, and the SDK's own option validation raises ValueError under drift as readily as
+    a dependency raises TypeError under none)."""
     names, seen = [], {id(e)}
     while e is not None and len(names) < ERROR_CHAIN_CAP:
         nxt = e.__cause__ if e.__cause__ is not None else (None if e.__suppress_context__ else e.__context__)
@@ -115,8 +111,24 @@ SDK_CAUSE_CAP = 200                          # the cause text appended to a mism
 
 
 def installed_sdk_version() -> "str | None":
-    """The installed claude-agent-sdk's version from its package metadata; None when the package is importable
-    but carries no distribution metadata (a source checkout on the path)."""
+    """The version of the claude-agent-sdk this process imports: the package's own `__version__` when the import
+    gives one, else its distribution metadata, else None (importable, but a source checkout with neither).
+
+    The module first, the metadata second (the closing check of the review, 2026-09-18): the pin exists to know
+    WHICH CODE IS RUNNING, and importlib.metadata describes what was installed, which is not always the same
+    thing. A copy of the package ahead of the tested site on sys.path with no dist-info of its own (a checkout on
+    PYTHONPATH, a vendored tree) imports at ITS version while the metadata still reports the tested one, so a
+    metadata-only read said "tested", took the direct import road, and a moved internal died as a bare
+    AttributeError with no version anywhere. The imported module is the authoritative source; the metadata is the
+    reconstruction, kept for a package that exports no `__version__`. An import that fails here is not reported
+    here: the internals import that follows raises the same error onto its own road."""
+    try:
+        mod = importlib.import_module(SDK_PACKAGE)
+    except Exception:                    # sdk_internals imports the same package next and raises there, as before
+        mod = None
+    v = getattr(mod, "__version__", None) if mod is not None else None
+    if isinstance(v, str) and v:
+        return v
     try:
         return importlib.metadata.version(SDK_DIST)
     except importlib.metadata.PackageNotFoundError:
@@ -1133,8 +1145,8 @@ class SessionHost:
             raise           # its text is the host's own and names the remedy: main's host-crashed record carries it whole
         except Exception as e:
             # the type name, plus the chained type names behind it when there are any (error_chain; fresh-1, round 2 of
-            # the review, 2026-09-18): the kernel's reason composer reads the chain to tell a drifted SDK call the SDK
-            # wrapped as a connection error from a missing binary it wrapped the same way. Never a message.
+            # the review, 2026-09-18): the SDK wraps a drifted call and a missing binary alike as a connection error,
+            # and the chain records which was behind it for whoever reads the row. Never a message.
             chain = error_chain(e)
             self.log("cli-spawn-failed", error=type(e).__name__, **({"causes": chain} if chain else {}))
             self.exit_info = {"t": "exit", "code": None, "signal": None, "cause": "spawn-failed", "error": type(e).__name__}
