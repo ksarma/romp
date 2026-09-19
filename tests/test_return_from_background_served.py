@@ -533,7 +533,7 @@ class ReturnFromBackground(unittest.TestCase):
         if mode == "denied":
             self.assertEqual(data.get("via"), "load", where + "the kernel's 403 commits a document (text/plain) and fires load in every engine, so the load listener is the detector on all three: %r" % (data,))
         else:
-            self.assertEqual(data.get("via"), "load" if engine == "chromium" else "backstop", where + "the detector per engine, as observed under the route's abort: Chromium commits an error page and fires load; Firefox and WebKit fire no load event the shell can act on (the frame keeps about:blank), so the 30 s backstop detects it navigation, so its load fires everywhere: %r" % (data,))
+            self.assertEqual(data.get("via"), "load" if engine == "chromium" else "backstop", where + "the detector per engine, as observed under the route's abort: Chromium commits an error page and fires load; Firefox and WebKit fire no load event the shell can act on (the frame keeps about:blank), so the 30 s backstop detects it: %r" % (data,))
         la = r.get("loadingAfterTap") or {}
         self.assertFalse(la.get("failed"), where + "the re-tap cleared the failed state: %r" % (la,))
         self.assertIs(la.get("retryHidden"), True, where + "…and the retry button is hidden again after the re-tap's load: %r" % (la,))
@@ -569,7 +569,10 @@ class ReturnFromBackground(unittest.TestCase):
     def _dial(self, name, r, boot_tab, tap):
         """The phone's first chat dial carries skeleton=1 (the kernel serves one full plus statuses), the desktop's does not (F5's rule end to
         end); and on a phone opened on another tab the chat pane's idle prefetch asks for nothing while the chat is display:none and asks
-        for its first background full once the Chat tab is shown (F1: the visibility publisher's show hook and the panes word's belt)."""
+        for its first background full once the Chat tab is shown (F1's outcome; the roads are render.ts's: on Chromium and WebKit the
+        visibility publisher's show hook and the panes word's belt carry the re-arm and are witnessed jointly, those legs red only when
+        both go; on Firefox neither road carries it and the leg pins the outcome alone, see the comment on
+        test_firefox_phone_opened_on_the_feed_tab_arms_the_chain_when_chat_is_shown)."""
         where = name + ": "
         boot_chat = [d for d in (r.get("dials") or []) if d.get("app") == "chat" and d.get("phase") == "boot"]
         self.assertTrue(boot_chat, where + "the chat pane dialed at boot")
