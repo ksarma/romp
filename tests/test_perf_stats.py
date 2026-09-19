@@ -1661,7 +1661,22 @@ class RoutingStatements(unittest.TestCase):
             return self._scan(root)
 
     def _pin_swept_set(self, found):
-        self.assertEqual(set(found), self.PLACES, "a file names a routed block and is not in the sweep (or left it): %r" % sorted(set(found) ^ self.PLACES))
+        # Direction-aware: the two sides of the set difference want different remedies, and one sentence for both sent a
+        # contributor whose scratch note the scan had read to add it to PLACES, then red again once the note was deleted
+        # (round 1). %r throughout, so a name holding a surrogate (a non-UTF-8 name, fsdecoded) prints.
+        extra = sorted(set(found) - self.PLACES)
+        gone = sorted(self.PLACES - set(found))
+        parts = []
+        if extra:
+            parts.append("names a routed block and is not in PLACES: %r. The scan reads every text file git tracks or would "
+                         "track, so an untracked, unignored file counts: your own scratch (a note, a saved diff, an editor "
+                         "backup, a .orig or .rej) is removed from the tree or ignored (.git/info/exclude), a new source or "
+                         "doc is read against the measured cells and then added to PLACES" % extra)
+        if gone:
+            parts.append("in PLACES and no longer names a routed block, or gone from the tree: %r. Remove it from PLACES (or "
+                         "restore the file)" % gone)
+        if parts:
+            self.fail("; ".join(parts))
 
     def _pin_no_retired_wording(self, found):
         # One pattern per phrase: its words in order with any run of whitespace between them, newlines and tabs included,
@@ -1689,6 +1704,12 @@ class RoutingStatements(unittest.TestCase):
         with self._tree_lock(exclusive=True) as root:
             clean = self._scan(root)
             self._pin_swept_set(clean); self._pin_no_retired_wording(clean)                          # green without the plant
+            missing = sorted(self.PLACES)[0]
+            with self.assertRaises(AssertionError) as gone:                                          # the other direction, off the same scan
+                self._pin_swept_set({k: v for k, v in clean.items() if k != missing})
+            self.assertIn(missing, str(gone.exception), "a swept file that is gone is named")
+            self.assertIn("Remove it from PLACES", str(gone.exception), "with its own remedy")
+            self.assertNotIn("tracks or would track", str(gone.exception), "and not the extra clause")
             plant = root / "plans" / ("routing-sweep-plant-%d-%s.md" % (os.getpid(), os.urandom(4).hex()))
             rel = str(plant.relative_to(root))
             try:
@@ -1700,6 +1721,8 @@ class RoutingStatements(unittest.TestCase):
                 with self.assertRaises(AssertionError) as swept:
                     self._pin_swept_set(planted)
                 self.assertIn(rel, str(swept.exception), "the swept-set pin names the plant")
+                self.assertIn("tracks or would track", str(swept.exception), "and says the scan reads untracked files")
+                self.assertNotIn("Remove it from PLACES", str(swept.exception), "the plant is an extra, so only that clause prints")
                 with self.assertRaises(AssertionError) as worded:
                     self._pin_no_retired_wording(planted)
                 self.assertIn(rel, str(worded.exception), "the wording pin names the plant")
