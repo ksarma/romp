@@ -215,13 +215,15 @@ _UNSET = object()
 
 
 def _pass_through_lines(fn, callee):
-    """The line numbers, in `fn`'s file, of its calls to `callee`: the boundary wrapper's hand-off of the read (`loader(fsid)`
-    in _or_fault, `_or_fault(...)` in the two outer wrappers), read from the source by the AST so a docstring or a comment
-    naming the callee is not one. Absolute: inspect gives the source with its first line's number."""
+    """(lines, calls): the line numbers, in `fn`'s file, of its calls to `callee`, and how many such calls there are. The calls
+    are the boundary wrapper's hand-off of the read (`loader(fsid)` in _or_fault, `_or_fault(...)` in the two outer wrappers),
+    read from the source by the AST so a docstring or a comment naming the callee is not one. The lines are absolute (inspect
+    gives the source with its first line's number) and are what _caller steps over at; the count is the guard's (review round
+    2, extra5-2: two hand-off calls written on one line are one line and were passed by a guard whose message said one call)."""
     src, start = inspect.getsourcelines(fn)
     tree = ast.parse(textwrap.dedent("".join(src)))
-    return frozenset(start - 1 + node.lineno for node in ast.walk(tree)
-                     if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == callee)
+    calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == callee]
+    return frozenset(start - 1 + node.lineno for node in calls), len(calls)
 
 
 def _loader_sites(obj, needle):
@@ -383,11 +385,15 @@ class _WalkHarness(unittest.TestCase):
         # replaces a door. Not at import: the judge module is shared by every kernel a worker loads and re-executed into the same
         # module object by each load (romp_load), so a code object captured when this module was imported is a previous
         # execution's once a sibling module imports its kernel (the first run beside six siblings failed on exactly that).
-        boundary = tuple((fn.__code__, _pass_through_lines(fn, callee)) for fn, callee in
-                         ((jd._or_fault, "loader"), (jd.load_goals_shared_or_fault, "_or_fault"), (jd.load_goals_or_fault, "_or_fault")))
-        for code, lines in boundary:
-            self.assertEqual(len(lines), 1, "%s hands the read on at exactly one call; the recorder steps over the wrapper only "
-                                            "while its frame sits at that line" % code.co_name)
+        boundary = []
+        for fn, callee in ((jd._or_fault, "loader"), (jd.load_goals_shared_or_fault, "_or_fault"), (jd.load_goals_or_fault, "_or_fault")):
+            lines, calls = _pass_through_lines(fn, callee)
+            self.assertEqual(len(lines), 1, "%s's hand-off calls sit on one line, the granularity the recorder steps over at: the "
+                                            "wrapper's frame is stepped over only while it sits at that line" % fn.__name__)
+            self.assertEqual(calls, 1, "%s hands the read on at exactly one call: a second call on the same line would be stepped "
+                                       "over too and named for the wrapper's kernel caller" % fn.__name__)
+            boundary.append((fn.__code__, lines))
+        boundary = tuple(boundary)
         shared_body = real_shared.__code__
         self.calls, self.writer = [], []
         self.owned_records = {}                           # sid -> the wake records the sweep owns this test (the seeding helper sets it)
@@ -794,7 +800,7 @@ class TheRecorderNamesTheAsker(unittest.TestCase):
             other()                                       # a load written in the wrapper's own body, off the hand-off line
             return loader()                               # the hand-off: the one line the recorder steps over
 
-        boundary = ((wrapper.__code__, _pass_through_lines(wrapper, "loader")),)
+        boundary = ((wrapper.__code__, _pass_through_lines(wrapper, "loader")[0]),)
 
         def other():
             seen.append(("in the body",) + _caller(inspect.currentframe(), boundary))
