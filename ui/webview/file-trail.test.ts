@@ -5,13 +5,18 @@
 // other modifier, and the buttons' titles name the target file. The wiring into the viewer is pinned at source in the
 // second half (the one tag the viewer's own openers set and openFileView reads, both exits ending the trail, the
 // conflict Reload keeping it, the capture-phase chord listener leaving with the viewer); the browser leg,
-// file-trail-browser.test.ts, drives the real viewer. Synthetic values only: the notes-api world, a placeholder sid.
+// file-trail-browser.test.ts, drives the real viewer through its links, its buttons and its chords. The one road that leg
+// never takes, the conflict bar's Reload file, is driven for real at the end of this module, in Chromium through
+// real-viewer-leg.ts (a link push, Edit, a change, a Save refused as changed on disk, Reload file, and the bar read back),
+// so a Reload re-routed around the tagged open fails by execution and not only where the source pins look. Synthetic
+// values only: the notes-api world, a placeholder sid.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { EMPTY_TRAIL, trailRoot, trailPush, trailBack, trailForward, trailSetView, trailEnd, trailBackTarget, trailForwardTarget,
   fileNameOf, navTitle, navChord, liveTrail, setTrail, type TrailEntry, type TrailState } from "./file-trail";
+import { inBrowser, openViewer, frames, ROOT, REPORT } from "./real-viewer-leg";
 
 const web = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
 const VIEW = web("file-view.ts");
@@ -147,7 +152,7 @@ test("both exits end the trail after their guards, the URL viewer's replace ends
   assert.ok(close.indexOf("if (closeGuard && !closeGuard()) return;") < close.indexOf("setTrail(trailEnd());"), "closeFileView ends the trail once the close is happening (a vetoed close keeps it)");
   const url = VIEW.slice(VIEW.indexOf("export function openUrlView("), VIEW.indexOf("  const wrap = el(\"div\");", VIEW.indexOf("export function openUrlView(")));
   assert.ok(url.indexOf("closeGuard && !closeGuard()) return;") < url.indexOf("setTrail(trailEnd());"), "a URL document replacing the viewer ends the trail (its entries are files; a URL is none)");
-  assert.match(VIEW, /trailNext = "reload"; openFileView\(path, sid, opts\);/, "the conflict Reload re-opens the same file as the same entry: the trail stands");
+  assert.match(VIEW, /trailNext = "reload"; openFileView\(path, sid, opts\);/, "the conflict Reload re-opens the same file as the same entry: the trail stands (driven for real in the Chromium case at the end of this module)");
   assert.match(VIEW, /case "reload": setTrail\(s\); return null;/, "moveTrail: a reload records the leaving view and moves nothing");
 });
 
@@ -166,4 +171,79 @@ test("the two glyph buttons stand first in the bar with the icon family's drawin
   assert.ok(nav.includes("const dir = navChord(e, IS_MAC);"), "the chord table decides");
   assert.ok(nav.includes("if (a && a !== document.body && isTypingTarget(a)) return;"), "a text field keeps its own Alt+Left (the caret) and Cmd+[");
   assert.ok(nav.includes("e.preventDefault();"), "the browser's history step is taken over while the viewer is open, target or none");
+});
+
+// ── the conflict Reload, driven in Chromium ────────────────────────────────────────────────────────
+// The one road the source pins above held alone: the two Reload lines and moveTrail's reload arm say a Reload file after a
+// refused save re-opens the same file as the same entry, so Back still names the file the link was followed from, but no
+// leg pressed the button (file-view-notice.test.ts and its siblings press it over a shim and read the card, never the
+// trail). This case drives it through the real viewer in the chat modal (real-viewer-leg.ts; the viewer's default opener):
+// a link push, Edit, a change, a Save the kernel refuses as changed on disk, Reload file behind a discard ask answered yes,
+// and the fresh card's Back read back; then Back itself, to show the entry behind is live and the reloaded file went
+// ahead. A Reload re-routed through closeFileView (the trail ends), or through an untagged open (the trail roots), leaves
+// both pinned lines in place and fails here at the fresh card's Back. Skips LOUDLY without a playwright browser (CI
+// installs none), as every browser leg does.
+const NOTES = ROOT + "/docs/notes.md";
+const REPORT_TEXT = "# Report\n\nRead [the notes](./notes.md) before the results.\n\n"
+  + Array.from({ length: 6 }, (_, i) => `Paragraph ${i + 1}: a line of the report.`).join("\n\n") + "\n";
+const NOTES_TEXT = "# Notes\n\nBack to [the report](report.md).\n\nNote 1: a short line of notes.\n";
+type NavRead = { title: string; disabled: string | null } | null;
+
+test("in a browser, the conflict bar's Reload file keeps the trail: after a link push, Edit, a change and a Save refused as changed on disk, Reload file re-opens the notes fresh with Back still titled with the report's name, and Back then returns to the report with the reloaded notes ahead", async (t) => {
+  await inBrowser(t, async (browser) => {
+    const { page, errors } = await openViewer(browser, "chat", 900, 520, { docs: { [REPORT]: REPORT_TEXT, [NOTES]: NOTES_TEXT } });
+    // an untracked file: Save posts saveFile to the kernel and the refusal arrives as a fileSaveFailed message (a tracked
+    // file saves through the comments host instead; file-view-keyboard-frames-browser.test.ts sets the same status)
+    await page.evaluate(() => { const w = window as any; w.__status = { ...w.__status, trackedBy: null, store: null, storePath: null, storeMtimeNs: null }; });
+    // what the case reads: the two buttons' titles and aria-disabled, as strings, and the bar's file name
+    const nav = (): Promise<{ back: NavRead; forward: NavRead }> => page.evaluate(() => {
+      const read = (dir: string) => { const b = document.querySelector("#romp-fileview .fileview-nav-" + dir) as HTMLButtonElement | null; return b ? { title: b.title, disabled: b.getAttribute("aria-disabled") } : null; };
+      return { back: read("back"), forward: read("forward") };
+    });
+    const base = (): Promise<string | null> => page.locator("#romp-fileview .fileview-base").textContent();
+    // a paint of the named file in either view: Edit on a markdown file switches the view to Raw and SAVES that preference
+    // (the editor's own rule, from before the trail), so the reloaded notes come back Raw while the report, opened by
+    // Back, comes back in the view its entry recorded; the view is read where the case cares, never assumed here
+    const painted = async (name: string) => {
+      await page.locator("#romp-fileview .fileview-base", { hasText: name }).waitFor({ timeout: 10000 });
+      await page.waitForFunction(() => !!document.querySelector("#romp-fileview .fileview-md > p") || !!document.querySelector("#romp-fileview .fileview-body .fv-cl"), null, { timeout: 10000 });
+      await frames(page, 2);
+    };
+    const view = (): Promise<"rendered" | "raw" | null> => page.evaluate(() => document.querySelector("#romp-fileview .fileview-md") ? "rendered" : document.querySelector("#romp-fileview .fileview-body .fv-cl") ? "raw" : null);
+    // the push: the report's link to the notes
+    await page.locator("#romp-fileview .fileview-body a", { hasText: "the notes" }).click();
+    await painted("notes.md");
+    assert.deepEqual(await nav(), { back: { title: "Back to report.md", disabled: null }, forward: { title: "Forward", disabled: "true" } }, "the link's open pushed the report behind");
+    // Edit (the page inlines the bundle, so the editor chunk has no script tag to load from and the plain textarea mounts), a change, Save
+    await page.locator("#romp-fileview .fileview-acts button[aria-label='Edit']").click();
+    await page.waitForFunction(() => !!document.querySelector("#romp-fileview .fileview-body textarea.fileview-editor"), null, { timeout: 10000 });
+    await frames(page, 2);
+    await page.evaluate(() => { const ta = document.querySelector("#romp-fileview .fileview-body textarea.fileview-editor") as HTMLTextAreaElement; ta.focus(); ta.value = ta.value + "\nNote 2: a line added in the viewer.\n"; ta.dispatchEvent(new Event("input")); });
+    const n0: number = await page.evaluate(() => (window as any).__posted.length);
+    await page.locator("#romp-fileview .fileview-acts button", { hasText: /^Save$/ }).click();
+    await page.waitForFunction((n: number) => (window as any).__posted.slice(n).some((m: any) => m && m.type === "saveFile"), n0, { timeout: 10000 });
+    const save: { reqId: number; path: string } = await page.evaluate((n: number) => { const p = (window as any).__posted.slice(n).find((m: any) => m && m.type === "saveFile"); return { reqId: p.reqId, path: p.path }; }, n0);
+    assert.equal(save.path, NOTES, "the save is the notes'");
+    // the kernel's refusal, in its words: the file moved under the editor, so the notice carries Reload file
+    await page.evaluate((reqId: number) => { window.dispatchEvent(new MessageEvent("message", { data: { type: "fileSaveFailed", reqId, error: "notes.md changed on disk since you opened it" } })); }, save.reqId);
+    await page.waitForFunction(() => { const b = document.querySelector("#fileview-save-err button"); return !!b && b.textContent === "Reload file"; }, null, { timeout: 10000 });
+    assert.deepEqual(await nav(), { back: { title: "Back to report.md", disabled: null }, forward: { title: "Forward", disabled: "true" } }, "the refused save moved nothing");
+    // Reload file: the discard ask (the page is the kernel's, so it is window.confirm) says yes; the old card goes and a NEW one paints, in read mode, with no notice
+    await page.evaluate(() => { const w = window as any; w.__asked = 0; w.confirm = () => { w.__asked++; return true; }; w.__oldWrap = document.getElementById("romp-fileview"); });
+    await page.click("#fileview-save-err button");
+    await page.waitForFunction(() => { const w = document.getElementById("romp-fileview"); return !!w && w !== (window as any).__oldWrap && !document.getElementById("fileview-save-err"); }, null, { timeout: 10000 });
+    await painted("notes.md");
+    assert.equal(await page.evaluate(() => (window as any).__asked), 1, "the discard ask ran once, before the old card went");
+    assert.equal(await base(), "notes.md", "the fresh card shows the notes as they are now");
+    assert.equal(await page.evaluate(() => !!document.querySelector("#romp-fileview .fileview-body textarea.fileview-editor")), false, "in read mode");
+    assert.deepEqual(await nav(), { back: { title: "Back to report.md", disabled: null }, forward: { title: "Forward", disabled: "true" } },
+      "the trail stood through the reload: the same entry, Back still names the report (a Reload that closed first, or opened untagged, leaves Back disabled here)");
+    // Back after the reload: the report, with the reloaded notes ahead
+    await page.click("#romp-fileview .fileview-nav-back");
+    await painted("report.md");
+    assert.deepEqual(await nav(), { back: { title: "Back", disabled: "true" }, forward: { title: "Forward to notes.md", disabled: null } }, "Back after the reload reaches the report, and the notes went ahead");
+    assert.equal(await view(), "rendered", "the report opens in the view its entry recorded at the push (L2), whatever the saved preference says by now");
+    assert.deepEqual(errors, [], "no page errors");
+    await page.close();
+  });
 });

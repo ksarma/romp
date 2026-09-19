@@ -327,7 +327,10 @@ test("local file mode: a relative link becomes a path link on the anchor itself 
   const MOD = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "file-view-links.ts"), "utf8");
   assert.match(MOD, /else if \(frag\) \{ a\.dataset\.frag = frag; a\.setAttribute\("title", a\.getAttribute\("title"\) \+ "#" \+ frag\); \}/, "the link's own #fragment rides data-frag (a #L12 is the line instead)");
   // the fragment rides openFileView's options bag beside the fork's todoId and line (user-todo-links.test.ts)
-  assert.match(OPEN_FN, /openLinkedFile\(p, sid \|\| null, ln > 0 \? \{ line: ln \} : x\.dataset\.frag \? \{ heading: x\.dataset\.frag \} : null\);/, "the sibling opens through the host's opener, for this sid, landing on its line or its heading (the open's `at`; Slice 6 of plans/markdown-viewer.md)");
+  // through the trail's door since the link-navigation follow-on (plans/markdown-viewer.md, "Follow-on: Link navigation", L1):
+  // openFromViewer tags the open as the viewer's own and then calls the host's opener as the delegate always did
+  assert.match(OPEN_FN, /openFromViewer\("push", p, sid \|\| null, ln > 0 \? \{ line: ln \} : x\.dataset\.frag \? \{ heading: x\.dataset\.frag \} : null\);/, "the sibling opens through the host's opener, for this sid, landing on its line or its heading (the open's `at`; Slice 6 of plans/markdown-viewer.md)");
+  assert.match(VIEW, /function openFromViewer\(how: TrailHow, path: string, sid: string \| null, at: At \| null\): void \{\n\s*trailNext = how;\n\s*try \{ openLinkedFile\(path, sid, at\); \} finally \{ trailNext = null; \}\n\}/, "the door is the host's opener with a tag: the same openLinkedFile, so a host's openFile (files.ts openHere) still sees every link open");
   assert.match(VIEW, /let openLinkedFile: \(path: string, sid: string \| null, at: At \| null\) => void =\n\s*\(path, sid, at\) => \{ openFileView\(path, sid, \{ at \}\); \};/);
   assert.equal((OPEN_FN.match(/delegate\(body/g) || []).length, 0, "no fv-open delegate in the local viewer: the body's one click listener reads every link (file-view-links.test.ts pins it)");
   assert.ok(OPEN_FN.indexOf('body.addEventListener("click"') > 0 && OPEN_FN.indexOf('body.addEventListener("click"') < OPEN_FN.indexOf("const fetchFile = "), "installed in the open itself, before any bytes can land");

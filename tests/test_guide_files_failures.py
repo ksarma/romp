@@ -244,9 +244,13 @@ class TheViewerDoesIt(unittest.TestCase):
         # the img's error does not bubble: one capture-phase listener on the body per open, its twin removing the label
         self.assertIn('body.addEventListener("error", onError, true);', self.viewer)
         self.assertIn('const FIGERR_MARK = "data-fv-figerr";', self.viewer)
-        # "where the picture would be": the label is the note's neighbour, not its text, to the pairing and the place
+        # "where the picture would be": the label is the note's neighbour, not its text, to the pairing and the place; the
+        # seventh entry is the figure's "Open the picture" control (the link-navigation follow-on's L3), the figure's other
+        # text-free neighbour, which both walks skip the same way (its own pins: ui/webview/file-figure-open.test.ts and
+        # tools/markdown-viewer-plan-linknav.test.mjs read the same literal)
         self.assertRegex(_read("ui", "webview", "anchor-map.ts"), re.compile(r'^  "fv-figerr",', re.M))
-        self.assertIn('const CONTROL_CLASSES = ["code-copy", "katex", "md-fnback", "md-frontmatter-head", "fv-gate", "fv-figerr"];',
+        self.assertRegex(_read("ui", "webview", "anchor-map.ts"), re.compile(r'^  "fv-figopen",', re.M))
+        self.assertIn('const CONTROL_CLASSES = ["code-copy", "katex", "md-fnback", "md-frontmatter-head", "fv-gate", "fv-figerr", "fv-figopen"];',
                       _read("ui", "webview", "reader-place.ts"))
         for sheet in ("styles.css", "feed.css"):
             self.assertRegex(_read("ui", "webview", sheet), re.compile(r"^\.fileview-md \.fv-figerr \{", re.M), sheet)

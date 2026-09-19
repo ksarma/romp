@@ -7790,14 +7790,33 @@ rebuilt: every step is an open that builds a new bar. A press re-opens the entry
 is the view for that open (this open's `fmt.md` copy, unsaved, as a line target's Raw is); the replace in the same tick
 is the acknowledgement. The chords: Alt+Left and Alt+Right, and on a Mac Cmd+[ and Cmd+] as well (`navChord`, pure over
 the event's fields), through ONE document keydown listener in the capture phase, installed per open and removed through
-the viewer's close hooks by both exits; it stands down when the key was already prevented, when a text field or the
-editor holds the keyboard, and when no viewer is up, and otherwise takes the browser's default (its history step, which
-would leave the page under an open viewer) whether or not the trail has a step that way (the contract asked for the
-chords while the viewer is open; a chord with no step that way is taken too, so Alt+Left never navigates the page away
-under an open viewer). The Recent list keeps its meaning: a Back or Forward open in the Files pane records the file as
-any open there does (openHere), moving its row up. Held by file-trail.test.ts (the titles, the chord table, the bar and
-listener pins) and file-trail-browser.test.ts (Back at the block, the scrollTop and the view; Forward; the chords with
-and without a text field and under a prevented key; the default taken with and without a target).
+the viewer's close hooks by both exits; it stands down when the key was already prevented, when a text field holds the
+keyboard (`isTypingTarget`: a text input, a textarea, a select, a contenteditable), while the editor is open (`editing`,
+whatever holds the keyboard then), and when no viewer is up, and otherwise takes the browser's default (its history
+step, which would leave the page under an open viewer) whether or not the trail has a step that way (the contract asked
+for the chords while the viewer is open; a chord with no step that way is taken too, so a chord outside a text field,
+with the editor closed, never navigates the page away). The stand-downs are the exception, and the record names it
+rather than reading as an absolute: with a text field focused (the comments composer, a search field, the plain-textarea
+editor) or while the editor is open and a bar button holds the focus (Save, Cancel), Alt+Left reaches the browser
+unprevented and is its Back on Linux, so the page under the open viewer leaves and an unsaved edit goes with it (no
+beforeunload guard exists in the webview or the shell); the review's probe verified this on 2026-09-19 with a real key
+into headed Chromium and Firefox under a virtual display (Windows binds the same key to Back and was not run; on a Mac,
+Alt+Left in a field is the caret's word step, and Cmd+[ under the same stand-down was not run, open point 6). CodeMirror
+itself, focused, binds Alt+Left to a cursor motion (its default keymap) and kept the key at every caret position tried.
+The browser legs cannot show that half: a synthetic key from Playwright does not run the browser's Back accelerator (the
+probe saw the page stay with no viewer up), so file-trail-browser.test.ts asserts that the chord is not the trail's with
+a field focused and that the default is taken with the keyboard on the body, and no test drives the leave. Whether the
+listener should take the default in the stand-down cases too, stepping nothing, is the owner's (open point 9). Inside
+the dashboard shell a second stand-down applies: the shell's pane-focus script (kernel.py `_LANDING_FOCUS_JS`) wires a
+capture-phase keydown listener on every pane document as the pane loads, ahead of the listener a later open adds, and
+takes Alt+Left and Alt+Right on a non-editable target as the move between panes (preventDefault, so `onNavKey` sees a
+prevented key and returns), so in a shell pane (the Files pane, a chat pane's modal) the arrow chords move the pane
+focus and the trail's are Cmd+[ and Cmd+] on a Mac and the two buttons everywhere; on the standalone Files and chat
+pages, which the browser legs drive, all four chords step the trail. Read from the listeners' order, not driven (open
+point 10). The Recent list keeps its meaning: a Back or Forward open in the Files pane records the file as any open
+there does (openHere), moving its row up. Held by file-trail.test.ts (the titles, the chord table, the bar and listener
+pins) and file-trail-browser.test.ts (Back at the block, the scrollTop and the view; Forward; the chords with and
+without a text field and under a prevented key; the default taken with and without a target).
 
 L3. **A figure opens in detail.** Every picture a rendered file embeds (`![]()`, an `<img>`, an image wikilink embed)
 wears an "Open the picture" control (file-view.ts `ensureFigureControl`): a glyph button of the bar's family (icons.ts
@@ -7853,7 +7872,8 @@ call in file-trail.ts or file-view.ts. A pushState per step would put entries on
 the viewer, so the browser's Back after the viewer closes would step through closed files or leave the page, and the
 Files pane is an iframe of the dashboard, whose entries join the shell page's history; popping the entries at the close,
 and telling the pane's steps from the shell's, is a design of its own. Recorded as a follow-on for the owner with that
-trade-off (open point 1); meanwhile the chords take the browser's step while the viewer is up (L2).
+trade-off (open point 1); meanwhile the chords take the browser's step while the viewer is up, outside L2's
+stand-downs (L2).
 
 L6. **Nothing leaves the machine that did not before.** No kernel change and no new route: a Back or Forward open
 fetches the file through the same `/file` route the link's open used, a figure's open fetches the picture through it as
@@ -7866,26 +7886,32 @@ modules: ui/webview/file-trail.test.ts (the pure functions, the chord table, the
 source: the one tag, both exits, the reload, the bar and the listener), ui/webview/file-trail-browser.test.ts
 (Chromium over the real Files page and a chat-modal page: the contract's cases 1 to 5 and 7),
 ui/webview/file-figure-open.test.ts (L3's source pins) and ui/webview/file-figure-open-browser.test.ts (Chromium over
-the real chat modal: case 6 and L4). Seven standing suites were re-aimed, not undone:
-ui/webview/file-view-text-size.test.ts (its real-module bar leg at 380, 420, 480 and 600 px in the chat and feed
-modals measures the two glyphs among the actions, case 8), ui/webview/file-view.test.ts and
-ui/webview/file-view-links.test.ts (the delegate's open through openFromViewer; the model import),
-ui/webview/file-view-figure-error.test.ts and ui/webview/file-view-figure-error-browser.test.ts (the label readers
-step past the control), ui/webview/fileview-parity.test.ts (the control's rules byte-equal in both sheets) and
-ui/webview/anchor-map-fallback-markup.test.ts (the stand-in's control list). The guide's Links in a file paragraph
-gained two sentences, the trail's and the figure control's, and the browser plan's navigation-stack section
-(plans/file-browser.md) a pointer sentence. tools/markdown-viewer-plan-linknav.test.mjs holds this section to the
-tree: the section is present once after "## Out of scope" and carries the ask, what existed, the six decisions, the
-tests and the open points in that order; the trail module exists with the functions L1 names and the viewer calls it
-where L1 and L2 say; the words quoted here and in the guide are the sources' literals; the sheets carry L3's rules
-under `screen` in both sheets and the print block names the control nowhere; no history API call stands in the trail
-or the viewer; the guide's two sentences are whole and the old wording is gone; the browser plan's pointer stands in
-its navigation-stack section; and the module list is two-way (every module the listing above produces is named here
-and the count in that sentence is the listing's, read from the sentence; every test module under ui/webview, tools or
-tests whose own text names this follow-on is named here; every module named here exists, this one included).
-tests/test_file_view_bar_browser.py, the served bar pins, read the groups inside `.fileview-acts`, and the nav group
-stands outside it, in the bar itself, before the path; run as a single module at the records commit, green (`pytest
-tests/test_file_view_bar_browser.py`, a run that needs the extension deps and a Playwright browser).
+the real chat modal: case 6 and L4). Ten standing suites were re-aimed, not undone:
+ui/webview/file-view-text-size.test.ts (its real-module bar leg at 380, 420, 480 and 600 px in the chat and feed modals
+measures the two glyphs among the actions, case 8), ui/webview/file-view.test.ts and ui/webview/file-view-links.test.ts
+(the delegate's open through openFromViewer; the model import), ui/webview/file-view-figure-error.test.ts and
+ui/webview/file-view-figure-error-browser.test.ts (the label readers step past the control),
+ui/webview/fileview-parity.test.ts (the control's rules byte-equal in both sheets),
+ui/webview/anchor-map-fallback-markup.test.ts (the stand-in's control list), and in the review
+ui/webview/file-view-notice.test.ts (its Escape cases run every keydown handler an open registers in the document's
+order, the capture phase first, since the trail's listener is an open's newest registration, and the close hooks'
+removal carries the capture flag its add did), ui/webview/md-url-view.test.ts (the local-file mode's sibling link opens
+through openFromViewer with a push, and the door's shape: the tag set, the host's opener called, the tag cleared in a
+finally) and tests/test_guide_files_failures.py (both walks' control lists carry fv-figopen, the figure's other
+text-free neighbour, as the seventh entry). The guide's Links in a file paragraph gained two sentences, the trail's and
+the figure control's, and the browser plan's navigation-stack section (plans/file-browser.md) a pointer sentence.
+tools/markdown-viewer-plan-linknav.test.mjs holds this section to the tree: the section is present once after "## Out of
+scope" and carries the ask, what existed, the six decisions, the tests and the open points in that order; the trail
+module exists with the functions L1 names and the viewer calls it where L1 and L2 say; the words quoted here and in the
+guide are the sources' literals; the sheets carry L3's rules under `screen` in both sheets and the print block names the
+control nowhere; no history API call stands in the trail or the viewer; the guide's two sentences are whole and the old
+wording is gone; the browser plan's pointer stands in its navigation-stack section; and the module list is two-way
+(every module the listing above produces is named here and the count in that sentence is the listing's, read from the
+sentence; every test module under ui/webview, tools or tests whose own text names this follow-on is named here; every
+module named here exists, this one included). tests/test_file_view_bar_browser.py, the served bar pins, read the groups
+inside `.fileview-acts`, and the nav group stands outside it, in the bar itself, before the path; run as a single module
+at the records commit, green (`pytest tests/test_file_view_bar_browser.py`, a run that needs the extension deps and a
+Playwright browser).
 
 **Open points for the owner.**
 
@@ -7914,3 +7940,14 @@ tests/test_file_view_bar_browser.py`, a run that needs the extension deps and a 
 8. The plan's two follow-on sections. The print follow-on (branch filereview-print, in flight) appends its section at
    the same place, after "## Out of scope", and its pin requires its section to be the plan's last; this section's pin
    requires only that it follows "## Out of scope", so when both land this section goes before the print one.
+9. The chords' stand-downs (L2). With a text field focused, or the editor open and the focus on a bar button, Alt+Left
+   is the browser's Back on Linux (verified) and, by the same accelerator, Windows, and leaves the page under the open
+   viewer, an unsaved edit with it. Whether `onNavKey` should take the default there too and step nothing (the viewer up
+   and the caret outside the editor's own field; CodeMirror keeps its own Alt+Left), or a beforeunload guard should hold
+   a dirty editor, is a ruling: the first trades a field's own Alt+Left (the caret's word step on a Mac) for the page's
+   safety.
+10. The chords inside the dashboard shell (L2). The shell's pane-focus script takes Alt+Left and Alt+Right first on
+    every pane document as the move between panes, so in a shell pane the arrow chords never reach the trail and only
+    the Mac's Cmd+[ and Cmd+] and the buttons step it; read from the listeners' order, not driven. Whether the shell
+    should yield the arrows to a pane whose document has a viewer up (`#romp-fileview`), or the trail's arrow chords
+    should be other keys, is a ruling; the guide's trail sentence names the arrow chords without this exception.

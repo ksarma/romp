@@ -10,10 +10,13 @@
 // nothing; a figure inside an author's link keeps the link on its plain click and still has its own control; a remote picture
 // on an unlisted host is a gated placeholder with no control until its click loads it, and then opens a tab, never the viewer;
 // an inline `data:` picture has no control; with the panel OPEN a plain click on the figure is the panel's comment offer
-// (the float), a drag on the overlay draws a region, and the control's click is not swallowed by the overlay; print media
-// shows no control even when it holds the focus; a device with no hover keeps it visible. Red over the unchanged viewer at
-// the first control assertion (no control exists). Skips LOUDLY without a playwright browser (CI installs none). Synthetic
-// values only: the notes-api world, a placeholder session id, example.invalid addresses, /repo/notes-api paths.
+// (the float), a drag on the overlay draws a region, and the control's click is not swallowed by the overlay; with the panel
+// open on a COARSE pointer the layer's overlay is off, so the plain tap reaches the figure listener itself, which stands down
+// to the comment offer (the guard's own execution: nothing opens, the trail does not move) while a Ctrl-click and the control
+// keep their opens; print media shows no control even when it holds the focus; a device with no hover keeps it visible. Red
+// over the unchanged viewer at the first control assertion (no control exists). Skips LOUDLY without a playwright browser (CI
+// installs none). Synthetic values only: the notes-api world, a placeholder session id, example.invalid addresses,
+// /repo/notes-api paths.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import { inBrowser, openViewer, openPanel, frames, topBlock, putAtTop, ROOT, REPORT, SID, PARA } from "./real-viewer-leg";
@@ -281,6 +284,51 @@ test("in a browser, the Comments panel open: the regions layer wraps the figure 
     await page.mouse.click(ctl2.left + ctl2.width / 2, ctl2.top + ctl2.height / 2);
     await painted(page, "plot.svg");
     enabledTo((await nav(page)).back, "Back to report.md", "the control opened the picture from under the open panel");
+    assert.deepEqual(errors, [], "no page errors");
+    await page.close();
+  });
+});
+
+test("in a browser, the Comments panel open on a coarse pointer: the layer's overlay is off, so a plain tap on the figure reaches the figure listener itself, which stands down to the panel's comment offer (the float; nothing opens, the trail does not move); a Ctrl-click on the figure is still the /file URL in a tab with no offer, and the control still opens the picture", async (t) => {
+  await inBrowser(t, async (browser) => {
+    const { page, errors } = await openReport(browser);
+    // The finger BEFORE the panel: the layer reads the pointer as it arms (file-comments.ts, `active = this.open && !isCoarsePointer()`),
+    // and Chromium's `(pointer: coarse)` follows touch emulation, which does not revert (the leg above), so this is a page of its own.
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 1 });
+    assert.equal(await page.evaluate(() => matchMedia("(pointer: coarse)").matches), true, "a coarse pointer under the emulation");
+    await openPanel(page);
+    // the wrap stands and EVERY overlay is off (pointer-events none): the tap's target is the img, not the overlay the fine-pointer leg clicks
+    await page.waitForFunction(() => { const o = document.querySelectorAll(".fileview-md .fc-overlay"); return !!document.querySelector(".fileview-md .fc-imgwrap > img") && o.length > 0 && Array.from(o).every((x) => x.classList.contains("fc-overlay-off")); }, null, { timeout: 5000 });
+    await page.evaluate(() => { document.querySelectorAll(".fileview-md img")[0].scrollIntoView({ block: "center" }); });
+    await frames(page, 2);
+    const img = await boxOf(page, ".fileview-md img", 0);
+    const at: [number, number] = [img.left + img.width * 0.3, img.top + img.height * 0.6];   // away from the control's corner
+    assert.equal(await page.evaluate(([x, y]: [number, number]) => { const e = document.elementFromPoint(x, y)!; return e.localName + (e.closest(".fc-imgwrap") ? " in the wrap" : ""); }, at), "img in the wrap", "the figure itself is under the point: an off overlay takes no pointer events");
+    const floatShown = (): Promise<boolean> => page.evaluate(() => { const f = document.querySelector(".fc-float") as HTMLElement | null; return !!f && !f.hidden && f.getBoundingClientRect().width > 0; });
+    // a Ctrl-click on the figure: the guard reads the gesture, so the listener runs the tab and stops before the row (no comment offer)
+    await page.keyboard.down("Control"); await page.mouse.click(at[0], at[1]); await page.keyboard.up("Control");   // mouse.click takes no modifiers option: the key is held around it
+    await frames(page, 2);
+    assert.deepEqual(await opened(page), [FILE_URL(PLOT)], "the modified click on a coarse pointer under the open panel: the /file URL in a tab");
+    assert.equal(await base(page), "report.md", "the viewer still shows the report");
+    assert.equal(await floatShown(), false, "the modified click stopped before the row: no comment offer");
+    // FAILS with the guard dead (asideOpen read as false): the plain tap reaches the listener, which opens the picture.
+    // With the guard, it stands down, and the panel's row listener offers the comment: the float stands, the report stays, the trail is unmoved.
+    await page.mouse.click(at[0], at[1]);
+    // the tap's outcome, whichever it is (the offer's float, or the picture's paint replacing the bar's name), then the verdict
+    await page.waitForFunction(() => { const f = document.querySelector(".fc-float") as HTMLElement | null; const b = document.querySelector(".fileview-base"); return (!!f && !f.hidden && f.getBoundingClientRect().width > 0) || (b !== null && b.textContent !== "report.md"); }, null, { timeout: 5000 });
+    await frames(page, 2);
+    assert.equal(await base(page), "report.md", "the figure listener stood down: the tap offered a comment and opened nothing");
+    assert.equal(await floatShown(), true, "the panel's comment offer stands");
+    assert.equal(await page.evaluate(() => !!document.querySelector(".fileview-imgbox")), false, "no picture body");
+    const n = await nav(page);
+    disabled(n.back, "the tap pushed nothing"); disabled(n.forward, "nothing ahead");
+    // the control keeps its open under the open panel on a coarse pointer (no hover: it stands visible at rest)
+    const ctl = await boxOf(page, ".fileview-md [data-fv-figopen]", 0);
+    assert.equal(await page.evaluate(([x, y]: [number, number]) => document.elementFromPoint(x, y)!.closest("[data-fv-figopen]") !== null, [ctl.left + ctl.width / 2, ctl.top + ctl.height / 2]), true, "the control is under its own point");
+    await page.mouse.click(ctl.left + ctl.width / 2, ctl.top + ctl.height / 2);
+    await painted(page, "plot.svg");
+    enabledTo((await nav(page)).back, "Back to report.md", "the control opened the picture from under the open panel on a coarse pointer");
     assert.deepEqual(errors, [], "no page errors");
     await page.close();
   });

@@ -2718,8 +2718,10 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // replace's runLeave writes the reader's place as for any link); a Cmd/Ctrl-click opens the kernel's /file URL in a tab, as
   // a PDF's modified click does (openFileTab; a blocked popup falls through to the viewer), and stops before the row, as a
   // link's modified click does. A remote picture (an http source) opens in a tab whatever the gesture, never in the viewer.
-  // The control's click is the figure's own wherever it stands. The figure's own click yields where another gesture owns it:
-  // a figure inside a link (linkOf: the links listener follows the author's link), a picture the panel framed (panelMark: the
+  // The control's click is the figure's own wherever it stands (and it never stands inside a link: ensureFigureControl puts it
+  // after a link holding the figure alone and adds none inside a link holding more, linkAbove). The figure's own click yields
+  // where another gesture owns it: a figure inside a link (linkOf: the links listener follows the author's link; an anchor
+  // with an href the links listener leaves to the browser, a web address: the browser's own open), a picture the panel framed (panelMark: the
   // card's, through the row's delegate), the Comments panel open (asideOpen: a plain click is the panel's comment offer,
   // onImageClick, and a drag its region; the regions layer's overlay takes the press on a fine pointer, and on a coarse one the
   // click reaches here and stands down), a drag that selected and ended on the picture (selectionOpenIn, the links' rule).
@@ -2738,6 +2740,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     if (control) { const img = figureOfControl(control); if (img) openFigure(img, ev); return; }
     const img = bareFigureOf(t, body);
     if (!img || linkOf(t)) return;
+    if (img.closest("a[href]")) return;                          // a web anchor of the markdown holding the figure (`[![alt](src)](https://...)`: linkMarkdownAnchors gives it target and rel and no class, so linkOf reads none): the browser's own open of the author's link, never the picture beside it
     if (panelMark(t) && !wantsOwnTab(ev)) return;
     if (asideOpen && !wantsOwnTab(ev)) return;
     if (selectionOpenIn(box)) return;
@@ -4761,25 +4764,37 @@ function resolveFigureRefs(root: ParentNode, base: string): void {
 // holding the figure alone), never a wrapper around it: the panel pairs pictures by img order and data-fv-src, the regions
 // layer wraps THE img, the reader's place and the anchor map read the flow as the browser laid it, and a wrapper standing in
 // the author's flow changed a figure's own layout (the regions layer's 2026-09-06 review). Outside a link holding the figure,
-// so the author's link keeps the figure's click and the control's click is its own. The sheets lay it over the figure's
-// top-right corner from that place with no measuring (`.fileview-md .fv-figopen`: a zero-width margin box aligned to the
-// line's top), transparent until the pointer is over the figure or over it, or a keyboard focus reaches it; always in the tab
-// order. A figure the author floated by its align attribute stacks sideways, so the control floats with it (the -left and
-// -right classes). It has no text of its own and the text walks skip it as a control (anchor-map.ts and reader-place.ts
-// CONTROL_CLASSES). A URL document (openUrlView) gets none: its figures are the web's, and it is no file of a session.
-// What the control opens (figureTarget): the file the authored source names on the session's disk (the model's figurePath,
-// the join rewriteFigureSrcs fetched through, so the picture opened is the one shown), or, for a remote picture (an http or
-// https source, a protocol-relative one), the address in a tab, never the viewer. A figure with nothing to open gets no
-// control: no source, a `data:` URL (inline bytes, which a tab will not show), any other scheme. A gated placeholder
-// (figure-gate.ts) gets none until its figure is loaded: armFigureControls hears the load on the body.
+// so the author's link keeps the figure's click and the control's click is its own. A figure inside a link that holds MORE
+// than the figure (text beside it, `[![alt](src) caption](target)`, an `<a>` with a caption) gets no control (linkAbove): the
+// climb leaves such a link standing over the img, so the control went inside the author's link, nested interactive content
+// whose one click the links listener took as the link's and this one as the control's, two opens and a phantom entry on the
+// trail (the review's round 1); there the figure is the author's link, as its plain click is. A figure under the floor on
+// either side (FIGOPEN_MIN_PX, read once its picture has loaded: a badge, an inline icon) gets none either, and one added at
+// paint leaves at the load that measured it: the sheets' fixed box overhung it and took the click meant for its link or the
+// prose before it. The sheets lay it over the figure's top-right corner from that place with no measuring (`.fileview-md
+// .fv-figopen`: a zero-width margin box aligned to the line's top), transparent until the pointer is over the figure or over
+// it, or a keyboard focus reaches it; always in the tab order. A figure the author floated by its align attribute stacks
+// sideways, so the control floats with it (the -left and -right classes). It has no text of its own and the text walks skip
+// it as a control (anchor-map.ts and reader-place.ts CONTROL_CLASSES). A URL document (openUrlView) gets none: its figures
+// are the web's, and it is no file of a session.
+// What the control opens (figureTarget): for a remote picture (an http or https source, a protocol-relative one), the address
+// in a tab, never the viewer, read FIRST; else the file the authored source names on the session's disk (the model's
+// figurePath, the join rewriteFigureSrcs fetched through, so the picture opened is the one shown). A figure with nothing to
+// open gets no control: no source, a `data:` URL (inline bytes, which a tab will not show), any other scheme. A gated
+// placeholder (figure-gate.ts) gets none until its figure is loaded: armFigureControls hears the load on the body.
 /** What "Open the picture" opens for a figure, or null when there is nothing to open. `filePath` is the shown file's. */
 type FigureTarget = { kind: "file"; path: string } | { kind: "web"; href: string };
 function figureTarget(img: Element, filePath: string): FigureTarget | null {
   const dest = pictureDest(img);                       // the authored source: data-fv-src when the viewer rewrote the src, else src as written
   if (dest === null) return null;
+  // The web address FIRST, before the model's join: figurePath reads a protocol-relative source (`//host/pic.svg`) as an
+  // absolute path of the disk (its one test is for a scheme, and `//` has none), where rewriteFigureSrcs left it alone as a
+  // web address and the browser fetched it from the web (file-view-figures-absolute.test.ts). Read after the join, the web
+  // arm was unreachable for that source, and the control opened the viewer on the kernel's /file route at path `//host/pic.svg`
+  // (a 404 and a bogus entry on the trail) in place of the tab (the review's round 1).
+  if (/^https?:/i.test(dest) || dest.startsWith("//")) return { kind: "web", href: absUrl(dest) };   // resolved against the page, as the browser resolved the fetch
   const p = figurePath(filePath, dest);
   if (p !== null) return { kind: "file", path: p };
-  if (/^https?:/i.test(dest) || dest.startsWith("//")) return { kind: "web", href: absUrl(dest) };   // resolved against the page, as the browser resolved the fetch
   return null;
 }
 /** The control a click landed on, inside `within`: the element carrying FIGOPEN_MARK at or above the target, else null. */
@@ -4802,13 +4817,51 @@ function bareFigureOf(target: Element | null, within: Element): Element | null {
   if (!t.closest(".fileview-md") || t.closest('[data-act="' + GATE_ACT + '"]')) return null;
   return t;
 }
+/** The least a figure measures on each side, in CSS pixels, for a control: the control's 22px box and its 6px inset from the
+ *  corner (the sheets' rest rule), and as much figure again beside them, so the control covers a corner of the picture and a
+ *  click on the picture itself (the author's link, the panel's offer, the plain open) keeps most of it. A badge (a 100 by 20
+ *  svg) and an inline icon (16 by 16) measure under it: laid from the sheets' fixed margins, the transparent control on one
+ *  hung below the badge and over the prose before the icon and took the click meant for the link or the text (the review's
+ *  round 1). Their plain click still opens them where no link holds them. */
+const FIGOPEN_MIN_PX = 48;
+/** The figure's box once its picture has loaded: the rendered box when it is laid out (the width the author or the column
+ *  gave it), else the picture's own size; null while the picture is not loaded (its `load`, armFigureControls, decides
+ *  then), when it failed (no size to read: the control stands and opens what the label names), or where the element has no
+ *  picture to ask (a stand-in outside a browser). */
+function figureBox(img: Element): { w: number; h: number } | null {
+  const i = img as HTMLImageElement;
+  if (typeof i.complete !== "boolean" || !i.complete || !(i.naturalWidth > 0) || typeof i.getBoundingClientRect !== "function") return null;
+  const r = i.getBoundingClientRect();
+  return r.width > 0 && r.height > 0 ? { w: r.width, h: r.height } : { w: i.naturalWidth, h: i.naturalHeight };
+}
+/** Whether the figure measures under the floor on either side (figureBox), so that no control goes on it. */
+function figureTooSmall(img: Element): boolean {
+  const b = figureBox(img);
+  return b !== null && (b.w < FIGOPEN_MIN_PX || b.h < FIGOPEN_MIN_PX);
+}
+/** Remove the control standing after `img`'s anchor, when one does: a control added at paint, before the load measured the
+ *  figure under the floor. */
+function dropFigureControl(img: Element): void {
+  const c = figureControlAfter(figureAnchor(img));
+  if (c) c.remove();
+}
+/** The link above `anchor` that figureAnchor's climb did not leave: a link holding more than the figure (text beside it), a
+ *  path link (`[data-act="openpath"]`, its href taken off at mark time) or an anchor with an href (a web address, a section).
+ *  A control inside it would be the link's click too. */
+function linkAbove(anchor: Element): Element | null {
+  const p = anchor.parentElement;
+  return p ? p.closest('a[href], [data-act="openpath"]') : null;
+}
 /** Put the control after `img`'s anchor when the figure has something to open and none stands there yet; an img inside a
- *  gate's placeholder is left alone (its control waits for the load). */
+ *  gate's placeholder is left alone (its control waits for the load); a figure under the floor (figureTooSmall) gets none and
+ *  loses one added before its load; a figure inside a link holding more than it (linkAbove) gets none. */
 function ensureFigureControl(img: Element, filePath: string): void {
   if (img.closest('[data-act="' + GATE_ACT + '"]')) return;
+  if (figureTooSmall(img)) { dropFigureControl(img); return; }   // a badge, an inline icon: the sheets' fixed box would overhang it
   const anchor = figureAnchor(img);
   if (figureControlAfter(anchor)) return;
   if (figureTarget(img, filePath) === null) return;
+  if (linkAbove(anchor)) return;                                 // inside the author's link: the figure is the link's, and a button in there is the link's click too
   const b = el("button", "fileview-btn fileview-icon " + FIGOPEN_CLASS) as HTMLButtonElement;
   b.type = "button"; b.innerHTML = ICON_EXPAND; b.dataset.icon = "1";
   b.setAttribute(FIGOPEN_MARK, "");
