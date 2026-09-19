@@ -55,6 +55,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -206,6 +207,68 @@ out.after2 = await active();
 for (let i = 0; i < DEADLINE / 50 && !out.ledger.length; i++) await page.waitForTimeout(50);
 out.urlAfterShow = page.url();
 out.later = { reveals: out.reveals.slice(), ledger: out.ledger.slice() };
+fs.writeSync(1, "RESULT:" + JSON.stringify(out) + "\n");
+await browser.close();
+process.exit(0);
+"""
+
+# THE PHONE'S COLD OPEN ON THE LINK (review round 3 of the lazy panes, 2026-09-19, fresh-1): the phone shell at an iPhone
+# viewport, the chat blob naming `web` (the tab the phone was on when it buzzed), the page booted on the deep link for `api`. On
+# the phone the chat pane's first dial takes the skeleton diet and the kernel serves ONE full, the tab the dial's active= names;
+# the shell's head seeds the blob with the notified session before the chat iframe parses, so that one full is the notified
+# session's. Every socket any document constructs is recorded on the top window (its url, and every frame it receives as
+# [t, type, id] in wire order), so the first dial's terms and the order of the diet's full against the reveal's focus are read
+# off the wire, not off the page.
+DRIVER_LINK_PHONE = r"""
+import { createRequire } from "node:module";
+import fs from "node:fs";
+const require = createRequire(process.env.EXT_PKG);
+const { chromium, devices } = require("playwright");
+const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+let browser;
+try { browser = await chromium.launch(); }
+catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
+const DEADLINE = __DEADLINE_MS__;   // the harness deadline for an outcome (SETTLE_S), set by the test
+const out = { reveals: [], ledger: [] };
+const dev = { ...(devices["iPhone 14"] || {}) }; delete dev.defaultBrowserType;
+const context = await browser.newContext({ ...dev, viewport: { width: 390, height: 844 } });
+// the phone was on `web` when it buzzed: the chat blob's activeId is the dial's hint; written by the top document before the shell parses
+await context.addInitScript((sid) => { try { if (window === window.top) localStorage.setItem("romp-vscode-state-chat", JSON.stringify({ activeId: sid, activeName: "web" })); } catch (e) {} }, cfg.sidA);
+// the wire: every WebSocket any document constructs, on the top window, with the frames it receives (type and id, in wire order)
+await context.addInitScript(() => {
+  try {
+    const T = window.top; if (!T.__wire) T.__wire = [];
+    const W = window.WebSocket;
+    const Wrapped = function (url, protos) {
+      const rec = { url: String(url), t: Date.now(), doc: location.pathname, frames: [], sends: [] };
+      T.__wire.push(rec);
+      const ws = protos === undefined ? new W(url) : new W(url, protos);
+      ws.addEventListener("message", (ev) => { if (rec.frames.length >= 400) return; try { const o = JSON.parse(String(ev.data)); rec.frames.push([Date.now(), o && o.type, o && o.id]); } catch (e) { rec.frames.push([Date.now(), "?", null]); } });
+      const send = ws.send;   // the page's own asks on this socket (needFull with its why: the tap's skeleton-click, the chain's prefetch), stamped
+      ws.send = function (d) { if (rec.sends.length < 400) { try { const o = JSON.parse(String(d)); rec.sends.push([Date.now(), o && o.type, o && o.id, o && o.why]); } catch (e) { rec.sends.push([Date.now(), "?", null, null]); } } return send.call(ws, d); };
+      return ws;
+    };
+    Wrapped.prototype = W.prototype; Wrapped.CONNECTING = 0; Wrapped.OPEN = 1; Wrapped.CLOSING = 2; Wrapped.CLOSED = 3;
+    window.WebSocket = Wrapped;
+  } catch (e) {}
+});
+const page = await context.newPage();
+page.on("request", (r) => { const u = r.url();
+  if (r.method() === "POST" && /\/reveal$/.test(u)) out.reveals.push(JSON.parse(r.postData() || "{}"));
+  if (r.method() === "POST" && /\/push\/landed$/.test(u)) out.ledger.push(JSON.parse(r.postData() || "{}")); });
+await page.goto(cfg.link);
+const chat = await (async () => { for (let i = 0; i < DEADLINE / 50; i++) { const f = page.frames().find((f) => /\/chat/.test(f.url())); if (f) return f; await page.waitForTimeout(50); } return null; })();
+if (!chat) { console.error("no chat iframe in the shell"); process.exit(1); }
+const active = () => chat.evaluate(() => (document.querySelector("#tabs .tab.active") || { dataset: {} }).dataset.id || null);
+out.landed = await chat.waitForFunction((sid) => (document.querySelector("#tabs .tab.active") || {}).dataset?.id === sid, cfg.sidB, { timeout: DEADLINE }).then(() => true).catch(() => false);
+out.after = await active();
+out.mobileShell = await page.evaluate(() => !!document.getElementById("mtabs") && getComputedStyle(document.getElementById("mtabs")).display !== "none");
+for (let i = 0; i < DEADLINE / 50 && !out.ledger.length; i++) await page.waitForTimeout(50);
+await page.waitForTimeout(1500);   // the ready arm's push and the parked reveal's focus are on the wire; a beat for anything the chain asks after them
+out.boot = { reveals: out.reveals.slice(), ledger: out.ledger.slice() };
+out.urlAfterBoot = page.url();
+out.strip = await chat.evaluate(() => Array.from(document.querySelectorAll("#tabs .tab[data-id]")).map((t) => ({ id: t.dataset.id, skeleton: t.classList.contains("tab-skeleton"), active: t.classList.contains("active") })));
+out.wire = await page.evaluate(() => (window.__wire || []).slice());
 fs.writeSync(1, "RESULT:" + JSON.stringify(out) + "\n");
 await browser.close();
 process.exit(0);
@@ -568,6 +631,54 @@ class ServedTapLanding(unittest.TestCase):
         self.assertEqual([(r["via"], r["hasPid"], r["dup"]) for r in rows], [("boot", True, False), ("pageshow", True, False)], "%r" % rows)
         for r in self._diag_rows("deeplink"):
             self.assertNotIn("sid", r.get("data") or {}, "structure only: %r" % r)
+
+    def test_a_phone_cold_open_on_the_deep_link_dials_the_notified_session_as_the_diets_one_full(self):
+        # fresh-1 (review round 3 of the lazy panes, 2026-09-19): the phone's first chat dial takes the skeleton diet (one full, the
+        # tab the dial's active= names). Before the head seed that hint was the last-shown tab (web here), so the one full went to
+        # it and the notified session (api), parked as a pending reveal, arrived as a skeleton and cost a second round trip. Now the
+        # shell's head seeds the chat blob with the link's session before the chat iframe parses: the FIRST dial names api, the one
+        # full before the reveal's focus is api's and no other, and the landing is the same /reveal, via link, at boot.
+        ep, pid = self._subscribe_and_test_push("link-phone-device", host="web.push.apple.com")
+        link = "http://127.0.0.1:%d/?token=%s&push-reveal=%s&push-pid=%s" % (self.port, self.token, SID_B, pid)
+        out = self._drive(DRIVER_LINK_PHONE, link=link)
+        self.assertTrue(out.get("mobileShell"), "the viewport selected the phone shell (the tab bar shows)")
+        self.assertTrue(out["landed"], "the chat pane's active tab must become the session the link names; it is %r, reveals %r\n  kernel: %s"
+                        % (out["after"], out["boot"]["reveals"], self._reveal_lines()))
+        self.assertEqual(out["after"], SID_B)
+        wire = out.get("wire") or []
+        self.assertTrue(wire, "the page dialed at least one socket")
+        chat_dials = [w for w in wire if w.get("doc") == "/chat" and "/ws?app=chat" in w.get("url", "")]
+        self.assertTrue(chat_dials, "the chat pane dialed: %r" % [w.get("url") for w in wire])
+        first = chat_dials[0]
+        q = parse_qs(urlsplit(first["url"]).query)
+        self.assertEqual(q.get("active"), [SID_B], "the FIRST chat dial names the notified session, not the last-shown web tab (the head seed ran before the chat iframe parsed): %r" % first["url"])
+        self.assertEqual(q.get("skeleton"), ["1"], "the phone's first dial takes the diet: %r" % first["url"])
+        self.assertNotIn("reconnect", q, "a first dial")
+        frames, sends = first.get("frames") or [], first.get("sends") or []
+        self.assertTrue(frames, "the first socket received frames")
+        self.assertTrue(sends, "the page sent on it (its ready at least)")
+        types = [f[1] for f in frames]
+        self.assertIn("focus", types, "the reveal's focus arrived on the first socket (parked at the fetch, consumed behind the strip or at the pane's ready): %r" % (types,))
+        # THE CAUSAL SHAPE, not the wire's order (the focus is sent directly and rides ahead of the connect push's queued frames): the
+        # `session` fulls the kernel pushed UNPROMPTED, before the page's first needFull ask of any why, are the diet's set. With the seed
+        # that is api alone; without it web's full is the one pushed and api's arrives only after the focus asks for it (skeleton-click)
+        asks = [x for x in sends if x[1] == "needFull"]
+        first_ask_t = min(x[0] for x in asks) if asks else None
+        pushed = [f[2] for f in frames if f[1] == "session" and (first_ask_t is None or f[0] <= first_ask_t)]
+        self.assertEqual(pushed, [SID_B], "the diet's one full, pushed before the page asked for anything, is the notified session's and no other's (asks: %r; frames: %r)" % (asks, frames[:12]))
+        self.assertEqual([x for x in asks if x[3] == "skeleton-click"], [], "no skeleton-click round trip: the focus found the notified tab loaded (the asks that did leave are the idle chain's prefetch): %r" % (asks,))
+        tabs = out.get("strip") or []
+        self.assertEqual([t["id"] for t in tabs if t.get("active")], [SID_B], "api is the active tab: %r" % (tabs,))
+        self.assertIn(SID_A, [t["id"] for t in tabs], "web is on the strip: %r" % (tabs,))
+        self.assertFalse(next(t for t in tabs if t["id"] == SID_B).get("skeleton"), "…and api is not a skeleton (its full came on the first push): %r" % (tabs,))
+        b = out["boot"]
+        self.assertEqual(len(b["reveals"]), 1, "exactly one /reveal at boot: %r" % b["reveals"])
+        self.assertEqual((b["reveals"][0]["sid"], b["reveals"][0]["via"], b["reveals"][0].get("boot")), (SID_B, "link", True), "%r" % b["reveals"])
+        self.assertEqual(b["ledger"], [{"pid": pid}], "the row the link named is settled")
+        self.assertNotIn("push-reveal", out["urlAfterBoot"], "the params are stripped once read: %r" % out["urlAfterBoot"])
+        self.assertNotIn("token=", out["urlAfterBoot"], "the address keeps no token once the cookie is set: %r" % out["urlAfterBoot"])
+        klog = self._klog_settled(r"\[push\] landed sid=%s endpoint=web\.push\.apple\.com" % re.escape(SID_B[:8]))
+        self.assertRegex(klog, r"\[reveal\] link sid=%s wid=\S+ boot: (parked|delivered, copy parked \(booting page\))" % re.escape(SID_B[:8]), "the boot reveal: %s" % self._trail())
 
     def _pending_rows(self, ep):
         from urllib.parse import quote

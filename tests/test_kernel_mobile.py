@@ -1524,5 +1524,96 @@ out({first:first,redial:redial,sockets:sockets.length,mobile:parentMobile()});""
         self.assertLess(html.index(probe), html.index("window.__rompMobileOn=mobileOn;"), "…and the mobile script's cached-list version replaces it when the body's scripts run")
 
 
+# The head's notified-session seed (review round 3, 2026-09-19, fresh-1), executed: the shell's head <script> under the auth
+# test's harness (its stubs of the few browser globals the head touches) plus a Map-backed localStorage of this module's own.
+from test_kernel_auth_hardening import _HEAD_HARNESS as _AUTH_HEAD_HARNESS, _head_script as _auth_head_script   # noqa: E402  the harness and the head extractor, never its TestCases
+
+_SEED_SID_A = "aaaaaaaa-1111-2222-3333-444444444444"   # web: the tab the phone was on when it buzzed
+_SEED_SID_B = "bbbbbbbb-1111-2222-3333-444444444444"   # api: the session that buzzed
+_SEED_KEY = "romp-vscode-state-chat"
+_SEED_STORE = r"""
+const STORE = new Map(); const SETS = [];
+if (process.env.ROMP_TEST_BLOB) STORE.set(%s, process.env.ROMP_TEST_BLOB);
+global.localStorage = {
+  getItem: (k) => { if (process.env.ROMP_TEST_LS_THROWS) throw new Error("storage refused"); return STORE.has(k) ? STORE.get(k) : null; },
+  setItem: (k, v) => { if (process.env.ROMP_TEST_LS_THROWS) throw new Error("storage refused"); SETS.push(k); STORE.set(k, String(v)); },
+};
+""" % json.dumps(_SEED_KEY)
+_SEED_DRIVER = "\nconsole.log(JSON.stringify({ replaced: REPLACED, blob: STORE.has(%s) ? STORE.get(%s) : null, sets: SETS }));\n" % (json.dumps(_SEED_KEY), json.dumps(_SEED_KEY))
+
+
+class NotifiedSessionSeed(unittest.TestCase):
+    """A push notification's cold open lands on a URL carrying ?push-reveal=<sid>. The chat pane's shim dials at its own parse,
+    before any body script, with the chat blob's activeId as the dial's hint (the LAST-SHOWN tab), and on the phone that first
+    dial takes the skeleton diet: before this seed the kernel's one full went to the last-shown tab and the notified session
+    arrived as a skeleton, one round trip later. The head script now seeds the blob with the notified session before the parser
+    reaches the chat iframe, so the first dial names it. Executed here under node with a Map-backed store; the served leg
+    (tests/test_notification_tap_resume_browser.py, the phone iteration of the link road) reads the dial off the wire."""
+
+    def _run(self, href, blob=None, throws=False):
+        env = dict(os.environ, ROMP_TEST_HREF=href)
+        if blob is not None:
+            env["ROMP_TEST_BLOB"] = json.dumps(blob)
+        if throws:
+            env["ROMP_TEST_LS_THROWS"] = "1"
+        with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as f:
+            f.write(_AUTH_HEAD_HARNESS + _SEED_STORE + _auth_head_script(km._landing()) + _SEED_DRIVER)
+            path = f.name
+        try:
+            r = subprocess.run(["node", path], capture_output=True, text=True, timeout=30, env=env)
+        finally:
+            os.unlink(path)
+        self.assertEqual(r.returncode, 0, "the head script threw: " + r.stderr[:800])
+        out = json.loads(r.stdout.strip().splitlines()[-1])
+        out["blob"] = json.loads(out["blob"]) if out["blob"] is not None else None
+        return out
+
+    def test_a_deep_link_seeds_the_chat_blob_with_the_notified_session_before_the_token_scrub(self):
+        was = {"activeId": _SEED_SID_A, "activeName": "web"}
+        o = self._run("http://localhost:7777/?token=t&push-reveal=" + _SEED_SID_B, blob=was)
+        self.assertEqual(o["blob"], {"activeId": _SEED_SID_B, "activeName": ""}, "the notified session is the stored tab now, its name unknown here (persistActive's shape): %r" % (o,))
+        self.assertEqual(o["sets"], [_SEED_KEY], "one write, the chat blob's")
+        self.assertEqual(o["replaced"], ["/?push-reveal=" + _SEED_SID_B], "the token scrub still ran after the seed, and the param stays for the reveal script")
+        # a blob with other keys keeps them; a missing blob is minted; a host-prefixed id (a relayed remote event's sid) passes the shape
+        o = self._run("http://localhost:7777/?push-reveal=" + _SEED_SID_B, blob={"activeId": _SEED_SID_A, "activeName": "web", "compact": True})
+        self.assertEqual(o["blob"], {"activeId": _SEED_SID_B, "activeName": "", "compact": True})
+        o = self._run("http://localhost:7777/?push-reveal=" + _SEED_SID_B)
+        self.assertEqual(o["blob"], {"activeId": _SEED_SID_B, "activeName": ""}, "a first-ever open: the blob is minted with the notified session")
+        o = self._run("http://localhost:7777/?push-reveal=TESTHOST:" + _SEED_SID_B, blob=was)
+        self.assertEqual(o["blob"]["activeId"], "TESTHOST:" + _SEED_SID_B, "a host-prefixed id, as the dashboard carries a remote session")
+        # a corrupt store reads as an empty blob and is rewritten with the notified session
+        o = self._run("http://localhost:7777/?push-reveal=" + _SEED_SID_B, blob=[1, 2])
+        self.assertEqual(o["blob"], {"activeId": _SEED_SID_B, "activeName": ""})
+
+    def test_no_param_a_blob_already_naming_the_session_and_a_refused_value_write_nothing(self):
+        was = {"activeId": _SEED_SID_A, "activeName": "web"}
+        o = self._run("http://localhost:7777/?token=t&keep=1", blob=was)
+        self.assertEqual((o["blob"], o["sets"], o["replaced"]), (was, [], ["/?keep=1"]), "no deep link: the blob is untouched")
+        o = self._run("http://localhost:7777/?push-reveal=" + _SEED_SID_A, blob=was)
+        self.assertEqual((o["blob"], o["sets"]), (was, []), "the blob already names the notified session: no write")
+        # the refused inputs, recorded: a value outside push-card's shape (a quote), and one over 128 characters
+        for bad in ("a%22b", "x" * 200, "a%20b", ""):
+            o = self._run("http://localhost:7777/?token=t&push-reveal=" + bad, blob=was)
+            self.assertEqual((o["blob"], o["sets"]), (was, []), "refused input %r left the blob alone: %r" % (bad, o))
+            self.assertEqual(len(o["replaced"]), 1, "…and the token scrub still ran: %r" % (o,))
+
+    def test_a_storage_that_throws_leaves_the_token_scrub_standing(self):
+        # a storage that refuses every call (the auth test's harness defines no localStorage at all, a ReferenceError; a browser
+        # with storage blocked throws a SecurityError): the seed's own try/catch swallows it and the scrub after it still runs
+        o = self._run("http://localhost:7777/?token=t&push-reveal=" + _SEED_SID_B, throws=True)
+        self.assertEqual(o["replaced"], ["/?push-reveal=" + _SEED_SID_B], "the seed's own try/catch swallowed the throw and the scrub after it ran")
+        self.assertEqual(o["sets"], [], "nothing was written through a refusing store")
+
+    def test_the_seed_sits_in_the_head_after_the_layout_probe_and_before_the_standalone_flip(self):
+        html = km._landing()
+        head = _auth_head_script(html)
+        seed = head.index("searchParams.get('push-reveal')")
+        self.assertLess(head.index("window.__rompMobileOn=function(){"), seed, "after the layout probe (tests/test_per_viewer_focus.py pins the wid mint as the head's first statement)")
+        self.assertLess(seed, head.index("if(navigator.standalone){"), "before the standalone flip")
+        self.assertLess(seed, head.index("searchParams['delete']('token')"), "before the token scrub, as a statement of its own")
+        self.assertEqual(html.count("<script>"), 22, "no new script element: the seed is a statement of the head script")
+        self.assertLess(html.index("searchParams.get('push-reveal')"), html.index("<iframe"), "ahead of the first pane iframe, whose shim reads the blob at its parse")
+
+
 if __name__ == "__main__":
     unittest.main()

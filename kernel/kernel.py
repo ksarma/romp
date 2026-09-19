@@ -70202,6 +70202,22 @@ def _landing():
             # this one when it parses, at the body's end, which on a fast origin can be after the chat document's inline shim has
             # run (the wid mint above moved here for the same race). One constant, _MOBILE_MQ, so the two answers cannot differ.
             "window.__rompMobileOn=function(){try{return !!(window.matchMedia&&matchMedia(" + json.dumps(_MOBILE_MQ) + ").matches);}catch(e){return false;}};"
+            # [fork] review round 3 (2026-09-19, fresh-1): a push notification's deep link names the session it is about (?push-reveal=<sid>,
+            # the reveal script's param, which that script reads and strips at the body's end). The chat pane's shim dials at ITS parse,
+            # before any body script runs, and reads the tab it shows from the chat blob's activeId, the LAST-SHOWN tab; on the phone that
+            # first dial takes the skeleton diet, so the kernel's one full went to the last-shown tab while the notified session, parked
+            # as a pending reveal, arrived as a skeleton and cost a second kernel round trip (a skeleton-click) before it showed. The blob
+            # is seeded HERE, in the head, before the parser reaches the chat iframe: the notified session becomes the stored tab, the
+            # first dial carries active=<it>, the kernel's one full is its by construction (_resolve_reconnect reads the hint as before;
+            # no kernel change), and render.ts's wantActive restores that tab before the reveal's focus lands, which then finds it active
+            # and loaded. The value is admitted in push-card's shape (a host-prefixed id passes); a blob that already names it is left
+            # alone; the param stays for the reveal script, whose /reveal still lands the focus (a revive prompt for an ended session). Its
+            # own try/catch: a page whose storage is missing or throws must still reach the token scrub below. No layout gate: on the desktop
+            # the seed makes the notified tab the active-tab-first build, the outcome the reveal produces there anyway.
+            "try{var _pr=new URL(location.href).searchParams.get('push-reveal');if(_pr&&/^[A-Za-z0-9_.:-]{1,128}$/.test(_pr)){"
+            "var _sk='romp-vscode-state-chat',_sb=null;try{_sb=JSON.parse(localStorage.getItem(_sk)||'null');}catch(e){}"
+            "if(!_sb||typeof _sb!=='object'||Array.isArray(_sb))_sb={};"
+            "if(_sb.activeId!==_pr){_sb.activeId=_pr;_sb.activeName='';localStorage.setItem(_sk,JSON.stringify(_sb));}}}catch(e){}"
             "if(navigator.standalone){document.documentElement.className+=' ios-standalone';"
             "var _vp=document.querySelector('meta[name=viewport]');"
             "_vp.setAttribute('content',_vp.getAttribute('content')+',viewport-fit=cover');}"
