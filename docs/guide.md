@@ -528,17 +528,19 @@ addresses and paths found in the text wear a dotted underline that
 turns solid under the pointer; a Markdown link that names a file keeps the
 ordinary link look. Selecting text across a link, and commenting on a line that
 holds one, work as before, and a drag that starts or ends on a link selects
-rather than opens. The viewer keeps a trail of the files you reach through the links inside
-a file: the two arrow buttons at the left of its title bar go back to the file you followed
-the link from and forward again (Alt+Left and Alt+Right do the same, and Cmd+[ and Cmd+] on a
-Mac, while no text box holds the keyboard), and a file you go back to opens at the place and
-in the view you left it. A file opened from the chat, from a listing or from the **Recent**
-list starts the trail over, and closing the viewer ends it. Every picture in a rendered file has an
-**Open the picture** button at its top-right corner, shown while the pointer is over the picture or
-the button holds the keyboard focus: it opens the picture on its own in the viewer, and Back returns
-to the file at that place. A plain click on the picture does the same while the Comments panel is
-closed (with the panel open, a click offers a comment as before); a Cmd-click (Ctrl on Windows and
-Linux) opens the picture in a browser tab, and a picture from the web opens in a tab.
+rather than opens. The viewer keeps a trail of the files you reach through the links
+inside a file: **Back** and **Forward**, the two arrow buttons at the left of its title bar
+(Alt+Left and Alt+Right, or Cmd+[ and Cmd+] on a Mac, do the same while no text box holds
+the keyboard), return you to the file you followed a link from, at the place and in the view
+you left it, and take you on again; a file opened from the chat, from a listing or from the
+**Recent** list starts the trail over, and closing the viewer ends it. Every picture in a
+rendered file has an **Open the picture** button at its top-right corner (top-left for a
+picture floated to the right), shown while the pointer is over the picture or the button
+holds the keyboard focus, that opens the picture on its own in the viewer, with Back
+returning you to the file at that place; a plain click on the picture does the same while
+the Comments panel is closed (with the panel open, a click offers a comment as before), a
+Cmd-click (Ctrl on Windows and Linux) opens the picture in a browser tab, and a picture from
+the web opens in a tab.
 
 **Text size and width.** The **A−** and **A+** buttons in the viewer's title bar make
 the text of any text file smaller or larger in fixed steps from 70% to 200%: a markdown
