@@ -10811,6 +10811,143 @@ class DefaultBillingMovesItsFollowers(unittest.TestCase):
                       "it as a pick of its own and is not moved by a later change of the default", doc)
 
 
+    def test_the_walk_touches_no_session_with_a_pick_of_its_own_even_one_whose_cli_runs_the_other_side(self):
+        # the mutation pass (2026-09-19): the walk's skip of a picked session was pinned only by a picked session already
+        # running its own side, which the step leaves alone anyway (its own pick is its launch shape), so dropping the
+        # skip left the suite green. The discriminating shape: a session that picked the key while its CLI still bills
+        # the login (its pick's relaunch has not landed, or a wrong landing). Walked, the step would read the pick as the
+        # target and ask it to move, with a line calling it a follower; the walk skips it, whatever side it runs
+        picked = self._sess(1, auth="key")
+        picked.auth_live = "login"; picked._launched_auth = "login"
+        asked = []
+        picked.request_reconnect = lambda *a, **k: asked.append(1)
+        self.assertTrue(self.be.set_auth_default("login"))
+        self.assertEqual(asked, [], "a pick of its own is untouched, whatever side its CLI runs")
+        self.assertEqual(picked._auth_pending, ""); self.assertFalse(picked._relaunch_bounded)
+        self.assertEqual(self._reg(picked).get("auth"), "key"); self.assertFalse(self._reg(picked).get("authPending"))
+        self.assertEqual(self._walk_lines(), [])
+
+    def test_a_landing_that_serves_a_stale_ask_inside_the_walks_window_leaves_the_walk_to_ask_itself(self):
+        # the mutation pass (2026-09-19): the re-run after a landing found inside the never-landed branch's hold (the step
+        # runs once more from a fresh read) was pinned only through a landing whose own step made the ask, so a bare
+        # return in its place left the suite green. The landing that leaves the walk nothing is one that SERVED an ask
+        # and ran no step: a follower asked to move to the key while the default was the key, the kernel restarted before
+        # its relaunch (the constructor carries the ask; the reg's report says key), and the default becomes the login
+        # while the boot re-attach is in progress. The attach lands inside the walk's hold: the CLI's report is stamped,
+        # the carried ask reads as served by a CLI already on the key and is cleared, and the landing runs no step. The
+        # walk's write finds the object landed; without the re-run the pending would be decided by nothing (no ask, no
+        # dots, no line, no landing to come), the round-2 defect's shape on another road
+        sb.write_sdk_default(self.be.state_dir, auth="key", authExplicit=True)
+        s = self._sess(landed=False, authPending=True, apiKeyAuth=True)
+        self.assertEqual(s._auth_pending_target(), ("key", ""), "the carried ask, to the default that stood at construction")
+        self.assertEqual(s.auth_live, "key"); self.assertIsNone(s._launched_auth)
+        s._launching = self.be._launch_shape(s); s._connecting = True; s._host_is_attach = True   # the boot re-attach, composed on the key
+        self.assertEqual(s._launching["auth"], "key")
+        real_hold, fired = s._hold_write, []
+
+        @contextlib.contextmanager
+        def hold_then_land():
+            if not fired:
+                fired.append(1)
+                s._connect_landed()                                  # the attach lands between the walk's read and its write
+            with real_hold():
+                yield
+        s._hold_write = hold_then_land
+        asked = []
+        real_req = s.request_reconnect
+        s.request_reconnect = lambda *a, **k: (asked.append(1), real_req(*a, **k))
+        self.assertTrue(self.be.set_auth_default("login"))
+        self.assertEqual(fired, [1], "the landing ran inside the walk's step")
+        self.assertEqual(s._launched_auth, "key", "the attach stamped the CLI's report"); self.assertFalse(s._connecting)
+        self.assertEqual([str(m) for m in self.logs if "attached to this session's surviving CLI" in str(m)], [],
+                         "the landing served the carried ask and ran no step: it left the walk nothing")
+        self.assertEqual(asked, [1], "the walk asked itself, once, from a fresh read with the stamps truthful")
+        self.assertEqual(s._auth_pending_target(), ("login", "")); self.assertTrue(self._reg(s).get("authPending"))
+        self.assertTrue(s._reconnect); self.assertTrue(s._relaunch_bounded)
+        self.assertEqual(self._walk_lines(), ["auth (web): the machine default is now login; this session follows the default but runs on "
+                                              "the key; reconnecting to apply" + self.STAGGER])
+
+    def test_a_step_that_fails_with_an_ask_already_standing_restores_that_ask_and_its_flag_never_a_wipe(self):
+        # the mutation pass (2026-09-19): the guard's restore was pinned only by a step that began with no ask standing,
+        # for which a wipe and a restore write the same empty pair. The shape that tells them apart: an ask standing from
+        # an earlier write (or carried across a restart) when a later write moves the default to a stored login and the
+        # step's mirror write is refused. The pair the step did not own is put back as it stood, the slot flag with it,
+        # and the row says the ask stands for its own deciding event; a wipe would drop an ask with an arm already behind
+        # it, and the relaunch would land with the reg no longer saying it was asked for
+        s = self._sess()
+        s.auth_live = "key"; s._launched_auth = "key"
+        self.assertTrue(self.be.set_auth_default("login"))
+        self.assertEqual(s._auth_pending_target(), ("login", "")); self.assertTrue(s._relaunch_bounded); self.assertTrue(s._reconnect)
+        rec = self._record("Work")
+        real_update = self.be._update_reg
+
+        def refused(sid, live_fields=None, **fields):
+            if live_fields is not None:                              # the ask's mirror (_mirror_auth_pending): the state directory is full
+                raise OSError(28, "No space left on device")
+            return real_update(sid, live_fields=live_fields, **fields)
+        self.be._update_reg = refused
+        try:
+            self.assertTrue(self.be.set_auth_default("login:" + rec["id"]), "the default stands and the walk finishes")
+        finally:
+            self.be._update_reg = real_update
+        self.assertEqual(s._auth_pending_target(), ("login", ""), "the ask that stood before the step stands: restored, not wiped")
+        self.assertTrue(s._relaunch_bounded, "the flag went with the ask it belonged to"); self.assertTrue(s._reconnect)
+        rows = [p["text"] for p in self.be.problems(10) if "step failed" in p["text"]]
+        self.assertEqual(len(rows), 1, self.be.problems(10))
+        self.assertIn("auth (web): the machine default is now %s, but this session's step failed (OSError: [Errno 28] No space left "
+                      "on device)" % self.be.login_display(rec["id"]), rows[0])
+        self.assertIn("it stays on the key until its next connect or the next default write, with the login ask it already carried "
+                      "standing for that event", rows[0])
+
+    def test_a_step_that_fails_after_its_mirror_write_retries_the_mirror_from_the_restored_pending(self):
+        # the mutation pass (2026-09-19): the guard's mirror retry was pinned by nothing, since every failing step in the
+        # suite failed AT the mirror write, where a retry fails the same way. A step that fails after the mirror (the
+        # ask's line, the request) has written authPending True to the reg for a pending the restore then takes back;
+        # the retry from the live pending writes False, so the reg does not say an ask stands where none does (a restart
+        # would carry a phantom ask, and the dots would stay on with no arm behind them)
+        s = self._sess()
+        s.auth_live = "key"; s._launched_auth = "key"
+        with mock.patch.object(s, "_note_reconnect_ask", side_effect=RuntimeError("the ask's line refused")):
+            self.assertTrue(self.be.set_auth_default("login"), "the default stands and the walk finishes")
+        self.assertEqual(s._auth_pending, "", "restored to what stood: no ask"); self.assertFalse(s._relaunch_bounded)
+        self.assertFalse(self._reg(s).get("authPending"), "the mirror was retried from the restored pending: the flag the step wrote is taken back")
+        self.assertFalse(s._reconnect, "the request never ran")
+        rows = [p["text"] for p in self.be.problems(10) if "step failed" in p["text"]]
+        self.assertEqual(len(rows), 1, self.be.problems(10))
+        self.assertIn("(RuntimeError: the ask's line refused); it stays on the key until its next connect or the next default write, "
+                      "with no ask standing", rows[0])
+
+    def test_the_clis_first_init_runs_the_follower_step_through_the_guard(self):
+        # the mutation pass (2026-09-19): the init road's use of the one guarded entry point was pinned by nothing, so a
+        # bare call of the step there left the suite green. A survivor whose attach could not tell what it bills (no
+        # report on record; the landing stamped nothing) has its step run by the CLI's own first init; a reg write
+        # refused inside that step (the ask's mirror, a full state directory) is contained as on every other road: the
+        # report is still stamped, the session is left as the step found it, one row names the road, and the init
+        # handler goes on. Bare, the raise would escape the init handler on the loop thread mid-turn
+        sb.write_sdk_default(self.be.state_dir, auth="login", authExplicit=True)
+        s = self._sess()                                             # landed (effort stamped) with no auth stamp: an attach that could not tell
+        self.assertIsNone(s._launched_auth); self.assertEqual(s.auth_live, "")
+        real_update = self.be._update_reg
+
+        def refused(sid, live_fields=None, **fields):
+            if live_fields is not None:
+                raise OSError(28, "No space left on device")
+            return real_update(sid, live_fields=live_fields, **fields)
+        self.be._update_reg = refused
+        try:
+            self.be._note_auth_source(s, "apiKeyHelper")             # the CLI's first init: it bills the key; the step's mirror write fails
+        finally:
+            self.be._update_reg = real_update
+        self.assertEqual(s._launched_auth, "key", "the report is the stamp, written before the step"); self.assertEqual(s.auth_live, "key")
+        self.assertEqual(s._auth_pending, "", "left as the step found it: no half-written ask"); self.assertFalse(s._relaunch_bounded)
+        self.assertFalse(s._reconnect); self.assertFalse(self._reg(s).get("authPending"))
+        rows = [p["text"] for p in self.be.problems(10) if "step failed" in p["text"]]
+        self.assertEqual(len(rows), 1, self.be.problems(10))
+        self.assertIn("auth (web): this session's CLI reported its billing, but the follower's step failed (OSError: [Errno 28] No space "
+                      "left on device); the connect goes on with the CLI it has, and it stays on the key until its next connect or the "
+                      "next default write, with no ask standing", rows[0])
+
+
 class RelaunchSlotWait(unittest.TestCase):
     """_take_relaunch_slot driven on a real loop against a held semaphore (round 1 of the review, 2026-09-18): the
     orderings the loop harness cannot make deterministic. A loop callback that sets the wake (and the end) and frees
@@ -10832,15 +10969,16 @@ class RelaunchSlotWait(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.d, ignore_errors=True)
 
-    def _drive(self, batch):
+    def _drive(self, batch, arm_time=False):
         """Run the wait; once the taker blocks in its acquire, run `batch` on the loop and stall the loop 0.2 s so the
-        taker's resolve lands in the ready queue behind it. Returns the coroutine's answer."""
+        taker's resolve lands in the ready queue behind it. Returns the coroutine's answer. `arm_time` drives the arm-time
+        road (the grant awaited alone; the mutation pass of 2026-09-19)."""
         s = self.s
 
         async def main():
             s.loop = asyncio.get_running_loop()
             s._wake = asyncio.Event()
-            task = asyncio.ensure_future(s._take_relaunch_slot())
+            task = asyncio.ensure_future(s._take_relaunch_slot(arm_time=arm_time))
             await asyncio.sleep(0.05)
             def stalled():
                 batch()
@@ -10856,6 +10994,18 @@ class RelaunchSlotWait(unittest.TestCase):
         def batch():
             s.ended = True; s._wake.set(); self.sem.release()
         self.assertFalse(self._drive(batch), "an ended session has nothing to launch")
+        self.assertTrue(self.sem.acquire(blocking=False), "the granted slot went back")
+        self.assertIsNone(s._relaunch_slot)
+    def test_the_arm_time_road_re_reads_the_end_at_the_grant_and_returns_the_slot(self):
+        # the mutation pass (2026-09-19): the post-wait end check was pinned only on the loop-top road, whose in-wait read
+        # returns before the grant is read, so dropping the post-wait check left the suite green. On the arm-time road
+        # that check is the only one (the wait awaits the grant alone and reads no wake), so an end that lands in the
+        # grant's batch, a shutdown while a follower waits for its slot with the CLI still serving, must be read there:
+        # the slot goes back and nothing composes a fresh CLI for an ended session
+        s = self.s
+        def batch():
+            s.ended = True; self.sem.release()                       # the shutdown's end and the grant, one ready batch
+        self.assertFalse(self._drive(batch, arm_time=True), "an ended session has nothing to launch")
         self.assertTrue(self.sem.acquire(blocking=False), "the granted slot went back")
         self.assertIsNone(s._relaunch_slot)
 
@@ -13297,6 +13447,235 @@ class SettingsPickThroughTheLoopUnderAHost(SettingsPickThroughTheLoop):
         self._turn(self._Client.instances[0], apiKeySource="apiKeyHelper")
         self._wait(lambda: s.inflight == 0 and getattr(s, "_settled_msg", None) is not None, "a turn settled on the surviving CLI")
         self.assertTrue(s.thread.is_alive())
+
+
+    def test_a_seeded_row_typed_in_the_reports_own_spelling_is_retired_on_the_omission_like_one_in_the_registrys(self):
+        # the mutation pass (2026-09-19): the predicate's `shell` member had no test. A mirror row carries the report's own
+        # label when the row it mirrors was ADOPTED from a turn-end report (the adoption copies the report's type and the
+        # mirror is rewritten from the live set), so a survivor attach after a restart seeds a row typed "shell"; the next
+        # report's omission retires it as it retires a registry-spelled one (local_bash), instead of holding it as a type
+        # the report is not known to enumerate
+        self._helper()
+        since = int(time.time()) - 600
+        rows = [{"taskId": "t-1", "type": "shell", "desc": "a long sweep", "since": since, "toolUseId": "", "lastTool": ""},
+                {"taskId": "t-2", "type": "local_bash", "desc": "a second sweep", "since": since, "toolUseId": "tu-2", "lastTool": ""}]
+        s = self._survivor_with_a_carried_ask(bg_tasks=rows)
+        self._connect()
+        self.assertEqual(s._live_work_counts(), (0, 2)); self.assertEqual(s._seeded_tasks, {"t-1", "t-2"})
+        asyncio.run(s._stop_hook({"background_tasks": []}, None, None))
+        self.assertEqual(s._seeded_tasks, set())
+        self.assertEqual(sorted(s._bg_tasks), [], "both shells are retired on the omission, the report-spelled one too")
+        self.assertEqual(s._live_work_counts(), (0, 0))
+        self.assertEqual([t.get("taskId") for t in (sb.read_reg(self.be.state_dir, self.SID) or {}).get("bgTasks") or []], [])
+        line = [l for l in self.lines if "the CLI's turn-end report lists 2 background tasks the reg named for the surviving CLI as not running" in l]
+        self.assertEqual(len(line), 1, self.lines[-6:])
+        self.assertNotIn("omits", line[0])
+
+    def test_a_seeded_row_whose_type_was_never_learned_is_held_on_the_omission_and_the_line_says_so(self):
+        # the mutation pass (2026-09-19): the predicate's answer for an empty kind was pinned by nothing, so deciding an
+        # unlearned type by absence left the suite green. A mirror row with no type (a write from before the type rode the
+        # row, or a frame that carried none) is a row the report may or may not enumerate; its omission is no report about
+        # it, so it is held as any other non-shell row, and the line names the hold's reason as a type never learned
+        self._helper()
+        since = int(time.time()) - 600
+        rows = [{"taskId": "t-1", "type": "", "desc": "a task of no recorded type", "since": since, "toolUseId": "", "lastTool": ""}]
+        s = self._survivor_with_a_carried_ask(bg_tasks=rows)
+        self._connect()
+        self.assertEqual(s._live_work_counts(), (0, 1)); self.assertEqual(s._bg_tasks["t-1"]["type"], "")
+        asyncio.run(s._stop_hook({"background_tasks": []}, None, None))
+        self.assertEqual(s._seeded_tasks, set())
+        self.assertEqual(sorted(s._bg_tasks), ["t-1"], "held: the omission is no report about a row whose type was never learned")
+        self.assertEqual(s._live_work_counts(), (0, 1))
+        self.assertEqual([t.get("taskId") for t in (sb.read_reg(self.be.state_dir, self.SID) or {}).get("bgTasks") or []], ["t-1"])
+        line = [l for l in self.lines if "the CLI's turn-end report omits 1 background task" in l]
+        self.assertEqual(len(line), 1, self.lines[-6:])
+        self.assertIn("of a type the report is not known to enumerate completely (a type never learned); still counted as live and held "
+                      "until the CLI's own stream ends it, since the omission is no report about it", line[0])
+        self.assertTrue(s._reconnect_held_for_work); self.assertFalse(s._reconnect)
+
+    def test_a_seeded_row_the_report_lists_with_a_terminal_status_is_retired_on_that_word_whatever_its_type(self):
+        # the mutation pass (2026-09-19): the second verdict (a row the report LISTS as ended is retired) was pinned only
+        # for shells, which absence retires anyway, so ruling by the predicate alone left the suite green. The report's
+        # presence is trusted for every type: a monitor and an agent it lists with a terminal status are retired on its
+        # word, no notice (the CLI reports the ends itself), while the run it lists as running is confirmed and holds
+        self._helper()
+        since = int(time.time()) - 600
+        rows = [{"taskId": "t-2", "type": "monitor_mcp", "desc": "watch the queue", "since": since, "toolUseId": "tu-2", "lastTool": ""},
+                {"taskId": "t-3", "type": "local_agent", "desc": "a reviewer agent", "since": since, "toolUseId": "tu-3", "lastTool": ""},
+                {"taskId": "t-4", "type": "local_workflow", "desc": "a fan-out run", "since": since, "toolUseId": "tu-4", "lastTool": ""}]
+        s = self._survivor_with_a_carried_ask(bg_tasks=rows)
+        c1 = self._connect()
+        t1 = self.hosted[0]
+        self.assertEqual(s._live_work_counts(), (0, 3))
+        asyncio.run(s._stop_hook({"background_tasks": [
+            {"id": "t-2", "type": "monitor", "status": "completed", "description": "watch the queue"},
+            {"id": "t-3", "type": "subagent", "status": "failed", "description": "a reviewer agent"},
+            {"id": "t-4", "type": "workflow", "status": "running", "description": "a fan-out run"}]}, None, None))
+        self.assertEqual(s._seeded_tasks, set())
+        self.assertEqual(sorted(s._bg_tasks), ["t-4"], "the two the report lists as ended are retired on its word; the running one is confirmed")
+        self.assertEqual(s._live_work_counts(), (0, 1))
+        self.assertEqual([t.get("taskId") for t in (sb.read_reg(self.be.state_dir, self.SID) or {}).get("bgTasks") or []], ["t-4"])
+        line = [l for l in self.lines if "the CLI's turn-end report confirms 1 background task" in l]
+        self.assertEqual(len(line), 1, self.lines[-6:])
+        self.assertIn("lists 2 background tasks the reg named for the surviving CLI as not running; no longer counted as live, and no "
+                      "notice, since the CLI reports no death", line[0])
+        self.assertNotIn("omits", line[0])
+        self.assertFalse(any("cut off when the claude process" in str(p) for p in s.pending()), "no death notice: the CLI reported the ends")
+        self._turn(c1, apiKeySource="apiKeyHelper")
+        self._wait(lambda: s.inflight == 0 and getattr(s, "_settled_msg", None) is not None, "the first turn after the attach settled")
+        self._settled("the first settle")
+        self.assertEqual(t1.sent, [], "the settle holds for the confirmed run"); self.assertTrue(s._reconnect_held_for_work)
+
+    def test_a_running_task_the_report_names_is_adopted_on_every_report_and_a_task_it_lists_as_ended_is_not(self):
+        # the mutation pass (2026-09-19): adoption was pinned only on the first report after a seed, so adopting while the
+        # seeded set is non-empty alone left the suite green, and adopting from the whole list rather than the live statuses
+        # did too. A report on a later turn, with no seed standing, names a running task the live set never held (a
+        # task_started frame no kernel heard): it is counted from the report, with the report's type and description and
+        # no tool-use id; a task the same report lists as ended is not, since a row nothing counts needs no retiring
+        self._helper()
+        s = self._survivor_with_a_carried_ask()
+        self._connect()
+        asyncio.run(s._stop_hook({"background_tasks": [{"id": "t-1", "type": "shell", "status": "running",
+                                                        "description": "a long sweep", "command": "sleep 600"}]}, None, None))
+        self.assertEqual(s._seeded_tasks, set(), "the first report answered the seed's question"); self.assertEqual(sorted(s._bg_tasks), ["t-1"])
+        asyncio.run(s._stop_hook({"background_tasks": [
+            {"id": "t-1", "type": "shell", "status": "running", "description": "a long sweep", "command": "sleep 600"},
+            {"id": "t-9", "type": "shell", "status": "running", "description": "another task", "command": "sleep 5"},
+            {"id": "t-8", "type": "shell", "status": "completed", "description": "a finished one", "command": "true"}]}, None, None))
+        self.assertEqual(sorted(s._bg_tasks), ["t-1", "t-9"], "t-9 adopted from a report with no seed standing; t-8, listed as ended, is not")
+        self.assertEqual((s._bg_tasks["t-9"]["type"], s._bg_tasks["t-9"]["desc"], s._bg_tasks["t-9"]["toolUseId"]), ("shell", "another task", ""))
+        self.assertEqual(s._live_work_counts(), (0, 2))
+        self.assertEqual(sorted(t.get("taskId") for t in (sb.read_reg(self.be.state_dir, self.SID) or {}).get("bgTasks") or []), ["t-1", "t-9"],
+                         "the mirror is rewritten with the adopted row")
+        line = [l for l in self.lines if "names 1 running background task the live set never held; counted as live from the report" in l]
+        self.assertEqual(len(line), 1, self.lines[-6:])
+        self.assertEqual(sum(1 for l in self.lines if "the CLI's turn-end report" in l), 2, "one line per report")
+
+    def test_the_no_list_flag_is_spent_by_the_settle_so_a_later_no_report_settle_names_its_own_shape(self):
+        # the mutation pass (2026-09-19): the settle's clear of the no-list flag was pinned by nothing, so leaving it set
+        # left the suite green, and every later no-report settle would have blamed a missing list on a turn whose Stop hook
+        # never ran. Two no-report turns of the two shapes, in order: the first's hook carried no list, the second had no
+        # hook at all; each hold line names its own shape
+        self._helper()
+        s = self._survivor_with_a_carried_ask()
+        c1 = self._connect()
+        asyncio.run(s._stop_hook({"session_crons": []}, None, None))     # a Stop payload with no task list
+        self._turn(c1, apiKeySource="apiKeyHelper")
+        self._wait(lambda: sum(1 for l in self.lines if "had no frame and no turn-end report through this turn" in l) == 1, "the first hold line")
+        self._settled("the first settle")
+        self._turn(c1, apiKeySource="apiKeyHelper")                      # no Stop hook at all this turn
+        self._wait(lambda: sum(1 for l in self.lines if "had no frame and no turn-end report through this turn" in l) == 2, "the second hold line")
+        self._settled("the second settle")
+        holds = [l for l in self.lines if "had no frame and no turn-end report through this turn" in l]
+        self.assertIn("(the turn's Stop hook carried no background_tasks list)", holds[0])
+        self.assertIn("(no Stop hook report reached this kernel for the turn)", holds[1], "the flag was spent by the first settle")
+        self.assertFalse(s._stop_hook_no_list)
+        self.assertEqual(s._seeded_tasks, {"t-1"}); self.assertEqual(s._live_work_counts(), (0, 1))
+
+    def test_a_teardown_that_drops_the_live_work_clears_the_seeded_set_too(self):
+        # the mutation pass (2026-09-19): the seeded set's clear in _drop_live_work was pinned by nothing. Left standing
+        # after the rows it names are gone, the ids would make the next no-report settle hold and announce work that is
+        # not counted, and the next report's reconcile would hold a phantom row of a type never learned
+        self._helper()
+        s = self._survivor_with_a_carried_ask()
+        self._connect()
+        self.assertEqual(s._seeded_tasks, {"t-1"}); self.assertEqual(s._live_work_counts(), (0, 1))
+        s._drop_live_work("reconnect")
+        self.assertEqual(s._live_work_counts(), (0, 0))
+        self.assertEqual(s._seeded_tasks, set(), "a seeded row dies with the CLI like any other: no id stays behind for the reconciles")
+        n = len(self.lines)
+        s._reconcile_seeded_work()                                       # a no-report settle after the teardown
+        s._reconcile_seeded_with_report([])                              # and a report after it
+        self.assertEqual([l for l in self.lines[n:] if "background task" in l], [], "nothing left to hold or announce")
+
+    def test_a_hello_naming_a_fresh_cli_seeds_nothing_from_the_mirror_and_the_roads_that_cannot_tell_say_so(self):
+        # the mutation pass (2026-09-19): that the fresh-CLI road seeds nothing was pinned by nothing, so seeding there too
+        # left the suite green. The mirror describes the CLI whose identity the reg records; a hello naming another CLI is
+        # a fresh one, whose live set starts empty (the mirror's rows are another process's work, dead or not this CLI's),
+        # and the two roads that cannot tell (no identity, no spawn time) seed nothing either and say so in their lines
+        self._helper()
+        since = int(time.time()) - 600
+        rows = [{"taskId": "t-1", "type": "local_bash", "desc": "a long sweep", "since": since, "toolUseId": "tu-1", "lastTool": ""}]
+        sb.write_sdk_default(self.be.state_dir, auth="login", authExplicit=True)
+        reg = sb.read_reg(self.be.state_dir, self.SID)
+        reg.update(spawnedAtCli="4999:c0", bgTasks=rows)             # the mirror describes a CLI this hello does not name
+        sb.write_reg(self.be.state_dir, self.SID, reg)
+        self.s = s = sb.SdkSession(self.be, dict(reg))
+        self.be.sessions[self.SID] = s
+        self._connect()                                              # the class's transport spawns: the hello names 4301:c1, spawned at 1700000001
+        self.assertEqual(s._live_work_counts(), (0, 0), "a fresh CLI's hello seeds nothing: the mirror describes another CLI")
+        self.assertEqual(s._seeded_tasks, set())
+        self.assertTrue(any("a fresh CLI 4301:c1 (spawned at 1700000001); its epoch and launch login stamped" in l for l in self.lines), self.lines[-8:])
+        self.assertFalse(any("counted as live from the attach" in l for l in self.lines))
+        self.assertEqual((sb.read_reg(self.be.state_dir, self.SID) or {}).get("spawnedAtCli"), "4301:c1")
+        self.be._fresh_cli_decision(s, {"pid": None, "start": ""})   # a host older than the identity
+        self.assertEqual(s._seeded_tasks, set()); self.assertEqual(s._live_work_counts(), (0, 0))
+        self.assertTrue(any("the hello names no CLI identity; nothing stamped (a host older than the identity); the 1 background task the "
+                            "reg's mirror names is not counted as live on this attach (the survivor seed runs only for the CLI whose "
+                            "identity the reg records)" in l for l in self.lines), self.lines[-4:])
+        self.be._fresh_cli_decision(s, {"pid": 4302, "start": "c2"})    # older host code: no spawn time
+        self.assertEqual(s._seeded_tasks, set()); self.assertEqual(s._live_work_counts(), (0, 0))
+        self.assertTrue(any("the hello carries no CLI spawn time (older host code); CLI 4302:c2 recorded, nothing stamped; the 1 background "
+                            "task the reg's mirror names is not counted as live on this attach (the survivor seed runs only for the CLI "
+                            "whose identity the reg records); the identity just recorded makes the next attach to this CLI a survivor "
+                            "attach, which counts them" in l for l in self.lines), self.lines[-4:])
+
+    def test_the_report_reconcile_never_raises_into_the_hook(self):
+        # the mutation pass (2026-09-19): the reconcile's outer guard was pinned by nothing. The Stop hook calls it, and a
+        # raise there would become an error control_response to the CLI and skip the ledger reconcile behind it; a fault
+        # inside the reconcile's own ruling is said in one line and the rows stand for the next report
+        self._helper()
+        s = self._survivor_with_a_carried_ask()
+        self._connect()
+        self.assertEqual(s._seeded_tasks, {"t-1"})
+        with mock.patch.object(sb, "report_absence_decides", side_effect=RuntimeError("the predicate refused")):
+            out = asyncio.run(s._stop_hook({"background_tasks": []}, None, None))
+        self.assertEqual(out, {}, "the hook completed")
+        self.assertEqual([l for l in self.lines if "the seeded-work reconcile against the turn-end report failed" in l],
+                         ["live work (web): the seeded-work reconcile against the turn-end report failed: RuntimeError: the predicate refused"])
+        self.assertEqual(s._seeded_tasks, {"t-1"}, "left for the next report: the reconcile did not reach its clear")
+        self.assertEqual(s._live_work_counts(), (0, 1))
+
+    def test_the_settles_seeded_reconcile_never_raises(self):
+        # the mutation pass (2026-09-19): the settle-side reconcile's outer guard was pinned by nothing. The settle's finally
+        # calls it, and a raise there would skip the settle's own failed-step report; a fault is said in one line instead
+        self._helper()
+        s = self._survivor_with_a_carried_ask()
+        self._connect()
+
+        class _Refusing:
+            def __enter__(self):
+                raise RuntimeError("the lock refused")
+
+            def __exit__(self, *a):
+                return False
+        real = s._sub_lock
+        s._sub_lock = _Refusing()
+        try:
+            s._reconcile_seeded_work()
+        finally:
+            s._sub_lock = real
+        self.assertEqual([l for l in self.lines if "the seeded-work reconcile failed" in l],
+                         ["live work (web): the seeded-work reconcile failed: RuntimeError: the lock refused"])
+        self.assertEqual(s._seeded_tasks, {"t-1"})
+
+
+class ReportAbsencePredicate(unittest.TestCase):
+    """report_absence_decides, the one predicate both reconciles of a Stop payload consult (the round 3 pre-check,
+    2026-09-19), pinned by value, since the mutation pass of the same day found its normalization and its answer for an
+    unlearned type unpinned: the three spellings a shell's row carries decide by absence whatever their case or padding
+    (the report's label is copied from a payload, the registry's from a frame, the hook's from a tool name lowercased,
+    and no caller normalizes before asking); an empty or None kind, a row whose type was never learned, never does; nor
+    does any other type, a near-miss spelling included."""
+
+    def test_the_three_shell_spellings_decide_by_absence_whatever_their_case_or_padding(self):
+        for kind in ("local_bash", "shell", "bash", "Shell", "BASH", "Local_Bash", " local_bash ", "\tshell\n"):
+            self.assertTrue(sb.report_absence_decides(kind), repr(kind))
+
+    def test_a_type_never_learned_and_every_other_type_hold(self):
+        for kind in ("", None, "monitor_mcp", "monitor_ws", "monitor", "local_agent", "subagent", "local_workflow", "workflow",
+                     "shells", "local_bash2", "sh"):
+            self.assertFalse(sb.report_absence_decides(kind), repr(kind))
 
 
 class WorkflowProgressShapeIsLoud(unittest.TestCase):

@@ -192,6 +192,23 @@ class StopReconciler(_Backend):
         live, _ = self._ledger()
         self.assertEqual(len(live), 1, "no payload field, no verdict — never treat absence as empty")
 
+    def test_a_shell_the_reconciler_adopted_is_ruled_by_absence_like_one_the_launch_recorded(self):
+        # the round 3 pre-check (2026-09-19): an adopted entry carries the payload's own label (tool "shell"), a
+        # launch-recorded one the hook's tool name lowercased (tool "bash"); one predicate (report_absence_decides) reads
+        # every spelling of a shell, so a later payload that omits the adopted shell tombstones it "gone" as it does the
+        # recorded one. Pinned by the mutation pass of the same day: with "shell" dropped from the predicate the adopted
+        # entry stayed live for good, as a type of unproven coverage, and the session read as waiting on it
+        self._launch_bash()
+        self._stop(self.sess, [
+            {"id": "task-aa11", "type": "shell", "status": "running", "description": "campaign timer", "command": "sleep 40"},
+            {"id": "task-zz99", "type": "shell", "status": "running", "description": "a launch the hook missed", "command": "tail -f x"}])
+        live, _ = self._ledger()
+        self.assertEqual({(e["tid"], e["tool"]) for e in live}, {("task-aa11", "bash"), ("task-zz99", "shell")}, "two spellings, one per road")
+        self._stop(self.sess, [])
+        live, ended = self._ledger()
+        self.assertEqual(live, [])
+        self.assertEqual(sorted((w["tid"], w["why"]) for w in ended), [("task-aa11", "gone"), ("task-zz99", "gone")])
+
 
 class KernelSeamEnrichesTheStream(unittest.TestCase):
     """_bg_live_norm: the lifecycle set stays the liveness authority; the ledger ENRICHES its rows by
