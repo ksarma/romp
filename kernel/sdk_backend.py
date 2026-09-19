@@ -5133,13 +5133,13 @@ ERROR_CENTER_TEXT_CAP = 240
 # derives the rows whose message or ring text carries a value of the pick, its file or its rule (the sources: the
 # session's env attributes, the 'env' key of a registry row or launch shape, the flag-settings constants and helpers,
 # the reserved and credential name sets and the functions judging them; the taint follows assignments, calls and
-# returns, adds in place, augmented assignment, attribute stores and module-level names, and a dict by key: a read of one
-# key yields what sits under it, while a whole-value use of the dict, str(shape) or shape.values(), yields all it holds; a
-# source function whose every return is a dict, the launch shape, is a source at its env key, the value under that key
-# followed by declaration to its roots across the function and the whole return crossing where the census cannot locate
-# the key; and the census
-# does not follow the pick tag across a dict return, so a pick that crosses one is OUTSIDE the census and the existence
-# population is the direct readers of the surface set by construction, a bound on the census's reach and not a property
+# returns, adds in place, augmented assignment, attribute stores and module-level names, and a dict by key: a
+# read of one key yields what sits under it, while a whole-value use of the dict, str(shape) or
+# shape.values(), yields all it holds; a source function whose every return is a dict, the launch shape, is a
+# source at its env key, the value under that key followed by declaration to its roots across the function and
+# the whole return crossing where the census cannot locate the key; and the census does not follow the pick
+# tag across a dict return, so a pick that crosses one is OUTSIDE the census and the existence population is
+# the direct readers of the surface set by construction, a bound on the census's reach and not a property
 # of this module) and that are filed problem=True, and
 # holds them to the ENV ROWS line below the ring formats: each has a ring_text whose length is a function of its FORMAT,
 # never of what a pick or a stored env carries, and tests/test_session_env.py computes a worst case for every format on
