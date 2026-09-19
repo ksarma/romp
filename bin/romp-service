@@ -388,12 +388,15 @@ _W_EXEC_ERR=""; _W_EXEC_FIX=""   # for a `carry` refusal on ExecStart's path alo
 _WS=$' \t\n\r'   # systemd's WHITESPACE: what strstrip strips, what the comment test skips and what extract_first_word splits on
 _unit_refuse() {   # $1 the line number, $2 the form, $3 the remedy; $4 non-empty: $3 is the whole second line and the shared tail is not
                    # appended (round 4, extra7-4: the ExecStart-path site named the install route itself, and the tail then added a
-                   # daemon-reload the install already does)
+                   # daemon-reload the install already does). The tail says what a Linux install does (the round-5 preface's third
+                   # commit of fork PR #778: it said the install restarts the manager, which a plain install does not; the install arm
+                   # below runs daemon-reload and enable --now and no restart, so the running manager keeps its old unit until the
+                   # restart the tail names, as the rewrite's own line says).
     echo "romp-service: the $_SVC_NOUN ($UNIT) is in a form this rewrite does not read whole (line $1: $2); nothing was rewritten." >&2
     if [[ -n "${4:-}" ]]; then
         echo "  $3" >&2
     else
-        echo "  $3, then systemctl --user daemon-reload and run the deploy again; or run romp-service install from the shell and clone that should own the service (the header says what it bakes), which writes the unit afresh and restarts the manager." >&2
+        echo "  $3, then systemctl --user daemon-reload and run the deploy again; or run romp-service install from the shell and clone that should own the service (the header says what it bakes), which writes the unit afresh, reloads systemd and runs enable --now, which starts an inactive unit and leaves a running one as it is; a running manager keeps its old unit until its next restart:  systemctl --user restart romp-manager" >&2
     fi
     return 1
 }
@@ -616,7 +619,7 @@ _unit_scan() {
             case "$w" in [-@:+!\|]*) _unit_refuse "$n" "ExecStart's command begins with a prefix character (${w:0:1}), which this rewrite would not write back" "Write the path bare, without the prefix"; return 1 ;; esac
             _unit_specifiers "$w" || { _unit_refuse "$n" "ExecStart carries the specifier $_W_ERR, which systemd expands and this reader would take literally" "Write the absolute path in its place (a literal % is written %%)"; return 1; }
             w="$_W_WORD"
-            if _exec_path_unsafe "$w"; then _unit_refuse "$n" "ExecStart's command path contains a quote, a backslash or a control character, which systemd refuses in an executable name (Executable name contains special characters), so this unit does not start" "Move the clone to a path without those characters and run romp-service install from it, which writes the unit afresh and restarts the manager (the same characters are fine in ROMP_DIR and the service.env path; ExecStart's command path is the one systemd checks)." own; return 1; fi
+            if _exec_path_unsafe "$w"; then _unit_refuse "$n" "ExecStart's command path contains a quote, a backslash or a control character, which systemd refuses in an executable name (Executable name contains special characters), so this unit does not start" "Move the clone to a path without those characters (the same characters are fine in ROMP_DIR and the service.env path; ExecStart's command path is the one systemd checks) and run romp-service install from it, which writes the unit afresh, reloads systemd and runs enable --now, which starts an inactive unit and leaves a running one as it is; a running manager keeps its old unit until its next restart:  systemctl --user restart romp-manager" own; return 1; fi
             _unit_first_word "$rest" || true
             [[ "$_W_WORD" == up && -z "$_W_REST" ]] || { _unit_refuse "$n" "ExecStart's arguments are not up alone (romp-manager up is what romp writes)" "Write ExecStart=<the path to romp-manager> up"; return 1; }
             _U_EXEC="$w" ;;

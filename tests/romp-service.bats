@@ -3468,7 +3468,11 @@ _marked_install_ok() {   # the marked child's install over the unit on disk, exp
     _svc_line "$unit" "ExecStart=\"$TEST_DIR/t${tab}ab/romp-manager\" up"
     [ "$(_sd_read "$unit" exec0)" = "ERROR: Executable name contains special characters: $TEST_DIR/t${tab}ab/romp-manager" ]
     _three_roads_refuse "$unit" "a quote, a backslash or a control character, which systemd refuses in an executable name" "then systemctl --user daemon-reload"
-    [[ "$output" == *"  Move the clone to a path without those characters and run romp-service install from it, which writes the unit afresh and restarts the manager (the same characters are fine in ROMP_DIR and the service.env path; ExecStart's command path is the one systemd checks)."* ]]
+    # the round-5 preface's third commit (fork PR #778, 2026-09-19): the remedy said the install restarts the manager, which a plain Linux
+    # install does not (daemon-reload, enable --now, which leaves an active unit as it is; no road of the reader calls restart), so it now
+    # says what the install does and names the restart the user runs; the pin holds the whole corrected line and the old clause absent
+    [[ "$output" == *"  Move the clone to a path without those characters (the same characters are fine in ROMP_DIR and the service.env path; ExecStart's command path is the one systemd checks) and run romp-service install from it, which writes the unit afresh, reloads systemd and runs enable --now, which starts an inactive unit and leaves a running one as it is; a running manager keeps its old unit until its next restart:  systemctl --user restart romp-manager"* ]]
+    [[ "$output" != *"restarts the manager"* ]]
     ROMP_MANAGER_BIN="$TEST_DIR/t${tab}ab/romp-manager" ROMP_OS_OVERRIDE=Linux run "$SVC" install
     [ "$status" -eq 5 ]
     [[ "$output" == *"contains a quote, a backslash or a control character"* ]]

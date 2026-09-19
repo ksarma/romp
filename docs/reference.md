@@ -1553,8 +1553,13 @@ through. When systemd reports the service active but no unit is at the path
 `romp-service` writes, the rewrite exits 3 and `install.sh` goes on without
 failing the run and without running `install` (that would boot the running
 manager out): it says the release's unit did not land and that
-`romp-service install` from the owning shell and clone is the route, which
-restarts the manager. The kernel's self-update runs `romp-service rewrite
+`romp-service install` from the owning shell and clone is the route. What
+that install does to the running manager depends on the platform: on macOS
+the `bootout` and `bootstrap` above restart it; on Linux the install writes
+the unit afresh, reloads systemd and runs `systemctl --user enable --now`,
+which starts an inactive unit and leaves a running one as it is, so the
+running manager keeps its old unit until the restart the user runs by hand,
+`systemctl --user restart romp-manager`. The kernel's self-update runs `romp-service rewrite
 --check`, the identity checks alone, BEFORE it fetches the release and moves
 the checkout, so a deploy the rewrite would refuse moves nothing first; its
 detached child is marked (`ROMP_UPDATE_CHILD=1`), and on the install road
@@ -1597,7 +1602,17 @@ characters, as systemd keeps them), a bare value with whitespace is its first wo
 systemd drops it, a later assignment of a name replaces an earlier one, and
 an `EnvironmentFile=` path that is not absolute is no file, as systemd reads
 it; the compare reads what systemd hands the manager, so the update child's
-own environment is never refused over the file's spelling. A form the reader
+own environment is never refused over the file's spelling. One residual is
+disclosed and left: the `EnvironmentFile=` path is compared against
+`ROMP_SERVICE_ENV_FILE` by place, not by systemd's simplified reading of the
+line, so an override spelled as the simplified path of a place that does not
+exist (the unit reads `EnvironmentFile=-/x//y/env`, the shell sets
+`ROMP_SERVICE_ENV_FILE=/x/y/env`) is refused, exit 5, nothing written,
+`the file reads /x//y/env, this environment names /x/y/env`, though systemd
+reads the same file under either spelling; spell the override as the file
+spells it, or create the place, after which the two resolve to one. A false
+refusal on the safe side: modelling systemd's whole path resolution in the
+reader would risk an error in the direction that writes. A form the reader
 cannot read whole is refused, exit 5, nothing written, with the line, the
 form and the remedy named: a carriage return anywhere but before the LF, or a
 NUL byte (line ends systemd reads and bash's `read` does not, so a CR-only
@@ -1616,8 +1631,14 @@ re-encodes, where a `PATH` line is replayed as written and its specifier is
 systemd's to expand; an unbalanced quote or an escape systemd refuses (a `\U`
 escape naming a surrogate or a noncharacter among them; it drops the item and
 the rest of the line, the items before it standing); an eight-bit, `\u`
-surrogate or `\u` noncharacter escape, which systemd decodes into raw bytes
-it then judges as UTF-8, a reading this reader does not model; a kept value ending in
+surrogate or `\u` noncharacter escape, on either of two surfaces: in an
+`Environment=` value systemd decodes it into raw bytes it then judges as UTF-8
+(an assignment carrying bytes that are not is dropped), a reading this reader
+does not model; in `ExecStart`'s path systemd decodes a `\u` surrogate or
+noncharacter escape into bytes that are not UTF-8 and runs the unit with them,
+and the writer, which writes a path back raw, has no written form that reads
+back to the same bytes (written raw they are a line systemd refuses whole), so
+the remedy is the move to a path without them; a kept value ending in
 a newline, which every read loses through a command substitution; a second
 assignment on a line that assigns a value the rewrite keeps (one assignment a
 line); a second `ExecStart=` or `EnvironmentFile=` line; an `ExecStart` whose
