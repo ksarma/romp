@@ -156,6 +156,7 @@ REEXEC = ("re-executed the kernel (or loaded it for the first time) and left the
 INHERITED = "starts under the kernel's backend singleton (km._sdk_backend) over a directory that no longer exists"
 INHERITED_KEPT = ("starts under the kernel's backend singleton (km._sdk_backend) over a directory that is not jd.STATE, before any "
                   "test in this worker has run")
+PUT_BACK_GONE = "put back the kernel's backend singleton (km._sdk_backend) it found, whose directory is gone: "
 BOUNDARY = "'s class or module boundary (tearDownClass, tearDownModule or a class- or module-scoped fixture)"
 SHARED_STATE = "left shared state changed"     # the judge fixture's text: quiet in every case here, so the ratchet's is the only red
 
@@ -591,6 +592,39 @@ SCRATCH_M = SCRATCH_HEAD + textwrap.dedent("""\
     class Six(unittest.TestCase):
         def test_a_does_nothing_under_fives_object(self):
             assert km._sdk_backend.state_dir == Five.root
+""")
+
+SCRATCH_P = SCRATCH_HEAD + textwrap.dedent("""\
+
+    class One(unittest.TestCase):
+        root = None
+
+        def test_a_leaks_over_a_kept_sandbox(self):
+            saved = jd.STATE
+            One.root = sandbox()
+            build_over(One.root)                      # named at its own window
+            jd.STATE = saved
+
+    class Two(unittest.TestCase):
+        @classmethod
+        def setUpClass(cls):
+            cls.saved = (km._sdk_backend, jd.STATE)
+            cls.root = sandbox()
+            km._sdk_backend = None
+            jd.STATE = cls.root
+
+        @classmethod
+        def tearDownClass(cls):
+            km._sdk_backend, jd.STATE = cls.saved     # the object it found, put back
+            shutil.rmtree(cls.root)
+            shutil.rmtree(One.root)                   # and the directory under it removed
+
+        def test_a_builds_over_the_class_root(self):
+            assert km._sdk().state_dir == Two.root
+
+    class Three(unittest.TestCase):
+        def test_a_does_nothing_under_the_gone_object(self):
+            assert not km._sdk_backend.state_dir.exists()
 """)
 
 
@@ -1067,6 +1101,27 @@ class ClassTeardownInstallsAValue(_NestedRun, unittest.TestCase):
         self.assertRatchetPassed("Six", "test_a_does_nothing_under_fives_object")
         self.assertIsNone(boundary(self.out, "::Six"), self.out)
         self.assertIsNone(boundary(self.out, ""), "the module end is quiet on the object the class end named: %s" % self.out)
+
+class ClassTeardownPutsBackAnObjectWhoseDirectoryItRemoved(_NestedRun, unittest.TestCase):
+    SCRATCH = SCRATCH_P
+    ERRORS = 2
+
+    def test_the_leak_over_the_kept_sandbox_is_named_at_its_own_window(self):
+        text = self.assertRatchetFailed("One", "test_a_leaks_over_a_kept_sandbox")
+        self.assertTrue(text.startswith("changed after its teardown: before None (not built), after SdkBackend over "), text)
+        self.assertNotIn(GONE, text)
+
+    def test_the_put_back_of_the_found_object_over_a_removed_directory_is_named_at_the_class_boundary(self):
+        # Two.a's lazy build over the root the class moved to passes at its own window; Two's one case is its last, so the
+        # boundary verdict lands on it (PASSED for the call, ERROR at the teardown), and no test verdict names it.
+        text = self.assertBoundaryFailed("::Two", "Two.test_a_builds_over_the_class_root")
+        self.assertTrue(text.startswith(PUT_BACK_GONE + "SdkBackend over "), text)
+        self.assertTrue(text.endswith(", " + GONE), text)
+
+    def test_the_class_that_inherits_the_gone_object_is_quiet(self):
+        self.assertRatchetPassed("Three", "test_a_does_nothing_under_the_gone_object")
+        self.assertIsNone(boundary(self.out, "::Three"), self.out)
+        self.assertIsNone(boundary(self.out, ""), self.out)
 
 if __name__ == "__main__":
     unittest.main()
