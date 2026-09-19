@@ -6,8 +6,13 @@ A hermetic kernel serves one synthetic session whose reply links six paths: a ma
 `#fold-rules` section (with a [[wikilink]] and a callout inside it), a `#no-such-section` anchor (the head with a one-line
 note), a small PNG (the figure at its natural size, capped to the card), a Python file (a highlighted head), a `.env`
 (a secrets-shaped name: text plus "open", no request), a markdown-named symlink to that `.env` (judged by its target:
-text plus "open") and an absolute path outside the session's folder and the user's home (text plus "open", no request);
-the route itself, asked by hand for a refused path, answers 403 with the reason and no text. The acceptance includes
+text plus "open"), an absolute path outside the session's folder and the user's home (text plus "open", no request) and a
+note under `a-_b/c_/`, directories whose names begin and end with an underscore: CommonMark's flanking rules make those
+underscores an emphasis pair, and the chat rendered the path's middle as <em>, so its link walk never saw the token and the
+link never rendered (the 2026-09-19 browser census, Entry 5: the lab's own random temp name did this on one CI run; the
+population note md-emphasis-population.md has the class); the fixed synthetic path reproduces it on every run at the head
+before the chat's path-aware emphasis (md-config.ts pathAwareEmphasis) and is the twelfth link after it. The route itself,
+asked by hand for a refused path, answers 403 with the reason and no text. The acceptance includes
 latency: the card stamps the time from the dwell's end to its rendered content; a cached markdown slice (the guide,
 warmed on the pusher's path) must render within 250 ms, and a cold one (a file whose time the test rewrites after the
 build, so the hover misses the cache) is measured and reported (PV_LATENCY names a file for the numbers). The cold file
@@ -102,8 +107,8 @@ page.on("request", (r) => { if (/\/file\?/.test(r.url())) fileRequests++; });
 await page.goto(cfg.chat);
 await page.waitForSelector("#tabs .tab[data-id]", { timeout: 20000 });
 await page.click('#tabs .tab[data-id="' + cfg.sid + '"]');
-try { await page.waitForFunction(() => document.querySelectorAll("#content .file-uri-link").length >= 11, null, { timeout: 20000 }); }
-catch (e) {   // say which links rendered, so a short count is diagnosable from the failure alone
+try { await page.waitForFunction(() => document.querySelectorAll("#content .file-uri-link").length >= 12, null, { timeout: 20000 }); }
+catch (e) {   // say which links rendered, so a short count is diagnosable from the failure alone (eleven of twelve: the underscored path was cut by emphasis)
   const got = await page.evaluate(() => Array.from(document.querySelectorAll("#content .file-uri-link")).map((a) => a.dataset.path + (a.dataset.frag ? "#" + a.dataset.frag : "")));
   console.error("links rendered (" + got.length + "): " + JSON.stringify(got)); process.exit(1);
 }
@@ -246,6 +251,9 @@ class ServedFilePreview(unittest.TestCase):
         os.makedirs(os.path.join(cls.lab, "outside"), exist_ok=True)
         subprocess.run(["git", "init", "-q"], cwd=cwd, check=True, capture_output=True)   # the repo index behind a bare filename (tier 3)
         os.makedirs(os.path.join(cwd, "docs", "notes"), exist_ok=True)
+        # the emphasis-delimiter reproduction (the docstring): a `-_` opener and a `_/` closer inside one path
+        os.makedirs(os.path.join(cwd, "a-_b", "c_"), exist_ok=True)
+        Path(cwd, "a-_b", "c_", "d.md").write_text("# Underscored\n\nA note whose directories begin and end with an underscore.\n")
         Path(cwd, "docs", "notes", "rollup-notes.md").write_text("# Rollup notes\n\nThe rollup gathers every open task into one line per session.\n")
         # a notes file whose TEXT is credential-shaped (assembled here, never a literal: the scanner reads this repo too):
         # the content belt refuses its warm, and the card must say so (T364: it blamed the confinement instead)
@@ -268,7 +276,7 @@ class ServedFilePreview(unittest.TestCase):
         os.makedirs(proj, exist_ok=True)
         reply = ("Read docs/guide.md first, then the rule at docs/guide.md#fold-rules (docs/guide.md#no-such-section is not a section).\n\n"
                  "The plot is at plots/figure.png and the code at src/app.py; the secrets live in docs/.env (and docs/report.md is a link to them); "
-                 "the later note is docs/cold.md; notes outside the project sit at %s. "
+                 "the later note is docs/cold.md and the underscored one is a-_b/c_/d.md; notes outside the project sit at %s. "
                  "The rollup is written up in `rollup-notes.md` and the leak in `leaky-notes.md`." % cls.outside)   # bare filenames as a session writes them: in code spans
         Path(proj, SID + ".jsonl").write_text(
             json.dumps({"type": "user", "uuid": U_UUID, "parentUuid": None, "timestamp": "2026-09-05T00:00:00.000Z", "sessionId": SID,
@@ -324,6 +332,8 @@ class ServedFilePreview(unittest.TestCase):
         self.assertIsNone(by[("docs/report.md", None)]["preview"], "a markdown name over a secret: judged by what it points at, no preview")
         self.assertIsNone(by[(self.outside, None)]["preview"], "outside the session's folder and home: no preview")
         self.assertEqual(by[("docs/cold.md", None)]["preview"], "markdown")
+        under = by[("a-_b/c_/d.md", None)]
+        self.assertEqual((under["text"], under["preview"]), ("a-_b/c_/d.md", "markdown"), "the underscored path links whole, its underscores no emphasis pair: %r" % r["links"])
         latency = {"cached": [], "cold": [], "code": []}      # dwell end → rendered card, ms, per theme
         for theme in ("dark", "light"):
             t = r["themes"][theme]
