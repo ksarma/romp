@@ -861,8 +861,15 @@ class _LinkDrop(unittest.TestCase):
         return out
 
     def _rows_in(self, k0, k1, slack_s=1.5):
-        """The hub's client-diag rows stamped inside the marks' window (the kernel stamps a row at receipt, in seconds; a
-        row the shim queued while its socket was down is stamped at the flush)."""
+        """The hub's client-diag rows stamped inside the marks' window, padded by slack_s on BOTH sides (the kernel stamps
+        a row at receipt, in whole seconds; a row the shim queued while its socket was down is stamped at the flush). The
+        pad is symmetric on purpose: the kernel's stamp is a whole-second floor, so a row an event just after a mark
+        caused can carry a second that precedes the mark (a zero left pad dropped a real phase-A row in one measured
+        run), and a row lands after the closing mark by the flush's lag. Adjacent marks (A1 and drop are milliseconds
+        apart) therefore give overlapping windows; the down window's exact zero holds because phase() waits 1500 ms
+        after the visibles before A1, so phase A's last row is stamped before the down window's padded start, a
+        separation the numbers give rather than a designed guarantee. The residual no pad tuning removes: a row queued
+        while a page's local socket was down and flushed late lands anywhere in the down window (round 1, tests-6)."""
         m = self._marks()
         t0, t1 = m[k0] / 1000.0 - slack_s, m[k1] / 1000.0 + slack_s
         return [r for r in self.hub_diag_rows if t0 <= float(r.get("t") or 0) <= t1]
