@@ -1153,7 +1153,7 @@ test("source: where an open lands (Slice 6 of plans/markdown-viewer.md, item 4):
     "validated at the receiver: the message crossed a frame boundary");
   const openFn = VIEW.split("export function openFileView")[1].split("function offersDownload")[0];
   assert.match(openFn, /const at: At \| null = opts\?\.at \?\? null;/);
-  assert.match(openFn, /openLinkedFile\(p, sid \|\| null, ln > 0 \? \{ line: ln \} : x\.dataset\.frag \? \{ heading: x\.dataset\.frag \} : null\);/, "the body's delegate: data-line as { line }, data-frag as { heading }, a bare path as null");
+  assert.match(openFn, /openFromViewer\("push", p, sid \|\| null, ln > 0 \? \{ line: ln \} : x\.dataset\.frag \? \{ heading: x\.dataset\.frag \} : null\);/, "the body's delegate: data-line as { line }, data-frag as { heading }, a bare path as null (through the trail's door, openFromViewer, since the link-navigation follow-on)");
   assert.match(openFn, /let pendingOffset: number \| null = at !== null && "offset" in at && at\.offset >= 0 \? Math\.floor\(at\.offset\) : null;/);
   assert.match(openFn, /renderBody\(\);\n(?:\s*\/\/[^\n]*\n)*\s*if \(notUtf8 && !latin1LineStands\(\)\) noteBar\(LATIN1_NOTICE\);\n\s*landTarget\(\);/, "the landing spends the target and takes the keyboard through one gate over a body with a box (review round 5); the Latin-1 line's raise stands between the paint and the spend (Slice 7, item 5), guarded by the standing line (the review's round 1)");
   assert.match(openFn, /const landTarget = \(\): void => \{\n\s*if \(unmeasurable\(\)\) return;\n\s*if \(pendingLine !== null\) \{ const n = pendingLine; pendingLine = null; scrollToLine\(n\); \}\n\s*if \(pendingOffset !== null\) \{ const n = pendingOffset; pendingOffset = null; requestAnimationFrame\(\(\) => \{ if \(wrap\.isConnected\) scrollToSourceOffset\(n\); \}\); \}\n\s*if \(pendingHeading !== null && \(!isMd \|\| fmt\.md === "rendered"\)\) spendHeading\(\);\n\s*keyboardOnLanding\(\);\n\s*\};/,
@@ -1444,7 +1444,8 @@ test("openFileView answers false when the dirty-edit guard keeps the previous vi
     let asked = 0;
     const document = { getElementById: (id: string) => (viewerUp && id === "romp-fileview" ? {} : null) };
     const closeGuard = guard ? () => { asked++; return guard(); } : null;
-    const out = (new Function("document", "closeGuard", "return (function () {" + head + " return { through: true, guard: closeGuard }; })();") as
+    // the head also takes the trail's tag (file-trail.ts; `const how = trailNext; trailNext = null;`), module state the slice cannot see: declared here
+    const out = (new Function("document", "closeGuard", "return (function () { let trailNext = null;" + head + " return { through: true, guard: closeGuard }; })();") as
       (d: unknown, g: unknown) => false | { through: true; guard: unknown })(document, closeGuard);
     return { out, asked };
   };

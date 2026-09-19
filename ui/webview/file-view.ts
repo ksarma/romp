@@ -23,7 +23,7 @@ import { literalizeUnclosedTags } from "./md-literal-tags";   // an inline start
 import { gateRemoteFigures, gateOf, loadGatedHost, figureRefs, parseSrcset, serializeSrcset, GATE_ACT } from "./figure-gate";   // decision 8: a figure on an unlisted host loads on a click (figure-gate.ts)
 import { hostOf, bareId, hostNameNodes } from "./host-prefix";
 import { fileUrl } from "./preview";
-import { ICON_DOWNLOAD, ICON_COPY, ICON_EDIT, ICON_ZOOM, ICON_CHECK, ICON_CROSS } from "./icons";   // the bar's glyphs (T367)
+import { ICON_DOWNLOAD, ICON_COPY, ICON_EDIT, ICON_ZOOM, ICON_CHECK, ICON_CROSS, ICON_BACK, ICON_FORWARD } from "./icons";   // the bar's glyphs (T367); the trail's two arrows (L2)
 import { openPdfTab, wantsOwnTab } from "./preview";   // a PDF's own tab, and the gesture that asks for it
 import { openFileTab, canPreview } from "./preview";   // any file's own tab, for the links inside a shown file, and the web-vs-webview test
 import { headVerdict, mtimeMoved, ABSENT } from "./file-comments-model";   // the panel's reading of a HEAD /file answer, shared by the changed-on-disk probe (Slice 6, item 5); ABSENT: a 404, the bar's deletion words
@@ -36,6 +36,7 @@ import { sourceBlockSpans, renderedBlockElements } from "./anchor-map";   // the
 import { rawRowForOffset } from "./anchor-map";   // the verified Raw row map, for scrollToOffset (Slice 7 of plans/markdown-viewer.md, item 7): the row whose source span holds an offset, following whatever split the rows were built on
 import { linkifyFileText, linkMarkdownAnchors, viewerWalkTokens, fragmentTarget, URL_LINK_CLASS, FRAG_LINK_CLASS } from "./file-view-links";
 import { selectionOpenIn } from "./path-links";
+import { liveTrail, setTrail, trailRoot, trailPush, trailBack, trailForward, trailSetView, trailEnd, trailBackTarget, trailForwardTarget, navTitle, navChord, type TrailEntry, type TrailView } from "./file-trail";   // the navigation trail behind Back and Forward (plans/markdown-viewer.md, "Follow-on: Link navigation")
 import { PDF_MAX_BYTES, pdfCapMessage } from "./pdf-cap";   // the pages cap, pure (Slice 4); never the chunk itself
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const gclock = require("./gesture-clock.js");   // the gesture clock every settings post stamps through
@@ -586,6 +587,8 @@ export function placeKey(path: string, sid: string | null | undefined): string {
 // (the chat's body after a plain click) yields as the document's body does. Frames the read cannot see (another origin, a
 // host with no top) or a read that throws take the keyboard as before.
 const NON_TEXT_INPUTS = new Set(["button", "checkbox", "radio", "submit", "reset", "file", "range", "color", "image", "hidden"]);
+// the platform, for the trail's Cmd+[ and Cmd+] (navChord): the spelling render.ts and file-comments.ts read it by
+const IS_MAC = typeof navigator !== "undefined" && /Mac|iP(?:hone|ad|od)/.test(navigator.platform || "");
 function isTypingTarget(a: Element): boolean {
   if (a.localName === "textarea" || a.localName === "select") return true;   // type-ahead in a dropdown is typing too (render.ts's isTypingTarget reads the same; the review's round 3)
   if (a.localName === "input") return !NON_TEXT_INPUTS.has((a.getAttribute("type") || "text").toLowerCase());
@@ -648,6 +651,47 @@ function ringWithNoHolder(): boolean {
 // target rides as `at` (the link's data-line as `{ line }`, its data-frag as `{ heading }`; null for a bare path).
 let openLinkedFile: (path: string, sid: string | null, at: At | null) => void =
   (path, sid, at) => { openFileView(path, sid, { at }); };
+// ── the navigation trail (file-trail.ts; plans/markdown-viewer.md, "Follow-on: Link navigation", L1) ──────────────
+// How openFileView tells an open from INSIDE the viewer (a link in the shown file, Back, Forward) from one from OUTSIDE
+// (the Files pane's rows and Recent list, a chat path pill, a Waiting pane link, the shell's relay): the viewer's own
+// openers go through ONE door, openFromViewer, which sets `trailNext` and then calls openLinkedFile as the delegate always
+// has (the host's opener, files.ts openHere, or the default above, either of which reaches openFileView in the same call);
+// openFileView reads the tag and clears it at its top. No other caller sets it, so an untagged open is outside by
+// construction and no caller has to remember a flag. The one direct re-open inside this module, the conflict bar's
+// Reload file, tags itself "reload" so the trail stands through it.
+type TrailHow = "push" | "back" | "forward" | "reload";
+let trailNext: TrailHow | null = null;
+function openFromViewer(how: TrailHow, path: string, sid: string | null, at: At | null): void {
+  trailNext = how;
+  try { openLinkedFile(path, sid, at); } finally { trailNext = null; }
+}
+/** The trail's move for the open of `path` under `how`, run after runLeave wrote the leaving file's place: the shown
+ *  file's entry first records the view it was left in (that place's `view`, read back by the file's key; none for a
+ *  picture or a PDF, whose leave writes no place), then the tag decides. `push`: the shown file goes behind and the
+ *  steps ahead are dropped, unless the target IS the shown file (a `report.md:40` link inside report.md, a same-file
+ *  heading target), which is a jump inside the file and no step between files, so the trail stands. `back` and
+ *  `forward`: the step, when the trail's target is the file being opened (the buttons and the chords pass the entry's own
+ *  path, so it always is; a mismatch, or no entry there, falls to a root rather than desynchronising). `reload`: stands.
+ *  null (outside): a new trail rooted at the file. Returns the view the opened file's entry recorded, for Back and
+ *  Forward to open it in (L2); null for every other move: the saved preference rules. */
+function moveTrail(how: TrailHow | null, path: string, sid: string | null): TrailView | null {
+  let s = liveTrail();
+  const cur = s.current;
+  if (cur) s = trailSetView(s, rememberedPlaces.get(placeKey(cur.path, cur.sid))?.view ?? null);
+  const entry: TrailEntry = { path, sid, view: null };
+  switch (how) {
+    case "reload": setTrail(s); return null;
+    case "push":
+      if (cur && placeKey(cur.path, cur.sid) === placeKey(path, sid)) { setTrail(s); return null; }
+      setTrail(trailPush(s, entry)); return null;
+    case "back": case "forward": {
+      const next = how === "back" ? trailBack(s) : trailForward(s);
+      if (next === s || !next.current || next.current.path !== path || next.current.sid !== sid) { setTrail(trailRoot(entry)); return null; }
+      setTrail(next); return next.current.view;
+    }
+    default: setTrail(trailRoot(entry)); return null;
+  }
+}
 let saveSeq = 0;
 let editHooks: { reqId: number; logWarning: string | null; saved: (mtimeNs: string, logged: boolean) => void; failed: (err: string, code?: string) => void } | null = null;
 // Set by the open viewer: returns false to VETO a close (an editor holding unsaved changes asks
@@ -1044,6 +1088,7 @@ export function closeFileView(): void {
   runLeave();                                          // the reader's place, remembered for the next open of the path (RememberedPlace, above), read while the body stands
   editHooks = null;
   gitHooks = null;                                     // a reply landing after the close decorates nothing
+  setTrail(trailEnd());                                // the trail ends with the review (file-trail.ts, L1): a reopen from Recent starts a new one
   dropOnKey();                                         // the closing viewer's handler leaves with it
   dropProbe();                                         // …and its changed-on-disk probe (the window and document listeners)
   if (zoomOpen) { zoomOpen.close(); zoomOpen = null; }   // the text-size flyout's reference leaves with the viewer (review: a keyboard close kept it, and the next viewer's first Escape was swallowed)
@@ -1090,6 +1135,7 @@ export function openFileClick(ev: MouseEvent | KeyboardEvent | null | undefined,
  *  Files pane's Recent entry, plans/markdown-viewer.md Slice 6, item 3), seated on the first text paint; the viewer's
  *  own memory of the path is read too, and the later of the two wins. An `at` lands where it points and ignores both. */
 export function openFileView(path: string, sid?: string | null, opts?: { todoId?: string | null; at?: At | null; place?: RememberedPlace | null }): boolean {
+  const how = trailNext; trailNext = null;             // the trail's word on this open (openFromViewer sets it; every other caller leaves it null: an open from outside), taken before the guard so a vetoed open leaves no stale tag
   // The replace path bypasses closeFileView, so it needs the same dirty ask: opening file B over an
   // edited-but-unsaved file A must not silently eat A's buffer.
   if (document.getElementById("romp-fileview") && closeGuard && !closeGuard()) return false;
@@ -1099,6 +1145,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   runLeave();                                          // …and the same leave write: the old file's place, before its body goes
   editHooks = null;
   gitHooks = null;                                     // the replace path skips closeFileView — same drop
+  const trailView = moveTrail(how, path, sid ?? null); // the trail's step, after that leave write (the leaving entry records the view the place was read in); the view to open in for a Back or Forward, else null
   dropOnKey();                                         // …and the same for the old viewer's Escape handler
   dropProbe();                                         // …and its changed-on-disk probe: the new open arms its own
   runCloseHooks();                                     // …and the old viewer's panel hooks
@@ -1126,6 +1173,28 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   document.body.classList.add("fileview-open");
 
   const bar = el("div", "fileview-bar");
+  // ── Back and Forward (plans/markdown-viewer.md, "Follow-on: Link navigation", L2) ── the trail's two steps as glyph
+  // buttons in the icon family, the bar's first group: an arrow left and an arrow right, the words in the title and
+  // aria-label with the target's file name ("Back to report.md"), and the word alone with aria-disabled when the trail
+  // has nothing that way (the bar's precedent, the text-size ends: never `disabled`, so a focused button keeps the
+  // keyboard). Built once per open from the trail as this open left it (moveTrail ran above), never rebuilt: every step
+  // is an open that builds a new bar, so the state cannot go stale. The click's acknowledgement is the replace itself,
+  // in the same tick; a step re-opens its entry through openFromViewer with NO target, so the remembered place re-seats
+  // the file where it was left (pendingPlace) and the entry's recorded view is the view for that open (trailView).
+  const trailNow = liveTrail();
+  const nav = el("span", "fileview-group fileview-nav");
+  const navBtn = (dir: "back" | "forward"): HTMLButtonElement => {
+    const target = dir === "back" ? trailBackTarget(trailNow) : trailForwardTarget(trailNow);
+    const b = el("button", "fileview-btn fileview-icon fileview-nav-" + dir) as HTMLButtonElement;
+    b.type = "button"; b.innerHTML = dir === "back" ? ICON_BACK : ICON_FORWARD; b.dataset.icon = "1";
+    const words = navTitle(dir, target);
+    b.title = words; b.setAttribute("aria-label", words);
+    if (!target) b.setAttribute("aria-disabled", "true");
+    b.addEventListener("click", () => { if (target) openFromViewer(dir, target.path, target.sid, null); });
+    return b;
+  };
+  nav.appendChild(navBtn("back")); nav.appendChild(navBtn("forward"));
+  bar.appendChild(nav);
   // BACK to the listing (the user 2026-08-24): a file opened FROM the browser overlays it with the
   // listing intact beneath (the one-directional stack above) — closing just the viewer IS the back.
   // The button renders only when a listing is actually underneath; a viewer opened from a path link
@@ -1180,6 +1249,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // re-rendered by kernel pushes — the viewer is a static overlay — so direct listeners are click-safe
   // here, same as Copy path below.
   const fmt = loadFmt();
+  if (trailView !== null) fmt.md = trailView;   // a Back or Forward opens the file in the view its entry recorded, for THIS open (this copy; nothing saves it, as a line target's Raw is unsaved)
   let text: string | null = null;             // set once the fetch lands; earlier clicks just save the pref
   let renderFell: string | null = null;       // the message of the throw the last text paint fell on (renderBody's catch: the RENDER_FELL line over Raw rows); null once a paint stands, so mode() answers "raw" over those rows and "rendered" again after the Rendered click's retry
   let viewError: string | null = null;        // the seam's error(): the words of the pane the body shows in place of the file, set where the two panes paint (the fetch chain's catch, imgFailed) and cleared where content paints (the text paint once its swap stands, the media arm, the editor's entry); never read off the body (plans/markdown-viewer.md Slice 7, item 3)
@@ -2601,7 +2671,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       if (openFileTab(p, sid || null)) return;                   // its own tab; a blocked popup falls through to the viewer
     }
     const ln = Number(x.dataset.line);
-    openLinkedFile(p, sid || null, ln > 0 ? { line: ln } : x.dataset.frag ? { heading: x.dataset.frag } : null);
+    openFromViewer("push", p, sid || null, ln > 0 ? { line: ln } : x.dataset.frag ? { heading: x.dataset.frag } : null);   // an open from inside the viewer: the shown file goes onto the trail (moveTrail)
   };
   // A gated figure's placeholder (figure-gate.ts; decision 8 of plans/markdown-viewer.md): the click loads every figure
   // of that host in the document and remembers the host for the page. Read here, on the stable body, since every paint
@@ -3016,7 +3086,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
         re.addEventListener("click", () => {
           if (!confirmDiscard()) return;
           dirty = false;                      // confirmed once — the replace guard must not ask twice
-          openFileView(path, sid, opts);      // the same provenance (todoId) — a reload is still that open
+          trailNext = "reload"; openFileView(path, sid, opts);      // the same provenance (todoId): a reload is still that open, and the same entry of the trail (moveTrail)
         });
         bar2.appendChild(re);
       }
@@ -3158,6 +3228,27 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   };
   document.addEventListener("keydown", onKey);
   onKeyLive = onKey;
+  // ── the trail's chords (L2) ── Alt+Left and Alt+Right, and on a Mac Cmd+[ and Cmd+] as well (navChord), step the trail
+  // while this viewer is up. One document listener in the CAPTURE phase, so it runs before the page's own handlers and
+  // the browser's default (its history step, which would leave the page under an open viewer) is taken whether or not
+  // the trail has a step that way; it stands down when another listener already took the key (defaultPrevented), when
+  // a text field or the editor holds the keyboard (the caret's own word step on a Mac), and when no viewer is up. A
+  // step is the button's own open (openFromViewer with no target). Installed with the viewer and removed by BOTH exits
+  // through the close hooks (runCloseHooks: closeFileView, a replace-open, the URL viewer's replace), as onKey is by
+  // dropOnKey, so a replaced viewer's chord never opens from a trail it no longer shows.
+  const onNavKey = (e: KeyboardEvent) => {
+    if (e.defaultPrevented || !document.getElementById("romp-fileview")) return;
+    const dir = navChord(e, IS_MAC);
+    if (dir === null) return;
+    const a = document.activeElement;
+    if (a && a !== document.body && isTypingTarget(a)) return;
+    if (editing) return;
+    e.preventDefault();
+    const target = dir === "back" ? trailBackTarget(liveTrail()) : trailForwardTarget(liveTrail());
+    if (target) openFromViewer(dir, target.path, target.sid, null);
+  };
+  document.addEventListener("keydown", onNavKey, true);
+  closeHooks.push(() => document.removeEventListener("keydown", onNavKey, true));
 
   // ── changed on disk (plans/markdown-viewer.md Slice 6, item 5) ── With the Comments panel closed nothing watched the
   // file: a session's write went unnoticed until something else reloaded it. A `focus` on this window and a
@@ -3612,6 +3703,7 @@ export function openUrlView(href: string): void {
   runLeave();                                          // a file viewer's place is remembered when a URL replaces it (RememberedPlace)
   editHooks = null;
   gitHooks = null;
+  setTrail(trailEnd());                                // the trail's entries are files; a URL document replacing the viewer ends it as a close does (file-trail.ts, L1)
   dropProbe();                                         // …and the old viewer's changed-on-disk probe (a URL view has no mtime to watch)
   dropOnKey();                                         // …and the old viewer's Escape handler (one live handler at a time)
   runCloseHooks();                                     // …and the old viewer's panel hooks

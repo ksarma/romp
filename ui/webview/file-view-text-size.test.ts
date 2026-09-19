@@ -1458,7 +1458,7 @@ test("in a browser, the real module: a bare <img> line, an image paragraph and a
   });
 });
 
-test("in a browser, the real module: the bar wraps, so the close button and every action stay inside the card at 380, 420, 480 and 600px in the chat and feed modals, with the kernel-answered row, at the default and with the readout showing", async (t) => {
+test("in a browser, the real module: the bar wraps, so the close button and every action stay inside the card at 380, 420, 480 and 600px in the chat and feed modals, with the kernel-answered row, at the default and with the readout showing; the trail's two glyphs at the bar's left are among the actions measured", async (t) => {
   await inBrowser(t, async (browser) => {
     for (const mode of ["chat", "feed"] as const) for (const width of [380, 420, 480, 600]) for (const size of [100, 115]) {
       const cell = `${mode} ${width}px @${size}%`;
@@ -1468,15 +1468,19 @@ test("in a browser, the real module: the bar wraps, so the close button and ever
         const bar = root.querySelector(".fileview-bar") as HTMLElement;
         // the buttons that render: a hidden one, or one inside a hidden unit (the module's own GitHub action, mounted and
         // waiting for a kernel that never answers here), has no box; the readout's empty slot (visibility) keeps its box
-        const btns = (Array.from(bar.querySelectorAll(".fileview-acts .fileview-btn")) as HTMLElement[]).filter((b) => b.getClientRects().length > 0);
+        // …and the trail's Back and Forward, the bar's first group (file-trail.ts; plans/markdown-viewer.md, "Follow-on: Link navigation", L2)
+        const btns = (Array.from(bar.querySelectorAll(".fileview-nav .fileview-btn, .fileview-acts .fileview-btn")) as HTMLElement[]).filter((b) => b.getClientRects().length > 0);
         const box = (e: Element) => { const b = e.getBoundingClientRect(); return { left: b.left, right: b.right, top: b.top, bottom: b.bottom }; };
         // a glyph button's word rides its aria-label (T367)
         return { labels: btns.map((b) => b.getAttribute("aria-label") || b.textContent), root: box(root), minLeft: Math.min(...btns.map((b) => box(b).left)), maxRight: Math.max(...btns.map((b) => box(b).right)),
           close: box(bar.querySelector(".fileview-close")!), main: box(root.querySelector(".fileview-main")!), barOver: bar.scrollWidth - bar.clientWidth,
-          name: (bar.querySelector(".fileview-name") as HTMLElement).getBoundingClientRect().width, nameFont: parseFloat(getComputedStyle(bar.querySelector(".fileview-name")!).fontSize) };
+          name: (bar.querySelector(".fileview-name") as HTMLElement).getBoundingClientRect().width, nameFont: parseFloat(getComputedStyle(bar.querySelector(".fileview-name")!).fontSize),
+          navLeft: bar.querySelector(".fileview-nav")!.getBoundingClientRect().left, nameLeft: bar.querySelector(".fileview-name")!.getBoundingClientRect().left };
       });
-      // A− and A+ live in the zoom glyph's flyout since T367 (hidden until the glyph is pressed), so the glyph stands for them in the row
-      for (const l of ["Rendered", "Raw", "Text size", "Edit", "Comments", "GitHub", "Download", "Copy path", "Close the file viewer"]) assert.ok(m.labels.includes(l), cell + ": the row measured is the kernel-answered one, with " + l + ": " + m.labels.join(","));
+      // A− and A+ live in the zoom glyph's flyout since T367 (hidden until the glyph is pressed), so the glyph stands for them in the row;
+      // Back and Forward wear their word alone here (a fresh open has no trail either way)
+      for (const l of ["Back", "Forward", "Rendered", "Raw", "Text size", "Edit", "Comments", "GitHub", "Download", "Copy path", "Close the file viewer"]) assert.ok(m.labels.includes(l), cell + ": the row measured is the kernel-answered one, with " + l + ": " + m.labels.join(","));
+      assert.ok(m.navLeft <= m.nameLeft + 0.5, cell + ": the two glyphs stand at the bar's left, before the path: " + m.navLeft + " vs " + m.nameLeft);
       assert.ok(m.close.left >= m.root.left - 0.5 && m.close.right <= m.root.right + 0.5, cell + `: the close button lies inside the card: x ${m.close.left}-${m.close.right} in ${m.root.left}-${m.root.right}`);
       assert.ok(m.minLeft >= m.root.left - 0.5 && m.maxRight <= m.root.right + 0.5, cell + `: every action lies inside the card: x ${m.minLeft}-${m.maxRight} in ${m.root.left}-${m.root.right}`);
       assert.ok(m.close.bottom <= m.main.top + 0.5, cell + ": the wrapped actions sit above the body, not over it");
