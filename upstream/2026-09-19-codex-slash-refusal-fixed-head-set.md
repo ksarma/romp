@@ -1,11 +1,11 @@
 ---
 title: A Codex session refuses only the slash commands the kernel knows it cannot take; a message that merely begins with a slash reaches the model as text
-status: candidate
+status: offered
 where: kernel/kernel.py _route_meta_command's Codex arm, _apply_pending_ops's parked command arm, a new _CODEX_REFUSED_HEADS constant; docs/codex.md; tests/test_codex_slash_guard.py
 added: 2026-09-19
 pr:
 tier: fix
-offered:
+offered: their PR #1891
 closed:
 ---
 Their PR #1864 (merged 2026-09-19) made a Codex session refuse every slash command it cannot take, and keyed the refusal on _is_slash_command, the shape predicate that decides when a text may fire as a fresh prompt. Shape is not command-ness: a message whose first token is a slash-word or a single-component path (a /tmp report, a /s to skip) is refused with 'This session runs in Codex, which has no /tmp', where the base delivered it to the model as prose. The review of their PR reproduced it on the route, the plain door, the sendMessage arm and the drain of a parked copy, against head and base; peer mail is unaffected because the banner leads. The fix refuses a fixed, checked-in head set at every arm (the commands romp's own surfaces mint and a Codex session cannot take, plus the setter heads with a wrong shape) and lets every other slash-shaped text take the ordinary road, sent idle or parked and drained to the model, with the doc naming the set and saying a skill's name reaches the model as text.
