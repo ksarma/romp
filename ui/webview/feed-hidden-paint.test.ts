@@ -317,20 +317,33 @@ type ModelAsk = Ask & { sid?: string; name?: string; satellite?: boolean; groupT
 type Views = { tags?: { id: string; name: string; color: string; members: string[] }[] } | null;
 type PlanState = { model: ModelAsk[]; onlySid: string | null; searchQ: string; metas: { sid: string; name: string }[]; lens: { all?: boolean; none?: boolean; tags?: string[] }; views: Views };
 function liftedPlan() {
-  const names = ["viewScope", "viewBase", "viewFiltered", "turnGroups", "paintPlan", "paintedKeyOf"];
+  // …with the follow-move prediction lifted too (review round 3, extra6-1): predictFollowMoves, the pure transform, and applyFollowMove,
+  // render()'s in-place application, over the module's three Maps stood in (pendingFollowMove, pendingMoveKind, predictedFrom)
+  const names = ["viewScope", "viewBase", "viewFiltered", "turnGroups", "paintPlan", "paintedKeyOf", "predictFollowMoves", "applyFollowMove"];
   const src = names.map((n) => body(n)).join("\n");
   const js = requireCjs("esbuild").transformSync(src, { loader: "ts" }).code;
   const prelude = `
     const searchSids = M.searchSids, searchMatches = M.searchMatches, lensAll = M.lensAll, lensUnions = M.lensUnions, lensVisible = M.lensVisible;
     let asks = [], feedOnlySid = null, feedSearchQ = "", sessionsMeta = [], feedLens = { all: true }, feedTagViews = null;
+    const pendingFollowMove = new Map(), pendingMoveKind = new Map(), predictedFrom = new Map();
     const bind = (st) => { asks = st.model; feedOnlySid = st.onlySid; feedSearchQ = st.searchQ; sessionsMeta = st.metas; feedLens = st.lens; feedTagViews = st.views; };
   `;
-  const api = new Function("M", prelude + js + "\nreturn { plan: (st) => { bind(st); return paintPlan(asks); }, keyOf: (st, id) => { bind(st); return paintedKeyOf(id); } };")(
+  const api = new Function("M", prelude + js + `
+    return { plan: (st) => { bind(st); return paintPlan(asks); }, keyOf: (st, id) => { bind(st); return paintedKeyOf(id); },
+             rendered: (st) => { bind(st); applyFollowMove(asks); return paintPlan(asks); },
+             predict: (list) => predictFollowMoves(list),
+             pending: (id, kind) => { pendingFollowMove.set(id, 1); pendingMoveKind.set(id, kind); },
+             clearMoves: () => { pendingFollowMove.clear(); pendingMoveKind.clear(); predictedFrom.clear(); },
+             predictedFrom: () => predictedFrom };`)(
     { searchSids, searchMatches, lensAll, lensUnions, lensVisible }) as {
-      plan(st: PlanState): { shown: ModelAsk[]; byTurn: Map<string, ModelAsk[]>; grouped: Set<string> }; keyOf(st: PlanState, id: string): string | null };
-  /** the [data-key]s render() stamps for this state: g:<turnId> per group, a:<itemId> per shown ask outside every group (renderBody's two loops) */
-  const keys = (st: PlanState) => { const p = api.plan(st); return Array.from(p.byTurn.keys()).map((t) => "g:" + t).concat(p.shown.filter((a) => !p.grouped.has(a.itemId)).map((a) => "a:" + a.itemId)); };
-  return { plan: api.plan, keyOf: api.keyOf, keys };
+      plan(st: PlanState): { shown: ModelAsk[]; byTurn: Map<string, ModelAsk[]>; grouped: Set<string> }; keyOf(st: PlanState, id: string): string | null;
+      rendered(st: PlanState): { shown: ModelAsk[]; byTurn: Map<string, ModelAsk[]>; grouped: Set<string> }; predict(list: ModelAsk[]): ModelAsk[];
+      pending(id: string, kind: "followup" | "answer"): void; clearMoves(): void; predictedFrom(): Map<string, ModelAsk> };
+  const keysOf = (p: { shown: ModelAsk[]; byTurn: Map<string, ModelAsk[]>; grouped: Set<string> }) => Array.from(p.byTurn.keys()).map((t) => "g:" + t).concat(p.shown.filter((a) => !p.grouped.has(a.itemId)).map((a) => "a:" + a.itemId));
+  /** the [data-key]s render() stamps for this state: g:<turnId> per group, a:<itemId> per shown ask outside every group (renderBody's two loops), after
+   *  render()'s own applyFollowMove over the model in place (feed.ts render: the prediction, then renderBody's paintPlan) */
+  const keys = (st: PlanState) => keysOf(api.rendered(st));
+  return { plan: api.plan, keyOf: api.keyOf, keys, keysOf, predict: api.predict, pending: api.pending, clearMoves: api.clearMoves, predictedFrom: api.predictedFrom };
 }
 const PLAN = liftedPlan();
 
@@ -551,7 +564,38 @@ test("HIGH-1 (review round 2, 2026-09-19): a reveal the paint will NOT stamp und
   assert.match(rb, /\n  const plan = paintPlan\(asks\);\n  const shown = plan\.shown, byTurn = plan\.byTurn, grouped = plan\.grouped;\n  for \(const \[tid, members\] of byTurn\) \{\n    const g = buildGroup\(tid, members\);/, "renderBody paints from paintPlan's object");
   assert.doesNotMatch(rb, /viewFiltered\(|turnGroups\(/, "…and derives neither view nor groups a second time");
   assert.equal(SRC.split("paintPlan(").length - 1, 3, "three sites: the definition, renderBody, paintedKeyOf");
-  assert.match(body("paintedKeyOf"), /const plan = paintPlan\(asks\);\n\s*const a = plan\.shown\.find\(\(x\) => x\.itemId === itemId\);\n\s*if \(!a\) return null;\n\s*return plan\.grouped\.has\(itemId\) \? "g:" \+ a\.turnId : "a:" \+ itemId;/, "paintedKeyOf answers from the same plan");
+  assert.match(body("paintedKeyOf"), /const plan = paintPlan\(predictFollowMoves\(asks\)\);[^\n]*\n\s*const a = plan\.shown\.find\(\(x\) => x\.itemId === itemId\);\n\s*if \(!a\) return null;\n\s*return plan\.grouped\.has\(itemId\) \? "g:" \+ a\.turnId : "a:" \+ itemId;/, "paintedKeyOf answers from the same plan, over the render's INPUT (the predicted list, round 3)");
+  // (g) extra6-1 (review round 3): a PENDING follow-up on a needs-you card the tag lens shows only through its escape. render() predicts the card
+  // into Working before it plans, and the lens hides a working card of a session outside it, so the paint stamps no key for X; the handler's
+  // answer must be derived from the same input (paintedKeyOf over predictFollowMoves(asks)), so the reveal takes the open road at the tap.
+  // Before: paintedKeyOf read the bare asks, said a:X, the reveal parked, and the release paint never stamped it (a silent drop). Driven through
+  // the LIFTED applyFollowMove and predictFollowMoves (feed.ts's own lines under esbuild), never a hand-written prediction; raw column spelling.
+  PLAN.clearMoves();
+  const g = held(); g.st.lens = lens; g.st.views = views;
+  PLAN.pending("X", "followup");   // the user replied to X on the Feed: optimisticFollowMove's registration (pendingFollowMove and its kind)
+  g.applyFeedPayload({ asks: [{ itemId: "X", column: "needs_input", sid: SID, t: 1 }, { itemId: "Y", column: "asks", sid: OTHER, t: 2 }] });
+  assert.equal(g.st.paints, 0, "held");
+  assert.deepEqual(PLAN.keysOf(PLAN.plan(g.st)), ["a:X"], "over the UNPREDICTED model the lens's escape shows X (the round-2 answer, wrong for a pending card)");
+  assert.equal(PLAN.keyOf(g.st, "X"), null, "over the render's input the prediction moves X to working and the lens hides it: the paint will stamp no key for X");
+  assert.equal(PLAN.predictedFrom().size, 0, "the handler's derivation wrote nothing: predictFollowMoves is pure (no predictedFrom, no slot)");
+  assert.equal(g.st.model[0].column, "needs_input", "…and the model is untouched");
+  assert.equal(g.revealCard("X", SID), "open", "the reveal takes the open road at the tap (before round 3: park, for a paint that never stamped it)");
+  assert.deepEqual([g.st.opened, g.st.pendingRevealKey], [[SID], null]);
+  // the invariant behind it: what render() stamps (the lifted applyFollowMove over the model in place, then the plan) is the plan over
+  // predictFollowMoves of the untouched model (the handler's answer): one derivation, two readers
+  const model = [{ itemId: "X", column: "needs_input", sid: SID, t: 1 }, { itemId: "Y", column: "asks", sid: OTHER, t: 2 }, { itemId: "Z", column: "needs_input", sid: OTHER, t: 3 }] as ModelAsk[];
+  const untouched = model.map((a) => ({ ...a }));
+  const handlerKeys = PLAN.keysOf(PLAN.plan({ ...g.st, model: PLAN.predict(untouched) }));
+  const rendered = { ...g.st, model: model.map((a) => ({ ...a })) };
+  const renderKeys = PLAN.keys(rendered);   // applyFollowMove in place, then the plan: render()'s order
+  assert.deepEqual(untouched, model, "the transform left its input untouched");
+  assert.deepEqual(renderKeys, handlerKeys, "render's stamp equals the handler's answer");
+  assert.deepEqual(renderKeys, ["a:Z"], "…X predicted into working and hidden by the lens, Y outside the lens, Z the shown needs-you card (the derivation is not empty)");
+  assert.equal(rendered.model[0].column, "working", "render's application replaced the slot with the predicted copy");
+  assert.equal(PLAN.predictedFrom().get("X")?.column, "needs_input", "…and recorded what a refusal puts back");
+  assert.match(body("applyFollowMove"), /const out = predictFollowMoves\(list\);\n\s*for \(let i = 0; i < list\.length; i\+\+\) \{\n\s*if \(out\[i\] === list\[i\]\) continue;\n\s*predictedFrom\.set\(list\[i\]\.itemId, list\[i\]\);[^\n]*\n\s*list\[i\] = out\[i\];\n\s*\}\n\}/, "one implementation: applyFollowMove is the transform applied in place");
+  assert.doesNotMatch(body("predictFollowMoves"), /predictedFrom|pendingMoveKind\.set|list\[i\] =/, "the transform writes nothing");
+  PLAN.clearMoves();
   assert.match(body("paintPlan"), /const shown = viewFiltered\(list\);\n\s*const byTurn = turnGroups\(shown\);/, "the plan is the display view and its groups, the lines renderBody used to run inline");
 });
 

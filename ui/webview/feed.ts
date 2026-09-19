@@ -452,20 +452,35 @@ function reconcileFollowMove(incoming: AskItem[], buildId: number, buildIds?: Re
 // already in flight when the reply landed (honestly pre-reply) then bounced the card back to Blocked with
 // no prediction left to hold it. Replacing the list SLOT with a copy keeps the render identical while the
 // cached frame stays exactly what the kernel sent, so the prediction ends only on the real events.
-function applyFollowMove(list: AskItem[]) {
-  if (!pendingFollowMove.size) return;
+// THE PREDICTION AS A PURE TRANSFORM (review round 3, 2026-09-19, extra6-1): the list with each pending, non-working card replaced by
+// its predicted copy (column working, the follow-up chip, the sort key bumped to now), writing nothing: no list slot, no predictedFrom,
+// no pendingMoveKind. render() applies it to `asks` in place through applyFollowMove below, and paintedKeyOf runs the paint plan over
+// it, so the reveal's answer at the tap is derived from the INPUT render() will paint. Before this paintedKeyOf read the unpredicted
+// asks while render() planned over the predicted ones, and under a held paint (no render had run) the handler parked a key the release
+// paint never stamped: a pending card the tag lens shows only through viewBase's needs-you escape, predicted into Working and hidden.
+// Idempotent over a list a render already predicted (a working copy is skipped), so the release's losing arm reads the same plan.
+function predictFollowMoves(list: AskItem[]): AskItem[] {
+  if (!pendingFollowMove.size) return list;
   // now, in the server's epoch-second unit (kernel is local). Bump the predicted card's sort key to now so
   // the INSTANT optimistic move lands at the BOTTOM of Working, matching where the kernel's authoritative
   // followupAt stamp keeps it once this prediction clears — no top-flash then lurch-down (the user 2026-07-03).
   const nowSec = Math.floor(Date.now() / 1000);
-  for (let i = 0; i < list.length; i++) {
-    const a = list[i];
-    if (!pendingFollowMove.has(a.itemId) || a.column === "working") continue;
+  return list.map((a) => {
+    if (!pendingFollowMove.has(a.itemId) || a.column === "working") return a;
     const c: AskItem = { ...a, column: "working" };
     if ((pendingMoveKind.get(a.itemId) ?? "followup") === "followup") { c.recheck = true; c.followupPending = true; }   // plain move / answer: no chip
     if (c.t < nowSec) c.t = nowSec;   // sort to the bottom (newest); the group's repr follows via buildGroup
-    predictedFrom.set(a.itemId, a);   // what a refusal of the post puts back (revertFollowMove)
-    list[i] = c;
+    return c;
+  });
+}
+// render()'s in-place application of the transform: each replaced slot is recorded in predictedFrom (what a refusal of the post puts
+// back, revertFollowMove) and the copy takes the slot. One implementation of the prediction: this and paintedKeyOf both read predictFollowMoves.
+function applyFollowMove(list: AskItem[]) {
+  const out = predictFollowMoves(list);
+  for (let i = 0; i < list.length; i++) {
+    if (out[i] === list[i]) continue;
+    predictedFrom.set(list[i].itemId, list[i]);   // what a refusal of the post puts back (revertFollowMove)
+    list[i] = out[i];
   }
 }
 // (drag-to-Working and the modal's "Move to Working" button were REMOVED, the user 2026-07-25: a
@@ -5582,7 +5597,7 @@ function paintPlan(list: AskItem[]): { shown: AskItem[]; byTurn: Map<string, Ask
 // revealCard handler asks this at the tap (review round 2: the model-membership question parked a reveal the paint could
 // never land, so a bell-row tap on such a card did nothing where the base opened the session).
 function paintedKeyOf(itemId: string): string | null {
-  const plan = paintPlan(asks);
+  const plan = paintPlan(predictFollowMoves(asks));   // the render's INPUT (review round 3, extra6-1): render() predicts the pending moves before it plans, so the answer is derived from what the paint will stamp
   const a = plan.shown.find((x) => x.itemId === itemId);
   if (!a) return null;
   return plan.grouped.has(itemId) ? "g:" + a.turnId : "a:" + itemId;

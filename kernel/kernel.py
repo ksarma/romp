@@ -67427,14 +67427,24 @@ function feedHere(){return !(window.__rompPaneEnabled&&!window.__rompPaneEnabled
 // page has loaded waits for the iframe's load, once (the files forward's shape): a message posted into the
 // document still on its way would be dropped, and the first click would show nothing. A second ask while that
 // one waits is not queued: the page's opener toggles, so two would open and close it.
-var sPend=false;
+var sPend=false,sArmed=false;
 window.__rompOpenSettings=function(tab,section){var f=document.getElementById('f-settings');if(!f)return;
 // tab and section (T379): the chat strip's tab-widgets gear asks for the Chat tab at its Tab widgets section; the rail's gear names none (the remembered tab)
 var msg={romp:'openSettings'};if(typeof tab==='string'&&tab)msg.tab=tab;if(typeof section==='string'&&section)msg.section=section;
 var open=function(){try{f.contentWindow&&f.contentWindow.postMessage(msg,'*');}catch(e){}};
+// [fork] review round 3 (2026-09-19, kernel-3): a src set over NO document is a failed fetch (Chromium commits a cross-origin error
+// page, contentDocument null; Firefox and WebKit keep the frame's initial about:blank and fire no load event), and before this it left
+// the gear unopenable for the page's life: every later tap returned at sPend or posted into a dead document. Read at TAP time (no load
+// event comes on two engines, and no timer: the next tap is the event): no document, or about:blank, drops the src and the pending flag
+// and falls through to the promotion below, which fetches again and posts the open on the load. A same-origin document at /settings is
+// never a failure here, marked or not (the lazy panes' rule, _LANDING_MOBILE_JS docState: a document the origin served is what it served).
+// A tap while the first fetch is still in flight reads about:blank too and restarts it (one open still, at that load; the earlier "not
+// queued" rule kept a second tap from toggling the page twice, and the restart keeps that); the gear paints no failure state, a second tap is the recovery.
+if(f.getAttribute('src')){var live=false;try{var sd=f.contentDocument;live=!!(sd&&sd.URL&&sd.URL!=='about:blank');}catch(e){}
+  if(!live){try{f.removeAttribute('src');}catch(e){}sPend=false;}}
 if(!f.getAttribute('src')){var u=f.getAttribute('data-src');if(!u)return;sPend=true;f.setAttribute('src',u);
-  f.addEventListener('load',function(){try{if(f.contentDocument&&f.contentDocument.URL==='about:blank')return;}catch(e){}   // the empty document's own load, not the page's
-    if(sPend){sPend=false;open();}});return;}
+  if(!sArmed){sArmed=true;f.addEventListener('load',function(){try{if(f.contentDocument&&f.contentDocument.URL==='about:blank')return;}catch(e){}   // the empty document's own load, not the page's; ONE listener for the element's life (a re-fetch after a failed one reuses it: review round 3)
+    if(sPend){sPend=false;open();}});}return;}
 if(sPend)return;
 open();};
 // #settings=<tab> in the URL (T404 round two): a standalone /feed or /fleet page's off notice lands here with the tab named,

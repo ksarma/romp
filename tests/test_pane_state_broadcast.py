@@ -686,10 +686,12 @@ let MOBILE = false, TAB = 'chat', FILES_READY = 'complete', FILES_LOADS = [], SE
 // the settings iframe carries data-src, no src, and its document is the empty one until the page loads
 const ATTRS = { 'f-settings': { 'data-src': '/settings' } };
 let SETTINGS_URL = 'about:blank', FILES_URL = 'http://TESTHOST:1/files';   // FILES_URL: about:blank while the Files pane is a just-promoted lazy iframe (stage 0)
+let SETTINGS_DEAD = false, SETTINGS_SETS = 0;   // SETTINGS_DEAD: the gear's frame committed an error page (contentDocument null, Chromium's failed fetch); SETTINGS_SETS: src assignments on the gear's iframe (review round 3, kernel-3)
 const frame = (id) => ({ contentWindow: { postMessage: (m) => POSTED[id].push(JSON.parse(JSON.stringify(m))), focus: () => FOCUSED.push(id) },
-  contentDocument: { get readyState() { return id === 'f-files' ? FILES_READY : 'complete'; }, get URL() { return id === 'f-settings' ? SETTINGS_URL : id === 'f-files' ? FILES_URL : 'http://TESTHOST:1/' + id.slice(2); } },
+  contentDocument: (id === 'f-settings' && SETTINGS_DEAD) ? null : { get readyState() { return id === 'f-files' ? FILES_READY : 'complete'; }, get URL() { return id === 'f-settings' ? SETTINGS_URL : id === 'f-files' ? FILES_URL : 'http://TESTHOST:1/' + id.slice(2); } },
   getAttribute: (a) => (ATTRS[id] && a in ATTRS[id] ? ATTRS[id][a] : null),
-  setAttribute: (a, v) => { (ATTRS[id] = ATTRS[id] || {})[a] = v; },
+  setAttribute: (a, v) => { (ATTRS[id] = ATTRS[id] || {})[a] = v; if (id === 'f-settings' && a === 'src') SETTINGS_SETS++; },
+  removeAttribute: (a) => { if (ATTRS[id]) delete ATTRS[id][a]; },
   addEventListener: (ev, f) => { if (ev === 'load' && id === 'f-files') FILES_LOADS.push(f); if (ev === 'load' && id === 'f-settings') SETTINGS_LOADS.push(f); },
   removeEventListener: (ev, f) => { if (id === 'f-files') FILES_LOADS = FILES_LOADS.filter((g) => g !== f); } });
 global.window = global;
@@ -784,6 +786,23 @@ window.__rompOpenSettings();
 out.gearOpen = Object.assign(snap(), { src: ATTRS['f-settings'].src }); reset();
 SETTINGS_LOADS.slice().forEach((f) => f());   // a later reload of the page replays nothing
 out.gearReloaded = snap(); reset();
+// kernel-3 (review round 3, 2026-09-19): the gear over a DEAD document. (a) Chromium's road: the fetch failed and the frame committed a
+// cross-origin error page (contentDocument null; its load fired and posted into it, unheard); the next tap reads no document at TAP time,
+// drops the src and fetches again, and the page's load delivers the open. (b) Firefox's and WebKit's road: no load event, the frame at its
+// initial about:blank with the pending flag still up; the next tap reads about:blank and does the same. (c) the mirror: a committed document
+// at /settings is never re-fetched, the ask posts at once.
+SETTINGS_DEAD = true; const setsBefore = SETTINGS_SETS;
+window.__rompOpenSettings();
+out.gearDeadTap = Object.assign(snap(), { src: ATTRS['f-settings'].src, sets: SETTINGS_SETS - setsBefore, waiting: SETTINGS_LOADS.length });
+SETTINGS_DEAD = false; SETTINGS_URL = 'http://TESTHOST:1/settings'; SETTINGS_LOADS.slice().forEach((f) => f());   // the re-fetched page loads
+out.gearDeadLoaded = Object.assign(snap(), { sets: SETTINGS_SETS - setsBefore }); reset();
+SETTINGS_URL = 'about:blank';   // (b) the never-committed frame (a failed navigation on Firefox or WebKit: no load event came)
+window.__rompOpenSettings();
+out.gearBlankTap = Object.assign(snap(), { src: ATTRS['f-settings'].src, sets: SETTINGS_SETS - setsBefore, waiting: SETTINGS_LOADS.length });
+SETTINGS_URL = 'http://TESTHOST:1/settings'; SETTINGS_LOADS.slice().forEach((f) => f());
+out.gearBlankLoaded = Object.assign(snap(), { sets: SETTINGS_SETS - setsBefore }); reset();
+window.__rompOpenSettings();   // (c) the mirror: a committed document is not re-fetched
+out.gearLiveTap = Object.assign(snap(), { sets: SETTINGS_SETS - setsBefore }); reset();
 // the Feed pane off in this browser (the gear's Panes section): a browse ask naming no pane takes the Files pane's
 // arm (the feed cannot be lifted), a browseClosed puts nothing back, and a phone gets the Files tab, not the feed's
 FEED_OFF = true;
@@ -921,13 +940,33 @@ class RelayArms(unittest.TestCase):
         self.assertEqual(a["waiting"], 1, "one load listener holds the ask")
         b = self.out["gearAskAgain"]
         self.assertEqual(b["settings"], [], "a second ask while the page loads is not queued: the page's opener toggles, two would open and close it")
-        self.assertEqual(b["waiting"], 1, "and adds no listener")
-        self.assertEqual(b["src"], "/settings", "the src is set once, never reassigned")
+        self.assertEqual(b["waiting"], 1, "and adds no listener (one load listener for the element's life, review round 3)")
+        self.assertEqual(b["src"], "/settings", "the src stands (a second tap over a frame still at about:blank restarts the fetch, round 3's dead-document rule; the page still opens once, at its load)")
         self.assertEqual(self.out["gearBlankLoad"]["settings"], [], "the empty document's own load event is not the page's")
         self.assertEqual(self.out["gearLoaded"]["settings"], [{"romp": "openSettings"}], "the page's load delivers the open, once")
         self.assertEqual(self.out["gearOpen"]["src"], "/settings")
         self.assertEqual(self.out["gearReloaded"]["settings"], [], "a later load replays nothing")
         self.assertIn("<iframe id=f-settings data-src=/settings title=Settings></iframe>", km._landing(), "served without a src")
+
+    def test_the_gear_over_a_dead_document_fetches_again_at_the_next_tap_and_a_live_document_is_not_re_fetched(self):
+        # kernel-3 (review round 3, 2026-09-19): HIGH 2's failed-load class reaches the settings gear, the one other data-src iframe in the
+        # shell. Before: one failed fetch left the gear unopenable for the page's life (Chromium: src set, contentDocument null, sPend
+        # cleared by the error page's load, every later ask posted into the dead document; Firefox and WebKit: no load event, sPend true
+        # forever, every later ask returned). Now the tap reads the document: none, or about:blank, drops the src and fetches again; the
+        # page's load delivers the open. No timer: the next tap is the event. A committed document is never re-fetched (the mirror).
+        d = self.out["gearDeadTap"]
+        self.assertEqual((d["src"], d["sets"], d["settings"], d["waiting"]), ("/settings", 1, [], 1), "no document at the tap: the src is dropped and set again (one more assignment), nothing posted into the dead frame, still one load listener")
+        l = self.out["gearDeadLoaded"]
+        self.assertEqual((l["settings"], l["sets"]), ([{"romp": "openSettings"}], 1), "the re-fetched page's load delivers the open, once")
+        b = self.out["gearBlankTap"]
+        self.assertEqual((b["src"], b["sets"], b["settings"]), ("/settings", 2, []), "the frame at about:blank (Firefox's and WebKit's failed navigation: no load event ever came): the same re-fetch")
+        self.assertEqual(self.out["gearBlankLoaded"]["settings"], [{"romp": "openSettings"}], "…and its load delivers the open")
+        m = self.out["gearLiveTap"]
+        self.assertEqual((m["sets"], m["settings"]), (2, [{"romp": "openSettings"}]), "the mirror: a committed document at /settings is not re-fetched, the ask posts at once")
+        js = km._LANDING_SETTINGS_JS
+        self.assertIn("if(f.getAttribute('src')){var live=false;try{var sd=f.contentDocument;live=!!(sd&&sd.URL&&sd.URL!=='about:blank');}catch(e){}", js, "the tap-time read, before the promotion branch")
+        self.assertIn("if(!live){try{f.removeAttribute('src');}catch(e){}sPend=false;}}", js)
+        self.assertLess(js.index("var live=false;"), js.index("if(!f.getAttribute('src')){var u=f.getAttribute('data-src');"), "…so the promotion below re-fetches in the same tap")
 
     def test_closing_the_gear_puts_the_keyboard_back_in_the_chat(self):
         # the gear's document is the hidden settings iframe, lifted while open; closing hides it, which drops focus
