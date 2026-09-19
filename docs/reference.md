@@ -4846,15 +4846,19 @@ The two rows, as the kernel writes them (`t` its clock, `wid` the dashboard id):
   since the previous row (an idle or muted minute carries on the same way).
   The two are disjoint: a remote socket's characters are counted under its
   position and never in `wsBytes`. Positions are assigned per page life and
-  never reused: a host that detaches keeps its position and reads 0 from
-  then on, a host that re-attaches counts on under its old position, and a
-  reload starts over, so `h1` can mean a different host after a reload. The
+  never reused: a position is on a row when its host is attached at the
+  flush or received characters in the minute, so the row closing the minute
+  of a host's detach carries the characters it received in it and the rows
+  after carry no key for it, an attached host that received nothing reads
+  0, a host that re-attaches counts on under its old position, and a reload
+  starts over, so `h1` can mean a different host after a reload. The
   perf minute row carries positions, never names; the file's shell and
   federation surfaces and the kernel's own `wsopen` row (`kind` `hub`, above)
   carry host names already under their `host` key, so a reader holding the
   perf row and any of those three can map a position to a name within one
-  page life. The key is absent, not `null`,
-  on a page that never attached a remote host and on the shell. `rafGap` is
+  page life. The key is absent, not `null`, when no remote host is attached
+  at the flush and none received characters in the minute: a page that never
+  attached one, the shell, and the rows after every host has detached. `rafGap` is
   `{n, worst}`, the animation-frame gaps over 50 ms while the document was
   visible, from a loop that runs only while share is on and the document
   visible. `capped` is present only on a row the kernel shed or replaced

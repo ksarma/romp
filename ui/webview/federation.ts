@@ -1023,10 +1023,12 @@ export class FederationManager {
   // frames included). NEITHER is pruned by closeRemote, unlike every per-host map there: the collector
   // (perf-telemetry.ts) reads the totals as a monotone counter and differences them per minute against a baseline, so a
   // detach that dropped an ordinal would make the next row's difference wrong or re-key a re-attached host; a re-attached
-  // host keeps its ordinal, so a reader holding a page's rows sees one position per host for the page's life, and a
-  // detached host's position reads 0 from then on. Never reused; a reload starts over, so h1 can name another host after
-  // a reload. Positions, never names: the minute row carries these keys (h1..h4, hmore) and no host name. Read through
-  // window.__rompFed.wsBytesByHost (wsBytesByHost()).
+  // host keeps its ordinal, so a reader holding a page's rows sees one position per host for the page's life. Which rows
+  // carry a position is the collector's rule, read off the minute's characters and the attachment at the flush
+  // (attachedHostOrdinals): the row closing a minute in which the host received characters carries it whether or not the
+  // host is still attached, an attached idle host reads 0, and a detached silent host has no key. Never reused; a reload
+  // starts over, so h1 can name another host after a reload. Positions, never names: the minute row carries these keys
+  // (h1..h4, hmore) and no host name. Read through window.__rompFed.wsBytesByHost (wsBytesByHost()).
   private hostOrdinal = new Map<string, number>();
   private wsBytesByOrdinal = new Map<number, number>();
   // false until the first /tunnels answer is absorbed (poll): before it, hostSeq is the local host alone and says
@@ -1120,6 +1122,9 @@ export class FederationManager {
       // the characters each remote host's sockets delivered over this page's life, by the host's ordinal (the maps
       // declared beside hostSeq): the collector's reader for the minute row's wsBytesByHost (perf-telemetry.ts)
       wsBytesByHost: () => this.wsBytesByHost(),
+      // the positions of the hosts attached right now, the collector's second reader: which of the totals above belongs to
+      // an attachment at the flush (an attached idle host reads 0 on the row; a detached silent one has no key)
+      attachedHostOrdinals: () => this.attachedHostOrdinals(),
     };
     // A drag in ANY pane rewrites the arrangement; every other pane hears it through `storage` (which fires
     // only in other same-origin contexts) and this one through the writer's own CustomEvent. Both land here,
@@ -1869,12 +1874,24 @@ export class FederationManager {
 
   /** The text-frame characters received on each remote host's sockets over this page's life, keyed h<ordinal> in
    *  ordinal order (window.__rompFed.wsBytesByHost, the collector's reader; the shim's unit, wsBytes's): {} while no
-   *  remote host has ever been attached, so the collector leaves the key off the row. A host that attached and sent
-   *  nothing yet, or one detached since, reads its total so far (0 for the first). */
+   *  remote host has ever been attached. A host that attached and sent nothing yet, or one detached since, reads its
+   *  total so far (0 for the first): a monotone counter the collector differences per minute, which decides from the
+   *  difference and from attachedHostOrdinals() which positions a row carries. */
   wsBytesByHost(): Record<string, number> {
     const out: Record<string, number> = {};
     for (const [o, n] of [...this.wsBytesByOrdinal].sort((a, b) => a[0] - b[0])) out["h" + o] = n;
     return out;
+  }
+
+  /** The positions of the hosts attached to this page NOW, h<ordinal> in ordinal order (window.__rompFed.attachedHostOrdinals,
+   *  the collector's second reader): a conn in the map is an attachment, whatever its tunnel's state (a down host is attached
+   *  and idle), and closeRemote's delete ends it. The collector keys a row's wsBytesByHost on this and on the minute's
+   *  characters: an attached idle host reads 0, a host that received characters in the minute carries them whether or not
+   *  it is still attached at the flush, and a detached silent host has no key. */
+  attachedHostOrdinals(): string[] {
+    const out: number[] = [];
+    for (const host of this.conns.keys()) { const o = this.hostOrdinal.get(host); if (o !== undefined) out.push(o); }
+    return out.sort((a, b) => a - b).map((o) => "h" + o);
   }
 
   private async poll(): Promise<void> {

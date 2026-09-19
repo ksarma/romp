@@ -130,12 +130,14 @@ test("positions are stable for the page's life: a host detached by a /tunnels an
     const a1 = wsA.frame(full(1)), b1 = wsB.frame(full(2));
     assert.deepEqual(fm.wsBytesByHost(), { h1: a1, h2: b1 });
     assert.deepEqual(fm.hostSeq, [LOCAL, HOST_A, HOST_B]);
+    assert.deepEqual(fm.attachedHostOrdinals(), ["h1", "h2"], "both attached: the collector's second reader names both positions");
     // /tunnels stops listing A: closeRemote(A) runs from poll()
     rows.splice(0, rows.length, row(HOST_B));
     await fm.poll();
     assert.equal(fm.conns.has(HOST_A), false, "A is detached");
     assert.deepEqual(fm.hostSeq, [LOCAL, HOST_B], "hostSeq pruned A (why it cannot be the position's source)");
     assert.deepEqual(fm.wsBytesByHost(), { h1: a1, h2: b1 }, "neither map was pruned: A's position and total stand, B stays h2");
+    assert.deepEqual(fm.attachedHostOrdinals(), ["h2"], "the detach ends A's attachment and nothing else: the collector reads this to leave A off the rows after its detach minute");
     const b2 = wsB.frame(full(3));
     assert.deepEqual(fm.wsBytesByHost(), { h1: a1, h2: b1 + b2 }, "B counts on under h2 after A's detach");
     // a host never seen before arrives WHILE A is detached: the third position, never A's first (a count of the hosts
@@ -146,6 +148,7 @@ test("positions are stable for the page's life: a host detached by a /tunnels an
     socketFor(HOST_C).open();
     const c1 = socketFor(HOST_C).frame(full(5));
     assert.deepEqual(fm.wsBytesByHost(), { h1: a1, h2: b1 + b2, h3: c1 }, "C is h3: positions are never reused, and no two hosts share one");
+    assert.deepEqual(fm.attachedHostOrdinals(), ["h2", "h3"]);
     // A comes back: a NEW conn and socket, the same position, while hostSeq lists it last
     rows.splice(0, rows.length, row(HOST_B), row(HOST_C), row(HOST_A));
     await fm.poll();
@@ -155,6 +158,7 @@ test("positions are stable for the page's life: a host detached by a /tunnels an
     wsA2.open();
     const a2 = wsA2.frame(full(4));
     assert.deepEqual(fm.wsBytesByHost(), { h1: a1 + a2, h2: b1 + b2, h3: c1 }, "A is h1 again and its bytes add to h1, not to a fourth position");
+    assert.deepEqual(fm.attachedHostOrdinals(), ["h1", "h2", "h3"], "the re-attached host is attached under its old position, in ordinal order whatever hostSeq's");
     for (const c of fm.conns.values()) c.closed = true;
   });
 });
@@ -184,7 +188,7 @@ test("a detached conn's late retry timer dials nothing and writes nothing: the r
   });
 });
 
-test("start() publishes the getter as window.__rompFed.wsBytesByHost beside hosts(), and it reads the live map", () => {
+test("start() publishes the getter as window.__rompFed.wsBytesByHost beside hosts(), with attachedHostOrdinals beside it, and both read live state", () => {
   const g: any = globalThis;
   const saved: Record<string, [boolean, unknown]> = {};
   for (const k of ["window", "document", "localStorage", "setInterval", "fetch", "WebSocket", "location"]) saved[k] = [k in g, g[k]];
@@ -205,12 +209,15 @@ test("start() publishes the getter as window.__rompFed.wsBytesByHost beside host
     const fm: any = new FederationManager();
     fm.start();
     assert.equal(typeof win.__rompFed.wsBytesByHost, "function", "published on the window slot for the collector");
+    assert.equal(typeof win.__rompFed.attachedHostOrdinals, "function", "…with the attachment reader beside it");
     assert.deepEqual(win.__rompFed.wsBytesByHost(), {}, "nothing attached: an empty map");
+    assert.deepEqual(win.__rompFed.attachedHostOrdinals(), []);
     fm.openRemote(HOST_A, true);
     const ws = last(FakeWS.made);
     ws.open();
     const n = ws.frame(full(1));
     assert.deepEqual(win.__rompFed.wsBytesByHost(), { h1: n }, "the getter reads the live map");
+    assert.deepEqual(win.__rompFed.attachedHostOrdinals(), ["h1"], "the attachment reader reads the live conns");
     assert.deepEqual(win.__rompFed.hosts(), [HOST_A], "beside the hosts getter the pickers read");
     fm.conns.get(HOST_A).closed = true;
   } finally {

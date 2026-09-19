@@ -1400,7 +1400,7 @@ test("the paint pass runs as one fileview:paint frame of the page's performance 
     now: () => clock.t, wallNow: () => clock.wall, post: (m) => posted.push(m), raf: null, caf: null, setInterval: null,
     observer: null, supportedEntryTypes: [], heapBytes: () => null, domCount: () => 42, visible: () => true, hiddenPane: () => false,
     ua: "chrome-desktop", pageUrl: "http://h:1/files", windowEvents: null, documentEvents: null,
-    switches: () => ({ share: false, mute: false }), entries: () => null, marks: () => null, fedBytes: () => null, env: () => null,
+    switches: () => ({ share: false, mute: false }), entries: () => null, marks: () => null, fedBytes: () => null, fedAttached: () => null, env: () => null,
   });
   const observers: Array<{ cb: (entries: any[]) => void; targets: any[] }> = [];
   (globalThis as any).ResizeObserver = class {

@@ -56,9 +56,12 @@
 // touch, viewport, pixel ratio, the entry types the browser supports from a fixed list, requestIdleCallback, the dist
 // token); every row `vis` (visibility transitions and hidden time inside the minute), `wsBytes` (text-frame characters
 // the shim received on the pane's LOCAL socket in the minute, from its counter), `wsBytesByHost` (the same unit, per
-// attached REMOTE host by its position on the page, h1 the first remote host this page attached, at most MAX_HOSTS named
-// and the rest summed under hmore, from federation's page-lifetime totals through window.__rompFed.wsBytesByHost; absent,
-// not null, on a page that never attached a remote host and on the shell; disjoint from wsBytes: a remote socket's
+// REMOTE host by its position on the page, h1 the first remote host this page attached, at most MAX_HOSTS named and the
+// rest summed under hmore, from federation's page-lifetime totals through window.__rompFed.wsBytesByHost and the hosts
+// attached at the flush through window.__rompFed.attachedHostOrdinals: a position is on the row when its host is attached
+// at the flush or received characters in the minute, so the row closing a detach's minute carries the host and the rows
+// after it do not, an attached idle host reads 0, and the key is absent, not null, when no host is attached and none
+// received characters, a page that never attached one and the shell included; disjoint from wsBytes: a remote socket's
 // characters are counted here and never there; 2026-09-19, the user approved the field as one number per host and no
 // content) and `rafGap` (animation-frame gaps over RAF_GAP_MS while visible, from a loop that runs only while the switch
 // is on and the document visible). A Performance API the browser lacks reads as null, never a guess. The pending minute also flushes on visibilitychange to hidden: iOS fires that on an
@@ -122,6 +125,7 @@ export interface PerfDeps {
   entries(type: string): any[] | null;   // performance.getEntriesByType(type); null where the API is absent
   marks(): Record<string, unknown> | null;   // window.__rompPerfMarks: the shim's stamps (wsOpen, bundleReady, firstFrame), its wsBytes counter and the dist token dv; null without a shim
   fedBytes(): Record<string, unknown> | null;   // window.__rompFed.wsBytesByHost(): federation's page-lifetime characters per remote host position (h<ordinal>); null without federation, or with a federation bundle before the getter
+  fedAttached(): readonly string[] | null;   // window.__rompFed.attachedHostOrdinals(): the positions attached right now; null without federation, or with a bundle before the read (then a position is on the row only for the minute's characters)
   env(): EnvInfo | null;             // the page's environment, read live (envInfo over the window); null where nothing can be read
 }
 
@@ -356,29 +360,35 @@ export function pageMarks(marks: Record<string, unknown> | null, paints: readonl
 /** The minute's characters per remote host position (the row's wsBytesByHost) from federation's page-lifetime totals
  *  (`now`, keyed h<ordinal>, the getter's shape; a key off that pattern or a non-numeric value is ignored) against the
  *  minute's baselines (`base`, the same shape, {} where a position had no total when the minute began: a host attached
- *  mid-minute counts from 0). Positions 1..MAX_HOSTS keep their own keys; every later position sums under `hmore`, present
- *  only when there is one. Null when `now` names no position (no remote host ever attached), and the caller leaves the
- *  key off the row. Pure. */
-export function bytesByHost(now: Record<string, unknown> | null, base: Record<string, number>): Record<string, number> | null {
+ *  mid-minute counts from 0), for the positions `attached` at the flush (federation's attachedHostOrdinals; null when
+ *  federation cannot say, a bundle before the read). A position is on the row when its host is attached at the flush or
+ *  received characters in the minute: the row closing a detach's minute carries the host's characters and the rows after
+ *  it carry no key for it, an attached idle host (a down one; an up one hears a keepalive every 10 s) reads 0, and a
+ *  position both detached and silent is left off. Positions 1..MAX_HOSTS keep their own keys; every later position that
+ *  qualifies sums under `hmore`, present only when one does. Null when no position qualifies (no remote host attached at
+ *  the flush and none received characters in the minute, a page that never attached one included), and the caller leaves
+ *  the key off the row. Pure. */
+export function bytesByHost(now: Record<string, unknown> | null, base: Record<string, number>, attached: readonly string[] | null): Record<string, number> | null {
   if (!now || typeof now !== "object") return null;
+  const up = new Set(attached || []);
   const ords: number[] = [];
   for (const k of Object.keys(now)) {
     const m = /^h([1-9][0-9]*)$/.exec(k);
     const v = now[k];
     if (m && typeof v === "number" && isFinite(v)) ords.push(Number(m[1]));
   }
-  if (!ords.length) return null;
   ords.sort((a, b) => a - b);
   const out: Record<string, number> = {};
   let more = 0, folded = false;
   for (const o of ords) {
     const k = "h" + o;
     const d = Math.max(0, Math.round((now[k] as number) - (base[k] || 0)));
+    if (d <= 0 && !up.has(k)) continue;   // detached at the flush and silent in the minute: no key
     if (o <= MAX_HOSTS) out[k] = d;
     else { more += d; folded = true; }
   }
   if (folded) out.hmore = more;
-  return out;
+  return Object.keys(out).length ? out : null;
 }
 
 export function iosMajor(ua: string): number {
@@ -656,9 +666,10 @@ export class PerfTelemetry implements RompPerf {
     data.vis = { hiddenN: b.vis.hiddenN, visibleN: b.vis.visibleN, hiddenMs: Math.round(b.vis.hiddenMs) };
     const bytes = marks ? marks.wsBytes : undefined;
     data.wsBytes = typeof bytes === "number" && isFinite(bytes) ? Math.max(0, Math.round(bytes - b.bytes0)) : null;
-    // per remote host position, the same unit, from federation's page-lifetime totals against this minute's baselines;
-    // the key is left off when no remote host was ever attached (bytesByHost returns null), never written as null
-    const byHost = bytesByHost(this.safe(() => this.d.fedBytes(), null), b.fedBytes0);
+    // per remote host position, the same unit, from federation's page-lifetime totals against this minute's baselines, for
+    // the positions attached at the flush or delivered to in the minute; the key is left off when none qualifies
+    // (bytesByHost returns null), never written as null
+    const byHost = bytesByHost(this.safe(() => this.d.fedBytes(), null), b.fedBytes0, this.safe(() => this.d.fedAttached(), null));
     if (byHost) data.wsBytesByHost = byHost;
     data.rafGap = { n: b.rafGap.n, worst: Math.round(b.rafGap.worst) };
   }
@@ -919,6 +930,9 @@ function browserDeps(post: PerfPost | null): PerfDeps | null {
     // federation's per-host totals (federation.ts wsBytesByHost, published on window.__rompFed): null on a page without
     // federation (the shell, VS Code) or with a federation bundle that predates the getter, and the row carries no key
     fedBytes: () => { const f = w.__rompFed; if (!f || typeof f.wsBytesByHost !== "function") return null; const m = f.wsBytesByHost(); return m && typeof m === "object" ? m : null; },
+    // the positions attached at the flush (federation.ts attachedHostOrdinals): null on a page without federation or with a
+    // bundle before the read, and a position is then on the row only for the minute's characters
+    fedAttached: () => { const f = w.__rompFed; if (!f || typeof f.attachedHostOrdinals !== "function") return null; const a = f.attachedHostOrdinals(); return Array.isArray(a) ? a : null; },
     env: () => envInfo({ standalone: nav.standalone, ua: String(nav.userAgent || ""), maxTouchPoints: Number(nav.maxTouchPoints) || 0,
                          vw: Number(w.innerWidth) || 0, vh: Number(w.innerHeight) || 0, dpr: Number(w.devicePixelRatio) || 0,
                          entryTypes: (PO && Array.isArray(PO.supportedEntryTypes)) ? PO.supportedEntryTypes : [],
