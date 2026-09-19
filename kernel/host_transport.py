@@ -266,15 +266,28 @@ def write_spawn_spec(state_dir, sid: str, spec: dict) -> Path:
     be written, and the shape is deliberately not widened to catch them, since no such name has a road into
     the overlay today and a legitimate TOKEN_BUDGET or PRIVATE_KEY_PATH would be moved out of the file for
     nothing. A credential never lives in a file, the fork's rule, and the box admin's hazard review of the
-    pull-in, 2026-09-16, found the first cut moving the three login names alone."""
+    pull-in, 2026-09-16, found the first cut moving the three login names alone.
+    The file's mode is set on the descriptor BEFORE the write (os.fchmod): a
+    pre-existing file keeps its old mode through O_CREAT|O_TRUNC, and the trailing chmod this had until
+    2026-09-18 tightened it only after the overlay was already in it (PR 789, review round 1, the same
+    write-then-tighten window the reg and the parked-ops mirror lost). fchmod is exact under any umask. The published
+    inode is rewritten in place (O_TRUNC on the path; no temp, no os.replace, unlike write_reg), so the tightening is
+    not retroactive for a descriptor another uid opened while the file sat at its old looser mode: it reads the new
+    overlay through it. The 0700 directory above, and the 0700 state root above that, close that road today (review
+    round 2, 2026-09-19). A raising fchmod closes the descriptor before the error propagates (round 2 too: os.fdopen
+    was the only close)."""
     d = host_dir(state_dir, sid)
     d.mkdir(parents=True, exist_ok=True)
     os.chmod(d, 0o700)
     p = d / "spawn.json"
     fd = os.open(str(p), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        os.fchmod(fd, 0o600)
+    except BaseException:
+        os.close(fd)          # closed and re-raised, not a finally: the file object closes it on the success road
+        raise
     with os.fdopen(fd, "w") as f:
         json.dump(spec, f)
-    os.chmod(p, 0o600)
     return p
 
 

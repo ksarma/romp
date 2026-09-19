@@ -3318,7 +3318,42 @@ def write_reg(state_dir: Path, sid: str, reg: dict) -> None:
     # (FileNotFoundError, seen live 2026-07-06). os.replace stays atomic; last writer wins.
     tmp = p.with_name("%s.%d.%s.tmp" % (p.name, os.getpid(), uuid.uuid4().hex[:8]))
     try:
-        tmp.write_text(json.dumps(reg))
+        # 0600, set on the descriptor before the first write (os.fchmod; no chmod on a path). The reg carries
+        # the session's env block, whose values can be credentials (a pick under a token-shaped name lands here
+        # verbatim), and a temp created by write_text takes the umask (0664 on a box with umask 002), so the
+        # value was readable at that mode from the write on; every live registry file sat at 0664 under the
+        # 0700 state root until this change. The descriptor's mode is exact (the umask does not apply to
+        # fchmod), so no window with the text at a wider mode, and os.replace carries it onto the published
+        # path, so a reg written before this change tightens on its next write. A reg never written again (a
+        # dead session's, since this backend never unlinks one) keeps its older mode, and no boot-time re-mode
+        # is added for it (the reviewer's call, review round 1, 2026-09-18): the owner-only root is what makes
+        # that interim safe. Two other credential files do get a loose mode healed, and the difference is one of
+        # shape, not policy (review round 2, 2026-09-19): _remotes_load re-modes remotes.json at boot and
+        # _serve_token_read_or_mint strips a loose serve token's bits under its lock, two single files healed on a
+        # road that already opens them, against N per-session regs behind a memoized read (the kernel's
+        # _thread_reg_read keys its memo on the ctime, which a chmod alone changes, so a heal on read would evict
+        # what it feeds), while the closest analogue, the per-sid flag-settings file holding the same env values
+        # (flag_settings_path), tightened forward-only on 2026-09-03 and took no walk. Round 1 also replaced the
+        # first cut's exclusive create, which would have refused a leftover temp at the same name and put the mode
+        # through the umask. Every reader (the kernel, bin/romp and the CLI tools it execs, the judges, the postal
+        # service) is the same uid, so 0600 shuts nobody out.
+        # Defence in depth behind the 0700 state root (kernel/judge.py chmods it at import, says why, and since review
+        # round 2, 2026-09-19, reads the mode back and says so on stderr when it is not 0700), not a live fix:
+        # PR 776's review round asked for it (kernel-1, extra5-2) and the reviewer deferred it to its own fix
+        # (2026-09-18). The value still lives in a file; the mode is a mitigation, not the never-in-a-file rule.
+        fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            os.fchmod(fd, 0o600)
+        except BaseException:
+            # A raising fchmod (EPERM on an inode this uid does not own, ENOTSUP on a filesystem that refuses it after a
+            # successful open) left the descriptor open until review round 2 of PR 789 (2026-09-19): os.fdopen below was
+            # the only close. Closed and re-raised, not a finally: on the success road the file object owns the
+            # descriptor and closes it, so a finally would close it a second time. The precedents this shape copies
+            # (cli/perf_export.py write_file, the Codex registry lock) close on this road too.
+            os.close(fd)
+            raise
+        with os.fdopen(fd, "w") as f:
+            f.write(json.dumps(reg))
         os.replace(tmp, p)
         REG_REV[0] += 1                                 # the table moved (after the publish, so a reader that took the revision
         _reg_rows_note(sid, reg)                        #  before its read misses on its next check); the rows revision only on a
@@ -5328,11 +5363,25 @@ def flag_settings_path(state_dir, sid: str, *, ultracode: bool = False, fast: bo
     try:
         os.makedirs(d, exist_ok=True)
         # 0600, the serve-token treatment: the env block can carry secrets, and a default-umask file is
-        # world-readable on a shared host (PR #889 review). Created private, then written.
+        # world-readable on a shared host (PR #889 review). The mode is set on the descriptor BEFORE the write:
+        # a pre-existing file keeps its old mode through O_CREAT|O_TRUNC, and the trailing chmod this had until
+        # 2026-09-18 tightened it only after the env block was already in it (PR 789, review round 1: the same
+        # write-then-tighten window the reg and the parked-ops mirror lost, here for a file created before the
+        # 0600 open of 2026-09-03). fchmod is exact under any umask, so nothing follows the write. The published inode
+        # is rewritten in place (O_TRUNC on the path; no temp, no os.replace, unlike write_reg), so the tightening is
+        # not retroactive for a descriptor another uid opened while the file sat at its old looser mode: it reads the
+        # new block through it. The 0700 state root is what closes that road today (review round 2, 2026-09-19).
         fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            os.fchmod(fd, 0o600)
+        except BaseException:
+            # Review round 2 (2026-09-19): a raising fchmod left the descriptor open (os.fdopen below was the only
+            # close), once per launch or reconnect for as long as it failed. Closed and re-raised, not a finally: the
+            # file object closes it on the success road.
+            os.close(fd)
+            raise
         with os.fdopen(fd, "w") as f:
             f.write(json.dumps(keys) + "\n")
-        os.chmod(p, 0o600)   # a pre-existing file keeps its old mode through O_CREAT — tighten it too
     except OSError as e:
         # no settings file → the session still launches, just without these keys — and the Log says
         # so (fail-loudly, the user 2026-07-03): for env especially, a silent drop here leaves the
