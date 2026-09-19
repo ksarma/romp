@@ -1145,10 +1145,13 @@ class Cli(unittest.TestCase):
     def test_a_file_nested_past_the_depth_bound_is_refused_in_one_line_naming_the_bound_with_no_traceback_and_nothing_sent(self):
         """The depth rule is the verb's own (the fork review of the second round, 2026-09-18): a file nested deeper than
         MAX_DEPTH (32) is refused before any check walks it, in one stderr line that names the file's depth and the bound,
-        exit 1, nothing sent, on every Python. Before the bound the verb let the walks decide by running out of stack, and
-        the depth at which they do differs by build: CI's free-threaded 3.14t cell alone overflowed on a document every
-        other cell walked and sent, so the old test's case, derived from the interpreter's recursion limit, pinned a number
-        no two builds agreed on. The three documents here are fixed: 33 levels, one past the bound, refused; 32, at the bound,
+        exit 1, nothing sent, on every Python. Before the bound the verb let the walks decide by running out of stack, which
+        they do at about 990 levels on every build (the recursion limit); what differs by build is the PARSER's reach, and
+        CI's free-threaded 3.14t cell alone admitted a 100,000-level document every other cell's parser refused as not strict
+        JSON, so the walks overflowed there and nowhere else (the fourth review round corrected the comment at MAX_DEPTH, which
+        had put the variance on the walks). A bound derived from the interpreter's limit would sit near the walks' own reach
+        and stop nothing a deeper parser admits, so the bound is a fixed number well inside every build. The three documents
+        here are fixed: 33 levels, one past the bound, refused; 32, at the bound,
         sent; and the 100000-level file in the case beside this one meets whichever refusal its build's parser leaves it:
         a parser that gives up on the document refuses it as not strict JSON, one that admits it hands it to the depth
         bound, and both are refusals by kind."""
