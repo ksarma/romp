@@ -5656,7 +5656,7 @@ function parentMobile(): boolean | undefined {
 // round 1, 2026-09-19: the lookup over the empty DOM took the fallback and posted openSession for an existing card). Its
 // retirement is the pane's NEXT visibility change (review round 2, D5: a park with no bound was consumed by an unrelated
 // Feed-tab tap hours later, a card move on no new information): the show that follows the reveal consumes it in
-// releasePaint's tail; a flip to hidden (the shell's word, or the observer's) drops it; a second reveal replaces it; a re-tell
+// releasePaint's tail; a flip to hidden (the shell's word, or the observer's) drops it; a second reveal replaces or drops it; a re-tell
 // of the same word (the shell's socket events) changes nothing. No timer.
 let pendingRevealKey: string | null = null;
 // the pane loader's hold (review round 2, D3): while the FIRST paint is owed nobody can see the pane, so the pane's own loader
@@ -6645,10 +6645,9 @@ listenForFrames(perfFrameHandler("feed", (m) => vscodeApi?.postMessage(m), (e: M
     // for the paint that lands (the pane's show word, the panes handler above), never the card-gone fallback for it; else
     // the fallback. The shell's own tab switch, or none, is unchanged: this pane decides only what it says about the card.
     const decision = revealDecision(!!target, paintDirty, paintedKeyOf(String(m.itemId || "")) === key, !!m.sid);
+    pendingRevealKey = decision === "park" ? key : null;   // this gesture's park, or none: a second reveal replaces or drops an earlier park whatever road it takes (D5, review round 2 closeout: written in the park arm alone, an open or a card-gone reveal left the first park standing and the next show jumped to the older gesture's card)
     if (decision === "jump" && target) {
       jumpToCard(target);
-    } else if (decision === "park") {
-      pendingRevealKey = key;
     } else if (decision === "open") {
       frameGesture = !!m.gesture;   // the bell click or the notification tap behind this frame is the reader's gesture (round three)
       try { vscodeApi?.postMessage({ type: "openSession", id: String(m.sid) }); } finally { frameGesture = false; }

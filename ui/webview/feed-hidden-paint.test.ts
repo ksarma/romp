@@ -366,8 +366,8 @@ function phoneFeed(opts: { phone?: boolean | undefined; probeHidden?: boolean } 
     const key = "a:" + itemId;
     const target = st.dom.includes(key) ? key : null;
     const decision = revealDecision(!!target, st.paintDirty, PLAN.keyOf(st, itemId) === key, !!sid);
+    st.pendingRevealKey = decision === "park" ? key : null;   // feed.ts: this gesture's park or none (D5: a second reveal replaces or drops the first, whatever road it takes)
     if (decision === "jump" && target) st.jumped.push(target);
-    else if (decision === "park") st.pendingRevealKey = key;
     else if (decision === "open") st.opened.push(sid);
     return decision;
   }
@@ -448,14 +448,14 @@ test("F2 (review round 1, 2026-09-19): a bell jump into a held, never-painted ph
   assert.deepEqual(g.st.opened, ["11111111-2222-3333-4444-000000000107"]);
   assert.equal(g.st.pendingRevealKey, null);
   // the wiring: the handler's branch, the parked key, the release's tail, the shared helpers
-  assert.match(SRC, /if \(m\.romp === "revealCard"\) \{[\s\S]*?if \(paintDirty && feedShellOn !== false\) \{ revealShown = true; releasePaint\(\); \}\n\s*const key = "a:" \+ String\(m\.itemId \|\| ""\);\n\s*unfoldThreadsFor\(new Set\(\[key\]\)\);\n\s*const target = cardByKey\(key\);[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*const decision = revealDecision\(!!target, paintDirty, paintedKeyOf\(String\(m\.itemId \|\| ""\)\) === key, !!m\.sid\);\n\s*if \(decision === "jump" && target\) \{\n\s*jumpToCard\(target\);\n\s*\} else if \(decision === "park"\) \{\n\s*pendingRevealKey = key;\n\s*\} else if \(decision === "open"\) \{/,
-    "the handler: the release attempt, the structural lookup, then paint-gate.ts's revealDecision over (found, paintDirty, the paint will stamp this key, a session named) and its three arms; the decision itself is executed above and in paint-gate.test.ts");
+  assert.match(SRC, /if \(m\.romp === "revealCard"\) \{[\s\S]*?if \(paintDirty && feedShellOn !== false\) \{ revealShown = true; releasePaint\(\); \}\n\s*const key = "a:" \+ String\(m\.itemId \|\| ""\);\n\s*unfoldThreadsFor\(new Set\(\[key\]\)\);\n\s*const target = cardByKey\(key\);[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*const decision = revealDecision\(!!target, paintDirty, paintedKeyOf\(String\(m\.itemId \|\| ""\)\) === key, !!m\.sid\);\n\s*pendingRevealKey = decision === "park" \? key : null;[^\n]*\n\s*if \(decision === "jump" && target\) \{\n\s*jumpToCard\(target\);\n\s*\} else if \(decision === "open"\) \{/,
+    "the handler: the release attempt, the structural lookup, then paint-gate.ts's revealDecision over (found, paintDirty, the paint will stamp this key, a session named); the park is written or cleared BEFORE the arms (a second reveal replaces or drops an earlier park whatever road it takes, D5), then the jump and open arms; the decision itself is executed above and in paint-gate.test.ts");
   assert.match(SRC, /import \{ firstPaintHeld, viewportHiddenSinceLoad, revealDecision \} from "\.\/paint-gate";/);
   assert.match(SRC, /^let pendingRevealKey: string \| null = null;/m);
   assert.match(body("releasePaint"), /render\(\);\n\s*if \(firstHoldTold[^\n]*\n\s*\/\/[^\n]*\n\s*if \(pendingRevealKey !== null && !paintDirty\) \{ const k = pendingRevealKey; pendingRevealKey = null; const t = cardByKey\(k\); if \(t\) jumpToCard\(t\); \}\n\}/,
     "the release's tail reveals the parked card on the paint it waited for (after the loader's release event, D3)");
   assert.match(body("cardByKey"), /Array\.from\(document\.querySelectorAll\("\[data-key\]"\)\) as HTMLElement\[\]\)\.find\(\(c\) => c\.dataset\.key === key\) \|\| null/, "the structural match, never an interpolated selector (#940)");
-  assert.equal((SRC.match(/pendingRevealKey = /g) || []).length, 4, "parked, consumed, and dropped on the pane's flip to hidden by either witness (the shell's word, the observer's): four writes (the declaration initialises it null); review round 2, D5");
+  assert.equal((SRC.match(/pendingRevealKey = /g) || []).length, 4, "this gesture's park or none (before the arms, so a second reveal replaces or drops the first), consumed, and dropped on the pane's flip to hidden by either witness (the shell's word, the observer's): four writes (the declaration initialises it null); review round 2, D5");
 });
 
 test("HIGH-1 (review round 2, 2026-09-19): a reveal the paint will NOT stamp under its key takes the base's open road at the tap, under the hold: a satellite, a session-filtered card, a search miss, a lens-hidden card, a turn-group member", () => {
@@ -657,7 +657,56 @@ test("D5: the parked jump retires on the pane's next visibility change: the show
   assert.equal(k.st.pendingRevealKey, "a:g2", "a second reveal replaces the first");
   k.panesWord({ chat: false, feed: true });
   assert.deepEqual(k.st.jumped, ["a:g2"]);
+  // a second reveal that takes a road other than the park (review round 2 closeout, D5): the first park is dropped, not left for the next
+  // show. Two bell-row taps on the Chat tab, the second on a delegation satellite the paint will not stamp (the open road), then a Feed tap
+  const n = phoneFeed();
+  n.applyFeedPayload({ asks: [{ itemId: "g1", column: "asks", sid: SID }, { itemId: "s1", column: "asks", sid: SID, satellite: true }] });
+  n.panesWord({ chat: true, feed: false });
+  assert.equal(n.revealCard("g1", SID), "park");
+  assert.equal(n.revealCard("s1", SID), "open", "the satellite takes the open road at the tap");
+  assert.equal(n.st.pendingRevealKey, null, "…and the older gesture's park is dropped (before: 'a:g1' stood, and the next show jumped to a card the user had moved on from)");
+  n.panesWord({ chat: false, feed: true });
+  assert.deepEqual(n.st.jumped, [], "the show jumps nothing");
+  // the same on feed.ts's own handler lines (revealWiring lifts the revealCard block)
+  const L = revealWiring({ paintDirty: true, shellOn: false, dom: [], keyOf: (id) => (id === "g1" || id === "g2" ? "a:" + id : null) });
+  L.reveal("g1", SID);
+  assert.equal(L.pending(), "a:g1", "parked on feed.ts's own line");
+  L.reveal("s1", SID);
+  assert.equal(L.pending(), null, "a second reveal the paint will not stamp drops the park on feed.ts's own lines");
+  assert.deepEqual(L.st.posted.map((p) => p.type), ["openSession"], "…and takes the open road");
+  assert.deepEqual(L.st.gesture, [true], "the reader's gesture stands behind the openSession post");
+  L.reveal("g1", SID); L.reveal("g2", SID);
+  assert.equal(L.pending(), "a:g2", "a second park replaces the first on feed.ts's own lines");
+  assert.equal(L.st.released, 0, "no release attempt while the shell's word says the pane is off screen");
+  const J = revealWiring({ paintDirty: false, shellOn: true, dom: ["a:g1"], keyOf: (id) => "a:" + id });
+  J.reveal("g1", SID);
+  assert.deepEqual([J.pending(), J.st.jumped], [null, ["a:g1"]], "a found card under a painted board jumps and leaves no park");
 });
+
+// feed.ts's revealCard handler, lifted and run (review round 2 closeout, D5): the block from `if (m.romp === "revealCard") {` to its
+// `return;` is feed.ts's text, transpiled at run time, with its collaborators stood in (the release attempt counted, the structural
+// lookup over a list of painted keys, the plan's answer per id, the openSession post recorded with the gesture flag it rode on)
+function revealWiring(opts: { paintDirty: boolean; shellOn: boolean | undefined; dom: string[]; keyOf: (id: string) => string | null }) {
+  const start = 'if (m.romp === "revealCard") {', endMark = '\n  if (m.type === "feedDelta") {';
+  const a = SRC.indexOf(start), b = SRC.indexOf(endMark, a);
+  assert.ok(a > 0 && b > a, "the reveal handler's anchors moved; re-anchor");
+  const block = SRC.slice(a, b);
+  assert.match(block, /\n    return;\n  \}$/, "the block ends with the handler's own return");
+  const js = requireCjs("esbuild").transformSync("function onMessage(m) {\n" + block + "\n}", { loader: "ts" }).code;
+  const st = { released: 0, jumped: [] as string[], posted: [] as { type: string }[], gesture: [] as boolean[], ...opts };
+  const prelude = `
+    let paintDirty = S.paintDirty, feedShellOn = S.shellOn, revealShown = false, pendingRevealKey = null, frameGesture = false;
+    const releasePaint = () => { S.released++; };
+    const unfoldThreadsFor = () => {};
+    const cardByKey = (k) => (S.dom.includes(k) ? { key: k } : null);
+    const jumpToCard = (t) => { S.jumped.push(t.key); };
+    const paintedKeyOf = (id) => S.keyOf(id);
+    const vscodeApi = { postMessage: (m) => { S.posted.push(m); S.gesture.push(frameGesture); } };
+    const revealDecision = P.revealDecision;
+  `;
+  const api = new Function("P", "S", prelude + js + "\nreturn { onMessage, pending: () => pendingRevealKey };")({ revealDecision }, st) as { onMessage(m: unknown): void; pending(): string | null };
+  return { st, pending: api.pending, reveal(itemId: string, sid: string) { api.onMessage({ romp: "revealCard", itemId, sid, gesture: true }); } };
+}
 
 test("run: feed.ts's own lines take the shell's show hook: the held first frame paints synchronously, the loader's two events fire once each, and the observer's callback afterwards paints nothing more", () => {
   const f = feedWiring({ parentProbe: () => true, innerWidth: 0, innerHeight: 0 });   // the phone, the feed hidden since load
@@ -665,8 +714,11 @@ test("run: feed.ts's own lines take the shell's show hook: the held first frame 
   f.frame(4);
   assert.equal(f.st.paints, 0, "held");
   assert.deepEqual(f.events, ["romp:firstpaintheld"], "told once across two held frames");
-  f.viewport(390, 700); f.shown();   // the tap: the shell shows the iframe and calls the hook in the same task
-  assert.equal(f.st.paints, 1, "painted synchronously");
+  f.observer(false);   // the observer's first word over the display:none iframe: off screen (review round 2 closeout, D4: with no word yet the paint proceeds on null whether or not the override is read, so the read side had no executed witness)
+  assert.equal(f.st.host.__rompPaneHidden, true, "published hidden");
+  assert.equal(f.st.paints, 0, "still held");
+  f.viewport(390, 700); f.shown();   // the tap: the shell shows the iframe and calls the hook in the same task; the observer's word still says hidden, so the paint rides the override alone
+  assert.equal(f.st.paints, 1, "painted synchronously, through the show override over the observer's standing hidden word (render()'s gate reads seenNow())");
   assert.equal(f.st.painted, 4);
   assert.deepEqual(f.events, ["romp:firstpaintheld", "romp:firstpaintreleased"], "the backstop resumes once");
   f.observer(true);
