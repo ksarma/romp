@@ -11,17 +11,22 @@ restored the floor, so this pin holds both.
 
 The walk's load is its one decision read, `jd.load_goals_shared_or_fault(sid)` in `_auto_nudge_session`, the read ruling
 A counted (its wording: every alive session walked wake-only with exactly one load_goals_shared_or_fault and zero plain
-load_goals in the decision path). Two witnesses count it. By execution: a recorder stands in for the name the walk resolves
-at call time (`km.jd.load_goals_shared_or_fault`, the kernel's own judge instance), records each call with the function
-that made it, and calls through to the real loader, so nothing about the shared cache is stubbed; a call from the look's
-body or from its gate wrapper (`_nudge_look_gated`'s inner function, the same mechanism) is the walk's, a call from
-`_nudge_placement_gate` is the gate's, and any other caller during a pass is unattributed and fails the test, named by
-function and line. The recorder's window is each pass, the `_auto_nudge_tick` call (cleared before it, read after it): a
-third loader anywhere on the pass's path, the tick's setup included, is caught; a load elsewhere in the process (a
+load_goals in the decision path). Two witnesses count it. By execution: a recorder stands on `jd.load_goals_shared`, the
+one door both of the judge's boundary wrappers reach (`load_goals_shared_or_fault` hands the name to `_or_fault`, which
+resolves it from the judge's globals at call time, so every spelling of the shared read arrives at this door), and a
+second recorder on `jd.load_goals`, the writer's door. Each records the call with its caller's function, file and line,
+stepping over the judge's boundary frames by code identity (never by name), and calls through to the real loader, so
+nothing about the shared cache is stubbed. A call from the look's body or from its gate wrapper (`_nudge_look_gated`'s
+inner function, the same mechanism) is the walk's, a call from `_nudge_placement_gate` is the gate's, a call from
+`_awaiting_wake_outcomes` is the wake sweep's (the store's third reader on the pass, bounded below), and any other caller
+during a pass fails the test, named by function, file and line. The claim has two limits. The door: a third loader that
+reaches the store through the judge's loaders during the pass is caught and named; a reader below those loaders (the
+judge's own file reader and parser) is outside the recorders and outside the claim. The window: each pass, the
+`_auto_nudge_tick` call (the records are cleared before it and read after it), so a load elsewhere in the process (a
 builder, a handler, the perf snapshot the test reads after its last pass) is outside the window and is not this test's
-claim. By the served counter:
-`memos.nudgeWalk.loads`, bumped at the walk's one call site, must move by the walk's count per pass. A skipped look repeats
-its verdict and writes nothing (the wake-only memo of PR 784), so it needs no data: the recorder sees no call from either.
+claim. By the served counter: `memos.nudgeWalk.loads`, bumped at the walk's one call site, must move by the walk's count
+per pass. A skipped look repeats its verdict and writes nothing (the wake-only memo of PR 784), so it needs no data: the
+recorder sees no call from either.
 
 The gate's load is `_nudge_placement_gate`'s currency check after a derivation (upstream's since the 2026-09-09 fold; ruling
 A listed it as open, to be offered upstream, never edited here): one call per DERIVED session, none when the gate is served
@@ -30,10 +35,28 @@ beside the walk's one; a ledger-driven run pass (the ledger is the tenth keyed f
 served, so the walk loads once and the gate not at all. A look the state gates end before the store read (a working
 session's, say) runs, records, and loads through neither.
 
+The wake sweep, `_awaiting_wake_outcomes`, is the store's third reader on the pass. It runs after the per-session loop,
+in the same pass and outside the toggle guard, and takes one shared load per wake record it owns: a record that is
+wake-set, not failed, moot or answered, not muted, and whose sid the walk did not visit or visited under a wedge gate.
+It keeps no memo, so it reads again every pass, and `memos.nudgeWalk.loads` does not count it. The harness holds it to
+that bound per sid per pass (`owned_records`, the records the seeding helper gave it): the first cases' ledger holds no
+wake record, so the sweep reads nothing there, and TheSweepIsItsOwnBoundedReader seeds one record for an unwalked private
+sid and shows one sweep load on each of two passes, once with a store whose nodes lack the goal and once with no store
+file, where the shared door falls back into load_goals and that fallback is one logical read of the shared door's.
+
 Red in both directions, each mutation landed on kernel/kernel.py and reverted: a load creeping into the skip path (a shared
 read in the gated look before it consults the memo, or the skip's early return dropped) reds the skip pass on the walk's
 bound; the load disappearing from the run path (the walk reusing a stale snapshot instead of reading) reds the run pass on
-the walk's bound. The assertion texts name the mechanism and are in the commit message.
+the walk's bound. The door plants, each through the bare `jd.load_goals_shared` spelling that a recorder on the outer door
+alone missed: a load per session in the pass loop of `_auto_nudge_pass` reds every case on the unattributed caller, named
+`_auto_nudge_pass` with the kernel's real file and the plant's line (4 failed, 2 passed); the same loop over the alive set
+at the tick's setup, the same way (4 failed, 2 passed); a second read above the walk's own in `_auto_nudge_session` reds
+the walk's bound (2 per session against 1) and the census (2 sites against 1) (3 failed, 3 passed); a load per walked sid
+at the top of `_awaiting_wake_outcomes` reds the sweep's bound in every case (1 against 0 owned records) (4 failed, 2
+passed); the sweep's read duplicated reds the sweep case on its bound (2 against 1) (2 failed, 4 passed); the sweep's read
+moved to the writer door reds the sweep case (no sweep load where 1 is asserted) (2 failed, 4 passed). The outer spelling
+at the pass-loop site names `_auto_nudge_pass`, never the judge's `_or_fault`. The assertion texts name the mechanism and
+are in the commit message.
 
 Drives the real pass (_auto_nudge_tick) over two alive sessions with real transcript files and real goal stores, on the
 suite's fake clock (the pass takes `now`). SYNTHETIC fixtures only; a PRIVATE synthetic sid pair (the goal-store fixture
@@ -61,11 +84,27 @@ pp = load_source("romp_perf_public", os.path.join(os.path.dirname(HERE), "cli", 
 
 SID_A = "c7c0a001-5e55-4a11-8b22-000000000001"   # private to this module (the goal-store fixture rule): a plain working top
 SID_B = "c7c0a001-5e55-4a11-8b22-000000000002"   # a stamped top whose dead-man is an hour away (the wake-only branch's other road)
+SID_C = "c7c0a001-5e55-4a11-8b22-000000000003"   # never alive, so never walked: the sid of the wake record the sweep owns
 SIDS = (SID_A, SID_B)
 NOW = 1_787_900_000
 H = 3600
 WALK = ("_auto_nudge_session", "gated")   # the walk's look: its body and its gate wrapper (_nudge_look_gated's inner function)
 GATE = ("_nudge_placement_gate",)         # the placement gate's post-derivation currency check: a second loader, counted apart
+SWEEP = ("_awaiting_wake_outcomes",)      # the wake sweep after the per-session loop: a third reader, one shared load per wake record it owns
+KERNEL_FILE = os.path.basename(os.path.realpath(km.__file__))   # the kernel's real file: it is loaded from bin/romp-kernel, a symlink
+JUDGE_FILE = os.path.basename(os.path.realpath(jd.__file__))
+
+
+def _caller(frame, boundary):
+    """(function, file, line) of the frame that asked for the store: `frame` is the recorder's own, its f_back the immediate
+    caller, and the judge's boundary frames (`boundary`, their code objects) are stepped over by code identity, never by
+    name, so a call through either boundary wrapper is named for the kernel function that made it. The file is the basename
+    of the frame's REAL path: the kernel is loaded from bin/romp-kernel, a symlink to kernel/kernel.py, so the bare basename
+    would read romp-kernel."""
+    f = frame.f_back
+    while any(f.f_code is c for c in boundary):
+        f = f.f_back
+    return f.f_code.co_name, os.path.basename(os.path.realpath(f.f_code.co_filename)), f.f_lineno
 
 
 class _FakeBackend:
@@ -94,7 +133,7 @@ class _WalkHarness(unittest.TestCase):
             "_pending_ops", "_log_nudge_event", "_push_all", "_mark_views_dirty", "_path_of",
             "_debt_backstop_tick", "_PREV_ALIVE")}
         self.saved_jd = {k: getattr(jd, k) for k in ("parsed_session", "_segs", "plan_units", "load_goals",
-                                                     "load_goals_shared_or_fault")}
+                                                     "load_goals_shared")}
         self.saved_state = jd.STATE
         self.saved_backend = km.Sessions.backend_for
         self.shared_off_before = jd._SHARED_OFF[0]
@@ -162,26 +201,39 @@ class _WalkHarness(unittest.TestCase):
         jd.parsed_session = _parsed
         jd._segs = lambda tn, store: []
         jd.plan_units = lambda session, store, lazy_text=None: []
-        # the witnesses by execution: recorders on the names the walk resolves at call time, each calling through
-        real_shared, real_writer = self.saved_jd["load_goals_shared_or_fault"], self.saved_jd["load_goals"]
+        # the witnesses by execution: recorders on the judge's two doors, each calling through. The shared recorder stands on
+        # the INNER door, jd.load_goals_shared: load_goals_shared_or_fault hands that name to _or_fault, which resolves it from
+        # the judge's globals at call time, so a call by either spelling arrives here (a recorder on the outer door alone
+        # missed the bare spelling, the one _awaiting_wake_outcomes uses: review round 1)
+        real_shared, real_writer = self.saved_jd["load_goals_shared"], self.saved_jd["load_goals"]
+        for fn, name in ((real_shared, "load_goals_shared"), (real_writer, "load_goals")):
+            self.assertEqual((fn.__code__.co_name, os.path.basename(os.path.realpath(fn.__code__.co_filename))), (name, JUDGE_FILE),
+                             "jd.%s is the judge's own door (no stand-in left by a peer module)" % name)
+        # The boundary frames and the shared door's body, by CODE identity, taken from the real functions NOW, before this setUp
+        # replaces a door. Not at import: the judge module is shared by every kernel a worker loads and re-executed into the same
+        # module object by each load (romp_load), so a code object captured when this module was imported is a previous
+        # execution's once a sibling module imports its kernel (the first run beside six siblings failed on exactly that).
+        boundary = (jd._or_fault.__code__, jd.load_goals_shared_or_fault.__code__, jd.load_goals_or_fault.__code__)
+        shared_body = real_shared.__code__
         self.calls, self.writer = [], []
+        self.owned_records = {}                           # sid -> the wake records the sweep owns this test (the seeding helper sets it)
 
         def _shared(sid):
-            f = inspect.currentframe().f_back                     # the caller: its function and the line of the call
-            self.calls.append((sid, f.f_code.co_name, f.f_lineno))
+            self.calls.append((sid,) + _caller(inspect.currentframe(), boundary))
             return real_shared(sid)
 
         def _load(sid):
-            self.writer.append(sid)
-            return real_writer(sid)
-        jd.load_goals_shared_or_fault = _shared
+            if inspect.currentframe().f_back.f_code is not shared_body:          # the shared door's own fallback into load_goals (the
+                self.writer.append((sid,) + _caller(inspect.currentframe(), boundary))   # cache off, no store file, an unreadable
+            return real_writer(sid)                                              #  journal, corrupt bytes) is one logical read: the shared
+        jd.load_goals_shared = _shared                                           #  recorder recorded its caller, so nothing is recorded here
         jd.load_goals = _load
         self._toggle(False)
         self._seed(SID_A, stamped=False)
         self._seed(SID_B, stamped=True, age=5 * H)
 
     def _restore(self):
-        journals = [jd._overrides_dir() / (sid + ".jsonl") for sid in SIDS]   # under this test's root, resolved before the rebind back
+        journals = [jd._overrides_dir() / (sid + ".jsonl") for sid in SIDS + (SID_C,)]   # under this test's root, resolved before the rebind back
         for k, v in self.saved.items():
             setattr(km, k, v)
         for k, v in self.saved_jd.items():
@@ -230,19 +282,33 @@ class _WalkHarness(unittest.TestCase):
     def _pass(self, now):
         """One pass over the two sessions: the walk's counter deltas, the placement gate's (served, derived) deltas, and the
         shared-loader calls per mechanism and sid (`walk`: the look's decision read; `gate`: the placement gate's currency
-        check; never a total of the two), the writer loads, and the sids parsed. A call from any other function during the
-        pass fails here, named by function and line, so a third loader of the store is caught on the first pass it runs in."""
+        check; `sweep`: the wake sweep's read per owned record, over every sid seen; never a total), the writer loads, and
+        the sids parsed. The recorders stand on the judge's two doors, `jd.load_goals_shared` and `jd.load_goals`, and
+        attribute through its boundary frames by code identity, so a shared load from any other function during the pass
+        fails here, named by function, file and line, and the sweep is held to its bound per sid; a reader below the doors
+        is outside the claim. `calls` carries the shared records (sid, function, file, line) for a case's own assertions."""
         before = {k: km._NUDGE_WALK_STATS[k] for k in self.KEYS}
         gate0 = dict(km._NUDGE_GATE_STATS)
         self.calls.clear(); self.writer.clear(); self.parsed.clear()
         km._auto_nudge_tick(now, {sid: {"state": ""} for sid in SIDS})
         d = {k: km._NUDGE_WALK_STATS[k] - before[k] for k in self.KEYS}
         d["memo"] = tuple(km._NUDGE_GATE_STATS[k] - gate0[k] for k in ("served", "derived"))
-        d["walk"] = {sid: sum(1 for s, c, _ln in self.calls if s == sid and c in WALK) for sid in SIDS}
-        d["gate"] = {sid: sum(1 for s, c, _ln in self.calls if s == sid and c in GATE) for sid in SIDS}
-        others = ["%s (kernel.py:%d, sid ..%s)" % (c, ln, s[-4:]) for s, c, ln in self.calls if c not in WALK + GATE]
-        self.assertEqual(others, [], "a shared load from a caller that is neither the walk nor the placement gate, by function "
-                                     "and line: %s" % "; ".join(others))
+        d["walk"] = {sid: sum(1 for s, c, _f, _ln in self.calls if s == sid and c in WALK) for sid in SIDS}
+        d["gate"] = {sid: sum(1 for s, c, _f, _ln in self.calls if s == sid and c in GATE) for sid in SIDS}
+        d["sweep"] = {}                                   # over every sid seen: the sweep's constituency includes unwalked sids
+        for s, c, _f, _ln in self.calls:
+            if c in SWEEP:
+                d["sweep"][s] = d["sweep"].get(s, 0) + 1
+        others = ["%s (%s:%d, sid ..%s)" % (c, f, ln, s[-4:]) for s, c, f, ln in self.calls if c not in WALK + GATE + SWEEP]
+        self.assertEqual(others, [], "a shared load from a caller that is neither the walk, the placement gate nor the wake sweep, "
+                                     "by function, file and line: %s" % "; ".join(others))
+        for sid, n in sorted(d["sweep"].items()):
+            self.assertLessEqual(n, self.owned_records.get(sid, 0),
+                                 "sid ..%s: the sweep takes at most one shared load per wake record it owns per pass (a record that is "
+                                 "wake-set, not failed, moot or answered, not muted, and whose sid the walk did not visit or visited "
+                                 "under a wedge gate), none for a sid with no owned record; it runs after the per-session loop in the "
+                                 "same pass and memos.nudgeWalk.loads does not count it" % sid[-4:])
+        d["calls"] = list(self.calls)
         d["writer"] = len(self.writer)
         d["parsedSids"] = sorted(self.parsed)
         return d
@@ -305,6 +371,7 @@ class OneSharedLoadPerAliveSessionPerPass(_WalkHarness):
                 self.assertLessEqual(p["walk"][sid], 1, "%s %s: the walk takes at most one shared load per alive session per pass (condition 7, the walk's bound)" % (name, sid[-4:]))
                 self.assertLessEqual(p["gate"][sid], 1, "%s %s: the placement gate checks at most once per derived session (condition 7, the gate's bound)" % (name, sid[-4:]))
             self.assertEqual(sum(p["gate"].values()), p["memo"][1], "%s: the gate's checks equal its derives, none on a served or skipped look" % name)
+            self.assertEqual(p["sweep"], {}, "%s: the fixture ledger holds no wake record, so the wake sweep reads no store" % name)
         self.assertEqual(self.fb.sent, [], "nudges off: nothing injected")
         served = km._PERF_STATS.snapshot()["memos"]["nudgeWalk"]
         self.assertEqual(served["loads"], km._NUDGE_WALK_STATS["loads"], "served under memos.nudgeWalk.loads")
@@ -337,15 +404,70 @@ class OneSharedLoadPerAliveSessionPerPass(_WalkHarness):
         p3 = self._pass(NOW + 10)
         self.assertEqual((p3["skippedParses"], p3["walk"], p3["gate"], p3["loads"]), (2, {SID_A: 0, SID_B: 0}, {SID_A: 0, SID_B: 0}, 0),
                          "the gate rows stand: skipped, and still no load through either")
+        for name, p in (("p1", p1), ("p2", p2), ("p3", p3)):
+            self.assertEqual(p["sweep"], {}, "%s: the fixture ledger holds no wake record, so the wake sweep reads no store" % name)
+
+
+class TheSweepIsItsOwnBoundedReader(_WalkHarness):
+    """The wake sweep reads the store once per wake record it owns per pass, keeps no memo, and is counted apart from the
+    walk and the gate. One wake record for SID_C, a sid that is never alive (so never walked: the sweep's original
+    constituency), goes into the ledger before the first pass; the two alive sessions run their first pass as in the first
+    case, and the sweep takes exactly one shared load for SID_C on that pass and again on the skip pass. With a store whose
+    nodes lack the goal, the read is followed by the inert-record continue (no parse, no writer load, nothing sent). With
+    no store file, the shared door falls back into load_goals: one logical read, recorded once by the shared recorder as
+    the sweep's and never as a writer call. Not the wedge-gate recipe (an api-error gate on an alive sid with a live
+    record): past the read that sweep reaches _mark_nudge_failed, which loads through the writer door and stamps a failure."""
+
+    def _seed_wake_record(self, store_file):
+        """One owned wake record for SID_C in the ledger (the toggle stays off), and its store: with `store_file`, a store
+        whose nodes lack the goal; without, no file at all."""
+        (jd.STATE / "auto-nudge.json").write_text(json.dumps({"enabled": False, "nudged": {
+            SID_C + ":g1": {"wake": True, "at": NOW - 2 * H, "count": 1, "lastTurnId": "t1"}}}))
+        km._autonudge_cache.clear()
+        self.owned_records = {SID_C: 1}
+        if store_file:
+            (jd.GOALDIR / (SID_C + ".json")).write_text(json.dumps(
+                {"rompUuid": SID_C, "seq": 1, "placements": {}, "status": {}, "nodes": {}}))
+
+    def _one_sweep_load(self, p, name):
+        self.assertEqual(p["sweep"], {SID_C: 1},
+                         "%s: the sweep takes exactly one shared load for the one record it owns, and none for the walk's sids" % name)
+        self.assertEqual([(c, f) for _s, c, f, _ln in p["calls"] if c in SWEEP], [("_awaiting_wake_outcomes", KERNEL_FILE)],
+                         "%s: the sweep's read is recorded as _awaiting_wake_outcomes's, in the kernel's real file" % name)
+        self.assertEqual(p["writer"], 0, "%s: no writer load: the record is inert past the read, and the shared door's fallback into "
+                                         "load_goals is the shared door's own read" % name)
+
+    def test_a_store_whose_nodes_lack_the_goal(self):
+        self._seed_wake_record(store_file=True)
+        p1 = self._pass(NOW)
+        self.assertEqual((p1["walk"], p1["gate"], p1["memo"], p1["loads"]), ({SID_A: 1, SID_B: 1}, {SID_A: 1, SID_B: 1}, (0, 2), 2),
+                         "the walk and the gate as on any first pass: the record is SID_C's, a sid neither look is about, and the "
+                         "counter counts the walk alone")
+        self._one_sweep_load(p1, "p1")
+        p2 = self._pass(NOW + 5)
+        self.assertEqual((p2["walk"], p2["gate"], p2["loads"]), ({SID_A: 0, SID_B: 0}, {SID_A: 0, SID_B: 0}, 0),
+                         "the looks skip: nothing of theirs moved")
+        self._one_sweep_load(p2, "p2")                    # the sweep keeps no memo: one read per owned record per pass
+        self.assertEqual(self.fb.sent, [], "nothing sent: the node is gone, so the record is inert and the sweep continues past it")
+
+    def test_no_store_file(self):
+        self._seed_wake_record(store_file=False)
+        p1 = self._pass(NOW)
+        self._one_sweep_load(p1, "p1")
+        p2 = self._pass(NOW + 5)
+        self._one_sweep_load(p2, "p2")
+        self.assertEqual(self.fb.sent, [], "nothing sent: the fresh store has no node for the record")
 
 
 class TheCountersOneSite(unittest.TestCase):
     def test_the_walk_has_one_shared_load_site_and_the_counter_is_bumped_beside_it(self):
-        """A census over the look's own source (the gate decorator unwraps): one shared load, the counter bumped on the line
+        """A census over the look's own source (the gate decorator unwraps): one shared load by either spelling of the shared
+        door (`jd.load_goals_shared` is a prefix of both), counted over non-comment lines, the counter bumped on the line
         after it so the two cannot drift, and the gate around the look reads no store (a skipped look needs no data)."""
         lines = inspect.getsource(km._auto_nudge_session).splitlines()
-        at = [i for i, ln in enumerate(lines) if "jd.load_goals_shared_or_fault(" in ln]
-        self.assertEqual(len(at), 1, "one shared load in the walk's look: a second call site is a second load per look (condition 7, the walk's bound)")
+        at = [i for i, ln in enumerate(lines) if "jd.load_goals_shared" in ln and not ln.strip().startswith("#")]
+        self.assertEqual(len(at), 1, "one shared load in the walk's look, by either spelling of the shared door: a second call site is "
+                                     "a second load per look (condition 7, the walk's bound)")
         bump = [i for i, ln in enumerate(lines) if '_NUDGE_WALK_STATS["loads"] += 1' in ln]
         self.assertEqual(len(bump), 1, "the counter is bumped once")
         self.assertEqual(bump[0], at[0] + 1, "on the line after the load")
