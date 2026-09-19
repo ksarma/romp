@@ -1970,6 +1970,154 @@ PY
     [ "$status" -eq 0 ]
 }
 
+# ─── the mutation pass over round 3 (2026-09-19): the pins the reviewer's mutation lens found missing ───────────
+# Each case reds under one mutation of bin/romp-service that the round-3 cases left green: the plutil reader's branch
+# for a Label that does not extract returning 0, _xml_unescape undoing &amp; first, the unit's instance line
+# re-encoded instead of replayed, and the ROMP_PLUTIL knob ignored (this host has no plutil, so the knob and the
+# default resolved the same reader in every round-3 case).
+
+@test "rewrite (macOS): through plutil, a plist from which no Label extracts (no Label entry, or not a plist at all) is refused, exit 5 and byte for byte, nothing read out of it, on rewrite, rewrite --check and the marked child's install" {
+    # Mutation pass (2026-09-19): the round-3 cases drove the plutil reader with a Label present (romp's, or another
+    # label), so the branch for a Label that does not extract could return 0 with every case green; the stand-in then
+    # read the values out of the file, and a plist with no Label was rewritten at exit 0.
+    unset ROMP_SERVICE_NO_LOAD
+    _plutil_stub
+    local plist="$ROMP_LAUNCHD_DIR/com.romp.manager.plist"
+    ROMP_KERNEL_PORT=29866 ROMP_OS_OVERRIDE=Darwin ROMP_SERVICE_NO_LOAD=1 "$SVC" install >/dev/null
+    cp "$plist" "$plist.romp"
+    # every entry romp writes except Label (re-saved, so the stand-in parses it and finds no Label)
+    python3 - "$plist" <<'PY'
+import plistlib, sys
+with open(sys.argv[1], "rb") as f:
+    d = plistlib.load(f)
+del d["Label"]
+with open(sys.argv[1], "wb") as f:
+    plistlib.dump(d, f)
+PY
+    cp "$plist" "$plist.nolabel"
+    printf 'not a property list\n' > "$plist.text"                     # not a plist at all: the parser refuses it
+    local shape
+    for shape in nolabel text; do
+        cp "$plist.$shape" "$plist"
+        PATH="$TEST_DIR/plutil-bin:$PATH" ROMP_OS_OVERRIDE=Darwin run "$SVC" rewrite
+        [ "$status" -eq 5 ]
+        [[ "$output" == *"plutil could not extract its Label entry"* ]]
+        [[ "$output" == *"not a plist launchd would load, or one with no Label"* ]]
+        [[ "$output" == *"nothing was rewritten"* ]]
+        [[ "$output" == *"romp-service install from the shell and clone that should own the service"* ]]
+        [[ "$output" != *"Rewrote"* ]]
+        cmp -s "$plist" "$plist.$shape"
+        [ ! -e "$plist.tmp" ]
+        run grep -c '"action": "service-rewrite"' "$XDG_STATE_HOME/romp/restart-audit.jsonl"
+        [ "$status" -ne 0 ]                                              # nothing journaled
+        PATH="$TEST_DIR/plutil-bin:$PATH" ROMP_OS_OVERRIDE=Darwin run "$SVC" rewrite --check
+        [ "$status" -eq 5 ]
+        [[ "$output" == *"plutil could not extract its Label entry"* ]]
+        [[ "$output" != *"agree"* ]]
+        cmp -s "$plist" "$plist.$shape"
+        run env -i HOME="$HOME" PATH="$TEST_DIR/plutil-bin:$PATH" ROMP_UPDATE_CHILD=1 ROMP_OS_OVERRIDE=Darwin ROMP_SERVICE_NO_LOAD=1 ROMP_NO_NODE_COPY=1 \
+            ROMP_LAUNCHD_DIR="$ROMP_LAUNCHD_DIR" ROMP_MANAGER_BIN="$ROMP_MANAGER_BIN" "$SVC" install
+        [ "$status" -eq 5 ]
+        [[ "$output" == *"plutil could not extract its Label entry"* ]]
+        cmp -s "$plist" "$plist.$shape"                                  # the marked child wrote nothing either
+    done
+    # the control: romp's own plist, through the same stand-in, reads and rewrites
+    cp "$plist.romp" "$plist"
+    PATH="$TEST_DIR/plutil-bin:$PATH" ROMP_OS_OVERRIDE=Darwin run "$SVC" rewrite
+    [ "$status" -eq 0 ]
+    grep -q '<key>ROMP_KERNEL_PORT</key><string>29866</string>' "$plist"
+}
+
+@test "rewrite (macOS): ROMP_PLUTIL names the reader: a plutil named by path reads a re-saved plist with none on PATH, and a path that does not exist runs the one-line fallback past a plutil that is on PATH" {
+    # Mutation pass (2026-09-19): this host has no plutil, so with the knob ignored (PLUTIL=plutil) every round-3 case
+    # still resolved the reader it asked for: the stand-in was on PATH under that name where the knob named it, and the
+    # knob's path that does not exist found nothing where the default found nothing either. Told apart both ways here.
+    unset ROMP_SERVICE_NO_LOAD
+    _plutil_stub
+    local plist="$ROMP_LAUNCHD_DIR/com.romp.manager.plist"
+    ROMP_KERNEL_PORT=29866 ROMP_OS_OVERRIDE=Darwin ROMP_SERVICE_NO_LOAD=1 "$SVC" install >/dev/null
+    cp "$plist" "$plist.romp"
+    # the knob by path, the stand-in NOT on PATH under any name: a binary plist reads through it
+    _resave "$plist" binary
+    ROMP_PLUTIL="$TEST_DIR/plutil-bin/plutil" ROMP_OS_OVERRIDE=Darwin run "$SVC" rewrite
+    [ "$status" -eq 0 ]
+    grep -q '<key>ROMP_KERNEL_PORT</key><string>29866</string>' "$plist"
+    grep -q '<key>Label</key><string>com.romp.manager</string>' "$plist"
+    # the knob at a path that does not exist, the stand-in ON PATH as plutil: the fallback runs and refuses the re-saved form
+    cp "$plist.romp" "$plist"
+    _resave "$plist" xml
+    cp "$plist" "$plist.saved"
+    PATH="$TEST_DIR/plutil-bin:$PATH" ROMP_PLUTIL="$TEST_DIR/no-plutil-here" ROMP_OS_OVERRIDE=Darwin run "$SVC" rewrite
+    [ "$status" -eq 5 ]
+    [[ "$output" == *"no plutil is available"* ]]
+    cmp -s "$plist" "$plist.saved"
+    PATH="$TEST_DIR/plutil-bin:$PATH" ROMP_PLUTIL="$TEST_DIR/no-plutil-here" ROMP_OS_OVERRIDE=Darwin run "$SVC" rewrite --check
+    [ "$status" -eq 5 ]
+    cmp -s "$plist" "$plist.saved"
+    # the control: the same PATH with the knob unset reads it
+    PATH="$TEST_DIR/plutil-bin:$PATH" ROMP_OS_OVERRIDE=Darwin run "$SVC" rewrite
+    [ "$status" -eq 0 ]
+    grep -q '<key>ROMP_KERNEL_PORT</key><string>29866</string>' "$plist"
+}
+
+@test "rewrite (macOS): the one-line reader undoes &amp; last: a value whose text is an entity (&lt;, &gt;) reads back as written, agrees with the owning shell and is unchanged by a clean-shell rewrite" {
+    # Mutation pass (2026-09-19): the round-3 escaping cases carried &, <, > and a quote, which decode the same in any
+    # order; a value whose TEXT is an entity (a directory named with &lt;) is written as &amp;lt; and, undone in the
+    # wrong order, decodes twice to <, so the owning shell was refused over a path it never changed and a clean-shell
+    # rewrite wrote the doubly decoded value back. The fallback reader alone: plutil decodes itself.
+    unset ROMP_SERVICE_NO_LOAD
+    local plist="$ROMP_LAUNCHD_DIR/com.romp.manager.plist" none="$TEST_DIR/no-plutil-here"
+    local envf="$TEST_DIR/lit &lt;x dir/service.env" cc="$TEST_DIR/cc &gt; dir"
+    mkdir -p "$cc"
+    ROMP_PLUTIL="$none" ROMP_SERVICE_ENV_FILE="$envf" CLAUDE_CONFIG_DIR="$cc" ROMP_OS_OVERRIDE=Darwin ROMP_SERVICE_NO_LOAD=1 "$SVC" install >/dev/null
+    grep -qF '<key>ROMP_SERVICE_ENV_FILE</key><string>'"$TEST_DIR"'/lit &amp;lt;x dir/service.env</string>' "$plist"   # escaped once: the & of the text
+    grep -qF '<key>CLAUDE_CONFIG_DIR</key><string>'"$TEST_DIR"'/cc &amp;gt; dir</string>' "$plist"
+    [ "$(_plist_get "$plist" EnvironmentVariables.ROMP_SERVICE_ENV_FILE)" = "$envf" ]
+    [ "$(_plist_get "$plist" EnvironmentVariables.CLAUDE_CONFIG_DIR)" = "$cc" ]
+    cp "$plist" "$plist.once"
+    ROMP_PLUTIL="$none" ROMP_SERVICE_ENV_FILE="$envf" CLAUDE_CONFIG_DIR="$cc" ROMP_OS_OVERRIDE=Darwin run "$SVC" rewrite   # the owning shell agrees
+    [ "$status" -eq 0 ]
+    cmp -s "$plist" "$plist.once"
+    ROMP_PLUTIL="$none" ROMP_OS_OVERRIDE=Darwin run "$SVC" rewrite                                                            # the clean shell changes nothing
+    [ "$status" -eq 0 ]
+    cmp -s "$plist" "$plist.once"
+    [ "$(_plist_get "$plist" EnvironmentVariables.ROMP_SERVICE_ENV_FILE)" = "$envf" ]
+    [ "$(_plist_get "$plist" EnvironmentVariables.CLAUDE_CONFIG_DIR)" = "$cc" ]
+    # a shell carrying the doubly decoded text is a DIFFERENT value, refused naming the file's as written
+    ROMP_PLUTIL="$none" ROMP_SERVICE_ENV="$TEST_DIR/lit <x dir/service.env" ROMP_OS_OVERRIDE=Darwin run "$SVC" rewrite
+    [ "$status" -eq 5 ]
+    [[ "$output" == *"the file reads $envf, this environment names $TEST_DIR/lit <x dir/service.env"* ]]
+    cmp -s "$plist" "$plist.once"
+}
+
+@test "rewrite (Linux): an unquoted instance line carrying a % an administrator wrote for a specifier goes back as written; re-encoded, the % would be doubled" {
+    # Mutation pass (2026-09-19): the round-3 quoting case replayed hand-quoted lines whose re-encoding gives the same
+    # bytes (a %% decoded to % is doubled back; whitespace is quoted back), so the replay branch could fall through to
+    # _unit_env_line with the case green. An unquoted %h, written for systemd to expand, is the value the replay is
+    # for: decoded it is still %h, and re-encoded it becomes a quoted %%h, which systemd reads as a literal.
+    unset ROMP_SERVICE_NO_LOAD
+    local unit="$ROMP_SYSTEMD_DIR/romp-manager.service"
+    _old_unit "$unit"
+    printf 'Environment=CLAUDE_CONFIG_DIR=%%h/.claude-romp\n' >> "$unit"                 # unquoted, a specifier for systemd
+    local stub; stub="$(_systemctl_stub active)"
+    ROMP_SYSTEMCTL="$stub" ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite                      # the clean shell
+    [ "$status" -eq 0 ]
+    grep -qxF 'Environment=CLAUDE_CONFIG_DIR=%h/.claude-romp' "$unit"                     # as written: unquoted, one %
+    [ "$(grep -cE '^Environment="?CLAUDE_CONFIG_DIR=' "$unit")" -eq 1 ]
+    run grep -F '%%h' "$unit"
+    [ "$status" -ne 0 ]                                                                    # never doubled
+    grep -q '^Environment=MALLOC_ARENA_MAX=2$' "$unit"                                      # the release's line arrived beside it
+    # a second rewrite leaves it as it is, and the compare reads the value as the file carries it
+    ROMP_SYSTEMCTL="$stub" ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite
+    [ "$status" -eq 0 ]
+    grep -qxF 'Environment=CLAUDE_CONFIG_DIR=%h/.claude-romp' "$unit"
+    CLAUDE_CONFIG_DIR="$TEST_DIR/other" ROMP_SYSTEMCTL="$stub" ROMP_OS_OVERRIDE=Linux run "$SVC" rewrite
+    [ "$status" -eq 5 ]
+    [[ "$output" == *"CLAUDE_CONFIG_DIR: the file carries %h/.claude-romp, this environment carries $TEST_DIR/other"* ]]
+    grep -qxF 'Environment=CLAUDE_CONFIG_DIR=%h/.claude-romp' "$unit"
+}
+
+
 # ─── stop / start: the supervisor halves of `romp down` / `romp up` ──────────────────────────
 # A stop has to go THROUGH the supervisor: the manager exiting on its own is a crash to
 # Restart=always / KeepAlive and it respawns within seconds. ROMP_SYSTEMCTL stubs systemctl the

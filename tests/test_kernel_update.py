@@ -3323,6 +3323,97 @@ class AssembledUpdateRoad(Fresh):
                 self.assertEqual(f.read(), "ran\n")
 
 
+    def test_the_preflight_honours_romp_service_bin_as_install_sh_does(self):
+        # Mutation pass over round 3 (2026-09-19): every case above ran the preflight through the tree's own
+        # bin/romp-service, which is the default, so `svc="$svc_default"` (the knob ignored) kept them all green.
+        # install.sh's service step runs `${ROMP_SERVICE_BIN:-$ROMP_DIR/bin/romp-service}` when it is executable and
+        # skips the step otherwise; the preflight does the same, so the check it runs is the check the deploy's own
+        # service step will run.
+        with tempfile.TemporaryDirectory() as tmp:
+            clone, base, tag_sha, g = self._clone(tmp)
+            # a romp-service the knob names, outside the tree, that refuses; the tree's own (the default) agrees
+            named = os.path.join(tmp, "elsewhere", "romp-service")
+            os.makedirs(os.path.dirname(named))
+            with open(named, "w") as f:
+                f.write("#!/usr/bin/env bash\necho \"$*\" >> \"$ROMP_TEST_NAMED_SVC_LOG\"\n"
+                        "if [ \"$1 $2\" = 'rewrite --check' ]; then\n"
+                        "  echo 'romp-service: the login unit on disk and this environment disagree; nothing was rewritten:' >&2\n"
+                        "  echo '  ROMP_STATE_DIR: the file carries /srv/second, this environment carries /srv/other' >&2\n"
+                        "  exit %d\nfi\nexit 0\n" % self.IDENTITY_REFUSED)
+            os.chmod(named, 0o755)
+            named_log = os.path.join(tmp, "named-svc.log")
+            r, env = self._run(clone, {"ROMP_SERVICE_BIN": named, "ROMP_TEST_NAMED_SVC_LOG": named_log})
+            self.assertEqual(g(clone, "rev-parse", "HEAD"), base, "the named romp-service refused, so the checkout did not move")
+            self.assertEqual(g(clone, "tag", "-l", "v9.9.9"), "", "nothing fetched")
+            with open(named_log) as f:
+                self.assertEqual(f.read().split("\n")[0], "rewrite --check", "the check ran through the binary the knob names")
+            self.assertFalse(os.path.exists(env["ROMP_TEST_SVC_LOG"]), "the tree's own romp-service, the default, did not run")
+            self.assertFalse(os.path.exists(env["ROMP_TEST_INSTALL_LOG"]), "install.sh never ran")
+            rep = self._report()
+            self.assertFalse(rep["ok"])
+            self.assertIn("would be refused", rep["why"])
+            self.assertIn("ROMP_STATE_DIR: the file carries /srv/second", (jd.STATE / "update.log").read_text(),
+                          "the named binary's own lines are in update.log")
+        with tempfile.TemporaryDirectory() as tmp:
+            # the knob naming a path that is not executable: install.sh skips its service step, so the preflight skips
+            # too, and the tree's own romp-service, which would refuse here, is not consulted in its place
+            clone, base, tag_sha, g = self._clone(tmp)
+            r, env = self._run(clone, {"ROMP_SERVICE_BIN": os.path.join(tmp, "no-such-romp-service"),
+                                       "ROMP_TEST_CHECK_RC": str(self.IDENTITY_REFUSED)})
+            self.assertEqual(g(clone, "rev-parse", "HEAD"), tag_sha, "no check ran, so the tree moved to the release")
+            self.assertFalse(os.path.exists(env["ROMP_TEST_SVC_LOG"]), "the default was not consulted in the knob's place")
+            with open(env["ROMP_TEST_INSTALL_LOG"]) as f:
+                self.assertEqual(f.read(), "ran\n")
+
+    def test_a_failed_fetch_and_a_failed_fast_forward_each_have_their_own_report_with_the_tree_unmoved_and_the_marker_standing(self):
+        # Mutation pass over round 3 (2026-09-19): the cases above end at the preflight, at the install or on success,
+        # so the fetch and the fast-forward legs of the step-recorded report ran in none of them, and both could report
+        # the old generic line (the fetch, fast-forward or install failed) with the class green.
+        with tempfile.TemporaryDirectory() as tmp:
+            clone, base, tag_sha, g = self._clone(tmp)
+            g(clone, "remote", "set-url", "origin", os.path.join(tmp, "no-such-remote"))   # the fetch cannot reach its remote
+            (jd.STATE / "update-attempted.json").write_text(json.dumps({"tag": "v9.9.9", "t": 1}))
+            r, env = self._run(clone, {})
+            self.assertEqual(g(clone, "rev-parse", "HEAD"), base, "the checkout did not move")
+            self.assertEqual(g(clone, "tag", "-l", "v9.9.9"), "", "the tag was never fetched")
+            with open(env["ROMP_TEST_SVC_LOG"]) as f:
+                self.assertEqual(f.read().split("\n")[0], "rewrite --check", "the preflight ran and agreed before the fetch")
+            self.assertFalse(os.path.exists(env["ROMP_TEST_INSTALL_LOG"]), "install.sh never ran")
+            rep = self._report()
+            self.assertEqual((rep["ok"], rep["tag"], rep["why"]),
+                             (False, "v9.9.9", "the fetch of v9.9.9 failed; the checkout did not move"))
+            self.assertNotIn("advanced", rep)
+            self.assertTrue((jd.STATE / "update-attempted.json").exists(), "a failure before the tree moved leaves the marker")
+            km._UPDATE_STATE[0] = "running"
+            km._consume_update_report(running_only=True)
+            ns = self.notices()
+            self.assertEqual(len(ns), 1)
+            self.assertIn("the fetch of v9.9.9 failed", ns[0]["text"])
+            (jd.STATE / "update-attempted.json").unlink()
+        with km._SYNC_LOCK:
+            del km._SYNC_NOTICES[:]
+        with tempfile.TemporaryDirectory() as tmp:
+            clone, base, tag_sha, g = self._clone(tmp)
+            g(clone, "commit", "-qm", "a local commit the release does not carry", "--allow-empty")   # diverged: no fast-forward
+            local = g(clone, "rev-parse", "HEAD")
+            (jd.STATE / "update-attempted.json").write_text(json.dumps({"tag": "v9.9.9", "t": 1}))
+            r, env = self._run(clone, {})
+            self.assertEqual(g(clone, "rev-parse", "HEAD"), local, "the checkout did not move")
+            self.assertEqual(g(clone, "tag", "-l", "v9.9.9"), "v9.9.9", "the fetch itself succeeded")
+            self.assertFalse(os.path.exists(env["ROMP_TEST_INSTALL_LOG"]), "install.sh never ran")
+            rep = self._report()
+            self.assertEqual((rep["ok"], rep["tag"], rep["why"]),
+                             (False, "v9.9.9", "the fast-forward onto v9.9.9 failed; the checkout did not move"))
+            self.assertNotIn("advanced", rep)
+            self.assertTrue((jd.STATE / "update-attempted.json").exists(), "a failure before the tree moved leaves the marker")
+            km._UPDATE_STATE[0] = "running"
+            km._consume_update_report(running_only=True)
+            ns = self.notices()
+            self.assertEqual(len(ns), 1)
+            self.assertIn("the fast-forward onto v9.9.9 failed", ns[0]["text"])
+            (jd.STATE / "update-attempted.json").unlink()
+
+
 class KernelIdFloor(unittest.TestCase):
     """tests/conftest.py floors ROMP_KERNEL_ID to the primary's id at import (round 2 of the install-rewrite review,
     2026-09-18): the name is a new manager-to-kernel variable every session shell inherits, and a suite run from a shell

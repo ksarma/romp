@@ -313,7 +313,9 @@ PY
 _svc_stub() {   # write a fake romp-service to $1; behavior toggled by ROMP_SVC_RUNNING / ROMP_SVC_FAIL / ROMP_SVC_REWRITE_FAIL
                 # (exit 1, a reload that failed) / ROMP_SVC_REWRITE_REFUSE (exit 5, the identity refusal, with romp-service's
                 # own two lines) / ROMP_SVC_INSTALL_REFUSE (the same refusal on the install road, the marked update child's) /
-                # ROMP_SVC_NOT_INSTALLED (status says not installed AND running; rewrite exits 3)
+                # ROMP_SVC_NOT_INSTALLED (status says not installed AND running; rewrite exits 3) /
+                # ROMP_SVC_MINT_PORT (install writes that port into the state root's serve-port record beside a
+                # serve-token, as the kernel the started service brings up does moments after it loads)
     cat > "$1" <<'SH'
 #!/usr/bin/env bash
 echo "$1" >> "$ROMP_SVC_LOG"
@@ -324,7 +326,8 @@ case "$1" in
   install) [[ -n "${ROMP_SVC_FAIL:-}" ]] && { echo "romp-service: bootstrap lost the drain-race" >&2; exit 1; }
            [[ -n "${ROMP_SVC_INSTALL_REFUSE:-}" ]] && { echo "romp-service: the login service unit on disk and this environment disagree; nothing was rewritten:" >&2
                                                        echo "  ROMP_STATE_DIR: the file carries /srv/second, this environment carries /srv/other" >&2; exit 5; }
-           [[ -n "${ROMP_SVC_HELD:-}" ]] && { echo "romp-service: the agent's manager exited at once because a manager is ALREADY serving on :7432 outside the login service" >&2; exit 3; } ;;
+           [[ -n "${ROMP_SVC_HELD:-}" ]] && { echo "romp-service: the agent's manager exited at once because a manager is ALREADY serving on :7432 outside the login service" >&2; exit 3; }
+           [[ -n "${ROMP_SVC_MINT_PORT:-}" ]] && { mkdir -p "$ROMP_STATE_DIR"; printf '%s\n' "$ROMP_SVC_MINT_PORT" > "$ROMP_STATE_DIR/serve-port"; printf 'tok123\n' > "$ROMP_STATE_DIR/serve-token"; } ;;
   rewrite) [[ -n "${ROMP_SVC_REWRITE_FAIL:-}" ]] && { echo "romp-service: the unit was written but systemd did NOT reload it" >&2; exit 1; }
            [[ -n "${ROMP_SVC_REWRITE_REFUSE:-}" ]] && { echo "romp-service: the login unit on disk and this environment disagree; nothing was rewritten:" >&2
                                                        echo "  ROMP_KERNEL_PORT: the file carries 29866, this environment carries 31855" >&2; exit 5; }
@@ -586,6 +589,39 @@ EOF
     [ "$status" -eq 0 ]
     [[ "$output" == *"http://127.0.0.1:31857/"* ]]
     [[ "$output" != *"token="* ]]
+}
+
+@test "install.sh: the closing link's port is read after the service step: a fresh install whose started kernel writes its serve-port record beside the token names that port" {
+    # Mutation pass over round 3 (2026-09-19): the serve-port case above seeds the record before the run, which the
+    # first read (before the service step) already sees, so the second read could go with the case green. A fresh
+    # install has no record until the service it installs starts the kernel, which writes serve-port beside the token
+    # it mints; the stub's install does what that kernel does, and the link must name the port it wrote.
+    unset ROMP_NO_SERVICE ROMP_KERNEL_PORT
+    _svc_stub "$TEST_DIR/romp-service"
+    export ROMP_SVC_LOG="$TEST_DIR/svc.log" ROMP_SVC_MINT_PORT=31855   # not running: the install road, whose install writes the record and the token
+    [ ! -e "$ROMP_STATE_DIR/serve-port" ]
+    [ ! -e "$ROMP_STATE_DIR/serve-token" ]
+    ROMP_SERVICE_BIN="$TEST_DIR/romp-service" run "$ROMP_DIR/install.sh"
+    [ "$status" -eq 0 ]
+    grep -qx install "$TEST_DIR/svc.log"
+    [ "$(cat "$ROMP_STATE_DIR/serve-port")" = 31855 ]
+    [[ "$output" == *"http://127.0.0.1:31855/?token=tok123"* ]]
+    [[ "$output" != *"29855"* ]]
+}
+
+@test "install.sh: the failed-install line names the dashboard port the state root's record gives, not the default" {
+    # Mutation pass over round 3 (2026-09-19): the FAILED case above runs with no record and no variable, where the
+    # computed port and a literal 29855 read alike. A renumbered install's record names its own port.
+    unset ROMP_NO_SERVICE ROMP_KERNEL_PORT
+    _svc_stub "$TEST_DIR/romp-service"
+    export ROMP_SVC_LOG="$TEST_DIR/svc.log" ROMP_SVC_FAIL=1   # not running + install exits 1
+    mkdir -p "$ROMP_STATE_DIR"
+    printf '31855\n' > "$ROMP_STATE_DIR/serve-port"
+    ROMP_SERVICE_BIN="$TEST_DIR/romp-service" run "$ROMP_DIR/install.sh"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp-service install FAILED"* ]]
+    [[ "$output" == *"dashboard will be dead on :31855"* ]]
+    [[ "$output" != *"29855"* ]]
 }
 
 # ── The closing dashboard link (the user 2026-07-25, who wanted installing alone to be
