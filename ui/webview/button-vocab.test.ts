@@ -10,6 +10,10 @@
 //     .on keeps the reverse-highlight — accent is never the resting dress.
 //  4. PRESS — the families share ONE transition string (color/border/background 0.12s + transform
 //     0.08s) and the .stop-btn's :active scale press cue (0.96 for word buttons).
+//  5. ACCENT CHROME FOLLOWS THE THEME (2026-09-19): a button whose text is var(--accent) draws its border
+//     from the same token in both theme blocks, never from a dark-accent literal. The held-mail card's
+//     Approve button (.fdismiss.fq-ok) wrote its border as rgba(156, 210, 255, 0.6), the dark accent at
+//     0.6, so in the light theme it computed the clay text inside a blue edge.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -110,4 +114,43 @@ test("ONE transition string + the :active press cue on every touched family", ()
   assert.ok(GEAR.includes("#rs-keys-btn:active { transform: scale(0.96); }"));
   assert.ok(GEAR.includes(".ra-openbtn:active { transform: scale(0.96); }"));
   assert.ok(GEAR.includes(".ra-periods button:active, .ra-group button:active, .ra-metric button:active { transform: scale(0.96); }"));
+});
+
+/** A theme block's tokens, comments stripped first (a declaration after a multi-line comment must still count). */
+function tokens(css: string, opener: string): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const m of block(css, opener).replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/(--[a-z0-9-]+):\s*([^;]+);/gi)) out.set(m[1], m[2].trim());
+  return out;
+}
+type RGBA = [number, number, number, number];
+/** A declared colour under one theme's tokens: a hex, an rgb()/rgba(), var(--x) through the block, or the sheet's
+ *  accent-tint idiom color-mix(in srgb, <colour> N%, transparent). Anything else fails by name. */
+function resolve(v: string, theme: Map<string, string>): RGBA {
+  v = v.trim();
+  const hex = v.match(/^#([0-9a-f]{6})$/i);
+  if (hex) return [0, 2, 4].map((i) => parseInt(hex[1].slice(i, i + 2), 16)).concat(1) as RGBA;
+  const ra = v.match(/^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*([\d.]+))?\s*\)$/);
+  if (ra) return [+ra[1], +ra[2], +ra[3], ra[4] === undefined ? 1 : parseFloat(ra[4])];
+  const vr = v.match(/^var\((--[a-z0-9-]+)\)$/i);
+  if (vr) { const t = theme.get(vr[1]); assert.ok(t, vr[1] + " is declared in the theme block"); return resolve(t!, theme); }
+  const mix = v.match(/^color-mix\(in srgb, (.+) (\d+)%, transparent\)$/);
+  if (mix) { const c = resolve(mix[1], theme); return [c[0], c[1], c[2], c[3] * (+mix[2] / 100)]; }
+  assert.fail("not a colour this pin can read: " + v);
+}
+
+test("the held-mail Approve button's edge follows the theme's accent: no dark-accent literal, the clay in light", () => {
+  const rule = FEED.match(/\n\.fdismiss\.fq-ok \{([^}]*)\}/);
+  assert.ok(rule, ".fdismiss.fq-ok rule present");
+  const decl = rule![1];
+  const color = decl.match(/(?:^|[;\s])color:\s*([^;]+);/), border = decl.match(/border-color:\s*([^;]+);/);
+  assert.ok(color && border, "the rule declares color and border-color");
+  assert.equal(color![1].trim(), "var(--accent)", "the text is the accent token");
+  assert.doesNotMatch(border![1], /156,\s*210,\s*255|#9cd2ff/i, "the border carries no dark-accent literal: " + border![1]);
+  for (const [name, opener, accent] of [["dark", ":root {", [156, 210, 255]], ["light", "body.theme-light {", [194, 65, 12]]] as const) {
+    const theme = tokens(FEED, opener);
+    const text = resolve(color![1], theme), edge = resolve(border![1], theme);
+    assert.deepEqual(text.slice(0, 3), accent, name + ": the text resolves to the theme's accent");
+    assert.deepEqual(edge.slice(0, 3), accent, name + ": the edge is the same hue as the text");
+    assert.equal(edge[3], 0.6, name + ": the edge keeps the 0.6 tint the dark theme always drew");
+  }
 });
