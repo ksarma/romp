@@ -512,9 +512,10 @@ _GC_HOOK_SAID = [False]   # whether a failure inside the gc.callbacks hook has b
 # outgrew the live set read it nine times longer, so after a deploy the field reads gen.2's msLast and msMax and
 # collectedLast per pass. Thresholds 0
 # and 1 stay as CPython sets them (700, 10 through 3.12; 2000, 10 from 3.13). The knob: unset or empty applies the
-# default; 0 leaves CPython's own thresholds (the off switch, silent); a positive integer applies that value; anything
-# else is said once on stderr and the default applied. The reason lines are keyed in _GC_THRESHOLD_SAID so each is said
-# exactly once per process and two different reasons (a malformed knob and a declining interpreter) both get their line.
+# default; 0 leaves CPython's own thresholds (the off switch, silent); an integer from 1 to 2**31 - 1 (the C int
+# gc.set_threshold takes) applies that value; anything else is said once on stderr and the default applied. The reason
+# lines are keyed in _GC_THRESHOLD_SAID so each is said exactly once per process and two different reasons (a malformed
+# knob and a declining interpreter) both get their line.
 GC_GEN2_THRESHOLD_KNOB = "ROMP_GC_GEN2_THRESHOLD"
 GC_GEN2_THRESHOLD_DEFAULT = 1000
 _GC_THRESHOLD_SAID = set()   # the reason keys _gc_threshold_say has written: "knob", "interpreter", "readback", "error"
@@ -549,8 +550,10 @@ def _gc_gen2_threshold_reason(impl=None, version=None, abiflags=None):
       generational; the churn ran one or two automatic collections, all reported as generation 0, under either setting,
       and identically with the GIL re-enabled by PYTHON_GIL=1, so the gate reads the BUILD fact, never the runtime GIL
       state. Declined.
-    - Not CPython, or a CPython outside 3.10 to 3.14: unmeasured, declined (the restricted side; a visible line, not a
-      silent degrade)."""
+    - Not CPython, or a CPython outside 3.10 to 3.14: declined (the restricted side; a visible line, not a silent
+      degrade). CPython 3.15.0b4 was measured classic (the value reads back; 201 full collections per 4,316
+      generation-1 ones under 10, exactly 4 under 1000), but 3.14 changed collectors within its own patch series, so a
+      beta does not settle the final's collector; 3.15 declines until its final release is measured."""
     impl = sys.implementation.name if impl is None else impl
     version = tuple(sys.version_info[:3]) if version is None else tuple(version)[:3]
     abiflags = getattr(sys, "abiflags", "") if abiflags is None else abiflags

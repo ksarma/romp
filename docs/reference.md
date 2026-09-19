@@ -2680,17 +2680,18 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   `gcGen2MsSum`, cumulative, to difference per interval beside `rssKb`.
   The kernel raises the third threshold once at boot to
   `ROMP_GC_GEN2_THRESHOLD` (default 1,000; 0 keeps CPython's own thresholds;
-  a value that is not a non-negative integer is said once on stderr and the
-  default applied), leaving the first two as CPython set them. A full
-  collection needs the generation-2 count over that threshold AND the
-  objects promoted since the last full collection over a quarter of the
-  long-lived total; at CPython's default of 10 the count gate never bound (a
-  production kernel at 6.8 h up read counts of 175 against 10), so the
-  quarter rule alone timed full collections: 103 an hour, one every 35 s,
-  each about 3 s holding the interpreter lock, 8.5% of a core. At 1,000 the
-  collector's own generation-1 count (5.6 a second measured there) keeps
-  them at least 1,001 generation-1 collections apart, at that rate at least
-  179 s, at most about 20 an hour. Each pause stays about the same length:
+  a value that is not a non-negative integer up to 2,147,483,647, the C int
+  the collector takes, is said once on stderr and the default applied),
+  leaving the first two as CPython set them. A full collection needs the
+  generation-2 count over that threshold AND the objects promoted since the
+  last full collection over a quarter of the long-lived total; at CPython's
+  default of 10 the count gate never bound (a production kernel at 6.8 h up
+  read counts of 175 against 10), so the quarter rule alone timed full
+  collections: 103 an hour, one every 35 s, each about 3 s holding the
+  interpreter lock, 8.5% of a core. At 1,000 the collector's own
+  generation-1 count (5.6 a second measured there) keeps them at least 1,001
+  generation-1 collections apart, at that rate at least 179 s, at most about
+  20 an hour. Each pause stays about the same length:
   it walks the same long-lived population either way and also frees the
   cyclic garbage accrued since the previous one, about five times today's
   per pass (a lab with an acyclic churn read the mean pause 5% higher; one
