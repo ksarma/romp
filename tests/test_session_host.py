@@ -1060,6 +1060,29 @@ class SocketMode(unittest.TestCase):
         self.assertEqual(mode, 0o600, "the host published regardless")
         self.assertEqual(self._temps(), [foreign], "the foreign owner's temp is left: alive, and not ours to judge")
 
+    def test_two_hundred_dead_owner_temps_are_swept_in_one_launch_so_the_sweep_has_no_per_launch_cap(self):
+        """The sweep's stated non-behaviour, pinned (the mutation pass of round 3, 2026-09-19: _sweep_stale_temps's
+        docstring says there is no per-launch cap on the sweep, and no test could red a cap, since no case planted more
+        than three temps). Two hundred temps whose owners are gone, the count the docstring's cost figure was measured
+        at, are all swept by the one launch, so a cap below that count leaves the rest standing and reds here. The
+        owners are pids above 2^22, Linux's largest pid_max (and far above macOS's), so each names no process, which the
+        case checks with the sweep's own probe before the run. The glob that reads hosts/ is shown reading it by counting
+        the two hundred back before the launch: an empty listing after it is the sweep's work, not an unreadable
+        directory's answer (glob returns nothing for a directory it cannot read)."""
+        pids = range(2 ** 22 + 1, 2 ** 22 + 201)
+        for pid in pids:
+            with self.assertRaises(ProcessLookupError, msg="pid %d names a process: not a dead owner" % pid):
+                os.kill(pid, 0)
+        names = sorted(sh._b32(pid, 5) + "0000.tmp" for pid in pids)
+        self.assertEqual(len(names), 200)
+        for name in names:
+            (self.pub.parent / name).write_text("a temp")
+        self.assertEqual(self._temps(), names, "two hundred dead owners' temps stand in hosts/, and the listing reads them all")
+        mode, rc = self._run_host()
+        self.assertEqual(rc, 0, self.host_log[-3:])
+        self.assertEqual(mode, 0o600, "the host published regardless")
+        self.assertEqual(self._temps(), [], "every dead owner's temp is gone after the one launch: no per-launch cap")
+
     def test_the_temp_name_is_writer_unique_and_the_published_names_length(self):
         """The length proof and the identity proof (the review of this fix, 2026-09-18 and 2026-09-19): the socket path
         budget is sun_path (SOCK_PATH_MAX, 107 usable bytes on Linux), the published path IS that budget on the sweep's
@@ -1170,6 +1193,53 @@ class SocketMode(unittest.TestCase):
         here in round 3 from the budget refusal they used, which precedes the spawn now. Returns the sid."""
         self._reroot(sh.SOCK_PATH_MAX, sid="web")
         return "web"
+
+    def _refused_by(self, fact, plant, restore, rc, step, error, errno_, at):
+        """One class-specific fact _assert_refused reads, falsified ALONE in the case's or the host's bookkeeping by
+        `plant`: the helper fails and its message names the fact; `restore` puts the bookkeeping back and the helper
+        passes again (the accept twin, in the same subtest)."""
+        with self.subTest(fact=fact):
+            plant()
+            try:
+                with self.assertRaises(AssertionError, msg="the helper is satisfied with this fact false") as ctx:
+                    self._assert_refused(rc, step, error, errno_, at=at)
+            finally:
+                restore()
+            self.assertIn(fact, str(ctx.exception), "the helper names the fact it failed on")
+            self._assert_refused(rc, step, error, errno_, at=at)
+
+    def test_a_prelude_refusal_is_not_satisfied_by_the_post_spawn_classs_bookkeeping_on_any_fact_the_helper_reads(self):
+        """_assert_refused against its refusable inputs, the prelude class (the mutation pass of round 3, 2026-09-19:
+        the helper's docstring says a case cannot claim one refusal class and be satisfied by the other's bookkeeping,
+        and no test held it to that, so its prelude branch replaced by `pass` left the module green while the seven
+        prelude cases that assert through it alone lost their no-lease, no-transport, no-identity and no-cli-spawned
+        checks). A real budget refusal, then each of the four facts the prelude branch reads falsified alone, in the
+        recording stubs or on the host: the helper fails naming that fact, and passes once it is restored."""
+        self._reroot(sh.SOCK_PATH_MAX + 1)
+        mode, rc = self._run_host()
+        self.assertIsNone(mode)
+        prelude = (rc, "budget", "OSError", errno.ENAMETOOLONG, "session_host.py:")
+        self._assert_refused(*prelude[:4], at=prelude[4])
+        host = self.host
+        self._refused_by("no lease was ever written", lambda: self.lease_calls.extend(["write", "remove"]), self.lease_calls.clear, *prelude)
+        self._refused_by("no CLI was started", lambda: setattr(host, "transport", self._NoCli()), lambda: setattr(host, "transport", None), *prelude)
+        self._refused_by("no CLI identity was recorded", lambda: setattr(host, "cli_pid", CLI_PID), lambda: setattr(host, "cli_pid", None), *prelude)
+        self._refused_by("no cli-spawned row", lambda: self.rows.__setitem__("cli-spawned", {"kind": "cli-spawned"}),
+                         lambda: self.rows.pop("cli-spawned"), *prelude)
+
+    def test_a_post_spawn_refusal_is_not_satisfied_by_the_prelude_classs_bookkeeping_on_either_fact_the_helper_reads(self):
+        """The other class (the same pass): a real bind refusal after the spawn and its lease, then the two facts the
+        post-spawn branch reads falsified alone, the lease's removal (the calls read as a prelude refusal's, nothing
+        written) and the CLI stand-in's close: the helper fails naming each, and passes once it is restored."""
+        self._bind_refused_root()
+        mode, rc = self._run_host()
+        self.assertIsNone(mode)
+        served = (rc, "bind", "OSError", None, "unix_events.py:")
+        self._assert_refused(*served[:4], at=served[4])
+        host = self.host
+        self._refused_by("the lease written at the spawn is removed", self.lease_calls.clear,
+                         lambda: self.lease_calls.extend(["write", "remove"]), *served)
+        self._refused_by("the CLI was ended with the host", host.transport.closed.clear, host.transport.closed.set, *served)
 
     def test_a_published_path_one_byte_over_the_budget_is_refused_before_anything_is_bound(self):
         """The high of round 1 (2026-09-19): binding a temp moved the bind's sun_path check onto the temp's name, so at a
@@ -2278,6 +2348,28 @@ class PaddedRoots(unittest.TestCase):
         self.assertIn("UTF-8 locale", msg, "the remedy, in the failure")
         self.assertIn("fail rather than skip", msg)
         require_utf8_names(self)
+
+    MULTIBYTE_CASES = ("test_the_budget_is_measured_in_bytes_a_multibyte_published_path_over_it_in_bytes_alone_is_refused",
+                       "test_a_multibyte_published_path_at_the_budget_in_bytes_is_served_and_a_client_connects")
+
+    def test_the_multibyte_cases_themselves_fail_naming_the_remedy_on_a_single_byte_encoding_and_carry_no_skip(self):
+        """The two multibyte CASES against the refusable runner, not only their helper (the mutation pass of round 3,
+        2026-09-19: the pin above holds require_utf8_names to failing, and nothing held the cases to CALLING it, so both
+        calls removed, or round 2's skipUnless put back on both, left the module green on this UTF-8 runner while a
+        single-byte runner would again skip the byte measure's only pins). Each case is run as a nested case with
+        os.fsencode answering one byte for a two-byte character: exactly one failure, carrying the encoding's name and
+        the remedy, no skip and no error; and neither carries a skip decorator."""
+        for name in self.MULTIBYTE_CASES:
+            with self.subTest(case=name):
+                case = SocketMode(name)
+                self.assertFalse(getattr(getattr(case, name), "__unittest_skip__", False), "no skip decorator on the case")
+                result = unittest.TestResult()
+                with mock.patch.object(os, "fsencode", lambda n: str(n).encode("latin-1")):
+                    case.run(result)
+                self.assertEqual((len(result.skipped), len(result.errors)), (0, 0), (result.skipped, result.errors))
+                self.assertEqual(len(result.failures), 1, "the case FAILS on a single-byte runner: %r" % (result.failures,))
+                self.assertIn("is not UTF-8", result.failures[0][1])
+                self.assertIn("UTF-8 locale", result.failures[0][1], "the remedy, in the failure")
 
 
 class KeptLease(unittest.TestCase):
