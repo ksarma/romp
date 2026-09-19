@@ -390,7 +390,8 @@ test("two hosts: detaching one drops its raw base and leaves the other's; the re
 // looking first, so it can land on a conn that is detached, marked down by the poll, or already holding a live
 // replacement socket: connect() returns at its guards, and the per-dial reset sits below them. The raw feed base is the
 // CONN's (Conn.feedRaw), so such a call can only ever reach the conn it was called for. These legs pin both for the feed
-// half, as federation-remote-view-delta.test.ts 18 and 19 pin the bars half at the connecting/open guard. The one road
+// half, as federation-remote-view-delta.test.ts's two late-timer legs (19 and 20 at this head: the onclose retry landing
+// after the watchdog redialed, and the constructor-throw retry) pin the bars half at the connecting/open guard. The one road
 // that crosses conns: closeRemote cancels no timer, so a DETACHED conn's redial fires after the host was re-attached on a
 // NEW Conn whose socket has seeded a base by then. While the base was keyed by host (before round 5), a reset above the
 // guards would have deleted the live conn's base through the dead conn's call, and no per-conn assertion could see it:
