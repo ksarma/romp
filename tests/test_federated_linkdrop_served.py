@@ -953,7 +953,7 @@ class _LinkDrop(unittest.TestCase):
     def _assert_link_dropped_and_the_row_went_down(self):
         """The drop: every held relay socket closes uncleanly, the hub's supervisor marks the row down, NO feed-family
         frame crosses the dropped link, the down-window dials are all redials (reconnect=1, not first dials), and the
-        churn is BOUNDED — dialing ceases once the browser's /tunnels poll reads the row down (a quiescent tail with no
+        churn is BOUNDED. Dialing ceases once the browser's /tunnels poll reads the row down (a quiescent tail with no
         new relay dial before resume). This is the answer to "the storm is gated on the link's state": no link, no
         frames, no rows."""
         m = self._marks()
