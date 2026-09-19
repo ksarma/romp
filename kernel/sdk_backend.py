@@ -5116,23 +5116,37 @@ FLAG_SETTINGS_DIR = "sdk-flag-settings"   # per-session --settings payloads, one
 # 2026-09-18: set_env's refusal row, whose ring text was then the whole line, ran to 414 characters and was clipped
 # mid-word on both surfaces). Pinned to the TypeScript literal by tests/test_session_env.py.
 ERROR_CENTER_TEXT_CAP = 240
-# Every problem row this module writes about a per-session env or its flag-settings file has a ring_text whose length
-# is a function of its FORMAT, never of what a pick or a stored env carries (review round 3 of the env-pick door,
-# 2026-09-19: round 2's addendum had bounded the stored-offender row so, and the reviewer found every sibling row
-# still unbounded, the symbolic-link row at 383 to 453 characters and the refusal row pinned by measurements taken
-# with a three-character session name). The pieces: fixed text; a session name or a sid cut to a budget with the
-# feed's marker (kernel.NAME_RE caps no length, so the bound must not rest on one); ONE variable named, the first in
-# sorted order, cut to a budget, with the rest counted through a bounded count text (credentials.first_and_count);
-# an OSError class name cut to a budget; and the flag-settings keys, a fixed set. tests/test_session_env.py computes
-# each row's worst case from these constants and asserts it under ERROR_CENTER_TEXT_CAP (the stored-offender row
-# with _log's repeat suffix at a four-digit count, the one piece of a row this module does not shape). The kernel
-# log line of every row keeps each name, path and session name whole.
+# The problem rows this module writes about a per-session env or its flag-settings file are the ones on the ENV ROWS
+# line below the ring formats, and each has a ring_text whose length is a function of its FORMAT, never of what a pick
+# or a stored env carries (review round 3 of the env-pick door, 2026-09-19: round 2's addendum had bounded the
+# stored-offender row so, and the reviewer found every sibling row still unbounded, the symbolic-link row at 383 to
+# 453 characters and the refusal row pinned by measurements taken with a three-character session name; review round
+# 4, 2026-09-19: this paragraph then claimed every row while the two reserved-name rows, the _options skip and the
+# fork drop, carried no ring_text and rendered 244 and 241 characters against the cap at ordinary names, so the list
+# is derived now and this paragraph names the list, not a universal). The line is machine-readable and
+# tests/test_session_env.py derives it from this file's AST and compares: a _log or log call whose kernel log line
+# begins "env (" or "flag settings" and that carries problem= other than False, or carries none and sits in an except
+# handler (where _log classifies the line as a problem), is a row; its ring_text is resolved to the module-level format
+# or helper it starts from, and a row with none resolves to nothing and reds the test, as does a row the line does not
+# name. The same test computes a worst case for every name on the line, so a row the line carries with no worst case
+# is red too. The pieces: fixed text; a session name or a sid cut to a budget with the feed's marker (kernel.NAME_RE
+# caps no length, so the bound must not rest on one); ONE variable named, the first in sorted order, cut to a budget,
+# with the rest counted through a bounded count text (credentials.first_and_count); an OSError class name cut to a
+# budget; and the flag-settings keys, a fixed set tied to what the writer writes (FLAG_SETTINGS_KEYS). Each worst case
+# is asserted under ERROR_CENTER_TEXT_CAP (the stored-offender row with _log's repeat suffix at a four-digit count,
+# the one piece of a row this module does not shape). The kernel log line of every row keeps each name, path and
+# session name whole.
 RING_SESSION_BUDGET = 20                             # a session name, or the sid a nameless row falls back to
 RING_SID_BUDGET = 40                                 # a kernel-minted uuid4 is 36 characters and stays whole
 RING_NAME_BUDGET = _cred.RING_NAME_BUDGET            # OP_SERVICE_ACCOUNT_TOKEN's 24: every 1Password name romp spells
 #                                                       EXACTLY is whole; an OP_SESSION_<account> past it is cut like any name
 RING_CLASS_BUDGET = 24                               # an OSError subclass's name (FileNotFoundError is 17)
-FLAG_SETTINGS_KEYS = ("apiKeyHelper", "env", "fastMode", "ultracode")   # every key flag_settings_path writes, sorted
+FLAG_SETTINGS_KEYS = ("apiKeyHelper", "env", "fastMode", "ultracode")   # every key flag_settings_path writes, sorted; the
+#                                                       sid row's bound rests on this set (7 characters of headroom under the
+#                                                       cap), so tests/test_session_env.py drives the writer with every knob its
+#                                                       signature has and compares the written file's keys to it (review round
+#                                                       4 of the env-pick door, 2026-09-19: nothing tied the two, and a fifth
+#                                                       key left the pin green while the real row ran to 250)
 # The stored-offender row's short form (_options): the FACT, and no remedy (review round 3 of the env-pick door,
 # 2026-09-19: the earlier forms promised that re-declaring the env removed the value from the registry and this file,
 # and the redaction road that was to make it so left this change; what a re-declaration does today is the base's
@@ -5148,6 +5162,21 @@ FLAG_SID_RING = "flag settings: %s (%s); no per-session settings file is written
 FLAG_LINK_RING = ("flag settings (%s): the per-session settings file is a symbolic link and is not written through: nothing "
                   "of romp's makes one, and a write through it would carry the env block outside the directory")
 FLAG_UNWRITABLE_RING = "flag settings (%s): the per-session settings file could not be written (%s); launching WITHOUT %s"
+# The two reserved-name rows' short forms (review round 4 of the env-pick door, 2026-09-19: both rows predate the door and
+# carried no ring_text, so the error centre showed the whole log line, 244 and 241 characters at ordinary names against
+# the 240 cap): the session name cut to its budget, the first reserved name in sorted order cut to the name budget and
+# the rest counted, like the sibling rows. The kernel log line keeps every reserved name whole.
+RESERVED_DROP_RING = ("env (%s): ignoring reserved %s from the stored session env: romp sets the identity env itself, and a "
+                      "session's credential is Claude Code's own")                       # _options' skip at the launch
+FORK_RESERVED_RING = ("env (%s): dropping reserved %s from the inherited env: romp sets the identity env itself (the parent "
+                      "reg predates the reserved names)")                                # fork's drop at the copy
+# ENV ROWS: flag_settings_path -> FLAG_SID_RING FLAG_LINK_RING FLAG_UNWRITABLE_RING | _options -> RESERVED_DROP_RING STORED_OFFENDER_RING | fork -> FORK_RESERVED_RING FORK_DROP_RING | set_env -> REFUSAL_RING_HEAD REFUSAL_RING_HEAD
+# ^ every problem row this module writes about a per-session env or its flag-settings file, grouped by the function that
+#   writes it in source order, one name per row: the module-level FORMAT the row's ring_text starts from (a helper such
+#   as stored_offender_ring_text is followed into its return; set_env's two rows both open with the refusal head).
+#   Derived from this file's AST by tests/test_session_env.py (the paragraph above the ring budgets says how), which reds
+#   when the two differ; kernel.py and credentials.py write no such row (the kernel's problem rows are this module's
+#   ring, _sdk_problem_rows), and the same test walks them and asserts none.
 
 
 def stored_offender_ring_text(session_name, names) -> str:
@@ -5167,7 +5196,12 @@ def stored_offender_ring_text(session_name, names) -> str:
 # is what keeps a launch from reading a torn file then. Lock order: taken under NO other lock of this module
 # (_options runs on the session's loop thread with none held) and holding only the log's own lock inside it, so no
 # holder of self._lock, a session's _lock or _persist_lock, or _reg_lock may take it (review round 3, 2026-09-19:
-# the module's two statements of its lock order name it for that reason). Re-entrant, as round 2 made it.
+# the module's two statements of its lock order name it for that reason). Re-entrant, as round 2 made it. Both halves
+# of the order sentence are pinned by tests/test_session_env.py (review round 4, 2026-09-19, which found the sentence
+# left as prose and pinnable): a stand-in for this lock reads, at the acquisition inside the real _options, the held
+# state of every module-level lock and of the four the order statements name, and an AST census holds the writer's one
+# caller (_options), this lock's one taker (flag_settings_path) and _options' one caller outside any lexical `with`
+# over a lock of this module, so a caller that takes one first reds it.
 _flag_settings_lock = threading.RLock()
 
 # fast_mode_disabled_reason tokens humanized for the refusal toast (_adopt_fast_state's refused-ask
@@ -5445,7 +5479,11 @@ def flag_settings_path(state_dir, sid: str, *, ultracode: bool = False, fast: bo
     reviewers and rejected (it stops ordinary connects over a snapshot). The rename also closes the window between
     the islink check and the open (a link planted there is replaced, not followed), and a launch reading at the
     same moment sees the old file or the new one, never a torn one, in this process or another. The check and the
-    write run under _flag_settings_lock, so two connects for one sid in this process write in turn."""
+    write run under _flag_settings_lock, so two connects for one sid in this process write in turn. The finally
+    unlinks the temp this call CREATED and nothing else (review round 4 of the env-pick door, 2026-09-19: write_reg's
+    unconditional unlink, copied here, removed a file already at the temp path after the exclusive open had refused
+    to write through it, so a refused write deleted a file the call did not create; the guard is the descriptor the
+    open returned, never the path)."""
     keys = {}
     if ultracode:
         keys["ultracode"] = True
@@ -5478,11 +5516,14 @@ def flag_settings_path(state_dir, sid: str, *, ultracode: bool = False, fast: bo
                 log(line, problem=True, ring_text=ring)
             return ""
         tmp = p + ".%d.%s.tmp" % (os.getpid(), uuid.uuid4().hex[:8])
+        fd = None                                       # the descriptor the exclusive open returned: what this call created
         try:
             os.makedirs(d, exist_ok=True)
             # 0600, the serve-token treatment: the env block can carry secrets, and a default-umask file is
             # world-readable on a shared host (PR #889 review). A fresh inode created private (O_EXCL: the temp
-            # is this writer's alone), so no chmod after: the one the in-place write needed was for a
+            # is this writer's alone, and a file already at the path, a plant or a symbolic link, makes the open
+            # fail EEXIST rather than being written through; pinned by execution in tests/test_session_env.py since
+            # review round 4, 2026-09-19), so no chmod after: the one the in-place write needed was for a
             # pre-existing file that kept its mode through O_CREAT, and nothing pre-exists here
             fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             with os.fdopen(fd, "w") as f:
@@ -5500,10 +5541,11 @@ def flag_settings_path(state_dir, sid: str, *, ultracode: bool = False, fast: bo
                                                       _cred.cut_to(e.__class__.__name__, RING_CLASS_BUDGET), names))
             return ""
         finally:
-            try:                                        # never leave a stray temp on a failed write (write_reg's rule)
-                os.unlink(tmp)
-            except OSError:
-                pass
+            if fd is not None:                          # never leave a stray temp on a failed write (write_reg's rule), and
+                try:                                    # never remove one this call did not create: with no descriptor the
+                    os.unlink(tmp)                      # open refused, and whatever sits at the path is not this writer's
+                except OSError:
+                    pass
         return p
 
 
@@ -15039,21 +15081,25 @@ class SdkBackend:
         # connect, so a reconnect re-asserts them by construction.
         # The reserved identity names are skipped at THIS seam, not only refused at the doors:
         # a reg written before ENV_RESERVED_NAMES existed can still carry them, and every connect
-        # replays the stored env verbatim — applied, either name shadow-races the options.env
+        # replays the stored env verbatim: applied, either name shadow-races the options.env
         # identity above (`romp end self` resolving to a forged sid); refused, a reconnect bricks
         # a long-running session over a var accepted under older rules. Skip the var, keep the
-        # rest, launch the session — and say so (fail-loudly: the line lands on stderr via the
+        # rest, launch the session, and say so (fail-loudly: the line lands on stderr via the
         # kernel's log wire and in the problem ring the dashboard's error center reads).
         # A credential name in the stored session env is always a competing credential (2026-09-08: romp
         # holds no key, and a session's credential is Claude Code's own), so the reserved set is the
         # identity names plus the three credential names, at every door and here. The stripped env is the
-        # shape's (_launch_shape), so the stamp and the launch agree by construction.
+        # shape's (_launch_shape), so the stamp and the launch agree by construction. The ring text is
+        # bounded by construction (RESERVED_DROP_RING; review round 4 of the env-pick door, 2026-09-19: the
+        # row carried none and rendered 244 characters against the error centre's 240 at an ordinary name).
         env_vars = shape["env"]
         legacy = [k for k in ENV_RESERVED_NAMES + AUTH_ENV_NAMES if k in sess.env_vars]
         if legacy:
             self._log("env (%s): ignoring reserved %s from the stored session env: romp sets the identity "
                       "env itself, and a session's credential is Claude Code's own"
-                      % (sess.name, ", ".join(legacy)), problem=True)
+                      % (sess.name, ", ".join(legacy)), problem=True,
+                      ring_text=RESERVED_DROP_RING % (_cred.cut_to(sess.name, RING_SESSION_BUDGET),
+                                                      _cred.first_and_count(legacy, RING_NAME_BUDGET)))
         # A stored env carrying a credential-shaped name of another spelling (accepted before the door refused
         # them, 2026-09-18) is NOT stripped: the launch never ran the door, so the fix breaks no running
         # session, and dropping the variable here would change a session's environment at its next reconnect
@@ -15296,9 +15342,13 @@ class SdkBackend:
             env = {k: v for k, v in parent["env"].items() if k not in reserved and k not in shaped}
             dropped = [k for k in parent["env"] if k in reserved]
             if dropped:
-                self._log("env (%s): dropping reserved %s from the inherited env — romp sets the "
+                # the ring text is bounded by construction (FORK_RESERVED_RING; review round 4 of the env-pick door,
+                # 2026-09-19: the row carried none, three lines above the fork row round 3 bounded)
+                self._log("env (%s): dropping reserved %s from the inherited env: romp sets the "
                           "identity env itself (the parent reg predates the reserved names)"
-                          % (name, ", ".join(dropped)), problem=True)
+                          % (name, ", ".join(dropped)), problem=True,
+                          ring_text=FORK_RESERVED_RING % (_cred.cut_to(name, RING_SESSION_BUDGET),
+                                                          _cred.first_and_count(dropped, RING_NAME_BUDGET)))
             if shaped:
                 self._log("env (%s): not copying credential-shaped %s from the parent's stored env into the fork "
                           "(a pick accepted before the door refused such a name); the parent's registry keeps it"

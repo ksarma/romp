@@ -19,7 +19,17 @@ The mechanics under test:
     2026-09-19). Every row it logs has a ring text whose length is a function of its format. The
     link check and the write run under _flag_settings_lock, so two connects for one sid write in
     turn, and a no-keys call leaves a file an earlier connect left as it was (both pinned after the
-    mutation pass of round 3, 2026-09-19, which found neither read by a test).
+    mutation pass of round 3, 2026-09-19, which found neither read by a test). The exclusive open
+    and the finally that removes only the temp this call created are pinned by execution (review
+    round 4, 2026-09-19: O_TRUNC in O_EXCL's place left every suite green, and the unconditional
+    unlink removed a file the refused call had not created).
+  * The problem rows about a per-session env or its file are a DERIVED population (review round 4,
+    2026-09-19, after the round-3 comment claimed every row while two reserved-name rows carried no
+    ring text): the module's `# ENV ROWS:` line is the AST walk's enumeration (EnvRowsPopulation), every
+    format named on it has a worst case computed here from the format (CredentialShapedNamesEndToEnd),
+    each row is driven past its budgets through the real writer, and the lock-order sentence is pinned
+    by a held-state probe inside the real _options and an AST census of the three sites
+    (FlagSettingsLockOrder, EnvRowsPopulation).
   * _options threads the session's env into that file at EVERY connect — the file is rewritten on
     each use, so reconnects re-assert the reg's env by construction (pinned by tampering the file
     between two _options calls). Its stored-offender row states a fact and promises no remedy
@@ -40,13 +50,17 @@ The mechanics under test:
 Values are assembled at run time, never a token-shaped literal (gitleaks reads this repo too); the
 door tests deliberately plant credential-shaped NAMES, since refusing them is what they pin.
 """
+import ast
 import errno
 import glob
+import inspect
 import json
 import os
 import re
+import stat
 import tempfile
 import threading
+import types
 import unittest
 import uuid
 from pathlib import Path
@@ -99,13 +113,158 @@ def _interpose(test, **kw):
     return real
 
 
-def _enospc(real, src, dst):
-    """A rename that fails the way a full disk fails it."""
-    raise OSError(errno.ENOSPC, "No space left on device")
-
-
 def _temps(d):
     return sorted(os.path.basename(t) for t in glob.glob(os.path.join(str(d), sb.FLAG_SETTINGS_DIR, "*.tmp")))
+
+
+SDK_BACKEND = os.path.join(os.path.dirname(HERE), "kernel", "sdk_backend.py")
+KERNEL_PY = os.path.join(os.path.dirname(HERE), "kernel", "kernel.py")
+CREDENTIALS_PY = os.path.join(os.path.dirname(HERE), "kernel", "credentials.py")
+ENV_ROW_HEADS = ("env (", "flag settings")   # the two heads a problem row about a per-session env or its file begins with
+
+
+def _parsed(path):
+    """A module's AST and its parent map (the walk needs the enclosing def and the enclosing handlers of a call)."""
+    tree = ast.parse(Path(path).read_text(encoding="utf-8"))
+    parents = {}
+    for node in ast.walk(tree):
+        for child in ast.iter_child_nodes(node):
+            parents[child] = node
+    return tree, parents
+
+
+def _enclosing_def(node, parents):
+    while node in parents:
+        node = parents[node]
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return node
+    return None
+
+
+def _lock_withs_above(node, parents):
+    """The `with` (or `async with`) statements lexically enclosing `node` inside its def whose context names a lock (any
+    context expression whose source spells "lock", in any letter case: self._lock, _reg_lock, a module-level LOCK)."""
+    out = []
+    while node in parents:
+        node = parents[node]
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            break
+        if isinstance(node, (ast.With, ast.AsyncWith)):
+            for item in node.items:
+                if "lock" in ast.unparse(item.context_expr).lower():
+                    out.append((node.lineno, ast.unparse(item.context_expr)))
+    return out
+
+
+def _env_rows(path):
+    """THE PREDICATE, and the walk that applies it (review round 4 of the env-pick door, 2026-09-19). A problem row about
+    a per-session env or its flag-settings file is a call to `_log` or `log` whose kernel log line begins with one of
+    ENV_ROW_HEADS and that either carries `problem=` with a value other than the constant False, or carries no
+    `problem=` and sits inside an except handler, where _log classifies the line as a problem by the live exception.
+    A call with such a head that is neither is a routine line, returned apart. Each row's ring_text is resolved to
+    the module-level FORMAT it starts from: a `%` or `+` is followed down its left side, a name assigned in the
+    function is followed to every assignment (a tuple unpacking to the element's position), a call to a module-level
+    function is followed into that function's returns, and a module-level name ends the walk; the head is resolved the
+    same way to its string literal. A row with no ring_text resolves to no format. Returns {"rows": [(lineno, owner,
+    sorted formats, heads)], "routine": [(lineno, owner, heads)], "line": the `# ENV ROWS:` text this derivation
+    spells, one format per row grouped by the writing function in source order}."""
+    tree, parents = _parsed(path)
+    top_defs = {n.name: n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+    top_names = {t.id for st in tree.body if isinstance(st, ast.Assign) for t in st.targets if isinstance(t, ast.Name)}
+
+    def assigns_to(fn, name, before):
+        out = []
+        for n in ast.walk(fn):
+            if isinstance(n, ast.Assign) and n.lineno < before:
+                for t in n.targets:
+                    if isinstance(t, ast.Name) and t.id == name:
+                        out.append((n.value, None))
+                    elif isinstance(t, ast.Tuple):
+                        for i, e in enumerate(t.elts):
+                            if isinstance(e, ast.Name) and e.id == name:
+                                out.append((n.value, i))
+        return out
+
+    def returns_of(fn, index):
+        out = []
+        for r in ast.walk(fn):
+            if isinstance(r, ast.Return) and r.value is not None:
+                if index is None:
+                    out.append(r.value)
+                elif isinstance(r.value, ast.Tuple) and index < len(r.value.elts):
+                    out.append(r.value.elts[index])
+        return out
+
+    def resolve(expr, fn, before, depth=0):
+        if depth > 16:
+            return {("deep", "")}
+        if isinstance(expr, ast.Constant) and isinstance(expr.value, str):
+            return {("lit", expr.value)}
+        if isinstance(expr, ast.BinOp) and isinstance(expr.op, (ast.Mod, ast.Add)):
+            return resolve(expr.left, fn, before, depth + 1)
+        if isinstance(expr, ast.Call):
+            f = expr.func
+            if isinstance(f, ast.Name) and f.id in top_defs:
+                out = set()
+                for r in returns_of(top_defs[f.id], None):
+                    out |= resolve(r, top_defs[f.id], 10 ** 9, depth + 1)
+                return out or {("call", f.id)}
+            return {("call", ast.unparse(f))}
+        if isinstance(expr, ast.Name):
+            if expr.id in top_names or expr.id in top_defs:
+                return {("name", expr.id)}
+            out = set()
+            for value, idx in assigns_to(fn, expr.id, before):
+                if idx is None:
+                    out |= resolve(value, fn, before, depth + 1)
+                elif isinstance(value, ast.Tuple):
+                    out |= resolve(value.elts[idx], fn, before, depth + 1)
+                elif isinstance(value, ast.Call) and isinstance(value.func, ast.Name) and value.func.id in top_defs:
+                    for r in returns_of(top_defs[value.func.id], idx):
+                        out |= resolve(r, top_defs[value.func.id], 10 ** 9, depth + 1)
+            return out or {("unresolved", expr.id)}
+        return {("other", ast.unparse(expr))}
+
+    rows, routine = [], []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or not node.args:
+            continue
+        f = node.func
+        callee = f.attr if isinstance(f, ast.Attribute) else (f.id if isinstance(f, ast.Name) else None)
+        if callee not in ("_log", "log"):
+            continue
+        fn = _enclosing_def(node, parents)
+        if fn is None:
+            continue
+        heads = sorted(h[1] for h in resolve(node.args[0], fn, node.lineno) if h[0] == "lit")
+        if not any(h.startswith(ENV_ROW_HEADS) for h in heads):
+            continue
+        kws = {k.arg: k.value for k in node.keywords}
+        handler = False
+        up = node
+        while up in parents:
+            up = parents[up]
+            if isinstance(up, ast.ExceptHandler):
+                handler = True
+            if isinstance(up, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                break
+        if "problem" in kws:
+            problem = not (isinstance(kws["problem"], ast.Constant) and kws["problem"].value is False)
+        else:
+            problem = handler
+        if not problem:
+            routine.append((node.lineno, fn.name, heads))
+            continue
+        formats = sorted(t[1] for t in resolve(kws["ring_text"], fn, node.lineno) if t[0] == "name") if "ring_text" in kws else []
+        rows.append((node.lineno, fn.name, formats, heads))
+    rows.sort()
+    groups = []
+    for _ln, owner, formats, _heads in rows:
+        if not groups or groups[-1][0] != owner:
+            groups.append((owner, []))
+        groups[-1][1].append(formats[0] if len(formats) == 1 else "UNBOUNDED" if not formats else "AMBIGUOUS(%s)" % ",".join(formats))
+    line = "# ENV ROWS: " + " | ".join("%s -> %s" % (owner, " ".join(tags)) for owner, tags in groups)
+    return {"rows": rows, "routine": routine, "line": line}
 
 
 class _Backend(unittest.TestCase):
@@ -254,7 +413,12 @@ class FlagSettingsWriter(unittest.TestCase):
     temp-and-rename (round 3, correctness-4 and kernel-3: an in-place O_TRUNC write refreshed a hard link's other
     name with every connect's env and followed a symlink planted between the check and the open), and every row the
     writer logs has a ring text whose length is a function of its format (round 3, correctness-3 and kernel-2: the
-    link row ran to 383 to 453 characters over a real state root, past both caps, and the sid rows were unbounded)."""
+    link row ran to 383 to 453 characters over a real state root, past both caps, and the sid rows were unbounded).
+    Review round 4 (2026-09-19) pinned by execution what the round-3 text had only stated: the exclusive open (tests-1
+    and extra6-1: O_TRUNC in its place left every suite green), the finally that removes only what this call created
+    (kernel-2 and extra6-2: it removed a file the refused call had not created), the sid cut on the link and the
+    unwritable rows and the class-name cut (tests-2: driven for the sid row alone), and FLAG_SETTINGS_KEYS against
+    the keys the writer writes (extra5-1)."""
 
     def setUp(self):
         self.root = tempfile.mkdtemp()
@@ -264,6 +428,123 @@ class FlagSettingsWriter(unittest.TestCase):
     def _log(self):
         logged = []
         return logged, (lambda msg, problem=False, **kw: logged.append((msg, problem, kw)))
+
+    def _pin_temp_name(self, sid=PARENT):
+        """The writer's temp name made predictable, TempIsExclusive's method (tests/test_kernel_serve_token_mode.py):
+        the module's `uuid` stands in with a fixed hex for the test, so the path the exclusive open will ask for is
+        known ahead and a file can be planted there. Returns that path."""
+        fixed = "0123456789abcdef0123456789abcdef"
+        stand_in = types.SimpleNamespace(uuid4=lambda: types.SimpleNamespace(hex=fixed))
+        self.addCleanup(setattr, sb, "uuid", sb.uuid)
+        sb.uuid = stand_in
+        return Path(self.d, sb.FLAG_SETTINGS_DIR, "%s.json.%d.%s.tmp" % (sid, os.getpid(), fixed[:8]))
+
+    def test_a_file_already_at_the_temp_path_is_never_written_through(self):
+        """tests-1 / extra6-1 (review round 4 of the env-pick door, 2026-09-19): O_EXCL on the temp open was pinned by
+        nothing (O_TRUNC in its place left every suite green), and it is what makes the writer's two promises true, a
+        FRESH inode and 0600 with no chmod after. Behaviour, not source text: with the temp name pinned, a regular
+        file already there, holding a hard link under another name, and then a symbolic link to a file outside the
+        directory, each make the open fail EEXIST; the writer refuses with the unwritable row and mints nothing. The
+        assertions read the OTHER name and the OUTSIDE target, so they hold whatever the finally does with the plant
+        itself (the next test pins that). Under O_TRUNC the write goes through the plant: the other name or the
+        outside file carries the env block and the call returns the path with no row."""
+        tmp = self._pin_temp_name()
+        p = Path(self.d, sb.FLAG_SETTINGS_DIR, PARENT + ".json")
+        tmp.write_text("planted\n")
+        other = Path(self.root, "other-name")
+        os.link(str(tmp), str(other))
+        self.assertEqual(os.stat(other).st_nlink, 2, "the state under test: the planted inode has two names")
+        logged, log = self._log()
+        self.assertEqual(sb.flag_settings_path(self.d, PARENT, env=ENV, log=log), "", "the write road refuses")
+        self.assertEqual(other.read_text(), "planted\n", "the bytes never went through the existing inode")
+        self.assertFalse(p.exists(), "nothing is minted at the settings path")
+        self.assertEqual(len(logged), 1, logged)
+        m, problem, kw = logged[0]
+        self.assertTrue(problem)
+        self.assertIn("unwritable", m)
+        self.assertIn(os.strerror(errno.EEXIST), m, "the exclusive open met the existing file and the log line says so")
+        self.assertEqual(kw["ring_text"], sb.FLAG_UNWRITABLE_RING % (PARENT, "FileExistsError", "env"))
+        if tmp.exists():
+            os.unlink(tmp)
+        os.unlink(other)
+        target = Path(self.root, "outside.json")
+        target.write_text(json.dumps({"env": {"OUTSIDE": "kept"}}) + "\n")
+        os.chmod(target, 0o644)
+        os.symlink(str(target), str(tmp))
+        del logged[:]
+        self.assertEqual(sb.flag_settings_path(self.d, PARENT, env=ENV, log=log), "", "a link at the temp path is not followed")
+        self.assertEqual(json.loads(target.read_text()), {"env": {"OUTSIDE": "kept"}}, "the outside file is untouched")
+        self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o644, "and keeps its mode")
+        self.assertFalse(p.exists())
+        self.assertEqual(len(logged), 1, logged)
+        self.assertEqual(logged[0][2]["ring_text"], sb.FLAG_UNWRITABLE_RING % (PARENT, "FileExistsError", "env"))
+        if os.path.lexists(tmp):
+            os.unlink(tmp)
+        self.assertEqual(sb.flag_settings_path(self.d, PARENT, env=ENV, log=log), str(p), "with the path free the same call writes")
+        self.assertEqual(stat.S_IMODE(p.stat().st_mode), 0o600, "a fresh inode, created private")
+        self.assertEqual(len(logged), 1, "and says nothing")
+        self.assertEqual(_temps(self.d), [])
+
+    def test_a_refused_write_removes_no_file_it_did_not_create(self):
+        """kernel-2 / extra6-2 (review round 4 of the env-pick door, 2026-09-19): the finally unlinked the temp path
+        unconditionally, so on the EEXIST road the file at the path, which is not this writer's, was deleted by the
+        call that had refused to write through it. The guard is the descriptor the open returned: no descriptor,
+        nothing of this call's to remove. A planted regular file survives byte for byte on its own inode and a planted
+        symbolic link stays a link; the row still fires and nothing is minted. Red on 291268585, where the plant is
+        gone after the call. The temps this call does create are still swept: the failed-rename test beside this one
+        reads none left."""
+        tmp = self._pin_temp_name()
+        p = Path(self.d, sb.FLAG_SETTINGS_DIR, PARENT + ".json")
+        tmp.write_text("planted\n")
+        before = tmp.stat()
+        logged, log = self._log()
+        self.assertEqual(sb.flag_settings_path(self.d, PARENT, env=ENV, log=log), "")
+        self.assertTrue(tmp.exists(), "the plant survives the call that refused to write through it")
+        self.assertEqual(tmp.read_text(), "planted\n", "byte for byte")
+        self.assertEqual(tmp.stat().st_ino, before.st_ino, "on its own inode")
+        self.assertEqual(tmp.stat().st_mtime_ns, before.st_mtime_ns)
+        self.assertFalse(p.exists())
+        self.assertEqual(len(logged), 1, logged)
+        self.assertIn("unwritable", logged[0][0])
+        os.unlink(tmp)
+        target = Path(self.root, "outside.json")
+        target.write_text("kept\n")
+        os.symlink(str(target), str(tmp))
+        del logged[:]
+        self.assertEqual(sb.flag_settings_path(self.d, PARENT, env=ENV, log=log), "")
+        self.assertTrue(os.path.islink(tmp), "the link is left in place: it is not this writer's")
+        self.assertEqual(target.read_text(), "kept\n")
+        self.assertEqual(len(logged), 1, logged)
+        os.unlink(tmp)
+        self.assertEqual(_temps(self.d), [])
+
+    def test_flag_settings_keys_is_what_the_writer_writes(self):
+        """extra5-1 (review round 4 of the env-pick door, 2026-09-19): the sid row's and the unwritable row's bounds rest
+        on FLAG_SETTINGS_KEYS naming every key the writer writes, and nothing tied the constant to the writer: a fifth
+        key left the worst-case pin green while the real sid row ran to 250 against 240. The writer is driven with
+        every keyword-only knob its signature has, each at a value that writes (a bool True, a dict with one entry, a
+        str), so a knob this test does not know by name is driven too, and the written file's keys must be the
+        constant. Headroom under the cap is 7 characters, so the next key must shorten a format or spend it."""
+        sig = inspect.signature(sb.flag_settings_path)
+        knobs = {}
+        for name, prm in sig.parameters.items():
+            if prm.kind is not prm.KEYWORD_ONLY or name == "log":
+                continue
+            if isinstance(prm.default, bool):
+                knobs[name] = True
+            elif prm.default is None or isinstance(prm.default, dict):
+                knobs[name] = {"A_FLAG": "1"}
+            elif isinstance(prm.default, str):
+                knobs[name] = "x"
+            else:
+                self.fail("a knob of a shape this pin cannot drive: %s=%r; extend the pin" % (name, prm.default))
+        self.assertGreaterEqual(len(knobs), 4, "the four knobs the writer had at review round 4: %r" % (sorted(knobs),))
+        written = sb.flag_settings_path(self.d, PARENT, **knobs)
+        self.assertTrue(written)
+        self.assertEqual(sorted(json.loads(Path(written).read_text())), list(sb.FLAG_SETTINGS_KEYS),
+                         "FLAG_SETTINGS_KEYS is the set of keys the writer writes, sorted: the sid row's bound is computed "
+                         "from it, so a key written and not named here moves the real row past the pin (7 characters of headroom)")
+        self.assertEqual(sorted(sb.FLAG_SETTINGS_KEYS), list(sb.FLAG_SETTINGS_KEYS), "sorted, as the writer joins them")
 
     def test_a_traversal_sid_is_refused_before_anything_is_touched(self):
         victim = Path(self.root, "victim.json")
@@ -478,6 +759,45 @@ class FlagSettingsWriter(unittest.TestCase):
         cut = sb._cred.cut_to(repr(long_sid), sb.RING_SID_BUDGET)
         self.assertTrue(cut.endswith(sb._cred.CUT_MARK) and len(cut) == sb.RING_SID_BUDGET, cut)
         self.assertEqual(logged[1][2]["ring_text"], sb.FLAG_SID_RING % (sb.FLAG_SID_REASONS[2], cut, keys))
+        # tests-2 (review round 4, 2026-09-19): the sid cut on the link row and on the unwritable row was pinned by
+        # nothing (every rendered assertion used the 36-character PARENT, under the 40 budget, where cut_to is the
+        # identity), so both rows are driven with a BARE sid past the budget (a file name under NAME_MAX; the '/y' sid
+        # above is refused by the sid gate first and never reaches either road), and the equality is what pins the cut:
+        # at 70 characters the uncut unwritable row still fits the cap
+        bare = "x" * (sb.RING_SID_BUDGET + 30)
+        cut_bare = sb._cred.cut_to(bare, sb.RING_SID_BUDGET)
+        self.assertTrue(cut_bare.endswith(sb._cred.CUT_MARK) and len(cut_bare) == sb.RING_SID_BUDGET, cut_bare)
+        outside = Path(self.root, "outside.json")
+        outside.write_text("{}\n")
+        os.symlink(str(outside), os.path.join(long_root, sb.FLAG_SETTINGS_DIR, bare + ".json"))
+        self.assertEqual(sb.flag_settings_path(long_root, bare, log=log, **riding), "")
+        self.assertEqual(logged[-1][2]["ring_text"], sb.FLAG_LINK_RING % cut_bare, "the link row cuts the sid")
+        self.assertIn(bare, logged[-1][0], "and the kernel log line carries it whole")
+        bare2 = "y" * (sb.RING_SID_BUDGET + 30)
+        Path(long_root, sb.FLAG_SETTINGS_DIR, bare2 + ".json").mkdir()
+        self.assertEqual(sb.flag_settings_path(long_root, bare2, log=log, **riding), "")
+        self.assertEqual(logged[-1][2]["ring_text"],
+                         sb.FLAG_UNWRITABLE_RING % (sb._cred.cut_to(bare2, sb.RING_SID_BUDGET), "IsADirectoryError", keys),
+                         "the unwritable row cuts the sid")
+        self.assertIn(bare2, logged[-1][0])
+        # the class-name cut on the same row: an OSError subclass named past RING_CLASS_BUDGET raised at the rename
+        # (every other rendering uses IsADirectoryError or OSError, both under the budget)
+
+        class AnOSErrorSubclassWhoseNameOutrunsTheBudget(OSError):
+            pass
+        klass = AnOSErrorSubclassWhoseNameOutrunsTheBudget.__name__
+        self.assertGreater(len(klass), sb.RING_CLASS_BUDGET)
+
+        def boom(real, src, dst):
+            raise AnOSErrorSubclassWhoseNameOutrunsTheBudget(errno.EIO, "boom")
+        _interpose(self, replace=boom)
+        self.assertEqual(sb.flag_settings_path(long_root, CHILD, log=log, **riding), "")
+        cut_class = sb._cred.cut_to(klass, sb.RING_CLASS_BUDGET)
+        self.assertTrue(cut_class.endswith(sb._cred.CUT_MARK) and len(cut_class) == sb.RING_CLASS_BUDGET)
+        self.assertEqual(logged[-1][2]["ring_text"], sb.FLAG_UNWRITABLE_RING % (CHILD, cut_class, keys), "the class name is cut")
+        self.assertIn("boom", logged[-1][0], "the kernel log line carries the error's own text")
+        self.assertNotIn(sb._cred.CUT_MARK, logged[-1][0], "and cuts nothing")
+        self.assertEqual(len(logged), 5, logged)
         for m, problem, kw in logged:
             self.assertTrue(problem)
             self.assertNotIn(long_root, kw["ring_text"], "no path in the short form")
@@ -590,6 +910,152 @@ class OptionsThreadsEnv(_OptionsBackend):
         self.assertNotIn("settings", kw, "degrade to launch, never abort the connect")
         self.assertTrue(any(problem and "env" in msg for msg, problem in logged),
                         "the drop must land in the Log as a problem naming env: %r" % (logged,))
+
+
+class EnvRowsPopulation(unittest.TestCase):
+    """The problem rows about a per-session env or its flag-settings file are a DERIVED population (review round 4 of
+    the env-pick door, 2026-09-19): the round-3 comment claimed every such row carried a bounded ring text while two
+    rows in the same two functions, the _options reserved skip and the fork reserved drop, carried none and rendered
+    244 and 241 characters against the 240 cap at ordinary session names, and the owner's rows lens had rendered 24
+    rows and called the population complete. So the list is written into the module as one machine-readable line and
+    derived here from the file's AST by the predicate _env_rows states; the two must agree, and every row on the list
+    must resolve to a module-level format (no ring_text resolves to none). PR 792's POOL SITES line and its pin in
+    tests/test_perf_stats.py are the precedent."""
+
+    def test_the_env_rows_line_is_the_ast_walks_enumeration(self):
+        got = _env_rows(SDK_BACKEND)
+        src = Path(SDK_BACKEND).read_text(encoding="utf-8")
+        written = [ln for ln in src.splitlines() if ln.startswith("# ENV ROWS: ")]
+        self.assertEqual(len(written), 1, "exactly one ENV ROWS line in kernel/sdk_backend.py: %r" % (written,))
+        self.assertEqual(written[0], got["line"],
+                         "kernel/sdk_backend.py's ENV ROWS line is the AST walk's enumeration; the walk found %d rows at lines %s. "
+                         "Update the line to the derived text; a row named UNBOUNDED carries no ring_text and needs one built "
+                         "from a module-level format, with its worst case added to the table in CredentialShapedNamesEndToEnd"
+                         % (len(got["rows"]), [ln for ln, _o, _f, _h in got["rows"]]))
+        for ln, owner, formats, heads in got["rows"]:
+            self.assertEqual(len(formats), 1, "one format per row, resolved from its ring_text: line %d in %s: %r" % (ln, owner, formats))
+            fmt = getattr(sb, formats[0])
+            self.assertIsInstance(fmt, str, "%s names a module-level string format" % formats[0])
+            self.assertTrue(fmt.startswith(ENV_ROW_HEADS), "the ring text opens with the row's head too: %r" % fmt)
+            self.assertNotIn("\u2014", fmt)
+        self.assertEqual(sorted({o for _ln, o, _f, _h in got["rows"]}), ["_options", "flag_settings_path", "fork", "set_env"],
+                         "the four functions that write such a row at review round 4")
+        self.assertEqual(len(got["rows"]), 9, "nine rows at review round 4: three in the writer, two each in _options and fork, two in set_env")
+        # the routine lines with the same head are outside every handler and carry no problem= (set_env's success line)
+        self.assertEqual([(o, h[0][:24]) for _ln, o, h in got["routine"]], [("set_env", "env (%s): per-session en")],
+                         "the one routine env-headed line at review round 4: %r" % (got["routine"],))
+        # kernel.py and credentials.py write no such row: the kernel's problem rows are the backend ring's (_sdk_problem_rows)
+        for path in (KERNEL_PY, CREDENTIALS_PY):
+            other = _env_rows(path)
+            self.assertEqual(other["rows"], [], "%s writes a problem row with an env head: %r" % (os.path.basename(path), other["rows"]))
+        self.assertIn("SdkBackend._log, problem=True", Path(KERNEL_PY).read_text(encoding="utf-8"),
+                      "the kernel names the backend ring as where its problem rows come from")
+
+    def test_the_predicate_reads_a_head_through_a_name_a_tuple_and_a_helper(self):
+        """The walk's resolver is itself pinned on a synthetic module: a head held in a name assigned from a tuple-returning
+        helper, a ring text built by a helper from a module-level format, a `problem=False` routine line, a keyword-less
+        line inside an except handler, and a row with no ring_text (UNBOUNDED)."""
+        src = (
+            "FMT = 'env (%s): a'\n"
+            "OTHER = 'env (%s): b'\n"
+            "def helper(x):\n"
+            "    return FMT % x\n"
+            "def rows(sid):\n"
+            "    line = 'flag settings (%s): c' % sid\n"
+            "    return line, OTHER % sid\n"
+            "class B:\n"
+            "    def one(self, sid):\n"
+            "        line, ring = rows(sid)\n"
+            "        self._log(line, problem=True, ring_text=ring)\n"
+            "        self._log('env (%s): d' % sid, problem=True, ring_text=helper(sid))\n"
+            "        self._log('env (%s): routine' % sid, problem=False)\n"
+            "        self._log('env (%s): plain' % sid)\n"
+            "        try:\n"
+            "            pass\n"
+            "        except OSError:\n"
+            "            self._log('env (%s): in a handler' % sid)\n"
+            "    def two(self, sid):\n"
+            "        self._log('flag settings: e', problem=bool(sid))\n"
+        )
+        path = os.path.join(tempfile.mkdtemp(), "synthetic.py")
+        Path(path).write_text(src)
+        got = _env_rows(path)
+        self.assertEqual([(o, f) for _ln, o, f, _h in got["rows"]], [("one", ["OTHER"]), ("one", ["FMT"]), ("one", []), ("two", [])])
+        self.assertEqual(got["line"], "# ENV ROWS: one -> OTHER FMT UNBOUNDED | two -> UNBOUNDED")
+        self.assertEqual([h for _ln, _o, _f, h in got["rows"]][0], ["flag settings (%s): c"], "the head read through the tuple-returning helper")
+        self.assertEqual([(o, h) for _ln, o, h in got["routine"]], [("one", ["env (%s): routine"]), ("one", ["env (%s): plain"])])
+
+    def test_the_writer_its_caller_and_the_locks_taker_sit_outside_every_lexical_with_over_a_lock(self):
+        """The caller-side half of _flag_settings_lock's order sentence (correctness-3, tests-4, regression-2; review round 4,
+        2026-09-19): the runtime probe (FlagSettingsLockOrder) reads the locks held when the writer takes its lock inside
+        the real _options, and cannot see what _options' own caller holds, so that half is a census. Exactly one call
+        site of flag_settings_path (in _options), one of _options (in _amain) and one `with _flag_settings_lock`
+        (in flag_settings_path), and none of the three sits lexically inside a `with` over a lock (any context naming
+        one: self._lock, _reg_lock, a session's _lock or _persist_lock, a module-level lock). A new caller, or one of
+        these wrapped in a lock, reds here; wrapping the _options call in _amain is the mutation the refuter showed
+        the runtime probe alone cannot catch."""
+        tree, parents = _parsed(SDK_BACKEND)
+        sites = {"flag_settings_path": [], "_options": [], "with _flag_settings_lock": []}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                f = node.func
+                callee = f.attr if isinstance(f, ast.Attribute) else (f.id if isinstance(f, ast.Name) else None)
+                if callee in ("flag_settings_path", "_options"):
+                    sites[callee].append(node)
+                if isinstance(f, ast.Attribute) and f.attr in ("acquire", "release") and "_flag_settings_lock" in ast.unparse(f.value):
+                    self.fail("the lock is taken by a bare acquire at line %d; the census reads `with` only" % node.lineno)
+            elif isinstance(node, (ast.With, ast.AsyncWith)):
+                if any("_flag_settings_lock" in ast.unparse(item.context_expr) for item in node.items):
+                    sites["with _flag_settings_lock"].append(node)
+        self.assertEqual({k: len(v) for k, v in sites.items()}, {"flag_settings_path": 1, "_options": 1, "with _flag_settings_lock": 1},
+                         "one production site each: %r" % ({k: [n.lineno for n in v] for k, v in sites.items()},))
+        self.assertEqual({k: _enclosing_def(v[0], parents).name for k, v in sites.items()},
+                         {"flag_settings_path": "_options", "_options": "_amain", "with _flag_settings_lock": "flag_settings_path"})
+        for k, v in sites.items():
+            self.assertEqual(_lock_withs_above(v[0], parents), [], "%s (line %d) sits inside a with over a lock" % (k, v[0].lineno))
+
+
+class FlagSettingsLockOrder(_OptionsBackend):
+    """The callee half of _flag_settings_lock's order sentence, pinned by execution (correctness-3, tests-4, regression-2;
+    review round 4 of the env-pick door, 2026-09-19: the round-3 mutation pass had left it as prose, calling it a claim
+    about every caller's stack, and the reviewer showed the population is one call site and the held state of a lock
+    is readable). A stand-in for the module's lock records, at its acquisition inside the real _options, which of the
+    module-level locks and of the four locks the two order statements name are held by this thread; the writer must
+    find none. The caller-side half is EnvRowsPopulation's census."""
+
+    def test_the_writer_takes_its_lock_with_no_other_lock_of_the_module_held(self):
+        lock_types = (type(threading.Lock()), type(threading.RLock()))
+        module_locks = {n: v for n, v in vars(sb).items() if isinstance(v, lock_types) and n != "_flag_settings_lock"}
+        self.assertGreaterEqual(len(module_locks), 4, "the module-level locks the probe reads: %r" % (sorted(module_locks),))
+        sid = self.be.spawn("web", "/tmp", env=ENV)
+        sess = self._sess(sid)
+        named = {"be._lock": self.be._lock, "be._reg_lock": self.be._reg_lock, "sess._lock": sess._lock,
+                 "sess._persist_lock": sess._persist_lock}
+        for n, lock in named.items():
+            self.assertIsInstance(lock, lock_types, n)
+
+        def held(lock):
+            return lock._is_owned() if hasattr(lock, "_is_owned") else lock.locked()   # an RLock knows its owner; a Lock is held or not
+        seen = {"entered": 0, "held": []}
+
+        class _Probe:
+            def __enter__(self):
+                seen["entered"] += 1
+                seen["held"].extend(sorted(n for n, lock in {**module_locks, **named}.items() if held(lock)))
+
+            def __exit__(self, *exc):
+                pass
+        self.addCleanup(setattr, sb, "_flag_settings_lock", sb._flag_settings_lock)
+        sb._flag_settings_lock = _Probe()
+        kw = self.be._options(sess, dict)
+        self.assertTrue(kw.get("settings"), "the writer ran (the env rides the settings file)")
+        self.assertEqual(seen["entered"], 1, "the writer took the module's lock once")
+        self.assertEqual(seen["held"], [], "no lock of the module is held when the writer takes its own")
+        # the probe reads a held lock: the same walk under one of the named locks names it
+        with self.be._reg_lock:
+            self.assertEqual([n for n, lock in named.items() if held(lock)], ["be._reg_lock"])
+        with sb._defaults_lock:
+            self.assertEqual([n for n, lock in module_locks.items() if held(lock)], ["_defaults_lock"])
 
 
 class SetEnv(_Backend):
@@ -741,7 +1207,7 @@ class LegacyReservedEnv(_OptionsBackend):
     def test_a_pre_rule_reg_launches_with_the_reserved_name_skipped(self):
         sid = self._poisoned({"FEATURE_FLAG": "1", "ROMP_SID": PARENT})
         logged = []
-        self.be._log = lambda msg, problem=False: logged.append((msg, problem))
+        self.be._log = lambda msg, problem=False, **kw: logged.append((msg, problem))
         kw = self._options_kw(self._sess(sid))
         applied = json.loads(Path(kw["settings"]).read_text())["env"]
         self.assertEqual(applied, {"FEATURE_FLAG": "1"},
@@ -756,7 +1222,7 @@ class LegacyReservedEnv(_OptionsBackend):
     def test_a_reg_carrying_only_reserved_names_still_launches(self):
         sid = self._poisoned({"ROMP_SESSION_NAME": "impostor"})
         logged = []
-        self.be._log = lambda msg, problem=False: logged.append((msg, problem))
+        self.be._log = lambda msg, problem=False, **kw: logged.append((msg, problem))
         kw = self._options_kw(self._sess(sid))
         self.assertNotIn("settings", kw,
                          "nothing left after the skip = the no-keys contract, not an empty env")
@@ -771,7 +1237,7 @@ class LegacyReservedEnv(_OptionsBackend):
             reg["env"] = {"FEATURE_FLAG": "1", "ROMP_SID": PARENT}
             sb.write_reg(self.be.state_dir, PARENT, reg)
             logged = []
-            self.be._log = lambda msg, problem=False: logged.append((msg, problem))
+            self.be._log = lambda msg, problem=False, **kw: logged.append((msg, problem))
             self.be.fork("child", PARENT, "a1", sid=CHILD)
             self.assertEqual(self._reg(CHILD).get("env"), {"FEATURE_FLAG": "1"},
                              "the copy is where a legacy reg's poison stops propagating")
@@ -1082,6 +1548,13 @@ class CredentialShapedNamesAtTheDoor(unittest.TestCase):
         self.assertIn("its own file", op)
         self.assertIn("_API_KEY or _TOKEN value goes in romp's process environment", mixed)
         self.assertIn("1Password name is refused there at boot", mixed)
+        # the closing review's fold clause (2026-09-19) landed with no test to fail without it (tests-5, review round
+        # 4): the mixed road states the fold like every other statement of the rule, and AFTER both halves, so it
+        # scopes both (the exact phrase: credential_env_refusal's own prefix already carries "any letter case")
+        self.assertIn("in any letter case", mixed)
+        after_suffix = mixed.index("goes in romp's process environment")
+        self.assertGreater(mixed.index("in any letter case", after_suffix), mixed.index("1Password name is refused there at boot"),
+                           "the fold clause follows both halves: %r" % mixed)
         self.assertEqual(sb._cred.credential_env_refusal(["op_account"]).replace("op_account", "OP_ACCOUNT"), op,
                          "the fold: a lowercase 1Password name hears the 1Password road")
         short_op = sb._cred.credential_env_ring_text(["OP_ACCOUNT"])
@@ -1320,6 +1793,135 @@ class CredentialShapedNamesEndToEnd(_OptionsBackend):
             self.assertFalse(any(val in m for m, _p, _k in self.logged), "no log line carries the value")
         finally:
             os.environ.pop("CLAUDE_CONFIG_DIR", None)
+
+    def test_the_fork_and_reserved_rows_two_cuts_are_driven_at_one_two_and_twenty_names(self):
+        """tests-3 and correctness-1 (review round 4 of the env-pick door, 2026-09-19): the fork row's two budget cuts
+        were never exercised and its one cap assertion was a measurement with the five-character name "child", the
+        shape round 3 ruled out for every other row; the two reserved rows (the _options skip and the fork drop) had
+        no ring text at all. Through the real fork and the real _options, with a fork or session name past
+        RING_SESSION_BUDGET and a first variable past RING_NAME_BUDGET: the rendered ring text equals the format
+        applied to the two cut pieces and the count, at one, two and twenty names for the fork row and at one, two and
+        all five for the reserved rows (the reserved set is fixed and every name in it fits the name budget, so the
+        session cut is the one that fires there and the count is at most four by construction); the kernel log line
+        carries every name and the whole session name; no line carries a value. The fork rows are unkeyed, so no
+        repeat suffix rides them and the format's worst case is the whole bound."""
+        os.environ["CLAUDE_CONFIG_DIR"] = tempfile.mkdtemp()   # transcript_path resolves through this
+        try:
+            cap = sb.ERROR_CENTER_TEXT_CAP
+            long_child = "notes-api-" + "c" * 30                                     # 40 characters, budget 20
+            long_name = "NOTES_" + "X" * 40 + "_TOKEN"                               # 52 characters, budget 24; sorts first
+            cut_child = sb._cred.cut_to(long_child, sb.RING_SESSION_BUDGET)
+            cut_name = sb._cred.cut_to(long_name, sb.RING_NAME_BUDGET)
+            for piece, budget in ((cut_child, sb.RING_SESSION_BUDGET), (cut_name, sb.RING_NAME_BUDGET)):
+                self.assertTrue(piece.endswith(sb._cred.CUT_MARK) and len(piece) == budget, piece)
+            self.be.spawn("notes-api-" + "p" * 30, self.d, sid=PARENT, env=ENV)
+            for count in (1, 2, 20):
+                with self.subTest(fork_names=count):
+                    names = [long_name] + ["ZZ_%02d_TOKEN" % i for i in range(count - 1)]
+                    vals = {n: _secret_value("f%d" % i) for i, n in enumerate(names)}
+                    self.be._update_reg(PARENT, env={**ENV, **vals})
+                    del self.logged[:]
+                    child = self.be.fork(long_child, PARENT, "a%d" % count)
+                    self.assertEqual(self._reg(child).get("env"), ENV)
+                    rows = [(m, kw) for m, problem, kw in self.logged if problem and "not copying credential-shaped" in m]
+                    self.assertEqual(len(rows), 1, self.logged)
+                    expect = sb.FORK_DROP_RING % (cut_child, cut_name + (" and %d more" % (count - 1) if count > 1 else ""))
+                    self.assertEqual(rows[0][1]["ring_text"], expect, "both cuts and the count, through the real fork")
+                    self.assertLessEqual(len(expect), cap)
+                    self.assertNotIn("key", rows[0][1], "unkeyed: no repeat suffix rides the fork rows")
+                    self.assertIn(long_child, rows[0][0], "the kernel log line carries the whole fork name")
+                    for n in names:
+                        self.assertIn(n, rows[0][0], "and every name whole")
+                    self.assertFalse(any(v in m for v in vals.values() for m, _p, _k in self.logged), "no line carries a value")
+            reserved = sorted(sb.ENV_RESERVED_NAMES + sb.AUTH_ENV_NAMES)
+            self.assertEqual(len(reserved), 5)
+            self.assertLessEqual(max(len(n) for n in reserved), sb.RING_NAME_BUDGET, "every reserved name fits the name budget")
+            for count in (1, 2, 5):
+                with self.subTest(reserved_names=count):
+                    names = reserved[:count]
+                    val = _secret_value("r%d" % count)
+                    self.be._update_reg(PARENT, env={**ENV, **{n: val for n in names}})
+                    del self.logged[:]
+                    child = self.be.fork(long_child, PARENT, "b%d" % count)
+                    self.assertEqual(self._reg(child).get("env"), ENV)
+                    rows = [(m, kw) for m, problem, kw in self.logged if problem and "dropping reserved" in m]
+                    self.assertEqual(len(rows), 1, self.logged)
+                    expect = sb.FORK_RESERVED_RING % (cut_child, sb._cred.first_and_count(names, sb.RING_NAME_BUDGET))
+                    self.assertEqual(rows[0][1]["ring_text"], expect, "the fork's reserved drop, bounded")
+                    self.assertTrue(expect.startswith("env (%s): dropping reserved %s" % (cut_child, names[0])), expect)
+                    if count > 1:
+                        self.assertIn(" and %d more from the inherited env" % (count - 1), expect)
+                    self.assertLessEqual(len(expect), cap)
+                    self.assertFalse(any("not copying credential-shaped" in m for m, _p, _k in self.logged), "no fork row for a reserved name")
+                    # the _options skip of the same names on a session with a long name, launched with them stored
+                    sid = self.be.spawn(long_child + "-%d" % count, "/tmp", env=ENV)
+                    self.be._update_reg(sid, env={**ENV, **{n: val for n in names}})
+                    del self.logged[:]
+                    kw = self.be._options(self._sess(sid), dict)
+                    self.assertEqual(json.loads(Path(kw["settings"]).read_text())["env"], ENV, "the reserved names are stripped from the launch")
+                    rows = [(m, kw2) for m, problem, kw2 in self.logged if problem and "ignoring reserved" in m]
+                    self.assertEqual(len(rows), 1, self.logged)
+                    cut_sess = sb._cred.cut_to(long_child + "-%d" % count, sb.RING_SESSION_BUDGET)
+                    expect = sb.RESERVED_DROP_RING % (cut_sess, sb._cred.first_and_count(names, sb.RING_NAME_BUDGET))
+                    self.assertEqual(rows[0][1]["ring_text"], expect, "the launch's reserved skip, bounded")
+                    self.assertLessEqual(len(expect), cap)
+                    self.assertIn(long_child + "-%d" % count, rows[0][0], "the whole session name on the log line")
+                    for n in names:
+                        self.assertIn(n, rows[0][0])
+                    self.assertFalse(any(val in m for m, _p, _k in self.logged))
+        finally:
+            os.environ.pop("CLAUDE_CONFIG_DIR", None)
+
+    def test_every_format_on_the_env_rows_line_has_its_worst_case_computed_from_the_format_and_fits_the_cap(self):
+        """The tie between the derived population (EnvRowsPopulation) and the bounds (review round 4 of the env-pick door,
+        2026-09-19): one worst case per format the ENV ROWS line names, computed HERE from the format's own pieces with
+        every budget spent and the count text at its widest, no more entries and no fewer, so a new row reds this test
+        until its worst case is written down. The stored-offender row is keyed, so _log's repeat suffix at a four-digit
+        count, read from the real ring, rides its worst case; the refusal head has three bodies (the credential ring
+        text under the longest road, the registry-road sentence, and any other body cut to what the cap leaves). Each
+        is under ERROR_CENTER_TEXT_CAP and whole through the feed's cut, and the two-piece formats' lengths are the
+        identity fixed text + session budget + name budget + widest count."""
+        km = self._real_ring()
+        suffix4 = self._repeat_suffix(9999)
+        cap = sb.ERROR_CENTER_TEXT_CAP
+        S, N, D = "x" * sb.RING_SESSION_BUDGET, "x" * sb.RING_NAME_BUDGET, "x" * sb.RING_SID_BUDGET
+        count_worst = " and %s more" % sb._cred.count_text(sb._cred.COUNT_CAP + 1)
+        self.assertEqual(count_worst, " and 999+ more")
+        keys = ", ".join(sb.FLAG_SETTINGS_KEYS)
+        road = max(sb._cred.CREDENTIAL_RING_ROADS.values(), key=len)
+        head = sb.REFUSAL_RING_HEAD % S
+        two_piece = ("RESERVED_DROP_RING", "STORED_OFFENDER_RING", "FORK_RESERVED_RING", "FORK_DROP_RING")
+        worst = {
+            "FLAG_SID_RING": [sb.FLAG_SID_RING % (max(sb.FLAG_SID_REASONS, key=len), D, keys)],
+            "FLAG_LINK_RING": [sb.FLAG_LINK_RING % D],
+            "FLAG_UNWRITABLE_RING": [sb.FLAG_UNWRITABLE_RING % (D, "x" * sb.RING_CLASS_BUDGET, keys)],
+            "RESERVED_DROP_RING": [sb.RESERVED_DROP_RING % (S, N + count_worst)],
+            "STORED_OFFENDER_RING": [sb.STORED_OFFENDER_RING % (S, N + count_worst) + suffix4],
+            "FORK_RESERVED_RING": [sb.FORK_RESERVED_RING % (S, N + count_worst)],
+            "FORK_DROP_RING": [sb.FORK_DROP_RING % (S, N + count_worst)],
+            "REFUSAL_RING_HEAD": [head + sb._cred.CREDENTIAL_RING_FORMAT % (N + count_worst, "are", road),
+                                  head + sb.REFUSAL_NO_REG,
+                                  head + sb._cred.cut_to("B" * 1000, cap - len(head))],
+        }
+        on_line = sorted({f for _ln, _o, formats, _h in _env_rows(SDK_BACKEND)["rows"] for f in formats})
+        self.assertEqual(sorted(worst), on_line, "one worst case per format on the ENV ROWS line, no more and no fewer")
+        lengths = {}
+        for fmt_name in on_line:
+            fmt = getattr(sb, fmt_name)
+            for text in worst[fmt_name]:
+                self.assertLessEqual(len(text), cap, (fmt_name, len(text), text))
+                self.assertEqual(km._sdk_problem_text(text), text, (fmt_name, "whole in the feed"))
+                self.assertTrue(text.startswith(fmt.split("%s")[0]), (fmt_name, text))
+            lengths[fmt_name] = max(len(t) for t in worst[fmt_name])
+            if fmt_name in two_piece:
+                self.assertEqual(fmt.count("%s"), 2, fmt_name)
+                self.assertEqual(len(worst[fmt_name][0].removesuffix(suffix4 if fmt_name == "STORED_OFFENDER_RING" else "")),
+                                 len(fmt % ("", "")) + sb.RING_SESSION_BUDGET + sb.RING_NAME_BUDGET + len(count_worst),
+                                 "%s: the format's worst case is its fixed text plus both budgets and the widest count" % fmt_name)
+        self.assertEqual(lengths["REFUSAL_RING_HEAD"], cap, "the refusal ring's worst case is the cap exactly (round 3's arithmetic)")
+        self.assertEqual(lengths["STORED_OFFENDER_RING"], 178 + len(suffix4), "the stored row: 178 plus the suffix at four digits")
+        self.assertEqual((lengths["RESERVED_DROP_RING"], lengths["FORK_RESERVED_RING"]), (196, 187),
+                         "the two reserved rows' worst cases at review round 4 (the whole log lines rendered 244 and 241)")
 
     def _real_ring(self):
         """The row as the dashboard reads it: the class stubs _log to capture lines, so the stub goes and the kernel
