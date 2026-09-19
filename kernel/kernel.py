@@ -38040,7 +38040,29 @@ def _stat_counting_install():
     per worker) finds the wrapper installed, reuses its thread-local and installs nothing: the chain stays one deep
     (os.stat.__wrapped__ is the builtin) and every load shares one accumulator. Returns the thread-local. A
     DirEntry.stat reaches no wrapper (C); _entry_stat is its door. What a wrapped stat and a stat through the door
-    cost is stated once, in the stages_cpu_ms entry of docs/reference.md."""
+    cost is stated once, in the stages_cpu_ms entry of docs/reference.md.
+
+    The wrappers carry the builtins' membership in the os capability sets, os.supports_dir_fd,
+    os.supports_effective_ids, os.supports_fd and os.supports_follow_symlinks (os.py builds the four at import, keyed
+    by the builtin function objects; a rebind alone took os.stat out of three of them for the life of the process, so
+    every stdlib probe on it answered unsupported: pytest's tmpdir guard, shutil.copystat's lookup; the round-2
+    review, 2026-09-19): wherever the builtin is a member the wrapper is added beside it, in place, so a reader
+    holding the set object sees it, and the builtin stays a member. A derivation over the stdlib of 3.10, 3.12, 3.13
+    and 3.14t (a grep of every module for the supports_* names, for os.stat or os.lstat used as a value rather than
+    called, for a getattr of either by name, and for an identity or membership test against either) found no fifth
+    registry keyed by os.stat or os.lstat, and two import-time bindings of the builtin, both patched above: 3.10's
+    pathlib accessor and 3.13's glob._StringGlobber.lstat (pathlib imports glob, so Path.glob over a literal trailing
+    part reached the builtin past the wrapper there and counted nothing; the round-3 review, 2026-09-19); 3.14's
+    realpath binds os.lstat inside the call, so it reads the wrapper. The consumers at call time are shutil.copystat's
+    follow_symlinks=False lookup and pytest's guard; shutil's fd-based rmtree gate (_use_fd_functions) is an import-time
+    constant evaluated before this module loads (tempfile has no gate that runs: on 3.12 its copy sits in an import
+    fallback that shutil's presence skips); 3.13's shutil asserts `func is os.lstat` against the current os.lstat (the
+    wrapper on both sides); and 3.14's pathlib asks about utime, setxattr, chmod and chflags, not stat. What still
+    differs from the builtin: the type (a Python function, not builtin_function_or_method; inspect.isbuiltin reads
+    False), inspect.signature with follow_wrapped=False ((path, *a, **kw); the default follows __wrapped__ and reads the
+    builtin's), no __self__ and no __text_signature__, the TypeError text on a missing argument, and pickling (the
+    wrapper pickles by name; the builtin kept in __wrapped__ no longer does, since posix.stat names another object);
+    functools.wraps carries __name__, __qualname__, __module__, __doc__ and sets __wrapped__ to the builtin."""
     tl = getattr(os.stat, "_romp_sig_counting", None)
     if tl is not None:
         return tl
@@ -38054,7 +38076,8 @@ def _stat_counting_install():
             return real(path, *a, **kw)
         counting._romp_sig_counting = tl
         return counting
-    st, lst = _wrap(os.stat), _wrap(os.lstat)
+    real_stat, real_lstat = os.stat, os.lstat
+    st, lst = _wrap(real_stat), _wrap(real_lstat)
     os.stat, os.lstat = st, lst
     posix = sys.modules.get("posix")
     if posix is not None:
@@ -38062,6 +38085,21 @@ def _stat_counting_install():
     acc = getattr(sys.modules.get("pathlib"), "_NormalAccessor", None)   # 3.10 alone: its accessor bound os.stat at import
     if acc is not None:
         acc.stat, acc.lstat = staticmethod(st), staticmethod(lst)
+    globber = getattr(sys.modules.get("glob"), "_StringGlobber", None)   # 3.13 alone: glob's globber bound os.lstat at import
+    held = globber.__dict__.get("lstat") if globber is not None else None  #  (pathlib imports glob), so Path.glob over a literal
+    if getattr(held, "__func__", None) is real_lstat:                    #  trailing part reached the builtin past the wrapper
+        globber.lstat = staticmethod(lst)
+    for name in ("supports_dir_fd", "supports_effective_ids", "supports_fd", "supports_follow_symlinks"):
+        members = getattr(os, name, None)                # the capability sets os.py built at import, keyed by the builtins
+        if members is None:
+            continue
+        for real, wrapper in ((real_stat, st), (real_lstat, lst)):
+            if real in members and wrapper not in members:
+                if hasattr(members, "add"):              # a plain set on CPython 3.10 to 3.14t: mutated in place, so a reader
+                    members.add(wrapper)                 #  holding the set object sees the wrapper; the builtin stays a member
+                else:                                    # an immutable set: rebound on os with the wrapper added
+                    members = type(members)(members | {wrapper})
+                    setattr(os, name, members)
     return tl
 
 

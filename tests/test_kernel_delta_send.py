@@ -1987,6 +1987,72 @@ class StatCountingInstall(unittest.TestCase):
             self.assertEqual(tl.stats, 4, "inside one: os.stat, os.lstat, pathlib and os.path alike, one each")
         self.assertFalse(tl.active)
 
+    def test_the_wrappers_keep_the_builtins_membership_in_the_os_capability_sets(self):
+        """regression-1 (the round-2 review, 2026-09-19): rebinding os.stat and os.lstat to the wrappers took them out of
+        the os.supports_* sets (os.py builds the four at import, keyed by the builtin function objects), so for the life of
+        any process that loaded the kernel every capability probe on the two answered unsupported: pytest's tmpdir guard
+        (`False if os.stat in os.supports_follow_symlinks else True`) and shutil.copystat's lookup among them. The install
+        carries the membership now: wherever the builtin is a member the wrapper is too, and where it is not (os.stat in
+        supports_effective_ids; os.lstat in supports_follow_symlinks; os.lstat in supports_dir_fd below 3.13) the wrapper
+        is not either, so a probe reads the same answer through the wrapper as through the builtin. Pinned by equality
+        per set and function (the platform-derived edges included), by the three memberships the builtin stat holds on
+        Linux (red at HEAD before the carry), by a consumer executed (shutil.copystat over two symlinks with
+        follow_symlinks=False takes the lookup road that asks the set and answered a no-op stat before the carry: None
+        has no st_mode), by pytest's guard expression reading False, and across a second kernel load (the early return
+        installs nothing and disturbs nothing). NOT under a _StatInterceptor, which re-patches os.stat for its window with
+        wrappers of its own that are in no set."""
+        sets = ("supports_dir_fd", "supports_effective_ids", "supports_fd", "supports_follow_symlinks")
+        for fn in (os.stat, os.lstat):
+            for name in sets:
+                s = getattr(os, name)
+                self.assertEqual(fn in s, fn.__wrapped__ in s, "%s: the wrapper's membership equals the builtin's (%s)" % (name, fn.__name__))
+        three = ("supports_follow_symlinks", "supports_dir_fd", "supports_fd")
+        if sys.platform.startswith("linux"):
+            for name in three:
+                self.assertIn(os.stat.__wrapped__, getattr(os, name), "premise: the builtin stat is a member of %s on Linux" % name)
+        for name in three:
+            if os.stat.__wrapped__ in getattr(os, name):
+                self.assertIn(os.stat, getattr(os, name), "%s: the wrapper is a member where the builtin is (HEAD before the carry: not)" % name)
+        with tempfile.TemporaryDirectory() as td:
+            a, b = os.path.join(td, "a"), os.path.join(td, "b")
+            for p in (a, b):
+                with open(p, "w") as f:
+                    f.write("x\n")
+            la, lb = os.path.join(td, "la"), os.path.join(td, "lb")
+            os.symlink(a, la); os.symlink(b, lb)
+            shutil.copystat(la, lb, follow_symlinks=False)     # the consumer: its lookup asks os.supports_follow_symlinks about os.stat
+        self.assertFalse(False if os.stat in os.supports_follow_symlinks else True,
+                         "pytest's tmpdir guard expression reads False: the root's stat may refuse to follow a symlink")
+        km2 = load_source("romp_kernel_second_load_for_the_membership_pin", os.path.join(BIN, "romp-kernel"))
+        self.assertIs(km2._CHAT_SIG_TL, km._CHAT_SIG_TL, "premise: the second load took the early return")
+        for fn in (os.stat, os.lstat):
+            for name in sets:
+                s = getattr(os, name)
+                self.assertEqual(fn in s, fn.__wrapped__ in s, "%s after a second kernel load (%s)" % (name, fn.__name__))
+        self.assertIn(os.stat, os.supports_follow_symlinks, "membership intact after a second load")
+
+    def test_a_stdlib_class_that_bound_the_builtin_at_import_reaches_the_wrapper_inside_a_signature(self):
+        """regression-1's round-3 finding (2026-09-19): 3.13's glob._StringGlobber binds os.lstat into its class dict at
+        import (pathlib imports glob, before the kernel loads), so Path.glob over a literal trailing part called the
+        builtin past the wrapper and a signature counted none of its stats, while os.path.lexists beside it counted one;
+        the install patches that binding the way it patches 3.10's pathlib accessor. Pinned by execution on every
+        interpreter: a literal glob over an existing file inside a signature counts at least one stat (the versions differ
+        in how many stats a glob makes, so the count is not pinned exactly), and where the class carries the attribute it
+        holds the kernel's wrapper. Red on 3.13 before the patch (0 counted), green on 3.10, 3.12 and 3.14t before it."""
+        tl = km._CHAT_SIG_TL
+        with tempfile.TemporaryDirectory() as td:
+            with open(os.path.join(td, "a"), "w") as f:
+                f.write("x\n")
+            with km._chat_sig_scope():
+                found = list(pathlib.Path(td).glob("a"))
+                n = tl.stats
+        self.assertEqual([p.name for p in found], ["a"], "premise: the literal glob found the file")
+        self.assertGreaterEqual(n, 1, "the glob's stat reached the counting wrapper inside the signature (3.13 before the patch: 0)")
+        globber = getattr(sys.modules.get("glob"), "_StringGlobber", None)
+        held = globber.__dict__.get("lstat") if globber is not None else None
+        if held is not None:
+            self.assertIs(held.__func__, os.lstat, "the globber's bound lstat is the kernel's wrapper, not the builtin")
+
     def test_the_direntry_stat_scanner_derives_entry_names_and_flags_a_stat_on_one_outside_the_door_in_both_directions(self):
         """The pin below is only as good as its derivation, so the scanner is checked on synthetic modules in both directions:
         a `.stat(` on a name bound as a scandir entry through each spelling the kernel uses (a for over a listing bound by
