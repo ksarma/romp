@@ -1508,14 +1508,16 @@ class PushRowsByPurpose(unittest.TestCase):
 NOT_A_REPOSITORY = "not a git repository"
 
 
-def _git_bytes(root, *args):
+def _git_bytes(root, *args, env=None):
     """git's stdout, as bytes, for `git -C root args`. Skips the caller only when git is not installed or says `root`
     is not in a repository; any other failure is an AssertionError carrying git's stderr and exit code, never a skip
     (the shape of tests/test_entrypoints_executable.py's _index, whose docstring says why: a skip there would disarm
     the check while the run stays green). stdout stays bytes because a -z listing is split on NUL; stderr alone is
-    decoded, with errors replaced, so git's words reach the message whatever their encoding."""
+    decoded, with errors replaced, so git's words reach the message whatever their encoding. `env`, when given, is the
+    whole environment for the call: a scratch repo passes the scrubbed one _scratch_repo built, since git obeys a
+    hook's GIT_DIR and GIT_INDEX_FILE over `-C`; the live tree is listed under the ambient one."""
     try:
-        proc = subprocess.run(["git", "-C", str(root), *args], capture_output=True, timeout=60)
+        proc = subprocess.run(["git", "-C", str(root), *args], capture_output=True, timeout=60, env=env)
     except FileNotFoundError:
         raise unittest.SkipTest("git is not installed; the routing sweep cannot list the tree")
     if proc.returncode != 0:
@@ -1531,15 +1533,19 @@ def _scratch_repo(test):
     """A git repository of its own under the run's temp root (removed with the test, and swept with the root either way)
     for a pin that needs a listed file the live tree must not hold: a file placed in it is untracked and unignored, so
     `git ls-files --others --exclude-standard` lists it and RoutingStatements._scan reads it, with no lock taken and no
-    write into the checkout. Its git init runs with every GIT_* variable scrubbed but GIT_TEST_* and reads no global or
-    system config (the ScratchCheckout shape in tests/test_entrypoints_executable.py, whose env() says why: a hook's
-    GIT_INDEX_FILE would otherwise send the scratch repo's operations into this checkout's index)."""
+    write into the checkout. Returns the directory and the environment its git init ran with, every GIT_* variable
+    scrubbed but GIT_TEST_* and no global or system config read (the ScratchCheckout shape in
+    tests/test_entrypoints_executable.py, whose env() says why: a hook's GIT_INDEX_FILE would otherwise send the scratch
+    repo's operations into this checkout's index); every git call over the scratch repo passes that environment too,
+    the listing in _scan through its env keyword. The first version scrubbed for the init alone, and a listing over
+    the scratch repo under a hook's GIT_DIR and GIT_INDEX_FILE was this checkout's index (3109 paths at 0ec2eb9ff),
+    each skipped at the open, so the pins stayed green over a listing that was not the scratch repo's."""
     d = Path(tempfile.mkdtemp())
     test.addCleanup(shutil.rmtree, d, ignore_errors=True)
     env = {name: value for name, value in os.environ.items() if not name.startswith("GIT_") or name.startswith("GIT_TEST_")}
     env.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
     subprocess.run(["git", "init", "-q", str(d)], env=env, check=True, capture_output=True, timeout=60)
-    return d
+    return d, env
 
 
 class RoutingStatements(unittest.TestCase):
@@ -1648,12 +1654,13 @@ class RoutingStatements(unittest.TestCase):
                     held.append(f[3])
         return held
 
-    def _scan(self, root):
-        """{relative path: text} for every text file under `root` that git tracks or would track and that names a block."""
+    def _scan(self, root, env=None):
+        """{relative path: text} for every text file under `root` that git tracks or would track and that names a block;
+        `env` is the environment for the git call (a scratch repo's scrubbed one; None for the live tree)."""
         # A skip only where the precedent skips (no git, no repository); a dubious-ownership 128 fails with git's
         # safe.directory hint instead of a bare exit code, because a skip there would disarm the sweep while the run
         # stays green.
-        listing = _git_bytes(root, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
+        listing = _git_bytes(root, "ls-files", "-z", "--cached", "--others", "--exclude-standard", env=env)
         found = {}
         # A name git lists is bytes. fsdecode keeps an undecodable byte as a surrogate (surrogateescape on POSIX), so the
         # file is still read under its real name (os.fsencode gives the bytes back at the open) and a pin failure prints
@@ -1788,7 +1795,7 @@ class RoutingStatements(unittest.TestCase):
         67 million when the blob is read whole). Measured with tracemalloc per call, not ru_maxrss: that is a process
         high-water mark an earlier test can already have raised past 64 MiB, which would let a scan that reads the blob
         whole pass."""
-        d = _scratch_repo(self)
+        d, env = _scratch_repo(self)
         (d / "control.md").write_text("a control note naming stagesForeign\n")    # so the absence below cannot pass vacuously
         with open(d / "blob.bin", "wb") as fh:
             fh.write(b"\0" * 16 + b"stagesForeign")
@@ -1798,12 +1805,12 @@ class RoutingStatements(unittest.TestCase):
             tracemalloc.start()
         try:
             tracemalloc.reset_peak()
-            found = self._scan(d)
+            found = self._scan(d, env=env)
             peak = tracemalloc.get_traced_memory()[1]
         finally:
             if not tracing:
                 tracemalloc.stop()
-        listed = os.fsdecode(_git_bytes(d, "ls-files", "-z", "--others", "--exclude-standard")).split("\0")
+        listed = os.fsdecode(_git_bytes(d, "ls-files", "-z", "--others", "--exclude-standard", env=env)).split("\0")
         self.assertIn("blob.bin", listed, "git lists the blob, so the scan met it (a machine-wide ignore of .bin would hide it)")
         self.assertIn("control.md", sorted(found))
         self.assertNotIn("blob.bin", sorted(found), "a NUL in the first bytes rejects the file")
@@ -1814,11 +1821,11 @@ class RoutingStatements(unittest.TestCase):
         """One listed path whose NAME is not valid UTF-8 (git ls-files -z emits the raw bytes) used to error every test
         here with a UnicodeDecodeError naming an offset into the joined listing and no file. The file is read under its
         real name, and a pin failure names it, surrogate and all."""
-        d = _scratch_repo(self)
+        d, env = _scratch_repo(self)
         name = b"notes-caf\xe9.md"                                                # latin-1 e-acute, not UTF-8
         with open(os.path.join(os.fsencode(str(d)), name), "wb") as fh:
             fh.write(b"a note naming stagesForeign\n")
-        found = self._scan(d)                                                     # must not raise
+        found = self._scan(d, env=env)                                            # must not raise
         rel = os.fsdecode(name)                                                   # 'notes-caf\udce9.md'
         self.assertIn(rel, sorted(found), "the file is read under its real name")
         with self.assertRaises(AssertionError) as swept:
@@ -1951,6 +1958,56 @@ class RoutingStatements(unittest.TestCase):
                 self.assertTrue(control.exists(), "the healer removes plants alone")
             finally:
                 control.unlink(missing_ok=True)
+
+    def test_a_scratch_repos_git_runs_with_its_scrubbed_environment_not_the_callers(self):
+        """Every git call over a scratch repo runs with the environment _scratch_repo scrubbed for its init (round 2; the
+        first version scrubbed the init alone). Two things a caller's environment can hold, set here together: a hook's
+        GIT_DIR and GIT_INDEX_FILE for this checkout, which git obeys over `-C` (a scratch listing under them was this
+        checkout's index, 3109 paths at 0ec2eb9ff, each skipped at the open, so the pins stayed green over a listing that
+        was not the scratch repo's), and a global config whose excludes hide the scratch file, which the ambient
+        environment honours and the scrubbed one, with no global config, does not."""
+        root = Path(HERE).parent
+        git_dir = os.fsdecode(_git_bytes(root, "rev-parse", "--absolute-git-dir").strip())
+        hostile = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, hostile, ignore_errors=True)
+        (hostile / "excludes").write_text("*.md\n")
+        (hostile / "gitconfig").write_text("[core]\n\texcludesFile = %s\n" % (hostile / "excludes"))
+        with mock.patch.dict(os.environ, {"GIT_DIR": git_dir, "GIT_INDEX_FILE": os.path.join(git_dir, "index"),
+                                          "GIT_CONFIG_GLOBAL": str(hostile / "gitconfig")}):
+            d, env = _scratch_repo(self)
+            (d / "note.md").write_text("a note naming stagesForeign\n")
+            listed = [entry for entry in _git_bytes(d, "ls-files", "-z", "--cached", "--others", "--exclude-standard",
+                                                    env=env).split(b"\0") if entry]
+            found = self._scan(d, env=env)
+        self.assertEqual(listed, [b"note.md"], "the scratch repo's listing is its own: not this checkout's index, and not "
+                                               "thinned by the caller's excludes")
+        self.assertEqual(sorted(found), ["note.md"], "and the scan over it reads that listing")
+
+    def test_the_scan_honours_ignores_and_reads_a_nul_only_past_the_probe(self):
+        """The text rule's other edges, each stated in the class docstring and, before round 2, pinned by nothing: an
+        ignored file naming a block is not read (--exclude-standard); a NUL at byte PROBE-1 rejects a file and a NUL at
+        byte PROBE does not (the file is read whole and found, the case the docstring says grep -I hides); content that
+        is not UTF-8 is skipped, never read with a replacement character. In a scratch repo, so the live tree holds
+        none of it."""
+        d, env = _scratch_repo(self)
+        (d / ".gitignore").write_text("ignored.md\n")
+        (d / "ignored.md").write_text("an ignored note naming stagesForeign\n")
+        prefix = b"a note naming stagesForeign\n"
+        (d / "edge-nul.md").write_bytes(prefix + b"x" * (self.PROBE - 1 - len(prefix)) + b"\0\n")   # NUL at index PROBE-1
+        (d / "late-nul.md").write_bytes(prefix + b"x" * (self.PROBE - len(prefix)) + b"\0\n")       # NUL at index PROBE
+        (d / "latin1.md").write_bytes(b"caf\xe9 naming stagesForeign\n")
+        self.assertEqual((d / "edge-nul.md").read_bytes().index(b"\0"), self.PROBE - 1)
+        self.assertEqual((d / "late-nul.md").read_bytes().index(b"\0"), self.PROBE)
+        self.assertEqual(sorted(self._scan(d, env=env)), ["late-nul.md"],
+                         "ignored, NUL-in-probe and non-UTF-8 files are skipped; a NUL past the probe is read")
+
+    def test_the_wording_pin_needs_whitespace_between_the_words(self):
+        """The pattern's other edge: two words of a retired phrase run together are not the phrase. The plant test pins
+        the wide direction (a phrase broken across a line matches), and a pattern of zero or more whitespace between the
+        words passed every test here (round 2's two-direction sweep). The literal is split so this module, which is
+        swept, does not carry the phrase."""
+        near = {"near-miss.md": "A note: inside its" + "cycle, never the phrase.\n"}
+        self._pin_no_retired_wording(near)                                                       # must not raise
 
     def test_this_modules_top_keys_comment_names_both_families(self):
         line = next(l for l in Path(__file__).read_text().splitlines() if l.strip().startswith('"stagesForeign",'))
