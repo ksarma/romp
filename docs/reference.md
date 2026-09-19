@@ -3179,15 +3179,16 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   `push.chat.send`, each listed at zero from the start and cumulative like
   the flat rows of `stages_ms`. A row takes the CPU of a mark whose wall
   went to the flat `stages_ms` row of its name: a connect push's `push.*`
-  stage, the pusher's `jobs.<job>` and a foreign writer's stage record no
-  CPU row, so each row's CPU is the same writer's as its wall. Over a
-  window, wall minus user minus sys is the stage's wait (the GIL, the
-  syscalls); the split between user and sys is tick-sampled by
-  the operating system and scaled to the exact total, so read it over a
-  window, never off one cycle. The reads cost two `getrusage` calls per
-  mark, about 230 clock reads per cycle at 38 tabs. Empty where the platform
-  has no per-thread rusage (macOS): an empty block means no clock, not no
-  CPU.
+  stage, the pusher's `jobs.<job>` and a foreign writer's stage (a
+  push-marked write from a thread owning no cycle included, under the
+  `stagesForeign` rule above) record no CPU row, so each row's CPU is the
+  same writer's as its wall. Over a window, wall minus user minus sys is
+  the stage's wait (the GIL, the syscalls); the split between user and sys
+  is tick-sampled by the operating system and scaled to the exact total,
+  so read it over a window, never off one cycle. The reads cost two
+  `getrusage` calls per mark, about 230 clock reads per cycle at 38 tabs.
+  Empty where the platform has no per-thread rusage (macOS): an empty
+  block means no clock, not no CPU.
 - `builds`: `chat`, `feed`, `timeline`, each with `cached`, `built`, `ms`.
   `chat` also carries `bySession`, one row per living session built since
   the boot, ordered by `max` (slowest first) and numbered by `rank` in that

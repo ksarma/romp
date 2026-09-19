@@ -857,8 +857,9 @@ class _PerfStats:
                                    per-thread rusage (macOS): an empty block means no clock, not no CPU.
                                    A row takes the CPU of a mark whose wall went to the flat stages_ms
                                    row of its name (stage()'s routing): a connect push's push.* stage,
-                                   the pusher's jobs.<job> and a foreign writer's stage record no CPU
-                                   row, so each row's CPU is the same writer's as its wall
+                                   the pusher's jobs.<job> and a foreign writer's stage (a push-marked
+                                   write from a thread owning no cycle included) record no CPU row, so
+                                   each row's CPU is the same writer's as its wall
       builds                       chat / feed / timeline / feedJson -> {cached, built, ms}: served
                                    from the build cache vs rebuilt, and the rebuild time. feedJson is
                                    GET /feed.json's own reads (_pure_feed), kept apart from `feed`,
@@ -1619,10 +1620,11 @@ class _PerfStats:
         `cpu`, when the caller read the thread's rusage at the open and the close (_thread_cpu / _cpu_delta), is the
         (user, sys) CPU seconds over the stage, folded into stages_cpu_ms under the stage name (the cumulative totals
         only; the cycle split's rows stay {ms, bytes, hydrated}). The CPU follows the wall's route and is kept for the
-        FLAT row alone: a mark whose wall went to cycleJobsMs, connectPush.stagesMs or stagesForeign records no CPU row,
-        so every stages_cpu_ms row is the same writer's CPU as the stages_ms row of its name and wall minus user minus
-        sys reads as that row's own wait (a connect push's or a foreign writer's CPU has no consumer and is not kept;
-        the pusher's cycle jobs hand stage() no CPU). None leaves the CPU row alone."""
+        FLAT row alone: a mark whose wall went to cycleJobsMs, connectPush.stagesMs or stagesForeign records no CPU row
+        (a push-marked write from a thread owning no cycle among the last, the mark alone being no owner), so every
+        stages_cpu_ms row is the same writer's CPU as the stages_ms row of its name and wall minus user minus sys reads
+        as that row's own wait (a connect push's or a foreign writer's CPU has no consumer and is not kept; the pusher's
+        cycle jobs hand stage() no CPU). None leaves the CPU row alone."""
         marks = self._byte_marks()
         ms = dt * 1000.0
         with self.lock:
