@@ -149,6 +149,27 @@ async function replyOn(page: any, id: string): Promise<void> {
   await btn.click();
   await page.waitForFunction(() => { const ta = (window as any).__ta(); return !!ta && document.activeElement === ta; });
 }
+let settles = 0;                                     // settledBox's per-call nonce
+/** The box as __box() reads it, once its scroll offset has stood still across two consecutive animation frames. Firefox lands
+ *  the caret's scroll after typing in two steps (the 2026-09-18 bisect, 104 isolated runs of this file: a baseline read straight
+ *  after keyboard.type() saw 42, one 15-pixel line short of the 57 it settles at, in about a quarter of the runs of the file
+ *  ALONE and never under npm test, where every round trip is slower than the second step). The panel's own read (render) came
+ *  after the second step, so it restored 57 correctly and the leg held a right answer to a stale baseline. Chromium has settled
+ *  by the time type() resolves; the same wait costs it a frame. Two equal frames are how the page observes that the last scroll
+ *  landed, so the wait also stands after each move, where a 50 ms timer stood: the moves' renders (the status's and the
+ *  refresh's finally) are one task with the reply, so the frame that shows the card gone or back shows their restore too.
+ *  waitForFunction polls on requestAnimationFrame by default and does not await a Promise from its predicate (a Promise is
+ *  truthy), so the predicate is synchronous and keeps the last frame's reading on the window, keyed by a per-call nonce so an
+ *  earlier settle's reading never counts as this one's first frame; playwright's default timeout bounds it. */
+async function settledBox(page: any): Promise<any> {
+  await page.waitForFunction((k: number) => {
+    const w = window as any, ta = w.__ta(), now = ta ? ta.scrollTop : null;
+    const last = w.__settle && w.__settle.k === k ? w.__settle.top : undefined;
+    w.__settle = { k, top: now };
+    return !!ta && last === now;
+  }, ++settles);
+  return page.evaluate(() => (window as any).__box());
+}
 
 for (const name of ["chromium", "firefox"] as const) {
   test("in " + name + ": Save inside the card of a comment whose id holds a quote posts the reply — by the mouse and by Tab, Enter — with Save waiting disabled and no script error", async (t) => {
@@ -198,7 +219,7 @@ for (const name of ["chromium", "firefox"] as const) {
       await openPanel(page);
       await replyOn(page, passage.id);
       await page.keyboard.type(Array.from({ length: 16 }, (_, i) => "line " + (i + 1)).join("\n"));
-      const before = await page.evaluate(() => (window as any).__box());
+      const before = await settledBox(page);            // the caret's scroll has landed: the baseline both restores are held to
       assert.equal(before.card, passage.id);
       assert.ok(before.scrollHeight > before.clientHeight, "the box scrolls: " + before.scrollHeight + " over " + before.clientHeight);
       assert.ok(before.scrollTop > 0, "…and is scrolled to the caret: " + before.scrollTop);
@@ -207,8 +228,7 @@ for (const name of ["chromium", "firefox"] as const) {
       await untilPosted(page, 3, "status");
       await page.__reply(status([whole, odd], "1757145600000000004"));
       await page.waitForFunction((id: string) => !(window as any).__cardOf(id), passage.id);
-      await page.waitForTimeout(50);                    // the refresh's last render (its finally) follows the status's
-      const away = await page.evaluate(() => ({ box: (window as any).__box(), row: (window as any).__row() }));
+      const away = { box: await settledBox(page), row: await page.evaluate(() => (window as any).__row()) };
       assert.equal(away.box.connected, true); assert.equal(away.box.card, null); assert.equal(away.box.inSlot, true, "the box stands in the slot");
       assert.equal(away.box.focused, true, "the keyboard was put back");
       assert.equal(away.box.value, before.value, "the words"); assert.equal(away.box.caret, before.caret, "the caret");
@@ -219,8 +239,7 @@ for (const name of ["chromium", "firefox"] as const) {
       await untilPosted(page, 4, "status");
       await page.__reply(status([passage, whole, odd], "1757145600000000005"));
       await page.waitForFunction((id: string) => { const c = (window as any).__cardOf(id); return !!c && !!c.querySelector(".fc-composer"); }, passage.id);
-      await page.waitForTimeout(50);
-      const back = await page.evaluate(() => (window as any).__box());
+      const back = await settledBox(page);
       assert.equal(back.card, passage.id, "the box returned to the card");
       assert.equal(back.focused, true); assert.equal(back.value, before.value);
       assert.equal(back.scrollTop, before.scrollTop, "the offset survived the return too");

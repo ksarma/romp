@@ -1743,6 +1743,16 @@ PROBLEM_ROW_MARK = " ;; problem-row "
 LEDGER_ROTATE_BYTES = 32 * 1024 * 1024   # a ledger past this size is rotated to <name>.1 (one predecessor kept),
 #                                          so the pair is bounded at twice this: at ~300 bytes a turn and a few
 #                                          thousand turns a day, turns.jsonl holds about a month; the reader reads both
+# The `host` a refused launch records in the registry's hostLogPos (SdkBackend._record_refused_launch_position): no
+# host identity, since a host that never served sent no hello, but a position the served road honours for the next
+# host of any identity, so the rows the refusal filed are not filed again (regression-1, round 3, 2026-09-19). The
+# position is host.log's WHOLE line count at the refusal, not the extent of what the refusal filed (correctness-1,
+# round 4, 2026-09-19): after a refused launch the served road, _file_host_log_rows, skips every line present then, a
+# previous host's row that no road had filed included (a reader-behind, an end-forced), so such a row VANISHES, with
+# no problem row anywhere. The queued served-road change, which bounds that road on the spawn watermark
+# (host_transport.host_log_mark), is where that is fixed; until then the drop is pinned as the head's behaviour in
+# tests/test_session_host_sdk_pin.py, and _record_refused_launch_position's docstring states the reach in full.
+HOST_LOG_POS_REFUSED = "refused-launch"
 
 
 _LEDGER_LOCK = threading.Lock()   # one appender at a time across the ledgers: two threads crossing the
@@ -3308,7 +3318,42 @@ def write_reg(state_dir: Path, sid: str, reg: dict) -> None:
     # (FileNotFoundError, seen live 2026-07-06). os.replace stays atomic; last writer wins.
     tmp = p.with_name("%s.%d.%s.tmp" % (p.name, os.getpid(), uuid.uuid4().hex[:8]))
     try:
-        tmp.write_text(json.dumps(reg))
+        # 0600, set on the descriptor before the first write (os.fchmod; no chmod on a path). The reg carries
+        # the session's env block, whose values can be credentials (a pick under a token-shaped name lands here
+        # verbatim), and a temp created by write_text takes the umask (0664 on a box with umask 002), so the
+        # value was readable at that mode from the write on; every live registry file sat at 0664 under the
+        # 0700 state root until this change. The descriptor's mode is exact (the umask does not apply to
+        # fchmod), so no window with the text at a wider mode, and os.replace carries it onto the published
+        # path, so a reg written before this change tightens on its next write. A reg never written again (a
+        # dead session's, since this backend never unlinks one) keeps its older mode, and no boot-time re-mode
+        # is added for it (the reviewer's call, review round 1, 2026-09-18): the owner-only root is what makes
+        # that interim safe. Two other credential files do get a loose mode healed, and the difference is one of
+        # shape, not policy (review round 2, 2026-09-19): _remotes_load re-modes remotes.json at boot and
+        # _serve_token_read_or_mint strips a loose serve token's bits under its lock, two single files healed on a
+        # road that already opens them, against N per-session regs behind a memoized read (the kernel's
+        # _thread_reg_read keys its memo on the ctime, which a chmod alone changes, so a heal on read would evict
+        # what it feeds), while the closest analogue, the per-sid flag-settings file holding the same env values
+        # (flag_settings_path), tightened forward-only on 2026-09-03 and took no walk. Round 1 also replaced the
+        # first cut's exclusive create, which would have refused a leftover temp at the same name and put the mode
+        # through the umask. Every reader (the kernel, bin/romp and the CLI tools it execs, the judges, the postal
+        # service) is the same uid, so 0600 shuts nobody out.
+        # Defence in depth behind the 0700 state root (kernel/judge.py chmods it at import, says why, and since review
+        # round 2, 2026-09-19, reads the mode back and says so on stderr when it is not 0700), not a live fix:
+        # PR 776's review round asked for it (kernel-1, extra5-2) and the reviewer deferred it to its own fix
+        # (2026-09-18). The value still lives in a file; the mode is a mitigation, not the never-in-a-file rule.
+        fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            os.fchmod(fd, 0o600)
+        except BaseException:
+            # A raising fchmod (EPERM on an inode this uid does not own, ENOTSUP on a filesystem that refuses it after a
+            # successful open) left the descriptor open until review round 2 of PR 789 (2026-09-19): os.fdopen below was
+            # the only close. Closed and re-raised, not a finally: on the success road the file object owns the
+            # descriptor and closes it, so a finally would close it a second time. The precedents this shape copies
+            # (cli/perf_export.py write_file, the Codex registry lock) close on this road too.
+            os.close(fd)
+            raise
+        with os.fdopen(fd, "w") as f:
+            f.write(json.dumps(reg))
         os.replace(tmp, p)
         REG_REV[0] += 1                                 # the table moved (after the publish, so a reader that took the revision
         _reg_rows_note(sid, reg)                        #  before its read misses on its next check); the rows revision only on a
@@ -5148,16 +5193,87 @@ def env_credential_names(environ) -> list:
     1Password's own names exactly as credentials.py draws them (is_op_env_name: the service-account and
     Connect tokens, the account and host beside them, and OP_SESSION_<account>, which `op signin` exports
     and which ends in neither suffix; the boot check refuses those names too, so the boot line and the
-    boot check agree on what an op name is). A name of another shape stays unnamed, and the boot line
-    says what shape it checked. Returns the names, sorted, for a one-line boot notice; values are tested
-    for emptiness only and never logged. The one exclusion is romp's own control token, which is not a
-    provider credential; no name the claim removes is excluded here, so a login token still present when
-    this runs did reach sessions and is named, and the call's place after the claim is what keeps it off
-    the line.
+    boot check agree on what an op name is). The two suffixes are compared on the upper-cased name, so a
+    lowercase or mixed-case spelling is the same shape (review round 1 of the spawn-spec fix, 2026-09-18:
+    the test was an exact, case-sensitive suffix, so a name like notes_api_token was never named here and,
+    once the spawn spec's writer reused this rule, would have been written to hosts/<sid>/spawn.json with
+    its value); the op names stay as credentials.py spells them, that being the classifier the boot check
+    refuses by. A name of another shape stays unnamed, and the boot line says what shape it checked.
+    Returns the names, sorted, for a one-line boot notice; values are tested for emptiness only and never
+    logged. The one exclusion is romp's own control token, which is not a provider credential (the exact
+    name romp reads, ROMP_SERVE_TOKEN; another spelling is not romp's token and is named like any other);
+    no name the claim removes is excluded here, so a login token still present when this runs did reach
+    sessions and is named, and the call's place after the claim is what keeps it off the line.
     """
+    def shaped(n) -> bool:
+        u = str(n).upper()
+        return u.endswith("_API_KEY") or u.endswith("_TOKEN") or _cred.is_op_env_name(n)
     return sorted(n for n in environ
-                  if n != "ROMP_SERVE_TOKEN" and (environ.get(n) or "").strip()
-                  and (n.endswith("_API_KEY") or n.endswith("_TOKEN") or _cred.is_op_env_name(n)))
+                  if n != "ROMP_SERVE_TOKEN" and (environ.get(n) or "").strip() and shaped(n))
+
+
+def _overlay_text(value) -> str:
+    """One env-overlay value as text: a str byte for byte, None as the empty string (the unset it means), any
+    other JSON-native value as str() of it. The coercion exists for the NAME decision only: spawn_env_secret_names
+    judges the shape rule over this view so that env_credential_names, which strips every value it is handed, can
+    read every value without raising, and split_spawn_secrets returns it for the names it moves, so the Popen(env=...)
+    that launches the host (_spawn_host) gets strings (review round 1 of the spawn-spec fix, 2026-09-18). It says
+    nothing about what the host later does with a non-string value left in the spec under a plain name: that
+    value stays in the file as it always did, and of the host's two transports only the pipe one
+    (session_host.py PipeCliTransport, the no-SDK road of the hermetic tests and CI) converts per value when it
+    lays the overlay over its environment; the SDK's transport, which every real install runs, merges the
+    overlay as it is and cannot spawn a CLI from a non-string value (pre-existing, unchanged, named in
+    split_spawn_secrets). Review round 2 (2026-09-18) restated the reason: round 1's docstring had credited the
+    pipe transport's conversion as the host's way, so the coercion read as matching the host when it only
+    serves the shape test."""
+    if isinstance(value, str):
+        return value
+    if value is None:
+        return ""
+    return str(value)
+
+
+def spawn_env_secret_names(env) -> list:
+    """The names a host spawn spec's env overlay must not carry into hosts/<sid>/spawn.json, for
+    split_spawn_secrets to move to the host's process environment: the three credential names (AUTH_ENV_NAMES,
+    whatever their value, as the pull-in's writer moved them) and every name env_credential_names flags over
+    the OVERLAY ITSELF, a non-empty value under a name ending _API_KEY or _TOKEN or one of 1Password's own. The
+    pull-in's writer stripped the three names alone, so a credential-shaped variable of any other name a compose
+    put in options.env was written to disk (the box admin's hazard review of the pull-in, 2026-09-16; fixed
+    2026-09-18), against the fork's rule that no credential is ever written to a file, and the rule for the
+    shape already existed for the boot notice (_note_env_credential_names), so the file and that notice now
+    agree on what a credential looks like. Judged over the overlay, never this process's environment: what the
+    file would carry is what is checked. An empty value stays in the overlay: it holds no secret, and there it
+    is the unset it was meant to be (a None stays as the JSON null it was; what a transport exports for it is the
+    transport's business, below). Sorted, names only, fit for a log line. [] for no overlay.
+
+    Two notes from review round 1 (2026-09-18). The shape rule is judged over a COERCED VIEW of the overlay
+    (_overlay_text per value), for the NAME decision only: env_credential_names strips every value it is handed,
+    so the first cut raised AttributeError on an overlay holding a non-string value anywhere in it, where the base
+    tree launched the session; the view keeps the test total and keeps a credential-shaped name moving whatever
+    its value's type (filtering the overlay to string values instead would have written an integer or a list under
+    a token-shaped name straight into the file, a verifier's probe showed). The view is the classification's alone:
+    a value the rule leaves in the overlay stays there as it was, non-string included, and what the host makes of
+    it is the transport's (review round 2, 2026-09-18: the pipe transport of the SDK-less tests exports str() of
+    it, the word None for a null; the SDK transport a real install runs cannot spawn from it at all; pre-existing
+    and unchanged here, see split_spawn_secrets). And the rule inherits env_credential_names' one
+    by-name exclusion, romp's own control token (ROMP_SERVE_TOKEN, not a provider credential, and already in an
+    owner-only file of the same state root): moot here, since no compose puts that name in options.env, so the
+    exclusion is stated and not undone, and the file and the boot notice keep one shape rule between them.
+
+    The shape is not widened past this (review round 1's addendum, 2026-09-18, which took a wording fix at
+    write_spawn_spec instead: that docstring and the change's title had claimed every credential-shaped name). A
+    password, a client secret, a private key, a cookie or a bare TOKEN under a name of another shape would stay in
+    the file, and no such name has a road into options.env today (its writers are _options' own: PATH, the identity
+    names, the scope limits, the fast-mode switches, the login tokens); a match on PASSWORD, SECRET, PRIVATE_KEY,
+    COOKIE or a bare _KEY would move a legitimate TOKEN_BUDGET, PRIVATE_KEY_PATH or SECRET_NAME out of the spec for
+    nothing, onto a road whose rank against the flag-settings layer is unverified (ENV_RESERVED_NAMES). So wherever
+    the file's omission is described, the shape is named rather than called every credential."""
+    if not isinstance(env, dict):
+        return []
+    names = set(n for n in AUTH_ENV_NAMES if n in env)
+    names.update(env_credential_names({k: _overlay_text(v) for k, v in env.items()}))
+    return sorted(names)
 
 
 def env_request_error(env, auth: str = "") -> str:
@@ -5247,11 +5363,25 @@ def flag_settings_path(state_dir, sid: str, *, ultracode: bool = False, fast: bo
     try:
         os.makedirs(d, exist_ok=True)
         # 0600, the serve-token treatment: the env block can carry secrets, and a default-umask file is
-        # world-readable on a shared host (PR #889 review). Created private, then written.
+        # world-readable on a shared host (PR #889 review). The mode is set on the descriptor BEFORE the write:
+        # a pre-existing file keeps its old mode through O_CREAT|O_TRUNC, and the trailing chmod this had until
+        # 2026-09-18 tightened it only after the env block was already in it (PR 789, review round 1: the same
+        # write-then-tighten window the reg and the parked-ops mirror lost, here for a file created before the
+        # 0600 open of 2026-09-03). fchmod is exact under any umask, so nothing follows the write. The published inode
+        # is rewritten in place (O_TRUNC on the path; no temp, no os.replace, unlike write_reg), so the tightening is
+        # not retroactive for a descriptor another uid opened while the file sat at its old looser mode: it reads the
+        # new block through it. The 0700 state root is what closes that road today (review round 2, 2026-09-19).
         fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            os.fchmod(fd, 0o600)
+        except BaseException:
+            # Review round 2 (2026-09-19): a raising fchmod left the descriptor open (os.fdopen below was the only
+            # close), once per launch or reconnect for as long as it failed. Closed and re-raised, not a finally: the
+            # file object closes it on the success road.
+            os.close(fd)
+            raise
         with os.fdopen(fd, "w") as f:
             f.write(json.dumps(keys) + "\n")
-        os.chmod(p, 0o600)   # a pre-existing file keeps its old mode through O_CREAT — tighten it too
     except OSError as e:
         # no settings file → the session still launches, just without these keys — and the Log says
         # so (fail-loudly, the user 2026-07-03): for env especially, a silent drop here leaves the
@@ -5458,18 +5588,39 @@ def startup_auth_env() -> dict:
 
 
 def split_spawn_secrets(spec: dict) -> dict:
-    """Move every credential-named variable (AUTH_ENV_NAMES) out of a host spawn spec's env overlay and
-    return them. The spec is written to hosts/<sid>/spawn.json, and a key or login token lives in the
-    process environment only, never in a file (the fork's rule, 2026-09-05; the pull-in review's item 1,
-    2026-09-16): the launch hands the returned variables to bin/romp-session-host through its process
-    environment instead (_spawn_host), and the host's CLI inherits them from there, so a stored login's
-    CLAUDE_CODE_OAUTH_TOKEN and the machine's boot-claimed login tokens reach the CLI exactly as they do
-    for a kernel child, with no file holding them. Every other field stays in the spec. The spec's env is
-    spawn_spec's own copy, so the options object the kernel-child road launches from is untouched."""
+    """Move the credential-shaped variables of a host spawn spec's env overlay out of it and return them
+    (spawn_env_secret_names' shape: AUTH_ENV_NAMES whatever their value, and a non-empty value under a name ending
+    _API_KEY or _TOKEN, in any letter case, or one of 1Password's; a name of another shape stays). The spec is
+    written to hosts/<sid>/spawn.json, and a key or login token lives in the process environment only, never
+    in a file (the fork's rule, 2026-09-05; the pull-in review's item 1, 2026-09-16): the launch hands the
+    returned variables to bin/romp-session-host through its process environment instead (_spawn_host), and
+    the host's CLI inherits them from there, so a stored login's CLAUDE_CODE_OAUTH_TOKEN and the machine's
+    boot-claimed login tokens reach the CLI exactly as they do for a kernel child, with no file holding them.
+    The file omits every other name of that shape in the overlay as well (the box admin's hazard review of
+    the pull-in, 2026-09-16, fixed 2026-09-18: the first cut moved the three names alone, so any other such
+    variable a compose put in options.env was written to disk): those take the same road, the host's
+    environment, with the overlay's precedence kept (_spawn_host lays them over the kernel's environment, as
+    the SDK lays options.env over it for a kernel child), so the session launches with them and only the file
+    is clean. Every other field stays in the spec. The spec's env is spawn_spec's own copy, so the options
+    object the kernel-child road launches from is untouched. The returned values are text (_overlay_text: a str
+    as it was, None as the empty string, any other value as str() of it), so the host's Popen(env=...) gets
+    strings whatever the overlay held, and a login name carrying None rides as the empty string, not the word
+    None (review round 1, 2026-09-18, beside the total name test in spawn_env_secret_names).
+
+    A residual, pre-existing and unchanged here (review round 2, 2026-09-18): a non-string value under a name the
+    shape rule leaves alone stays in the spec as it was, as the base tree wrote it, and that spec cannot launch a
+    real CLI. The host's SDK transport, the one every real install runs, merges the spec's overlay over its
+    environment as it is, with no per-value conversion, and a subprocess environment refuses a non-string value
+    (the round's verifiers spawned one through the real SDK transport: TypeError); only the pipe transport of the
+    SDK-less tests (session_host.py PipeCliTransport) converts per value, which is the road the non-string tests
+    in tests/test_session_host.py run. Those tests pin the value staying in the file as BASE behaviour, not as a
+    supported state. No writer of options.env produces a non-string value today (every value romp puts there is
+    a string), so the state has no live road, and a fix (refusing or converting the whole overlay at the write)
+    is a behavioural change with its own test and ruling, out of scope for a fix-tier change."""
     env = spec.get("env")
     if not isinstance(env, dict):
         return {}
-    return {name: env.pop(name) for name in AUTH_ENV_NAMES if name in env}
+    return {name: _overlay_text(env.pop(name)) for name in spawn_env_secret_names(env)}
 
 
 
@@ -12036,6 +12187,16 @@ class SdkBackend:
             # directly, unscoped.
             os.environ["ROMP_CLI_REAL"] = self.claude_bin
         self._cli_scope_wrapper_logged = False    # the missing-wrapper fallback is reported once per backend
+        # (installed, tested) SDK version pairs whose host.sdk-untested row this backend has filed (fresh-2, round 2
+        # of the review, 2026-09-18): the venv's version is a machine condition, the same for every host on this box,
+        # so it is reported once per kernel life like the wrapper fallback above, not once per launch (each launch was
+        # appending a byte-identical error-centre entry and bumping the feed's cache key, the repetition the ring's
+        # dedupe exists to prevent). The key is the version PAIR and not the sid (the closing check, 2026-09-18, on the
+        # round-2 ask for a sid in the key): the row is once per pair per kernel life, so the SECOND SESSION under the
+        # same pair files no row either, and which sessions ran on it is read from the plain kernel-log line
+        # _file_sdk_untested_row writes for every later one. A venv repinned to ANOTHER untested version mid-life is a
+        # new pair, reported anew.
+        self._sdk_untested_reported: set = set()
         # CLI launches since boot that the wrapper reported running WITHOUT a scope (its stderr notice,
         # see _on_cli_stderr), and when the last one was. The boot verdict above is taken once; these say
         # whether it stopped holding afterwards. Read by api_health_snapshot (cliScope.fallbacks).
@@ -12160,7 +12321,11 @@ class SdkBackend:
         provider's key there on purpose. Filed with problem=False explicitly, because _log's default
         classifies a line by whether an exception is being handled at the moment, and a boot that happens
         on a handler's retry path must not turn this line into a problem row. Names only, no value logged;
-        the copy says what shape was checked; nothing said on a box whose environment carries none."""
+        the copy says what shape was checked, the case fold included (review round 2 of the spawn-spec fix,
+        2026-09-18: round 1 folded case in env_credential_names and this copy still described exact-cased
+        suffixes, so a lowercase name was listed under a clause that excluded it; the fold is said between
+        the suffixes and the 1Password clause, whose names stay case-exact); nothing said on a box whose
+        environment carries none."""
         global _ENV_CRED_NAMES_SAID
         if _ENV_CRED_NAMES_SAID:
             return
@@ -12168,11 +12333,11 @@ class SdkBackend:
         if not names:
             return
         _ENV_CRED_NAMES_SAID = True
-        self._log("names in the kernel's own environment shaped like credentials (ending _API_KEY or _TOKEN, "
-                  "or 1Password's own OP_* names) reach every session's CLI and the shells it spawns (the SDK "
-                  "hands the CLI this process's environment): %s. Values are never logged; names of another "
-                  "shape are not checked. Move any that a session should not see out of the manager's "
-                  "environment (its service.env or service unit)." % ", ".join(names), problem=False)
+        self._log("names in the kernel's own environment shaped like credentials (ending _API_KEY or _TOKEN "
+                  "in any letter case, or 1Password's own OP_* names) reach every session's CLI and the shells "
+                  "it spawns (the SDK hands the CLI this process's environment): %s. Values are never logged; "
+                  "names of another shape are not checked. Move any that a session should not see out of the "
+                  "manager's environment (its service.env or service unit)." % ", ".join(names), problem=False)
 
     def _note_seed_skipped(self, side: str = "key", login_id: str = "") -> None:
         """Said ONCE per process and side, as a problem row: the remembered Billing default names a side this
@@ -12420,27 +12585,96 @@ class SdkBackend:
             spec["login"] = str(getattr(sess, "_options_login", "") or "")   # the login IDENTIFIER this launch bills, echoed
             #   in every hello as cli.login, so the kernel that first sees the CLI stamps the login the launch used (never a
             #   token or key: those ride the host's process environment, and the hello never carries them)
-            secrets = split_spawn_secrets(spec)    # the credential names leave the overlay BEFORE the file is written: a
-            #   login token rides the host's environment (_spawn_host), never spawn.json (the fork's secrets rule)
+            secrets = split_spawn_secrets(spec)    # the credential-shaped names (spawn_env_secret_names: a login name, and a
+            #   name ending _API_KEY or _TOKEN or one of 1Password's that carries a value) leave the overlay BEFORE the file
+            #   is written and ride the host's environment (_spawn_host), never spawn.json (the fork's secrets rule; the box
+            #   admin's hazard review, 2026-09-16; the shape named, not "every credential", since review round 1's addendum,
+            #   2026-09-18)
+            moved = [n for n in secrets if n not in AUTH_ENV_NAMES]
+            if moved:
+                # names only, never a value. The login names are routine (every login launch moves one) and go unsaid;
+                # a name beyond them means a compose put a credential-shaped variable in options.env, worth one line
+                # where the Log panel shows it. problem=False explicitly: _log's default classifies a line by whether an
+                # exception is being handled at that moment, and this routine line must stay routine from whatever road
+                # reaches it (no handler spans this call today; review round 1, 2026-09-18, which also pinned the kwarg
+                # and the login names' silence in tests/test_session_host.py; _note_env_credential_names files its line
+                # the same way).
+                self._log("host (%s): credential-shaped names in the launch's env overlay ride the host's environment, "
+                          "not spawn.json: %s" % (sess.name, ", ".join(moved)), problem=False)
             spec_path = ht.write_spawn_spec(self.state_dir, sess.sid, spec)
             sock = ht.host_sock(self.state_dir, sess.sid)
             try:
                 sock.unlink()
             except OSError:
                 pass
+            # the spawn watermark (host_log_mark; the closing check of the review, 2026-09-18): host.log's size before
+            # the host exists, so the two reads below see what THIS host wrote and nothing a previous host left in the
+            # same file (a stale kernel-held lease keeps the directory, and with it the log, across launches). Its
+            # reach is the refused roads below and nothing else (extra6-1, round 3 of the review, 2026-09-19): the
+            # served road, _file_host_log_rows at the hello and the exit, reads from an identity-keyed line position
+            # and not from this mark. Over a surviving log with no refused launch since, it files a previous host's
+            # rows as the new host's; after a refused launch it starts past host.log's WHOLE line count at the
+            # refusal (_record_refused_launch_position), so a previous host's row no road had filed vanishes
+            # (round 4, 2026-09-19). Bounding that road on the mark is the queued served-road change, by the
+            # reviewer's ruling.
+            mark = ht.host_log_mark(self.state_dir, sess.sid)
             proc = self._spawn_host(sess, spec_path, secrets)
             deadline = time.time() + ht.SOCKET_WAIT_S
             while not sock.exists():                          # loop-ok: a bounded wait on the socket appearing
                 if proc.poll() is not None:
-                    raise CLIConnectionErrorLike("the session host exited before serving its socket (code %s); see hosts/%s/host.log"
-                                                 % (proc.returncode, sess.sid))
+                    # the host's last word when it left one (an SDK pin mismatch names both versions and the repin
+                    # command there; a spawn failure its exception type, with the version it ran beside it when the
+                    # host wrote that fact), so the card says why, not just where to look
+                    reason = ht.host_exit_reason(self.state_dir, sess.sid, since=mark)
+                    said = "exited before serving its socket (code %s); see hosts/%s/host.log%s" % (
+                        proc.returncode, sess.sid, (": " + reason) if reason else "")
+                    # The drift fact first, on its own row (fresh-1 as the closing check ruled it, 2026-09-18): a
+                    # host that imported an untested SDK wrote so before it failed, and that fact is filed whatever
+                    # the failure was, with the remedy, once per kernel life per version pair. The failure's row below
+                    # keeps the failure's own type; nothing attributes the one to the other.
+                    self._file_refused_launch_context(sess, mark)
+                    # One ledger row per refused launch, under its own kind (fresh-3, round 1 of the review,
+                    # 2026-09-18): a host that never serves its socket sends no hello and no exit frame, the two
+                    # events that file host.log rows, so a refused launch left no session-events row at all and the
+                    # error centre, the ledger and the restart counts stayed at zero while the benign case (an
+                    # untested version whose internals resolve) got host.sdk-untested. Gated on the event, not on the
+                    # reason text (a host that died without a row gets a row too), and never host.spawn-failed here.
+                    # The one event is counted once because this road also records host.log's line count at the
+                    # refusal (_record_refused_launch_position; regression-1, round 3 of the review, 2026-09-19): until
+                    # then the served road, which starts a host it has not seen at line zero, re-filed this launch's
+                    # cli-spawn-failed row as host.spawn-failed when a later host served over a log that survived
+                    # (a stale kernel-held lease keeps the directory). That count is the whole file's, so it also
+                    # skips a previous host's rows in the same file (the reach is stated at that function). A retry
+                    # that is refused again is its own launch and its own row. This is the EXITED road; the deadline
+                    # road below files its own kind.
+                    problem_row(self.state_dir, "the session host for %s %s" % (sess.name, said), "host.exited-before-socket",
+                                sid=sess.sid, name=sess.name, log=self._log, code=proc.returncode)
+                    self._record_refused_launch_position(sess)
+                    raise CLIConnectionErrorLike("the session host " + said)
                 if time.time() > deadline:
                     # a host that never served is ended, or a resend would start a second host and two CLIs
                     try:
                         proc.terminate()
                     except ProcessLookupError:
                         pass
-                    raise CLIConnectionErrorLike("the session host did not serve its socket within %.0f s; it was ended" % ht.SOCKET_WAIT_S)
+                    # The same two filings as the exited road (kernel-2, round 2 of the review, ruled MISSING by the
+                    # closing check, 2026-09-18): until then this road raised and filed nothing, so a host that wedged
+                    # before its socket (a CLI that never answered, a hang in connect) was a refused launch with no
+                    # session-events row, invisible everywhere but the card. Its own kind, because this host was ended
+                    # rather than exited and has no return code; the wait it missed rides as waitS. The reason read
+                    # below is for a host that wrote a FAILING row (host-crashed, cli-spawn-failed) and then did not
+                    # exit within the wait (correctness-2, round 3 of the review, 2026-09-19: a real host leaves
+                    # some 16 to 19 ms between that row and its exit, so this read answers only for one that wedges
+                    # after failing); it never returns the untested-version row, which is not a reason and is filed
+                    # on its own by _file_refused_launch_context, the line after it.
+                    reason = ht.host_exit_reason(self.state_dir, sess.sid, since=mark)
+                    said = "did not serve its socket within %.0f s; it was ended; see hosts/%s/host.log%s" % (
+                        ht.SOCKET_WAIT_S, sess.sid, (": " + reason) if reason else "")
+                    self._file_refused_launch_context(sess, mark)
+                    problem_row(self.state_dir, "the session host for %s %s" % (sess.name, said), "host.never-served-socket",
+                                sid=sess.sid, name=sess.name, log=self._log, waitS=ht.SOCKET_WAIT_S)
+                    self._record_refused_launch_position(sess)
+                    raise CLIConnectionErrorLike("the session host " + said)
                 await asyncio.sleep(0.05)
         finally:
             with self._lock:
@@ -12464,9 +12698,11 @@ class SdkBackend:
         """Start bin/romp-session-host detached: in a transient scope of its own on Linux when scopes are on
         (outside the service cgroup, like the CLI's), a plain new-session child elsewhere. `secret_env` is the
         launch's credential overlay (split_spawn_secrets: a stored login's CLAUDE_CODE_OAUTH_TOKEN, the machine's
-        boot-claimed login tokens), handed to the host through its process environment and never through the
-        spec file or the command line: a scope runs its command as systemd-run's own child with this
-        environment, and both of the host's transports (session_host.py) build the CLI's environment from the
+        boot-claimed login tokens, and, since 2026-09-18, every other name of spawn_env_secret_names' shape in the
+        overlay that carries a value: one ending _API_KEY or _TOKEN, in any letter case, or one of 1Password's), handed
+        to the host through its process environment and never through the spec file or the command line: a scope runs
+        its command as systemd-run's own child with this environment, and both of the host's transports
+        (session_host.py) build the CLI's environment from the
         host's own with the spec's overlay on top, exactly as the SDK merges this process's environment for a
         kernel child. This process's environment carries no bearer (startup_auth_env claimed them at boot), so a
         key-billed launch's host inherits none."""
@@ -12664,10 +12900,90 @@ class SdkBackend:
         sess._fresh_cli_stamp(spawned, ident, mark_echoes=not getattr(sess, "_deliberate_connect", False))
         self._log("host (%s): a fresh CLI %s (spawned at %d); its epoch and launch login stamped" % (sess.name, ident, spawned))
 
+    def _file_sdk_untested_row(self, sess, row: dict) -> None:
+        """One `sdk-version-untested` host.log row (the host imports claude-agent-sdk at a version other than the one
+        its private imports are written against, and the internals still resolved, so it ran) as the host.sdk-untested
+        problem row, naming both versions and the repin command; visible so the machine is repinned before a release
+        moves one. Reached from _file_host_log_rows for a host that served, and from the refused roads of
+        _host_transport_for for one that did not (the closing check of the review, 2026-09-18, ruling on fresh-1 of
+        round 2: the fact is filed on its own whenever the host wrote it, and never composed into a launch failure's
+        row as that failure's remedy).
+
+        Once per kernel life per version PAIR, keyed on (installed, tested) and NOT on the sid (_sdk_untested_reported;
+        fresh-2, round 2; the key confirmed by the closing check, 2026-09-18): the venv is the machine's, so the first
+        host to say so speaks for every host on the box, and a later host under the same pair, in this session or in
+        ANOTHER, files no row and gets one plain kernel-log line instead. That line is where the per-session fact
+        lives (which sessions ran on the untested version); the row is not per session, and a second session with no
+        row of its own is this rule working, not a filing that went missing."""
+        pair = (str(row.get("installed")), str(row.get("tested")))
+        if pair in self._sdk_untested_reported:
+            self._log("host (%s): runs claude-agent-sdk %s, not the %s it is written against (reported once above, this kernel life)"
+                      % (sess.name, pair[0], pair[1]), problem=False)
+            return
+        self._sdk_untested_reported.add(pair)
+        relation = row.get("relation")
+        prose = ("the host for %s runs claude-agent-sdk %s, %s than the %s it is written against; run %s to install the tested version "
+                 "(the venv is this machine's, so every host runs it; reported once per kernel life)"
+                 % (sess.name, row.get("installed"), relation if relation in ("newer", "older") else "other",
+                    row.get("tested"), _ht().sh.SDK_REPIN_COMMAND))
+        fields = {k: v for k, v in row.items() if k not in ("kind", "t")}
+        problem_row(self.state_dir, prose, "host.sdk-untested", sid=sess.sid, name=sess.name, log=self._log, t=row.get("t"), **fields)
+
+    def _file_refused_launch_context(self, sess, mark: int) -> None:
+        """What a host that never served its socket wrote about the SDK it ran, filed on its own: the
+        sdk-version-untested row past the spawn watermark `mark` (host_log_mark, so a previous host's row in the same
+        file is not this launch's) becomes the host.sdk-untested row through _file_sdk_untested_row. The served
+        roads file it from _file_host_log_rows at the hello and the exit; a refused launch reaches neither, so until
+        the closing check of the review (2026-09-18) the only trace of the drift on this road was a sentence composed
+        into the failure's own reason, attributed by the failure's type name."""
+        for row in _ht().host_log_rows(self.state_dir, sess.sid, since=mark):
+            if row.get("kind") == "sdk-version-untested":
+                self._file_sdk_untested_row(sess, row)
+
+    def _record_refused_launch_position(self, sess) -> None:
+        """host.log's WHOLE line count at a refused launch, as `hostLogPos: {host: HOST_LOG_POS_REFUSED, pos: <lines>}`
+        (regression-1, round 3 of the review, 2026-09-19; the reach corrected in round 4). The refused roads file the
+        launch's own rows (the untested-version fact, the refusal itself) and the served road, _file_host_log_rows,
+        starts a host identity it has not seen at line zero, so over a host.log that survived the refusal (a stale
+        kernel-held lease keeps the directory) the next host that served re-filed the refused launch's
+        cli-spawn-failed row as host.spawn-failed: one event, two error-centre rows. The served road honours this
+        position for the next host whatever its identity; every road that clears the directory drops hostLogPos with
+        it (_host_orphan_recover, _host_ended), so the position never outlives the file it counts.
+
+        What the count reaches (correctness-1, round 4 of the review, 2026-09-19): every line present at the refusal,
+        not only the rows this launch filed. A previous host's row in the same file that no road had filed (a
+        reader-behind, an end-forced from a host of an earlier kernel life) sits below this position too, so after a
+        refused launch no road files it: on the tree before this position existed the next serving host filed it as
+        its own, misattributed; now it VANISHES, and the error centre's silence about that host means nothing. A
+        prefix position cannot both keep the rows before the spawn watermark and skip the rows after it (the refuters
+        executed both spellings: a position derived from the byte mark re-files the refusal's rows, and one counting
+        the lines up to the mark reds the refused-launch case), so the fix is the queued served-road change, which
+        bounds that road on the watermark; until then tests/test_session_host_sdk_pin.py pins the drop as the head's
+        behaviour so it cannot change unseen. A line count because that is the unit the served road keeps."""
+        p = _ht().host_dir(self.state_dir, sess.sid) / "host.log"
+        try:
+            lines = len(p.read_text().splitlines())
+        except OSError:
+            return
+        try:
+            self._update_reg(sess.sid, hostLogPos={"host": HOST_LOG_POS_REFUSED, "pos": lines})
+        except Exception as e:
+            self._log("host (%s): hostLogPos write failed after a refused launch: %s" % (sess.name, e))
+
     def _file_host_log_rows(self, sess) -> None:
         """host.log lines not yet filed become problem rows. The position is kept in the registry beside hostAck
         (`hostLogPos: {host, pos}`, keyed by the host's identity), so a restart never re-files a row and a new
-        host's log starts from zero."""
+        host's log starts from zero, unless a refused launch recorded host.log's line count at the refusal
+        (HOST_LOG_POS_REFUSED, _record_refused_launch_position): then the next host, whatever its identity, starts
+        past every line that was in the file then.
+
+        The reach of that bound, stated plainly (extra6-1, round 3 of the review; corrected in round 4, 2026-09-19):
+        every line present at the refusal, the refused launch's own rows and any earlier host's alike. So over a
+        host.log that survived a previous launch (a stale kernel-held lease keeps the directory) a previous host's
+        row that no road had filed is dropped by this road once a refused launch followed it, and filed as this
+        host's when none did; the spawn watermark the refused roads read past (host_log_mark, in bytes) does not
+        reach this road. Both are pinned as the head's behaviour in tests/test_session_host_sdk_pin.py; the queued
+        served-road change, by the reviewer's ruling, is where this road is bounded on the watermark."""
         p = _ht().host_dir(self.state_dir, sess.sid) / "host.log"
         try:
             lines = p.read_text().splitlines()
@@ -12678,9 +12994,10 @@ class SdkBackend:
         ident = "%s:%s" % (h.get("pid"), h.get("start")) if h else ""
         reg = read_reg(self.state_dir, sess.sid) or {}
         kept = reg.get("hostLogPos") if isinstance(reg.get("hostLogPos"), dict) else {}
-        pos = int(kept.get("pos") or 0) if kept.get("host") == ident else 0
+        pos = int(kept.get("pos") or 0) if kept.get("host") in (ident, HOST_LOG_POS_REFUSED) else 0
         kinds = {"hook-self-answered": "host.hook-self-answered", "reader-behind": "host.reader-behind",
-                 "end-forced": "host.end-forced", "cli-spawn-failed": "host.spawn-failed"}
+                 "end-forced": "host.end-forced", "cli-spawn-failed": "host.spawn-failed",
+                 "sdk-version-untested": "host.sdk-untested"}
         for ln in lines[pos:]:
             try:
                 row = json.loads(ln)
@@ -12697,6 +13014,9 @@ class SdkBackend:
                 prose = "the host's journal for %s fell behind the CLI's output" % sess.name
             elif kind == "host.end-forced":
                 prose = "the host had to SIGKILL %s's CLI: it did not exit within the grace after stdin closed" % sess.name
+            elif kind == "host.sdk-untested":
+                self._file_sdk_untested_row(sess, row)      # its own filing: once per kernel life per version pair
+                continue
             else:
                 prose = "the host for %s could not spawn its CLI" % sess.name
             problem_row(self.state_dir, prose, kind, sid=sess.sid, name=sess.name, log=self._log, t=row.get("t"), **fields)
@@ -18796,7 +19116,12 @@ class SdkBackend:
         dep = isinstance(exc, ImportError)
         # A provider failure happened before a new CLI existed. The previous
         # connection's stderr must not replace it or turn it into a quota hold.
-        tail = "" if dep or isinstance(exc, _cred.CredentialError) else sess.stderr_tail()
+        # A host launch or attach refusal (CLIConnectionErrorLike) too (correctness-1 and kernel-1, round 1 of
+        # the review, 2026-09-18): no CLI of THIS launch ever started, so the tail belongs to the previous one,
+        # and launch_failure_text prefers a tail over the exception's text. With the tail in, a session whose
+        # CLI had ever written a stderr line got that stale line as its card and the host's reason (an SDK
+        # pin mismatch naming both versions and the repin command) reached no card.
+        tail = "" if dep or isinstance(exc, (_cred.CredentialError, CLIConnectionErrorLike)) else sess.stderr_tail()
         text = (sdk_unavailable_text(self.state_dir, verdict=self.unavailable_verdict(),
                                      started_missing=self._sdk_missing)
                 if dep else launch_failure_text(exc, tail))

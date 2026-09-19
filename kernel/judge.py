@@ -40,25 +40,79 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 # ThreadPoolExecutor, so the tier thread's own CPU says little about what the judges cost; the
 # workers' does. _TimedPool wraps each submitted callable with a time.thread_time() delta into one
 # counter, and the name below rebinds so every `ThreadPoolExecutor(...)` in this module builds the
-# timed pool without touching the dozen pool sites. A worker blocked on a model call adds nothing:
-# thread_time is CPU, not wall.
+# timed pool without touching the pool sites themselves (the POOL SITES line under the rebind
+# enumerates them, eleven as of 2026-09-19, derived from this file by tests/test_perf_stats.py).
+# A worker blocked on a model call adds nothing: thread_time is CPU, not wall.
+# The same delta goes to the SINK when one is set: the kernel installs its perf collector's writer at
+# load (set_worker_cpu_sink), so the workers' share stands in the kernel's live counters as each
+# future ends and a live read of those counters agrees with a snapshot while that collector holds
+# the sink, its served block carrying cpu_ms_workers exactly then (until 2026-09-18 the kernel
+# added this module counter to its snapshot COPY at read time, so two readings of one counter
+# disagreed by the whole total). With no sink armed only the module counter moves, and a kernel
+# collector nothing armed serves no cpu_ms_workers key at all rather than a zero (the setter's
+# docstring says who arms it and where). The module counter stays: the serve child runs this file
+# with no kernel in its process and reads it for the done line's workerCpuMs (_serve_pass), and a
+# standalone romp-judge run has nothing else. This module names no kernel object: it holds a callable.
 _JUDGE_CPU = {"worker_ms": 0.0}
 _JUDGE_CPU_LOCK = threading.Lock()
+_WORKER_CPU_SINK = None        # kernel wiring: fn(cpu_ms) called on the pool worker's thread as each future ends, or None
+
+
+def set_worker_cpu_sink(fn):
+    """Kernel wiring: `fn(cpu_ms)` receives every pool worker's CPU milliseconds as its future ends, on the worker's
+    thread and under no lock of this module, besides the module counter judge_worker_cpu_ms reads.
+    WITHOUT a sink (None, the default) the module counter still accumulates and _serve_pass still reports workerCpuMs
+    from it, but no kernel's live counters take the share: a kernel collector nothing armed serves NO judge.cpu_ms_workers
+    key (its arming is what creates the key) and its judge.cpu_ms_sum is the tier threads' and the child's CPU alone, so
+    the absent key reads "not reported" where a 0.0 would have passed for a measurement (the review ruling on the
+    write-time fold, 2026-09-18, as set_sdk_owner_provider's docstring names what its absence costs).
+    WHO ARMS IT: in production the kernel, once per load, right after it builds its collector
+    (_PerfStats.arm_judge_worker_sink installs its judge_worker_cpu here); in a test, the test itself in setUp when it
+    asserts on its own kernel's counters, because every kernel load re-executes this module and clears the hook, so the
+    LAST kernel a test process loaded holds it (the property set_sdk_owner_provider and set_pending_cut_provider share,
+    module globals set the same way). Nobody arms it in the serve child (no kernel in its process) or a standalone
+    romp-judge run, and no log line marks an unarmed future: in a kernel process the arming precedes every pool future,
+    so that state is reachable only in a test.
+    `fn` must not raise: it runs in the future's finally, AFTER the worker's stage mark is restored (review round 1,
+    2026-09-19: the accounting used to run first, so a raising sink left the submitter's mark on the pool thread for
+    every later future to inherit), so a raise there costs the worker no mark but stands in for the future's own
+    result and reaches the tier's as_completed loop as that future's error; nothing catches it here, on purpose
+    (a perf path that ate its own errors would publish numbers nobody could trust).
+    Returns the previous sink, so a test can restore it. worker_cpu_sink() reads the one installed now."""
+    global _WORKER_CPU_SINK
+    prev = _WORKER_CPU_SINK
+    _WORKER_CPU_SINK = fn
+    return prev
+
+
+def worker_cpu_sink():
+    """The sink set_worker_cpu_sink last installed, or None. The kernel's collector asks whether it is that sink
+    (_PerfStats.holds_judge_worker_sink) before it serves or re-creates cpu_ms_workers: a later kernel load in the
+    same process re-executes this module, which clears the hook without telling the collector it displaced, so the
+    collector cannot know from its own state alone (review round 1, 2026-09-19). A plain read of one module global,
+    under no lock; the kernel's collector reads it outside its own lock."""
+    return _WORKER_CPU_SINK
 
 
 def _judge_cpu_add(cpu_s):
+    ms = cpu_s * 1000.0
     with _JUDGE_CPU_LOCK:
-        _JUDGE_CPU["worker_ms"] += cpu_s * 1000.0
+        _JUDGE_CPU["worker_ms"] += ms
+    sink = _WORKER_CPU_SINK                          # read once; the lock above is released before the call
+    if sink is not None:
+        sink(ms)
 
 
 def judge_worker_cpu_ms():
-    """CPU milliseconds spent so far in this module's pool workers (every future any tier submitted)."""
+    """CPU milliseconds spent so far in this module's pool workers (every future any tier submitted), since this
+    module last executed. The serve child reads it per pass; a kernel reads its own counters (set_worker_cpu_sink)."""
     with _JUDGE_CPU_LOCK:
         return _JUDGE_CPU["worker_ms"]
 
 
 class _TimedPool(ThreadPoolExecutor):
-    """ThreadPoolExecutor whose submitted callables account their CPU to _JUDGE_CPU, and whose workers are
+    """ThreadPoolExecutor whose submitted callables account their CPU to _JUDGE_CPU and to the sink when one is set
+    (_judge_cpu_add), and whose workers are
     PASS THREADS (_pass_frame): a tier fans its per-session stages through these pools, and a worker must
     see the frame the tier thread opened or joined, so every submitted run carries the mark (review find,
     2026-09-08). Thread-locals do not cross into pool workers on their own, which is why the mark rides
@@ -81,12 +135,23 @@ class _TimedPool(ThreadPoolExecutor):
             try:
                 return fn(*args, **kwargs)
             finally:
+                em._set_stage_mark(prev)                  # the worker's previous mark restored on every exit, BEFORE the
+                #                                           accounting: the sink runs kernel code and may raise, and the
+                #                                           restore must not depend on it (review round 1, 2026-09-19; the
+                #                                           order alone keeps a sink failure loud, no try/except here)
                 _judge_cpu_add(time.thread_time() - c0)
-                em._set_stage_mark(prev)                  # the worker's previous mark restored on every exit
         return super().submit(run)
 
 
 ThreadPoolExecutor = _TimedPool      # every pool below is a timed one (see above)
+# POOL SITES: run_pass -> _run_index _run_index run_plan run_group run_consolidate run_close run_unblock run_distill | main only -> _ab_close _ab_classify _test
+# ^ every ThreadPoolExecutor(...) construction in this file, named by its enclosing top-level function in source order
+#   (one name per construction) and split by whether run_pass reaches its owner (a name walk from run_pass over this
+#   module's functions) or only main's subcommand dispatch does. DERIVED, not written: tests/test_perf_stats.py
+#   (JudgeCpu) walks this file's AST on every run and reds when the line and the walk differ, so a new pool site is
+#   named here or fails the suite, and the fact the kernel's arming rests on (every pool the kernel process can reach
+#   sits under run_pass, so the sink armed at load precedes every future) is re-derived rather than remembered
+#   (review round 2, 2026-09-19: a hand enumeration of these sites in PR 792's rationale ran one short of the file).
 
 HERE = Path(__file__).resolve().parent
 _ls_spec = importlib.util.spec_from_file_location("romp_loadsource", str(HERE / "loadsource.py"))
@@ -108,12 +173,41 @@ STATE    = Path(os.environ.get("ROMP_STATE_DIR")   # per-kernel state root overr
 # Keep the romp state root private (0700): it holds session names, prompts,
 # captions, goals, and postal message bodies. The traverse bit on the root is
 # enough to block other local users from reading anything beneath it. Runs on
-# import so every romp Python tool that uses STATE secures it; best-effort.
+# import so every romp Python tool that uses STATE secures it; best-effort, and
+# since review round 2 of PR 789 (2026-09-19) the mode is read back afterwards
+# and said once on stderr when it is not 0700 (_state_root_mode_line).
+
+
+def _state_root_mode_line(root):
+    """The one stderr line said at import when the state root is not owner-only, or None when it is.
+
+    The mkdir and the chmod below are best-effort: an OSError is swallowed, since every romp tool runs them at
+    import and a failure there must not stop a CLI. Until review round 2 of PR 789 (2026-09-19) nothing read the
+    mode back, so the premise behind this repo's no-heal rule for credential files (a registry or a parked-ops
+    mirror this uid wrote at a looser mode is not exposed, because the root is 0700) could be false with no
+    signal. This reads it back and names the path and the mode as read, once per process, so a root that a chmod
+    could not tighten is seen rather than assumed. Not a heal: nothing here changes a mode (the round-1 ruling
+    stands, files tighten on their next write). tests/test_judge_scratch_private.py (TheStateRootModeIsChecked)
+    pins both roads, the import road in a child process."""
+    try:
+        mode = stat.S_IMODE(os.stat(root).st_mode)
+    except OSError as e:
+        return ("romp-judge: state root %s could not be checked for its mode (%s): every file under it is only as "
+                "private as its own mode" % (root, e))
+    if mode == 0o700:
+        return None
+    return ("romp-judge: state root %s is mode %04o, not 0700: the chmod at import did not tighten it, so every file "
+            "under it is only as private as its own mode" % (root, mode))
+
+
 try:
     STATE.mkdir(parents=True, exist_ok=True)
     os.chmod(STATE, 0o700)
 except OSError:
     pass
+_STATE_ROOT_MODE_LINE = _state_root_mode_line(STATE)   # the line said at import, or None: read back, not assumed
+if _STATE_ROOT_MODE_LINE:
+    sys.stderr.write(_STATE_ROOT_MODE_LINE + "\n")
 NAMES    = STATE / "names"
 PROJECTS = Path(os.environ.get("CLAUDE_CONFIG_DIR") or str(HOME / ".claude")) / "projects"   # per-kernel Claude root (plans/multi-kernel.md phase 2)
 CAPDIR   = STATE / "captions"            # the new summaries/ — one .jsonl per transcript, keyed by unit id

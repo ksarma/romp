@@ -92,7 +92,15 @@ def _no_crypto():
     every loaded cryptography module and the top-level name read None in sys.modules, which the
     import system raises ModuleNotFoundError for, and the kernel's cache is reset so the import is
     really attempted (patching _PUSH_CRYPTO to a sentinel would only prove the sentinel). Reset again
-    on the way out: the next call is the retry a re-installed package is found by."""
+    on the way out: the next call is the retry a re-installed package is found by.
+
+    Minting inside the block works (_mint_browser_keys, _sub_body): the package's Rust bindings
+    resolve `cryptography.hazmat.primitives.asymmetric.ec` through an import on the first key
+    generated in the process and keep it, so one key is generated and discarded here before anything
+    is hidden. Without that, a cold process (the test alone, an xdist split of this module) halted in
+    the test's own mint before the route was reached — 2026-09-19."""
+    if HAVE_CRYPTO:
+        ec.generate_private_key(ec.SECP256R1())   # the warm the docstring describes
     hidden = {k: None for k in list(sys.modules) if k == "cryptography" or k.startswith("cryptography.")}
     hidden["cryptography"] = None
     km._PUSH_CRYPTO[0] = None
@@ -661,7 +669,8 @@ class SubscribeRoutes(unittest.TestCase):
         # install layout, bin/romp-sdk-setup in this checkout, which installs the package into the SDK
         # venv the kernel reads; the bell's This-device sub-line shows the body verbatim
         with _no_crypto():
-            code, body = self._post("/push/subscribe", self._sub_body())
+            sub = self._sub_body()
+            code, body = self._post("/push/subscribe", sub)
             kcode, kbody = self._get_text("/push/vapid-key")
         self.assertEqual(code, 500)
         self.assertIn("'cryptography'", body)
@@ -677,12 +686,30 @@ class SubscribeRoutes(unittest.TestCase):
         # the message sends the user to bin/romp-sdk-setup and says to turn the switch on again: that
         # only holds if a miss is not cached for the kernel's life (it was, as _PUSH_CRYPTO[0] = False)
         with _no_crypto():
-            code, _ = self._post("/push/subscribe", self._sub_body())
+            sub = self._sub_body()
+            code, _ = self._post("/push/subscribe", sub)
             self.assertEqual(code, 500)
             self.assertIsNone(km._push_crypto())
         code, _ = self._post("/push/subscribe", self._sub_body())
         self.assertEqual(code, 200, "the same kernel, the package importable now: the subscribe lands")
         self.assertEqual(len(km._push_subs()), 1)
+
+    @unittest.skipUnless(HAVE_CRYPTO, "python 'cryptography' not installed")
+    def test_a_subscription_minted_inside_the_block_still_reaches_the_route(self):
+        # the fourth test, written on purpose: a subscription minted INSIDE _no_crypto(), the natural way
+        # to write one of these, mints (the helper warms the bindings' lazy import before it hides the
+        # package) and then meets the route's 500, so the halt comes from the kernel's import and never
+        # from the test's own key generation. Red on a cold process before the helper warmed (2026-09-19).
+        with _no_crypto():
+            sub = self._sub_body()
+            import base64
+            b64 = sub["keys"]["p256dh"]
+            point = base64.urlsafe_b64decode(b64 + "=" * (-len(b64) % 4))
+            self.assertEqual((len(point), point[0]), (65, 0x04), "a P-256 point, minted under the hidden package")
+            code, body = self._post("/push/subscribe", sub)
+        self.assertEqual(code, 500)
+        self.assertIn("'cryptography'", body, "the route's own import met the hidden None")
+        self.assertEqual(km._push_subs(), {})
 
     def test_the_sdk_venvs_site_packages_are_put_on_the_path_for_the_import(self):
         # bin/romp-sdk-setup installs the package into the SDK venv; _ensure_sdk_on_path adds that venv
@@ -1329,7 +1356,7 @@ class RevealAiming(unittest.TestCase):
     it waits for — that window's chat pane saying ready — and aimed at that pane alone."""
 
     def setUp(self):
-        km._PENDING_REVEAL[0] = None
+        km._PENDING_REVEAL.clear()
         self._added = []
 
     def tearDown(self):
@@ -1337,7 +1364,7 @@ class RevealAiming(unittest.TestCase):
             for c in self._added:
                 if c in km._clients:
                     km._clients.remove(c)
-        km._PENDING_REVEAL[0] = None
+        km._PENDING_REVEAL.clear()
 
     def _register(self, app, wid):
         c, got = _fake_ws_client(app, wid)
@@ -1351,7 +1378,7 @@ class RevealAiming(unittest.TestCase):
         with mock.patch.object(km, "_live_map", return_value={"SID-live": {}}):
             self.assertTrue(km._reveal_request("SID-live", "W1"))
         self.assertEqual(got, [{"type": "focus", "id": "SID-live", "live": True}])
-        self.assertIsNone(km._PENDING_REVEAL[0], "delivered → nothing parked")
+        self.assertEqual(km._PENDING_REVEAL, {}, "delivered → nothing parked")
         # a DEAD session never silently reveals — the revive prompt instead (_reveal_or_confirm's split)
         got.clear()
         with mock.patch.object(km, "_live_map", return_value={}), \
@@ -1363,12 +1390,12 @@ class RevealAiming(unittest.TestCase):
         # the norm: the shell's fetch beats its chat iframe's WS, so nothing is connected yet
         with mock.patch.object(km, "_live_map", return_value={"SID-live": {}}):
             self.assertFalse(km._reveal_request("SID-live", "W-phone"))
-            self.assertEqual(km._PENDING_REVEAL[0], {"sid": "SID-live", "wid": "W-phone"})
+            self.assertEqual(km._PENDING_REVEAL.get("W-phone"), {"sid": "SID-live", "wid": "W-phone"})
             # another dashboard's pane saying ready must NOT steal it (the 2026-07-29 rule)
             other, other_got = _fake_ws_client("chat", "W-desktop")
             km._consume_pending_reveal(other)
             self.assertEqual(other_got, [])
-            self.assertIsNotNone(km._PENDING_REVEAL[0])
+            self.assertIsNotNone(km._PENDING_REVEAL.get("W-phone"))
             # a non-chat pane of the RIGHT window doesn't take it either
             feed, feed_got = _fake_ws_client("feed", "W-phone")
             km._consume_pending_reveal(feed)
@@ -1378,7 +1405,7 @@ class RevealAiming(unittest.TestCase):
             km._consume_pending_reveal(mine)
             # `own` (split screen, 2026-09-08): ONE chat client consumes the parked tap, so the pane's column arbitration must not hand it elsewhere
             self.assertEqual(mine_got, [{"type": "focus", "id": "SID-live", "live": True, "own": True}])
-            self.assertIsNone(km._PENDING_REVEAL[0])
+            self.assertEqual(km._PENDING_REVEAL, {})
             km._consume_pending_reveal(mine)
             self.assertEqual(len(mine_got), 1, "consumed means consumed")
 
@@ -1392,12 +1419,12 @@ class RevealAiming(unittest.TestCase):
         with mock.patch.object(km, "_live_map", return_value={"SID-live": {}}):
             self.assertTrue(km._reveal_request("SID-live", "W-phone", boot=True, via="link"), "delivered to the ready pane")
         self.assertEqual(mine_got, [{"type": "focus", "id": "SID-live", "live": True}])
-        parked = km._PENDING_REVEAL[0]
+        parked = km._PENDING_REVEAL.get("W-phone")
         self.assertEqual((parked["sid"], parked["wid"]), ("SID-live", "W-phone"))
         self.assertEqual(len(parked.get("sent") or []), 1); self.assertIs(parked["sent"][0], mine, "…and a copy stays parked, tagged with who got it")
         # the pane answers (a pong, any message): the copy is retired, so a later ready never replays the tap
         km._reveal_proven(mine)
-        self.assertIsNone(km._PENDING_REVEAL[0])
+        self.assertEqual(km._PENDING_REVEAL, {})
 
     def test_a_same_wid_socket_that_has_not_said_ready_is_no_target_and_its_ready_still_consumes(self):
         """The review find on T312: a chat socket exists from its handshake, but until its bundle posts `ready`
@@ -1413,22 +1440,22 @@ class RevealAiming(unittest.TestCase):
         with mock.patch.object(km, "_live_map", return_value={"SID-live": {}}):
             self.assertFalse(km._reveal_request("SID-live", "W-boot", boot=True, via="link"), "parked: nothing can hear it yet")
             self.assertEqual(dropped, [], "nothing is sent to a pane that cannot listen")
-            self.assertEqual(km._PENDING_REVEAL[0], {"sid": "SID-live", "wid": "W-boot"})
+            self.assertEqual(km._PENDING_REVEAL.get("W-boot"), {"sid": "SID-live", "wid": "W-boot"})
             # the pane's ready message arrives: _ws notes the inbound (an answer) BEFORE dispatching the handler…
             km._note_ws_inbound(booting)
-            self.assertIsNotNone(km._PENDING_REVEAL[0], "…which must not retire a copy this pane never heard")
+            self.assertIsNotNone(km._PENDING_REVEAL.get("W-boot"), "…which must not retire a copy this pane never heard")
             # …then the ready handler stamps the client and consumes the park
             booting["ready"] = True
             km._consume_pending_reveal(booting)
         self.assertEqual(heard, [{"type": "focus", "id": "SID-live", "live": True, "own": True}])   # own: a consumed reveal is the receiving column's to take (the split, 2026-09-08)
-        self.assertIsNone(km._PENDING_REVEAL[0])
+        self.assertEqual(km._PENDING_REVEAL, {})
         # a live (non-boot) tap to that same not-yet-ready socket parks too: the sw / ack / vanish roads had the
         # same hole once the shell saw the socket up but before the bundle listened
         with mock.patch.object(km, "_live_map", return_value={"SID-live": {}}):
             booting["ready"] = False
             self.assertFalse(km._reveal_request("SID-live", "W-boot", via="sw"))
             self.assertEqual(dropped, [])
-            self.assertEqual(km._PENDING_REVEAL[0], {"sid": "SID-live", "wid": "W-boot"})
+            self.assertEqual(km._PENDING_REVEAL.get("W-boot"), {"sid": "SID-live", "wid": "W-boot"})
 
 
     def test_a_widless_park_matches_the_first_chat_pane(self):
@@ -1452,12 +1479,12 @@ class RevealAiming(unittest.TestCase):
         with mock.patch.object(km, "_live_map", return_value={"S": {}}):
             self.assertTrue(km._reveal_request("S", "W-phone", boot=True))
             self.assertEqual(twin_got, [{"type": "focus", "id": "S", "live": True}], "the same-wid socket is told: it may be the page's own pane")
-            parked = km._PENDING_REVEAL[0]
+            parked = km._PENDING_REVEAL.get("W-phone")
             self.assertEqual((parked["sid"], parked["wid"], parked.get("sent")), ("S", "W-phone", [twin]), "…and the copy stays for the fresh pane")
             fresh, fresh_got = _fake_ws_client("chat", "W-phone")
             km._consume_pending_reveal(fresh)
         self.assertEqual(fresh_got, [{"type": "focus", "id": "S", "live": True, "own": True}])
-        self.assertIsNone(km._PENDING_REVEAL[0])
+        self.assertEqual(km._PENDING_REVEAL, {})
 
     def test_a_live_tap_to_an_unproven_socket_keeps_a_copy_until_the_pong_or_the_redial(self):
         # the live half of the same hole: the pane's socket has a ping on the wire nobody has
@@ -1471,19 +1498,19 @@ class RevealAiming(unittest.TestCase):
         with mock.patch.object(km, "_live_map", return_value={"S": {}}):
             self.assertTrue(km._reveal_request("S", "W1"))
         self.assertEqual(got, [{"type": "focus", "id": "S", "live": True}], "still delivered at once")
-        self.assertEqual((km._PENDING_REVEAL[0] or {}).get("sid"), "S", "…and kept until the socket proves itself")
+        self.assertEqual((km._PENDING_REVEAL.get("W1") or {}).get("sid"), "S", "…and kept until the socket proves itself")
         # another window's pane pongs: not this tap's socket, the copy stays
         other, _ = self._register("chat", "W2")
         other["pingAt"] = 100.0
         km._note_ws_inbound(other, now=101.0)
-        self.assertIsNotNone(km._PENDING_REVEAL[0])
+        self.assertIsNotNone(km._PENDING_REVEAL.get("W1"))
         # the delivered-to socket pongs → proven → the copy is retired, and a later ready replays nothing
         km._note_ws_inbound(c, now=101.0)
-        self.assertIsNone(km._PENDING_REVEAL[0])
+        self.assertEqual(km._PENDING_REVEAL, {})
         c["pingAt"] = None
         with mock.patch.object(km, "_live_map", return_value={"S": {}}):
             self.assertTrue(km._reveal_request("S", "W1"))
-        self.assertIsNone(km._PENDING_REVEAL[0], "a socket with no ping outstanding is proven — nothing parked")
+        self.assertEqual(km._PENDING_REVEAL, {}, "a socket with no ping outstanding is proven — nothing parked")
         # the dead case: never pongs; the redial's first strip takes the copy (its sender's consume, called here)
         c["pingAt"] = 100.0
         with mock.patch.object(km, "_live_map", return_value={"S": {}}):
@@ -1491,7 +1518,7 @@ class RevealAiming(unittest.TestCase):
             fresh, fresh_got = _fake_ws_client("chat", "W1")
             km._consume_pending_reveal(fresh)
         self.assertEqual(fresh_got, [{"type": "focus", "id": "S", "live": True, "own": True}])
-        self.assertIsNone(km._PENDING_REVEAL[0])
+        self.assertEqual(km._PENDING_REVEAL, {})
 
     def test_a_redialed_pane_is_a_target_and_its_first_strip_consumes_the_park(self):
         """A pane whose socket died in the SAME kernel process redials (the shim's ?reconnect=1), and its
@@ -1502,13 +1529,13 @@ class RevealAiming(unittest.TestCase):
         the flag and says so, and the strip sender consumes the park right behind the strip it just sent."""
         with mock.patch.object(km, "_live_map", return_value={"S": {}}):
             self.assertFalse(km._reveal_request("S", "W1", via="vanish"), "the socket died: the tap parks")
-            self.assertEqual(km._PENDING_REVEAL[0], {"sid": "S", "wid": "W1"})
+            self.assertEqual(km._PENDING_REVEAL.get("W1"), {"sid": "S", "wid": "W1"})
             c, got = self._register("chat", "W1")
             del c["ready"]                    # registered at its handshake; no ready will follow on this socket
             c["reconnect"] = True             # the shim's own statement: this page held the sessions before
             self.assertFalse(km._reveal_request("S", "W1", via="sw"), "before its first strip the redial is no target")
             self.assertEqual(got, [], "nothing is sent to a pane whose strip has not gone yet")
-            self.assertEqual(km._PENDING_REVEAL[0], {"sid": "S", "wid": "W1"}, "the park stands")
+            self.assertEqual(km._PENDING_REVEAL.get("W1"), {"sid": "S", "wid": "W1"}, "the park stands")
             # the first strip sender pops the flag: the client is stamped, and the sender is told to consume
             self.assertTrue(km._resolve_reconnect(c, []), "a popped redial flag says so")
             self.assertIs(c.get("ready"), True, "the redial is stamped like a pane whose ready was heard")
@@ -1516,7 +1543,7 @@ class RevealAiming(unittest.TestCase):
             km._consume_pending_reveal(c, why="the pane's redial")
             self.assertEqual(len(got), 1)
             self.assertEqual((got[0]["type"], got[0]["id"], got[0]["live"]), ("focus", "S", True))
-            self.assertIsNone(km._PENDING_REVEAL[0], "consumed")
+            self.assertEqual(km._PENDING_REVEAL, {}, "consumed")
             # from here the redialed pane is an ordinary target: the next tap lands at once
             self.assertTrue(km._reveal_request("S", "W1", via="sw"))
             self.assertEqual((got[-1]["type"], got[-1]["id"]), ("focus", "S"))
@@ -1543,7 +1570,7 @@ class RevealRoute(unittest.TestCase):
         cls.srv.shutdown()
 
     def setUp(self):
-        km._PENDING_REVEAL[0] = None
+        km._PENDING_REVEAL.clear()
 
     def _post(self, path, body, token=True):
         import urllib.request, urllib.error
@@ -1562,14 +1589,14 @@ class RevealRoute(unittest.TestCase):
         code, body = self._post("/reveal", {"sid": "SID-x", "wid": "W-x"})
         self.assertEqual(code, 200)
         self.assertFalse(json.loads(body)["delivered"])
-        self.assertEqual(km._PENDING_REVEAL[0], {"sid": "SID-x", "wid": "W-x"})
+        self.assertEqual(km._PENDING_REVEAL.get("W-x"), {"sid": "SID-x", "wid": "W-x"})
 
     def test_requires_token_and_sid(self):
         code, _ = self._post("/reveal", {"sid": "S"}, token=False)
         self.assertEqual(code, 403)
         code, _ = self._post("/reveal", {"wid": "W"})
         self.assertEqual(code, 400)
-        self.assertIsNone(km._PENDING_REVEAL[0])
+        self.assertEqual(km._PENDING_REVEAL, {})
 
     def test_a_boot_flagged_reveal_reaches_a_connected_same_wid_pane_and_keeps_a_copy_parked(self):
         # the deep-link arrival says it is booting; a connected same-wid pane may be the previous page's dead
@@ -1587,7 +1614,7 @@ class RevealRoute(unittest.TestCase):
         self.assertEqual(code, 200)
         self.assertTrue(json.loads(body)["delivered"])
         self.assertEqual(twin_got, [{"type": "focus", "id": "SID-x", "live": True}])
-        parked = km._PENDING_REVEAL[0]
+        parked = km._PENDING_REVEAL.get("W-x")
         self.assertEqual((parked["sid"], parked["wid"], parked.get("sent")), ("SID-x", "W-x", [twin]))
 
     def test_every_tap_leaves_a_line_in_the_kernel_log(self):

@@ -1,12 +1,12 @@
 ---
 title: api_retry detail reads the wire's attempt and error string
-status: candidate
+status: merged
 where: kernel/sdk_backend.py: the api_retry branch of _on_message; tests/test_sdk_backend.py ApiRetryState
 added: 2026-09-16
 pr:
 tier: fix
-offered:
-closed:
+offered: their PR #1852
+closed: 2026-09-18
 ---
 
 The installed CLI's SDKAPIRetryMessage carries attempt, max_retries, retry_delay_ms, error_status (null for a
@@ -19,3 +19,5 @@ FastModeReportedState's refused ask, the latter a fork-only class), a fake whose
 (ReconnectReconcilesInflight) and a class with no current event loop for the settle to schedule on (ApiRetryState's
 bare-payload case). The fix reads the wire's fields with a fails-before test on the installed CLI's frame; the
 re-pinned tests pass on upstream's code too. Found during the fork's 2026-09-16 pull-in review (PR 755 on the fork).
+
+2026-09-18: approved for offer by the user (batch 1 of the 2026-09-18 plan).

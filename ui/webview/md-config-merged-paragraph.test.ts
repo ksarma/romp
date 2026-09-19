@@ -29,6 +29,7 @@ import assert from "node:assert/strict";
 import { Lexer, marked } from "marked";
 import type { Token } from "marked";
 import { applyMdConfig } from "./md-config";
+import { viewerHtml } from "./file-view";   // the viewer's parse (mdBlock's recipe, the literal-tags rule of md-literal-tags.ts between marked's lexer and its parser): a `<prefix>` line's tag, with no end tag in its paragraph, is literal text on both sides
 import { mapRenderedSelection, sourceBlockSpans, renderedBlockIndex, type SelLike, type MapResult, type SourceRange } from "./anchor-map";
 import { hideEdges } from "../test-dom-shim";
 
@@ -134,7 +135,7 @@ function standInFill(root: FakeElement): void {
 function buildRendered(text: string): FakeElement {
   const doc = new FakeDocument();
   const box = doc.createElement("div"); box.setAttribute("class", "fileview-md");
-  for (const n of parseHTML(doc, marked.parse(text) as string)) box.appendChild(n);
+  for (const n of parseHTML(doc, viewerHtml(text))) box.appendChild(n);
   standInFill(box);
   return box;
 }

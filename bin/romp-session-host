@@ -7,9 +7,11 @@ state root (`sdkvenv`), for the python this process runs, or the directory ROMP_
 SDK the host still runs, on its built-in pipe transport (the hermetic tests' path; a real install always
 has the SDK, since the kernel refuses SDK sessions without it). A credential never rides the spec file:
 the kernel hands a stored login's CLAUDE_CODE_OAUTH_TOKEN (and the machine's boot-claimed login tokens) to
-this process through its environment (sdk_backend.py, split_spawn_secrets and _spawn_host), and both
-transports build the CLI's environment from this process's own with the spec's overlay on top, so the
-token reaches the CLI from here and no file under the state root holds it."""
+this process through its environment (sdk_backend.py, split_spawn_secrets and _spawn_host), and since
+2026-09-18 every other credential-shaped name of the launch's overlay that carries a value takes the same
+road (spawn_env_secret_names: a name ending _API_KEY or _TOKEN in any letter case, or one of 1Password's);
+both transports build the CLI's environment from this process's own with the spec's overlay on top, so
+each such variable reaches the CLI from here and no file under the state root holds it."""
 import glob
 import importlib.util
 import os

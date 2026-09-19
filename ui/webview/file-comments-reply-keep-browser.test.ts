@@ -142,6 +142,30 @@ async function openPanel(page: any): Promise<void> {
   await page.__reply(status([passage, whole, odd]));
   await page.waitForSelector(".fc-card");
 }
+let settles = 0;                                     // settledBox's per-call nonce
+/** The box as __box() reads it, once its scroll offset has stood still across two consecutive animation frames. Firefox lands
+ *  the caret's scroll after typing in two steps, and a baseline read straight after keyboard.type() can see the first step,
+ *  one 15-pixel line short of where it settles; the panel's own read (render) comes after the second, so it restores the
+ *  settled offset correctly and the leg holds a right answer to a stale baseline. The 2026-09-18 bisect found the race in
+ *  this file's twin (file-comments-reply-review2-browser.test.ts, about a quarter of its runs ALONE, never under npm test,
+ *  where every round trip is slower than the second step); the round-1 review found it here too, at about 4 percent (2 red in
+ *  49 isolated runs): the evaluate that arms the blur watch before the baseline buys one extra round trip, and with that
+ *  evaluate after the read this file fails 3 in 14, its twin's rate. Chromium has settled by the time type() resolves; the
+ *  same wait costs it a frame. Two equal frames are how the page observes that the last scroll landed, so the wait also
+ *  stands after the re-render, where a 50 ms timer stood: the rebuild's renders (the status's and the refresh's finally) are
+ *  one task with the reply, so the frame that shows the new card shows their restore too. waitForFunction polls on
+ *  requestAnimationFrame by default and does not await a Promise from its predicate (a Promise is truthy), so the predicate
+ *  is synchronous and keeps the last frame's reading on the window, keyed by a per-call nonce so an earlier settle's reading
+ *  never counts as this one's first frame; playwright's default timeout bounds it. */
+async function settledBox(page: any): Promise<any> {
+  await page.waitForFunction((k: number) => {
+    const w = window as any, ta = w.__ta(), now = ta ? ta.scrollTop : null;
+    const last = w.__settle && w.__settle.k === k ? w.__settle.top : undefined;
+    w.__settle = { k, top: now };
+    return !!ta && last === now;
+  }, ++settles);
+  return page.evaluate(() => (window as any).__box());
+}
 
 for (const name of ["chromium", "firefox"] as const) {
   test("in " + name + ": the poll's re-render leaves the reply's textarea in place — no blur, the keyboard, the scroll offset and the undo history all kept — and a comment id holding a quote is escaped in the panel's selectors", async (t) => {
@@ -156,7 +180,7 @@ for (const name of ["chromium", "firefox"] as const) {
       // past the twelve-row cap: the sheet caps the height and the box scrolls to the caret
       await page.keyboard.type(Array.from({ length: 16 }, (_, i) => "line " + (i + 1)).join("\n"));
       await page.evaluate(() => { (window as any).__card = (window as any).__cardOf((window as any).__ta().closest(".fc-card").dataset.id); (window as any).__watch(); });
-      const before = await page.evaluate(() => (window as any).__box());
+      const before = await settledBox(page);            // the watch armed first; the caret's scroll has landed: the baseline the re-render is held to
       assert.ok(before.scrollHeight > before.clientHeight, "the box scrolls: " + before.scrollHeight + " over " + before.clientHeight);
       assert.ok(before.scrollTop > 0, "…and is scrolled to the caret: " + before.scrollTop);
       assert.equal(before.value.split("\n").length, 16);
@@ -165,8 +189,7 @@ for (const name of ["chromium", "firefox"] as const) {
       await untilPosted(page, 3, "status");
       await page.__reply(status([passage, whole, odd, third], "1757145600000000004"));
       await page.waitForFunction((id: string) => !!(window as any).__cardOf(id), third.id);
-      await page.waitForTimeout(50);                    // the refresh's last render (its finally) follows the status's
-      box = await page.evaluate(() => (window as any).__box());
+      box = await settledBox(page);
       assert.equal(box.connected, true, "the textarea is in the document");
       assert.equal(box.card, passage.id, "…in the same comment's card");
       assert.equal(box.same, true, "…which is the same card node, kept around it");
@@ -190,10 +213,14 @@ for (const name of ["chromium", "firefox"] as const) {
       box = await page.evaluate(() => (window as any).__box());
       assert.equal(box.card, odd.id, "the box stands in the quoted id's card");
       await page.keyboard.type("Yes.");
+      // the same list comes back, so no card's arrival marks this re-render: the rebuild shows as the OTHER cards' nodes replaced
+      // around the kept one (swapCards keeps the box's card node and rebuilds every other card), so a card's node before the
+      // reply is the mark, and its replacement the event the read waits on
+      await page.evaluate((id: string) => { (window as any).__mark = (window as any).__cardOf(id); }, third.id);
       await page.evaluate(() => (window as any).__saved({ mtimeNs: "10", logged: true }));
       await untilPosted(page, 4, "status");
       await page.__reply(status([passage, whole, odd, third], "1757145600000000005"));
-      await page.waitForTimeout(50);
+      await page.waitForFunction((id: string) => { const w = window as any, c = w.__cardOf(id); return !!c && c !== w.__mark; }, third.id);
       box = await page.evaluate(() => (window as any).__box());
       assert.equal(box.card, odd.id, "kept there across the re-render");
       assert.equal(box.value, "Yes.");

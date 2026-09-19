@@ -243,7 +243,8 @@ class NudgeWalkParseGate(unittest.TestCase):
             self.assertEqual(sent, [[]], "a dead asker's ask is owed to nobody now")
             memo = km._TICK_SEEN[("auto-nudge", SID_OLD)]
             self.assertIsNotNone(memo[-2], "the asker's row is keyed: the debtor's memo is bounded, not None")
-            self.assertEqual(len(memo) - 2, 22, "ten files plus the asker's (mtime, size), zeros for an absent row: %r" % (memo,))
+            self.assertEqual(len(memo) - 3, 22, "ten files plus the asker's (mtime, size), zeros for an absent row, before the mode tag, "
+                             "the flip and the verdict (jobs stage 1 added the tag): %r" % (memo,))
             self.assertEqual(km._NUDGE_WALK_STATS["unboundedBy"], before, "no leg notes anything for a keyed asker")
             self._dead_asker_look(r, now + 1, calls, quiet)                    # a skipped look answers from its memo
             self.assertEqual(calls, [SID_OLD], "the second look skipped: nothing of the debtor's or the asker's moved")
@@ -482,6 +483,8 @@ class NudgeWalkParseGate(unittest.TestCase):
             "_intr_marks_memo",                     # a memo keyed on the parse identity plus the state log's machineCut pair
             "_intr_marks_memo_stats", "_INTR_MARKS_STATS_LOCK",   # that memo's hit/miss counters and their lock (no input)
             "_nudge_gate_memo", "_NUDGE_GATE_STATS",   # the placement gate's memo (the parse identity, the store view, the episode log's stat) and its counters
+            "_nudge_deleg_memo",                    # the delegated check's memo, keyed on the shared view object's identity (one object per store
+            #                                         version: the store, its journal and archive, keyed files 3 to 5) and holding a pure function of it
             "_last_state_cache", "_machine_cut_cache",   # _fold_records cursors over the state log (a keyed file), keyed by its path and stat
             "_stat_key",                            # a (mtime, size) reader
             "_NUDGE_HORIZON",                       # the look's thread-local horizon: its notes, and the keyed and overflow asker sets the
@@ -500,7 +503,8 @@ class NudgeWalkParseGate(unittest.TestCase):
             #                                         keyed files) and the parse's own sdk-ownership bit (jd._sdk_owned, the input
             #                                         parsed_session reads as sdk_human), holding only the tally's own two maxima
         }
-        DISPLAY_ONLY = {"_name_of": "the asker's display name for the reminder's TEXT (the names snapshot): never a verdict input"}
+        DISPLAY_ONLY = {"_name_of": "the asker's display name for the reminder's TEXT (the names snapshot): never a verdict input",
+                        "_name_color": "the awaited peer's chip color in the wait-for graph's rows (the names registry): display only"}
         ROAD_FORBIDDEN = {                          # a road whose KEY writes constants at some positions must never read those files (T401 (3)):
             "interrupt-block": {"names": {"_postal_wait_maps", "_nudge_asks_by_target", "_postal_index_memo"},
                                 "jd": {"MESSAGES", "EPIDIR", "episode_floor"},
@@ -511,20 +515,29 @@ class NudgeWalkParseGate(unittest.TestCase):
         SB_PURE = {"echo_text_key", "strip_echo_markers", "_strip_marker_tail"}   # pure functions of their text argument (an atom's
         #                                             user text folded to the echo key the interrupt marks compare against)
         REFILLED = {"_downtime": "kernel-downtime.jsonl"}
+        NOTED_READERS = {                            # a road function that reads a file OUTSIDE the ten, allowed only because the one exit it
+            #                                         gates notes None under the named leg (the exit census below pins the note sits at
+            #                                         that exit); the trace stops here, and the leg's literal must appear in the walk
+            "_open_user_todos": ("todoStandDown", "the user-todos store (STATE/user-todos.json) behind the goal loop's stand-down: "
+                                                  "the dashboard's dismiss route moves no keyed file, so the look stays unbounded (jobs stage 1, round 2)"),
+        }
         LEAF_READERS = {"_fold_records": "the event model's fold cursor over the NAMED file (the state log here), keyed by that file's "
                                          "stat; its internals are the record cache and the checkpoint tables, which mirror the file",
                         "_postal_wait_maps": "the postal log's wait maps, cached on that file's (mtime_ns, size) and rebuilt from it alone "
                                              "(the eighth keyed file); its internals are that cache and the alias history, which mirror the log",
                         "_auto_nudge_data": "the nudge ledger (the tenth keyed file), read through _ledger_read's cache on its (mtime_ns, size); "
                                             "the interrupt tick's key carries this session's own row from it, so a row change busts the memo "
-                                            "and another session's does not (T401 (3)); its internals are that cache and the fault latches"}
+                                            "and another session's does not (T401 (3)); its internals are that cache and the fault latches",
+                        "_postal_returned": "the postal log's returned-sends map, kept by the same scan as the wait maps and warmed with them "
+                                            "on the log's stat (the eighth keyed file); its internal is that scan's cache (jobs stage 1)"}
         JD_ALLOW = {"parsed_session", "_parse_entry", "_segs", "plan_units", "_placed_key", "_unit_key", "_closed_turns", "EPIDIR", "STATE",
                     "GOALDIR", "CLOSER_ON", "load_goals_shared_or_fault", "_seg_key", "_segment_id", "episode_floor", "_view_cleared",
                     "GOALARCHDIR", "_overrides_dir",   # the two keyed-file paths _session_files_stat itself names (the interrupt tick's key)
                     "load_goals_or_fault", "record_verdict", "append_block", "rollup_status", "save_goals", "INTERRUPT_BLOCK_WHY",
                     "_intr_paused_only",   # the interrupt arms' store readers and writers (T401 (3) round two): they load and write
                     "_pending_cut",    # the armed bare-rollback cut the judge parse reads live (no file): the marks memo takes NO key while it is armed
-                    "_sdk_owned"}      # the parse's sdk-ownership bit (parsed_session hands it to the adapter as sdk_human): the
+                    "_sdk_owned",      # the parse's sdk-ownership bit (parsed_session hands it to the adapter as sdk_human): the
+                    "FrozenStore"}     # the shared view's type, checked by the delegated memo (a type test on the store object: pure)
         #                                    marks memo's key carries the bit itself (round three, low 2)
         #                                    the goal store through its own API, the store, its journal and its archive being keyed
         #                                    files 3 to 5, and the override replay inside load_goals reads the clears log (keyed file 7,
@@ -555,14 +568,19 @@ class NudgeWalkParseGate(unittest.TestCase):
                     for a in n.names: names.add((a.asname or a.name).split(".")[0])
             return names
         problems = []; self.maxDiff = None
-        for verdict in sorted(set(km._NUDGE_FILE_KEYED_VERDICTS) | {"walk-completed", "interrupt-block"}):   # the debt leg's exit and
-            #                                                                                              the interrupt tick's road too
+        for verdict in sorted(set(km._NUDGE_FILE_KEYED_VERDICTS) | {"walk-completed", "interrupt-block", "wake-only"}):   # the debt leg's
+            #                                          exit, the interrupt tick's road and the wake-only goal loop's readers (jobs stage 1)
             todo = list(km._NUDGE_FILE_KEYED_ROADS[verdict]); seen = set()
             self.assertTrue(todo, "%s: its road functions are named" % verdict)
             while todo:
                 fn_name = todo.pop()
                 if fn_name in seen: continue
                 seen.add(fn_name)
+                if fn_name in NOTED_READERS:
+                    leg = NOTED_READERS[fn_name][0]      # an unkeyed reader the road names on purpose: not traced into, but the exit it
+                    self.assertIn('_nudge_clock(None, "%s")' % leg, inspect.getsource(km._auto_nudge_session),   # gates must note its leg
+                                  "%s: %s reads outside the ten files and its exit must note %s" % (verdict, fn_name, leg))
+                    continue
                 fn = getattr(km, fn_name, None)
                 if not isinstance(fn, types.FunctionType):
                     problems.append((verdict, fn_name, "not a module-level function")); continue
@@ -620,6 +638,124 @@ class NudgeWalkParseGate(unittest.TestCase):
             self.assertGreaterEqual(len(seen), len(km._NUDGE_FILE_KEYED_ROADS[verdict]), verdict)
         self.assertEqual(problems, [], "every marked road reads only the keyed files, through traced helpers")
         self.assertIn("kernel-downtime.jsonl", stat_src)
+
+    def test_every_declining_exit_of_the_awaiting_wake_and_the_goal_loop_notes_its_clock_or_stands_behind_a_keyed_read(self):
+        """Jobs stage 1, review round 1 (tests-3): the road census above traces the wake-only loop's READERS to the keyed files
+        but cannot trace _wake_goal (its fire, block and send path reads live state by design: 971 problems over 15 functions when
+        tried), and the walk's own goal loop is not a road. Retiring the stampedWait and allDelegated notes made both bodies'
+        declining exits memo-relevant: an exit that reads no keyed file and notes no leg lets the look record a skippable row, and
+        the awaiting ladder then waits for an unrelated keyed file to move (the refuters showed it with one injected line, and the
+        round's HIGH was such an exit, the user-todo stand-down). This census reads the source instead: every `return` of
+        _wake_goal that can decline (a bare `return True` is a fire, and a look that fires records no row) and every `continue` of
+        the goal loop in _auto_nudge_session must be preceded, in its own block, by a _nudge_clock call, or be named in the
+        exemptions below with the reason it stands behind a keyed file or a leg noted elsewhere. An exemption that matches no
+        exit, or an exit that is both noted and exempt, fails too, so the list cannot go stale."""
+        import ast, inspect
+
+        def exits(src, kind, loop_target=None):
+            """[(key, noted, line)] for the declining exits of the one function in `src`: the key is the source of the `if` test
+            the exit sits under (the exit's own text when it sits under none), whitespace folded; `noted` says a bare _nudge_clock
+            call precedes it in the same block."""
+            tree = ast.parse(src); fn = tree.body[0]
+            parents = {}
+            for node in ast.walk(fn):
+                for child in ast.iter_child_nodes(node):
+                    parents[child] = node
+            def loop_of(n):
+                while n in parents:
+                    n = parents[n]
+                    if isinstance(n, (ast.For, ast.While)):
+                        return n
+            if kind == "return":
+                nodes = [n for n in ast.walk(fn) if isinstance(n, ast.Return)
+                         and not (isinstance(n.value, ast.Constant) and n.value.value is True)]
+            else:
+                loop = next(n for n in ast.walk(fn) if isinstance(n, ast.For) and isinstance(n.target, ast.Name) and n.target.id == loop_target)
+                nodes = [n for n in ast.walk(loop) if isinstance(n, ast.Continue) and loop_of(n) is loop]
+            nodes.sort(key=lambda n: (n.lineno, n.col_offset))   # source order (ast.walk is breadth-first)
+            def text(n):
+                return " ".join(ast.get_source_segment(src, n).replace("\\\n", " ").split())
+            out = []
+            for n in nodes:
+                par = parents[n]
+                block = next(lst for f in ("body", "orelse", "finalbody") for lst in [getattr(par, f, None)] if isinstance(lst, list) and n in lst)
+                noted = any(isinstance(s, ast.Expr) and isinstance(s.value, ast.Call) and isinstance(s.value.func, ast.Name)
+                            and s.value.func.id == "_nudge_clock" for s in block[:block.index(n)])
+                out.append((text(par.test) if isinstance(par, ast.If) else text(n), noted, n.lineno))
+            return out
+
+        # the census on itself: an unnoted exit is unnoted, a note in the same block counts, a nested `if` does not shelter its
+        # exit behind an outer note, a nested loop's continue is that loop's
+        probe = ("def f(a, b, c):\n    if a:\n        return False\n    if b:\n        _nudge_clock(None, 'leg')\n        return False\n"
+                 "    _nudge_clock(2.0)\n    if c:\n        return False\n    return True\n")
+        self.assertEqual([(k, n) for k, n, _ in exits(probe, "return")], [("a", False), ("b", True), ("c", False)])
+        probe = ("def g(xs):\n    for gid in xs:\n        if gid:\n            continue\n        for k in xs:\n            continue\n"
+                 "        _nudge_clock(1.0)\n        continue\n")
+        self.assertEqual([(k, n) for k, n, _ in exits(probe, "continue", "gid")], [("gid", False), ("continue", True)])
+
+        EXEMPT = {                                   # (function, the exit's key): why the exit needs no clock note of its own
+            ("_wake_goal", 'rec and not rec.get("answeredAt") and not rec.get("failed") and not rec.get("moot")'):
+                "the outcome leg's escalation (return _fate == 'failed'): a landed stamp moves the ledger, _mark_nudge_failed's refused "
+                "moot stamp notes refusedWrite, and failed is a fire (the walk-gate tests pin all three)",
+            ("_wake_goal", "not ready"):
+                "_nudge_response_ready reads the parse (the transcript) and the store's placements, keyed files, and notes its own "
+                "legs inside (queuedSend, the lost-send instant); the in-flight pins drive it in both toggle states",
+            ("_wake_goal", "resp is not None"):
+                "the answered wake: a landed record moves the ledger, a refused one notes refusedWrite above, the filing writes the store",
+            ("_wake_goal", "_sdefer and not _nudge_deferred_ok(gid, _sdefer, now, sid)"):
+                "_nudge_deferred_ok notes the deferral legs (deferralNew, pausedTiers, deferralStanding) before it declines",
+            ("_wake_goal", '(rec.get("anchor") or 0) >= at'):
+                "the anti-loop rule over the ledger record and the stamp's anchor: the ledger and the store, keyed",
+            ("_wake_goal", "_defer and not _nudge_deferred_ok(gid, _defer, now, sid)"):
+                "the deferral legs, as above",
+            ("_wake_goal", 'not _goal_awaiting_stamp(_fresh.get("nodes", {}), gid, answered_at=_peer_answered(sid)) or '
+                           '_fresh.get("status", {}).get(gid, "working") != "working"'):
+                "the writer's re-read found the stamp gone or the goal resolved: the store moved, a keyed file",
+            ("_wake_goal", "_fresh is None"):
+                "reached only through the freshFault note above it (the try's success path binds _fresh)",
+            ("_wake_goal", "_sn is None"):
+                "the fresh store carries the wait at another anchor: the store moved (the re-anchored test pins it)",
+            ("_auto_nudge_session", 'nd.get("parentId") is not None or nd.get("cleared") or gid in cleared'):
+                "the store's node shape and the clears log: keyed files",
+            ("_auto_nudge_session", 'isinstance(nd.get("askAnchorRecord"), dict) and nd["askAnchorRecord"].get("kind") == "skill-load"'):
+                "the store's node record",
+            ("_auto_nudge_session", 'status.get(gid, "working") != "working"'):
+                "the store's status",
+            ("_auto_nudge_session", "_nudge_all_delegated(sid, store, nodes, gid)"):
+                "pure over the store's nodes (the road census traces it); a peer's return lands in the store and the postal log",
+            ("_auto_nudge_session", "_stamp"):
+                "the awaiting wake: its own declining exits are censused in the first half of this test",
+            ("_auto_nudge_session", "wake_only"):
+                "the look's mode is the row's tag: a wake-only row never serves a full look (_nudge_look_check)",
+            ("_auto_nudge_session", "_defer and not _nudge_deferred_ok(gid, _defer, now, sid)"):
+                "the deferral legs",
+            ("_auto_nudge_session", "not ready"):
+                "_nudge_response_ready, as above",
+            ("_auto_nudge_session", "_sdefer and not _nudge_deferred_ok(gid, _sdefer, now, sid)"):
+                "the deferral legs",
+            ("_auto_nudge_session", 'not (arm_id is not None and rec.get("moot") and not rec.get("failed") and _anch and '
+                                    "now - _anch > AWAITING_DEADMAN_SECS)"):
+                "the already-nudged exit: the record's lastTurnId against the arm turn (the ledger and the transcript, keyed); the "
+                "moot record's dead-man instant is noted in the branch just above it",
+        }
+        found = []
+        for fn, kind, target in ((km._wake_goal, "return", None), (km._auto_nudge_session, "continue", "gid")):
+            src, first = inspect.getsourcelines(fn)
+            for key, noted, line in exits("".join(src), kind, target):
+                found.append((fn.__name__, key, noted, first + line - 1))
+        self.assertGreaterEqual(len(found), 20, "the census found the exits: %d" % len(found))
+        keys = [(f, k) for f, k, _n, _l in found]
+        self.assertEqual(len(keys), len(set(keys)), "two exits share a key; give the census a way to tell them apart: %r" % keys)
+        unnoted = [(f, k, l) for f, k, n, l in found if not n and (f, k) not in EXEMPT]
+        self.assertEqual(unnoted, [], "a declining exit with no clock note before it and no exemption naming its keyed read (kernel.py lines)")
+        noted_and_exempt = [(f, k) for f, k, n, _l in found if n and (f, k) in EXEMPT]
+        self.assertEqual(noted_and_exempt, [], "an exit that notes its leg needs no exemption: drop the stale entry")
+        self.assertEqual(sorted(set(EXEMPT) - set(keys)), [], "an exemption that matches no exit: the exit moved or its test changed")
+        noted = sorted((f, k) for f, k, n, _l in found if n)
+        for must in (("_wake_goal", "now - since < AWAITING_DEADMAN_SECS"),       # the dead-man's instant: the bound on every gear-ON skip
+                     ("_auto_nudge_session", "_todo_standdown")):               # round 1's HIGH, closed by its note
+            self.assertIn(must, noted, "%s: %r must note its clock leg" % must)
+        self.assertGreaterEqual(len(noted), 8, "the noted exits: %r" % noted)
 
     def test_the_downtime_record_appends_before_it_writes_so_a_look_in_the_gap_cannot_record_a_stale_skippable_memo(self):
         """Round six, medium 1: with the write first, a look landing between the write and the append saw a moved stat but no
@@ -774,6 +910,62 @@ class NudgeWalkParseGate(unittest.TestCase):
         finally:
             km._NUDGE_HORIZON.notes = None
 
+    def test_the_wakeOnly_gloss_names_the_debt_reminders_that_ride_the_nudge_toggle(self):
+        """Review round 1 of jobs stage 1 (correctness-1): the counter also counts looks with the nudge toggle ON and Task tracking
+        OFF, and those run the debt-reminder leg and can send, so a gloss reading "the dead-man walk alone" named the wrong
+        population. All three statements of it, the reference's, the _PerfStats field docstring's and the comment at the
+        counter's own increment in the gated look, name the reminders and the toggle (the third since round 2)."""
+        doc = Path(HERE).parent.joinpath("docs", "reference.md").read_text()
+        entry = doc[doc.index("`wakeOnly` (looks"):]
+        entry = entry[:entry.index("`wakeOnlyRecorded`")]
+        self.assertIn("debt reminders", entry, "the reference's wakeOnly entry names the reminders")
+        self.assertIn("nudge toggle is on", entry, "and the toggle they ride")
+        self.assertNotIn("dead-man walk alone", entry)
+        gloss = km._PerfStats.__doc__
+        field = gloss[gloss.index("wakeOnly ("):]
+        field = field[:field.index("wakeOnlyRecorded")]
+        self.assertIn("debt reminders", field, "the field docstring names the reminders")
+        self.assertIn("Task tracking", field, "and the second switch that makes a look wake-only")
+        self.assertNotIn("dead-man walk alone", field)
+        lines = inspect.getsource(km._nudge_look_gated).splitlines()
+        at = [i for i, ln in enumerate(lines) if '"wakeOnly"] += 1' in ln]
+        self.assertEqual(len(at), 1, "one increment of the counter in the gated look")
+        site = [lines[at[0]]]
+        for ln in lines[at[0] + 1:]:                                # the comment's continuation lines, up to the next statement
+            if not ln.strip().startswith("#"):
+                break
+            site.append(ln)
+        site = "\n".join(site)
+        self.assertIn("debt", site, "the increment site's comment names the reminders too")
+        self.assertIn("nudge toggle is on", site, "and the toggle they ride")
+        self.assertNotIn("dead-man walk alone", site, "the third statement of the population matches the other two")
+
+    def test_the_persisted_row_length_the_prose_states_is_the_one_the_kernel_records(self):
+        """Review round 1 of jobs stage 1 (fresh-2): the mode tag made the row one element longer and the two prose statements of
+        its length still said 22 to 38. The digits are pinned by execution, against the constants and against rows the kernel
+        records with no asker and with the eight the key can carry, and the prose against both."""
+        low = 2 * len(km._TICK_KEY_FILES) + 3                       # the ten files' (mtime, size), the mode, the flip, the verdict
+        high = low + 2 * km._NUDGE_ASKER_ROWS_MAX                   # plus one (mtime, size) per keyed asker row
+        self.assertEqual((low, high), (23, 39))
+        d = tempfile.mkdtemp(); r = _row(d, SID_OLD, old=True)
+        st = tuple(km._session_files_stat(r))
+        km._TICK_SEEN.clear()
+        try:
+            km._nudge_look_done(r, st, [], "working", "wake")
+            self.assertEqual(len(km._TICK_SEEN[("auto-nudge", SID_OLD)]), low, "no asker: the ten files, the mode, the flip, the verdict")
+            km._nudge_look_done(r, st + (0.0, 0) * km._NUDGE_ASKER_ROWS_MAX, [], "working")
+            self.assertEqual(len(km._TICK_SEEN[("auto-nudge", SID_OLD)]), high, "eight absent asker rows: the bound")
+        finally:
+            km._TICK_SEEN.clear()
+        text = "%d to %d elements" % (low, high)
+        doc = Path(HERE).parent.joinpath("docs", "reference.md").read_text()   # boolean asserts: a failure must not dump the reference
+        self.assertTrue(text in doc, "the reference states the row's length (%s)" % text)
+        self.assertFalse("22 to 38" in doc, "the pre-tag length is gone from the reference")
+        self.assertTrue("then the mode tag, the earliest flip and the verdict" in doc, "and its colon list accounts for every element")
+        gloss = km._nudge_look_stat.__doc__
+        self.assertIn(text, gloss, "the key builder's docstring states it too"); self.assertNotIn("22 to 38", gloss)
+        self.assertIn("the key, the mode, the", gloss, "in the words _nudge_look_check's docstring already uses")
+
     def test_the_pass_keeps_its_stats_in_a_side_map_and_leaves_the_shared_rows_untouched(self):
         """Follow-up, low 1: the pass wrote _look_stat into the session rows _sessions memoises per cycle and hands out read-only;
         a later reader of a row would have read a stale key. The stats live in a side map keyed by sid, cleared per pass."""
@@ -824,16 +1016,59 @@ class NudgeWalkParseGate(unittest.TestCase):
         finally:
             km._NUDGE_WALK_FIRST["parsed"][:] = saved[0]; km._NUDGE_WALK_FIRST_OPEN[0] = saved[1]
 
-    def test_a_wake_only_look_neither_skips_nor_records_and_is_counted(self):
+    def test_a_wake_only_look_records_a_wake_mode_row_and_skips_while_its_key_stands(self):
+        """Jobs stage 1 (2026-09-18), the inverse of the retired pin: a wake-only look neither skipped nor recorded, so with the
+        toggle off every alive session parsed on every pass. It records a row under its own mode tag and skips like any look."""
         d = tempfile.mkdtemp(); r = _row(d, SID_OLD, old=True); calls = []; now = time.time()
         with mock.patch.multiple(km, **COMMON), \
              mock.patch.object(km.jd, "parsed_session", side_effect=lambda sid, paths, now: (calls.append(sid), {"turns": STOPPED})[1]), \
              mock.patch.object(km.jd, "_parse_entry", side_effect=lambda sid, session=None, turns=None: None):
-            for i in range(2):
-                km._auto_nudge_session(r, now + i, {}, {}, {}, alive_ids={r["sid"]}, wake_only=True)
-        self.assertEqual(calls, [SID_OLD, SID_OLD], "two parses: a wake-only look never skips")
-        self.assertNotIn(("auto-nudge", SID_OLD), km._TICK_SEEN, "and records nothing: the toggle is not a file")
-        self.assertEqual(km._NUDGE_WALK_STATS["wakeOnly"], 2)
+            self.assertEqual(km._auto_nudge_session(r, now, {}, {}, {}, alive_ids={r["sid"]}, wake_only=True), "working")
+            self.assertEqual(km._auto_nudge_session(r, now + 1, {}, {}, {}, alive_ids={r["sid"]}, wake_only=True), "working",
+                             "the skip repeats the recorded verdict")
+        self.assertEqual(calls, [SID_OLD], "one parse across two wake-only looks of an unchanged session")
+        self.assertEqual((km._NUDGE_WALK_STATS["looks"], km._NUDGE_WALK_STATS["parses"], km._NUDGE_WALK_STATS["skippedParses"],
+                          km._NUDGE_WALK_STATS["wakeOnly"]), (2, 1, 1, 2))
+        memo = km._TICK_SEEN.get(("auto-nudge", SID_OLD))
+        self.assertIsNotNone(memo, "the wake-only look records")
+        st = km._session_files_stat(r)
+        self.assertEqual(len(memo), len(st) + 3, "the key, the mode tag, the flip and the verdict")
+        self.assertEqual((memo[len(st)], memo[-2], memo[-1]), ("wake", -1.0, "working"), "the tag sits between the key and the tail")
+        with mock.patch.multiple(km, **COMMON), \
+             mock.patch.object(km.jd, "parsed_session", side_effect=lambda sid, paths, now: (calls.append(sid), {"turns": STOPPED})[1]), \
+             mock.patch.object(km.jd, "_parse_entry", side_effect=lambda sid, session=None, turns=None: None):
+            km._TICK_SEEN.clear()
+            km._auto_nudge_session(r, now + 2, {}, {}, {}, alive_ids={r["sid"]}, wake_only=True, reminders=True)
+        self.assertEqual(km._TICK_SEEN[("auto-nudge", SID_OLD)][len(st)], "wake+reminders", "tracking off with nudges on: its own tag")
+        km._TICK_SEEN.clear(); calls.clear()
+        with mock.patch.multiple(km, **dict(COMMON, _session_flag=lambda sid, flag: True)), \
+             mock.patch.object(km.jd, "parsed_session", side_effect=lambda sid, paths, now: (calls.append(sid), {"turns": STOPPED})[1]):
+            self.assertEqual(km._auto_nudge_session(r, now + 3, {}, {}, {}, alive_ids={r["sid"]}, wake_only=True), "muted")
+        self.assertNotIn(("auto-nudge", SID_OLD), km._TICK_SEEN, "a wake-only look that never parsed records nothing, as any look")
+        self.assertEqual(calls, [])
+
+    def test_rows_never_serve_across_modes_and_an_old_shape_row_misses_once_under_shape(self):
+        """Jobs stage 1: a wake-only row says nothing about the nudge legs a full look runs, so a row serves a look of the same
+        mode only (missBy.mode counts the refusal); a row of the pre-tag shape misses once under shape and is rewritten."""
+        d = tempfile.mkdtemp(); r = _row(d, SID_OLD, old=True); now = time.time()
+        st = km._session_files_stat(r)
+        def job():
+            return dict(km._tick_seen_report()["byJob"].get("auto-nudge") or {"missBy": {}})
+        m0 = job()["missBy"].get("mode", 0); s0 = job()["missBy"].get("shape", 0)
+        km._nudge_look_done(r, st, [], "working", "wake")
+        self.assertEqual(km._nudge_look_check(r, now)[0], False, "a wake row does not serve a full look")
+        self.assertEqual(km._nudge_look_check(r, now, "wake+reminders")[0], False, "nor a wake look with the reminders on")
+        self.assertEqual(job()["missBy"].get("mode", 0) - m0, 2)
+        self.assertEqual(km._nudge_look_check(r, now, "wake")[0::2], (True, "working"), "the same mode skips")
+        km._nudge_look_done(r, st, [], "working")
+        self.assertEqual(km._nudge_look_check(r, now, "wake")[0], False, "a full row does not serve a wake look")
+        self.assertEqual(km._nudge_look_check(r, now)[0::2], (True, "working"))
+        with km._TICK_SEEN_LOCK:
+            km._TICK_SEEN[("auto-nudge", SID_OLD)] = tuple(st) + (-1.0, "working")   # the pre-tag shape, as a previous kernel left it
+        self.assertEqual(km._nudge_look_check(r, now)[0], False, "an old-shape row misses")
+        self.assertEqual(job()["missBy"].get("shape", 0) - s0, 1, "once, under shape")
+        km._nudge_look_done(r, st, [], "working")
+        self.assertEqual(km._nudge_look_check(r, now)[0], True, "and the rewritten row serves")
 
 
 

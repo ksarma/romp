@@ -355,6 +355,32 @@ process.stdout.write(JSON.stringify({
         self.assertIn("_LANDING_COLLAPSE_JS", land)
         self.assertIn("_LANDING_ERRS_JS", land)
 
+    def test_a_parked_pane_is_its_own_state_never_down(self):
+        # D2 (2026-09-18): a pane off screen on the phone parks its return redial until its tab is tapped and tells the shell
+        # netState("parked") (the shim's park(), one word, never abandon()'s down). The shell keeps parked as its own state:
+        # liveDown reads down alone, so the cue stays dark, and the up->down transition rule logs no "connection lost" entry,
+        # because nothing is lost and nothing is reconnecting. A later real drop (the tap's dial refused) or open moves the
+        # pane like any other. The behaviour is pinned by execution in test_error_center.py ParkedPaneCue: a park logs
+        # nothing and keeps the cue dark (test_a_parked_pane_logs_nothing_and_keeps_the_cue_dark); a later down still logs,
+        # because prev then reads parked, not down (test_a_real_drop_after_the_park_logs_and_lights_as_before). This test
+        # pins the SHAPE (review round 1, 2026-09-18): ONE fork-only line, after the split-column branch and before
+        # upstream's tracking line, which stays byte for byte. The PR had rewritten that line, and the pin above and
+        # test_chat_split.py's went red; one inserted line leaves the folds no new divergence.
+        js = km._LANDING_ERRS_JS
+        parked = "if(m.state==='parked'){st[m.app]='parked';paint();return;}"
+        upstream = "var s=(m.state==='up')?'up':'down',prev=st[m.app];st[m.app]=s;"
+        split_col = "if(col){var sc=(m.state==='up')?'up':'down',pc=stc[col];stc[col]=sc;"
+        self.assertEqual(js.count(parked), 1, "the one fork-only parked line")
+        self.assertEqual(js.count(upstream), 1, "upstream's tracking line, byte for byte")
+        self.assertNotIn("m.state==='parked'?'parked'", js, "the upstream line is not rewritten")
+        self.assertLess(js.index(split_col), js.index(parked), "after the split-column branch: a parked column never writes the first column's key")
+        self.assertLess(js.index(parked), js.index(upstream), "before the tracking line: a park returns before up or down is written")
+        self.assertIn("if(st[k]==='down'&&shown(k))return true;", js, "liveDown reads down alone: parked does not light it")
+        self.assertIn("if(s==='down'&&prev!=='down'&&shown(m.app))", js, "the log's transition rule is down's alone")
+        shim = km._shim("feed")
+        self.assertIn('parked=true;returnParked=true;netState("parked");', shim, "the shim's one parked word")
+        self.assertEqual(shim.count('netState("down")'), 2, "abandon() and onclose post down as before; the park posts none")
+
 
 if __name__ == "__main__":
     unittest.main()

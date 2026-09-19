@@ -425,5 +425,68 @@ class ErrorCenterWiring(unittest.TestCase):
             self.assertNotIn(gone, html)
 
 
+PARKED_DRIVER = r"""
+const out = {};
+// the center's own __rompNotify, wrapped to count its 'conn' calls. The store proves the same (no kind is filtered before
+// the push), and the count states it in the property's own words (review round 1, 2026-09-18: pinned by execution, not grep)
+const realNotify = window.__rompNotify, CONN = [];
+window.__rompNotify = function (kind, text, tgt) { if (kind === 'conn') CONN.push(String(text)); return realNotify.apply(this, arguments); };
+// D2 (2026-09-18): a pane off screen on the phone parks its return redial and tells the shell state 'parked' (the shim's
+// park()); po-chat is on the body, so this pane counts as shown. Parked is not down: no conn call, no entry, no red.
+post({ romp: 'wsState', app: 'chat', state: 'parked' });
+out.afterPark = { n: notes().length, conn: CONN.length, red: EL['rail-errs']._cls.has('has'), mred: EL['merr']._cls.has('has') };
+// a real drop after the park (the tap's dial refused) logs the entry and lights the cue, as any drop does: the tracking
+// line reads prev as parked, not down, so the up->down rule fires
+post({ romp: 'wsState', app: 'chat', state: 'down' });
+out.afterDrop = { n: notes().length, conn: CONN.length, red: EL['rail-errs']._cls.has('has'), text: notes()[0] ? notes()[0].text : '' };
+EL['rail-errs'].fire('click');   // read the entry: from here the live cue alone keeps the bell red
+out.afterRead = { red: EL['rail-errs']._cls.has('has') };
+// the down pane re-parks (a second hidden return): the live cue clears, since parked is not down; the entry stays
+post({ romp: 'wsState', app: 'chat', state: 'parked' });
+out.afterRepark = { n: notes().length, red: EL['rail-errs']._cls.has('has') };
+// and its open, at the tap, reads up as ever
+post({ romp: 'wsState', app: 'chat', state: 'up' });
+out.afterUp = { n: notes().length, red: EL['rail-errs']._cls.has('has') };
+console.log(JSON.stringify(out));
+"""
+
+
+class ParkedPaneCue(unittest.TestCase):
+    """D2 (2026-09-18): the center against a parked pane's words. A pane off screen on the phone parks its return redial
+    until its tab is tapped and posts wsState 'parked'; the shell keeps that as its own state, never 'down', so the live
+    cue stays dark and no "connection lost" entry is logged: nothing is lost and nothing is reconnecting. A real drop after
+    the park logs and lights as before; a re-park clears the live cue; an open reads up."""
+
+    @classmethod
+    def setUpClass(cls):
+        script = HARNESS + km._LANDING_ERRS_JS + PARKED_DRIVER
+        with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as f:
+            f.write(script)
+            path = f.name
+        try:
+            r = subprocess.run(["node", path], capture_output=True, text=True, timeout=30)
+        finally:
+            os.unlink(path)
+        assert r.returncode == 0, "the center's JS threw: " + r.stderr[:800]
+        cls.out = json.loads(r.stdout.strip().splitlines()[-1])
+
+    def test_a_parked_pane_logs_nothing_and_keeps_the_cue_dark(self):
+        # P1: a parked pane never logs a connection-lost line (no __rompNotify('conn', ...)) and the cue stays dark
+        self.assertEqual(self.out["afterPark"], {"n": 0, "conn": 0, "red": False, "mred": False}, "parked is not down: no conn call, no entry, no red on either bell")
+
+    def test_a_real_drop_after_the_park_logs_and_lights_as_before(self):
+        # P2: a later down on the same pane still logs, because prev reads parked, not down
+        a = self.out["afterDrop"]
+        self.assertEqual(a["n"], 1)
+        self.assertEqual(a["conn"], 1, "the transition rule fires: prev was parked, not down")
+        self.assertTrue(a["red"])
+        self.assertIn("Chat", a["text"])
+        self.assertTrue(self.out["afterRead"]["red"], "read, but the pane is down: the live cue keeps the bell red")
+
+    def test_a_re_park_clears_the_live_cue_and_an_open_reads_up(self):
+        self.assertEqual(self.out["afterRepark"], {"n": 1, "red": False}, "parked is not down: the live cue clears, the entry stays")
+        self.assertEqual(self.out["afterUp"], {"n": 1, "red": False})
+
+
 if __name__ == "__main__":
     unittest.main()

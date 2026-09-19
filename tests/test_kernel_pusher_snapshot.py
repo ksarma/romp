@@ -15,6 +15,7 @@ import os
 import tempfile
 import time
 import unittest
+from unittest import mock
 from romp_load import load_source
 from pathlib import Path
 
@@ -76,6 +77,15 @@ class _CycleFixture(unittest.TestCase):
         self.row = {SID: dict(meta), SID2: dict(meta)}
         self.saved_clients = list(km._clients)
         self._files_stat_reset()
+        # Every cycle test measures a steady-state jobs pass, never the boot's first: _jobs_pass skips the spend guard
+        # while _PERF_STATS.jobs["passes"] is 0 (the T401 follow-up), and that counter is module state _jobs_cycle's
+        # finally bumps and nothing here reset, so a test's job roster used to depend on whether an earlier test in the
+        # process had run a pass (the empty-window case below failed alone and passed after a sibling, 2026-09-18).
+        # The pin is stated here for the whole class so the three jobs-pass cases count one roster; patch.dict is the
+        # shape tests/test_spend_tree_memo.py uses for this counter, and it puts the counter back at cleanup.
+        passes = mock.patch.dict(km._PERF_STATS.jobs, {"passes": max(km._PERF_STATS.jobs.get("passes", 0), 1)})
+        passes.start()
+        self.addCleanup(passes.stop)
 
     def _files_stat_reset(self):
         """The ten-file key's standing snapshot, dirty set and observers back to a boot's: no test inherits another's marks."""
@@ -170,11 +180,12 @@ class OneDiscoverPerCycle(_CycleFixture):
 
     def _cycle(self, client, cycle=None):
         cycle = cycle or km._pusher_cycle                 # or km._jobs_cycle: the housekeeping's pass (the split, 2026-09-13)
-        depth, inside, outside, keys = [0], [], [], set()
+        depth, inside, outside, keys, calls = [0], [], [], set(), [0]
         orig_sessions, orig_fp = km._sessions, jd._discover_fingerprint
 
         def sessions(now, window=None, forks=True):
             keys.add((jd.WINDOW if window is None else int(window), bool(forks)))
+            calls[0] += 1
             depth[0] += 1
             try:
                 return orig_sessions(now, window, forks)
@@ -194,7 +205,9 @@ class OneDiscoverPerCycle(_CycleFixture):
         finally:
             km._sessions, jd._discover_fingerprint = orig_sessions, orig_fp
         s1 = km._sessions_scope_stats
-        return len(inside), keys, {k: s1[k] - s0[k] for k in s1}
+        d = {k: s1[k] - s0[k] for k in s1}
+        d["calls"] = calls[0]                             # every _sessions read the cycle made, memo or not
+        return len(inside), keys, d
 
     def test_one_sweep_per_key_per_cycle_without_a_client(self):
         fps, keys, d = self._cycle(None)
@@ -262,7 +275,13 @@ class OneDiscoverPerCycle(_CycleFixture):
         fps, keys, d = self._cycle(None, cycle=km._jobs_cycle)   # the tick jobs' pass (the housekeeping split, 2026-09-13)
         self.assertEqual(d["miss"], len(keys), "one sweep per key, the empty result memoized")
         self.assertEqual(fps, d["miss"])
-        self.assertGreaterEqual(d["hit"], 5, "the tick jobs were served the empty list from the memo")
+        # The hit count is pinned against the reads the pass made, not a fixed number: with no session in the window
+        # the _path_of misses under _compacting_now that carry the siblings past a threshold are gone, and the roster
+        # of readers then turns on process state (the spend guard reads only on a counted pass, the fixture's pin, and
+        # only while the ceiling is on). This case asserted five hits and failed alone with four (2026-09-18); every
+        # read after the first per key being a hit is the property, whatever the roster.
+        self.assertEqual(d["hit"] + d["miss"], d["calls"], "every read of the pass went through the memo")
+        self.assertGreaterEqual(d["hit"], 1, "the tick jobs were served the empty list from the memo")
 
     def test_the_key_is_normalized_like_discover(self):
         # the memo key is normalized the way discover normalizes its own: None, the default window and a float

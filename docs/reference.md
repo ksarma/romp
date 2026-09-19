@@ -518,7 +518,8 @@ are folded, which tabs show while their group is folded (**Show when folded**), 
 which sessions are hidden inside their group (**Hide**, in the section's at-a-glance
 view). The tab's right-click menu writes the same hide entry: **Hide tab** on a shown copy,
 **Show tab** on a hidden one (a hidden copy has no tab on the strip; the way back is the view's
-**Show**, and the group's count opens the view while the group is open). The row follows the copy
+**Show**, or the same menu from a right-click on its row there, and the group's count opens the view
+while the group is open). The row follows the copy
 the menu speaks for: the copy you right-clicked while its group holds the session, else the
 session's one remaining group, and none under two or more (the copy is known by its tag's id, and
 by its name when no tag has that id, so a rename keeps it and so does a tag made again under the
@@ -993,9 +994,17 @@ For `./install.sh`:
 - `ROMP_NO_SERVICE=1` skips the login service.
 - `ROMP_NO_EXT=1` skips the VS Code / Cursor extension.
 - `ROMP_NO_SDK=1` skips the Agent SDK venv. Claude Code sessions need it, so
-  run `bin/romp-sdk-setup` before starting one. Notifications to a phone or
-  browser read the `cryptography` package from the same venv, so they stay off
-  until it runs too.
+  run `bin/romp-sdk-setup` before starting one. The script installs one
+  `claude-agent-sdk` version, never the latest: the version the session host's
+  private SDK imports were verified against, declared once as
+  `SDK_TESTED_VERSION` in `kernel/session_host.py`. A host that finds another
+  version installed whose internals have moved refuses to start the session and
+  names both versions and the script in the launch error; one whose internals
+  still resolve runs and files a problem row saying so, once per kernel life for
+  each installed version (a later host on the same version, in any session, is a
+  kernel-log line and not a second row). Notifications to a
+  phone or browser read the `cryptography` package from the same venv, so they
+  stay off until it runs too.
 
 For the one-line installer (`bootstrap.sh`), which passes all of the above
 through to `install.sh`:
@@ -1319,13 +1328,14 @@ a session can print, so there is no quiet fallback anywhere.
 
 At boot the kernel also names, once and as information rather than a problem,
 the variables in its own environment shaped like credentials (names ending
-`_API_KEY` or `_TOKEN`, and 1Password's own `OP_*` names) that reach every
-session's Claude process and the shells it spawns: the SDK hands each session
-the kernel's environment, and romp takes only the login tokens it claims at
-boot (see [The login](#the-login)) out of it. The line carries names only,
-never values, and a second provider's key placed there on purpose is nothing
-to act on. To keep a variable away from sessions, remove it from `service.env`
-or from the service unit's environment and restart the manager.
+`_API_KEY` or `_TOKEN` in any letter case, and 1Password's own `OP_*` names)
+that reach every session's Claude process and the shells it spawns: the SDK
+hands each session the kernel's environment, and romp takes only the login
+tokens it claims at boot (see [The login](#the-login)) out of it. The line
+carries names only, never values, and a second provider's key placed there on
+purpose is nothing to act on. To keep a variable away from sessions, remove it
+from `service.env` or from the service unit's environment and restart the
+manager.
 
 #### A key from a secret manager
 
@@ -2007,7 +2017,10 @@ crash resume, or the next kernel restart, which cuts a plain child's turn one
 last time); a new session is hosted at once. The host spawns the CLI from a
 spawn specification the kernel writes
 (`hosts/<sid>/spawn.json`, the plain fields of the SDK's options, at mode 0600
-in a 0700 directory, since it carries the environment overlay), through the
+in a 0700 directory, since it carries the environment overlay; a login token
+whatever its value, and any other name of that overlay carrying a value that
+ends `_API_KEY` or `_TOKEN`, in any letter case, or is one of 1Password's, is
+left out of the file and rides the host's process environment instead), through the
 SDK's own subprocess transport, so the command line and the environment are
 the SDK's byte for byte. It reads the CLI's stdout without pause and appends
 every message to an append-only journal (`hosts/<sid>/journal-<n>.jsonl`, one
@@ -2474,7 +2487,10 @@ serialized until a request reads them. `romp perf` takes two snapshots
 `--interval` seconds apart (default 10) and prints the difference as rates on
 one screen: pusher cycles and wakes per second, the cycles the minimum
 interval between cycle starts held and the watched-tab wakes exempt from it,
-cycle time percentiles, the share of cycle time in each stage, CPU split between the pusher thread, the
+cycle time percentiles, the share of the pusher's cycle time in each stage
+with the connect pushes' count, wall and per-stage wall printed apart (since
+2026-09-18; a share of the pusher's cycle time would be a share of time the
+pusher never spent), CPU split between the pusher thread, the
 judge threads and the rest of the process, builds served from cache against
 rebuilds, bytes sent per slot as full frames, deltas and deduplicated frames,
 goal-store loads and writes per second, judge passes and their durations
@@ -2607,10 +2623,9 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   skipped), `splitFailed`, `firstPass` (the boot's first pass's stage split,
   the shape of `pusher.firstCycle`) and `stageRing`. The pass's container
   stage is `jobsPass`, its opening `jobs.prelude`; each job is still its
-  `jobs.<job>` stage, so a stage name says which thread ran it by the list
-  in `_pusher_cycle_jobs` (the pusher's: the checkpoint cycle, pending ops,
-  turn notify, the checkpoint persist and converge, the boot row backstop,
-  the kernel sample, the API health frame) against `_jobs_pass`.
+  `jobs.<job>` stage, and a `jobs.<job>` row in `stages_ms` is this thread's
+  own (since 2026-09-18); the pusher's cycle jobs are counted under
+  `pusher.cycleJobsMs`.
 - `caches`: one block per cache the kernel, the judge and the event model keep,
   each an exact occupancy (a `len()` or a sum of `len()`s under the cache's
   lock; nothing estimated): `jsonl` with `entries`, `file_bytes` and `records`
@@ -2636,7 +2651,17 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   the client declared under the identifier-and-cap rule `clients.byApp`
   states below, so `other` and `none` are keys there too; the pusher's
   cycles never see this push, so before it the restart's logo phase had no
-  number),
+  number; and `stagesMs` (2026-09-18): `{stage: ms}`, the `push.*` stages
+  those pushes closed (`push.chat` and its seams, `push.feed`,
+  `push.timeline`, `push.send` and its seams, `push.feedFirst`), cumulative
+  wall under the stage name, with no seed, so the table lists the stages
+  connect pushes ran (`push.warm` and the `push` container are the pusher's
+  alone and never appear); `push.chat`, `push.feed`, `push.timeline`,
+  `push.send` and `push.feedFirst` add up to at most `ms_sum`, a seam to at
+  most its container, over closed pushes (a stage closes before `ms_sum`
+  takes the push's wall; the `stages_ms` entry says how a snapshot inside a
+  push reads). Until that day these walls sat in the `stages_ms`
+  `push.*` rows beside the pusher's),
   `clients` (what each client's sender thread wrote to its socket,
   2026-09-18): `byApp`, per app the client declared on its socket URL,
   `frames` and `bytes` (the text frames written and their wire bytes, header
@@ -2671,6 +2696,15 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   longer wait between cycles would have skipped; a conservative undercount,
   since a wake set by another thread or a periodic repost of an unchanged
   frame marks a cycle busy).
+  `cycleJobsMs` (2026-09-18): `{job: ms}`, the pusher thread's cumulative
+  wall per cycle job, the nine listed at zero from the start
+  (`beginCheckpointCycle`, `sessionsListing`, `applyPendingOps`,
+  `turnNotify`, `persistCheckpoints`, `convergeCheckpoints`,
+  `bootRowBackstop`, `kernelSample`, `apiHealth`). A `jobs.<job>` stage the
+  thread that owns the pusher's cycle closes counts here and not in
+  `stages_ms`, whose `jobs.<job>` rows are the jobs thread's; the nine sum to
+  at most `stages_ms.jobs` over closed cycles (the `stages_ms` entry says how
+  a snapshot inside one reads).
   The interval is 1.0 s (`PUSH_MIN_INTERVAL_S` in the kernel): a cycle starts
   no sooner than that after the previous one began unless the live tail of a
   chat tab a connected client is watching changed (a Claude Code session's
@@ -2684,8 +2718,10 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   cut's `hydrated` bytes ON THE PUSHER'S THREAD since the previous stage
   boundary (another thread's reads in the window, the judges' first pass or
   a boot warm, are not the pusher's; a dashboard's connect push, which runs
-  the same stages on the HTTP handler thread, feeds `stages_ms` and never the
-  split); the `push` container carries its sub-stages' sums, the jobs before
+  the same stages on the HTTP handler thread, feeds
+  `pusher.connectPush.stagesMs` since 2026-09-18, the `stages_ms` rows
+  before, and never the split); the `push` container carries its
+  sub-stages' sums, the jobs before
   the push land in `jobs`, and the boundary sits at the push's entry, before
   the cards-first path. A plain GET carries the newest 16 splits and
   `stageRingLen` (how many splits the ring holds now, not how many were
@@ -3061,9 +3097,11 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   no client connected reads `kernel` zero, and a connecting chat client adds
   at most its shown tabs.
 - `stages_ms`: `prelude` (the cycle's opening: the liveness snapshot and the
-  names), `jobs` (the cycle's tick jobs outside the push) and inside it one
-  `jobs.<job>` per tick job (`jobs.interruptBlock`, `jobs.autoNudge`,
-  `jobs.convergeCheckpoints` and the rest, T398), `push`, and inside it
+  names), `jobs` (the pusher's cycle jobs outside the push, itemized under
+  `pusher.cycleJobsMs`), `jobsPass` (the jobs thread's pass) and one
+  `jobs.<job>` per job of the jobs thread (`jobs.interruptBlock`,
+  `jobs.autoNudge` and the rest, T398) plus `jobs.prelude`, its opening,
+  `push`, and inside it
   `push.chat`, `push.feed`, `push.timeline`, `push.send`, `push.warm`,
   `push.feedFirst`; a fresh snapshot lists every one at zero. Two of those
   are split further: inside `push.chat`, `push.chat.sig` (each tab's build
@@ -3078,9 +3116,57 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   and an unchanged build no `feedParts` or `barsSplit`; the cycle's split
   (`pusher.firstCycle`, `pusher.stageRing`) carries a seam's own bytes, its
   parent's glue under `push.chat.other` or `push.send.other`, and `push`
-  counts the parent's rows through the parent's own row, once. The `push.*`
-  stages count every push, including the one a connecting page gets, so they
-  can add up to more than `push`.
+  counts the parent's rows through the parent's own row, once. `push` and
+  the `push.*` rows are the pusher's own: a connect push (the full push a
+  connecting page gets, on its HTTP handler thread) runs the same stages,
+  and its walls are counted under `pusher.connectPush.stagesMs.<stage>`, so
+  `push.chat`, `push.feed`, `push.timeline`, `push.send`, `push.warm` and
+  `push.feedFirst` add up to at most `push` over closed pushes. A stage
+  closes before its container and a snapshot copies the rows at any
+  instant, so a snapshot taken inside a push counts that push's closed
+  stages before its `push`, and a capture pair can read the children ahead
+  of the container by the one push in flight; every bound in this section
+  that sets rows against their container reads the same way (a seam against
+  its stage, the connect stages against `ms_sum`, the nine cycle jobs
+  against `stages_ms.jobs`, and the `romp perf` shares against the cycle
+  time, which `cycle_ms_sum` takes after both containers close). A push
+  stage from a thread that neither owns the pusher's cycle nor carries a
+  connect push's mark is counted under `stagesForeign`; a thread owns the
+  pusher's cycle from the cycle's opening on that thread, the cycle's close
+  included, so a push stage the pusher's thread closes between two cycles
+  lands in the flat rows.
+  Two discontinuities, both on 2026-09-18, for anyone comparing a capture
+  from before that day with one from after it. The nine cycle jobs the
+  pusher runs (`beginCheckpointCycle`, `sessionsListing`, `applyPendingOps`,
+  `turnNotify`, `persistCheckpoints`, `convergeCheckpoints`,
+  `bootRowBackstop`, `kernelSample`, `apiHealth`) moved from `jobs.<job>`
+  rows here to `pusher.cycleJobsMs.<job>`: their `jobs.<job>` keys are gone
+  from `stages_ms`, and a `jobs.<job>` row is the jobs thread's time under
+  that name, where before it was every thread's; the nine do not compare
+  across a capture pair spanning the change, while the nineteen remaining
+  `jobs.<job>` container rows (the pass jobs) keep their names and their
+  values: the act-now pass the dashboard's arms run on the WS handler thread
+  closes no `jobs.<job>` container, so the jobs thread alone wrote those
+  nineteen. A job's part rows narrow too: the `jobs.autoNudge.<part>` rows
+  shed that pass's share, now counted under `stagesForeign` (the
+  `stagesForeign` bullet below, since 2026-09-18). The `push.*` rows
+  narrowed to the pusher's own work: the connect pushes' part, in those rows
+  until then (so they could add up to more than `push`), moved to
+  `pusher.connectPush.stagesMs.<stage>`, and a `push.*` row does not compare
+  across a capture pair spanning the change either. A `jobs.<job>` write
+  from a thread owning neither loop is counted under `stagesForeign`.
+- `stagesForeign`: `{stage: ms}` (2026-09-18), a `jobs.<job>` stage closed by
+  a thread that owns neither loop (a handler thread, a test that opened no
+  cycle), or a push stage (`push`, `push.*`) closed by a thread that
+  neither owns the pusher's cycle nor carries a connect push's mark (a
+  push-marked write from a thread owning no cycle included), cumulative
+  wall under the stage name, so a write that fits no owner is counted
+  rather than merged into a row that names another thread. On a
+  running kernel the block holds the `jobs.autoNudge.*` parts of the
+  act-now pass the dashboard's Auto Nudge and compaction-suggestion arms run
+  on the WS handler thread (`_ws_act_now_tick`: `key`, `snapshot`, `looks`,
+  and `parse` per session looked at); any other key names a stage that ran
+  outside both loops. The keys are the kernel's own stage names.
 - `builds`: `chat`, `feed`, `timeline`, each with `cached`, `built`, `ms`.
   `chat` also carries `bySession`, one row per living session built since
   the boot, ordered by `max` (slowest first) and numbered by `rank` in that
@@ -3092,6 +3178,8 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   `feed` also carries `dirty`, the rebuilds a kernel-side mutation forced past
   the view signature (a card reply, a clear, a follow-up: the mutation is
   invisible to the signature and must not wait out the rebuild interval).
+  What the built feed frame is made of, in bytes, is under
+  `memos.feedComposition`.
   Every chat tab, the watched one included, is served from its cached build
   while one complete per-session signature holds: one component per input the
   build reads (the transcript and states files, the session's goal store and
@@ -3276,12 +3364,24 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   deferred session is the resume cursor, so the next pass rotates the
   recency order to start there and every session is reached within as many
   passes as there are cold parses), `unbounded` (memos refused because a leg's release is not one
-  of the session's files: a deferral retired by a judge pass, a stamped wait
-  a peer's bounce can end, an owed reminder a refused ledger write left
-  standing), `clockDue` (memos refused because a noted flip has come) and
-  `wakeOnly` (looks with injected follow-ups off, which neither skip nor
-  record because the toggle is not a file, so that configuration keeps the
-  boot's cold parses); the files the memo keys on are the transcript, the
+  of the session's files: a deferral retired by a judge pass, a wait on
+  peers the live map still shows alive, an owed reminder a refused ledger
+  write left standing), `clockDue` (memos refused because a noted flip has come),
+  `wakeOnly` (looks with injected follow-ups off, or Task tracking off: the
+  awaiting dead-man, plus the debt reminders when the nudge toggle is on;
+  since 2026-09-18 such a look checks and
+  records like any other, under its own mode tag, so with the gear off
+  `skippedParses` rises toward `looks` on a quiet board, where until then
+  every wake-only look parsed) and `wakeOnlyRecorded` (memo rows a wake-only
+  look recorded); a memo row is the ten files' stat, the look's mode tag
+  (`full`, `wake`, or `wake+reminders` for tracking off with nudges on), the
+  earliest flip and the verdict, and a row serves a look of the same mode
+  only (a row of another mode counts a miss under
+  `memos.tickSeen.byJob.auto-nudge.missBy.mode`, a row of the pre-tag shape
+  once under `shape`); the nudge toggle lives in the ledger, the tenth keyed
+  file, so its flip re-evaluates every session once, and a Task tracking
+  flip changes the mode, which the tag catches the same way; the files the
+  memo keys on are the transcript, the
   state log, the goal store with its override journal and archive, the
   episode log, the clears log, the postal log, the kernel's downtime log
   (the working verdict's suspension check reads a list that log refills)
@@ -3292,8 +3392,9 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   recorded under; a debtor's key also carries the registry row
   (`STATE/sdk/<asker>.json`, an absent row as a stable absent marker) of
   each peer with an open ask on it, oldest asks first and at most eight
-  (the persisted memo row is 22 to 38 elements: the ten files and up to
-  eight rows), because a dead asker's ask becomes owed again only when the
+  (the persisted memo row is 23 to 39 elements: the ten files, up to eight
+  rows, then the mode tag, the earliest flip and the verdict), because a
+  dead asker's ask becomes owed again only when the
   asker revives and a revival writes that row; the debt leg reads a keyed
   asker's aliveness from that same row (alive true or false, the SDK
   backend's own liveness record), never from the pass's alive set, which is
@@ -3322,8 +3423,21 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   unbounded NOTES per leg at the look that recorded them; the legs the
   kernel emits are `askerOverflow`, `askerRowUnproved`, `debtUnproved`,
   `debtUnlanded`, `deferralNew`, `pausedTiers`, `deferralStanding`,
-  `queuedSend`, `storeFault`, `allDelegated`, `awaitingPeer`,
-  `stampedWait`, `unjudgeable`, `refusedWrite`, `legacyNoAnchor`, and
+  `queuedSend`, `storeFault`, `awaitingPeer`, `unjudgeable`,
+  `refusedWrite`, `legacyNoAnchor`, `freshFault`, `peerAlive`,
+  `dormantOwner` (the last three name the exits of the awaiting wake that
+  read no file: the writer's re-read raised, a peer wait on live local
+  peers, a holder absent from the live map; `allDelegated` and
+  `stampedWait` were retired on 2026-09-18, since the delegated check is
+  pure over the store and every ending of a stamped wait is a keyed file
+  or an instant the wake notes), `todoStandDown` (the status nudge stood
+  down behind an open user todo: the todo store is a file outside the ten,
+  and its clearing through the dashboard's dismiss route moves none of
+  them, so the look stays unbounded; with the two retired notes gone a
+  session holding a stamped or delegated top beside a plain working top
+  had recorded a skippable row here, and the plain top's status nudge was
+  held after the dismissal until the next box-wide keyed event or the
+  wake's dead-man instant, about six hours on a stamped session), and
   `unmarked:<verdict>` when no named leg noted the look (the None-site
   census in the gate's test pins that every site names its leg with a
   literal); the legs partition the NOTES,
@@ -3413,7 +3527,13 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   `loaded`). `goalArchive` memoizes a readable archive only: an archive that
   exists and cannot be read or parsed is answered empty, marks the running
   judge stage incomplete, and is not memoized, so the next call reads the file
-  again. `plannerSkip` is the planner's inner change gate (`skipped`,
+  again. On the child road `chain`, `courierSkip`, `plannerSkip`, `backref`
+  and `captions` read this process's judge module, which does not judge
+  while the child does, so they read zero here; `shared` still counts the
+  pusher's loads, and `goalArchive` moves here too: a store load that
+  replays a `restore` override (`_replay_overrides`, under `load_goals` and
+  `load_goals_shared`) reads the archive through the counted shared reader.
+  `plannerSkip` is the planner's inner change gate (`skipped`,
   `planned`, `recorded`, and since T401 (5c) `restored`, `refused`,
   `persisted`: the gate's memo of "the key of the last pass that had
   nothing to do", one row per session, persists across boots in
@@ -3508,7 +3628,18 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   build: a `?delta=1` feed client that did not announce the feed delta
   capability. The counter is cumulative since kernel start, like the rest of
   the block: nonzero means such a client has connected since start, and a
-  value that rises between two snapshots means one is connected now).
+  value that rises between two snapshots means one is connected now). The
+  feed's split through that path is walked and memoized like the bars' but
+  counts none of its entries under `entries_walked` or `entries_encoded`:
+  its entries are the cards, one each, so the two counters were the card
+  count per build (`entries_walked` over `split_miss`, exact with no
+  timeline delta client) while such a client was connected, and
+  `memos.feedComposition` publishes sums over the cards that must not stand
+  beside their count (that entry says why). The bars' entries count as
+  before; the per-card cost of the feed's slot path is measured nowhere on
+  `/perf`. A time measurement of the same path would restore that diagnostic
+  without yielding a card count, since a duration does not divide into a
+  cardinality, and that is the form to use if the number is wanted back.
   `intrMarks` is the interrupt-marks
   memo behind the interrupt tick, the nudge tick and the feed's badge, one
   entry per (session, parse family) keyed on the parse object's identity and
@@ -3580,9 +3711,11 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   (the state log), `store` (the goal store), `overrides` (its journal),
   `archive`, `episode`, `cleared`, `messages` (the postal log), `downtime`,
   `ledger` (the nudge ledger, one file for the box), then `askerRow` for the
-  walk's asker registry rows and `shape` for a key of another length or an
-  unreadable entry; per job, hits plus misses plus neverSeen plus
-  noTranscript plus clockParse is the checks. The interrupt block's key
+  walk's asker registry rows, `mode` for a row the nudge walk recorded under
+  another look mode (the tag the `nudgeWalk` entry above describes), and
+  `shape` for a key of another length or an unreadable entry; per job, hits
+  plus misses plus neverSeen plus noTranscript plus clockParse is the
+  checks. The interrupt block's key
   keeps that shape but moves only with the files its road reads: the
   transcript, the state log, the downtime log, the goal store with its
   journal and archive, and the clears log (the store readers' override
@@ -3697,11 +3830,229 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   list and fingerprint: `hit` and `miss` count turns served from the memo
   against turns scanned, so a build of a working session with one moved turn
   is one miss, plus the gauge `entries` (sessions held).
+  `feedComposition` says what the feed frame is made of, in bytes, and what
+  each pane would receive if it were sent only the fields it reads. One feed
+  frame goes whole to every client that rides the feed slot (the feed pane;
+  the Outline, which dials as `fleet` on every layout; and the Waiting-on-you
+  pane, `waiting`), and each reads a part of it. `passes` counts the
+  per-entry encodes of a frame whose accounting completed, wherever the
+  encode runs: the pusher's send stage (a build, or a ledgers refill of the
+  same build), the cold serve on a handler thread (a `ready` handshake or a
+  re-base served while the pusher holds no fresh wire) and the cold kernel's
+  first frame. `/feed.json`, which encodes the frame on its own, and the
+  `/feed` page are not counted. `failed` counts the encodes whose accounting
+  raised; the fault is said once on stderr and the frame goes out unchanged
+  either way. `last` is the latest counted pass and says whether the ledgers
+  were attached (`ledgersAttached`). The block keeps lifetime sums over every
+  counted pass in its store and publishes none of them: `passes` is
+  published, a ledgers refill re-counts the same build with the ledgers
+  attached, and at two passes (the cold kernel's first push with a feed pane
+  connected: the cards-first frame without ledgers, then the send stage's
+  refill of that build with them) a published lifetime table and `last` were
+  two exact sums over passes sharing a build, so twice `last.rest` minus
+  `lifetime.rest` (equally over `other` and `frame`) was the ledgers' bytes,
+  one ledger row on a one-session board, the figure the fold below withholds.
+  No lifetime sum survives that subtraction while a pass can share its build
+  with the pass before it, and a coarsened sum is the sum again, so the table
+  is stored for the tests and not served. `wire` is `{}` until the first per-entry encode of a
+  frame and `last` until the first counted one; a cold kernel that has never
+  had a feed-slot client serves both empty. `frame` is the frame's bytes as
+  the pusher's size estimate counts them (the per-card strings minus their
+  tints, the per-ledger strings and the remainder), so it sits under the
+  served body by the key names, separators and tints it does not count.
+  `cards` and `rest` are its two parts: the per-card strings, and the frame
+  outside the cards (the per-ledger strings and the remainder). The card
+  count and the ledger count are measured and withheld: a count published
+  beside a sum discloses the single-object case, because a sum over one
+  object is that object's measurement and the count says when, so the sums
+  are aggregates only while their counts are unpublished, here or anywhere
+  else in the export. The card count is not recoverable in general and exact
+  under one condition: on cards with no tree, `wire.bytes` minus `frame` is
+  a constant plus a per-card term, measured on the test fixture's board (one
+  ledger, a one-digit `buildId`, cards younger than 459 seconds) as
+  82, 109, 136 and 190 bytes for one, two, three and five cards, 55 plus 27
+  per card; the second residual below states the terms, and a test holds the
+  formula on those boards. The ledgers have no row of their own for the same
+  reason: their count is the chat tab count, which `/perf` publishes whatever
+  this block does (`heap.builtChat.tabs`, `caches.built_chat.entries`,
+  `memos.chatLedger.entries` and the length of `builds.chat.bySession` are
+  each that count on a steady board), so a ledgers sum beside it was one
+  session's whole ledger row on a one-session board; the ledgers are folded
+  into `other` below and counted in `rest`. `by` splits `rest` by top-level
+  field, each row the field's quoted name, its separators and its value, and
+  publishes rows drawn from a fixed list: the flag and count fields
+  (`userTodosOn`, `dismissedCount`, `showDismissed`, `canUndoClear`, `off`:
+  the checked-in list `FEED_BY_ROWS` in `kernel/kernel.py`), the off frame's
+  four empty federation lists (`items`, `hosts`, `pendingHosts`,
+  `pendingDead`) and `other`. Every field whose value can carry a string
+  (`ledgers`, `selfHost`, `working`, `awaiting`, `stateUnknown`, `order`,
+  `sessions`, `userTodos`, `userTodoRows`, `views`, `viewsFault`,
+  `judgeLimit`, `bgServices`, `clearedForeign`, `clearNotices`, `sdkNotices`
+  and `syncNotices`: the checked-in list `FEED_BY_FOLDED` beside it) is
+  folded into `other` when the block is reported, and a key outside
+  `FEED_FRAME_FIELDS` and the off frame's lists is counted under `other` when
+  the table is built. A row of its own for one of the folded fields would
+  have been the length of one string (the machine's hostname under
+  `selfHost`, a session name under `working`, a todo's text under
+  `userTodoRows`, a session's ledger under `ledgers`); `other` mixes them,
+  and `other` is present on every non-empty published table. `frame` is
+  `cards` plus `rest`, and `rest` is the exact sum of the published rows,
+  because the fold regroups bytes and drops none.
+  `apps` has one row per
+  consuming app and one projection row, `phoneFace`: `today`, the whole frame
+  it receives, beside `projected`, the bytes of the fields its bundle reads,
+  from the checked-in table `FEED_APP_FIELDS` in `kernel/kernel.py`, which a
+  test pins against the bundles' source and against `federation.ts`: the merge
+  reads `clearedForeign` off the local frame for the feed pane and the Outline
+  (it drops the remote cards and strikes the remote ledger tops the local
+  ledger cleared), so those two rows carry it. `projected` counts the folded
+  fields as one, the ledgers among them: an app that reads any of them is
+  credited with all of `other`, and only the flag and count rows it reads
+  are added by name. The feed row is `cards` plus `other` plus the flag rows
+  but `userTodosOn`, which is `frame` minus `userTodosOn` on a built frame
+  and `frame` minus `userTodosOn` minus the four federation lists on the off
+  frame; the Outline's row is its `cardFields`, the card-field estimate
+  published beside it as a row (an aggregate over the cards, on the footing
+  of `cards`), plus `other` plus `off`; the Waiting-on-you row is `other`
+  plus `userTodosOn`. The invariant, in the words of the kernel's
+  `FEED_COMPOSITION_INVARIANT` and of the ledger entry (a test holds the
+  three equal): Every published number is a published row or a sum of
+  published rows: `frame` is `cards` plus `rest`; `rest` is the sum of the
+  `by` table; every `today` is `frame`; the feed row is `cards` plus `other`
+  plus the flag rows it reads; the Outline's row is its `cardFields`, the
+  card-field estimate published beside it, plus `other` plus `off`; the
+  Waiting-on-you row is `other` plus `userTodosOn`; and a one-character step
+  in any folded field, the ledgers among them, moves the same published
+  leaves by the same amounts, whichever field took it, so no published
+  number or difference of published numbers says which folded field a byte
+  belongs to.
+  A per-field sum published
+  here re-derived two folded rows by subtraction (the todo rows and the
+  session list), and a feed row credited with the remainder but not the
+  ledgers re-derived the ledgers (`frame` minus the feed row minus
+  `userTodosOn`), so the rows over-count the fields an app reads by the rest
+  of `other`: the ledgers, which the feed and Waiting-on-you panes do not
+  read, and the text-bearing fields the app does not read, about 16 KB of
+  remainder against an 8.8 MB frame. One
+  figure is estimated, not bounded, and published as the Outline row's
+  `cardFields`: the
+  Outline reads a few fields of each card, not the card, and those fields
+  are sized from their text lengths, never re-encoded, so the figure
+  over-counts by naming every field of every card and under-counts JSON
+  escapes. The `phoneFace` row is a projection of a frame that does not
+  exist yet (the table `FEED_PROJECTIONS`): a phone client's feed slot
+  carrying a face per active card plus one summary row per session with a
+  card. A card is active when its `column` is `working` or `needs_input`,
+  the Working and Blocked columns. The face is five of the card's fields:
+  `itemId` and `sid`, the address a tap fetches the detail by; `text`, the
+  title; `column`, the state; and `t`, the age. A summary row is the
+  session's `sid` and the count of cards it holds. Both are sized the way
+  the Outline's card fields are. The row's `today` is the whole frame, as
+  for every row (a phone's feed page dials as `feed` and its Outline as
+  `fleet`), so the row reads as the saving the face would bring. No bundle
+  reads such a frame, so the test's pin against the bundles skips the row.
+  Two residuals remain, stated here in the words of the kernel's
+  `FEED_COMPOSITION_RESIDUALS` and of the ledger entry (a test holds the
+  three equal). First: On a board with no session, no open todo, no tag, no
+  notice, no cleared id, no judge-limit latch, an empty stored session order
+  and a clean tags read, `other` is a constant plus the hostname's length
+  and the digit width of `views.seq`, which the frame's whole length on
+  `push.send` and the served body has always carried; with a session it is
+  the sum of that session's name and id, its ledger row when the ledgers are
+  attached, the pips, the tag names and the notices, and no published number
+  or difference of published numbers is one of those alone; two blocks
+  served across a change differ by what changed, as the frame's length on
+  `push.send` always did. Second, for the user's ruling: The card figures
+  are aggregates over the cards, whose count is withheld and published
+  nowhere else on /perf (the feed's view-delta split, the path a ?delta=1
+  client without the feed delta capability takes, counted one entry per card
+  per build under memos.wire until the review's third round and counts none
+  now): `cards` is the whole per-card strings, and the two card-field
+  estimates (the Outline's `cardFields`, which is its row minus `other` and
+  `off`; the `phoneFace` row) are sums of a few fields' lengths over the
+  cards, so one export of a board with one card discloses that card's total
+  and its tree apart: `cards` is that card's string, `cardFields` its title,
+  name, summary, background and blockSummary lengths plus a constant and the
+  digit width of its id, and `cards` minus `cardFields` its tree plus a
+  constant fixed by its other keys (the `t`, `live`, `turnId`, `column` and
+  `notify` values and the `tree` key: 129 bytes on the test fixture's card,
+  whose tree is 852 of its 1957 bytes), and on a board with one active card
+  the `phoneFace` row is a constant plus that card's title length, the
+  constant fixed by the column's spelling and the width of `t`. Two exports
+  across a one-character step tell the step's kind by which leaves move,
+  four kinds: a title moves `cards`, `cardFields` and the `phoneFace` row;
+  an Outline field (a name, a summary, a background, a blockSummary) moves
+  `cards` and `cardFields`; a tree text moves `cards` alone; a folded field
+  (a session name, a note, the hostname) moves `other` alone; so a title
+  step is told from every other step, and a session's name rides in each of
+  its cards and in the folded fields, so two blocks served across a
+  one-character rename move `cards` by that session's card count and `other`
+  by the number of folded fields carrying the name. A reader bounds the
+  count from the size of `cards` (a card's fixed keys are several hundred
+  bytes) and from the `phoneFace` row's group rows (61 bytes per session
+  holding fewer than ten cards, so the number of sessions with a card is
+  exact when no card is active); the count is not recoverable in general,
+  and exact under one condition: while `wire.exact` is 1, `wire.bytes` minus
+  `frame` is the frame's `asks`, `buildId`, `ledgers` and `type` keys,
+  brackets and separators plus each card's tint and separator and each tree
+  node's tint, so on cards with no tree it is a constant plus a per-card
+  term, measured on the test fixture's board (one ledger, a one-digit
+  `buildId`, cards younger than 459 seconds) as 82, 109, 136 and 190 bytes
+  for one, two, three and five cards, 55 plus 27 per card (a 25-byte tint and
+  a 2-byte separator; two more bytes per further ledger, one more per further
+  digit of `buildId`), and a tint is 22 to 25 bytes by the card's age (16
+  bytes of key, brackets and separators plus one byte per digit of the three
+  channels of the colour ramp: nine digits through 458 seconds of a card's
+  age, eight from 459 seconds, seven from about 27.1 hours with the first
+  channel at one digit, eight again from about 39.7 hours, seven from about
+  40.8 hours with the third channel at two digits, and six from about 91.4
+  hours with the third channel at one digit), so the count is exact from the
+  difference on a board of fewer than eight tree-less cards whatever their
+  ages, and at any count when the ages fall in one band.
+  `wire` is the served body as the kernel holds it now: `bytes`, its length,
+  and `exact`, 1 once a whole frame has gone out and the body's text is
+  held, 0 while the length is the size estimate. A delta client never needs
+  the whole text, so 0 says the held body is still estimated, not that
+  nothing was sent. Every number comes from the encode the wire needs
+  anyway, and there is no second encode. The accounting costs about two
+  milliseconds per thousand cards per build, measured on cards carrying the
+  Outline's fields, about a third of it the projections' pass; the
+  card-field and projection estimates are memoised with the cards, so a
+  ledgers refill pays none of that work, only the two part sums, the
+  per-field lengths and the record. Taking the remainder's encode in pieces
+  (one per field name and one per value) costs about one and a half times
+  the whole-remainder encode at a 16 KB remainder and about three and a
+  third times at a 1.4 KB one, a cost per field, not per byte, measured
+  before the pass shared one encoder over its fields, which takes about
+  forty percent off that overhead. The block is counts and byte totals under
+  identifier keys, and the public export (`romp perf export --public`)
+  carries it whole.
 - `judge`: `passes`, `ms_sum`, `ms_last`, `ms_mean` (wall time; a pass waits
   on model calls), `cpu_ms_sum` (CPU time of the judge tier threads and every
-  per-session worker they run; the workers' share is `cpu_ms_workers`; the
+  per-session worker they run; the in-process pools' share is
+  `cpu_ms_workers`, which on the child road is near zero, the child's
+  workers riding `cpu_ms_child_workers`; the
   producer thread's own per-pass work is not included and shows under the
-  process line's "other"), `wakes` (every wake of the producer: the backends'
+  process line's "other"; the workers' share reaches the kernel's live
+  counters as each pool future ends, through the sink the kernel arms in
+  judge.py right after it builds its collector (`set_worker_cpu_sink`), so a
+  live read of the stats dict and a `/perf` snapshot agree and a delta may
+  take either; the arming is what creates `cpu_ms_workers`, and the key
+  rides a served block exactly while that collector is the sink judge.py
+  holds, so a judge block without the key is from a collector that is not
+  that sink now, whatever made it so: a collector nothing armed, or one the
+  sink has since left, as when a later kernel load in the same process
+  displaced it (the load re-executes judge.py and clears the hook; only a
+  test process moves the sink once armed), and no workers' share lands in its
+  `cpu_ms_sum` from then on: the key is absent, never a zero or a frozen
+  figure that could pass for a measurement (a kernel serving `/perf` always
+  arms, so the shape is a collector built outside one or one the sink left,
+  and `romp perf` says "workers' share not reported" over such a pair; the
+  note says the block cannot tell how much of a window's figure is the
+  workers', since a window that straddles the displacement still carries
+  what landed while armed); judge.py's own counter,
+  `judge_worker_cpu_ms()`, serves the judge child, which runs with no kernel
+  in its process), `wakes` (every wake of the producer: the backends'
   pokes, `POST /tick`, and two kernel-internal sites; one SDK turn fires
   several, so this is an upper bound on the poke rate), `wakes_event` and
   `wakes_backstop` (how the producer's 3 s wait ended; `wakes - wakes_event`
@@ -3731,7 +4082,10 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   background task's deadline made due), plus `stamps`, the number of
   per-session records held. The index tier's signature is the session's
   parse pair, captions file, archive record and unit cache, and no goal
-  store: its idle path reads none.
+  store: its idle path reads none. On the child road the gate runs in the
+  child and this block reads this process's counters, which stay at zero
+  while the child judges (the done line carries no tiers block), so
+  `romp perf` prints no gated runs on the `tiers` line.
   `skipped / (ran + skipped)` is the share of per-session runs the gate saved;
   `romp perf` prints it per tier on the `tiers` line and adds `cpu/pass` to
   the `judge` line, since the judge's CPU share alone cannot tell a cheaper
@@ -5674,7 +6028,12 @@ Bounds and counters, all on `/perf` under `judge`:
   so the exit stays inside the grace whatever the child does. A boot sweep that cannot list the state root leaves the
   sweep unmarked and the first request retries it.
 - On the child road `parses.judge` and the `goals` block read zero: the judges' parses and store writes happen in the
-  child, and their per-pass figures ride its done line as `judge.child.parses` and `judge.child.goalIo`.
+  child, and their per-pass figures ride its done line as `judge.child.parses` and `judge.child.goalIo`. So do
+  `judge.tiers` and the judge-module memos (`memos.chain`, `courierSkip`, `plannerSkip`, `backref`, `captions`): the
+  gate and those memos run in the child, the done line carries neither, and `romp perf` prints no gated runs and zero
+  chain memo hits while the child judges. `memos.goalArchive` moves here too: a store load that replays a `restore`
+  override (`_replay_overrides`, under `load_goals` and `load_goals_shared`) reads the archive through the counted
+  shared reader. `judge.cpu_ms_workers` is the in-process pools' share, near zero on this road.
 - `cpu_ms_sum` counts the child's tier and worker CPU as it counts the in-process tiers and pools; `cpu_ms_child_workers`
   is the workers' share alone; `child` is the last done line's numbers: `seq`, `pid`, `t`, `chars` (the line's length),
   `status` (`ok` or `failed`), `failures` (a count), `recovered`, `wallMs`, `tierStarts`, `tierCpuMs`, `workerCpuMs`,

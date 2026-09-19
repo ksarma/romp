@@ -28,11 +28,15 @@ os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
 os.environ.setdefault("ROMP_SERVE_TOKEN", "test-token-DO-NOT-USE")
 # the postal trio (2026-09-10): this kernel runs IN-PROCESS, and an attach whose bus call is refused revives the bus;
 # without these it started one on the machine's fixed port while the real bus was down for a restart. Client-only, so
-# ensure starts nothing; its own port (never one inherited from a shell that names the machine's) and no peers, read at
-# load (the kernel reads them at import)
+# ensure starts nothing, and its own port (never one inherited from a shell that names the machine's), both before the
+# load: the kernel reads the port at import. Peers OFF is the third leg, and it is set PER TEST (_PeersOff below), never
+# here: the kernel reads ROMP_POSTAL_PEERS at call time, so a value written at import leaks. Under xdist every worker
+# imports every collected module before it runs a test, so the "0" this line used to write reached every module on
+# every worker, whether or not the worker ran a tunnel test: the remote-identity absorb case, which tells the bus about
+# the old name only with peers on, was red in 5 of 6 full runs (diagnosed 2026-09-18), and the postal dedupe module's
+# relay case had gone red the same way (2026-09-16). tests/test_hermetic_kernel_postal.py holds the placement.
 import socket as _socket
 _s = _socket.socket(); _s.bind(("127.0.0.1", 0)); os.environ["ROMP_POSTAL_PORT"] = str(_s.getsockname()[1]); _s.close()
-os.environ["ROMP_POSTAL_PEERS"] = "0"
 os.environ["ROMP_POSTAL_CLIENT_ONLY"] = "1"
 load_source("romp_event_model", os.path.join(BIN, "romp-event-model"))
 load_source("romp_judge", os.path.join(BIN, "romp-judge"))
@@ -92,8 +96,34 @@ def _req(port, method, path, body=None):
         return resp.status, raw.decode(errors="replace")
 
 
-class TunnelConcierge(unittest.TestCase):
+class _PeersOff(unittest.TestCase):
+    """Peers off for the classes whose tests attach or detach. With peers on (the default) a detach tells the bus the
+    peer is gone, nothing listens on this process's bus port, and the refused notice kicks _revive_postal_bus into
+    running the postal service's ensure from inside the test process (kernel.py, _notify_bus_peer). The kernel reads
+    the variable at call time, so it is set here, per test, and put back by a cleanup registered right after the
+    write, whatever the shell had; the module header says why it is not set at import. A subclass calls
+    super().setUp() first, and its own tearDown does the detach, which reads the value: cleanups run after tearDown,
+    so the restore is the last thing the test does."""
+
     def setUp(self):
+        self._peers_env = os.environ.get("ROMP_POSTAL_PEERS")
+        os.environ["ROMP_POSTAL_PEERS"] = "0"
+        # A cleanup, not a tearDown (review round 1, 2026-09-18): unittest skips tearDown when a subclass's setUp raises
+        # after this one returned, and both subclasses go on to make a temp dir and bind a server, so a tearDown
+        # restore left the 0 in the worker for every later module, the leak this class exists to end. A cleanup
+        # registered here runs whether or not the rest of setUp finishes, and after tearDown.
+        self.addCleanup(self._restore_peers)
+
+    def _restore_peers(self):
+        if self._peers_env is None:
+            os.environ.pop("ROMP_POSTAL_PEERS", None)
+        else:
+            os.environ["ROMP_POSTAL_PEERS"] = self._peers_env
+
+
+class TunnelConcierge(_PeersOff):
+    def setUp(self):
+        super().setUp()
         self.td = tempfile.mkdtemp()
         ssh = os.path.join(self.td, "mock-ssh")
         with open(ssh, "w") as f:
@@ -115,6 +145,7 @@ class TunnelConcierge(unittest.TestCase):
         km._remotes.clear()
         self.srv.shutdown()
         self.srv.server_close()
+        super().tearDown()              # the peers restore is a cleanup (_PeersOff.setUp): it runs after this, so the detach saw the 0
 
     def test_ssh_hosts_lists_concrete_config_aliases(self):
         status, body = _req(self.port, "GET", "/ssh-hosts")
@@ -257,12 +288,13 @@ class WakeRouter(unittest.TestCase):
         self.assertEqual(_StubRemoteKernel.received, [], "a local sid must never forward to a remote kernel")
 
 
-class BootstrapRemoteKernel(unittest.TestCase):
+class BootstrapRemoteKernel(_PeersOff):
     """'Install romp normally, then attach just works' (the user 2026-07-03): attaching a host whose
     kernel isn't running STARTS it over ssh (romp-serve, nohup) and then fetches the fresh token; a
     host without romp at all gets a next-step detail in the popover instead of a dead tunnel."""
 
     def setUp(self):
+        super().setUp()
         self.td = tempfile.mkdtemp()
         km._remotes.clear()
         self.saved_wait = km._BOOT_WAIT_S
@@ -278,6 +310,7 @@ class BootstrapRemoteKernel(unittest.TestCase):
         km._BOOT_WAIT_S = self.saved_wait
         self.srv.shutdown()
         self.srv.server_close()
+        super().tearDown()              # the peers restore is a cleanup (_PeersOff.setUp): it runs after this, so the detach saw the 0
 
     def _mock(self, script):
         ssh = os.path.join(self.td, "mock-ssh")

@@ -14,8 +14,8 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const http = require('http');
-const net = require('net');
 const { spawn } = require('child_process');
+const { freePorts } = require(path.join(__dirname, 'manager-ports'));
 
 const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'romp-down-marker-'));
 after(() => fs.rmSync(stateDir, { recursive: true, force: true }));   // one leaked dir per run otherwise
@@ -68,15 +68,12 @@ test('startManager clears the marker before it brings the kernels back (source p
   assert.ok(clear > 0 && boot > 0 && clear < boot, 'the clear runs before the boot specs are spawned');
 });
 
-// Two free loopback ports, fresh per case, never a literal: a literal pair once collided with another
-// suite's control port, where a concurrent run's manager answered the probe.
-function freePorts(n) {
-  return Promise.all(Array.from({ length: n }, () => new Promise((resolve, reject) => {
-    const s = net.createServer();
-    s.on('error', reject);
-    s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => resolve(p)); });
-  })));
-}
+// Ports for the real managers below come from this file's own block (tests/manager-ports.js), fresh per
+// case. Two earlier shapes each failed once: a literal pair collided with another suite's control port,
+// where a concurrent run's manager answered the probe; and a free port from listen-on-zero, the fix for
+// that, was handed to manager-token.test.js's case as well in the window between this probe's close and
+// the manager's bind (2026-09-18), since the files run concurrently and draw from one pool. A free port
+// is not enough on its own: the block is what keeps the two files apart.
 
 // The escalation cases below run a REAL manager with a stand-in kernel that swallows SIGTERM;
 // ROMP_SHUTDOWN_GRACE_MS shortens the 8 s grace so each stays bounded (graceEnv: the raw text on the
@@ -171,7 +168,7 @@ test('shutdownGrace: a plain whole number of milliseconds is the grace; an expon
 // launched reaches the CLI, and a rejected form reaches it as the default the manager applies, never as
 // the text on the environment.
 test('/status carries manager.shutdownGraceMs: the parsed grace under an accepted form, 8000 under a rejected one', async () => {
-  const [mp, sp, mp2, sp2] = await freePorts(4);
+  const [mp, sp, mp2, sp2] = await freePorts(__filename, 4);
   const h = stubbornManager(mp, sp);                 // '1000', the escalation cases' grace
   const h2 = stubbornManager(mp2, sp2, '1e3');       // an exponent: Number() read 1000 here, the contract reads nothing
   try {
@@ -193,7 +190,7 @@ test('/status carries manager.shutdownGraceMs: the parsed grace under an accepte
 // writes the marker before it stops the service), so the stop note the manager appends before its
 // SIGTERM is the wired one: trigger `cli-down`, which the kernel's exit reader answers with.
 test('shutdownAll: a kernel that ignores SIGTERM is SIGKILLed when the grace runs out, the manager still exits, and its stop note says cli-down under the marker', async () => {
-  const [mp, sp] = await freePorts(2);
+  const [mp, sp] = await freePorts(__filename, 2);
   const h = stubbornManager(mp, sp);
   try {
     const kpid = await h.readyKernel();
@@ -220,7 +217,7 @@ test('shutdownAll: a kernel that ignores SIGTERM is SIGKILLed when the grace run
 // sessions on stale code, and the manager logged nothing. Both paths share one helper, and for a
 // restart the exit handler's respawn follows the SIGKILL.
 test('restartKernel: a kernel that ignores SIGTERM is SIGKILLed when the grace runs out, logged and respawned, and the manager stays up', async () => {
-  const [mp, sp] = await freePorts(2);
+  const [mp, sp] = await freePorts(__filename, 2);
   const h = stubbornManager(mp, sp);
   try {
     const k1 = await h.readyKernel();

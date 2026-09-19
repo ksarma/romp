@@ -338,6 +338,20 @@ export function stripHost(host: string, id: string): string {
   return host && typeof id === "string" && id.startsWith(host + ":") ? id.slice(host.length + 1) : id;
 }
 
+/** The jump ops a kernel answers with a chat focus (kernel.py _reveal_chat_for, or _reveal_or_confirm for a dead
+ *  session's revive prompt). A jump routed to a REMOTE host posts the shell's chat reveal from the sending pane
+ *  (FederationManager.outbound): the remote kernel tells its OWN shell clients to reveal the chat and has none here.
+ *  The set is the KERNEL's, derived by AST in tests/test_remote_chat_reveal_ops.py (every arm of _dispatch_ws and _drive
+ *  that reaches either function) and pinned equal to this constant, so an op the kernel gains fails there until it is
+ *  listed here (review round 3 of the parked-pane change, 2026-09-18; round 2 hand-listed the first five, a list no test
+ *  could fail for a missing name). The last five leave the chat pane's own bundle alone (the + modal, the picker, the fork
+ *  and promote menus), where the pane is already forward and the post duplicates render.ts revealSelfPane, idempotently;
+ *  they are listed so the constant is what its name says. */
+export const REMOTE_CHAT_REVEAL_OPS: ReadonlySet<string> = new Set([
+  "openSession", "showOnTimeline", "deepLink", "viewReadOnly", "reviveSession",
+  "createSession", "pickResult", "openByName", "forkSession", "commentPromote",
+]);
+
 export function routeOutbound(msg: any, knownHosts?: ReadonlySet<string>): Route[] {
   if (!msg || typeof msg !== "object") return [{ host: LOCAL, msg }];
 
@@ -1509,17 +1523,38 @@ export class FederationManager {
     if (m && (m.type === "askClear" || m.type === "askClearMany" || m.type === "clearAll")) {
       this.lastClearHosts = routes.length ? routes.map((r) => r.host) : [LOCAL];
     }
-    for (const r of routes) this.sendTo(r.host, r.msg);
+    let delivered = false;   // a remote route whose socket was OPEN took the op (sendTo's word; the local route says nothing)
+    for (const r of routes) delivered = this.sendTo(r.host, r.msg) || delivered;
+    // A jump to a REMOTE host's session brings the chat pane forward from HERE (review round 2 of the parked-pane
+    // change, 2026-09-18). The kernel that answers a jump with a chat focus also tells its OWN shell clients to reveal
+    // the chat, and a remote kernel has none (the shell socket is local-only), so a tap on a remote session from the
+    // feed, Sessions or Outline reached the shell through one road alone: the chat pane's revealSelfPane when the focus
+    // landed on its relay. On the phone a chat pane parked since a return holds its local socket down and defers its
+    // relay dials until it is shown (the shim's park; this module's __rompLocalUp gate), so the remote's focus found no
+    // chat client, parked at that kernel, and the Chat tab never came forward. The pane that sends the jump posts the
+    // reveal waiting.ts openSession and render.ts revealSelfPane post: the shell shows the chat pane, the parked pane
+    // dials, its romp:wsup runs localUp() and the relay dials, and the remote's parked copy lands on the relay's first
+    // strip. Once per outbound, whatever the route count; a local route needs none (the local kernel's shell line does
+    // it), and a chat pane posting for itself duplicates revealSelfPane, idempotently. On the desktop the shell's reveal
+    // un-hides a collapsed chat pane, what the local kernel's shell line already does for a local tap. Only for a jump a
+    // remote socket TOOK (review round 3, 2026-09-18): sendRemote drops a jump whose host's socket is not open, with its
+    // toast, and a reveal posted for it moved the phone's tab and un-collapsed a desktop chat pane for an op that reached
+    // no kernel, on a session the user never tapped; the local road posts nothing in that case, the parity that settles it.
+    if (m && REMOTE_CHAT_REVEAL_OPS.has(m.type) && delivered) {
+      try { if (window.parent && window.parent !== window) window.parent.postMessage({ romp: "reveal", pane: "chat" }, "*"); } catch (e) { /* standalone page: no shell to ask */ }
+    }
   }
 
-  /** One send to one kernel: the local one through the page's own socket, a remote one through its conn. */
-  private sendTo(host: string, msg: any): void {
+  /** One send to one kernel: the local one through the page's own socket, a remote one through its conn. Says whether a
+   *  REMOTE socket took the message, OPEN at the send (sendRemote's word); the local route says nothing, since the local
+   *  kernel's own shell line follows a local jump (review round 3, 2026-09-18). */
+  private sendTo(host: string, msg: any): boolean {
     if (host === LOCAL) {
       const s = (window as any).__rompLocalSend;
       if (typeof s === "function") s(msg);
-    } else {
-      this.sendRemote(host, msg);
+      return false;
     }
+    return this.sendRemote(host, msg);
   }
 
   // The ONE remote send path (the user 2026-08-28, whose mid-restart Edit consent never reached the
@@ -1543,11 +1578,13 @@ export class FederationManager {
   //   minutes later can be worse than dropping it — a deliberate non-goal) but the drop lands a
   //   client-diag breadcrumb naming the type and host, beside the existing warn toast: a drop is never
   //   silent.
-  private sendRemote(host: string, msg: any): void {
+  // Returns whether the message went out on an OPEN socket now: a queued setting, a held bookkeeping row and a drop
+  // all say false (outbound posts the shell's chat reveal for a jump only on true; review round 3, 2026-09-18).
+  private sendRemote(host: string, msg: any): boolean {
     const c = this.conns.get(host);
     if (c && c.ws && c.ws.readyState === 1) {
       c.ws.send(JSON.stringify(msg));
-      return;
+      return true;
     }
     if (c && msg && typeof msg.type === "string" && KERNEL_SETTING.has(msg.type)) {
       // not dropped — it rides the next open, so no toast; but never silent either: the breadcrumb
@@ -1559,7 +1596,7 @@ export class FederationManager {
       this.diag("sendqueue", { host, msgType: msg.type, gt: typeof msg.gt === "number" ? msg.gt : 0,
                                rs: c.ws ? c.ws.readyState : -1,
                                ...(prev ? { superseded: typeof prev.gt === "number" ? prev.gt : true } : {}) });
-      return;
+      return false;
     }
     const key = bookkeepingKey(msg);
     if (key !== null) {
@@ -1568,13 +1605,14 @@ export class FederationManager {
       // dialed, or detached since) has nothing to hold it on: dropped with the breadcrumb alone. Journaled
       // once per KEY, at the not-held → held transition, in the hostconn family: a hover held per pointer
       // move would otherwise write a row per move; the open row names everything that flushed.
-      if (!c) { this.diag("senddrop", { host, msgType: msg.type, why: "no-conn" }); return; }
+      if (!c) { this.diag("senddrop", { host, msgType: msg.type, why: "no-conn" }); return false; }
       if (!c.pending.has(key)) this.diag("hostconn", { host, ev: "hold", msgType: msg.type, rs: c.ws ? c.ws.readyState : -1 });
       c.pending.set(key, msg);
-      return;
+      return false;
     }
     this.diag("senddrop", { host, msgType: (msg && msg.type) || "" });
     this.dropWarn(host, msg);
+    return false;
   }
 
   /** Deliver the settings that arrived while this host's socket was down, on the open event itself —
@@ -1828,21 +1866,31 @@ export class FederationManager {
     ws.onopen = () => {
       this.dialEvent(conn.host, false);
       conn.everOpened = true;   // a socket for this conn has opened (the shim's everConnected): part of the redial gate in connect()
-      // settings queued while the socket was down go out FIRST — on the open event itself, never a
-      // timer — so nothing sent after the reconnect can overtake them (see flushPending). That is
-      // also why the relay-up dispatch below comes AFTER the flush: the chat's upload re-ship rides
-      // that event, and a re-shipped dropFile must not get ahead of a queued setting on this socket.
-      const flushed = this.flushPending(conn);
       // the chat wire this page speaks, told to THIS host's kernel once the page has said it (T323 stage 4b): the
       // bundle's own ready reaches the local kernel alone, so a remote kernel would otherwise never learn the protocol
       // and serve index frames over a floor'd list; an older remote kernel ignores the field and answers as before.
+      // FIRST on the open, before the pending flush below (2026-09-18): a kernel since that date takes the first frame
+      // of an unhandshaken chat socket of older vintage as a proto-1 handshake, and this page's dial (its namespaced
+      // iid) keeps its socket out of that rule; the order is the page's own closure all the same, so no kernel of any
+      // vintage can read a flushed setting as this socket's first word and serve it index frames before the ready.
+      // pageProto is known here whenever the bundle has said ready (it posts the ready synchronously at evaluation).
       // NOT on a REDIAL socket (dialedReconnect): its reconnect=1&proto in the URL IS the handshake, and a `ready`
       // here would run the remote's ready reset (_client_reset_chat_base), which pops `reconnect` with nothing to
       // re-arm the skeleton set, so the redial would be served the whole board (2026-09-15, the shim posts no ready
       // on its own redial for the same reason).
       if (this.pageProto !== null && !conn.dialedReconnect) { try { ws.send(JSON.stringify({ type: "ready", proto: this.pageProto })); } catch (e) { /* the next frame says */ } }   // the proto the page speaks, 1 included (low 2)
+      // a held needFull the ready's connect push answers is not flushed behind it, where it would serve the same session
+      // frame a second time (dropAsksTheReadyServes: every held ask on a dial with no skeleton term, the active tab's alone
+      // on a skeleton dial). Only when a ready went out just now: a redial posts none and keeps every ask (2026-09-18).
+      const moot = this.pageProto !== null && !conn.dialedReconnect ? this.dropAsksTheReadyServes(conn) : [];
+      // settings queued while the socket was down go out next, behind the ready and ahead of everything else, on the
+      // open event itself, never a timer, so nothing sent after the reconnect can overtake them (see flushPending). That
+      // is also why the relay-up dispatch below comes AFTER the flush: the chat's upload re-ship rides that event, and a
+      // re-shipped dropFile must not get ahead of a queued setting on this socket.
+      const flushed = this.flushPending(conn);
       this.diag("hostconn", flushed.length ? { host: conn.host, ev: "open", flushed }
                                            : { host: conn.host, ev: "open" });
+      if (moot.length) this.diag("hostconn", { host: conn.host, ev: "moot", pendingDropped: moot });   // the asks the ready served, by type, beside the open row: an entry never leaves the queue unjournaled
       conn.lastRecv = Date.now();   // the watchdog measures this socket's silence from ITS open
       // this host's owed replies just became reachable again — the chat re-ships its pending
       // uploads on exactly this event (T215 review finding 2026-09-01: a remote kernel's restart
@@ -1879,6 +1927,29 @@ export class FederationManager {
         ws.close();
       } catch (e) {}
     };
+  }
+
+  /** The held needFull asks the ready this open just posted makes moot, removed from the conn's queue before the flush;
+   *  returns their types for the journal. The remote's ready arm answers a ready with a connect push: on a dial with no
+   *  skeleton term that push serves this socket every session whole, so a needFull flushed behind the ready would reset
+   *  that session's base at the remote and serve the same frame a second time (one tail frame per held ask); on a
+   *  skeleton dial the push serves the dial's active tab alone, so only that tab's ask is moot, and a held ask for any
+   *  other tab (a click, or the idle prefetch, while the socket was down) is that tab's only load and stays, as does
+   *  every ask on a skeleton dial that names no active (the remote skeletons every tab then). Read from the dial this
+   *  socket made (conn.url), the terms the remote read. A redial posts no ready and drops nothing (2026-09-18, review
+   *  round 2 of the ready-first open). */
+  private dropAsksTheReadyServes(conn: Conn): string[] {
+    const q = new URLSearchParams(conn.url.split("?")[1] || "");
+    const skeleton = q.get("skeleton") === "1";
+    const active = q.get("active") || "";
+    const dropped: string[] = [];
+    for (const [k, m] of conn.pending) {   // deleting the current entry mid-iteration is spec-safe on a Map
+      if (!m || m.type !== "needFull") continue;
+      if (skeleton && (!active || m.id !== active)) continue;
+      conn.pending.delete(k);
+      dropped.push(m.type);
+    }
+    return dropped;
   }
 
   /** One host's dial state changed: its relay socket's dial began (CONNECTING) or ended (open, closed, or

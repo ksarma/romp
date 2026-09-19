@@ -12,8 +12,11 @@ increments on the hot paths and no formatting until a read.
 Drives the REAL Handler over HTTP and the REAL _push with stubbed builders (the test_color_route.py
 and test_tab_meta_push.py patterns). Synthetic fixtures only: placeholder UUIDs, invented names."""
 import base64
+import codecs
 import collections
 import concurrent.futures
+import copy
+import fcntl
 import gc
 import inspect
 import io
@@ -22,11 +25,14 @@ import os
 import re
 import sys
 import tempfile
+import tracemalloc
 import threading
 import time
 import unittest
 import shutil
 import socket
+import stat
+import subprocess
 import urllib.request
 from unittest import mock
 import contextlib
@@ -56,6 +62,8 @@ SID = "11111111-2222-3333-4444-555555555555"
 # and node ids collide across test modules under the shared placeholder (CLAUDE.md, goal-store fixtures).
 GOAL_SID = "77777777-8888-9999-aaaa-bbbbbbbbbbbb"
 TOP_KEYS = {"now", "since", "uptime_s", "log", "process", "pusher", "jobs", "stages_ms", "builds", "sends",   # jobs: the jobs thread's passes
+            "stagesForeign",                               # stagesForeign: a `jobs.<job>` stage from a thread owning neither loop, or a push stage from a
+            #                                                  thread that neither owns the pusher's cycle nor carries a connect push's mark (2026-09-18)
             "heap",                                        # heap: where the resident size sits at the read, gauges over every content cache (2026-09-15)
             "gc",                                          # gc: the collector's pauses per generation, from the gc.callbacks hook (2026-09-16)
             "goals", "memos", "judge", "http", "parses",   # parses: cold event-model parses (T323 stage 1)
@@ -74,6 +82,51 @@ PROCESS_KEYS = {"rss_kb", "threads", "cpu_s", "pid", "rss_anon_kb", "hwm_kb", "s
 # nothing estimated. A cache added to the kernel, the judge or the event model is added here deliberately.
 CACHE_NAMES = {"jsonl", "asm", "asm_keylocks", "trailing", "judge_parse", "judge_recon", "judge_chain", "parse",
                "built_chat", "judge_usage", "img", "path_links", "space_paths", "session_stamp", "task_seg", "session_tok"}
+
+
+def _doc_row(doc, name):
+    """The _PerfStats docstring row whose entry line starts with `name`: from that line to the next line at or above its
+    indentation that begins an entry (a non-space after the indentation), or the docstring's end. The locator is RELATIVE
+    to the entry line's own indentation on purpose: Python 3.13 and later strip a docstring's common leading whitespace at
+    compile time, so a pin that counts leading spaces (the source's six before a row's name) passes on a 3.12 venv and
+    finds nothing on the 3.13 and 3.14t CI cells. Do not simplify it back to a space count."""
+    m = re.search(r"^( *)%s\s" % re.escape(name), doc, re.M)
+    if m is None:
+        raise ValueError("no docstring row starts with %r" % name)
+    nxt = re.compile(r"^ {0,%d}\S" % len(m.group(1)), re.M).search(doc, m.end())
+    return doc[m.start():nxt.start() if nxt else len(doc)]
+
+
+_ONES = ("zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve",
+         "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen")
+_TENS = ("", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety")
+
+
+def _number_word(n):
+    """The English word for a count under one hundred, spelled as the docs spell one ("nineteen"): the docs' count of the
+    pass jobs' rows is derived from len(_PerfStats.PASS_JOBS) through this, never typed a second time (2026-09-19 review),
+    so a job added to the list turns the sentence that counts them red."""
+    if not 0 <= n < 100:
+        raise ValueError("no word for %r" % (n,))
+    if n < 20:
+        return _ONES[n]
+    tens, ones = divmod(n, 10)
+    return _TENS[tens] + ("-" + _ONES[ones] if ones else "")
+
+
+# Wordings about the stage routing that a review round retired, assembled from parts so this file does not carry them as
+# sentences (the sweep pin below reads this file too): a push stage is foreign unless its writer is the pusher within the
+# open cycle (ownership outlives the cycle: kernel-1, round two); a bare _push in a test always has a cycle open before it
+# (false of 21 modules: extra6-1, round two); a push stage from a thread that is not the pusher and not a connect push (a
+# thread identity, not ownership: round one's wording); the pass jobs' rows keep their values because the housekeeping was
+# the jobs thread's alone from the start (false of the part rows: round one); a bare _push is foreign because no cycle
+# is open when it runs (openness, where the rule is the thread's registration as an owner, which cycle() leaves standing,
+# so the pusher's own thread between two cycles writes the flat rows: PR 797's closing check).
+RETIRED_WORDINGS = {"push-inside-cycle": "inside its " + "cycle",
+                    "bare-push-opens-cycle": "_push in a test " + "opens a cycle first",
+                    "pusher-identity": "neither the pusher " + "nor a connect push",
+                    "housekeeping-already-alone": "already ran on the " + "jobs thread alone",
+                    "bare-push-no-open-cycle": "_push with no " + "cycle open"}
 
 
 def _burn_cpu(seconds):
@@ -117,6 +170,34 @@ def _registered_clients(wids, want, deadline_s=5.0):
         if len(got) == want or time.monotonic() >= end:
             return got
         time.sleep(0.02)
+
+
+_STACK_FRAME = re.compile(r"\S+ \((.+):\d+\)")          # _thread_stacks' "function (file:line)" form
+_STACK_FRAME_DIRS = (os.path.dirname(threading.__file__),   # where a sampled frame's file may live: the standard library, and
+                     os.path.dirname(HERE), os.path.join(os.path.dirname(HERE), "kernel"), BIN,    # this repo (a kernel frame's
+                     os.path.join(os.path.dirname(HERE), "cli"), HERE)                             # file is bin/romp-kernel, the
+#                                                                                                    path load_source read it by)
+
+
+def _assert_stack_sample(tc, row):
+    """`row` is a stack sample of a live thread: at least one frame, each in _thread_stacks' "function (file:line)" form,
+    with a file of that name in one of _STACK_FRAME_DIRS. That is what the check verifies and no more: kernel.py formats
+    a frame's file with os.path.basename, so the check is that a file of that BASENAME exists directly in one of the
+    listed directories (the standard library's top directory, where threading.py lives; this repo's root, its kernel/,
+    bin/, cli/ and tests/), not that the frame came from it. A basename collision passes (a frame from any kernel.py
+    anywhere is taken for this repo's), and a frame in a standard-library subpackage (concurrent/futures/thread.py, say:
+    no thread.py sits directly in any of those directories) would fail it. No frame is pinned by
+    position or by function (2026-09-19): a thread parked on an Event is sampled at wait, at the lock acquire inside it
+    (Condition.__enter__ on the way into Event.wait), at a helper wait calls (_release_save, _is_owned), or in run
+    before wait, and the innermost-frame pins that stood in four tests here read `wait (` and went red on the
+    free-threaded 3.14 build when the sampler caught __enter__ (in some module runs there and not in others; no tally is
+    kept, since none recomputes)."""
+    tc.assertTrue(row["frames"], row)
+    for f in row["frames"]:
+        m = _STACK_FRAME.fullmatch(f)
+        tc.assertTrue(m, "function (file:line): %r" % f)
+        tc.assertTrue(any(os.path.exists(os.path.join(d, m.group(1))) for d in _STACK_FRAME_DIRS),
+                      "a file the standard library or this repo ships: %r" % f)
 
 
 class _HttpWatch:
@@ -169,6 +250,17 @@ class Collector(unittest.TestCase):
             self.assertEqual(p[k], 0.0, k)
         self.assertEqual(p["ring_n"], 0)
         self.assertEqual(set(snap["stages_ms"]), set(km._PerfStats.STAGES))
+        # the pusher's nine cycle jobs left stages_ms on 2026-09-18 (stage attribution): a `jobs.<job>` row there is the jobs
+        # thread's own, the cycle jobs' rows are pusher.cycleJobsMs, seeded with the nine names, and a fresh snapshot has
+        # no foreign write (a `jobs.` stage from a thread owning neither loop)
+        self.assertFalse({"jobs." + j for j in km._PerfStats.CYCLE_JOBS} & set(snap["stages_ms"]), "no cycle job's row in stages_ms")
+        self.assertTrue({"jobs." + j for j in km._PerfStats.PASS_JOBS} <= set(snap["stages_ms"]), "every pass job's row, at zero")
+        self.assertEqual(p["cycleJobsMs"], {j: 0.0 for j in km._PerfStats.CYCLE_JOBS})
+        self.assertEqual(snap["stagesForeign"], {})
+        # the connect pushes' push.* stages (2026-09-18): no seed, so a fresh table is empty (a seeded push.warm or `push` row
+        # would be one a connect push can never move); the block's counters start at zero beside it
+        self.assertEqual(p["connectPush"]["stagesMs"], {})
+        self.assertEqual((p["connectPush"]["count"], p["connectPush"]["ms_sum"]), (0, 0.0))
         self.assertEqual(set(snap["builds"]), {"chat", "feed", "timeline", "feedJson", "thread"})   # thread: the comment popover's build (2026-09-08)
         self.assertEqual(set(snap["builds"]["timeline"]), {"cached", "built", "ms"})
         self.assertEqual(set(snap["builds"]["chat"]), {"cached", "built", "ms", "active_built", "bg_built", "bg_miss", "moved",
@@ -185,7 +277,9 @@ class Collector(unittest.TestCase):
         self.assertEqual(set(snap["sends"]), {"full", "delta", "deduped"})
         self.assertEqual(snap["judge"]["ms_mean"], 0.0, "no passes: the mean is 0, not a division error")
         self.assertIn("cpu_ms_sum", snap["judge"])
-        self.assertIn("cpu_ms_workers", snap["judge"])
+        self.assertNotIn("cpu_ms_workers", snap["judge"],
+                         "nothing armed this collector as judge.py's worker-CPU sink: the workers' share is ABSENT, never a 0.0 "
+                         "that reads as measured; arm_judge_worker_sink opens the key (the review ruling, 2026-09-18)")
         self.assertEqual({k: snap["judge"][k] for k in ("wakes", "wakes_event", "wakes_backstop")},
                          {"wakes": 0, "wakes_event": 0, "wakes_backstop": 0},
                          "the producer's wake counters: present and zero on a fresh collector")
@@ -212,6 +306,7 @@ class Collector(unittest.TestCase):
                                               "subagentTree",   # the subagents directory walk memo (2026-09-16): served vs walked, roots held
                                               "chatMergeSets", "chatPostal", "chatLedger", "chatFoldTasks",   # the chat build's fixed-cost memos (2026-09-09)
                                               "outlineProvisional",   # the Outline's provisional-row ledger memo, parse-free (plans/outline-pane-provisional-row.md, 2026-09-15)
+                                              "feedComposition",   # the feed frame's bytes by component and per consuming app (2026-09-18, tests/test_feed_composition.py)
                                               "notices",   # the notice files' parsed rows (T370, plans/notice-cards.md): bytes against their bound
                                               "wire", "sessions_scope", "caps", "thread_reg"},
                          "one block per memo the kernel keeps: the shared names spelled as upstream reports them "
@@ -582,6 +677,9 @@ class Collector(unittest.TestCase):
         self.assertEqual(self.st.parses["bySid"], {A[:8]: 2, B[:8]: 1})
 
     def test_stages_builds_judge(self):
+        self.st.cycle_begin()                                  # this thread stands for the pusher: a push stage is credited to its
+        #                                                        writer since 2026-09-18, and a thread owning no cycle, under no connect
+        #                                                        mark, counts under stagesForeign instead (PushRowsByPurpose)
         self.st.stage("push.chat", 0.5); self.st.stage("push.chat", 0.25); self.st.stage("jobs", 0.1)
         self.st.build("chat", True); self.st.build("chat", False, 0.040); self.st.build("feed", False, 1.0)
         self.st.judge_pass(2.0); self.st.judge_pass(4.0); self.st.judge_cpu(0.25)
@@ -598,8 +696,10 @@ class Collector(unittest.TestCase):
         self.assertEqual(snap["judge"]["passes"], 2)
         self.assertAlmostEqual(snap["judge"]["ms_last"], 4000.0)
         self.assertAlmostEqual(snap["judge"]["ms_mean"], 3000.0)
-        self.assertAlmostEqual(snap["judge"]["cpu_ms_sum"] - snap["judge"]["cpu_ms_workers"], 250.0,
-                               msg="the tier threads' CPU, apart from the pool workers' share")
+        self.assertAlmostEqual(snap["judge"]["cpu_ms_sum"], 250.0,
+                               msg="the tier threads' CPU alone: nothing armed this collector, so no pool workers' share is in the sum")
+        self.assertNotIn("cpu_ms_workers", snap["judge"],
+                         "and no workers' key stands beside it to be mistaken for a measured zero (the review ruling, 2026-09-18)")
 
     def test_judge_child_is_served_as_a_size_and_a_status_never_the_line(self):
         """judge.child stood as the judges' child's done line verbatim (2026-09-18, a paste-safety review of the snapshot):
@@ -631,6 +731,9 @@ class Collector(unittest.TestCase):
         self.assertEqual((child.get("recordCache"), child.get("goalIo"), "asmCheckpoint" in child), (None, {"loads": 2}, False),
                          "a block rides only as a dict, and only when sent")
         self.assertEqual(self.st.snapshot()["judge"]["cpu_ms_child_workers"], 4.0, "the CPU folds as before")
+        self.assertNotIn("cpu_ms_workers", self.st.snapshot()["judge"],
+                         "the child's report lands with no sink armed (the child road needs none) and opens no in-process "
+                         "workers' key: only the arming, or an in-process future, creates it (the review ruling, 2026-09-18)")
         line = json.dumps(done) + "\n"
         self.st.judge_child_done(done, pid=4242, chars=len(line))
         self.assertEqual(self.st.snapshot()["judge"]["child"]["chars"], len(line), "the reader's own count when it has one")
@@ -872,6 +975,12 @@ class Collector(unittest.TestCase):
 
     def test_reset_starts_over_and_moves_since(self):
         self.st.cycle(0.1); self.st.http_request("GET /x", 0.1)
+        self.st.stage("jobs.autoNudge.parse", 0.001)          # a `jobs.` write from this thread owning no cycle: stagesForeign
+        self.st.cycle_begin(); self.st.stage("jobs.apiHealth", 0.002); self.st.stage("jobs", 0.002); self.st.cycle(0.002)   # and the pusher's
+        km._stage_marked("connect")(lambda: self.st.stage("push.chat", 0.003))()   # and a connect push's stage (2026-09-18)
+        self.assertEqual(self.st.snapshot()["stagesForeign"], {"jobs.autoNudge.parse": 1.0}, "premise: both blocks hold a row")
+        self.assertEqual(self.st.snapshot()["pusher"]["cycleJobsMs"]["apiHealth"], 2.0)
+        self.assertEqual(self.st.snapshot()["pusher"]["connectPush"]["stagesMs"], {"push.chat": 3.0}, "premise: the connect table holds a row")
         before = self.st.snapshot()["since"]
         time.sleep(0.01)
         self.st.reset()
@@ -879,6 +988,10 @@ class Collector(unittest.TestCase):
         self.assertEqual(snap["pusher"]["cycles"], 0)
         self.assertEqual(snap["http"], {})
         self.assertGreater(snap["since"], before)
+        # the two owner-routed blocks start over with the rest (2026-09-18): the foreign block empty, the pusher's the nine at zero
+        self.assertEqual(snap["stagesForeign"], {})
+        self.assertEqual(snap["pusher"]["cycleJobsMs"], {j: 0.0 for j in km._PerfStats.CYCLE_JOBS})
+        self.assertEqual(snap["pusher"]["connectPush"]["stagesMs"], {}, "the connect table too")
 
     def test_writers_are_thread_safe(self):
         def hammer():
@@ -893,6 +1006,1484 @@ class Collector(unittest.TestCase):
         self.assertEqual(snap["pusher"]["wakes"], 16000)
         self.assertEqual(snap["sends"]["full"]["chat"]["count"], 16000)
         self.assertEqual(snap["http"]["GET /p"]["count"], 16000)
+
+
+class JobRowsByOwner(unittest.TestCase):
+    """A `jobs.<job>` stage is written from two threads under one prefix: nine jobs in _pusher_cycle_jobs on the pusher and
+    nineteen in _jobs_pass on the jobs thread (plus a job's parts from _sub_stage). Until 2026-09-18 stage() added every
+    writer's wall to the one flat row, so a row said which thread's time it held only by the lists in the source, and a
+    job that changed lists, or a test driving both loops on one thread, merged the two silently. Now stage() routes a
+    dotted `jobs.` write by the WRITER'S OWNER: the jobs thread's to the flat row (stages_ms), the pusher's to
+    pusher.cycleJobsMs under the job's name (the nine seeded at zero), and a thread owning neither loop's to stagesForeign
+    under the stage name, counted rather than dropped. No stage name, mark, split row or boot row changes; three call
+    sites did: the nudge walk's looks computation, a per-thread parse tally since the flat parse row moves for the jobs
+    owner alone, and the two loop bodies' owner guards, which open the loop's own cycle on a thread that owns the other
+    loop's cycle. JOBS stays the census as CYCLE_JOBS + PASS_JOBS."""
+
+    NAME = "jobs.persistCheckpoints"      # a cycle job's name, written here from all three kinds of thread
+
+    def _three_writers(self, jobs_part=False):
+        """The note's run: the pusher (this thread) writes the name for 2 ms, a jobs thread for 3 ms inside a 3 ms pass, and a
+        thread with no cycle for 1 ms; then the pusher closes its `jobs` container and its cycle. With `jobs_part` the jobs
+        thread also runs a job with a part inside its pass (jobs.autoNudge.parse 2 ms inside jobs.autoNudge 2 ms, the pass
+        5 ms): a legitimate part row in the flat table. Returns the snapshot."""
+        st = km._PerfStats()
+        st.cycle_begin()                                              # this thread is the pusher
+        st.stage(self.NAME, 0.002)
+        written, release, foreign_done = threading.Event(), threading.Event(), threading.Event()
+        pass_s = 0.005 if jobs_part else 0.003
+
+        def jobs_thread():
+            st.cycle_begin("jobs")
+            st.stage(self.NAME, 0.003)
+            if jobs_part:
+                st.stage("jobs.autoNudge.parse", 0.002); st.stage("jobs.autoNudge", 0.002)
+            st.stage("jobsPass", pass_s)
+            st.jobs_pass(pass_s)
+            written.set()
+            release.wait(5)                                           # alive until the foreign write is in: the owner map holds
+            #                                                           this thread's ident, and a thread started after its exit can
+            #                                                           be handed the same ident and read as the jobs owner (the
+            #                                                           loops never exit on a kernel, so only a test meets this)
+
+        def foreign_thread():                                         # a handler thread's: it opened no cycle
+            st.stage(self.NAME, 0.001)
+            foreign_done.set()
+        jt = threading.Thread(target=jobs_thread); jt.start()
+        self.assertTrue(written.wait(5), "the jobs thread wrote")
+        ft = threading.Thread(target=foreign_thread); ft.start(); ft.join(5)
+        self.assertTrue(foreign_done.is_set(), "the foreign thread wrote")
+        release.set(); jt.join(5)
+        st.stage("jobs", 0.002)
+        st.cycle(0.002)
+        return st.snapshot()
+
+    def test_one_name_from_three_threads_lands_by_each_writers_owner(self):
+        snap = self._three_writers()
+        self.assertAlmostEqual(snap["stages_ms"][self.NAME], 3.0, msg="the flat row is the jobs thread's 3 ms alone (6 ms before: every writer's)")
+        self.assertAlmostEqual(snap["pusher"]["cycleJobsMs"]["persistCheckpoints"], 2.0, msg="the pusher's 2 ms, under the job's name")
+        self.assertEqual(sorted(snap["stagesForeign"]), [self.NAME], "the thread with no cycle is counted, not merged")
+        self.assertAlmostEqual(snap["stagesForeign"][self.NAME], 1.0)
+        # the split rows keep the owners apart as before, and the foreign write reaches no split
+        self.assertEqual(sorted(snap["pusher"]["firstCycle"]["stages"]), ["jobs", self.NAME])
+        self.assertAlmostEqual(snap["pusher"]["firstCycle"]["stages"][self.NAME]["ms"], 2.0)
+        self.assertEqual(sorted(snap["jobs"]["firstPass"]["stages"]), [self.NAME, "jobsPass"])
+        self.assertAlmostEqual(snap["jobs"]["firstPass"]["stages"][self.NAME]["ms"], 3.0)
+        self.assertAlmostEqual(snap["stages_ms"]["jobs"], 2.0, msg="the containers are not dotted: the flat row as before")
+        self.assertAlmostEqual(snap["stages_ms"]["jobsPass"], 3.0)
+        for j in km._PerfStats.CYCLE_JOBS:
+            self.assertIn(j, snap["pusher"]["cycleJobsMs"], "the nine are always present: %s" % j)
+        self.assertIn(self.NAME[len("jobs."):], km._PerfStats.CYCLE_JOBS, "premise: the name is a cycle job's")
+
+    # The two roll-up sums take the JOB rows alone, by a dot-free key, whoever wrote them (2026-09-18 review). The documented
+    # bounds are per family: a job's parts (jobs.<job>.<part>, from _sub_stage) sum to at most their job, and the jobs sum to
+    # at most their container (the pass for the flat rows, the pusher's `jobs` for cycleJobsMs). A sum over every dotted key
+    # counted a part beside its job and went red on a legitimate part with the routing correct (a real run of both loops
+    # puts jobs.autoNudge.key, .looks and .snapshot in the flat table); a sum over PASS_JOBS or CYCLE_JOBS by name excluded a
+    # cycle job's name the jobs thread wrote and read zero on a planted mis-credit under that name. The three-way test below
+    # holds the sums to both.
+    @staticmethod
+    def _flat_jobs(stages_ms):
+        """The flat `jobs.<job>` rows' sum: dot-free under the prefix, `jobs.prelude` (the jobs thread's opening, outside the
+        pass) excluded."""
+        return sum(v for k, v in stages_ms.items() if k.startswith("jobs.") and "." not in k[len("jobs."):] and k != "jobs.prelude")
+
+    @staticmethod
+    def _cycle_jobs(cycle_jobs_ms):
+        """The pusher's job rows' sum under cycleJobsMs: the block takes a part's name as a key too, so dot-free here as well."""
+        return sum(v for k, v in cycle_jobs_ms.items() if "." not in k)
+
+    def test_the_flat_job_rows_roll_up_to_the_pass_and_the_cycle_jobs_to_the_jobs_container(self):
+        """Over a run of both loops the flat `jobs.<job>` rows are the jobs thread's, so they sum to at most its pass (6 > 3
+        before, when the pusher's and the foreign write sat in them), and the pusher's rows sum to at most its `jobs`
+        container. `jobs.prelude` is the jobs thread's opening, outside the pass, so it is not in the sum."""
+        snap = self._three_writers()
+        flat = self._flat_jobs(snap["stages_ms"])
+        self.assertLessEqual(flat, snap["stages_ms"]["jobsPass"] + 1e-9, "the flat job rows against the pass: %r" % flat)
+        self.assertGreater(flat, 0.0, "the jobs thread's write is in them")
+        self.assertLessEqual(self._cycle_jobs(snap["pusher"]["cycleJobsMs"]), snap["stages_ms"]["jobs"] + 1e-9)
+        self.assertGreater(self._cycle_jobs(snap["pusher"]["cycleJobsMs"]), 0.0)
+
+    def test_the_roll_up_sum_passes_a_legitimate_part_and_catches_a_planted_mis_credit(self):
+        """The guard's sum, on three snapshots (2026-09-18 review): the clean run (3.0 against a 3 ms pass), the run with a
+        legitimate part on the jobs thread (5.0 against a 5 ms pass: the part is not counted beside its job, where a sum over
+        every dotted key read 7.0 and went red with the routing correct), and the clean run with the pusher's 2 ms and the
+        foreign 1 ms planted into the flat row, what a collector merging every writer served (6.0 against 3.0: caught, where
+        a sum over the PASS_JOBS names read 0.0, the name being a cycle job's, and passed the merge)."""
+        every_dotted = lambda st: sum(v for k, v in st.items() if k.startswith("jobs.") and k != "jobs.prelude")      # rejected
+        pass_names = lambda st: sum(st["jobs." + j] for j in km._PerfStats.PASS_JOBS)                                # rejected
+        clean = self._three_writers()
+        part = self._three_writers(jobs_part=True)
+        planted = self._three_writers()
+        planted["stages_ms"][self.NAME] += 2.0 + 1.0
+        with self.subTest("clean"):
+            self.assertAlmostEqual(self._flat_jobs(clean["stages_ms"]), 3.0)
+            self.assertLessEqual(self._flat_jobs(clean["stages_ms"]), clean["stages_ms"]["jobsPass"] + 1e-9)
+        with self.subTest("legitimate part"):
+            self.assertAlmostEqual(part["stages_ms"]["jobs.autoNudge.parse"], 2.0, msg="premise: the part is in the flat table")
+            self.assertAlmostEqual(part["stages_ms"]["jobs.autoNudge"], 2.0)
+            self.assertAlmostEqual(self._flat_jobs(part["stages_ms"]), 5.0)
+            self.assertLessEqual(self._flat_jobs(part["stages_ms"]), part["stages_ms"]["jobsPass"] + 1e-9, "the part is not counted beside its job")
+            self.assertGreater(every_dotted(part["stages_ms"]), part["stages_ms"]["jobsPass"], "the rejected every-key sum reads red here: %r" % every_dotted(part["stages_ms"]))
+            self.assertLessEqual(part["stages_ms"]["jobs.autoNudge.parse"], part["stages_ms"]["jobs.autoNudge"] + 1e-9, "the part against its job: the other family's bound")
+        with self.subTest("planted mis-credit"):
+            self.assertAlmostEqual(self._flat_jobs(planted["stages_ms"]), 6.0)
+            self.assertGreater(self._flat_jobs(planted["stages_ms"]), planted["stages_ms"]["jobsPass"], "caught: the merged writers exceed the pass")
+            self.assertEqual(pass_names(planted["stages_ms"]), 0.0, "the rejected name-list sum is blind to it")
+
+    def test_a_bare_jobs_write_is_the_flat_rows_for_every_writer_under_every_mark(self):
+        """The `jobs` container is not routed (2026-09-19 review, the cell bin/romp's share comment is checked against): stage()
+        adds a bare `jobs` write to the flat row whoever wrote it and whatever mark the thread carries. The pusher's owner
+        writes 2 ms, the jobs owner 3 ms inside its pass, and a thread owning neither loop 1 ms bare, 1 ms under the "push"
+        mark and 1 ms under the "connect" mark: the flat row reads 8.0, nothing reaches cycleJobsMs, stagesForeign or the
+        connect table. The row is the pusher's on a kernel because _pusher_cycle_jobs is its one writer (the census below),
+        not because stage() sends it there."""
+        st = km._PerfStats()
+        st.cycle_begin()                                              # this thread is the pusher
+        st.stage("jobs", 0.002)
+        done = {}
+
+        def jobs_thread():
+            st.cycle_begin("jobs")
+            st.stage("jobs", 0.003); st.stage("jobsPass", 0.003); st.jobs_pass(0.003)
+            done["jobs"] = True
+
+        def owns_nothing():
+            st.stage("jobs", 0.001)
+            km._stage_marked("push")(lambda: st.stage("jobs", 0.001))()
+            km._stage_marked("connect")(lambda: st.stage("jobs", 0.001))()
+            done["foreign"] = True
+        for target in (jobs_thread, owns_nothing):
+            th = threading.Thread(target=target); th.start(); th.join(5)
+        self.assertEqual(done, {"jobs": True, "foreign": True}, "both threads wrote")
+        st.cycle(0.002)
+        snap = st.snapshot()
+        self.assertAlmostEqual(snap["stages_ms"]["jobs"], 8.0, msg="every writer's `jobs`, under every mark, in the one flat row")
+        self.assertEqual(snap["stagesForeign"], {}, "a bare `jobs` write is never foreign")
+        self.assertEqual(snap["pusher"]["cycleJobsMs"], {j: 0.0 for j in km._PerfStats.CYCLE_JOBS}, "nor a cycle job")
+        self.assertEqual(snap["pusher"]["connectPush"]["stagesMs"], {}, "nor a connect stage")
+        # the census: the kernel closes the `jobs` container at exactly one call site, inside _pusher_cycle_jobs, so the flat
+        # row is the pusher's by having one writer; a second writer anywhere would merge into it without a trace
+        src = inspect.getsource(km)
+        sites = re.findall(r'_PERF_STATS\.stage\("jobs",', src)
+        self.assertEqual(len(sites), 1, "the `jobs` container has one writer in the kernel: %d found" % len(sites))
+        self.assertEqual(len(re.findall(r'_PERF_STATS\.stage\("jobs",', inspect.getsource(km._pusher_cycle_jobs))), 1,
+                         "and it is _pusher_cycle_jobs")
+
+    def test_a_pusher_write_under_a_name_outside_the_nine_still_lands_in_its_block(self):
+        """A job's part (jobs.autoNudge.snapshot, _sub_stage) or a job that moved lists, written by the pusher's owner: the
+        block takes the name as it comes, so nothing is dropped and the seeded nine are not a filter."""
+        st = km._PerfStats()
+        st.cycle_begin()
+        st.stage("jobs.autoNudge.snapshot", 0.001); st.stage("jobs.autoNudge", 0.004)
+        st.stage("jobs", 0.004); st.cycle(0.004)
+        snap = st.snapshot()
+        self.assertAlmostEqual(snap["pusher"]["cycleJobsMs"]["autoNudge.snapshot"], 1.0)
+        self.assertAlmostEqual(snap["pusher"]["cycleJobsMs"]["autoNudge"], 4.0)
+        self.assertEqual(snap["stages_ms"]["jobs.autoNudge"], 0.0, "the flat row is the jobs thread's: untouched")
+        self.assertEqual(snap["stagesForeign"], {})
+        self.assertEqual(sorted(snap["pusher"]["firstCycle"]["stages"]), ["jobs", "jobs.autoNudge", "jobs.autoNudge.snapshot"],
+                         "the split takes the pusher's rows as before")
+
+    def test_the_census_is_the_two_lists_and_the_flat_seed_is_the_pass_list(self):
+        P = km._PerfStats
+        self.assertEqual(P.JOBS, P.CYCLE_JOBS + P.PASS_JOBS, "JOBS stays the census")
+        self.assertEqual(len(P.CYCLE_JOBS), 9)
+        self.assertFalse(set(P.CYCLE_JOBS) & set(P.PASS_JOBS), "no job on both lists")
+        self.assertEqual(len(P.JOBS), len(set(P.JOBS)), "no name twice")
+        self.assertTrue({"jobs." + j for j in P.PASS_JOBS} <= set(P.STAGES), "the flat seed lists every pass job")
+        self.assertFalse({"jobs." + j for j in P.CYCLE_JOBS} & set(P.STAGES), "and no cycle job")
+        self.assertIn("jobs.prelude", P.STAGES); self.assertIn("jobsPass", P.STAGES); self.assertIn("jobs", P.STAGES)
+        self.assertEqual(set(km._PerfStats().pusher) & {"cycleJobsMs"}, set(),
+                         "the block is its own attribute, copied into the served pusher block, never the live dict")
+
+    def test_every_job_row_key_fits_the_paste_safe_grammar_and_the_export_keeps_it(self):
+        """The two new blocks are keyed by the kernel's own literals: a job name from CYCLE_JOBS under cycleJobsMs and a stage
+        name (`jobs.` + a _job_stage or _sub_stage literal) under stagesForeign; never a client's or a user's text, so
+        every key fits _PERF_IDENT (the served grammar) and the export's IDENT, is neither denied nor coarsened by
+        cli/perf_public.py, and the values are numbers. The sub-stage names are read from the kernel's source, so a part
+        added later is held to the same grammar."""
+        src = inspect.getsource(km)
+        parts = set(re.findall(r'_sub_stage\("([A-Za-z0-9_.]+)"\)', src)) | set(re.findall(r'stage\("jobs\.([A-Za-z0-9_.]+)"', src))
+        self.assertTrue({"autoNudge.key", "autoNudge.parse", "autoNudge.snapshot", "autoNudge.looks"} <= parts, sorted(parts))
+        names = set(km._PerfStats.STAGES) | set(km._PerfStats.JOBS) | {"jobs." + j for j in km._PerfStats.JOBS} \
+            | {"jobs." + p for p in parts} | set(parts) | {"cycleJobsMs", "stagesForeign"}
+        for k in sorted(names):
+            self.assertTrue(km._PERF_IDENT.fullmatch(k), "outside the served grammar: %s" % k)
+            self.assertTrue(pp.IDENT.fullmatch(k), "outside the export's grammar: %s" % k)
+            self.assertFalse(pp.denied(k, 0.0), "denied by the export: %s" % k)
+            self.assertNotIn(k, pp.BOUND_KEYS, "coarsened by the export: %s" % k)
+        snap = self._three_writers()
+        block = {"pusher": {"cycleJobsMs": snap["pusher"]["cycleJobsMs"]}, "stagesForeign": snap["stagesForeign"]}
+        self.assertEqual(pp.fold(block), block, "the export keeps every key and value as served")
+        for v in list(snap["pusher"]["cycleJobsMs"].values()) + list(snap["stagesForeign"].values()):
+            self.assertIsInstance(v, float)
+        self.assertEqual(pp.paste_problems(block), [])
+
+    def test_the_collectors_docstring_names_the_new_rows(self):
+        doc = km._PerfStats.__doc__
+        # each row is cut by _doc_row, relative to the row's own indentation: Python 3.13 and later strip a docstring's
+        # common leading whitespace at compile time, so a slice between six-space literals passed on the 3.12 venv and
+        # raised ValueError on the 3.13 and 3.14t CI cells; the stagesForeign check below is a line-start match for the
+        # same reason
+        pusher_row = _doc_row(doc, "pusher")
+        self.assertIn("cycleJobsMs", pusher_row, "the pusher row names its cycle jobs' block")
+        stages_row = _doc_row(doc, "stages_ms")
+        self.assertIn("cycleJobsMs", stages_row, "the stages_ms row sends the reader to the pusher's block for the nine")
+        self.assertRegex(stages_row, r"moved to pusher\.cycleJobsMs", "and says the nine MOVED there, so a reader of an older capture knows where the numbers went")
+        # the jobs clause itself, not the bare word: the same row's push sentence also says "counts under stagesForeign",
+        # so a bare assertIn stayed green with the jobs cross-reference dropped (2026-09-18 review). The row is joined and
+        # split first, as the reference-doc test does, because the docstring wraps at 80 columns and the two words sit on
+        # different lines; the colon in "owner:" is load bearing (a bare "owner" matches inside "ownership")
+        self.assertRegex(" ".join(stages_row.split()), r"writer's owner:.{0,120}stagesForeign",
+                         "the stages_ms row's jobs sentence sends a thread owning neither loop's write to stagesForeign")
+        self.assertRegex(doc, r"(?m)^ *stagesForeign ", "the foreign block has a row of its own")
+
+
+
+    def test_the_reference_names_the_new_rows_and_the_discontinuity(self):
+        """docs/reference.md's stages_ms entry names the blocks and states both discontinuities by their load-bearing words,
+        not one wording: the date, the word "moved", the prefix each family moved to (`pusher.cycleJobsMs` for the nine
+        cycle jobs, `pusher.connectPush.stagesMs` for the connect pushes' part of the push.* rows), and that the moved
+        rows do not compare across a capture pair spanning the change; the jobs entry sends the reader to
+        pusher.cycleJobsMs; the pusher entry lists both tables; the foreign entry names both families."""
+        doc = Path(HERE).parent.joinpath("docs", "reference.md").read_text()
+        para = doc[doc.index("- `stages_ms`:"):]
+        para = " ".join(para[:para.index("\n- `stagesForeign`:")].split())   # the reference wraps at 80 columns: one line
+        self.assertIn("`pusher.cycleJobsMs`", para)
+        self.assertIn("2026-09-18", para, "the day the meaning changed")
+        self.assertIn("moved", para, "the rows MOVED: a reader of an older capture is told where the numbers went")
+        self.assertRegex(para, r"moved.{0,120}`pusher\.cycleJobsMs", "the nine moved to the pusher's block (the word and the prefix, close together)")
+        self.assertRegex(para, r"moved.{0,120}`pusher\.connectPush\.stagesMs", "the connect pushes' part of the push rows moved to the connect table")
+        self.assertRegex(para, r"not compar(e|able)", "the discontinuity: the moved rows are not comparable across the change")
+        self.assertNotIn("count every push", para, "the fold sentence is gone")
+        for j in km._PerfStats.CYCLE_JOBS:
+            self.assertIn("`%s`" % j, para, "the nine are named: %s" % j)
+        # The rows that keep their values are the pass jobs' container rows, counted from PASS_JOBS, with the reason (the
+        # act-now pass closes no `jobs.<job>` container) and the clause that a job's part rows narrow under stagesForeign
+        # (2026-09-19 review: round one corrected the sentence and nothing held the correction; the unscoped wording,
+        # every remaining `jobs.<job>` row keeping its value, is false of the part rows and is refused here by shape).
+        n_pass = _number_word(len(km._PerfStats.PASS_JOBS))
+        self.assertRegex(para, r"%s remaining `jobs\.<job>` container rows \(the pass jobs\) keep their names and their values" % n_pass,
+                         "the rows that keep their values are the pass jobs' %s container rows" % n_pass)
+        self.assertRegex(para, r"closes no `jobs\.<job>` container", "the reason: the act-now pass closes no job container")
+        self.assertRegex(para, r"`jobs\.autoNudge\.<part>` rows shed.{0,80}`stagesForeign`", "and a job's part rows narrow, under stagesForeign")
+        self.assertNotRegex(para, r"`jobs\.<job>` rows keep their names", "round one's unscoped sentence (no `container`) is gone")
+        self.assertIn("- `stagesForeign`:", doc, "the foreign block is documented as a top-level block")
+        foreign_para = doc[doc.index("- `stagesForeign`:"):]
+        foreign_para = " ".join(foreign_para[:foreign_para.index("\n- `")].split())
+        self.assertIn("`jobs.<job>`", foreign_para); self.assertIn("`push.*`", foreign_para)
+        jobs_para = doc[doc.index("- `jobs`: the jobs thread"):]
+        jobs_para = jobs_para[:jobs_para.index("\n- `")]
+        self.assertIn("`pusher.cycleJobsMs`", jobs_para)
+        pusher_para = doc[doc.index("- `pusher`: `cycles`"):]
+        pusher_para = " ".join(pusher_para[:pusher_para.index("\n- `")].split())
+        self.assertIn("`cycleJobsMs`", pusher_para)
+        self.assertIn("`stagesMs`", pusher_para, "the connect table is listed under connectPush")
+        self.assertIn("`pusher.connectPush.stagesMs`", pusher_para, "the firstCycle sentence sends a connect push there, not to stages_ms")
+
+    def test_the_ledger_entry_gives_the_measured_reason_for_the_rows_that_keep_their_values(self):
+        """upstream/2026-09-18-stage-attribution.md states the jobs rows' meaning change with the same load-bearing words as the
+        reference: the pass jobs' container rows, counted from PASS_JOBS, keep their values because the act-now path closes no
+        `jobs.<job>` container, and a job's part rows shed that pass's share under stagesForeign. Round one replaced the
+        entry's reason (that the housekeeping was the jobs thread's alone from the start, which the act-now test in
+        tests/test_jobs_thread_split.py falsifies) and nothing held the replacement (2026-09-19 review)."""
+        entry = " ".join(Path(HERE).parent.joinpath("upstream", "2026-09-18-stage-attribution.md").read_text().split())
+        n_pass = _number_word(len(km._PerfStats.PASS_JOBS))
+        self.assertRegex(entry, r"the %s `jobs\.<job>` container rows keep their names and their values because" % n_pass,
+                         "the rows that keep their values are the pass jobs' %s container rows, with a reason" % n_pass)
+        self.assertRegex(entry, r"closes no `jobs\.<job>` container", "the reason: the act-now path closes no job container")
+        self.assertRegex(entry, r"`jobs\.autoNudge\.<part>` rows shed.{0,60}`stagesForeign`", "the part rows narrow, under stagesForeign")
+        self.assertNotIn(RETIRED_WORDINGS["housekeeping-already-alone"], entry, "round one's false reason is gone")
+        self.assertNotRegex(entry, r"those rows keep their names and their values, since", "and its unscoped sentence with it")
+
+
+class PushRowsByPurpose(unittest.TestCase):
+    """The push stages (`push` and the push.* rows: push.chat and its seams, push.feed, push.timeline, push.send and its
+    seams, push.warm, push.feedFirst) are closed by two kinds of thread through one set of calls in _push: the pusher's
+    cycle, and a fresh client's full push on its HTTP handler thread (_push_one: _push(connect=True)). Until 2026-09-18
+    stage() added both to the one flat row, so stages_ms.push.chat over a window held every browser reload's build beside
+    the pusher's, and `romp perf` divided it by the pusher's cycle time (a chat share above the push share, or above one
+    hundred percent, while pages reloaded). Now stage() routes a push stage by the writer's PURPOSE or OWNER: the
+    "connect" stage mark (what _push's decorator sets for connect=True) to pusher.connectPush.stagesMs under the stage
+    name; the pusher's cycle owner (its push.* under the "push" mark and the `push` container it closes outside the
+    mark) to the flat row; any other writer to stagesForeign, a "push"-marked write from a thread owning no cycle included
+    (the mark says what _push was called for, not whose cycle it ran in). No seed: the connect table lists the stages
+    connect pushes ran. No stage name, mark, split row or boot row changes."""
+
+    PUSHER = (("push.chat", 0.005), ("push.send", 0.001))                                # the pusher's push, under its mark
+    CONNECT = (("push.chat", 20.0), ("push.send", 0.5), ("push.feedFirst", 0.25))        # a reload's full push on a handler thread
+    FOREIGN = (("push.chat", 0.001), ("push", 0.02))                                     # a thread with no mark and no cycle; its
+    #                                                                                      `push` wall exceeds the room left in the
+    #                                                                                      8 ms cycle beside the pusher's 6 ms, so
+    #                                                                                      a foreign write merged into the flat row
+    #                                                                                      is red at the cycle bound (at 0.002 the
+    #                                                                                      merged 8.0 sat exactly on the 8.0 cycle)
+
+    def _three_writers(self):
+        """The pusher (this thread, the cycle's owner) closes push.chat and push.send under the "push" mark and then its `push`
+        container outside it, as _pusher_cycle_jobs does; a connect thread under the "connect" mark closes three stages and
+        the whole-wall counter _push_one keeps; a thread with no mark and no cycle closes two. Returns the snapshot."""
+        st = km._PerfStats()
+        st.cycle_begin()                                              # this thread is the pusher
+
+        @km._stage_marked("push")                                     # the mark _push carries when the pusher calls it
+        def pushers_push():
+            for name, dt in self.PUSHER:
+                st.stage(name, dt)
+        pushers_push()
+        done = {}
+
+        @km._stage_marked("connect")                                  # the mark _push carries for connect=True (_push_one)
+        def connect_push():
+            for name, dt in self.CONNECT:
+                st.stage(name, dt)
+            st.connect_push("chat", sum(dt for _, dt in self.CONNECT))   # _push_one's whole-wall counter, beside the stages
+            done["connect"] = True
+
+        def foreign_thread():                                         # no cycle_begin, no mark: a thread standing for neither
+            for name, dt in self.FOREIGN:
+                st.stage(name, dt)
+            done["foreign"] = True
+        for target in (connect_push, foreign_thread):
+            th = threading.Thread(target=target); th.start(); th.join(5)
+        self.assertEqual(done, {"connect": True, "foreign": True}, "both threads wrote")
+        st.stage("push", 0.006)                                       # the container: the pusher closes it outside the mark
+        st.cycle(0.008)
+        return st.snapshot()
+
+    def test_one_push_stage_from_three_threads_lands_by_each_writers_purpose(self):
+        snap = self._three_writers()
+        st = snap["stages_ms"]
+        self.assertAlmostEqual(st["push.chat"], 5.0, msg="the flat row is the pusher's 5 ms alone (20006 ms before: every writer's)")
+        self.assertAlmostEqual(st["push.send"], 1.0)
+        self.assertAlmostEqual(st["push"], 6.0, msg="the container, closed outside the mark, is the pusher's by its ownership of the cycle")
+        self.assertEqual(st["push.feedFirst"], 0.0, "the connect push's cards-first feed is not the pusher's")
+        self.assertEqual(snap["pusher"]["connectPush"]["stagesMs"],
+                         {"push.chat": 20000.0, "push.send": 500.0, "push.feedFirst": 250.0}, "the connect push's stages, under their names, apart")
+        self.assertEqual(snap["pusher"]["connectPush"]["count"], 1)
+        self.assertEqual(snap["stagesForeign"], {"push.chat": 1.0, "push": 20.0}, "the thread with no mark and no cycle is counted, not merged")
+        # the split rows keep the pusher's alone as before, and neither other writer reaches a split
+        self.assertEqual(sorted(snap["pusher"]["firstCycle"]["stages"]), ["push", "push.chat", "push.send"])
+        self.assertAlmostEqual(snap["pusher"]["firstCycle"]["stages"]["push.chat"]["ms"], 5.0)
+        self.assertEqual(snap["pusher"]["cycleJobsMs"], {j: 0.0 for j in km._PerfStats.CYCLE_JOBS}, "no `jobs.` write: the other routing untouched")
+
+    def test_the_flat_push_rows_roll_up_to_the_pushers_cycle_time_and_the_connect_rows_to_the_connect_pushes_wall(self):
+        """Over a run of both, the flat push.* rows are the pusher's, so the direct children of `push` sum to at most `push`,
+        which fits the pusher's cycle time (20757 ms of children against an 8 ms cycle before); the connect rows sum to at
+        most the connect pushes' whole wall, pusher.connectPush.ms_sum. A seam rolls up to its container, not to `push`.
+        Each of the three mis-credits is red here: a connect push merged into the flat rows at the container bound, the
+        pusher's writes sent to stagesForeign at the greater-than-zero bound, and the foreign thread's merged into the
+        flat rows at the cycle bound (its 20 ms `push` beside the pusher's 6 ms in an 8 ms cycle: 26.0 against 8.0)."""
+        snap = self._three_writers()
+        st = snap["stages_ms"]
+        children = sorted(k for k in st if k.startswith("push.") and k.count(".") == 1)
+        self.assertEqual(children, ["push.chat", "push.feed", "push.feedFirst", "push.send", "push.timeline", "push.warm"])
+        self.assertLessEqual(sum(st[k] for k in children), st["push"] + 1e-9, "the push.* rows against the container: %r" % {k: st[k] for k in children})
+        self.assertLessEqual(st["push"], snap["pusher"]["cycle_ms_sum"] + 1e-9, "the pusher's push fits its cycles")
+        self.assertGreater(sum(st[k] for k in children), 0.0, "the pusher's writes are in them")
+        cst = snap["pusher"]["connectPush"]["stagesMs"]
+        self.assertLessEqual(sum(v for k, v in cst.items() if k.count(".") == 1), snap["pusher"]["connectPush"]["ms_sum"] + 1e-9)
+        self.assertGreater(sum(cst.values()), 0.0)
+
+    def test_a_push_under_the_push_mark_with_no_cycle_is_foreign_not_the_pushers_row(self):
+        """The "push" mark says what _push was called for, not whose cycle it ran in: a push stage under it from a thread
+        owning no cycle is neither a connect push nor the cycle's owner, so it counts under stagesForeign beside the
+        container the same thread closes with no mark, and the flat rows the CLI divides by the pusher's cycle time take
+        nothing from it. The mark alone as the pusher's stand-in (this test's first meaning, 2026-09-18 review) let a
+        _push(connect=False) from any other thread merge its walls into those rows: a push share above one hundred percent
+        with stagesForeign empty. Latent on a kernel: _push_all's one caller opens the cycle first and _push_one passes
+        connect=True, so no live caller takes this road."""
+        st = km._PerfStats()
+        out = {}
+
+        def bare_thread():
+            km._stage_marked("push")(lambda: st.stage("push.feed", 0.002))()
+            st.stage("push", 0.002)
+            out["done"] = True
+        th = threading.Thread(target=bare_thread); th.start(); th.join(5)
+        self.assertTrue(out.get("done"))
+        snap = st.snapshot()
+        self.assertEqual(snap["stages_ms"]["push.feed"], 0.0, "the flat row takes nothing from a thread owning no cycle, marked or not")
+        self.assertEqual(snap["stages_ms"]["push"], 0.0)
+        self.assertEqual(snap["stagesForeign"], {"push.feed": 2.0, "push": 2.0}, "both counted apart, under their names")
+        self.assertEqual(snap["pusher"]["connectPush"]["stagesMs"], {})
+
+    # The two cells below are what the routing sentences in the reference, the ledger entry, bin/romp and this module are
+    # checked against (2026-09-19 review): ownership is a thread's registration in _owners, made by cycle_begin and left
+    # standing by cycle(), not the interval a cycle is open, so the same push stage closed in the gap between two cycles
+    # lands in the flat rows from the registered thread and under stagesForeign from a thread that registered nothing.
+    def test_a_push_stage_the_pushers_thread_closes_between_two_cycles_is_the_flat_rows(self):
+        """The pusher's thread opens a cycle, closes it, and then closes a push stage under _push's "push" mark and its `push`
+        container outside it before the next cycle opens: both land in the flat rows, nothing under stagesForeign, and the
+        gap's writes reach no split (the next cycle_begin empties the open split, so they belong to no cycle's rows)."""
+        st = km._PerfStats()
+        st.cycle_begin()                                              # this thread is the pusher
+        km._stage_marked("push")(lambda: st.stage("push.chat", 0.005))()
+        st.stage("push", 0.005); st.cycle(0.005)                     # the first cycle closes
+        self.assertEqual(st._mine(), "pusher", "premise: the close of a cycle leaves the thread registered as the owner")
+        km._stage_marked("push")(lambda: st.stage("push.feed", 0.003))()   # between the cycles, under _push's mark
+        st.stage("push", 0.002)                                       # and outside it
+        st.cycle_begin(); st.cycle(0.001)                             # the second cycle, with nothing written inside it
+        snap = st.snapshot()
+        self.assertAlmostEqual(snap["stages_ms"]["push.feed"], 3.0, msg="the gap's stage is the flat row's: the thread owns the pusher's cycle")
+        self.assertAlmostEqual(snap["stages_ms"]["push"], 7.0, msg="the gap's container too")
+        self.assertEqual(snap["stagesForeign"], {}, "nothing foreign: the writer is the registered owner")
+        self.assertEqual(snap["pusher"]["connectPush"]["stagesMs"], {})
+        ring = snap["pusher"]["stageRing"]
+        self.assertEqual(len(ring), 2)
+        self.assertEqual(sorted(ring[0]["stages"]), ["push", "push.chat"], "the first cycle's split holds its own writes")
+        self.assertEqual(ring[1]["stages"], {}, "the gap's writes are in no split: the second opening emptied them")
+
+    def test_a_push_stage_from_a_thread_owning_nothing_is_foreign_while_the_owner_sits_between_cycles(self):
+        """At the same instant, the pusher's thread between two cycles and a thread that opened no cycle each close push.feed,
+        the second under the "push" mark and bare: the owner's write is the flat row's and both of the other's count under
+        stagesForeign. Neither writer is inside an open cycle; the registration is what separates them."""
+        st = km._PerfStats()
+        st.cycle_begin(); st.stage("push", 0.001); st.cycle(0.001)  # one cycle, closed: this thread stays registered
+        done = {}
+
+        def owns_nothing():
+            km._stage_marked("push")(lambda: st.stage("push.feed", 0.004))()
+            st.stage("push.feed", 0.001)
+            done["written"] = True
+        th = threading.Thread(target=owns_nothing); th.start(); th.join(5)
+        self.assertTrue(done.get("written"))
+        km._stage_marked("push")(lambda: st.stage("push.feed", 0.002))()   # the owner's, in the same gap
+        snap = st.snapshot()
+        self.assertEqual(snap["stagesForeign"], {"push.feed": 5.0}, "the thread owning nothing: counted apart, marked or not")
+        self.assertAlmostEqual(snap["stages_ms"]["push.feed"], 2.0, msg="the flat row is the registered owner's write alone")
+        self.assertEqual(snap["pusher"]["connectPush"]["stagesMs"], {})
+
+    def test_a_fresh_snapshot_seeds_no_connect_stage_row_and_reset_empties_the_table(self):
+        """No seed, and the docstring says so: a seeded push.warm or `push` row would be one a connect push can never move (the
+        warm runs for the pusher alone, and _push_one closes no container), reading as time connect pushes never spend
+        there. The table is its own attribute, copied into the served block; the live counters dict never holds it."""
+        st = km._PerfStats()
+        self.assertEqual(st.snapshot()["pusher"]["connectPush"]["stagesMs"], {})
+        self.assertNotIn("stagesMs", st.connect_push_stats)
+        km._stage_marked("connect")(lambda: st.stage("push.timeline", 0.004))()
+        self.assertEqual(st.snapshot()["pusher"]["connectPush"]["stagesMs"], {"push.timeline": 4.0})
+        st.reset()
+        self.assertEqual(st.snapshot()["pusher"]["connectPush"]["stagesMs"], {})
+        doc = km._PerfStats.__doc__
+        # the row by _doc_row, relative to its own indentation: Python 3.13 and later strip a docstring's common leading
+        # whitespace at compile time, so a slice between six-space literals raised ValueError on the 3.13 and 3.14t CI cells
+        self.assertIn("No seed", _doc_row(doc, "pusher"), "the pusher row says the table is unseeded")
+
+    def test_every_push_row_key_fits_the_paste_safe_grammar_and_the_export_keeps_it(self):
+        """The connect table and the foreign block are keyed by the kernel's own stage literals (`push`, the push.* names in
+        STAGES, and every `push.` name stage() is called with in the kernel's source), under the fixed keys connectPush and
+        stagesMs; never a client's or a user's text. Every key fits _PERF_IDENT (the served grammar) and the export's IDENT,
+        is neither denied nor coarsened by cli/perf_public.py (a denied key would drop the table from an export, a coarsened
+        one would round it), and the values are numbers; the fold keeps the populated blocks byte for byte and the paste
+        walk finds nothing. The stage names are read from the source, so a seam added later is held to the same grammar."""
+        src = inspect.getsource(km)
+        written = set(re.findall(r'_PERF_STATS\.stage\("(push(?:\.[A-Za-z0-9_.]+)?)"', src))
+        self.assertTrue({"push", "push.chat", "push.chat.sig", "push.feedFirst", "push.send.compare", "push.warm"} <= written, sorted(written))
+        names = written | {k for k in km._PerfStats.STAGES if k.startswith("push")} | {"connectPush", "stagesMs", "stagesForeign", "stages_ms"}
+        for k in sorted(names):
+            self.assertTrue(km._PERF_IDENT.fullmatch(k), "outside the served grammar: %s" % k)
+            self.assertTrue(pp.IDENT.fullmatch(k), "outside the export's grammar: %s" % k)
+            self.assertFalse(pp.denied(k, 0.0), "denied by the export: %s" % k)
+            self.assertNotIn(k, pp.BOUND_KEYS, "coarsened by the export: %s" % k)
+        snap = self._three_writers()
+        tab = snap["pusher"]["connectPush"].get("stagesMs")           # the premise first: a kernel without the table fails here, by name
+        self.assertEqual(sorted(tab or {}), ["push.chat", "push.feedFirst", "push.send"], "premise: the table is populated")
+        block = {"pusher": {"connectPush": snap["pusher"]["connectPush"]}, "stagesForeign": snap["stagesForeign"],
+                 "stages_ms": {k: v for k, v in snap["stages_ms"].items() if k.startswith("push")}}
+        self.assertEqual(pp.fold(block), block, "the export keeps every key and value as served")
+        for v in list(snap["pusher"]["connectPush"]["stagesMs"].values()) + list(snap["stagesForeign"].values()) + list(block["stages_ms"].values()):
+            self.assertIsInstance(v, float)
+        self.assertEqual(pp.paste_problems(block), [])
+
+    def test_the_collectors_docstring_names_the_connect_table(self):
+        doc = km._PerfStats.__doc__
+        # each row is cut by _doc_row, relative to the row's own indentation: Python 3.13 and later strip a docstring's
+        # common leading whitespace at compile time, so a slice between six-space literals raised ValueError on the 3.13
+        # and 3.14t CI cells
+        pusher_row = _doc_row(doc, "pusher")
+        self.assertIn("connectPush", pusher_row, "the pusher row documents the block the table rides")
+        self.assertIn("stagesMs", pusher_row)
+        stages_row = _doc_row(doc, "stages_ms")
+        self.assertIn("pusher.connectPush.stagesMs", stages_row, "the stages_ms row sends the reader to the connect table")
+        self.assertRegex(stages_row, r"moved to pusher\.connectPush\.stagesMs", "and says the connect pushes' part moved there")
+        self.assertIn("2026-09-18", stages_row)
+        self.assertNotIn("EVERY caller", stages_row, "the fold sentence is gone")
+        foreign_row = _doc_row(doc, "stagesForeign")
+        self.assertIn("push", foreign_row, "the foreign block names the push stages as a second family")
+
+
+# git's own wording for a tree with no repository above it; the one nonzero exit that is a skip (the constant
+# tests/test_entrypoints_executable.py uses for the same call)
+NOT_A_REPOSITORY = "not a git repository"
+
+
+def _git_bytes(root, *args, env=None):
+    """git's stdout, as bytes, for `git -C root args`. Skips the caller only when git is not installed or says `root`
+    is not in a repository; any other failure is an AssertionError carrying git's stderr and exit code, never a skip
+    (the shape of tests/test_entrypoints_executable.py's _index, whose docstring says why: a skip there would disarm
+    the check while the run stays green). stdout stays bytes because a -z listing is split on NUL; stderr alone is
+    decoded, with errors replaced, so git's words reach the message whatever their encoding. `env`, when given, is the
+    whole environment for the call, and None is this process's. Every call that must read the repository AT A PATH
+    passes one _git_env_scrubbed built, since git obeys a hook's GIT_DIR and GIT_INDEX_FILE over `-C`: the scratch
+    repos' every call, the live tree's two listings (the scan's and the healer's) and the lock path's rev-parse. The
+    ambient calls are the tests' own premise reads, which show the exported repository winning over `-C`."""
+    try:
+        proc = subprocess.run(["git", "-C", str(root), *args], capture_output=True, timeout=60, env=env)
+    except FileNotFoundError:
+        raise unittest.SkipTest("git is not installed; the routing sweep cannot list the tree")
+    if proc.returncode != 0:
+        stderr = proc.stderr.decode(errors="replace").strip()
+        if NOT_A_REPOSITORY in stderr:
+            raise unittest.SkipTest("not a git checkout (git %s exited %d: %s)" % (" ".join(args), proc.returncode, stderr))
+        raise AssertionError("git %s exited %d in %s, so the routing sweep cannot list the tree and the check would be "
+                             "disarmed; fix the checkout rather than skipping:\n%s" % (" ".join(args), proc.returncode, root, stderr))
+    return proc.stdout
+
+
+def _git_env_scrubbed(global_config=False):
+    """A copy of this process's environment with every GIT_* variable removed and GIT_TEST_* kept (the ScratchCheckout
+    shape in tests/test_entrypoints_executable.py). git obeys a hook's GIT_DIR and GIT_INDEX_FILE over `-C`, so a call
+    that must read the repository AT A PATH, not the one the caller's hook is running in, scrubs first: the scratch
+    repos' every git call, the lock path's rev-parse (round 2's fresh-4), and the live tree's two listings, the scan's
+    and the healer's (round 3: the same rule grepped across the module's other git calls found the healer listing the
+    tracked set under the ambient environment, so under a hook's foreign GIT_DIR that set was the hook's index and a
+    plant-named file this checkout TRACKS was judged untracked and unlinked, with every test green). The scrub removes
+    the two overrides tests/conftest.py exports, GIT_CONFIG_GLOBAL and GIT_CONFIG_NOSYSTEM, with the rest; by default
+    they are put back, so the call reads no global or system config, conftest's rule for every test's git, and a
+    developer's global excludes cannot thin a listing. The lock path alone passes global_config=True and reads the
+    developer's global config on purpose: a global safe.directory must resolve a dubious-ownership checkout, and
+    core.worktree is the only other key that could move rev-parse's answer (a listing over such a checkout fails with
+    git's safe.directory hint, never a skip, so nothing is disarmed)."""
+    env = {name: value for name, value in os.environ.items() if not name.startswith("GIT_") or name.startswith("GIT_TEST_")}
+    if not global_config:
+        env.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
+    return env
+
+
+def _scratch_repo(test):
+    """A git repository of its own under the run's temp root (removed with the test, and swept with the root either way)
+    for a pin that needs a listed file the live tree must not hold: a file placed in it is untracked and unignored, so
+    `git ls-files --others --exclude-standard` lists it and RoutingStatements._scan reads it, with no lock taken and no
+    write into the checkout. Returns the directory and the environment its git init ran with, every GIT_* variable
+    scrubbed but GIT_TEST_* and no global or system config read (the ScratchCheckout shape in
+    tests/test_entrypoints_executable.py, whose env() says why: a hook's GIT_INDEX_FILE would otherwise send the scratch
+    repo's operations into this checkout's index); every git call over the scratch repo passes that environment too,
+    the listing in _scan through its env keyword. The first version scrubbed for the init alone, and a listing over
+    the scratch repo under a hook's GIT_DIR and GIT_INDEX_FILE was this checkout's index, every path skipped at the
+    open, so the pins stayed green over a listing that was not the scratch repo's. The init goes through _git_bytes, so
+    a box without git skips the test (the first version's subprocess.run raised FileNotFoundError out of it, and the
+    no-git world was five errors beside the skips the docstrings promised; round 3) and any other failure carries git's
+    words; the not-a-repository skip cannot fire here, since init needs none."""
+    d = Path(tempfile.mkdtemp())
+    test.addCleanup(shutil.rmtree, d, ignore_errors=True)
+    env = _git_env_scrubbed()
+    _git_bytes(d, "init", "-q", env=env)
+    return d, env
+
+
+def _traced_delta(fn):
+    """(result, peak): fn()'s result and tracemalloc's peak during it as a DELTA from what was held when it started (the
+    tests/test_reader_stream_peak.py idiom). A tracer already running (PYTHONTRACEMALLOC, -X tracemalloc, an earlier
+    test) is used and left running: start() is a no-op then and would neither reset the peak nor be ours to stop. The
+    delta, not the absolute peak, because reset_peak() sets the peak to what is held NOW, so under a running tracer the
+    absolute figure is everything the process holds and a bound over it reds whatever fn() did."""
+    gc.collect()
+    tracing = tracemalloc.is_tracing()
+    if not tracing:
+        tracemalloc.start()
+    try:
+        tracemalloc.reset_peak()
+        held = tracemalloc.get_traced_memory()[0]
+        out = fn()
+        cur, peak = tracemalloc.get_traced_memory()
+    finally:
+        if not tracing:
+            tracemalloc.stop()
+    return out, peak - held
+
+
+class RoutingStatements(unittest.TestCase):
+    """Every place in the tree that names a routed block (stagesForeign, pusher.cycleJobsMs, pusher.connectPush.stagesMs, or
+    their attributes) is where a sentence about the routing can live, and two review rounds found such a sentence wrong
+    in a way the code was not, each time in a file a hand-kept sweep had missed (2026-09-19 review). The sweep's scope is
+    therefore derived here from the tree, not listed: the files that name a block are found by reading them, pinned as a
+    set so a new one turns the test red until it is swept, and none of them may carry a wording a round retired
+    (RETIRED_WORDINGS at the top of this module). The truth of what the files say is measured by the routing tests above
+    (PushRowsByPurpose, JobRowsByOwner); this test holds only the scope and the retired wordings.
+
+    The tree is every text file git tracks or would track (PR 797's closing check, 2026-09-19): `git ls-files --cached
+    --others --exclude-standard` at the repo root, so an untracked file is swept before it is committed, no directory
+    excluded, symlinks skipped (bin/romp-kernel points at the kernel). A file is text when its first PROBE bytes (8 KiB)
+    hold no NUL and the whole of it decodes as UTF-8; it is read in CHUNK-byte pieces through an incremental decoder,
+    and only a file that names a block is read whole, so for a file that names none the scan holds a few pieces at
+    most, raw and decoded, whatever its size (the CHUNK comment has the shape, and the text pin measures it each run
+    over the widest content), and for each file that does (the PLACES files) its bytes plus its decoded text, which
+    Python holds at one, two or four bytes a character by the widest character in the file (a file holding a character
+    outside the Basic Multilingual Plane decodes at four), so up to five times its bytes; only the unmatched-file cost
+    is pinned. No size limit is needed and none is applied. The eight-directory walk this replaced omitted every other directory and the
+    root files (when this was written: tools/, vscode-extension/, ui/ outside ui/webview, plans/, vendor/, assets/, the
+    root files, .github/, hooks/, claude/, overrides/, postal/, .githooks/), and inside its eight roots it read only a
+    suffix allowlist and pruned named directories (docs/assets, and the .json, .bash, .csv and .svg files among the
+    omitted); none of them named a block when this was written, so the pin was complete by luck and would not have
+    caught a statement added there. No count of any of this is quoted here: the counts move with every commit, and a
+    count needs a head a clone may not hold. The census for the tree you have is a command: `git ls-files -z --cached
+    --others --exclude-standard` at the repo root, split on NUL; drop the symlinks; drop a file whose first PROBE bytes
+    hold a NUL; drop a file that does not decode as UTF-8; count the rest and sum their bytes. The old walk's gap is
+    that listing bucketed against the walk's definition: its roots (kernel, bin, cli, docs, upstream, tests, scripts,
+    ui/webview), its suffix allowlist (.py .md .bats .ts .js .mjs .sh .css .html .txt .toml .yml .yaml, and no suffix)
+    and its pruned names (node_modules, dist, out-tests, __pycache__, assets, and any directory whose name starts with
+    a dot): a listed file outside every root, or inside one with another suffix or under a pruned name, is a file the
+    walk never read. No directory list is kept. An untracked file git does not ignore is
+    read too: a scratch note, a saved diff, an editor backup, a .orig or .rej a merge left, a caption under docs/assets
+    (none of those is ignored here), so a machine holding one reds this pin before CI does; the webview test build's
+    output, vscode-extension/out-tests, is ignored by vscode-extension/.gitignore and never read, and ui/out-tests does
+    not exist. The scan takes a file lock shared and the plant test below takes it exclusive: pytest-xdist can run the
+    tests on different workers at once, and a sibling's scan during the plant would read the plant and red. The lock is
+    one file per checkout, in its git dir, so an xdist worker, a second pytest run, or a run under its own TMPDIR all
+    wait on the same inode (the first version sat in the per-process temp root tests/__init__.py mints and serialised
+    nothing).
+
+    What PLACES counts, since PR 797's closing check asked for the derivation: one entry per text file in the tree
+    above whose text matches BLOCKS at least once, however many times it matches, so the count the sweep holds is the
+    size of PLACES, a set of files. The block-name regex is a one-directional proxy: it finds the files that NAME a
+    routed block, and a file can state the routing without naming one (the ledger entry that recorded this sweep,
+    upstream/2026-09-19-stage-attribution-followup.md, does), so such
+    prose is outside the sweep whatever the file set. `git ls-files -z --cached --others --exclude-standard | xargs -0 grep -I -l -E
+    '<the BLOCKS pattern>'` at the repo root approximates it (run it beside the test and compare: over this tree it has
+    listed the same files plus the bin/romp-kernel symlink the scan skips) and is not the scan's rule (checked on GNU
+    grep 3.11, `grep --version`; another grep's -I may differ): grep -I drops a file when it meets a NUL byte in what
+    it has read before the first match, so a NUL after the scan's 8 KiB probe hides a file the scan reads, and grep -I
+    has no UTF-8 requirement, so it lists a file the scan skips on a decode error; the edges test constructs one of
+    each in a scratch repo, and whether the live tree holds one is what running both shows. No count of statements is
+    held anywhere: a statement has no
+    unit a regex fixes (a line matching BLOCKS, an occurrence of it and a sentence give three different numbers over the
+    same files), and the sweep needs the files to read, not a tally."""
+
+    BLOCKS = re.compile(r"stagesForeign|cycleJobsMs|connectPush\.stagesMs|stages_foreign|cycle_jobs_ms|connect_stages_ms")
+    # the places a routing sentence lives today; a file added here has been read against the measured cells
+    PLACES = {"bin/romp", "docs/reference.md", "kernel/kernel.py", "tests/test_first_cycle_stage_split.py",
+              "tests/test_jobs_thread_split.py", "tests/test_perf_stats.py", "upstream/2026-09-18-stage-attribution.md"}
+    PROBE = 8192                                  # the bytes read first from every file; a NUL among them ends the read, so a png, a
+    #                                               font or a recording costs its header and nothing more
+    CHUNK = 8 * PROBE                             # the bytes read per piece after the probe. A piece is held raw and decoded at once,
+    #                                               its text at one, two or four bytes a character by the widest character in it,
+    #                                               and its bytes twice for a moment as the next piece is read, so a piece can cost
+    #                                               several times CHUNK and the text pin's 128 x PROBE bound needs CHUNK well under
+    #                                               it: the pin measures the scan's delta each run over a file with a character
+    #                                               outside the Basic Multilingual Plane in every piece, the widest content, a few
+    #                                               times CHUNK on 3.12 and more on the free-threaded 3.14t, whose allocator books
+    #                                               more per call; a piece of 128 x PROBE cannot meet the bound (round 2's refuters,
+    #                                               who corrected the ruled 1 MiB piece)
+    OVERLAP = 32                                  # characters of the previous piece searched with the start of the next, so a block
+    #                                               name across a piece boundary is found. A name split across a boundary leaves at
+    #                                               most all but one of its characters on one side, so the overlap must be at least
+    #                                               one less than the longest BLOCKS alternative (connectPush.stagesMs, 20 characters);
+    #                                               the constants test derives that length from BLOCKS and pins this value and this
+    #                                               spelling against it, and the edges test splits the longest alternative at both
+    #                                               extremes across both seams. The retired-wording regex runs over the whole text
+    #                                               of a matched file and needs no overlap.
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        # A plant exists only while its owner holds the exclusive lock, so whatever the glob finds under that lock is a
+        # dead run's leftover (pytest-timeout's os._exit, which CI's --timeout-method=thread uses, a SIGKILL, a scope
+        # stop: none of them reaches the plant test's finally); a match git tracks is skipped. Safe ONLY because the
+        # lock is one file per checkout: under a per-process lock this could delete a sibling's live plant.
+        cls._no_repository = None
+        try:
+            with cls._tree_lock(exclusive=True) as root:
+                cls._remove_stale_plants(root)
+        except unittest.SkipTest as skip:
+            # A checkout without git metadata: the lock path's rev-parse skipped. Recorded rather than raised, so only
+            # the tests that read the live tree skip (each through _live_tree, with this reason) and the scratch-repo,
+            # mock and wording tests still run; raised from here it skipped all of them as one line (round 2's fresh-2).
+            cls._no_repository = str(skip)
+
+    _no_repository = None                         # setUpClass's record of the lock path's skip, read by _live_tree
+
+    def _live_tree(self):
+        """The repo root for a test that reads the live checkout, or a skip carrying the lock path's reason when
+        setUpClass found no repository. Called first in such a test; a test that needs no repository never calls it."""
+        if self._no_repository:
+            self.skipTest(self._no_repository)
+        return Path(HERE).parent
+
+    @classmethod
+    def _remove_stale_plants(cls, root, env=None):
+        """Unlink every UNTRACKED REGULAR FILE in plans/ named like a plant, and nothing else; `env` is the environment
+        for the git call (a scratch repo's; None for the live tree, which is listed under _git_env_scrubbed() as well,
+        because the tracked set decides what is deleted: under a hook's foreign GIT_DIR the ambient listing was the
+        hook's index, empty of this checkout's plans/, so a plant-named file this checkout TRACKS was judged untracked
+        and unlinked from the working tree with every test green, round 2's fresh-4 road on the one destructive call).
+        A match git tracks is content, whoever wrote it. A directory or a symlink is not this test's plant (the plant
+        test writes a regular file), and unlinking a directory raised IsADirectoryError out of setUpClass and errored
+        the class on every run until a human deleted it, the shape the healer exists to end (round 2's Cluster B)."""
+        if env is None:
+            env = _git_env_scrubbed()
+        tracked = {entry for entry in _git_bytes(root, "ls-files", "-z", "--cached", "--", "plans", env=env).split(b"\0") if entry}
+        for old in (root / "plans").glob("routing-sweep-plant-*.md"):
+            if os.fsencode(str(old.relative_to(root))) in tracked or old.is_symlink() or not old.is_file():
+                continue
+            old.unlink(missing_ok=True)
+
+    @classmethod
+    def _lock_path(cls, root):
+        # The lock is a property of the CHECKOUT, not of the run: `git rev-parse --absolute-git-dir` is one path for
+        # every process over this worktree (an xdist worker, a second pytest run, a run under its own TMPDIR), and in
+        # a linked worktree it is <main>/.git/worktrees/<name>, so sibling worktrees lock apart. It is also OUTSIDE the
+        # scanned tree, on purpose: a lock file anywhere inside the worktree, plans/ or the root, would be an untracked,
+        # unignored file, and this scan reads exactly those. The first version sat in tempfile.gettempdir(), which
+        # tests/__init__.py repoints to a private root per process, so every process locked a different inode and
+        # nothing waited. Resolved under the scrubbed git environment (GIT_* removed, GIT_TEST_* kept) and NOT under
+        # the scratch repos' config overrides: a hook's GIT_DIR moves rev-parse to the hook's repository, and did move
+        # the lock there, so two processes over one checkout stopped sharing an inode (round 2's fresh-4); a
+        # machine-wide config does not move the git dir, and a global safe.directory must still resolve a
+        # dubious-ownership checkout: this is the one git call in a test run that reads the developer's global config,
+        # since the scrub drops conftest's GIT_CONFIG_GLOBAL and GIT_CONFIG_NOSYSTEM overrides with the rest and
+        # global_config=True leaves them out (every other call here puts them back; _git_env_scrubbed says which keys
+        # can matter). The residual: a checkout reachable ONLY through an exported GIT_DIR resolves nothing here, and
+        # its tests that read the live tree skip with rev-parse's reason.
+        return Path(os.fsdecode(_git_bytes(root, "rev-parse", "--absolute-git-dir", env=_git_env_scrubbed(global_config=True)).strip())) / "romp-routing-sweep.lock"
+
+    @classmethod
+    @contextlib.contextmanager
+    def _tree_lock(cls, exclusive, root=None):
+        """The repo root, held under a file lock that lives in the checkout's git dir (one per linked worktree), shared
+        by every process over this tree whatever its TMPDIR, and outside the scanned tree; flock, so a process that
+        dies drops it. A checkout without git metadata skips the tests that read the live tree, each with the lock
+        path's reason (the listing's skip, no git or no repository, met here first, in setUpClass, and recorded there;
+        pytest reports the skips per test, so no test is lost), while the scratch-repo, mock and wording tests still
+        run. A tree nested inside another repository is not that case and does not skip: rev-parse resolves the
+        enclosing repository's git dir. `root` is the live checkout unless a test passes a scratch repo, to pin the
+        lock file's creation there rather than read the live one, which whichever runner came first created."""
+        root = Path(HERE).parent if root is None else root
+        lock = cls._lock_path(root)
+        # The lock file is permanent and zero bytes: created once, by the first runner, under their umask (0o666 before
+        # it), and never removed, because removing a lock file races its next taker (a process holding the old inode
+        # holds a lock nobody who opens the new one can see). flock needs no write access, so every later runner,
+        # another user included, opens it read-only and locks it; the first version's open(lock, "a+") needed write
+        # permission and errored the class on a read-only lock file (round 2's fresh-3).
+        fd = os.open(lock, os.O_RDONLY | os.O_CREAT, 0o666)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH)
+            try:
+                yield root
+            finally:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
+
+    @staticmethod
+    def _flocks_this_process_holds(path):
+        """'READ' or 'WRITE' for every flock THIS process holds on `path`, read from /proc/locks (Linux: one line per lock,
+        "N: FLOCK ADVISORY WRITE <pid> <maj>:<min>:<inode> 0 EOF"). The composition pins below use it because a
+        non-blocking try on a second descriptor cannot tell this process's hold from a sibling xdist worker's: a
+        sibling's hold refuses the try whatever this process holds, so such a pin stayed green over a _places that
+        scanned outside its lock."""
+        ino = os.stat(path).st_ino
+        held = []
+        with open("/proc/locks") as fh:
+            for line in fh:
+                f = line.split()
+                if len(f) >= 6 and f[1] == "FLOCK" and int(f[4]) == os.getpid() and int(f[5].split(":")[2]) == ino:
+                    held.append(f[3])
+        return held
+
+    def _scan(self, root, env=None):
+        """{relative path: text} for every text file under `root` that git tracks or would track and that names a block;
+        `env` is the environment for the git call (a scratch repo's; None for the live tree, which is listed under
+        _git_env_scrubbed() as well: under a hook's foreign GIT_DIR the ambient listing was the hook's repository, and
+        every PLACES entry was reported gone)."""
+        # A skip only where the precedent skips (no git, no repository); a dubious-ownership 128 fails with git's
+        # safe.directory hint instead of a bare exit code, because a skip there would disarm the sweep while the run
+        # stays green.
+        if env is None:
+            env = _git_env_scrubbed()
+        listing = _git_bytes(root, "ls-files", "-z", "--cached", "--others", "--exclude-standard", env=env)
+        found = {}
+        # A name git lists is bytes. fsdecode keeps an undecodable byte as a surrogate (surrogateescape on POSIX), so the
+        # file is still read under its real name (os.fsencode gives the bytes back at the open) and a pin failure prints
+        # it in a %r; never errors="ignore" or "replace", which would point at a path that does not exist and drop the
+        # file silently. Decoded per entry, so any failure here stays bound to the entry it came from; the first version
+        # decoded the joined listing strictly, and one such name errored every test here naming an offset and no file.
+        for entry in listing.split(b"\0"):
+            if not entry:
+                continue
+            rel = os.fsdecode(entry)
+            path = root / rel
+            if path.is_symlink():
+                continue
+            try:
+                with open(path, "rb") as fh:
+                    head = fh.read(self.PROBE)
+                    if b"\0" in head:                 # a binary: its header is all that was read
+                        continue
+                    # The text rule is decided in pieces (the probe, then CHUNK bytes at a time) through an incremental
+                    # decoder, which holds a character straddling a piece boundary until its bytes arrive, so a file that
+                    # names no block costs a few pieces raw and decoded whatever its size (the CHUNK comment has the
+                    # shape). A block name straddling a boundary is found on the seam: the last OVERLAP characters of the
+                    # previous piece joined to the first OVERLAP of this one. A piece's text is let go once its seam is
+                    # kept, before the next piece is read and decoded, so one decoded piece is held at a time rather than
+                    # two. Only a matched file is read whole, since the pins need its text.
+                    decoder = codecs.getincrementaldecoder("utf-8")()
+                    tail, chunk, matched = "", head, False
+                    while chunk:
+                        try:
+                            text = decoder.decode(chunk)
+                        except UnicodeDecodeError:      # not UTF-8: skipped, as a whole-file decode failure skips it
+                            break
+                        if self.BLOCKS.search(text) or self.BLOCKS.search(tail + text[:self.OVERLAP]):
+                            matched = True
+                            break
+                        tail = text[-self.OVERLAP:] if len(text) >= self.OVERLAP else (tail + text)[-self.OVERLAP:]
+                        text = None
+                        chunk = fh.read(self.CHUNK)
+                    if not matched:                   # skipped either way, so the decoder needs no final flush
+                        continue
+                    fh.seek(0)
+                    raw = fh.read()
+            except OSError:                           # in the index, gone from the working tree (the open is what raises)
+                continue
+            try:
+                text = raw.decode()                   # the rule stays: the WHOLE file decodes, or the file is skipped
+            except UnicodeDecodeError:
+                continue
+            found[rel] = text
+        return found
+
+    def _places(self):
+        with self._tree_lock(exclusive=False) as root:
+            return self._scan(root)
+
+    def _pin_swept_set(self, found):
+        # Direction-aware: the two sides of the set difference want different remedies, and one sentence for both sent a
+        # contributor whose scratch note the scan had read to add it to PLACES, then red again once the note was deleted
+        # (round 1). %r throughout, so a name holding a surrogate (a non-UTF-8 name, fsdecoded) prints.
+        extra = sorted(set(found) - self.PLACES)
+        gone = sorted(self.PLACES - set(found))
+        parts = []
+        if extra:
+            parts.append("names a routed block and is not in PLACES: %r. The scan reads every text file git tracks or would "
+                         "track, so an untracked, unignored file counts: your own scratch (a note, a saved diff, an editor "
+                         "backup, a .orig or .rej) is removed from the tree or ignored (git's local exclude file, `git rev-parse "
+                         "--git-path info/exclude`), a new source or doc is read against the measured cells and then added to "
+                         "PLACES" % extra)
+        if gone:
+            parts.append("in PLACES and no longer names a routed block, or gone from the tree: %r. Remove it from PLACES (or "
+                         "restore the file)" % gone)
+        if parts:
+            self.fail("; ".join(parts))
+
+    def _pin_no_retired_wording(self, found):
+        # One pattern per phrase: its words in order with any run of whitespace between them, newlines and tabs included,
+        # which is what collapsing the text with " ".join(text.split()) matched before, at the cost of a second copy of
+        # every matched file's words; the regex reads the text in place. re.escape keeps a phrase's punctuation literal
+        # (one of them carries an underscore; the phrase itself is not written here, since this file is swept too).
+        patterns = {key: re.compile(r"\s+".join(re.escape(word) for word in phrase.split())) for key, phrase in RETIRED_WORDINGS.items()}
+        for rel, text in sorted(found.items()):
+            for key, phrase in sorted(RETIRED_WORDINGS.items()):
+                if patterns[key].search(text):
+                    # self.fail with the path, not assertNotIn or assertIsNone: the first would print the whole file, the
+                    # second the match object ahead of the words that matter; the scope clause, as in the swept-set pin
+                    self.fail("%r carries a wording a review round retired (%s): %r; the scan reads every text file git tracks "
+                              "or would track, so an untracked, unignored file counts and is removed or ignored rather than "
+                              "swept" % (rel, key, phrase))
+
+    def test_the_files_that_name_a_routed_block_are_the_swept_set(self):
+        self._live_tree()
+        self._pin_swept_set(self._places())
+
+    def test_no_swept_file_carries_a_retired_wording(self):
+        self._live_tree()
+        self._pin_no_retired_wording(self._places())
+
+    def test_the_file_set_is_read_from_the_tree_not_listed(self):
+        """A file planted in plans/, a directory the replaced walk never entered, naming a block and carrying a retired
+        wording, is found by the scan and reds both pins; without it both are green. Both states are measured in this one
+        test under the exclusive lock, the plant removed in a finally, its name unique to this process. A plant a killed
+        run left behind is removed by setUpClass before any test here scans, so a plant-named file in plans/ is a test
+        artifact, never content."""
+        self._live_tree()
+        with self._tree_lock(exclusive=True) as root:
+            clean = self._scan(root)
+            self._pin_swept_set(clean); self._pin_no_retired_wording(clean)                          # green without the plant
+            missing = sorted(self.PLACES)[0]
+            with self.assertRaises(AssertionError) as gone:                                          # the other direction, off the same scan
+                self._pin_swept_set({k: v for k, v in clean.items() if k != missing})
+            self.assertIn(missing, str(gone.exception), "a swept file that is gone is named")
+            self.assertIn("Remove it from PLACES", str(gone.exception), "with its own remedy")
+            self.assertNotIn("tracks or would track", str(gone.exception), "and not the extra clause")
+            plant = root / "plans" / ("routing-sweep-plant-%d-%s.md" % (os.getpid(), os.urandom(4).hex()))
+            rel = str(plant.relative_to(root))
+            try:
+                plant.write_text("A planted note naming stagesForeign, " + RETIRED_WORDINGS["push-inside-cycle"].replace(" ", "\n  ", 1) + ".\n")
+                #                the phrase broken across a line, so the whitespace-flexible match is exercised, not only the single-space form
+                planted = self._scan(root)
+                self.assertIn(rel, sorted(planted), "the scan reads the tree, untracked files included: the plant is found")
+                #                    the paths, not the dict: a failure would otherwise print seven files' text
+                with self.assertRaises(AssertionError) as swept:
+                    self._pin_swept_set(planted)
+                self.assertIn(rel, str(swept.exception), "the swept-set pin names the plant")
+                self.assertIn("tracks or would track", str(swept.exception), "and says the scan reads untracked files")
+                self.assertIn("removed from the tree or ignored", str(swept.exception), "and sends scratch out of the tree, not into PLACES")
+                self.assertNotIn("Remove it from PLACES", str(swept.exception), "the plant is an extra, so only that clause prints")
+                with self.assertRaises(AssertionError) as worded:
+                    self._pin_no_retired_wording(planted)
+                self.assertIn(rel, str(worded.exception), "the wording pin names the plant")
+                self.assertIn("push-inside-cycle", str(worded.exception), "and the wording it carries")
+                self.assertIn("tracks or would track", str(worded.exception), "and says the scan reads untracked files")
+            finally:
+                plant.unlink(missing_ok=True)
+            after = self._scan(root)
+            self.assertNotIn(rel, sorted(after), "the plant is gone")
+            self._pin_swept_set(after); self._pin_no_retired_wording(after)                          # green again
+
+    def test_a_plant_left_by_a_killed_run_is_removed_before_any_scan(self):
+        """A plant with a pid that is never this process (1), the shape a run killed inside the plant window leaves, is
+        removed by the healer setUpClass runs, and the tree scans green after it. The healer's placement is pinned on
+        setUpClass's source: inside the plant test it would heal only from the second run, since the wording pin sorts
+        first and reads the leftover (round 1's refuters ran both placements: it reds the wording pin there and nothing
+        here)."""
+        self._live_tree()
+        with self._tree_lock(exclusive=True) as root:
+            stale = root / "plans" / "routing-sweep-plant-1-stale0000.md"
+            try:
+                stale.write_text("A planted note naming stagesForeign, " + RETIRED_WORDINGS["push-inside-cycle"] + ".\n")
+                self._remove_stale_plants(root)
+                self.assertFalse(stale.exists(), "the healer removes a plant whose owner is not this process")
+                after = self._scan(root)
+                self.assertNotIn("plans/routing-sweep-plant-1-stale0000.md", sorted(after), "and the scan no longer sees it")
+                self._pin_swept_set(after); self._pin_no_retired_wording(after)                      # green once healed
+            finally:
+                stale.unlink(missing_ok=True)
+        source = inspect.getsource(RoutingStatements.setUpClass)
+        self.assertIn("with cls._tree_lock(exclusive=True)", source, "the healer runs under the exclusive lock")
+        self.assertIn("cls._remove_stale_plants(root)", source, "and is called from setUpClass, before any test here scans")
+        #             the call forms, not the names: a comment in setUpClass naming the helper must not satisfy this pin
+
+    def test_a_binary_file_is_rejected_on_its_first_bytes_not_read_whole(self):
+        """A 64 MiB sparse file whose first bytes hold a NUL and a block name after it (a probe-less scan would list it)
+        costs the scan its header and nothing more: the tracemalloc delta during the scan (its peak minus what was held
+        when it started, the tests/test_reader_stream_peak.py idiom, so a tracer already running does not red it) stays
+        under 128 x PROBE. The test measures that delta each run and prints it on failure; no run's value is quoted here.
+        Measured with tracemalloc per call, not ru_maxrss: that is a process high-water mark an earlier test can already
+        have raised past 64 MiB, which would let a scan that reads the blob whole pass."""
+        d, env = _scratch_repo(self)
+        (d / "control.md").write_text("a control note naming stagesForeign\n")    # so the absence below cannot pass vacuously
+        with open(d / "blob.bin", "wb") as fh:
+            fh.write(b"\0" * 16 + b"stagesForeign")
+            fh.truncate(64 * 2**20)
+        found, delta = _traced_delta(lambda: self._scan(d, env=env))
+        listed = os.fsdecode(_git_bytes(d, "ls-files", "-z", "--others", "--exclude-standard", env=env)).split("\0")
+        self.assertIn("blob.bin", listed, "git lists the blob, so the scan met it (a machine-wide ignore of .bin would hide it)")
+        self.assertIn("control.md", sorted(found))
+        self.assertNotIn("blob.bin", sorted(found), "a NUL in the first bytes rejects the file")
+        #                            the paths, not the dict: a failure would otherwise print the decoded blob, 64 MiB of it
+        self.assertLess(delta, 128 * self.PROBE, "the scan read the blob past its first bytes: delta %d bytes" % delta)
+
+    def test_a_large_text_file_that_names_no_block_costs_a_chunk_not_its_size(self):
+        """The text road of the same bound: a 64 MiB untracked, unignored text file that names no block costs the scan a
+        few pieces, not its size. Its content is the widest the decoder produces (lines of plain text with one character
+        outside the Basic Multilingual Plane in every CHUNK bytes, so every piece the scan decodes holds one and is a
+        str of four bytes a character; round 3, after a pin over plain ASCII was found to measure the easiest content,
+        which a wider CHUNK could pass while such a file broke the bound). The tracemalloc delta during the scan (the
+        tests/test_reader_stream_peak.py idiom, as in the blob pin above) stays under 128 x PROBE, recomputed every run
+        and printed on failure; a scan that read the file whole and decoded it whole held the bytes and the text both
+        (round 2's Cluster C, the half of round 1's size-bound ruling that had not landed)."""
+        d, env = _scratch_repo(self)
+        (d / "control.md").write_text("a control note naming stagesForeign\n")    # so the absence below cannot pass vacuously
+        line = b"a line of plain text that names no routed block\n"
+        piece = (line * (self.CHUNK // len(line) + 1))[:self.CHUNK]                # exactly CHUNK bytes, written 64 MiB's worth of times
+        piece = "\U0001F5BC".encode() + piece[4:]                                  # the one astral character per piece, four bytes of UTF-8
+        self.assertEqual(len(piece), self.CHUNK)
+        self.assertGreater(max(map(ord, piece.decode())), 0xFFFF, "a piece holds a character outside the Basic Multilingual Plane")
+        with open(d / "big.txt", "wb") as fh:
+            for _ in range(64 * 2**20 // self.CHUNK):
+                fh.write(piece)
+        self.assertEqual((d / "big.txt").stat().st_size, 64 * 2**20)
+        found, delta = _traced_delta(lambda: self._scan(d, env=env))
+        listed = os.fsdecode(_git_bytes(d, "ls-files", "-z", "--others", "--exclude-standard", env=env)).split("\0")
+        self.assertIn("big.txt", listed, "git lists the file, so the scan met it (a machine-wide ignore of .txt would hide it)")
+        self.assertIn("control.md", sorted(found))
+        self.assertNotIn("big.txt", sorted(found), "a file naming no block is not in the result")
+        self.assertLess(delta, 128 * self.PROBE, "the scan held more than a piece of a file that names no block: delta %d bytes" % delta)
+
+    def test_a_path_whose_name_is_not_utf8_is_read_and_named(self):
+        """One listed path whose NAME is not valid UTF-8 (git ls-files -z emits the raw bytes) used to error every test
+        here with a UnicodeDecodeError naming an offset into the joined listing and no file. The file is read under its
+        real name, and a failure of EITHER pin names it in a %r, surrogate and all, in a message that encodes as strict
+        UTF-8, which is what xdist's transport does to a report: the wording pin's first version formatted the path with
+        %s, so a bad-named file carrying a retired wording put a lone surrogate into its message, and under -n 4 the
+        failure was never reported (UnicodeEncodeError in the worker, INTERNALERROR ending the session in some runs),
+        the shape this test exists to refuse, in the other pin."""
+        d, env = _scratch_repo(self)
+        name = b"notes-caf\xe9.md"                                                # latin-1 e-acute, not UTF-8
+        with open(os.path.join(os.fsencode(str(d)), name), "wb") as fh:
+            fh.write(b"a note naming stagesForeign, " + RETIRED_WORDINGS["push-inside-cycle"].replace(" ", "\n  ", 1).encode() + b".\n")
+            #        the retired phrase broken across a line, so the wording pin reds on the file too
+        found = self._scan(d, env=env)                                            # must not raise
+        rel = os.fsdecode(name)                                                   # 'notes-caf\udce9.md'
+        self.assertIn(rel, sorted(found), "the file is read under its real name")
+        with self.assertRaises(AssertionError) as swept:
+            self._pin_swept_set(found)
+        with self.assertRaises(AssertionError) as worded:
+            self._pin_no_retired_wording(found)
+        for pin, failure in (("swept-set", swept.exception), ("wording", worded.exception)):
+            try:
+                str(failure).encode("utf-8")                                      # strict, as xdist's transport encodes a report
+            except UnicodeEncodeError as e:
+                self.fail("the %s pin's message holds a lone surrogate, so a worker could not report it: %s" % (pin, e))
+            #          str(e) spells the character as an escape, so this message itself encodes
+            self.assertIn(repr(rel), str(failure), "the %s pin names the file, surrogate and all" % pin)
+
+    def test_the_scan_skips_for_a_missing_git_or_repository_only(self):
+        """The listing's git call follows tests/test_entrypoints_executable.py's _index: git off PATH and a tree with no
+        repository skip; every other nonzero exit fails with git's own words and the exit code, never a skip, since a
+        skip there would disarm the sweep while the run stays green. The mock replaces the only subprocess call _scan
+        makes, so nothing is read and no lock is needed."""
+        root = Path(HERE).parent
+
+        def completed(stderr):
+            return subprocess.CompletedProcess(args=["git"], returncode=128, stdout=b"", stderr=stderr)
+        with mock.patch.object(subprocess, "run", side_effect=FileNotFoundError("git")):
+            with self.assertRaises(unittest.SkipTest):
+                self._scan(root)
+        with mock.patch.object(subprocess, "run",
+                               return_value=completed(b"fatal: not a git repository (or any of the parent directories): .git")):
+            with self.assertRaises(unittest.SkipTest):
+                self._scan(root)
+        # every other nonzero exit is a failure that carries git's words; a skip there is the hole this test pins, so it
+        # is a failure of the test, never a skip of it (the precedent's index_failure shape)
+        with mock.patch.object(subprocess, "run",
+                               return_value=completed(b"fatal: detected dubious ownership in repository at '/a/checkout'")):
+            try:
+                self._scan(root)
+            except unittest.SkipTest as skip:
+                self.fail("the scan skipped instead of failing: %s" % skip)
+            except AssertionError as failed:
+                message = str(failed)
+            else:
+                self.fail("the scan returned a listing instead of failing")
+        self.assertIn("dubious ownership", message, "the failure carries git's words")
+        self.assertIn("exited 128", message, "and the exit code")
+
+    def test_a_scratch_repo_skips_when_git_is_not_installed(self):
+        """The no-git world the lock's docstring describes, for the scratch-repo tests: _scratch_repo's init skips the
+        test through _git_bytes (round 3; the first version's bare subprocess.run raised FileNotFoundError, so a box
+        without git had five errors where the docstring promised skips). The mock replaces the only subprocess call the
+        fixture makes before it returns, so no repository is created; the temp directory it minted is removed by the
+        cleanup it registered first."""
+        with mock.patch.object(subprocess, "run", side_effect=FileNotFoundError("git")):
+            with self.assertRaises(unittest.SkipTest) as skipped:
+                _scratch_repo(self)
+        self.assertIn("git is not installed", str(skipped.exception), "the skip names the cause")
+
+    def test_the_lock_path_skips_for_a_missing_repository_only(self):
+        """The lock path's own skip road, pinned directly (round 2's fresh-2): a tree with no repository skips, through
+        _git_bytes; a dubious-ownership 128 fails with git's words, never a skip, since setUpClass records a skip as
+        'no repository' and would otherwise let a broken checkout pass its live-tree tests as skipped. The mock
+        replaces the only subprocess call _lock_path makes, so nothing is locked."""
+        root = Path(HERE).parent
+
+        def completed(stderr):
+            return subprocess.CompletedProcess(args=["git"], returncode=128, stdout=b"", stderr=stderr)
+        with mock.patch.object(subprocess, "run",
+                               return_value=completed(b"fatal: not a git repository (or any of the parent directories): .git")):
+            with self.assertRaises(unittest.SkipTest):
+                RoutingStatements._lock_path(root)
+        with mock.patch.object(subprocess, "run",
+                               return_value=completed(b"fatal: detected dubious ownership in repository at '/a/checkout'")):
+            try:
+                RoutingStatements._lock_path(root)
+            except unittest.SkipTest as skip:
+                self.fail("the lock path skipped instead of failing: %s" % skip)
+            except AssertionError as failed:
+                message = str(failed)
+            else:
+                self.fail("the lock path resolved instead of failing")
+        self.assertIn("dubious ownership", message, "the failure carries git's words")
+        self.assertIn("exited 128", message, "and the exit code")
+
+    def test_setupclass_records_a_missing_repository_instead_of_skipping_the_class(self):
+        """setUpClass turns the lock path's SkipTest into a record, _no_repository, that _live_tree reads: raised from
+        setUpClass it skipped all of the class as one line, the tests that need no repository included (round 2's
+        fresh-2). The record's PRIOR value is registered for restoring before the call, so a failure here cannot leave
+        the class marked and a checkout without a repository keeps its record: the first version restored None, and in
+        such a checkout the later live-tree tests of the same process lost the record, so the healer-composition test,
+        which runs the real setUpClass, failed instead of skipping (round 3, executed in an archive copy of the tree;
+        under xdist the two tests landed on different workers and the red did not show). A skip that escapes setUpClass
+        is caught and FAILED here: raised inside a test it would read as this test skipping, the skipping-pin shape (the
+        precedent's index_failure)."""
+        self.addCleanup(setattr, RoutingStatements, "_no_repository", RoutingStatements._no_repository)
+        with mock.patch.object(RoutingStatements, "_lock_path", side_effect=unittest.SkipTest("no repo")):
+            try:
+                RoutingStatements.setUpClass()
+            except unittest.SkipTest as skip:
+                self.fail("setUpClass raised the skip instead of recording it: %s" % skip)
+        self.assertEqual(RoutingStatements._no_repository, "no repo", "the skip's reason is recorded on the class")
+        with self.assertRaises(unittest.SkipTest) as skipped:
+            self._live_tree()
+        self.assertEqual(str(skipped.exception), "no repo", "and a live-tree test skips with it")
+
+    def test_the_lock_is_one_file_for_every_process_of_this_tree(self):
+        """A second process over this checkout with its own TMPDIR and no record of this run's system temp dir (the
+        two-sweep-slots case a run-keyed lock misses) computes the same lock path, and its exclusive hold is seen here:
+        a non-blocking flock in either mode is refused while it holds, a shared waiter stays blocked until it lets go
+        and gets in after. Event based: the child says when it holds and is told when to release; the one timed step is
+        the 0.5 s bound on the negative check that the waiter is still blocked, which a working lock cannot fail and a
+        missing one fails at once."""
+        root = self._live_tree()
+        holder = ("import sys\n"
+                  "from tests.test_perf_stats import RoutingStatements as R\n"
+                  "with R._tree_lock(exclusive=True) as root:\n"
+                  "    print(R._lock_path(root), flush=True)\n"
+                  "    sys.stdin.readline()\n")
+        child_tmp = tempfile.mkdtemp()                                # under this process's run root, swept with it
+        env = dict(os.environ, TMPDIR=child_tmp)
+        env.pop("ROMP_TESTS_SYSTEM_TMPDIR", None)                     # so the child's tests/__init__.py records its own
+        errlog = open(os.path.join(child_tmp, "holder-stderr.log"), "w+b")   # a file, not a pipe: the kernel load may talk
+        child = subprocess.Popen([sys.executable, "-c", holder], cwd=root, env=env, stdin=subprocess.PIPE,
+                                 stdout=subprocess.PIPE, stderr=errlog, text=True)
+        entered = threading.Event()
+
+        def waiter():
+            with self._tree_lock(exclusive=False):
+                entered.set()
+        thread = threading.Thread(target=waiter, daemon=True)
+        try:
+            line = child.stdout.readline()
+            if not line:
+                errlog.seek(0)
+                self.fail("the holder printed no lock path; its stderr:\n%s" % errlog.read().decode(errors="replace"))
+            self.assertEqual(Path(line.strip()), self._lock_path(root),
+                             "two processes with different TMPDIRs compute one lock path")
+            with open(self._lock_path(root), "rb") as fh:                 # read-only, as _tree_lock opens it
+                with self.assertRaises(BlockingIOError, msg="the holder's exclusive lock refuses a shared try here"):
+                    fcntl.flock(fh, fcntl.LOCK_SH | fcntl.LOCK_NB)
+                with self.assertRaises(BlockingIOError, msg="and an exclusive try"):
+                    fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            thread.start()
+            self.assertFalse(entered.wait(0.5), "a shared waiter is blocked while the holder holds")
+            child.stdin.write("\n"); child.stdin.flush()               # the holder releases and exits
+            self.assertTrue(entered.wait(30), "the waiter gets in once the holder lets go")
+            self.assertEqual(child.wait(30), 0)
+        finally:                                                      # a failing step never leaves a holder behind
+            try:
+                child.communicate(timeout=60)                         # closes its stdin, so the holder's readline ends
+            except subprocess.TimeoutExpired:
+                child.kill(); child.communicate()
+            if thread.is_alive():
+                thread.join(60)
+            errlog.close()
+
+    def test_the_lock_path_ignores_an_exported_git_dir(self):
+        """The lock path is resolved under the scrubbed git environment: with a GIT_DIR exported (a hook's, here a scratch
+        repo's), `git -C <root> rev-parse --absolute-git-dir` under the ambient environment answers the exported
+        repository, and a lock path built from that landed the lock in the hook's git dir, so two processes over one
+        checkout stopped sharing an inode (round 2's fresh-4, round 1's high on a new road). Both directions are run:
+        the ambient call moves, the lock path does not."""
+        root = self._live_tree()
+        d, env = _scratch_repo(self)
+        before = RoutingStatements._lock_path(root)
+        with mock.patch.dict(os.environ, {"GIT_DIR": str(d / ".git")}):
+            moved = os.fsdecode(_git_bytes(root, "rev-parse", "--absolute-git-dir").strip())
+            self.assertEqual(os.path.realpath(moved), os.path.realpath(d / ".git"),
+                             "the premise: under the ambient environment the exported GIT_DIR wins over -C")
+            self.assertEqual(RoutingStatements._lock_path(root), before, "and the lock path is unmoved by it")
+
+    def test_the_lock_is_taken_on_a_read_only_lock_file(self):
+        """The lock file is permanent, created by whichever runner came first under their umask, so a later runner may
+        meet one it cannot write (another user's, or a read-only git dir). flock needs no write access: the lock is taken
+        in both modes on a lock file of mode 0o444, where the first version's open(lock, "a+") raised PermissionError
+        and errored the class (round 2's fresh-3). The chmod touches the lock file in the git dir, outside the scanned
+        tree, and is restored by addCleanup; a kill in the window leaves 0o444, which the open tolerates."""
+        root = self._live_tree()
+        lock = self._lock_path(root)
+        mode = stat.S_IMODE(os.stat(lock).st_mode)
+        self.addCleanup(os.chmod, lock, mode)
+        try:
+            os.chmod(lock, 0o444)
+        except PermissionError as e:
+            self.skipTest("the lock file is not ours to chmod: %s" % e)
+        with self._tree_lock(exclusive=True) as held:
+            self.assertEqual(held, root)
+        with self._tree_lock(exclusive=False) as held:
+            self.assertEqual(held, root)
+
+    def test_the_lock_file_is_created_without_execute_bits_and_off_the_scanned_tree(self):
+        """Two properties of the lock file stated in the comments and pinned by nothing before round 3. The explicit
+        mode: os.open creates it 0o666 before the umask, so whatever the umask it has no execute bit and its owner can
+        read it (with the mode dropped, os.open's default 0o777 mints it executable under any umask that leaves a read
+        bit). The placement: the lock sits in the git dir, off the tree the scan lists, so `git ls-files --cached
+        --others --exclude-standard` over the checkout never lists it (inside the tree it would be an untracked,
+        unignored file this scan reads, the trap the _lock_path comment names). In a scratch repo, whose git dir has no
+        lock yet, so the creation is this test's own; the live checkout's lock was created by whichever runner came
+        first and says nothing about the code as it is now."""
+        d, env = _scratch_repo(self)
+        lock = RoutingStatements._lock_path(d)
+        self.assertFalse(lock.exists(), "a fresh scratch repo has no lock file yet, so the open below creates it")
+        with RoutingStatements._tree_lock(exclusive=True, root=d) as held:
+            self.assertEqual(held, d)
+        mode = stat.S_IMODE(os.stat(lock).st_mode)
+        self.assertEqual(mode & 0o111, 0, "no execute bit, whatever the umask: mode %o" % mode)
+        self.assertTrue(mode & 0o400, "readable by its owner: mode %o" % mode)
+        listed = _git_bytes(d, "ls-files", "-z", "--cached", "--others", "--exclude-standard", env=env).split(b"\0")
+        self.assertFalse(any(lock.name.encode() in entry for entry in listed),
+                         "the lock file is off the tree the scan lists: %r" % [os.fsdecode(e) for e in listed if lock.name.encode() in e])
+
+    def test_places_scans_while_holding_the_shared_lock(self):
+        """The composition, not its halves: _places reads the tree INSIDE its shared hold. The lock test above pins the
+        key and the primitive, and a _places that took the shared lock, dropped it and then scanned left every test here
+        green (round 2's two-direction sweep), with the sibling-scan red the lock exists to prevent open again."""
+        self._live_tree()
+        if not os.path.exists("/proc/locks"):
+            self.skipTest("/proc/locks is how a process's own flocks are read")
+        seen = []
+
+        def probe(root):
+            seen.append(self._flocks_this_process_holds(self._lock_path(root)))
+            return {}
+        with mock.patch.object(RoutingStatements, "_scan", side_effect=probe):
+            self._places()
+        self.assertEqual(seen, [["READ"]], "_places scans while this process holds the shared lock")
+
+    def test_the_healer_runs_while_holding_the_exclusive_lock(self):
+        """The composition, not its halves: setUpClass calls the healer INSIDE its exclusive hold. The source pin in the
+        stale-plant test checks that both call forms appear in setUpClass, and a healer moved to just after the with
+        block satisfies it (round 2's two-direction sweep); that is the placement the setUpClass comment warns could
+        delete a sibling's live plant. The healer is patched with a probe that records, from /proc/locks, the flock
+        modes this process holds on the lock file when it is called, so no plant is touched."""
+        self._live_tree()
+        if not os.path.exists("/proc/locks"):
+            self.skipTest("/proc/locks is how a process's own flocks are read")
+        seen = []
+
+        def probe(root):
+            seen.append(self._flocks_this_process_holds(self._lock_path(root)))
+        with mock.patch.object(RoutingStatements, "_remove_stale_plants", side_effect=probe):
+            RoutingStatements.setUpClass()
+        self.assertEqual(seen, [["WRITE"]], "setUpClass calls the healer while this process holds the exclusive lock")
+
+    def test_the_healer_removes_only_an_untracked_regular_plant(self):
+        """The glob's other edges, in a scratch repo rather than by a file written into the checkout (round 2's extra4-1:
+        the first version wrote a control file into the live plans/ and removed it only in a finally, round 1's defect 2
+        in the healer's own test). Narrowing the glob reds the stale-plant test; widening it to every *.md left every
+        test here green while setUpClass deleted every tracked file in plans/ from the working tree (round 2's
+        two-direction sweep), and a destructive operation whose scope can widen silently needs a guard on that side. Of
+        five plans/ entries the healer removes exactly one, the untracked regular plant: a plant git tracks (the index
+        is enough, no commit and no identity) is content whoever wrote it; a directory and a symlink named like a plant
+        are not this test's plant, and unlinking the directory raised out of setUpClass and errored the class on every
+        run; a file off the glob, the prefix shared and the shape not, is not touched."""
+        d, env = _scratch_repo(self)
+        plans = d / "plans"
+        plans.mkdir()
+        tracked = plans / "routing-sweep-plant-1-tracked00.md"
+        tracked.write_text("a tracked plan named like a plant\n")
+        _git_bytes(d, "add", "--", "plans/routing-sweep-plant-1-tracked00.md", env=env)
+        stale = plans / "routing-sweep-plant-1-stale0000.md"
+        stale.write_text("a dead run's leftover\n")
+        directory = plans / "routing-sweep-plant-1-dir00000.md"
+        directory.mkdir()
+        other = plans / "routing-sweep-other-1.md"
+        other.write_text("a plans/ note off the glob\n")
+        link = plans / "routing-sweep-plant-1-link0000.md"
+        link.symlink_to(other.name)
+        RoutingStatements._remove_stale_plants(d, env=env)                                       # must not raise
+        self.assertFalse(stale.exists(), "the untracked regular plant is removed")
+        self.assertTrue(tracked.exists(), "a plant git tracks survives")
+        self.assertTrue(directory.is_dir(), "a directory named like a plant survives")
+        self.assertTrue(link.is_symlink(), "a symlink named like a plant survives")
+        self.assertTrue(other.exists(), "a plans/ file off the glob survives")
+
+    def test_a_scratch_repos_git_runs_with_its_scrubbed_environment_not_the_callers(self):
+        """Every git call over a scratch repo runs with the environment _scratch_repo scrubbed for its init (round 2; the
+        first version scrubbed the init alone). Two things a caller's environment can hold, set here together: a hook's
+        GIT_DIR and GIT_INDEX_FILE for this checkout, which git obeys over `-C` (a scratch listing under them was this
+        checkout's index, every path skipped at the open, so the pins stayed green over a listing that was not the
+        scratch repo's), and a global config whose excludes hide the scratch file, which the ambient
+        environment honours and the scrubbed one, with no global config, does not."""
+        root = self._live_tree()
+        git_dir = os.fsdecode(_git_bytes(root, "rev-parse", "--absolute-git-dir").strip())
+        hostile = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, hostile, ignore_errors=True)
+        (hostile / "excludes").write_text("*.md\n")
+        (hostile / "gitconfig").write_text("[core]\n\texcludesFile = %s\n" % (hostile / "excludes"))
+        with mock.patch.dict(os.environ, {"GIT_DIR": git_dir, "GIT_INDEX_FILE": os.path.join(git_dir, "index"),
+                                          "GIT_CONFIG_GLOBAL": str(hostile / "gitconfig")}):
+            d, env = _scratch_repo(self)
+            (d / "note.md").write_text("a note naming stagesForeign\n")
+            listed = [entry for entry in _git_bytes(d, "ls-files", "-z", "--cached", "--others", "--exclude-standard",
+                                                    env=env).split(b"\0") if entry]
+            found = self._scan(d, env=env)
+        self.assertEqual(listed, [b"note.md"], "the scratch repo's listing is its own: not this checkout's index, and not "
+                                               "thinned by the caller's excludes")
+        self.assertEqual(sorted(found), ["note.md"], "and the scan over it reads that listing")
+
+    def test_the_live_tree_listings_ignore_an_exported_git_dir_and_a_global_config(self):
+        """The healer's and the scan's listings with no env, the live tree's road, resolve under the scrubbed environment
+        as the lock path does (round 3: round 2's fresh-4 rule grepped across the module's other git calls). In a
+        scratch repo standing for the checkout, with a second scratch repo's .git exported as GIT_DIR (a hook's) and
+        HOME moved to a directory whose .gitconfig excludes every .md (the developer's global config; it has to come
+        through HOME, since GIT_CONFIG_GLOBAL is itself a GIT_* variable the scrub drops): a plant-named file the first
+        repo TRACKS and its own .gitignore also names is listed by its own index and, read from the exported index, is
+        an ignored other, so the ambient `ls-files --cached -- plans` is empty (the premise, executed) and the healer
+        under it unlinked a tracked file while the scan under it found nothing; and an untracked note the global
+        excludes name is listed only with conftest's config overrides back in the environment, which the scrub puts
+        there. The scrubbed healer keeps the tracked plant, and the scrubbed scan reads both files."""
+        d, env = _scratch_repo(self)
+        other, _ = _scratch_repo(self)
+        home = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, home, ignore_errors=True)
+        (home / "excludes").write_text("*.md\n")
+        (home / ".gitconfig").write_text("[core]\n\texcludesFile = %s\n" % (home / "excludes"))
+        (d / ".gitignore").write_text("plans/\n")
+        (d / "plans").mkdir()
+        rel = "plans/routing-sweep-plant-1-tracked00.md"
+        tracked = d / rel
+        tracked.write_text("a tracked plan named like a plant, naming stagesForeign\n")
+        _git_bytes(d, "add", "-f", "--", rel, env=env)                                         # -f: its .gitignore names plans/
+        (d / "note.md").write_text("an untracked note naming stagesForeign\n")
+        with mock.patch.dict(os.environ, {"GIT_DIR": str(other / ".git"), "HOME": str(home), "XDG_CONFIG_HOME": str(home / "xdg")}):
+            self.assertEqual(_git_bytes(d, "ls-files", "-z", "--cached", "--", "plans"), b"",
+                             "the premise: under the ambient environment the exported GIT_DIR's index answers, and it holds nothing")
+            RoutingStatements._remove_stale_plants(d)                                          # env=None: the live tree's road
+            self.assertTrue(tracked.exists(), "a plant git tracks survives the healer under an exported foreign GIT_DIR")
+            self.assertEqual(sorted(self._scan(d)), ["note.md", rel],
+                             "the scan with no env lists this repo's index, not the exported repository's, and the "
+                             "developer's global excludes do not thin it")
+
+    def test_the_scrub_drops_git_variables_keeps_git_test_ones_and_puts_the_config_overrides_back(self):
+        """_git_env_scrubbed's three clauses, each pinned by nothing before round 3: a GIT_* variable is dropped, a
+        GIT_TEST_* one and any other name are kept, conftest's two config overrides are back unless global_config is
+        asked for, and then they are absent whatever the caller exported. Membership is asserted as a bool, never with
+        assertIn over the mapping: a failure would otherwise print the whole environment, keys a report must not carry."""
+        with mock.patch.dict(os.environ, {"GIT_PROBE_DROPPED": "1", "GIT_TEST_PROBE_KEPT": "1", "PROBE_KEPT": "1",
+                                          "GIT_CONFIG_GLOBAL": "/nonexistent/gitconfig", "GIT_CONFIG_NOSYSTEM": "0"}):
+            scrubbed = _git_env_scrubbed()
+            with_global = _git_env_scrubbed(global_config=True)
+        self.assertFalse("GIT_PROBE_DROPPED" in scrubbed, "a GIT_* variable is dropped")
+        self.assertEqual(scrubbed.get("GIT_TEST_PROBE_KEPT"), "1", "a GIT_TEST_* variable is kept")
+        self.assertEqual(scrubbed.get("PROBE_KEPT"), "1", "and so is every other name")
+        self.assertEqual((scrubbed.get("GIT_CONFIG_GLOBAL"), scrubbed.get("GIT_CONFIG_NOSYSTEM")), (os.devnull, "1"),
+                         "the config overrides are conftest's, not the caller's")
+        self.assertFalse("GIT_PROBE_DROPPED" in with_global, "a GIT_* variable is dropped with global_config too")
+        self.assertEqual(with_global.get("GIT_TEST_PROBE_KEPT"), "1", "and a GIT_TEST_* one kept")
+        self.assertEqual((with_global.get("GIT_CONFIG_GLOBAL"), with_global.get("GIT_CONFIG_NOSYSTEM")), (None, None),
+                         "with global_config the overrides are out, the caller's included")
+
+    def test_the_lock_path_alone_reads_the_global_config_and_the_two_listings_do_not(self):
+        """The composition the scrub pin above cannot see: which of the three live-tree git calls asks for which
+        environment. The mock records the env each call hands subprocess.run; the lock path's rev-parse runs without
+        conftest's config overrides (a global safe.directory must resolve a dubious-ownership checkout), the scan's and
+        the healer's listings run with them, and none of the three carries a GIT_DIR the caller exported. The root is
+        an empty temp directory, so the healer's glob finds nothing and nothing live is touched under the mock."""
+        root = Path(tempfile.mkdtemp())                                                        # under the run's root, swept with it
+        seen = []
+
+        def record(argv, **kwargs):
+            seen.append((argv[3], kwargs["env"]))                                              # argv: git -C <root> <subcommand> ...
+            return subprocess.CompletedProcess(args=argv, returncode=0, stdout=b"", stderr=b"")
+        with mock.patch.dict(os.environ, {"GIT_DIR": "/a/hooks/repository/.git"}):
+            with mock.patch.object(subprocess, "run", side_effect=record):
+                RoutingStatements._lock_path(root)
+                self._scan(root)
+                RoutingStatements._remove_stale_plants(root)
+        self.assertEqual([subcommand for subcommand, env in seen], ["rev-parse", "ls-files", "ls-files"],
+                         "one git call each: the lock path's rev-parse, the scan's listing, the healer's listing")
+        for i, (subcommand, env) in enumerate(seen):
+            self.assertFalse("GIT_DIR" in env, "call %d (%s) runs without the caller's GIT_DIR" % (i, subcommand))
+        self.assertFalse("GIT_CONFIG_GLOBAL" in seen[0][1], "the lock path's rev-parse reads the global config")
+        for i in (1, 2):
+            self.assertEqual(seen[i][1].get("GIT_CONFIG_GLOBAL"), os.devnull, "listing %d does not" % i)
+
+    def test_the_scan_honours_ignores_and_reads_a_nul_only_past_the_probe(self):
+        """The text rule's other edges, each stated in the class docstring and, before round 2, pinned by nothing: an
+        ignored file naming a block is not read (--exclude-standard); a NUL at byte PROBE-1 rejects a file and a NUL at
+        byte PROBE does not (the file is read whole and found, the case the docstring says grep -I hides); content that
+        is not UTF-8 is skipped, never read with a replacement character. Round 3's chunked read adds its seams: the
+        longest BLOCKS alternative split at both extremes, all but its last character before byte PROBE (the probe's
+        end) and its first character alone before byte PROBE + CHUNK (the first piece's end), is found across both, so
+        an overlap one character short of what the longest name needs reds here (the first fixtures split a shorter
+        name near its middle and stayed green at an overlap the longest name outgrew); and a file whose match sits in
+        the first piece with a byte that is not UTF-8 two pieces later is skipped, because the rule is that the WHOLE
+        file decodes, not the part read up to the match. In a scratch repo, so the live tree holds none of it."""
+        d, env = _scratch_repo(self)
+        (d / ".gitignore").write_text("ignored.md\n")
+        (d / "ignored.md").write_text("an ignored note naming stagesForeign\n")
+        prefix = b"a note naming stagesForeign\n"
+        name = max((a.replace("\\", "") for a in self.BLOCKS.pattern.split("|")), key=len).encode()   # the longest alternative
+        (d / "edge-nul.md").write_bytes(prefix + b"x" * (self.PROBE - 1 - len(prefix)) + b"\0\n")   # NUL at index PROBE-1
+        (d / "late-nul.md").write_bytes(prefix + b"x" * (self.PROBE - len(prefix)) + b"\0\n")       # NUL at index PROBE
+        (d / "latin1.md").write_bytes(b"caf\xe9 naming stagesForeign\n")
+        (d / "seam-head.md").write_bytes(b"x" * (self.PROBE - len(name) + 1) + name + b"\n")        # all but its last character before PROBE
+        (d / "seam-chunk.md").write_bytes(b"x" * (self.PROBE + self.CHUNK - 1) + name + b"\n")      # its first character before PROBE + CHUNK
+        (d / "latin1-late.md").write_bytes(prefix + b"x" * (self.PROBE + 2 * self.CHUNK) + b"caf\xe9\n")
+        self.assertEqual((d / "edge-nul.md").read_bytes().index(b"\0"), self.PROBE - 1)
+        self.assertEqual((d / "late-nul.md").read_bytes().index(b"\0"), self.PROBE)
+        self.assertEqual((d / "seam-head.md").read_bytes().index(name), self.PROBE - len(name) + 1)
+        self.assertEqual((d / "seam-chunk.md").read_bytes().index(name), self.PROBE + self.CHUNK - 1)
+        self.assertGreater((d / "latin1-late.md").read_bytes().index(b"\xe9"), self.PROBE + 2 * self.CHUNK)
+        self.assertEqual(sorted(self._scan(d, env=env)), ["late-nul.md", "seam-chunk.md", "seam-head.md"],
+                         "ignored, NUL-in-probe and non-UTF-8 files are skipped, a NUL past the probe is read, a block name "
+                         "across either seam is found, and a bad byte after a match still skips the file")
+
+    def test_the_wording_pin_needs_whitespace_between_the_words(self):
+        """The pattern's other edge: two words of a retired phrase run together are not the phrase. The plant test pins
+        the wide direction (a phrase broken across a line matches), and a pattern of zero or more whitespace between the
+        words passed every test here (round 2's two-direction sweep). The literal is split so this module, which is
+        swept, does not carry the phrase."""
+        near = {"near-miss.md": "A note: inside its" + "cycle, never the phrase.\n"}
+        self._pin_no_retired_wording(near)                                                       # must not raise
+
+    def test_this_modules_top_keys_comment_names_both_families(self):
+        line = next(l for l in Path(__file__).read_text().splitlines() if l.strip().startswith('"stagesForeign",'))
+        self.assertIn("push stage", line + " ", "the TOP_KEYS comment names the push family beside the jobs family")
+
+    def test_probe_is_eight_kib_and_every_spelling_of_it_reads_the_constant(self):
+        """PROBE's VALUE, pinned by nothing before round 3: every fixture here derives from self.PROBE, so halving the
+        constant left every test green while the prose spelled a probe the code no longer used (round 2's Cluster D).
+        The value is eight kibibytes, a whole number of them, and every '<n> KiB' or '<n>KiB' in this class's source
+        (docstrings and comments; read through inspect.getsource, so the pin is indentation-relative and 3.13's
+        docstring dedent does not move it) spells that value and no other: every KiB figure in the class is taken to be
+        the probe, so another quantity spelled in KiB here reds until it is written another way. The literal appears
+        once, at the assignment, which must stay a literal (a product there reds this count), so a typed copy in a
+        comment reds here rather than drifting. The value is written as a product below so this pin is not itself the
+        second literal."""
+        self.assertEqual(RoutingStatements.PROBE, 8 * 1024)
+        self.assertEqual(RoutingStatements.PROBE % 1024, 0, "a whole number of KiB, or the rendered spelling below would round")
+        spelled = "%d KiB" % (RoutingStatements.PROBE // 1024)
+        source = inspect.getsource(RoutingStatements)
+        hits = ["%s KiB" % n for n in re.findall(r"\b(\d+)\s?KiB\b", source)]         # both spacings read as one
+        self.assertTrue(hits, "the class spells the probe in KiB somewhere; a pin over no spelling would pass vacuously")
+        self.assertEqual(set(hits), {spelled}, "every KiB spelling in the class is the constant's value")
+        self.assertEqual(source.count(str(RoutingStatements.PROBE)), 1, "the literal appears once, at the assignment")
+        self.assertTrue("one-directional proxy" in RoutingStatements.__doc__,          # assertTrue, not assertIn: a failure
+                        "the class docstring says the block-name regex finds the files that NAME a block and no other "
+                        "prose (round 1's fresh-2)")                                       # would otherwise print the whole docstring
+
+    def test_overlap_covers_the_longest_block_name_and_the_comment_spells_it(self):
+        """OVERLAP's WIDTH, pinned by nothing before round 3: the first seam fixtures split a shorter name near its middle,
+        so an overlap the longest alternative had outgrown left every test green while the scan missed that name across
+        a seam (Cluster D's one-direction shape, on the overlap). A name split across a piece boundary leaves at most all
+        but one of its characters on one side, and the seam search joins the last OVERLAP characters of the previous
+        piece to the first OVERLAP of the next, so OVERLAP must be at least one less than the longest alternative's
+        length. The length is derived from BLOCKS, which this pin first requires to be a flat alternation of literals
+        (the split on | and the unescape assume that; a group or a class added to it needs this derivation rewritten),
+        and the OVERLAP comment's '(<name>, <n> characters)' spelling is checked against both, so a longer alternative
+        added to BLOCKS reds here until the overlap and the comment follow it."""
+        alternatives = [a.replace("\\", "") for a in RoutingStatements.BLOCKS.pattern.split("|")]
+        self.assertEqual("|".join(re.escape(a) for a in alternatives), RoutingStatements.BLOCKS.pattern,
+                         "BLOCKS is a flat alternation of literals, which the derivation below assumes")
+        longest = max(alternatives, key=len)
+        self.assertGreaterEqual(RoutingStatements.OVERLAP, len(longest) - 1,
+                                "the overlap covers the longest block name split one character short of a piece boundary")
+        source = inspect.getsource(RoutingStatements)
+        hits = re.findall(r"\(([\w.]+), (\d+) characters\)", source)
+        self.assertEqual(hits, [(longest, str(len(longest)))],
+                         "the OVERLAP comment spells the longest alternative and its length, once, and they are BLOCKS's")
 
 
 class ProcessStatsFallback(unittest.TestCase):
@@ -1453,20 +3044,420 @@ class GoalIoCounters(unittest.TestCase):
 
 class JudgeCpu(unittest.TestCase):
     """The judge's CPU is attributed from two places: the tier threads (_run_tier) and every future the
-    tiers submit to judge.py's pools (_TimedPool, bound to the module's ThreadPoolExecutor name)."""
+    tiers submit to judge.py's pools (_TimedPool, bound to the module's ThreadPoolExecutor name). The workers'
+    share reaches the kernel's LIVE counters as each future ends, through the sink the kernel installs at load
+    (jd.set_worker_cpu_sink(_PERF_STATS.judge_worker_cpu)), so a live read of the stats dict and a snapshot()
+    read agree and a delta may take either, on the collector that holds the sink (a served block carries
+    cpu_ms_workers exactly then, review round 1, 2026-09-19); judge.py's own counter (judge_worker_cpu_ms) stays for the serve
+    child, whose module object no kernel ever loads. Until 2026-09-18 snapshot() added that module counter to
+    its COPY at read time and the live dict never carried it: two readings of one key disagreed by the whole
+    total, and a delta from one of each was wrong (tests/test_judges_process.py paid, f5ba16832)."""
+
+    def _arm(self, stats):
+        """Point judge.py's sink at `stats` for this test, recording every delta it is handed. judge.py is one module
+        object for every kernel a test process loads and the LAST load holds the sink, so a test that asserts on its
+        own kernel's counters arms them itself; the previous sink comes back at cleanup. The recording wrapper is laid
+        over judge_worker_cpu ON THE INSTANCE (the class method stays, the _HttpWatch shape) BEFORE the arming, so the
+        collector's own road (arm_judge_worker_sink, which opens cpu_ms_workers at 0.0 as the kernel's load does)
+        installs the wrapper itself and holds_judge_worker_sink stays true under the harness: a wrapper installed
+        beside the collector's method would read as a displacement and the served block would drop the key (review
+        round 1, 2026-09-19: presence follows who holds the sink, and a closure over the method is not the method)."""
+        jd = km.jd
+        received = []
+        real = km._PerfStats.judge_worker_cpu
+
+        def sink(ms):
+            received.append(ms)
+            real(stats, ms)
+        stats.judge_worker_cpu = sink
+        self.addCleanup(lambda: stats.__dict__.pop("judge_worker_cpu", None))   # the instance attribute goes; the method shows again
+        prev = stats.arm_judge_worker_sink()
+        self.addCleanup(jd.set_worker_cpu_sink, prev)
+        return received
+
+    @staticmethod
+    def _live(stats):
+        with stats.lock:
+            return dict(stats.judge)
 
     def test_pool_workers_account_their_cpu(self):
         jd = km.jd
         self.assertTrue(issubclass(jd.ThreadPoolExecutor, concurrent.futures.ThreadPoolExecutor),
                         "every pool in judge.py is a real executor that also accounts")
+        received = self._arm(km._PERF_STATS)
         before = jd.judge_worker_cpu_ms()
+        live0 = self._live(km._PERF_STATS)
         with jd.ThreadPoolExecutor(max_workers=2) as ex:
             self.assertEqual(ex.submit(lambda a, b=1: a + b, 2, b=3).result(), 5, "args and kwargs pass through")
             ex.submit(_burn_cpu, 0.005).result()
         grew = jd.judge_worker_cpu_ms() - before
         self.assertGreaterEqual(grew, 4.0, "about 5 ms of a worker's CPU landed")
         self.assertLess(grew, 500.0)
-        self.assertEqual(km._PERF_STATS.snapshot()["judge"]["cpu_ms_workers"], jd.judge_worker_cpu_ms())
+        self.assertAlmostEqual(sum(received), grew, places=6, msg="the sink is handed the same deltas the module counter takes")
+        snap = km._PERF_STATS.snapshot()["judge"]
+        self.assertAlmostEqual(snap["cpu_ms_workers"] - live0["cpu_ms_workers"], sum(received), places=6,
+                               msg="the snapshot's cpu_ms_workers is what the sink received, copied from the live dict")
+        self.assertAlmostEqual(snap["cpu_ms_sum"] - live0["cpu_ms_sum"], sum(received), places=6,
+                               msg="and cpu_ms_sum grew by the same: the workers' share is in the sum at write time")
+
+    def test_a_live_read_and_a_snapshot_agree_on_cpu_ms_sum_after_pool_work(self):
+        """(i) One source. A private collector takes the sink; after real pool work its live dict and its snapshot carry
+        the same cpu_ms_sum and cpu_ms_workers, and the snapshot reads NOTHING from judge.py's counter (that counter is
+        stubbed to a billion for one read and the snapshot does not move). Red before 2026-09-18 on the first
+        assertion: the snapshot added judge_worker_cpu_ms() to its copy, the live dict had no workers' share."""
+        jd = km.jd
+        st = km._PerfStats()
+        received = self._arm(st)
+        with jd.ThreadPoolExecutor(max_workers=1) as ex:
+            ex.submit(_burn_cpu, 0.005).result()
+        self.assertGreaterEqual(sum(received), 4.0, "about 5 ms of a worker's CPU went through the sink")
+        live = self._live(st)
+        snap = st.snapshot()["judge"]
+        self.assertEqual(snap["cpu_ms_sum"], live["cpu_ms_sum"], "the snapshot copies the live sum and adds nothing at read time")
+        self.assertEqual(snap["cpu_ms_workers"], live["cpu_ms_workers"], "the workers' share is a live counter, copied")
+        self.assertAlmostEqual(live["cpu_ms_workers"], sum(received), places=6)
+        self.assertAlmostEqual(live["cpu_ms_sum"], sum(received), places=6, msg="no tier ran: the sum is the workers' share alone")
+        with mock.patch.object(jd, "judge_worker_cpu_ms", return_value=1e9):
+            again = st.snapshot()["judge"]
+        self.assertEqual(again["cpu_ms_sum"], live["cpu_ms_sum"], "judge.py's module counter is not an input to the snapshot")
+        self.assertEqual(again["cpu_ms_workers"], live["cpu_ms_workers"])
+
+    def test_with_no_sink_the_module_counter_alone_accumulates_and_the_kernels_dict_stands_still(self):
+        """(iii) The sink is optional: judge.py with none set (the serve child's process, a standalone romp-judge run)
+        keeps its own counter, which _serve_pass reads for workerCpuMs, and writes to no kernel."""
+        jd = km.jd
+        prev = jd.set_worker_cpu_sink(None)
+        self.addCleanup(jd.set_worker_cpu_sink, prev)
+        live0 = self._live(km._PERF_STATS)
+        before = jd.judge_worker_cpu_ms()
+        with jd.ThreadPoolExecutor(max_workers=1) as ex:
+            ex.submit(_burn_cpu, 0.005).result()
+        self.assertGreaterEqual(jd.judge_worker_cpu_ms() - before, 4.0, "the module counter took the worker's CPU")
+        live1 = self._live(km._PERF_STATS)
+        self.assertEqual((live1["cpu_ms_workers"], live1["cpu_ms_sum"]), (live0["cpu_ms_workers"], live0["cpu_ms_sum"]),
+                         "no sink, no write to the kernel's counters")
+
+    def test_an_unarmed_collector_serves_no_workers_key_and_the_arming_opens_it_at_a_genuine_zero(self):
+        """(ii) The review ruling on the write-time fold (2026-09-18): an unarmed sink must be distinguishable from a
+        genuine zero. A collector nothing armed has no cpu_ms_workers in its live dict or its snapshot (red before: the
+        constructor opened the key at 0.0, the reading a process that never armed the sink would have served as fact);
+        arm_judge_worker_sink opens it at 0.0 with no pool future yet run, a genuine zero, and installs this collector's
+        writer; pool work then moves it; and a write through judge_worker_cpu on a collector that does not hold the sink
+        is a record, not a report: the live dict takes the key and the served block, what the user reads, drops it while
+        its cpu_ms_sum carries the write (review round 2, 2026-09-19: this cell had asserted the live dict alone and
+        called the write the evidence of reporting). cpu_ms_sum is served in every case: the tier threads' and the child's
+        CPU."""
+        jd = km.jd
+        st = km._PerfStats()
+        self.assertNotIn("cpu_ms_workers", self._live(st), "unarmed: no key in the live dict")
+        self.assertNotIn("cpu_ms_workers", st.snapshot()["judge"], "the snapshot copies the live dict: no key, not a zero")
+        self.assertEqual(st.snapshot()["judge"]["cpu_ms_sum"], 0.0, "cpu_ms_sum is served regardless")
+        prev = st.arm_judge_worker_sink()
+        self.addCleanup(jd.set_worker_cpu_sink, prev)
+        self.assertEqual(self._live(st).get("cpu_ms_workers"), 0.0, "armed, no future yet: a genuine zero, present")
+        self.assertEqual(st.snapshot()["judge"]["cpu_ms_workers"], 0.0)
+        installed = jd.set_worker_cpu_sink(None)
+        self.assertIs(getattr(installed, "__self__", None), st, "the arming installed this collector's writer: %r" % (installed,))
+        self.assertEqual(installed.__name__, "judge_worker_cpu")
+        st.arm_judge_worker_sink()
+        with jd.ThreadPoolExecutor(max_workers=1) as ex:
+            ex.submit(_burn_cpu, 0.005).result()
+        snap = st.snapshot()["judge"]
+        self.assertGreaterEqual(snap["cpu_ms_workers"], 4.0, "the value, once a future ran: %r" % snap["cpu_ms_workers"])
+        self.assertEqual(snap["cpu_ms_sum"], snap["cpu_ms_workers"], "no tier ran: the sum is the workers' share")
+        bare = km._PerfStats()
+        bare.judge_worker_cpu(2.5)
+        served = bare.snapshot()["judge"]
+        self.assertNotIn("cpu_ms_workers", served, "a write on a collector that does not hold the sink is a record, not a "
+                         "report: the served block drops the key (review round 2, 2026-09-19)")
+        self.assertEqual(served["cpu_ms_sum"], 2.5, "while cpu_ms_sum carries the write")
+        self.assertEqual(self._live(bare).get("cpu_ms_workers"), 2.5, "the live dict holds the record")
+
+    def test_the_reference_and_the_docstring_say_the_key_is_absent_until_the_sink_is_armed(self):
+        """(e) The two places PR 788 wrote its interim one-source sentence, the _PerfStats docstring's judge entry and
+        docs/reference.md's judge bullet, now describe the write-time fold and the unarmed shape: the arming creates
+        cpu_ms_workers, a block without it is from a collector nothing armed, and neither still says a delta comes from
+        one source, never one of each (the review ruling, 2026-09-18)."""
+        doc = km._PerfStats.__doc__ or ""
+        ref = Path(HERE).parent.joinpath("docs", "reference.md").read_text(encoding="utf-8")
+        for name, text in (("the _PerfStats docstring", doc), ("docs/reference.md", ref)):
+            text = re.sub(r"\s+", " ", text)      # a re-wrap is not a change of meaning (review round 2, 2026-09-19: the gap
+            #                                         bound below counted the docstring's indentation, 56 of its 60)
+            self.assertRegex(text, r"the arming is what creates\s+`?cpu_ms_workers`?", name)
+            self.assertRegex(text, r"straddles the displacement", "%s carries the hedge: a keyless block cannot say how much of a "
+                             "window's figure is the workers' (review round 2, 2026-09-19)" % name)
+            self.assertRegex(text, r"collector nothing armed", name)
+            self.assertRegex(text, r"workers' share not\s+reported", "%s names the CLI's wording for the absent key" % name)
+            self.assertNotRegex(text, r"one source,\s+never\s+one\s+of\s+each", "%s: PR 788's interim sentence is gone" % name)
+            self.assertRegex(text, r"later kernel load[\s\S]{0,60}displaced", "%s names the displaced collector as a keyless shape "
+                             "(review round 1, 2026-09-19: it was listed as one and served the key frozen)" % name)
+            self.assertNotRegex(text, r"earlier kernel load\s+in a test process after a later load re-armed",
+                                "%s: the sentence round 1 found false is gone" % name)
+        # the two CLI copies of the same predicate, bin/romp's comment over the "not reported" note and the bats test's,
+        # read with their comment markers stripped and whitespace normalised: each names the displaced collector and
+        # carries the hedge, and neither says the share is absent from the figure (review round 2, 2026-09-19: bin/romp's
+        # copy had dropped the hedge its siblings carry, and the bats copy still stated the closed rule from before round 1)
+        top = Path(HERE).parent
+        for name, path in (("bin/romp", top / "bin" / "romp"), ("tests/romp-perf.bats", top / "tests" / "romp-perf.bats")):
+            text = re.sub(r"\s+", " ", re.sub(r"(?m)^[ \t]*#", " ", path.read_text(encoding="utf-8")))
+            self.assertRegex(text, r"later kernel load[\s\S]{0,60}displaced", "%s names the displaced collector" % name)
+            self.assertRegex(text, r"not reported", name)
+            self.assertRegex(text, r"straddles", "%s carries the hedge: a window that straddles the displacement carries the share" % name)
+            self.assertNotRegex(text, r"share is not in the window's figure", "%s: the share may be in the figure; the note says the "
+                                "block cannot split it" % name)
+            self.assertNotRegex(text, r"has no pool workers' share in it", "%s: the closed rule from before round 1 is gone" % name)
+
+    def test_judge_worker_cpus_docstring_states_a_write_as_a_record_and_presence_by_who_holds_the_sink(self):
+        """The writer's own docstring follows the serving rule round 1 installed (review round 2, 2026-09-19: it still said a
+        write was itself the evidence that the share is reported, while snapshot() pops the key from any collector that
+        does not hold the sink, so a wrapper installed beside the method records and reports nothing, the opposite of the
+        promise). Whitespace is normalised first, so a re-wrap cannot red it. Kept apart from the class-docstring pin above
+        on purpose: this method's docstring carries none of that text."""
+        doc = re.sub(r"\s+", " ", km._PerfStats.judge_worker_cpu.__doc__ or "")
+        self.assertNotRegex(doc, r"write is itself the evidence", "the retired rule is gone")
+        self.assertRegex(doc, r"a served block carries the key only while this collector is the sink judge\.py holds",
+                         "the serving rule, in the writer's own words")
+        self.assertRegex(doc, r"holds_judge_worker_sink", "and it names the question snapshot() asks")
+        self.assertRegex(doc, r"RECORD, not a report", "a write is a record")
+
+    def test_judge_pys_pool_site_line_is_the_ast_walks_enumeration(self):
+        """kernel/judge.py carries ONE machine-readable line under the _TimedPool rebind, `# POOL SITES: run_pass -> ... |
+        main only -> ...`, and this test derives that line from the file and compares (review round 2, 2026-09-19: PR
+        792's rationale had enumerated the sites by hand, ten where the file has eleven, in place of a parenthetical
+        that claimed a check and was false; a written list is the same artifact with more words, so the list is derived
+        here and a new site reds this test until the line names it). THE PREDICATE. A pool site is an ast.Call whose
+        callee is the bare name ThreadPoolExecutor or _TimedPool: after the rebind every such construction builds
+        _TimedPool, whose submit wrapper feeds the sink. An attribute-form construction (concurrent.futures.
+        ThreadPoolExecutor(...)) would bypass the rebind and is asserted absent. A site is named by the module-level def
+        whose span holds it, in source order, one name per construction. run_pass REACHES a site when a walk from run_pass
+        over the Name loads of module-level functions inside each function's body reaches its owner: an over-approximation
+        of calls (a function passed as a value counts as reached), so "main only" is what the walk proves: no name road
+        from run_pass at all, and main the one module-level function that reaches the owner. Every owner is reached from
+        main (its subcommand dispatch)."""
+        import ast
+        path = Path(HERE).parent / "kernel" / "judge.py"
+        src = path.read_text(encoding="utf-8")
+        tree = ast.parse(src)
+        top = {n.name: n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.ClassDef))}
+
+        def owner_of(lineno):
+            for name, node in top.items():
+                if node.lineno <= lineno <= node.end_lineno:
+                    return name
+            return "<module>"
+        sites, bypass = [], []
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            f = node.func
+            if isinstance(f, ast.Name) and f.id in ("ThreadPoolExecutor", "_TimedPool"):
+                sites.append((node.lineno, owner_of(node.lineno)))
+            elif isinstance(f, ast.Attribute) and f.attr in ("ThreadPoolExecutor", "_TimedPool"):
+                bypass.append((node.lineno, owner_of(node.lineno)))
+        sites.sort()
+        self.assertEqual(bypass, [], "a pool built past the rebind would feed no sink: %r" % (bypass,))
+        self.assertNotIn("<module>", [o for _, o in sites], "every pool site sits inside a module-level def: %r" % (sites,))
+        refs = {}
+        for name, node in top.items():
+            refs[name] = {n.id for n in ast.walk(node) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load) and n.id in top}
+
+        def reach(start):
+            seen, stack = set(), [start]
+            while stack:
+                x = stack.pop()
+                if x not in seen:
+                    seen.add(x); stack.extend(refs.get(x, ()))
+            return seen
+        from_pass, from_main = reach("run_pass"), reach("main")
+        owners = [o for _, o in sites]
+        self.assertEqual([o for o in owners if o not in from_main], [], "every pool site is reached from main")
+        for owner in sorted({o for o in owners if o not in from_pass}):
+            who = sorted(f for f in top if f != owner and owner in reach(f))
+            self.assertEqual(who, ["main"], "%s is reached from main alone, which is what the line's 'main only' claims" % owner)
+        derived = "# POOL SITES: run_pass -> %s | main only -> %s" % (" ".join(o for o in owners if o in from_pass),
+                                                                      " ".join(o for o in owners if o not in from_pass))
+        written = [ln for ln in src.splitlines() if ln.startswith("# POOL SITES: ")]
+        self.assertEqual(len(written), 1, "exactly one POOL SITES line in kernel/judge.py: %r" % (written,))
+        self.assertEqual(written[0], derived, "kernel/judge.py's POOL SITES line is the AST walk's enumeration; the walk found %d "
+                         "constructions at lines %s. Update the line to the derived text, and if a site moved between the two "
+                         "groups, read what the kernel's arming rests on (the rebind's comment)" % (len(sites), [ln for ln, _ in sites]))
+
+    def test_the_kernel_arms_the_sink_at_load(self):
+        """A kernel load installs its collector's judge_worker_cpu as judge.py's sink and opens judge.cpu_ms_workers at
+        0.0 (armed, no pool future yet: a genuine zero, present), and a judge module no kernel has loaded has none, as a
+        collector built beside the kernel's has no key. Observed in a child process: judge.py is one module object per
+        process and every kernel load re-arms it, so only a load this test controls can show the state before and after."""
+        state = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, state, True)
+        env = dict(os.environ)
+        env["ROMP_STATE_DIR"] = state
+        env["ROMP_KERNEL_NO_OPEN"] = "1"
+        env.setdefault("ROMP_SERVE_TOKEN", "test-token-DO-NOT-USE")
+        code = ("import sys; sys.path.insert(0, %r)\n"
+                "from romp_load import load_source\n"
+                "load_source('romp_event_model', %r)\n"
+                "jd = load_source('romp_judge', %r)\n"
+                "assert jd.set_worker_cpu_sink(None) is None, 'no kernel loaded: no sink'\n"
+                "km = load_source('romp_kernel', %r)\n"
+                "sink = jd.set_worker_cpu_sink(None); jd.set_worker_cpu_sink(sink)\n"   # read and put back: a cleared sink drops the key
+                "assert getattr(sink, '__self__', None) is km._PERF_STATS, sink\n"
+                "assert sink.__name__ == 'judge_worker_cpu', sink\n"
+                "snap = km._PERF_STATS.snapshot()['judge']\n"
+                "assert snap.get('cpu_ms_workers') == 0.0, snap.get('cpu_ms_workers')\n"
+                "assert 'cpu_ms_workers' not in km._PerfStats().snapshot()['judge'], 'a collector nothing armed: no key'\n"
+                # a SECOND kernel load in the same process, the test-suite shape (review round 1, 2026-09-19): it re-executes
+                # judge.py and arms its own collector; the first collector is displaced and its served block drops the key,
+                # while its live dict keeps the frozen record; the pool work that follows lands in the second collector only.
+                # The displaced collector's block is asserted first, so a run on the code before this round fails on it.
+                "km2 = load_source('romp_kernel_second_load', %r)\n"
+                "first, second = km._PERF_STATS, km2._PERF_STATS\n"
+                "assert 'cpu_ms_workers' not in first.snapshot()['judge'], 'displaced: no key, never the frozen 0.0: %%r' %% first.snapshot()['judge'].get('cpu_ms_workers')\n"
+                "assert first.judge.get('cpu_ms_workers') == 0.0, 'the live dict keeps the record it took while armed'\n"
+                "assert second.snapshot()['judge']['cpu_ms_workers'] == 0.0\n"
+                "assert jd.worker_cpu_sink() == second.judge_worker_cpu, jd.worker_cpu_sink()\n"
+                "assert second.holds_judge_worker_sink() and not first.holds_judge_worker_sink()\n"
+                "import time\n"
+                "def burn(s):\n"
+                "    t = time.thread_time()\n"
+                "    while time.thread_time() - t < s: pass\n"
+                "with jd.ThreadPoolExecutor(max_workers=1) as ex: ex.submit(burn, 0.005).result()\n"
+                "assert second.snapshot()['judge']['cpu_ms_workers'] >= 4.0, second.snapshot()['judge']\n"
+                "assert 'cpu_ms_workers' not in first.snapshot()['judge'], 'still none on the displaced collector'\n"
+                "assert first.judge.get('cpu_ms_workers') == 0.0, 'nothing lands in a displaced collector'\n"
+                "print('armed')\n"
+                % (HERE, os.path.join(BIN, "romp-event-model"), os.path.join(BIN, "romp-judge"), os.path.join(BIN, "romp-kernel"),
+                   os.path.join(BIN, "romp-kernel")))
+        r = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, timeout=300)
+        self.assertEqual(r.returncode, 0, "stderr:\n%s" % r.stderr[-3000:])
+        self.assertIn("armed", r.stdout)
+
+    def _sink_saved(self):
+        """Restore whatever sink judge.py holds now at cleanup (read by a set-and-put-back, so this also runs on the code
+        before round 1, which had no worker_cpu_sink getter: the behavioral assertion is what goes red there)."""
+        jd = km.jd
+        prev = jd.set_worker_cpu_sink(None)
+        jd.set_worker_cpu_sink(prev)
+        self.addCleanup(jd.set_worker_cpu_sink, prev)
+
+    def test_a_collector_a_later_arming_displaced_serves_no_workers_key(self):
+        """The presence invariant, FORWARD (review round 1, 2026-09-19): a collector a later arming displaced (what a later
+        kernel load does through judge.py's re-execution) keeps its live key frozen at what it took, and its served block
+        drops the key, so `romp perf` says "not reported" over such a pair instead of reading the frozen figure as a
+        measurement. Red before on the first assertNotIn: the displaced block carried the key at 0.0."""
+        jd = km.jd
+        self._sink_saved()
+        first = km._PerfStats()
+        first.arm_judge_worker_sink()
+        self.assertEqual(first.snapshot()["judge"]["cpu_ms_workers"], 0.0, "armed, no future yet: present at a genuine zero")
+        second = km._PerfStats()
+        second.arm_judge_worker_sink()                                   # displaces `first`, as a later kernel load does
+        self.assertNotIn("cpu_ms_workers", first.snapshot()["judge"], "displaced: the served block has no key, never the frozen 0.0")
+        self.assertEqual(self._live(first).get("cpu_ms_workers"), 0.0, "the live dict keeps the record it took while armed")
+        with jd.ThreadPoolExecutor(max_workers=1) as ex:
+            ex.submit(_burn_cpu, 0.005).result()
+        self.assertGreaterEqual(second.snapshot()["judge"]["cpu_ms_workers"], 4.0, "the pool work landed in the collector that holds the sink")
+        self.assertNotIn("cpu_ms_workers", first.snapshot()["judge"], "and still none on the displaced one")
+        self.assertEqual(self._live(first)["cpu_ms_workers"], 0.0, "frozen: nothing lands in a displaced collector")
+        first.reset()
+        self.assertNotIn("cpu_ms_workers", self._live(first), "a reset on a displaced collector re-creates nothing")
+        self.assertFalse(first.holds_judge_worker_sink()); self.assertTrue(second.holds_judge_worker_sink())
+
+    def test_a_reset_on_the_collector_that_holds_the_sink_keeps_the_key(self):
+        """The presence invariant, REVERSE (review round 1, 2026-09-19): reset() on the collector that holds the sink keeps
+        cpu_ms_workers, at a genuine zero, and the next future lands in it. Red before on the first assertEqual: the
+        literal reset() rebuilds the dict from omitted the key, so an armed collector read "nothing armed me" while it was
+        the one reporting."""
+        jd = km.jd
+        self._sink_saved()
+        st = km._PerfStats()
+        st.arm_judge_worker_sink()
+        with jd.ThreadPoolExecutor(max_workers=1) as ex:
+            ex.submit(_burn_cpu, 0.005).result()
+        self.assertGreaterEqual(self._live(st)["cpu_ms_workers"], 4.0, "premise: armed and reporting")
+        st.reset()
+        self.assertEqual(self._live(st).get("cpu_ms_workers"), 0.0, "reset on the collector that holds the sink keeps the key at 0.0")
+        self.assertEqual(st.snapshot()["judge"]["cpu_ms_workers"], 0.0)
+        with jd.ThreadPoolExecutor(max_workers=1) as ex:
+            ex.submit(_burn_cpu, 0.005).result()
+        snap = st.snapshot()["judge"]
+        self.assertGreaterEqual(snap["cpu_ms_workers"], 4.0, "and the next future lands in the kept key")
+        self.assertEqual(snap["cpu_ms_sum"], snap["cpu_ms_workers"], "no tier ran: the sum is the workers' share")
+        self.assertTrue(st.holds_judge_worker_sink())
+
+    def test_a_cleared_sink_drops_the_key_from_the_served_block_and_a_bare_sink_serves_it(self):
+        """Two more faces of the one invariant (review round 1, 2026-09-19). A jd.set_worker_cpu_sink(None) leaves nobody
+        holding the sink, so the armed collector's served block drops the key while its live record stands (red before:
+        the block kept serving the frozen figure). And a collector installed by a direct set_worker_cpu_sink with no
+        arming call IS the one reporting, so its served block carries the key at 0.0 though its live dict has none yet."""
+        jd = km.jd
+        self._sink_saved()
+        st = km._PerfStats()
+        st.arm_judge_worker_sink()
+        with jd.ThreadPoolExecutor(max_workers=1) as ex:
+            ex.submit(_burn_cpu, 0.005).result()
+        jd.set_worker_cpu_sink(None)
+        self.assertNotIn("cpu_ms_workers", st.snapshot()["judge"], "a cleared sink: nobody holds it, the key leaves the served block")
+        self.assertGreaterEqual(self._live(st)["cpu_ms_workers"], 4.0, "the live record stands")
+        self.assertFalse(st.holds_judge_worker_sink())
+        bare = km._PerfStats()
+        jd.set_worker_cpu_sink(bare.judge_worker_cpu)                    # no arming call, the sink alone
+        self.assertNotIn("cpu_ms_workers", self._live(bare), "no arming: the live dict has no key yet")
+        self.assertEqual(bare.snapshot()["judge"]["cpu_ms_workers"], 0.0, "but it IS reporting: the served block carries the key at 0.0")
+        self.assertTrue(bare.holds_judge_worker_sink())
+
+    def test_a_raising_sink_still_restores_the_workers_stage_mark_and_its_raise_propagates(self):
+        """_TimedPool's finally restores the worker's previous stage mark BEFORE it runs the accounting, so a sink that
+        raises cannot skip the restore (review round 1, 2026-09-19: the sink ran first, and a raising one left the
+        submitter's mark on the pool thread for every later future to inherit as its own "previous"; red before on the raw
+        read of the worker's mark). The raise still propagates as the future's error: no try/except around the sink, a
+        perf path that ate its own errors would publish numbers nobody could trust. The mark is read RAW on the worker,
+        through the base class's submit, which bypasses the wrapper that would set and restore it."""
+        jd = km.jd
+        em = jd.em                                                          # the module object _TimedPool's wrapper calls into
+        # this kernel's provider pair for the test's duration: a private judge or event-model load by another test module
+        # in the same process re-executes event_model.py and clears both hooks, so the pair cannot be assumed installed
+        saved = (em._SET_STAGE_FN[0], em._READ_STAGE_FN[0])
+        em.set_stage_provider(km._set_stage); em.set_read_stage_provider(km._current_read_stage)
+        self.addCleanup(em.set_stage_provider, saved[0]); self.addCleanup(em.set_read_stage_provider, saved[1])
+
+        def boom(ms):
+            raise RuntimeError("sink died")
+        prev = jd.set_worker_cpu_sink(boom)
+        self.addCleanup(jd.set_worker_cpu_sink, prev)
+        raw_submit = concurrent.futures.ThreadPoolExecutor.submit           # the base class's: no mark, no accounting
+        em._set_stage_mark("judge.test")                                    # the submitter's mark, carried into the worker
+        self.addCleanup(em._set_stage_mark, None)
+        self.assertEqual(em._read_stage(), "judge.test", "premise: the stage provider pair is installed")
+        with jd.ThreadPoolExecutor(max_workers=1) as ex:
+            fut = ex.submit(lambda: "the future's own result")
+            with self.assertRaises(RuntimeError, msg="the sink's raise stands in for the future's result: nothing swallows it"):
+                fut.result(10)
+            self.assertIsNone(raw_submit(ex, em._read_stage).result(10),
+                              "the worker's previous mark (none) is restored though the sink raised")
+            em._set_stage_mark(None)
+            self.assertIsNone(raw_submit(ex, em._read_stage).result(10), "and a later future from an unmarked thread leaves it clear")
+
+    def test_a_pool_future_from_a_thread_outside_the_producer_lands_under_cpu_ms_workers(self):
+        """The sink is per future and reads no thread: a future submitted from a plain Thread, the shape of the kernel's
+        boot roads (threading.Thread(target=_rewind_migration_bg), which calls jd.run_rewound_reconcile), lands in the
+        armed collector's cpu_ms_sum and cpu_ms_workers like one from a tier thread under _producer. The boot road submits
+        no pool future today (tests/test_kernel_rewind.py pins that by running the real migration over a discoverable
+        session with a recording sink); this pins what the design does if a later change makes it submit one (review
+        round 1, 2026-09-19: the body's rationale had claimed kernel.py calls no jd.run_* outside _producer)."""
+        jd = km.jd
+        st = km._PerfStats()
+        received = self._arm(st)
+
+        def boot_road():
+            with jd.ThreadPoolExecutor(max_workers=1) as ex:
+                ex.submit(_burn_cpu, 0.005).result()
+        th = threading.Thread(target=boot_road, name="boot-road")
+        th.start(); th.join(30)
+        self.assertFalse(th.is_alive())
+        snap = st.snapshot()["judge"]
+        self.assertGreaterEqual(snap["cpu_ms_workers"], 4.0, "the plain thread's pool future landed: %r" % snap["cpu_ms_workers"])
+        self.assertEqual(snap["cpu_ms_sum"], snap["cpu_ms_workers"], "no tier ran: the sum is the workers' share")
+        self.assertAlmostEqual(sum(received), snap["cpu_ms_workers"], places=6, msg="through the sink, once")
 
     def test_run_tier_accounts_the_tier_threads_cpu(self):
         """The shared tier runner (judge.py _run_tier, stage three round two) lands the thread's own CPU in the pass's
@@ -1505,6 +3496,16 @@ class PusherRecords(unittest.TestCase):
             "_turn_notify_tick")                       # upstream's turn-end notification pass
 
     def setUp(self):
+        # The real _pusher_cycle the tests below drive opens the pusher's cycle on this thread: cycle_begin registers the thread
+        # in _PERF_STATS._owners and cycle() leaves the registration standing, so until this cleanup every class run after
+        # this one in the module inherited the main thread as the pusher's owner (the leak PushStages's real-push test was
+        # green through; 2026-09-19 review). Registered before anything else in setUp, so a raising setUp cannot skip it.
+        owners, cycle_state = dict(km._PERF_STATS._owners), copy.deepcopy(km._PERF_STATS._cycle_state)
+
+        def restore_cycle_owner():
+            km._PERF_STATS._owners.clear(); km._PERF_STATS._owners.update(owners)
+            km._PERF_STATS._cycle_state.clear(); km._PERF_STATS._cycle_state.update(cycle_state)
+        self.addCleanup(restore_cycle_owner)
         self.td = tempfile.TemporaryDirectory()
         names = Path(self.td.name) / "names"
         names.mkdir()
@@ -1770,7 +3771,17 @@ class PushStages(unittest.TestCase):
     """_push driven for real (the test_tab_meta_push.py pattern) with builders stubbed to sleep 5 ms
     each: every push.* stage grows by at least its builder's sleep, the chat build counts as built on
     the first push and as cached on the second (same transcript, background tab), and the timeline
-    client's bars go out in the send stage."""
+    client's bars go out in the send stage. setUp opens the pusher's cycle on the module collector
+    first (2026-09-18): stage() credits a push stage to the thread that owns the pusher's cycle, and
+    the "push" mark _push carries is no owner, so a bare _push from a thread that opened no cycle,
+    and so was never registered as an owner, counts under stagesForeign and the flat rows read zero.
+    Before that line the real-push test was green only
+    through a leak: PusherRecords drove the real _pusher_cycle, whose cycle_begin registered this
+    thread as the pusher's owner, and never restored the owner map, so the registration reached
+    every class after it (red with this class run alone). That leak is closed at its source, a
+    cleanup in PusherRecords.setUp; this class opens its own cycle because its _push needs an owner,
+    not because a sibling leaves one. tearDown puts the owner map and the split state back so no
+    later test inherits this class's cycle."""
 
     STUBS = ("NAMES", "_live_map", "_live_names", "_chat_tab_sessions", "build_session",
              "_cached_feed", "_cached_timeline", "build_timeline", "_fleet_view_sig", "_comments_frame",
@@ -1806,8 +3817,13 @@ class PushStages(unittest.TestCase):
         self.chat_frames, self.tl_frames = [], []
         self.chat = {"app": "chat", "alive": True, "sent": {}, "send": lambda s: self.chat_frames.append(json.loads(s))}
         self.tl = {"app": "timeline", "alive": True, "sent": {}, "send": lambda s: self.tl_frames.append(json.loads(s))}
+        self.saved_cycle = (dict(km._PERF_STATS._owners), dict(km._PERF_STATS._cycle_state))
+        km._PERF_STATS.cycle_begin()          # this thread is the pusher: its _push below is the cycle owner's (the class docstring)
 
     def tearDown(self):
+        owners, cycle_state = self.saved_cycle
+        km._PERF_STATS._owners.clear(); km._PERF_STATS._owners.update(owners)
+        km._PERF_STATS._cycle_state.clear(); km._PERF_STATS._cycle_state.update(cycle_state)
         for nm, v in self.saved.items():
             setattr(km, nm, v)
         st, bc, pe, pl, lo = self.saved_state
@@ -1991,8 +4007,11 @@ class PerfRoutes(unittest.TestCase):
 
     def test_get_perf_stacks_carries_one_frame_list_per_thread_with_its_stage_mark(self):
         """T401 (2)'s proof instrument: `?stacks=1` adds one row per live thread (name, ident, self, stage, frames innermost
-        last); a thread inside a tick job shows `jobs.<job>` and the frame it waits in; the plain snapshot carries no `stacks`;
-        the registry row is gone once the job returns."""
+        last); a thread inside a tick job shows `jobs.<job>` and its own frames under the launcher, outermost first; the plain
+        snapshot carries no `stacks`; the registry row is gone once the job returns. No wait frame is pinned or looked for
+        (2026-09-19): a thread parked on an Event is sampled at wait, at the lock acquire inside it, or before it enters wait,
+        so the row is pinned on the probe function's own frame, on the stack from its entry to its exit whatever it is inside,
+        under the launcher's frame, and on being a stack sample."""
         ev = threading.Event(); inside = threading.Event()
         def probe():
             inside.set(); ev.wait(10)
@@ -2010,10 +4029,15 @@ class PerfRoutes(unittest.TestCase):
         self.assertIn(key, rows, sorted(rows))                              #  reads other, the ident finds the row (T358's case)
         mine = rows[key]
         self.assertEqual(mine["stage"], "jobs.probe", mine)
-        self.assertTrue(any(f.startswith("wait (threading.py:") for f in mine["frames"]), mine["frames"])
+        self.assertTrue(any(f.startswith("probe (") for f in mine["frames"]), mine["frames"])       # the thread's own function,
+        #                                                                                                on the stack since inside.set()
         self.assertTrue(any(f.startswith("_job_stage (") for f in mine["frames"]), mine["frames"])   # the kernel's file name is
         #                                                                                                the launcher's here
-        self.assertEqual(mine["frames"][-1].split(" ")[0], "wait", "innermost last")
+        self.assertLess(next(i for i, f in enumerate(mine["frames"]) if f.startswith("_job_stage (")),
+                        next(i for i, f in enumerate(mine["frames"]) if f.startswith("probe (")),
+                        "outermost first: the launcher is outer to the function it runs")
+        self.assertIs(mine["self"], False, mine)
+        _assert_stack_sample(self, mine)
         self.assertEqual(sum(1 for r in rows.values() if r["self"]), 1, "the answering handler thread is marked once")
         self.assertTrue(all(len(r["frames"]) <= 40 for r in rows.values()))
         self.assertTrue(any(k.endswith(" handler") and rows[k]["self"] for k in rows), "the answering thread's kind is handler: %s" % sorted(rows))
@@ -2290,6 +4314,8 @@ class StacksField(unittest.TestCase):
     the thread's ident WITH its kind, so two workers sharing a kind stay two entries (the duplicate-worker case the aid is for),
     two threads outside the register, both `other`, included; None without the switch."""
     def test_two_threads_sharing_a_name_are_two_entries(self):
+        """The innermost frame is not pinned (2026-09-19): a thread parked on an Event is sampled at wait or at the lock acquire
+        inside it, so each row need only be a stack sample of a live thread (_assert_stack_sample)."""
         import threading
         from unittest import mock
         gate = threading.Event()
@@ -2309,8 +4335,7 @@ class StacksField(unittest.TestCase):
                 row = snap["stacks"][k]                                      #  boot diagnostic and romp perf stacks read
                 self.assertEqual(set(row), {"self", "stage", "frames"}, row)
                 self.assertIs(row["self"], False); self.assertIsNone(row["stage"])
-                self.assertTrue(row["frames"] and all(" (" in f and f.endswith(")") for f in row["frames"]), row["frames"])
-                self.assertTrue(row["frames"][-1].startswith("wait ("), "innermost last: the worker waits on its gate")
+                _assert_stack_sample(self, row)
         finally:
             gate.set()
             for t in ths:
@@ -2322,7 +4347,13 @@ class StacksField(unittest.TestCase):
     def test_two_threads_outside_the_register_are_two_entries_keyed_other(self):
         """2026-09-18: two threads whose names the register does not hold (a library's watchdog named with a test path, a worker
         named with an id) both read `other` and stay two rows, the ident half of the key keeping them apart; neither name
-        reaches the sample."""
+        reaches the sample. No frame is pinned (2026-09-19): a thread parked on an Event is sampled at wait, at the lock acquire
+        inside it (Condition.__enter__ on the way into Event.wait), at a helper wait calls (_release_save, _is_owned), or in run
+        before wait, and the test never waits for the threads to reach any of them. The pin that stood here read the innermost
+        frame as `wait (` and went red on the free-threaded 3.14 build in three module runs of ten. What each row must show is
+        that it is a stack sample of a live thread other than the sampler: at least one frame, each in the sampler's
+        "function (file:line)" form, every file one the standard library or this repo ships (_assert_stack_sample), self false
+        and no stage mark."""
         gate = threading.Event()
         names = ("pytest_timeout tests/test_perf_stats.py::StacksField::test_x", "worker 11111111-2222-3333-4444-555555555555")
         ths = [threading.Thread(target=gate.wait, name=n, daemon=True) for n in names]
@@ -2334,11 +4365,14 @@ class StacksField(unittest.TestCase):
             gate.set()
             for t in ths:
                 t.join(timeout=5)
-        keys = ["%d other" % t.ident for t in ths]
-        self.assertEqual(len(set(keys)), 2, keys)
+        idents = {str(t.ident) for t in ths}
+        keys = sorted(k for k in rows if k.split()[0] in idents)                     # the entries whose ident half is a planted thread's
+        self.assertEqual(len(keys), 2, "two threads, two entries: %s" % sorted(rows))
+        self.assertEqual(keys, sorted("%s other" % i for i in idents), "each keyed by its own ident and `other`")
         for k in keys:
-            self.assertIn(k, rows, sorted(rows))
-            self.assertTrue(rows[k]["frames"][-1].startswith("wait ("), rows[k]["frames"])
+            row = rows[k]
+            self.assertIs(row["self"], False, row); self.assertIsNone(row["stage"], row)
+            _assert_stack_sample(self, row)
         text = json.dumps(rows)
         self.assertFalse(any(n in text for n in names), "no planted name in the sample")
 
@@ -2554,7 +4588,25 @@ class ServedSnapshotIsPasteSafe(unittest.TestCase):
         st.send(("chat", SID), "full", 10)
         st.send(("status", SID), "delta", 5)
         st.cycle(0.050)
-        st.stage("push.chat", 0.010)
+        # the push stages by their writer (2026-09-18), all three routes populated so the walk covers them: a write under a
+        # request handler's route mark from this thread while it owns no cycle, neither a connect push nor the cycle's
+        # owner, to stagesForeign; a connect push's, under the "connect" mark, to pusher.connectPush.stagesMs; and the
+        # pusher's, under the "push" mark _push carries when the pusher calls it, from this thread once it owns the
+        # pusher's cycle (below: the mark alone is no owner), to the flat row. Every key is a stage literal spelled in the
+        # kernel's source: stage() is never called with a client's or a user's text, so no planted string can reach any of
+        # the three; the walk holds them to the grammar anyway
+        km._stage_marked("http.GET.other")(lambda: st.stage("push.feed", 0.004))()
+        km._stage_marked("connect")(lambda: (st.stage("push.chat", 0.003), st.stage("push.send.compare", 0.002)))()
+        # the two owner-routed blocks (2026-09-18), populated so the walk covers them: a `jobs.` stage from this thread
+        # while it owns no cycle lands in stagesForeign, then the same thread as the pusher's owner writes a cycle job
+        # into pusher.cycleJobsMs and its push.chat into the flat row. Both keys are the kernel's own literals (a stage
+        # name from the STAGES vocabulary, a job name from CYCLE_JOBS), never a client's or a user's text: stage() is
+        # called with names spelled in the kernel's source alone, so no planted string can reach either block; the walk
+        # holds them to the grammar anyway
+        st.stage("jobs.autoNudge.parse", 0.001)
+        st.cycle_begin()
+        st.stage("jobs.persistCheckpoints", 0.002)
+        km._stage_marked("push")(lambda: st.stage("push.chat", 0.010))()
 
     def _unplant_reads(self):
         with self.em._READ_BYTES_LOCK:
@@ -2580,7 +4632,9 @@ class ServedSnapshotIsPasteSafe(unittest.TestCase):
         read "<ident> pytest_timeout tests/test_perf_stats.py", outside the key grammar; a thread named with a path, a uuid or
         free text by any library reached the snapshot the same way. The kind is a word from the kernel's register or `other`,
         the ident keeping the row its own; the planted name, a node id with a session id and a home path appended, is nowhere
-        in the snapshot, and the whole walk stays clean with the thread alive."""
+        in the snapshot, and the whole walk stays clean with the thread alive. The frame is not pinned (2026-09-19): a thread
+        parked on an Event is sampled at wait or at the lock acquire inside it, so the row is the planted thread's by its key,
+        its self false and its empty stage mark, and need only be a stack sample."""
         gate = threading.Event()
         name = "pytest_timeout tests/test_perf_stats.py::ServedSnapshotIsPasteSafe::test_x %s %s" % (SID, self.home)
         th = threading.Thread(target=gate.wait, name=name, daemon=True); th.start()
@@ -2591,7 +4645,9 @@ class ServedSnapshotIsPasteSafe(unittest.TestCase):
             gate.set(); th.join(5)
         key = "%d other" % th.ident
         self.assertIn(key, snap["stacks"] or {}, sorted(snap["stacks"] or {}))
-        self.assertTrue(snap["stacks"][key]["frames"][-1].startswith("wait ("), "the row is the planted thread's")
+        row = snap["stacks"][key]                                            # the planted thread's row, not the sampler's: not
+        self.assertIs(row["self"], False, row); self.assertIsNone(row["stage"], row)   # self, no stage mark (this thread's row
+        _assert_stack_sample(self, row)                                      #  carries the request's), and a stack sample
         self.assertNotIn(name, json.dumps(snap), "the name is nowhere in the snapshot")
         self.problems = self._paste_problems(snap)
         self.assertEqual(self.problems, [], "%d leak(s) in the served snapshot:\n  %s" % (len(self.problems), "\n  ".join(map(str, self.problems))))
@@ -2625,6 +4681,10 @@ class ServedSnapshotIsPasteSafe(unittest.TestCase):
         self.assertEqual(sorted(snap["pusher"]["connectPush"]["byApp"]), ["chat", "other"])
         self.assertEqual(sorted(snap["pusher"]["clients"]["byApp"]), ["chat", "other"], "the per-client wire table follows the same rule")
         self.assertEqual(snap["pusher"]["clients"]["byKind"]["other"]["frames"], 1)
+        self.assertEqual(snap["stagesForeign"], {"jobs.autoNudge.parse": 1.0, "push.feed": 4.0}, "the two foreign writes rode in the walk")
+        self.assertEqual(snap["pusher"]["cycleJobsMs"]["persistCheckpoints"], 2.0, "and the pusher's cycle job")
+        self.assertEqual(snap["pusher"]["connectPush"]["stagesMs"], {"push.chat": 3.0, "push.send.compare": 2.0}, "and the connect push's stages")
+        self.assertEqual(snap["stages_ms"]["push.chat"], 10.0, "the pusher's push.chat alone in the flat row")
 
     def test_the_route_mark_is_the_registers_word_never_the_requesters(self):
         """_route_seg (2026-09-18): GET /perf?stacks=1 and ROMP_PERF_STACKS serve each thread's stage mark, and a handler's is
