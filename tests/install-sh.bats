@@ -566,11 +566,15 @@ EOF
     [[ "$output" == *"http://127.0.0.1:31855/?token=tok123"* ]]
     [[ "$output" != *"29855"* ]]
     # the record outranks the environment's variable (the record is what the kernel serves on; the variable is what a
-    # shell was told), and without the record the variable stands, then the default (the tokened-link case above)
-    ROMP_KERNEL_PORT=31856 ROMP_SERVICE_BIN="$TEST_DIR/romp-service" run "$ROMP_DIR/install.sh"
+    # shell was told), and without the record the variable stands, then the default (the tokened-link case above).
+    # Both port spellings are set, as the romp-service cases set them: the preflight's bin/romp-serve --print-python
+    # refuses a shell whose ROMP_SERVE_PORT (a romp session's shell carries the live kernel's) disagrees with it.
+    ROMP_KERNEL_PORT=31856 ROMP_SERVE_PORT=31856 ROMP_SERVICE_BIN="$TEST_DIR/romp-service" run "$ROMP_DIR/install.sh"
+    [ "$status" -eq 0 ]
     [[ "$output" == *"http://127.0.0.1:31855/?token=tok123"* ]]
     rm -f "$ROMP_STATE_DIR/serve-port"
-    ROMP_KERNEL_PORT=31856 ROMP_SERVICE_BIN="$TEST_DIR/romp-service" run "$ROMP_DIR/install.sh"
+    ROMP_KERNEL_PORT=31856 ROMP_SERVE_PORT=31856 ROMP_SERVICE_BIN="$TEST_DIR/romp-service" run "$ROMP_DIR/install.sh"
+    [ "$status" -eq 0 ]
     [[ "$output" == *"http://127.0.0.1:31856/?token=tok123"* ]]
     # a record that is not a port is skipped, never printed
     printf 'garbage\n' > "$ROMP_STATE_DIR/serve-port"
