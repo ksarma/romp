@@ -585,9 +585,15 @@ def restore_env(name, prior):
 # 18 files that share a private name), so their save-and-restore product code lands first, then the
 # ratchet's private-kernel arm.
 #
-# THE JUDGMENT (_sdk_judge), same marker: the same object is a pass, unless its directory was present at
-# the before read and is not at the after read, the test having removed the directory under the singleton
-# it found. A different value is a leak, with TWO allowances derived from the transition, never from a
+# THE JUDGMENT (_sdk_judge), same marker: the same object is a pass, unless its state_dir text differs
+# between the two reads, the test having REPOINTED the singleton it found (the readers hold the object and
+# read its state_dir on every registry scan, so a repoint to a root that stands moves every later test's
+# registry root as surely as a rebuild over it: named with the changed wording, both sides rendered from the
+# reads' recorded text since the live attribute shows the after path on both, the gone clause when the new
+# path is not a directory, and a remedy of its own, _SDK_REMEDY_C, put the state_dir back), or its
+# directory was present at the before read and is not at the after read, the test having removed the
+# directory under the singleton it found. A removal never changes the text, so the two are disjoint and the
+# text comparison comes first. A different value is a leak, with TWO allowances derived from the transition, never from a
 # list of test names. (1) None before and, after, the kernel's own class (type module romp_sdk_backend,
 # qualname SdkBackend: NOT isinstance, which a shared-name reload of sdk_backend.py breaks, since
 # load_source re-executes into the same module name and the class object changes while a backend built
@@ -624,9 +630,10 @@ def restore_env(name, prior):
 # save km._sdk_backend before moving jd.STATE and put it back where jd.STATE is restored, before the
 # directory is removed (setUp and tearDown, or setUpClass and tearDownClass when the class moves it). The
 # object road, everything else (a None, a False, a fake, a rebuild over the same root): put back the
-# object the test found, None or False included, not an equal one. The first form printed the sandbox
-# remedy on every road, so a test that left a None was told to save the singleton before a sandbox that
-# did not exist.
+# object the test found, None or False included, not an equal one. The repoint road, the same object with
+# its state_dir text changed: put the singleton's state_dir back where it was found. The first form printed
+# the sandbox remedy on every road, so a test that left a None was told to save the singleton before a
+# sandbox that did not exist.
 #
 # MARKER CHANGED (_sdk_judge_reload): the test re-executed kernel.py into the one module object (a
 # different function in the slot), loaded the shared kernel for the first time in this worker (None, then
@@ -647,11 +654,13 @@ def restore_env(name, prior):
 # re-execution). No test does this today.
 #
 # THE BOUNDARY (_sdk_judge_scope): with S = the scope's start read, L = the last read anywhere before the
-# end and E = the end read: E the same object as L with its directory present at L and gone at E is the
-# teardown removing the directory under the singleton its last test left (named even when the object was
-# already named, because the state got worse inside the teardown); E the object S found is a restore, a
-# pass, unless S saw its directory and E does not; E the object L left and already named is a pass (the
-# test that made it was judged); otherwise S -> E is judged as a test transition with S's jd.STATE as the
+# end and E = the end read: E the same object as L with its state_dir text changed is the teardown
+# repointing the singleton its last test left, and E the same object as L with its directory present at L
+# and gone at E is the teardown removing the directory under it, both named before the quiet rules and even
+# when the object was already named, because the state got worse inside the teardown; E the object S found
+# is a restore, a pass, unless the state_dir text S recorded is not E's (put back repointed) or S saw its
+# directory and E does not; E the object L left and already named is a pass (the test that made it was
+# judged); otherwise S -> E is judged as a test transition with S's jd.STATE as the
 # reference (the scope's own setUpClass moved jd.STATE, a test built under it, allowed at its own window
 # because it inherited that root, and the scope did not put the singleton back: the scope is the author);
 # and E different from both S and L is the teardown itself installing a value, judged the same way.
@@ -690,6 +699,9 @@ _SDK_REMEDY_A = ("A test that reaches km._sdk() under a sandboxed jd.STATE build
 _SDK_REMEDY_B = ("Put back the object the test found, None or False included, not an equal one: the kernel's readers hold "
                  "the object, its threads and its registry state, and a None makes the next reader rebuild over whatever "
                  "jd.STATE is at that moment.")
+_SDK_REMEDY_C = ("Put back the singleton's state_dir where it was found: the kernel's readers hold the object and read its "
+                 "state_dir on every registry scan, so a moved state_dir moves every later test's registry root.")
+_SDK_LIVE = object()                                   # _sdk_singleton_text: render the live state_dir attribute
 
 
 def _sdk_read():
@@ -742,12 +754,15 @@ def _sdk_report(be):
         _SDK_REPORTED.append(be)
 
 
-def _sdk_singleton_text(be):
+def _sdk_singleton_text(be, sd=_SDK_LIVE):
+    """The value as "<class> over <state_dir>", None and False said in words. `sd` is the state_dir text to render: the
+    live attribute by default, or a read's recorded text, since the same object's state_dir can have been repointed
+    between two reads and the live attribute would then show the after path on both sides of the transition."""
     if be is None:
         return "None (not built)"
     if be is False:
         return "False (the build failed)"
-    state_dir = getattr(be, "state_dir", None)
+    state_dir = getattr(be, "state_dir", None) if sd is _SDK_LIVE else sd
     t = type(be)
     name = "SdkBackend" if _sdk_is_real(be) else "%s.%s" % (t.__module__, t.__qualname__)
     return "%s over %s" % (name, "no state_dir" if state_dir is None else state_dir)
@@ -790,6 +805,13 @@ def _sdk_remedy(after, ref):
     return _SDK_REMEDY_B
 
 
+def _sdk_repointed_text(head, be, before, after):
+    """The clause for the same object whose state_dir text changed between two reads, both sides from the recorded text
+    (the live attribute shows the after path on both), the gone clause when the new path is not a directory."""
+    return "%s: before %s, after %s%s" % (head, _sdk_singleton_text(be, before.sd), _sdk_singleton_text(be, after.sd),
+                                          _SDK_GONE if after.isdir is False and _sdk_is_real(be) else "")
+
+
 def _sdk_judge(before, after, ref):
     """The transition from one read to another, judged as a test's: None for a pass, else (clause, remedy) for
     the caller to frame as "<who> <clause>. Fix: <remedy>". `ref` is the root the lazy-first-build allowance
@@ -798,6 +820,9 @@ def _sdk_judge(before, after, ref):
     if after.marker is not before.marker:
         return _sdk_judge_reload(before, after)
     if be1 is be0:
+        if before.sd != after.sd:              # the same object, repointed: the readers hold the object and read its state_dir
+            return (_sdk_repointed_text("left the kernel's backend singleton (km._sdk_backend) changed after its teardown",
+                                        be1, before, after), _SDK_REMEDY_C)
         if before.isdir and after.isdir is False:
             return ("left the kernel's backend singleton (km._sdk_backend) over a directory it removed: %s%s"
                     % (_sdk_singleton_text(be1), _SDK_GONE), _sdk_remedy(after, ref))
@@ -847,6 +872,9 @@ def _sdk_judge_scope(start, last, end, windows):
     """The class or module boundary's verdict from its start read, the last read before its end, its end read, and the
     test windows inside the scope that changed the slot (oldest first)."""
     if end.be is last.be:
+        if last.sd != end.sd:                  # the teardown repointed the singleton its last test left: named before the quiet rules
+            return (_sdk_repointed_text("left the kernel's backend singleton (km._sdk_backend) changed after its teardown",
+                                        end.be, last, end), _SDK_REMEDY_C)
         if last.isdir and end.isdir is False:
             return ("left the kernel's backend singleton (km._sdk_backend) over a directory it removed: %s%s"
                     % (_sdk_singleton_text(end.be), _SDK_GONE), _sdk_remedy(end, start.jd_state))
@@ -856,6 +884,9 @@ def _sdk_judge_scope(start, last, end, windows):
             return None                    # the tests made the change, each judged at its own window: the boundary did nothing
         return _sdk_judge(start, end, start.jd_state)
     if end.be is start.be:
+        if start.sd != end.sd:
+            return (_sdk_repointed_text("put back the kernel's backend singleton (km._sdk_backend) it found with its state_dir "
+                                        "repointed", end.be, start, end), _SDK_REMEDY_C)
         if start.isdir and end.isdir is False:
             return ("put back the kernel's backend singleton (km._sdk_backend) it found, whose directory is gone: %s%s"
                     % (_sdk_singleton_text(end.be), _SDK_GONE), _sdk_remedy(end, start.jd_state))
