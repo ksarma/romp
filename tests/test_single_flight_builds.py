@@ -275,7 +275,7 @@ class ChatTabSingleFlight(unittest.TestCase):
         a, b = self._client(active=S1), self._client(active=S1)
         km._clients[:] = [a, b]
         w0 = km._VIEW_STATS["chatWaited"]
-        cs0 = km._chat_sig_stats_report()["waited"]
+        cs0, b0 = km._chat_sig_stats_report(), km._PERF_STATS.snapshot()["builds"]["chat"]
         _race_fns = [lambda: km._push([a, b]), lambda: km._push([b], connect=True)]
         go = threading.Event()
         def run(i):
@@ -284,10 +284,21 @@ class ChatTabSingleFlight(unittest.TestCase):
         for t in ths: t.start()
         go.set()
         for t in ths: t.join(30)
+        cs1, b1 = km._chat_sig_stats_report(), km._PERF_STATS.snapshot()["builds"]["chat"]
+        d = {k: cs1[k] - cs0[k] for k in cs1}
         self.assertEqual(sorted(self.builds), [S1, S2], "each tab built once across the two pushes: %r" % self.builds)
         self.assertGreaterEqual(km._VIEW_STATS["chatWaited"] - w0, 1, "the later push waited and served the cache")
-        self.assertGreaterEqual(km._chat_sig_stats_report()["waited"] - cs0, 1,
-                                "memos.chatSig.waited moved beside it (2026-09-18 review, low 10)")
+        self.assertGreaterEqual(d["waited"], 1, "memos.chatSig.waited moved beside it (2026-09-18 review, low 10)")
+        # compares counts every cache READ that met an entry with a signature in hand (2026-09-19 review, kernel-1): on a cold
+        # cache the pre-flight reads and the claim re-reads meet nothing, and each of the two served tab visits met the other
+        # thread's fresh entry at exactly one counted read, the re-read after its single-flight wait (or a pre-flight read,
+        # should the other thread have stored first), so compares equals the served count here and equals waited when both
+        # served visits waited. Before this the post-wait re-read was not counted and compares read 0 against 2.
+        served = b1["cached"] - b0["cached"]
+        self.assertEqual(served, 2, "two of the four tab visits were served from the other thread's build")
+        self.assertEqual(d["compares"], served, "each served visit met the entry at one counted read: %r" % (d,))
+        self.assertGreaterEqual(d["compares"], d["waited"], "a waiter's post-wait re-read is one of them")
+        self.assertEqual(d["pushes"], 2, "the cycle push and the connect push each ran the chat tab loop (memos.chatSig.pushes)")
         self.assertEqual({f["id"] for f in b["_frames"] if f["type"] == "session"}, {S1, S2}, "the connect client still got both tabs")
         self.assertEqual(km._CHAT_INFLIGHT, {}, "no claim left behind")
 

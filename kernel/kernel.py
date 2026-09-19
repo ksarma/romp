@@ -850,6 +850,13 @@ class _PerfStats:
                                    and jobsPass and the chat loop's seams push.chat, push.chat.sig,
                                    push.chat.sig.static, push.chat.sig.deps, push.chat.build and
                                    push.chat.send (CPU_STAGES; each listed at zero from the start).
+                                   Three rows are containers of rows listed after them, as in
+                                   stages_ms: push.chat.sig's CPU row is exactly push.chat.sig.static
+                                   plus push.chat.sig.deps (by construction in _chat_sig_seam_close),
+                                   push.chat's row covers its three seams plus the loop's glue (a
+                                   superset, not a sum: the glue has no CPU row of its own), and push
+                                   covers the whole push, so a reader summing the nine rows counts the
+                                   signature a fourth time.
                                    Wall minus user minus sys over a window is the
                                    stage's wait (GIL and syscalls); the split between user and sys is
                                    tick-sampled by the kernel and scaled to the exact total, so read it
@@ -1015,32 +1022,54 @@ class _PerfStats:
                                    chatFoldTasks (the per-turn task fold, see _fold_tasks) -> hit /
                                    miss counted per TURN and the gauge entries (sids held); chatSig (the
                                    chat signature pass's own counters, _CHAT_SIG_STATS; stage 1 of the
-                                   chat-signature design, 2026-09-18) -> pre / post (pre-build
-                                   signatures the push loop took, one per tab past the cold gate, and
-                                   post-build ones: over a window pre = builds.chat cached + built less
-                                   the targeted push's builds, post = built less nosig), thread (the
-                                   comment-thread signatures _thread_events takes, one per non-promoted
-                                   thread per push and per HTTP comments frame, a raising one included:
-                                   the third caller, so a per-signature figure for the read counts
-                                   divides by pre + post + thread), nosig
-                                   (signatures that raised or found no transcript path: built, never
-                                   cached), waited (tabs served after another thread's build of the
-                                   same tab), compares / compareIdentity (cache checks that met a
-                                   cached entry, and over them the components equal by object
-                                   identity), stats (os.stat calls inside a signature at the
-                                   transcript, the states files, _chat_ident, _chat_stat_key,
-                                   _chat_postal_key and _repo_index_key; the store identity, the
-                                   registry, the task store, the fingerprints and the cwd memos stat
-                                   through their own helpers and are not counted), namesReads (raw
-                                   names-registry reads), switchReads (the user-todos switch file),
-                                   regReads (sdk_backend.read_reg file reads), and the warm-tab
-                                   census: warmEligible (a cached tab no client watches, every
-                                   connected chat client holds as a skeleton, with a transcript and
-                                   no plain Outline connected: what a warm-tab gate would skip),
+                                   chat-signature design, 2026-09-18; the block comment at the table
+                                   derives every key) -> pre / post (pre-build signatures the push loop
+                                   took, one per tab past the cold gate, and post-build ones: over any
+                                   window pre = builds.chat cached + built - targetedBuilds +
+                                   failedBuilds, and over a window with failedBuilds 0 post = built -
+                                   targetedBuilds - nosig, else larger by at most failedBuilds; the
+                                   nosig is this table's, which counts every tab where
+                                   builds.chat.bg_miss.nosig counts background builds only),
+                                   failedBuilds (the loop's builds that raised past a pre-build
+                                   signature: under neither cached nor built), targetedBuilds (the
+                                   targeted push's builds, which take no signature and which
+                                   builds.chat labels targeted only when the tab is unwatched), thread
+                                   (the comment-thread signatures _thread_events takes, one per
+                                   non-promoted thread per push and per HTTP comments frame, a raising
+                                   one included: the third caller, so a per-signature figure for the
+                                   read counts divides by pre + post + thread), nosig (signatures that
+                                   raised or found no transcript path: built, never cached), waited
+                                   (tabs served after another thread's build of the same tab),
+                                   compares (cache reads that met a cached entry with a signature in
+                                   hand: the pre-flight read, the re-read after a single-flight wait
+                                   and the re-read under a claim, not the final compare, so a rebuild
+                                   counts two and a waiter three and compares can exceed pre) and
+                                   compareIdenticalComponents (over those reads' operands the
+                                   components equal by object identity, at every position whether or
+                                   not the tuple compare reached it; the share is
+                                   compareIdenticalComponents / (compares * len(_CHAT_SIG_LABELS)),
+                                   both operands always full-length), stats (the os.stat, os.lstat and
+                                   DirEntry.stat calls made on the thread while a signature is open,
+                                   whichever function or module makes them: os.stat and os.lstat
+                                   through the wrappers _stat_counting_install puts on the os and
+                                   posix modules, and on pathlib's accessor on 3.10; DirEntry.stat
+                                   through _entry_stat, since a DirEntry stats in C; not countable
+                                   from Python and not counted: open()'s fstat and a DirEntry.is_dir
+                                   without d_type), namesReads (raw names-registry reads), switchReads
+                                   (the user-todos switch file), regReads (sdk_backend.read_reg file
+                                   reads), and the warm-tab census: warmEligible (a cached tab no
+                                   client watches, every connected chat client holds as a skeleton,
+                                   with a transcript and no plain Outline connected: the cold gate's
+                                   predicate with its not-yet-built clause negated and without the
+                                   gate's live-row clause, so an upper bound on what a cold-gate-shaped
+                                   warm gate would skip, the excess the tabs with no live row),
                                    warmBlockedByOutline (the same with a plain Outline connected) and
                                    heldBody (a tab some connected chat client holds as a body, the
-                                   watched tab included); every push, connect pushes included, so a
-                                   per-cycle figure is a delta over pusher.cycles. The
+                                   watched tab included); pushes, the pushes that ran the chat tab
+                                   loop, so every key is a delta over pushes for a per-push figure (a
+                                   figure over pusher.cycles alone runs high by the connect pushes,
+                                   and stages_ms push.chat.sig and stages_cpu_ms exclude connect
+                                   pushes while this table includes them). The
                                    judge's own memos, reported through its
                                    readers (2026-09-09): courierSkip (the courier's per-session
                                    inputs key, jd.courier_skip_stats), plannerSkip (the planner's,
@@ -19029,7 +19058,7 @@ def _working_notes():
         with os.scandir(WORKING_DIR) as it:
             for e in it:
                 try:
-                    st = e.stat()
+                    st = _entry_stat(e)
                 except OSError:
                     continue        # unlinked between readdir and stat (a clear, an atomic write's temp renamed
                     #                 away): that note is gone and the others still stand. One try around the whole
@@ -19613,7 +19642,7 @@ def _list_dir(raw, sid=None, hidden=False, limit=DIR_LIST_MAX):
                 is_link = False
                 try:
                     is_link = e.is_symlink()
-                    st = e.stat()                       # follows too; a dangling link keeps the zeros
+                    st = _entry_stat(e)                 # follows too; a dangling link keeps the zeros
                     size, mtime = int(st.st_size), int(st.st_mtime)
                 except OSError:
                     pass
@@ -31563,7 +31592,8 @@ def _sessions_listing_key(live_map, names):
                         for sid, m in (live_map or {}).items()))
     try:
         with os.scandir(WORKING_DIR) as it:
-            notes = tuple(sorted((e.name, e.stat().st_mtime_ns, e.stat().st_size, e.stat().st_ino) for e in it if e.is_file()))
+            notes = tuple(sorted((e.name, st.st_mtime_ns, st.st_size, st.st_ino)
+                                 for e, st in ((e, _entry_stat(e)) for e in it if e.is_file())))
     except OSError:                                        # (name, mtime_ns, size, ino): the key _working_notes itself memoizes on
         notes = ()
     nm = names if names is not None else {}
@@ -36651,7 +36681,7 @@ def _task_store_resolve(fsid, fold):
     root_key = []
     for e in cands:
         try:
-            root_key.append((e.name, e.stat().st_mtime_ns))
+            root_key.append((e.name, _entry_stat(e).st_mtime_ns))
         except OSError:
             root_key.append((e.name, None))
     root_key = tuple(sorted(root_key))
@@ -36709,7 +36739,7 @@ def _task_store_fp(fsid):
                 if not e.name.endswith(".json"):
                     continue
                 try:
-                    st = e.stat()
+                    st = _entry_stat(e)
                 except OSError:
                     continue                              # unlinked between readdir and stat → not in the store
                 ents.append((e.name, st.st_mtime_ns, st.st_size, st.st_ino))   # ns + size + inode: a same-size
@@ -36755,7 +36785,7 @@ def _read_task_store(fsid, fold=None):
                 if not e.name.endswith(".json"):
                     continue
                 try:
-                    st = e.stat()
+                    st = _entry_stat(e)
                 except OSError:
                     continue                              # unlinked between readdir and stat → not part of the store
                 fp.append((e.name, st.st_mtime_ns, st.st_size, st.st_ino))
@@ -36981,7 +37011,7 @@ def _judge_store_fp():
             with os.scandir(d) as it:
                 for e in it:
                     try:
-                        st = e.stat()
+                        st = _entry_stat(e)
                     except OSError:
                         continue
                     out.append((d.name, e.name, st.st_mtime_ns, st.st_size, st.st_ino))
@@ -37586,12 +37616,24 @@ def _chat_postal_relevant(ev):
 # argued from a wall-clock seam alone. Measurement only: no frame, read or cache decision depends on these. The
 # per-signature counts accumulate on a thread-local while _chat_build_sig runs (_chat_sig_scope sets `active`, so
 # the same helper stat'ing a shared component once per push, or a build's own reads, counts nothing) and fold into
-# the table under one lock hold per signature; the push loop folds its per-tab counts (pre, post, the compare, the
-# census) the same way. Served flat under memos.chatSig: identifier keys, integer values, pasteable. The keys:
+# the table under one lock hold per signature; the push loop folds its per-tab counts (pre, post, the compares) the
+# same way and the warm-tab census once per push after the tab loop. Served flat under memos.chatSig: identifier
+# keys, integer values, pasteable. Every row below says what its key counts BY EXECUTION and derives any figure it
+# invites (the review's round 2, 2026-09-19). The keys:
 #   pre / post           pre-build signatures the push loop took (one per tab past the cold gate, a raising one
-#                        included) and post-build ones (a rebuild that had a pre-build signature): over a window
-#                        pre = builds.chat cached + built less the targeted push's builds (it takes no signature),
-#                        post = built less nosig
+#                        included) and post-build ones (a rebuild that had a pre-build signature). Over any window
+#                        pre = builds.chat cached + built - targetedBuilds + failedBuilds. Over a window with
+#                        failedBuilds 0, post = built - targetedBuilds - nosig; otherwise post exceeds that by the
+#                        failed builds whose signature was also None (nosig counts those tabs, built does not), so
+#                        by at most failedBuilds. The nosig in the identity is THIS table's: memos.chatSig.nosig
+#                        counts every tab, while builds.chat.bg_miss.nosig counts background builds only (a
+#                        watched tab's rebuild lands in active_built with no label), so the two differ whenever the
+#                        watched tab's signature raises
+#   failedBuilds         the push loop's chat builds that raised past a pre-build signature (bumped in the fault
+#                        branch right after _chat_build_fault): counted under neither builds.chat cached nor built
+#   targetedBuilds       the targeted push's builds (_push_session_now, beside its build_chat record): they take no
+#                        signature, and builds.chat counts them under built, labelled targeted only when the tab is
+#                        unwatched (a watched tab's lands in active_built with no label)
 #   thread               the comment-thread signatures _thread_events takes (one per non-promoted thread of every
 #                        session with a comments store, per push and per HTTP comments frame, a raising one
 #                        included): the third caller of _chat_build_sig, and the reads below count inside its
@@ -37600,39 +37642,125 @@ def _chat_postal_relevant(ev):
 #                        thirty before this row, 2026-09-18 review)
 #   nosig                pre-build signatures that raised or found no transcript path: the tab built, never cached
 #   waited               tabs served after waiting for another thread's build of the same tab (the single flight)
-#   compares             cache checks that met a cached entry and a signature (the `hit[0] == sig` compare)
-#   compareIdentity      over those compares, the components equal by object identity: a tuple compare answers a
-#                        member by pointer before by value, so this is the share stage 3's identity memos widen
-#   stats                os.stat calls inside a signature at the sites this file owns: the transcript, the states
-#                        files, _chat_ident, _chat_stat_key, _chat_postal_key and _repo_index_key. The store
-#                        identity (judge.py), the registry, the task store, the todo and pin fingerprints and the
-#                        cwd memos stat through their own helpers and are NOT in this count. Per signature:
-#                        stats / (pre + post + thread), and the same denominator for the three read counts
+#   compares             cache reads that met a cached entry with a signature in hand: the pre-flight read of every
+#                        tab past the gate (_chat_sig_note_pre), the re-read after a single-flight wait and the
+#                        re-read under a claim (_chat_sig_note_compare at both), and NOT the final compare, which
+#                        re-evaluates the last read's operands. A rebuild counts two (its pre-flight read and its
+#                        claim re-read: every ordinary rebuild takes the claim road) and a waiter three, so compares
+#                        can exceed pre
+#   compareIdenticalComponents
+#                        over those reads' operands, the components equal by object identity (a tuple compare
+#                        answers a member by pointer before by value), counted at every position whether or not the
+#                        tuple compare reached it (a miss stops at the first unequal position), so exact for a hit
+#                        and an upper bound of the pointer answers a miss took. The share stage 3's identity memos
+#                        widen is compareIdenticalComponents / (compares * len(_CHAT_SIG_LABELS)), 40 today: both
+#                        operands are always full-length signatures (tests/test_chat_build_sig_inputs.py pins the
+#                        length), so the product is exact and no second denominator key is published (a copy of a
+#                        derived number would have nothing to check it against). Named for what it counts, so a
+#                        division by compares alone reads as identical components per compare (0 to 40), not a share
+#   stats                the os.stat, os.lstat and DirEntry.stat calls made on the thread while a signature is open,
+#                        whichever function or module makes them: os.stat and os.lstat through the wrappers
+#                        _stat_counting_install puts on the os and posix modules at import (and on pathlib's
+#                        accessor on Python 3.10), which every os.path, pathlib and importlib caller reaches;
+#                        DirEntry.stat through _entry_stat, the one door for a scandir entry's stat in kernel/
+#                        (judge.py carries a two-line twin), because a DirEntry stats in C and reaches no wrapper.
+#                        Not in the count, and not countable from Python: the fstat inside open() (C, part of a
+#                        read, counted by the read counters and the bytes column) and a DirEntry.is_dir on a
+#                        filesystem that reports no d_type. Per signature: stats / (pre + post + thread), and the
+#                        same denominator for the three read counts
 #   namesReads           raw names-registry file reads inside a signature (_sdk_transcript_path, _names_parts
 #                        with no snapshot)
 #   switchReads          reads of the user-todos switch file inside a signature (_user_todos_on)
 #   regReads             sdk_backend.read_reg file reads inside a signature (launch_error, a dead tab's queue)
-#   warmEligible         the warm-tab census: a tab with a cached build, watched by no connected chat client,
-#                        held as a skeleton by every connected chat client (the sets read once per push,
-#                        _skeleton_census), with a transcript, and no plain Outline connected: the cold gate's
-#                        predicate minus its "not built" clause, so what a warm-tab gate would skip (the cold
-#                        tabs it skips today count under builds.chat.coldSkipped)
+#   warmEligible         the warm-tab census (_skeleton_census once per push after the tab loop, folded by
+#                        _chat_sig_note_census): a tab with a cached build, watched by no connected chat client,
+#                        held as a skeleton by every connected chat client, with a transcript, and no plain Outline
+#                        connected. That is the cold gate's predicate with its not-yet-built clause negated (a
+#                        cached build) and WITHOUT the gate's live-row clause (the gate skips only a tab whose
+#                        liveness row exists; the census counts a tab with none too), so warmEligible is an upper
+#                        bound on what a cold-gate-shaped warm gate would skip, the excess being tabs with no live
+#                        row (a dead session reopened read-only). The cold tabs the gate skips today count under
+#                        builds.chat.coldSkipped
 #   warmBlockedByOutline the same tab with a plain Outline pane connected (the pane needs every ledger slice)
 #   heldBody             a tab some connected chat client holds as a body, the watched tab included
-# Every push counts, connect pushes on handler threads included, so a per-cycle figure is a delta over pusher.cycles.
-_CHAT_SIG_TL = threading.local()
+#   pushes               the pushes that ran the chat tab loop (a _push with a chat or Sessions target: the pusher's
+#                        cycles and the connect pushes of a chat or Sessions page), bumped once where the loop
+#                        opens. Every key here is a delta over pushes for a per-push figure; a figure over
+#                        pusher.cycles alone runs high by those connect pushes, largest in the boot window. And
+#                        stages_ms push.chat.sig and stages_cpu_ms EXCLUDE connect pushes (their wall goes to
+#                        pusher.connectPush.stagesMs and they record no CPU row) while this table includes them, so
+#                        a per-signature wall or CPU divides a pusher-only numerator by a mixed denominator unless
+#                        the window has no connect push
+class _ChatSigLocal(threading.local):
+    """The per-thread accumulator of the chat signature pass (memos.chatSig): class defaults, so the hot check in the
+    stat wrappers is a plain attribute read on any thread, one that never opened a signature included."""
+    active = False
+    stats = 0
+
+
+def _stat_counting_install():
+    """Once per process: os.stat and os.lstat wrapped so every stat made on a thread while its chat signature is open
+    counts on the thread-local (memos.chatSig.stats), whichever module makes it. The same wrapper objects go on the os
+    module and the posix module (importlib's path finder calls posix.stat directly: eight stats per fresh import,
+    verified) and, on Python 3.10, on pathlib._NormalAccessor, which bound os.stat at pathlib's import so Path.stat,
+    Path.exists and Path.is_dir bypassed an os-module wrapper there (verified on 3.10; with the accessor patched
+    3.10, 3.12 and 3.13 count alike: Path.stat 1, Path.exists 1, Path.is_dir 1). The thread-local lives on the wrapper
+    (_romp_sig_counting), so a second load of this module in one process (the test suite loads the kernel many times
+    per worker) finds the wrapper installed, reuses its thread-local and installs nothing: the chain stays one deep
+    (os.stat.__wrapped__ is the builtin) and every load shares one accumulator. Returns the thread-local. A
+    DirEntry.stat reaches no wrapper (C); _entry_stat is its door. Cost: about half a microsecond per stat
+    process-wide (0.44 us with no signature open on the thread, 0.61 us inside one) against a bare stat of about
+    2.4 us, and 0.15 to 0.24 us per DirEntry stat through _entry_stat (measured on 3.12, 2026-09-19)."""
+    tl = getattr(os.stat, "_romp_sig_counting", None)
+    if tl is not None:
+        return tl
+    tl = _ChatSigLocal()
+
+    def _wrap(real):
+        @functools.wraps(real)
+        def counting(path, *a, **kw):
+            if tl.active:
+                tl.stats += 1
+            return real(path, *a, **kw)
+        counting._romp_sig_counting = tl
+        return counting
+    st, lst = _wrap(os.stat), _wrap(os.lstat)
+    os.stat, os.lstat = st, lst
+    posix = sys.modules.get("posix")
+    if posix is not None:
+        posix.stat, posix.lstat = st, lst
+    acc = getattr(sys.modules.get("pathlib"), "_NormalAccessor", None)   # 3.10 alone: its accessor bound os.stat at import
+    if acc is not None:
+        acc.stat, acc.lstat = staticmethod(st), staticmethod(lst)
+    return tl
+
+
+_CHAT_SIG_TL = _stat_counting_install()
 _CHAT_SIG_STATS_LOCK = threading.Lock()
-_CHAT_SIG_STATS = {"pre": 0, "post": 0, "thread": 0, "nosig": 0, "waited": 0, "compares": 0, "compareIdentity": 0,
+_CHAT_SIG_STATS = {"pre": 0, "post": 0, "failedBuilds": 0, "targetedBuilds": 0, "thread": 0, "nosig": 0, "waited": 0,
+                   "compares": 0, "compareIdenticalComponents": 0,
                    "stats": 0, "namesReads": 0, "switchReads": 0, "regReads": 0,
-                   "warmEligible": 0, "warmBlockedByOutline": 0, "heldBody": 0}
+                   "warmEligible": 0, "warmBlockedByOutline": 0, "heldBody": 0, "pushes": 0}
+
+
+def _entry_stat(e, **kw):
+    """The one door for a scandir entry's stat in this file (memos.chatSig.stats): a DirEntry stats in C and reaches no
+    os.stat wrapper, so the count is taken here, when a signature is open on the thread, before the call. Counted as
+    attempted, like a missing file's stat (the syscall was made whatever it answered); every site calls it once per
+    entry, and a DirEntry caches its answer, so a call is one syscall. A source pin (tests/test_kernel_delta_send.py)
+    holds every `e.stat(` in kernel/ to this helper and judge.py's twin."""
+    tl = _CHAT_SIG_TL
+    if tl.active:
+        tl.stats += 1
+    return e.stat(**kw)
 
 
 def _chat_sig_count(field, n=1):
-    """One more `field` (stats, namesReads, switchReads) on the calling thread's OPEN signature; nothing outside one
-    (_chat_sig_scope sets the thread-local's `active` for _chat_build_sig's duration). A getattr and an add, about
-    thirty times per signature."""
+    """One more `field` (namesReads, switchReads) on the calling thread's OPEN signature; nothing outside one
+    (_chat_sig_scope sets the thread-local's `active` for _chat_build_sig's duration). A getattr and an add. The stats
+    count takes no site call: the os.stat and os.lstat wrappers and _entry_stat bump the thread-local themselves."""
     tl = _CHAT_SIG_TL
-    if getattr(tl, "active", False):
+    if tl.active:
         setattr(tl, field, getattr(tl, field, 0) + n)
 
 
@@ -37661,18 +37789,19 @@ def _reg_reads_on_thread():
 
 @contextlib.contextmanager
 def _chat_sig_scope():
-    """The thread-local scope of one _chat_build_sig call: the per-signature counts zeroed at entry, counted by the
-    stat and read sites while `active`, folded into memos.chatSig at exit, a raise included (a signature that raised
-    still paid its reads). The sub-seam durations (deps_dt, deps_cpu, deps_ran; push.chat.sig.deps) are zeroed here
-    too and left for the caller's seam close, so a signature taken outside a seam (a comment thread's) can never
-    hand a stale value to the next seam on the thread."""
+    """The thread-local scope of one _chat_build_sig call: the per-signature counts zeroed at entry and THEN `active`
+    set (so no stat between the two lands on the count), counted by the stat wrappers, _entry_stat and the read sites
+    while `active`, folded into memos.chatSig at exit, a raise included (a signature that raised still paid its
+    reads). The sub-seam durations (deps_dt, deps_cpu, deps_ran; push.chat.sig.deps) are zeroed here too and left for
+    the caller's seam close, so a signature taken outside a seam (a comment thread's) can never hand a stale value to
+    the next seam on the thread."""
     tl = _CHAT_SIG_TL
-    tl.active = True
     tl.stats = tl.namesReads = tl.switchReads = 0
     tl.deps_dt = 0.0
     tl.deps_cpu = None
     tl.deps_ran = False
     r0 = _reg_reads_on_thread()
+    tl.active = True
     try:
         yield
     finally:
@@ -37681,32 +37810,70 @@ def _chat_sig_scope():
                        regReads=_reg_reads_on_thread() - r0)
 
 
-def _chat_sig_note_pre(sid, sig, hit, watched, held, plain_outline):
-    """The push loop's per-tab counts after a pre-build signature (memos.chatSig): the signature taken (pre; nosig when
-    none could be), the cache compare it is about to make (compares, and the components equal by object identity),
-    and the warm-tab census. `hit` is the tab's cached entry before the compare, `watched` whether this push's or any
-    connected client's active tab is this one, `held` the push's census set (_skeleton_census: the tabs every connected
-    chat client holds as a skeleton, read once per push; None with no connected chat client) and `plain_outline`
-    whether an Outline pane without the provisional-row capability is connected. The transcript's existence is read
-    off the signature's own component (sig[0] is None when the file is missing), never a second stat; a watched tab is
-    a body by definition, whatever the set says."""
-    n_id = compares = 0
+def _chat_sig_compare_of(hit, sig):
+    """(compares, identical components) of one cache read: (1, n) when the read `hit` returned an entry with a tuple
+    signature and a signature `sig` is in hand, n the components equal by object identity at every position (the
+    compareIdenticalComponents row above); (0, 0) otherwise. Arithmetic only; the callers fold it."""
     if hit is not None and sig is not None and isinstance(hit[0], tuple):
-        compares = 1
-        n_id = sum(1 for a, b in zip(hit[0], sig) if a is b)
-    skel = held is not None and not watched and sid in held
-    gated = hit is not None and not watched and skel and sig is not None and sig[0] is not None
+        return 1, sum(1 for a, b in zip(hit[0], sig) if a is b)
+    return 0, 0
+
+
+def _chat_sig_note_compare(hit, sig):
+    """A cache RE-READ (after a single-flight wait, or under a claim) folded into memos.chatSig: compares and
+    compareIdenticalComponents by _chat_sig_compare_of, one lock hold when the read met an entry, none otherwise. The
+    pre-flight read is folded by _chat_sig_note_pre with the tab's other counts; the final compare is never counted."""
+    compares, n_id = _chat_sig_compare_of(hit, sig)
+    if compares:
+        _chat_sig_bump(compares=compares, compareIdenticalComponents=n_id)
+
+
+def _chat_sig_note_pre(sid, sig, hit, watched, held_live, tabs):
+    """The push loop's per-tab counts after a pre-build signature (memos.chatSig): the signature taken (pre; nosig when
+    none could be) and the pre-flight cache read it is about to compare (compares and compareIdenticalComponents by
+    _chat_sig_compare_of), folded in one lock hold; and the tab's row for the census after the loop appended to
+    `tabs`, the push's list (_chat_sig_note_census reads it): (sid, watched, cached, has a transcript, held_live).
+    `hit` is the tab's cached entry from the pre-flight read, `watched` whether this push's or any connected client's
+    active tab is this one, `held_live` the cold gate's live _held_as_skeleton_by_all answer when the gate walked
+    this tab (True or False) and None when it did not (a warm tab, a watched one, a transcript-less one, a plain
+    Outline connected), so the census asks only about those. The transcript's existence is read off the signature's
+    own component (sig[0] is None when the file is missing), never a second stat."""
+    compares, n_id = _chat_sig_compare_of(hit, sig)
+    tabs.append((sid, watched, hit is not None, sig is not None and sig[0] is not None, held_live))
     with _CHAT_SIG_STATS_LOCK:
         st = _CHAT_SIG_STATS
         st["pre"] += 1
         if sig is None:
             st["nosig"] += 1
         st["compares"] += compares
-        st["compareIdentity"] += n_id
-        if gated:
-            st["warmBlockedByOutline" if plain_outline else "warmEligible"] += 1
-        if held is not None and not skel:
-            st["heldBody"] += 1
+        st["compareIdenticalComponents"] += n_id
+
+
+def _chat_sig_note_census(tabs, clients, plain_outline):
+    """The warm-tab census, once per push after the tab loop (memos.chatSig: warmEligible, warmBlockedByOutline,
+    heldBody), over the rows _chat_sig_note_pre recorded. ONE _skeleton_census over the tabs the cold gate did not
+    walk (held_live None), so the skeleton question is asked once per tab per push: the gate's live answer where it
+    exists, the census set elsewhere (before this the census asked about every tab before the loop and the gate asked
+    again about the cold ones, a second clients-by-tabs walk on exactly the pushes where the gate is live, 2026-09-19
+    review). `clients` are the connected chat clients (the census answers None with none, and heldBody counts
+    nothing then) and `plain_outline` whether an Outline pane without the provisional-row capability is connected. A
+    tab is a skeleton when it is unwatched and every client holds it; warm when cached, a skeleton and with a
+    transcript (the block comment's warmEligible row names the gate clauses that is); a body when some client is
+    connected and it is not a skeleton, the watched tab included. One lock hold folds the three. A tab another
+    thread built between the gate's not-yet-built check and its turn was asked by the gate, as before."""
+    census = _skeleton_census([sid for sid, _w, _c, _t, held_live in tabs if held_live is None], clients)
+    warm = blocked = body = 0
+    for sid, watched, cached, transcript, held_live in tabs:
+        skel = not watched and (held_live if held_live is not None else (census is not None and sid in census))
+        if cached and skel and transcript:
+            if plain_outline:
+                blocked += 1
+            else:
+                warm += 1
+        if census is not None and not skel:
+            body += 1
+    if warm or blocked or body:
+        _chat_sig_bump(warmEligible=warm, warmBlockedByOutline=blocked, heldBody=body)
 
 
 def _chat_sig_seam_close(t0, c0):
@@ -37733,8 +37900,8 @@ def _chat_sig_seam_close(t0, c0):
 
 
 def _chat_stat_key(path):
-    """(mtime, size) of a file, or None when it is missing — the task-output gate's identity."""
-    _chat_sig_count("stats")
+    """(mtime, size) of a file, or None when it is missing — the task-output gate's identity. The stat counts on an
+    open signature through the os.stat wrapper (memos.chatSig.stats), as every stat does."""
     try:
         st = os.stat(path)
         return (st.st_mtime, st.st_size)
@@ -37744,7 +37911,6 @@ def _chat_stat_key(path):
 
 def _chat_postal_key():
     """The postal index's identity — messages.jsonl (mtime_ns, size), the same key _postal_index memoizes on."""
-    _chat_sig_count("stats")
     try:
         st = os.stat(jd.STATE / "timeline" / "messages.jsonl")
         return (st.st_mtime_ns, st.st_size)
@@ -37842,7 +38008,6 @@ def _chat_ident(path):
     permissions repair (a chmod that clears an unreadable record's door) moves ctime alone, and without it the cached
     chat payload kept the tab hover saying the record could not be read until an unrelated input moved (the review of
     T356's follow-ups)."""
-    _chat_sig_count("stats")
     try:
         st = os.stat(str(path))
     except OSError:
@@ -38144,8 +38309,8 @@ def _chat_build_sig(sess, tm=None, now=None, live_map=None, deps=None):
             deps = _hit[3] if _hit is not None and len(_hit) > 3 else None
         be = Sessions.backend_for(sid)
         sig = []
-        # transcript: (mtime, size), or None while the file does not exist yet (a just-created session).
-        _chat_sig_count("stats")
+        # transcript: (mtime, size), or None while the file does not exist yet (a just-created session). Every stat
+        # below, this one included, counts on the scope through the os.stat wrapper (memos.chatSig.stats): no site call.
         try:
             st = os.stat(path)
             sig.append((st.st_mtime, st.st_size))
@@ -38160,7 +38325,6 @@ def _chat_build_sig(sess, tm=None, now=None, live_map=None, deps=None):
         for _k in dict.fromkeys([fsid, str(sess.get("anchor") or "")]):
             if not _k:
                 continue
-            _chat_sig_count("stats")
             try:
                 ss = os.stat(jd.STATESDIR / (_k + ".jsonl"))
                 states.append((ss.st_mtime, ss.st_size))
@@ -48548,12 +48712,12 @@ def _spend_tree_list_dir(d, m, known):
                 continue
             if e.is_dir(follow_symlinks=False):
                 new = e.path not in known
-                m["dirs"][e.path] = e.stat(follow_symlinks=False).st_mtime; _SPEND_TREE_STATS["entryStats"] += 1
+                m["dirs"][e.path] = _entry_stat(e, follow_symlinks=False).st_mtime; _SPEND_TREE_STATS["entryStats"] += 1
                 if new:
                     known.add(e.path)
                     _spend_tree_list_dir(e.path, m, known)
             elif e.name.endswith(".jsonl") and e.is_file(follow_symlinks=False):
-                m["files"][e.path] = e.stat(follow_symlinks=False).st_mtime; _SPEND_TREE_STATS["entryStats"] += 1
+                m["files"][e.path] = _entry_stat(e, follow_symlinks=False).st_mtime; _SPEND_TREE_STATS["entryStats"] += 1
         except OSError:
             continue
 
@@ -54567,12 +54731,15 @@ def _skeleton_held_here(c, sid):
 
 def _skeleton_census(sids, clients):
     """The sids among `sids` that EVERY chat client in `clients` holds as a skeleton (_held_as_skeleton_by_all's answer
-    for each), from ONE read of each client under its slot lock; None with no client. The warm-tab census's input
-    (memos.chatSig, _chat_sig_note_pre): taken once per push before the tab loop, so the census costs one lock hold
-    per connected chat client per push. Asked per tab it took the lock per client per tab (about 150 holds per cycle
-    at 38 tabs and four pages, each able to wait behind a handler thread's send to that client), a second full
-    clients-by-tabs walk on the hot loop beside the cold gate's (2026-09-18 review). A set the clients change during
-    the loop is read as it stood at the push's start: a count, not a gate."""
+    for each), from ONE read of each client under its slot lock; None with no client, set() with clients and nothing
+    to ask about. The warm-tab census's input (memos.chatSig, _chat_sig_note_census): taken once per push AFTER the
+    tab loop, over the tabs the cold gate did not walk (the gate's live answer stands for the rest), so the census
+    costs one lock hold per connected chat client per push and the skeleton question is asked once per tab per push.
+    Asked per tab it took the lock per client per tab (about 150 holds per cycle at 38 tabs and four pages, each able
+    to wait behind a handler thread's send to that client), a second full clients-by-tabs walk on the hot loop
+    beside the cold gate's (2026-09-18 review); asked before the loop over every tab it repeated the gate's question
+    for the cold ones (2026-09-19 review). A set the clients change during the loop is read as it stood at the loop's
+    end: a count, not a gate."""
     if not clients:
         return None
     held = set(sids)
@@ -59320,7 +59487,9 @@ def _repo_index_key(cwd):
     the repo top dir's mtime and the mtimes of the top's immediate subdirs (see _repo_file_index). None when
     the tree cannot be scanned (the same backstop as _git_branch: no key means an uncached listing, never a
     raise). Shared with the chat-build signature's pathlink pre-check, which vouches for a message's
-    unresolved tokens only while this key and the message's candidate directories hold."""
+    unresolved tokens only while this key and the message's candidate directories hold. Inside a signature
+    every stat here counts under memos.chatSig.stats: the subdirectories' through _entry_stat, the two
+    getmtime calls through the os.stat wrapper, and the tree memos' (_tree_of, _git_head_file) the same way."""
     tree = _tree_of(cwd)[0] or cwd                   # _tree_of returns (toplevel, branch)
     try:
         gi = _git_head_file(tree)                    # <gitdir>/HEAD: the index sits beside it
@@ -59328,14 +59497,11 @@ def _repo_index_key(cwd):
         with os.scandir(tree) as it:
             for e in it:
                 if e.name != ".git" and e.is_dir(follow_symlinks=False):
-                    _chat_sig_count("stats")         # memos.chatSig: each stat as it is attempted, the other sites' rule
-                    subs.append((e.name, e.stat().st_mtime))
+                    subs.append((e.name, _entry_stat(e).st_mtime))   # a DirEntry stat: counted through the helper (memos.chatSig)
         if gi:                                       # the index's mtime only when there is a git dir to hold one
-            _chat_sig_count("stats")
             idx = os.path.getmtime(os.path.join(os.path.dirname(gi), "index"))
         else:
             idx = None
-        _chat_sig_count("stats")
         return (idx, os.path.getmtime(tree), tuple(sorted(subs)))
     except (OSError, UnicodeDecodeError):
         return None
@@ -59560,8 +59726,8 @@ def _pin_mention(fp):
             # bound the store on the write event, oldest first (mtime; serves don't touch it — a pin
             # for a busy old chat can age out, and the fallback is the live file)
             try:
-                rows = [(e.stat().st_mtime, e.stat().st_size, e.path)
-                        for e in os.scandir(d) if e.is_file() and not e.name.endswith(".tmp")]
+                rows = [(st.st_mtime, st.st_size, e.path)
+                        for e, st in ((e, _entry_stat(e)) for e in os.scandir(d) if e.is_file() and not e.name.endswith(".tmp"))]
                 total = sum(sz for _, sz, _ in rows)
                 for _, sz, path_ in sorted(rows):
                     if total <= _PIN_STORE_MAX_BYTES:
@@ -59988,7 +60154,8 @@ def _push(targets, connect=False, live_map=None):
             _live_scope.chat_floor0 = _chat_floor0_of(_all_chat)
             _all_active = {c.get("active") for c in _all_chat if c.get("active")}   # every connected column's watched tab,
             #                                                                          not this push's targets alone (round two, low 2)
-            _census = _skeleton_census([s["sid"] for s in build_order], _all_chat)   # memos.chatSig's warm-tab census: one read per client per push
+            _chat_sig_bump(pushes=1)                     # memos.chatSig.pushes: a push that runs the chat tab loop, the table's per-push denominator
+            _sig_tabs = []                               # memos.chatSig: the per-tab rows the warm-tab census folds after the loop (_chat_sig_note_census)
             for s in build_order:
                 is_active = s["sid"] in active           # the watched tab(s): served like any tab while the key holds
                 # THE COLD-TAB GATE (2026-09-14; the user, after the boot review): on the 3:58 PM PT restart the first
@@ -60003,10 +60170,13 @@ def _push(targets, connect=False, live_map=None):
                 # plans/outline-pane-provisional-row.md); a page that declared no diet holds no set and is served whole, as today.
                 _tm = live_map.get(s["sid"])
                 _light = None
+                _held_live = None                        # the gate's live skeleton answer when it asked; None when it did not
+                #                                          (the warm-tab census after the loop asks only about those, _chat_sig_note_census)
                 if (not is_active and s["sid"] not in _all_active and not _plain_outline
-                        and s["sid"] not in _built_chat and os.path.exists(s["path"])
-                        and _held_as_skeleton_by_all(s["sid"], _all_chat)):   # every CONNECTED chat client, as the floor reads
-                    _light = _light_status(s["sid"], s["path"], _tm, now)   # no live row: no status to state, so build as before
+                        and s["sid"] not in _built_chat and os.path.exists(s["path"])):
+                    _held_live = _held_as_skeleton_by_all(s["sid"], _all_chat)   # every CONNECTED chat client, as the floor reads
+                    if _held_live:
+                        _light = _light_status(s["sid"], s["path"], _tm, now)   # no live row: no status to state, so build as before
                 if _light is not None:
                     for c in chat_clients:               # a status per skeleton tab still goes (the diet's contract),
                         _send_light_status(c, s["sid"], _light)   # the live row's word until the tab's first build
@@ -60025,13 +60195,14 @@ def _push(targets, connect=False, live_map=None):
                     sig = None                           # an input that cannot be keyed: build, never cache
                 _chat_sig_seam_close(_t_seam, _c_seam)   # the seam and its static / deps sub-seams (stages_ms, the split)
                 hit = _built_chat.get(s["sid"])
-                _chat_sig_note_pre(s["sid"], sig, hit, is_active or s["sid"] in _all_active, _census, _plain_outline)   # memos.chatSig
+                _chat_sig_note_pre(s["sid"], sig, hit, is_active or s["sid"] in _all_active, _held_live, _sig_tabs)   # memos.chatSig
                 _claimed = False
                 if not (hit is not None and sig is not None and hit[0] == sig):
                     _ev = _chat_inflight_claim(s["sid"])            # single-flight (2026-09-14): another thread building this tab?
                     if _ev is not None:
                         _ev.wait(CHAT_INFLIGHT_WAIT_S)              # wait for it, then re-read what it stored
                         hit = _built_chat.get(s["sid"])
+                        _chat_sig_note_compare(hit, sig)            # memos.chatSig.compares: the post-wait re-read that met an entry
                         if hit is not None and sig is not None and hit[0] == sig:
                             _VIEW_STATS["chatWaited"] += 1
                             _chat_sig_bump(waited=1)
@@ -60043,6 +60214,7 @@ def _push(targets, connect=False, live_map=None):
                         hit = _built_chat.get(s["sid"])             # re-read under the claim (round two, low c): a builder that
                         #                                             stored between the first read and the claim is served, as
                         #                                             _cached_feed re-checks under its lock
+                        _chat_sig_note_compare(hit, sig)            # memos.chatSig.compares: the claim re-read that met an entry
                 post, served, _rec = None, False, None
                 if hit is not None and sig is not None and hit[0] == sig:
                     if _claimed:
@@ -60066,6 +60238,7 @@ def _push(targets, connect=False, live_map=None):
                         # that stopped updating is not a silent degrade (review find, 2026-09-08).
                         _PERF_STATS.stage("push.chat.build", time.monotonic() - _t0, cpu=_cpu_delta(_c0))   # a failed build's time is build time too
                         _chat_build_fault(s, e)
+                        _chat_sig_bump(failedBuilds=1)   # memos.chatSig.failedBuilds: a build that raised past its pre-build signature
                         _chat_dep_scope.deps = None      # the failed build's record is nobody's
                         if _claimed:
                             _chat_inflight_done(s["sid"])   # the waiters build their own, as before this change
@@ -60175,6 +60348,7 @@ def _push(targets, connect=False, live_map=None):
                                   moved=",".join(l for l in _chat_sig_miss(sig, post) if l not in _CHAT_SIG_DEPS))
                 if _claimed:
                     _chat_inflight_done(s["sid"])        # stored (or not cacheable): the waiters re-read the cache now
+            _chat_sig_note_census(_sig_tabs, _all_chat, _plain_outline)   # memos.chatSig: the warm-tab census, once per push, over the tabs the gate did not walk
             shown_sids = {s["sid"] for s in chat_list}
             for sid in list(_built_chat):                # drop cache for tabs no longer shown (closed/×-hidden)
                 if sid not in shown_sids:
@@ -60628,6 +60802,7 @@ def _push_session_now(sid):
             _nbytes = None
         _active = sid in {c.get("active") for c in targets if c.get("active")}   # the watched tab, as _push reads it from its clients
         _PERF_STATS.build_chat(False, _dt, active=_active, miss=("targeted",), sid=sid, nbytes=_nbytes)
+        _chat_sig_bump(targetedBuilds=1)             # memos.chatSig.targetedBuilds: a targeted build, no signature taken, watched or not
         #   the per-session timer (round three, 2026-09-15): this push builds too (27 attach handshakes at a boot run it), and an
         #   unrecorded build here warmed the cache the pusher's first recorded build then read, so the row's `first` and `max` and
         #   the aggregate's `built` missed the worst builds; the label `targeted` says the push, not a signature component, drove it.

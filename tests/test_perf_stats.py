@@ -574,15 +574,21 @@ class Collector(unittest.TestCase):
 
     def test_the_chat_signature_counters_are_a_flat_integer_table(self):
         """Stage 1 of the chat-signature design (2026-09-18): memos.chatSig is the pass's own table, one integer per
-        key, pasteable (identifier keys, numbers), served as a copy: the signature counts (pre, post, nosig, waited),
-        the compare (compares, compareIdentity), the reads inside a signature (stats, namesReads, switchReads,
-        regReads) and the warm-tab census (warmEligible, warmBlockedByOutline, heldBody); thread, the comment-thread
-        signatures, since the 2026-09-18 review (the read counts fold from those signatures too)."""
+        key, pasteable (identifier keys, numbers), served as a copy: the signature counts (pre, post, nosig, waited,
+        and since the 2026-09-19 review failedBuilds and targetedBuilds, the two terms the reconciliation identities
+        need), the compare (compares, compareIdenticalComponents: renamed from compareIdentity, which invited a division
+        by compares alone), the reads inside a signature (stats, namesReads, switchReads, regReads), the warm-tab census
+        (warmEligible, warmBlockedByOutline, heldBody), thread (the comment-thread signatures, the read counts fold from
+        those too) and pushes (the per-push denominator). The family's rule (tests-6): every reader of this table takes a
+        DELTA over its own window and never assumes the table clean, since the module's table is shared by every test
+        here (PushStages' real pushes leave it moved on the green path), and a bump is restored under try/finally, as the
+        populated-blocks sibling does, so a failed assertion leaves nothing moved for the tests after it."""
         snap = self.st.snapshot()
         blk = snap["memos"]["chatSig"]
-        self.assertEqual(set(blk), {"pre", "post", "thread", "nosig", "waited", "compares", "compareIdentity",
+        self.assertEqual(set(blk), {"pre", "post", "failedBuilds", "targetedBuilds", "thread", "nosig", "waited",
+                                    "compares", "compareIdenticalComponents",
                                     "stats", "namesReads", "switchReads", "regReads",
-                                    "warmEligible", "warmBlockedByOutline", "heldBody"})
+                                    "warmEligible", "warmBlockedByOutline", "heldBody", "pushes"})
         for k, v in blk.items():
             self.assertIs(type(v), int, k)
             self.assertTrue(km._PERF_IDENT.fullmatch(k), "an identifier key: %s" % k)
@@ -590,9 +596,11 @@ class Collector(unittest.TestCase):
         blk["pre"] += 1000
         self.assertNotEqual(blk["pre"], km._chat_sig_stats_report()["pre"], "the report is a copy, not the table")
         km._chat_sig_bump(pre=2, nosig=1)
-        after = km._chat_sig_stats_report()
-        self.assertEqual((after["pre"] - blk["pre"] + 1000, after["nosig"] - blk["nosig"]), (2, 1), "the bump adds under the lock")
-        km._chat_sig_bump(pre=-2, nosig=-1)             # this module's table is shared by every test: put it back
+        try:
+            after = km._chat_sig_stats_report()
+            self.assertEqual((after["pre"] - blk["pre"] + 1000, after["nosig"] - blk["nosig"]), (2, 1), "the bump adds under the lock")
+        finally:
+            km._chat_sig_bump(pre=-2, nosig=-1)         # this module's table is shared by every test: put it back, whatever the assertion said
 
     def test_the_populated_chat_signature_blocks_pass_the_exports_paste_safe_walk_whole(self):
         """The three blocks stage 1 of the chat-signature design adds, POPULATED (every chatSig counter moved, every CPU stage
@@ -1762,7 +1770,8 @@ class RoutingStatements(unittest.TestCase):
     BLOCKS = re.compile(r"stagesForeign|cycleJobsMs|connectPush\.stagesMs|stages_foreign|cycle_jobs_ms|connect_stages_ms")
     # the places a routing sentence lives today; a file added here has been read against the measured cells
     PLACES = {"bin/romp", "docs/reference.md", "kernel/kernel.py", "tests/test_first_cycle_stage_split.py",
-              "tests/test_jobs_thread_split.py", "tests/test_perf_stats.py", "upstream/2026-09-18-stage-attribution.md"}
+              "tests/test_jobs_thread_split.py", "tests/test_perf_stats.py", "upstream/2026-09-18-stage-attribution.md",
+              "upstream/2026-09-18-chat-signature-stage1.md"}   # its pushes sentence names connectPush.stagesMs (2026-09-19 review, fresh-2)
 
     def _places(self):
         root = Path(HERE).parent
@@ -2335,10 +2344,45 @@ class GoalIoCounters(unittest.TestCase):
         # memos.chatSig table are documented where the reader of GET /perf looks
         doc = Path(HERE).parent.joinpath("docs", "reference.md").read_text()
         self.assertIn("- `stages_cpu_ms`:", doc)
-        for k in ("`chatSig`", "`push.chat.sig.static`", "`push.chat.sig.deps`", "`compareIdentity`", "`regReads`",
+        for k in ("`chatSig`", "`push.chat.sig.static`", "`push.chat.sig.deps`", "`compareIdenticalComponents`", "`regReads`",
                   "`warmEligible`", "`warmBlockedByOutline`", "`heldBody`",
-                  "`thread`"):                          # the comment-thread signatures, the third taker (2026-09-18 review)
+                  "`thread`",                           # the comment-thread signatures, the third taker (2026-09-18 review)
+                  "`failedBuilds`", "`targetedBuilds`", "`pushes`"):   # the identities' two terms and the per-push denominator (2026-09-19 review)
             self.assertIn(k, doc, k)
+        self.assertNotIn("`compareIdentity`", doc, "the retired name: it invited a division by compares alone (2026-09-19 review, regression-5)")
+
+    def test_the_reference_doc_says_what_each_chat_signature_counter_counts_by_execution(self):
+        """The round-2 sentences (2026-09-19 review) the reference must carry, phrase by phrase, each matched tolerant of
+        backticks and line wraps. The kernel's block comment at _CHAT_SIG_STATS carries the same sentences (the fix lines'
+        wording, copied into both), so a copy that drifts turns one of these red: what stats counts by execution and what
+        Python cannot count (regression-1), compares at the three reads and not the final compare (kernel-1), the share's
+        denominator (regression-5), the identities' two terms and which nosig (extra5-1), the census without the gate's
+        live-row clause (regression-4), the CPU containers (extra5-3), the per-push denominator and the mixed population
+        (fresh-2), the split's bytes on the static row (fresh-3) and the instrumentation's own cost per stat (fresh-4)."""
+        doc = " ".join(Path(HERE).parent.joinpath("docs", "reference.md").read_text().split())
+        for why, pattern in (
+                ("regression-1: stats counts by execution, whoever makes the stat", r"whichever function or module makes them"),
+                ("regression-1: the wrappers on os.stat and os.lstat", r"`?os\.lstat`? in the wrappers"),
+                ("regression-1: the posix module is wrapped too (importlib)", r"posix"),
+                ("regression-1: DirEntry.stat through the one door", r"`?_entry_stat`?"),
+                ("regression-1: what Python cannot count, the fstat inside open()", r"fstat inside"),
+                ("regression-1: what Python cannot count, a DirEntry.is_dir without d_type", r"d_type"),
+                ("kernel-1: the final compare is not a read", r"not (at )?the final compare"),
+                ("kernel-1: a rebuild counts two, so compares can exceed pre", r"`?compares`? can exceed `?pre`?"),
+                ("regression-5: the share's denominator, compares * len(_CHAT_SIG_LABELS)", r"`?compares`? \* len\("),
+                ("regression-5: counted at every position", r"whether or not the tuple compare reached it"),
+                ("extra5-1: which nosig the identity means", r"background builds only"),
+                ("extra5-1: the bound when builds raised", r"at most `?failedBuilds`?"),
+                ("regression-4: the census drops the gate's live-row clause", r"without the gate's live-row clause"),
+                ("extra5-3: push.chat.sig's CPU row is exactly its two sub-seams", r"(exactly|the sum of) `?push\.chat\.sig\.static`? (plus|and) `?push\.chat\.sig\.deps`?"),
+                ("extra5-3: push.chat's row covers its seams plus the glue", r"plus (the loop's|its) glue"),
+                ("fresh-2: every key is a delta over pushes", r"delta over `?pushes`?"),
+                ("fresh-2: a pusher.cycles denominator runs high by the connect pushes", r"runs high by those connect pushes"),
+                ("fresh-2: the seam rows exclude connect pushes while the table includes them", r"(exclude|EXCLUDE) connect pushes"),
+                ("fresh-3: the signature's bytes in the split land on the static row", r"land on the static row"),
+                ("fresh-3: the deps row records wall and CPU only", r"deps`? row records wall and CPU only"),
+                ("fresh-4: the wrappers' cost per stat", r"wrappers?[^.]{0,240}per stat|per stat[^.]{0,240}wrappers?")):
+            self.assertTrue(re.search(pattern, doc), "%s: no match for %r in docs/reference.md" % (why, pattern))   # not assertRegex: its message would print the whole doc
 
     def test_the_reference_doc_names_the_shared_memos_by_their_camelcase_keys(self):
         # the memo keys upstream also reports are spelled one way in GET /perf and in the doc (bgTops, liftGate,

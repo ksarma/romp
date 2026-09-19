@@ -7456,6 +7456,17 @@ def task_store_dir(fsid):
     return Path(os.environ.get("CLAUDE_CONFIG_DIR") or str(HOME / ".claude")) / "tasks" / str(fsid)
 
 
+def _entry_stat(e, **kw):
+    """The kernel's _entry_stat twin (judge.py carries the same two lines): a scandir entry's stat, counted on the
+    kernel's open chat signature (its memos.chatSig.stats) through the thread-local the kernel hangs on its os.stat
+    wrapper, read by attribute because this module never imports the kernel (a DirEntry stats in C and reaches no
+    wrapper). The kernel's source pin holds every `e.stat(` in kernel/ to the helpers."""
+    tl = getattr(os.stat, "_romp_sig_counting", None)
+    if tl is not None and tl.active:
+        tl.stats += 1
+    return e.stat(**kw)
+
+
 def task_store_fp(fsid):
     """The task store's identity for the judge gate: None when the stem has no store dir (task_store_plan
     returns None too, and the caller folds the transcript instead), else the sorted (name, mtime_ns, size)
@@ -7474,7 +7485,7 @@ def task_store_fp(fsid):
             if not e.name.endswith(".json"):
                 continue
             try:
-                st = e.stat()
+                st = _entry_stat(e)
             except FileNotFoundError:
                 continue                                   # deleted between the listing and the stat
             out.append((e.name, st.st_mtime_ns, st.st_size))
