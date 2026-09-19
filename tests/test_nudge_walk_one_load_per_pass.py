@@ -24,8 +24,8 @@ pass-through call (the line read from the wrapper's source at setUp), so a load 
 than its hand-off line is named for the wrapper in the judge's file, while one written on the hand-off line itself is
 named for the kernel caller of that call and counted under that caller's mechanism, the walk's for the look's read and the
 gate's for its currency check, or the writer list for a call through load_goals_or_fault (the step-over is line-granular:
-review round 2; the walk's ceiling is the line that fires first, since the look's read precedes the gate's on a pass: review
-round 3), and calls through to the real loader, so nothing about the shared cache is stubbed. A call from the look's body or from its gate wrapper (`_nudge_look_gated`'s
+review round 2, extra5-1; the walk's ceiling is the line that fires first, since the look's read precedes the gate's on a pass:
+the build's verifier pass after the round-2 fixes), and calls through to the real loader, so nothing about the shared cache is stubbed. A call from the look's body or from its gate wrapper (`_nudge_look_gated`'s
 inner function, the same mechanism) is the walk's, a call from `_nudge_placement_gate` is the gate's, a call from
 `_awaiting_wake_outcomes` is the wake sweep's (the store's third reader on the pass, bounded below), and any other caller
 during a pass fails the test, named by function, file and line. The writer door has its own assertion on every pass: the
@@ -45,14 +45,14 @@ decorator without functools.wraps would hand the census its wrapper's source), w
 another name, or through a string, is refused where that name is born, by a pin over the kernel's and the judge's whole
 source (every loader by attribute the callee of a call; no alias, bare name, parameter, keyword, or loader-naming string constant
 handed to a dynamic lookup or a dict read or used as a subscript key spells one; a name assembled at run time or bound before the
-lookup is outside every static pin here, a limit the enumeration holds on its side; review round 4), and the census's own forms,
+lookup is outside every static pin here, a limit the enumeration holds on its side; the consolidation pass), and the census's own forms,
 counted and missed, are enumerated in
 TheCensusOverEveryForm; setUp checks that it rebinds
 exactly the listed names, so the census reads the fixture's list and not a hand-kept copy of it, and the check spans the
 whole setUp: its snapshots are setUp's first statements and its comparison the last, and the judge names the rebind moves are
 the diff across the rebind call alone, read against a second judge snapshot taken at the rebind, so a stub placed before the
-rebind is not filed as the rebind's (review round 3: read against the first snapshot, a judge stub between it and the rebind
-was subtracted and escaped); a stub installed before setUp, or on a judge directory or path name the rebind also moves, is
+rebind is not filed as the rebind's (the build's verifier pass after the round-2 fixes: read against the first snapshot, a judge
+stub between it and the rebind was subtracted and escaped); a stub installed before setUp, or on a judge directory or path name the rebind also moves, is
 outside it. The window: each pass, the
 `_auto_nudge_tick` call (the records are cleared before it and read after it), so a load elsewhere in the process (a
 builder, a handler, the perf snapshot the test reads after its last pass) is outside the window and is not this test's
@@ -62,12 +62,14 @@ and fallback in `jd.shared_store_stats()` (a call whose open or read raises move
 took no read), so per pass the delta of those five must equal the walk's, the gate's and the sweep's recorded calls
 together; and the door's second bumps, unreadable_journal, corrupt, dup and refuse (SHARED_SECOND_KEYS), each sit on the fill
 road below the miss or compare_miss bump and return, so per pass their sum never exceeds the fills, miss plus compare_miss
-(the second-bump bound, review round 4: corrupt and unreadable_journal are hand-off keys that are not call keys, so a bump of
+(the second-bump bound, ruling 1 of the reviewer's rulings on the pre-emption: corrupt and unreadable_journal are hand-off keys
+that are not call keys, so a bump of
 either beside a goal_io loads bump with no call through the door balanced the two reconciliations below and red nothing in
 _pass). The writer door: every `load_goals` call bumps `loads` in `jd.goal_io_stats()` at the loader's
 first line, and the shared door hands a read to `load_goals` on exactly the absent, fallback, corrupt and
 unreadable_journal counters (SHARED_HANDOFF_KEYS), so per pass the delta of `loads` must equal the recorded writer calls
-plus those hand-offs (review round 2: until then the writer door was a recorder on one name, and a `load_goals` through a
+plus those hand-offs (the build's verifier pass after the round-1 fixes: until then the writer door was a recorder on one name,
+and a `load_goals` through a
 reference bound before the recorder stood, or written inside the shared door's own body where the fallback skip takes it
 for the hand-off, left every witness green). So a load through a door of this judge module onto its cache or its
 counters that the recorders do not wrap, or through a reference to a real door taken before a recorder stood, is noticed
@@ -103,19 +105,28 @@ the shared door's; and one live record for an alive sid whose look the walk leav
 walk and the gate load nothing, the sweep loads once per pass and reaches the failure stamp (replaced by a recorder there,
 since its real body is a writer).
 
-Red in both directions. For every assertion this module makes, a battery at the final head of the fourth review round
-constructs the state in which that line fails and records the first failing line: each state landed on kernel/kernel.py,
+Two provenances are named in this module, never by one word. The reviewer's rounds carry a number: review round 1 ruled
+twelve findings, round 2 fourteen, round 3 nine, and "the round-N fixes" are the changes that answer round N's rulings. The
+build's own passes carry a role and never a number: the build's verifier pass after the round-1 fixes, the build's verifier
+pass after the round-2 fixes, and the consolidation pass, the build's pass between the round-2 fixes and the reviewer's round
+3, in which three lenses read the head, the reviewer ruled on what they found (the reviewer's rulings on the pre-emption,
+three rulings, not a round), a fixer applied the rulings, three verifiers read the fixes and a consolidator closed what the
+verifiers found.
+
+Red in both directions. For every assertion this module makes, a battery at the head of the build's verifier pass after the
+round-2 fixes constructs the state in which that line fails and records the first failing line: each state landed on kernel/kernel.py,
 kernel/judge.py, cli/perf_public.py, docs/reference.md or this module and reverted, the module run over its twelve cases
 on 3.12 with the caches cleared (three states on 3.11 as well); the figures below are counts from its log. A plant that
 reds every harness case reads 5 failed, 7 passed; the two pin cases' probe setUps raise the first guard they meet, so a
 setUp plant that changes which guard raises reads 7 failed, 5 passed. setUp: a stand-in left on a door by a peer module
 reds the door check (7 failed, 5 passed); two hand-off calls on `_or_fault`'s one hand-off line red the call-count
-guard, 2 against 1, where before the third round only the per-mechanism counts red, and the second call on its own line,
+guard, 2 against 1, where before the round-2 fixes (extra5-2) only the per-mechanism counts red, and the second call on its own
+line,
 or the `loader` parameter renamed so no call matches, reds the line guard (7 failed, 5 passed each); a kernel stub above
 the old snapshot position and a kernel stub inside the seeding helper each red the agreement check naming the stub, and
 the judge-stub pin beside the harness cases, whose probe meets that kernel guard before its own (6 failed, 6 passed
-each); a judge stub without a list entry and a judge stub between the first snapshot and the rebind (review round 3:
-read against the first snapshot, the rebind's diff filed it as the rebind's and it escaped) each red the check naming
+each); a judge stub without a list entry and a judge stub between the first snapshot and the rebind (the build's verifier
+pass after the round-2 fixes: read against the first snapshot, the rebind's diff filed it as the rebind's and it escaped) each red the check naming
 the stub (5 failed, 7 passed each); the backend replacement removed reds the backend assertion (5 failed, 7 passed); a
 stub placed through the hook right after the rebind is refused by name, and with the kernel snapshot back at its old
 position the hook's stub escapes and that pin case reds (1 failed, 11 passed); a stub placed through the hook before the
@@ -139,8 +150,8 @@ checks against 0 derives (1 failed, 11 passed); a derive counted in the skip bra
 skipping pass, 0 against 2 (4 failed, 8 passed), as do the currency read dropped and the fixture's parse left out of
 jd._PARSE_CACHE (3 failed, 9 passed each; at the head before the ceilings moved, those two red the first pass's gate
 assertion); a reference to the real shared door bound at kernel import and called per session in the pass loop reds the
-shared reconciliation, the counters two over the recorded calls (5 failed, 7 passed; review round 4: and the birth pin, 6 failed,
-11 passed of 17, below), a shared counter moved with no
+shared reconciliation, the counters two over the recorded calls (5 failed, 7 passed; the consolidation pass: and the birth pin, 6
+failed, 11 passed of 17, below), a shared counter moved with no
 recorded call reds it on every pass, one over (5 failed, 7 passed), the door's hit bump dropped reds it the other way (4
 failed, 8 passed), and a phantom record appended by the recorder reds the ceilings ahead of it (4 failed, 8 passed);
 `jd.load_goals` per session in the pass loop reds the writer assertion naming `_auto_nudge_pass` (5 failed, 7 passed),
@@ -149,8 +160,8 @@ in the judge's file (1 failed, 11 passed); the same import-time alias to the wri
 loads two over the hand-offs (5 failed, 7 passed), as does `load_goals(fsid)` at the top of the shared door's cache
 branch (4 failed, 8 passed). The first case, one state per assertion: the looks bump removed (3 failed, 9 passed); every
 look ending at the working gate, its test replaced by a constant true, the first pass's walk {0, 0} against {1, 1} (3
-failed, 9 passed; review round 3: the battery had folded this line into the walk ceiling's state, whose plant reds the
-ceiling first); a duplicate bump statement, 4 against 2 on the counter and 2 against 1 in the census (3 failed, 9 passed
+failed, 9 passed; the build's verifier pass after the round-2 fixes: the battery had folded this line into the walk ceiling's
+state, whose plant reds the ceiling first); a duplicate bump statement, 4 against 2 on the counter and 2 against 1 in the census (3 failed, 9 passed
 each); a served bump beside the derive, memo (2, 2) against (0, 2) (2 failed, 10 passed); the shared cache switched off
 after setUp, writerLoads 4 against 0 (1 failed, 11 passed); SID_A's store read once before the first pass, the counters
 {hit 3, miss 1} against {hit 2, miss 2} (1 failed, 11 passed); the memo row never recorded (4 failed, 8 passed); the
@@ -170,20 +181,22 @@ a miss in place of a hit, and the cache switched off before it, two fallbacks an
 each); a send in the look (3 failed, 9 passed); the served snapshot handing out zero loads, 0 against 5, the counter
 preset to 100 after setUp, 105 against 5, the bump adding a float, and `loads` denied in the public fold (1 failed, 11
 passed each). Four case-level tuples carried the writer door's counter and the store's call counters beside the walk's
-counter, on the two skip passes, the run pass and the state-gate case's first pass; review round 3 reduced them to the walk's
-counter alone, reasoning that a counter moved with no recorded call reds _pass's reconciliation first and that on the run pass
-a non-hit makes the gate derive and its line fire first. Review round 4 found that reasoning true of the call keys only: a
-corrupt or unreadable_journal bump beside a goal_io loads bump with no call through the door (a hand-off key that is not a
-call key) balanced both reconciliations, and at that head red nothing on the pass it was planted, only the moved-transcript
-tuple two passes later or nothing at all. The round restored the writer door's counter and the store's counters to the first
-skip pass, the run pass and the state-gate case's first pass (the second skip pass's tuple stays on the walk's counter and its
-skipped count) and added the second-bump bound to _pass, where the pair reds on its own pass; the pre-emption consolidation
-then gave the state-gate case's third pass, a skip pass, the same two elements, so every skip pass a pair can land on has both
-layers. The states re-run at this head are recorded below. The state-gate case: the working gate moved below the store
+counter, on the two skip passes, the run pass and the state-gate case's first pass; the build's verifier pass after the round-2
+fixes reduced them to the walk's counter alone, reasoning that a counter moved with no recorded call reds _pass's reconciliation
+first and that on the run pass a non-hit makes the gate derive and its line fire first. The consolidation pass's tuple-elements
+lens found that reasoning true of the call keys only: a corrupt or unreadable_journal bump beside a goal_io loads bump with no
+call through the door (a hand-off key that is not a call key) balanced both reconciliations, and at that head red nothing on
+the pass it was planted, only the moved-transcript tuple two passes later or nothing at all. Ruling 1 of the reviewer's rulings
+on the pre-emption restored the writer door's counter and the store's counters to the first skip pass, the run pass and the
+state-gate case's first pass (the second skip pass's tuple stays on the walk's counter and its skipped count) and added the
+second-bump bound to _pass, where the pair reds on its own pass; the consolidation then gave the state-gate case's third pass,
+a skip pass, the same two elements, so every skip pass a pair can land on has both layers. The states re-run at the head of the
+consolidation pass are recorded below. The state-gate case: the working gate moved below the store
 read (1 failed, 11 passed); a served bump in the working branch (contrived; 1 failed, 11 passed); the loads bump moved
 above the working gate (2 failed, 10 passed, the census the other); the verdict renamed (1 failed, 11 passed);
 `_put_walk_gate` made a no-op, so the second pass skips (2 failed, 10 passed); a read conditioned on a memo row standing
-(contrived; 3 failed, 9 passed; review round 4 dropped the second-pass tuple that was one of the three, below); a read in the
+(contrived; 3 failed, 9 passed; ruling 2 of the reviewer's rulings on the pre-emption dropped the second-pass tuple that was one
+of the three, below); a read in the
 skip branch (5 failed, 7 passed). The sweep cases: the sweep's ownership
 inverted (3 failed, 9 passed); the recorder using the bare basename, the sweep's read filed under `romp-kernel` (3
 failed, 9 passed); SID_C's store deleted in the store case and written in the no-store case, the hand-off count 1
@@ -198,8 +211,8 @@ bump moved one line off the load (1 failed, 11 passed); a call in the gate wrapp
 from the served block (1 failed, 11 passed); a name added to REPLACED_KM, 22 targets against 21 with setUp's check (7
 failed, 5 passed); `jd.load_goals_shared_or_fault` as the first statement of the real `_closer_settled`, and the same
 call inside an f-string on 3.11 (1 failed, 11 passed each; 8 passed on 3.11 at the head before the AST census); the
-loader imported under an alias there, on 3.12 and on 3.11 (1 failed, 11 passed each; review round 3: 11 passed each
-before the census read ast.alias); the census reverted to raw lines, the prose sample counting sites (1 failed, 11
+loader imported under an alias there, on 3.12 and on 3.11 (1 failed, 11 passed each; the build's verifier pass after the
+round-2 fixes: 11 passed each before the census read ast.alias); the census reverted to raw lines, the prose sample counting sites (1 failed, 11
 passed), attributes ignored, one call counting none (2 failed, 10 passed), and aliases ignored, the import sample
 counting none (1 failed, 11 passed); the old tokenize census with the f-string sample on 3.11 (1 failed, 11 passed); a
 comment quoting the bump, and a docstring mention in the gate wrapper, green (12 passed each). The recorder: the
@@ -210,12 +223,15 @@ the toggle needle dropped from the jobs block, each of the walk entry's four nee
 module's pointer dropped, and the gloss phrase changed (1 failed, 11 passed each). The assertion texts name the
 mechanism and are in the commit messages.
 
-Review round 4 (2026-09-19). The record above is the fourth round's battery over the twelve cases of that head; this head has
+The consolidation pass (2026-09-19, between the round-2 fixes and the reviewer's round 3). The record above is the battery of
+the build's verifier pass after the round-2 fixes, over the twelve cases of that head; the consolidation pass's head has
 seventeen (the second-bump roster pin, the kernel-and-judge birth pin and the three enumeration cases are new), so a figure
-in this paragraph reads against 17. Three lenses ran before the round's rulings, three verifiers read the rulings' fixes, and
-the pre-emption consolidation closed what the verifiers found (the state-gate case's third-pass tuple carries the writer door's
+in this paragraph reads against 17. Three lenses read the head, the reviewer ruled on what they found (the reviewer's rulings
+on the pre-emption, three rulings, not a round), three verifiers read the rulings' fixes, and the consolidation closed what
+the verifiers found (the state-gate case's third-pass tuple carries the writer door's
 and the store's counters; the birth pin reads a subscript's slice and a dict read's arguments, with the string limit split into
-what it refuses and what stays outside it; three texts). Every state below was re-run at the head of those closures, each
+what it refuses and what stays outside it; three texts). Every state below was re-run at the head of the consolidation pass,
+the head of those closures, each
 plant landed on kernel/kernel.py, kernel/judge.py or this module and reverted, the module run single-process on 3.12; the
 figures are counts from those logs. The tuple-elements lens, the forged pair (a corrupt or unreadable_journal
 bump beside a goal_io loads bump, no call through the door): in the kernel's skip branch it reds the second-bump bound in
@@ -260,7 +276,7 @@ each red the pin naming the line and the form (1 failed, 16 passed each; the fir
 judge, a module-level alias of the door below its definition, and the door passed to `map` rather than to `_or_fault`, each
 red it as a bare name outside a call (1 failed, 16 passed each). The battery's two import-time aliases, each called per
 session in the pass loop, red their reconciliation on every pass and the pin (6 failed, 11 passed each). The widened pin
-(the pre-emption verifier's finding: the first cut read a dynamic lookup's arguments alone): `vars(jd)[...]`, `jd.__dict__[...]`
+(a consolidation-pass verifier's finding: the first cut read a dynamic lookup's arguments alone): `vars(jd)[...]`, `jd.__dict__[...]`
 and `jd.__dict__.get(...)` spelled with the shared door, each at kernel module level and each as a real load inside
 `_closer_settled`, red the pin naming the line and the form (1 failed, 16 passed each; 17 passed before the widening); the
 name bound to a variable before the getattr, and a concatenation that splits the needle, leave the module green (17 passed
@@ -330,7 +346,8 @@ SHARED_HANDOFF_KEYS = ("absent", "fallback", "corrupt", "unreadable_journal")
 # load_goals), or the replayed store carries _unread (no hand-off; the door's comment calls that branch unreachable). corrupt:
 # _disk_parse raised ValueError (a hand-off). dup: a concurrent fill of the same version published first. refuse: the archive key
 # moved under the replay. The fallback, absent and hit returns bump none of them, so per pass their sum never exceeds the fills,
-# miss plus compare_miss: _pass's second-bump bound (review round 4). Two of them, corrupt and unreadable_journal, are hand-off
+# miss plus compare_miss: _pass's second-bump bound (ruling 1 of the reviewer's rulings on the pre-emption). Two of them, corrupt
+# and unreadable_journal, are hand-off
 # keys that are NOT call keys, so a bump of either beside a goal_io loads bump with no call through the door balanced the shared
 # reconciliation (no call key moved) and the writer one (one hand-off per loads) and red nothing in _pass; the bound is where it
 # reds on a pass with no fill, and the cases' writerLoads elements where one such pair rides beside each fill (the bound admits
@@ -389,19 +406,19 @@ def _loader_sites(obj, needle):
     is an ast.Name whose id contains the needle, an ast.Attribute whose dotted spelling (the value chain and the attribute,
     `jd.load_goals_shared_or_fault`) contains it, or an ast.alias whose imported name contains it (`from romp_judge import
     load_goals_shared as _lgs`: the import line is the site, and the alias's later uses, Names of another spelling, are not;
-    review round 3: over Name and Attribute alone, a loader imported under an alias inside a replaced helper's body was no
-    site), so `jd.load_goals_shared` counts both spellings of the shared door and nothing else, and a mention in a comment, a
+    the build's verifier pass after the round-2 fixes: over Name and Attribute alone, a loader imported under an alias inside a
+    replaced helper's body was no site), so `jd.load_goals_shared` counts both spellings of the shared door and nothing else, and a mention in a comment, a
     docstring or any string literal is no node of these kinds and no site: the one rule the source censuses share. By the same
     rule a loader reached through a string names it in no node of these kinds and is outside the census: `getattr(jd,
     "load_goals_shared")` (the string built by concatenation too), `exec` or `eval` of a string, `compile` of one,
     `operator.attrgetter("load_goals_shared")`, `vars(jd)["load_goals_shared"]` or `jd.__dict__[...]`,
-    `jd.__getattribute__("load_goals_shared")`, and `getattr` on an `importlib.import_module` result (review round 4: the limit
-    named in full; the sample case holds the getattr form at no site). The kernel-wide pin, _loader_births, refuses a
+    `jd.__getattribute__("load_goals_shared")`, and `getattr` on an `importlib.import_module` result (the consolidation pass: the
+    limit named in full; the sample case holds the getattr form at no site). The kernel-wide pin, _loader_births, refuses a
     loader-naming string CONSTANT handed to any of these, handed to a dict read (`.get`, `.pop`, `.setdefault`, `.__getitem__`)
     or used as a subscript key, in the kernel and the judge; a name assembled at run time or bound to a variable before the
     lookup (`"load_" + "goals_shared"`, `n = "load_goals_shared"; getattr(jd, n)`) is spelled in no constant it reads and is
-    outside every static pin in this module (the pre-emption verifier of review round 4 planted the two subscript forms and the
-    dict read as a real load in a replaced helper and the module stayed green; _LIMITS names the two classes, string and
+    outside every static pin in this module (a verifier of the consolidation pass planted the two subscript forms and the dict
+    read as a real load in a replaced helper and the module stayed green; _LIMITS names the two classes, string and
     assembled, and the enumeration runs the pin over each form of both and expects a birth from the first class and none from
     the second). A name bound OUTSIDE obj's source is no site in
     obj either (a module-level alias of a door, an import alias at module level, a module-level dict or partial, a closure
@@ -438,7 +455,7 @@ def _bump_sites(obj):
     a variable, the dict under a local alias or qualified by its module, `-= -1`, `__setitem__`, `update`) is no bump here, so
     the walk census reds on it, conservatively; the increment's value is not read (the served counter's delta holds it), and a
     bump under a one-line `if` or `for` on the line after the load counts with its adjacency intact. The bump forms are
-    enumerated in TheCensusOverEveryForm (review round 4)."""
+    enumerated in TheCensusOverEveryForm (the consolidation pass)."""
     tree = ast.parse(textwrap.dedent(inspect.getsource(obj)))
     return [n.lineno - 1 for n in ast.walk(tree)
             if isinstance(n, ast.AugAssign) and isinstance(n.op, ast.Add) and isinstance(n.target, ast.Subscript)
@@ -451,8 +468,8 @@ _DICT_READS = ("get", "pop", "setdefault", "__getitem__")   # a namespace dict r
 
 
 def _loader_births(path, judge):
-    """Every place a file's source could give a loader another name, or reach one through a string, over its whole AST (review
-    round 4): (born, called, defs, handoffs). `born` lists (line, what) for every reference to a loader the census could not
+    """Every place a file's source could give a loader another name, or reach one through a string, over its whole AST (the
+    consolidation pass): (born, called, defs, handoffs). `born` lists (line, what) for every reference to a loader the census could not
     follow into a body: an Attribute spelled with a loader that is not the callee of a call (bound to a name, passed, stored in a
     dict or list, a default, an assignment target); a bare Name spelled with a loader (in the kernel, any: the kernel reaches
     the judge's doors as `jd.<door>(...)`; in the judge, `judge`, one that is neither the callee of a call nor the loader a
@@ -461,8 +478,8 @@ def _loader_births(path, judge):
     reaches a binding: among the arguments of a call to one of _DYNAMIC_LOOKUPS (getattr, exec, eval, compile, __import__,
     import_module, attrgetter, vars, __getattribute__) or of a dict read named in _DICT_READS (get, pop, setdefault,
     __getitem__), the callee matched by its last name, or as the slice of a Subscript (`vars(jd)["load_goals_shared"]`,
-    `jd.__dict__["load_goals_shared"]`). The first cut read a dynamic lookup's arguments alone, and the pre-emption verifier of
-    review round 4 planted both subscript forms and `jd.__dict__.get(...)` as a real load inside a replaced helper's body with
+    `jd.__dict__["load_goals_shared"]`). The first cut read a dynamic lookup's arguments alone, and a verifier of the
+    consolidation pass planted both subscript forms and `jd.__dict__.get(...)` as a real load inside a replaced helper's body with
     the module green. The limit that remains is a name assembled at run time or bound before the lookup: a concatenation or a
     format that splits the needle (`"load_" + "goals_shared"`, `"load_%s_shared" % "goals"`) and `n = "load_goals_shared";
     getattr(jd, n)` spell it in no constant this pin reads and are outside every static pin in this module (_LIMITS names the
@@ -527,8 +544,8 @@ def _caller(frame, boundary):
     boundary wrapper is named for the kernel function that made it. `boundary` pairs each wrapper's code object with the
     lines of its pass-through calls (_pass_through_lines, taken at setUp): a boundary frame is stepped over only while it
     sits at one of those lines, so a load written anywhere else in a wrapper's own body is named for the wrapper itself,
-    in the judge's file (review round 2: stepped over unconditionally, a load planted inside _or_fault was named for the
-    wrapper's kernel caller, the misnaming that costs more than silence). The file is the basename of the frame's REAL
+    in the judge's file (the build's verifier pass after the round-1 fixes: stepped over unconditionally, a load planted inside
+    _or_fault was named for the wrapper's kernel caller, the misnaming that costs more than silence). The file is the basename of the frame's REAL
     path: the kernel is loaded from bin/romp-kernel, a symlink to kernel/kernel.py, so the bare basename would read
     romp-kernel."""
     f = frame.f_back
@@ -575,8 +592,9 @@ class _WalkHarness(unittest.TestCase):
         pre_rebind = dict(vars(jd))                       # the judge's globals AT the rebind, so the names it moves are the diff across that
         jd._rebind_state(td)                              #   one call (STATE and every dir derived from it, never jd.STATE alone) and nothing
         rebound_by_rebind = {k for k, v in vars(jd).items() if pre_rebind.get(k, _UNSET) is not v}   # rebound before it is filed as the
-        #                                                   rebind's (review round 3: read against the FIRST snapshot, a judge stub placed between
-        #                                                   it and the rebind was subtracted below and escaped). The set is the judge's directory
+        #                                                   rebind's (the build's verifier pass after the round-2 fixes: read against the FIRST
+        #                                                   snapshot, a judge stub placed between it and the rebind was subtracted below and
+        #                                                   escaped). The set is the judge's directory
         #                                                   and path globals (kernel/judge.py, _rebind_state's global list), subtracted at the
         #                                                   comparison below, so no hand-kept copy of that list exists
         self._after_rebind()                              # a hook: a pin overrides it to place a stub right after the rebind
@@ -685,8 +703,8 @@ class _WalkHarness(unittest.TestCase):
         # reds here (a stub without a list entry hides a loader from the execution witness AND from the census that reads the
         # list). Review round 2, correctness-2 and tests-1: the snapshot sat in the middle of setUp, after the cache clears, and
         # a stub above it escaped the check, the census and the execution witness (8 passed with a shared load in the stubbed
-        # helper's real body). Review round 3: the judge names the rebind moves were read against the first snapshot, so a judge
-        # stub between that snapshot and the rebind was filed as the rebind's and subtracted; they are read against a snapshot
+        # helper's real body). The build's verifier pass after the round-2 fixes: the judge names the rebind moves were read against
+        # the first snapshot, so a judge stub between that snapshot and the rebind was filed as the rebind's and subtracted; they are read against a snapshot
         # taken at the rebind itself now (pre_rebind), so a stub anywhere before or after it stays in this comparison. Outside the
         # window: a stub installed before setUp, and a jd directory or path name the rebind also moves (subtracted below, so a
         # later stub on one of those names is not seen either).
@@ -701,7 +719,8 @@ class _WalkHarness(unittest.TestCase):
 
     def _before_rebind(self):
         """A no-op hook, called right before the judge snapshot the rebind's diff is read against: the region between setUp's first
-        snapshot and the rebind, where a judge stub was filed as the rebind's and escaped until review round 3. A pin overrides it
+        snapshot and the rebind, where a judge stub was filed as the rebind's and escaped until the build's verifier pass after the
+        round-2 fixes. A pin overrides it
         to place a stub there and expects setUp to refuse it (TheAgreementCheckSpansSetUp)."""
 
     def _after_rebind(self):
@@ -763,8 +782,9 @@ class _WalkHarness(unittest.TestCase):
         recorded call of theirs names; `sweep` is keyed on every sid seen, since its constituency includes unwalked sids. So
         every recorded call sits inside one bound, and a shared load by the look or by the gate for a session that is not one
         of the pass's two is named by function, file, line and sid by its own assertion; a read by either of the OTHER pass
-        session lands in that session's count and is held by the ceilings, which name the sid and the mechanism (review round
-        3: this prose said the two read only the session they look at, which no assertion checks); the sweep's read of an
+        session lands in that session's count and is held by the ceilings, which name the sid and the mechanism (the build's
+        verifier pass after the round-2 fixes: this prose said the two read only the session they look at, which no assertion
+        checks); the sweep's read of an
         unwalked sid is legitimate and is held to its bound per sid instead. With no owned record (`owned_records` empty, as in the first
         class) that bound holds the sweep to zero on every pass, which is why those cases assert nothing about it. The
         walk's per-sid ceiling, the gate's per-sid ceiling, the gate's general bound (checks never exceed derives) and its
@@ -780,7 +800,8 @@ class _WalkHarness(unittest.TestCase):
         SHARED_CALL_KEYS, against every recorded shared call, listed in the message; `writerLoads`, the delta of goal_io
         loads, against the writer records plus the shared door's hand-offs over SHARED_HANDOFF_KEYS), so a load through a
         door of the judge module the recorders do not wrap is noticed, unnamed; a reader that bypasses the module is outside
-        both. Between the two sits the second-bump bound (review round 4), derived from load_goals_shared's body in judge.py,
+        both. Between the two sits the second-bump bound (ruling 1 of the reviewer's rulings on the pre-emption), derived from
+        load_goals_shared's body in judge.py,
         read top to bottom: `_shared_bump("fallback")` then `return load_goals(fsid)` under `if _SHARED_OFF[0]`;
         `_shared_bump("absent")` then the same return under `except FileNotFoundError` around the store's open;
         `_shared_bump("hit")` then `return ent[2]` when the cached entry's keys and bytes both match; `_shared_bump("compare_miss")`
@@ -797,8 +818,8 @@ class _WalkHarness(unittest.TestCase):
         writer reconciliation balanced), and before the bound red nothing here. The bound refuses the pair on a pass with no fill,
         and on a pass with fills refuses only what exceeds them: a pair that rides beside each genuine fill (one corrupt bump and one
         loads bump per miss the walk's read made) leaves second equal to fills, balances the writer reconciliation with its hand-off,
-        and passes the bound; the cases' writerLoads elements are what red it there, 2 against 0 on the first pass (the pre-emption
-        verifier's state, review round 4), and two pairs per fill red the bound again, 4 against 2. So the two layers cover different
+        and passes the bound; the cases' writerLoads elements are what red it there, 2 against 0 on the first pass (a
+        consolidation-pass verifier's state), and two pairs per fill red the bound again, 4 against 2. So the two layers cover different
         passes: the bound holds the passes with no fill on its own, and the tuples' writerLoads elements the passes with fills.
         `calls` carries the shared records (sid, function, file, line) for a case's own assertions."""
         before = {k: km._NUDGE_WALK_STATS[k] for k in self.KEYS}
@@ -861,7 +882,8 @@ class _WalkHarness(unittest.TestCase):
                          "wrap, a load through a reference to the real door taken before a recorder stood, a recorded call whose open or "
                          "read raised, a record appended without a call through"
                          % (sum(d["shared"].values()), len(self.calls), d["shared"], "; ".join(records) or "none"))
-        # the second-bump bound (review round 4): the derivation from the door's body is in the docstring above
+        # the second-bump bound (ruling 1 of the reviewer's rulings on the pre-emption): the derivation from the door's body is in
+        # the docstring above
         second = {k: s1[k] - s0[k] for k in SHARED_SECOND_KEYS if s1[k] != s0[k]}
         fills = d["shared"].get("miss", 0) + d["shared"].get("compare_miss", 0)
         self.assertLessEqual(sum(second.values()), fills,
@@ -923,7 +945,8 @@ class OneSharedLoadPerAliveSessionPerPass(_WalkHarness):
         self.assertEqual((p2["looks"], p2["skippedParses"], p2["parses"]), (2, 2, 0), p2)
         self.assertEqual((p2["loads"], p2["writerLoads"], p2["shared"]), (0, 0, {}),
                          "and neither the counter, the writer door's counter nor the store's call counters move: no read, so no hand-off and no "
-                         "call key (the two elements restored in review round 4; _pass's two reconciliations and its second-bump bound fire "
+                         "call key (the two elements restored by ruling 1 of the reviewer's rulings on the pre-emption; _pass's two "
+                         "reconciliations and its second-bump bound fire "
                          "first on a counter moved with no call, and this line stands behind them)")
         # (a) again with the gate SERVED: the ledger is the tenth keyed file, so its move re-evaluates every session once while
         # the parse and the store stand; the walk loads once per session and the gate not at all
@@ -936,14 +959,16 @@ class OneSharedLoadPerAliveSessionPerPass(_WalkHarness):
                          "the placement gate is served and makes no currency check (condition 7, the gate's bound)")
         self.assertEqual((p3["loads"], p3["writerLoads"], p3["shared"]), (2, 0, {"hit": 2}),
                          "the counter moves by the walk's two, no hand-off, two hits (that both reads hit is the gate's line above as well: a "
-                         "non-hit gives the walk a new view object, so the gate derives; the two elements restored in review round 4, behind "
+                         "non-hit gives the walk a new view object, so the gate derives; the two elements restored by ruling 1 of the "
+                         "reviewer's rulings on the pre-emption, behind "
                          "_pass's reconciliations and its second-bump bound)")
         # (b) again, by the re-arming: p3's run recorded a fresh memo row for each session under the ledger's moved key (the gate
         # wrapper records after every look that parsed and did not fire, a standing row or not; nothing fires here, the toggle is
         # off) and journaled nothing (these looks end with no state-gate verdict, so the pass pops no walk gate and writes nothing
         # into the ledger), so every keyed file stands and
         # this pass skips. A look that recorded only when no row stood, or re-recorded under the standing row's key, would run
-        # here with the three passes above green: this pass's two lines are what pin the re-record (review round 4's replay check).
+        # here with the three passes above green: this pass's two lines are what pin the re-record (the consolidation pass's replay
+        # lens).
         p4 = self._pass(NOW + 15)
         self.assertEqual((p4["walk"], p4["gate"]), ({SID_A: 0, SID_B: 0}, {SID_A: 0, SID_B: 0}),
                          "the walk takes no shared load on a skipped look, and the placement gate is never reached (condition 7, both bounds)")
@@ -989,7 +1014,8 @@ class OneSharedLoadPerAliveSessionPerPass(_WalkHarness):
                          "and the placement gate, never reached, checks nothing (condition 7, the gate's bound)")
         self.assertEqual((p1["loads"], p1["writerLoads"], p1["shared"]), (0, 0, {}),
                          "no counter, no writer-door counter and no store counter moves: every look ends before any read (the two elements "
-                         "restored in review round 4, behind _pass's reconciliations and its second-bump bound)")
+                         "restored by ruling 1 of the reviewer's rulings on the pre-emption, behind _pass's reconciliations and its "
+                         "second-bump bound)")
         for sid in SIDS:
             self.assertEqual(self._row(sid)[-1], "working", "the verdict recorded, file-keyed, for %s" % sid[-4:])
         p2 = self._pass(NOW + 5)
@@ -1003,7 +1029,8 @@ class OneSharedLoadPerAliveSessionPerPass(_WalkHarness):
                          "under the ledger's moved key, and its verdict, unchanged, wrote nothing into the ledger (_put_walk_gate is "
                          "write-on-change), so every key stands and this pass skips; a re-record dropped over a standing row, or made under "
                          "the standing row's key, or an unchanged gate re-written, runs the looks here. Neither the writer door's counter nor "
-                         "the store's call counters move either: the two elements were added in review round 4 so this skip pass has the two "
+                         "the store's call counters move either: the two elements were added by the consolidation pass so this skip pass has "
+                         "the two "
                          "layers the first case's skip pass has, _pass's second-bump bound first and this line behind it (a forged pair in the "
                          "kernel's skip branch reds the bound here, and with the bound gone this line)")
         # no owned record, so the sweep's bound in _pass holds the sweep to zero on every pass: nothing to assert about it here
@@ -1018,7 +1045,7 @@ class TheSweepIsItsOwnBoundedReader(_WalkHarness):
     the goal, the read is followed by the inert-record continue (no parse, no writer load, nothing sent). With no store
     file, the shared door falls back into load_goals: one logical read, recorded once by the shared recorder as the
     sweep's and never as a writer call. The third case drives the WEDGE-GATED one: a live record for SID_A, an alive sid
-    whose look the walk visits and leaves on a wedge gate (api-error), the recipe round 1's refuters probed; past its read
+    whose look the walk visits and leaves on a wedge gate (api-error), the reviewer's round-1 refuters probed; past its read
     that sweep reaches the failure stamp, whose real body loads through the writer door, so the case replaces the two
     writers it can reach with recorders and asserts the stamp was reached (see the case)."""
 
@@ -1171,7 +1198,8 @@ class TheAgreementCheckSpansSetUp(unittest.TestCase):
 
     def test_a_stub_placed_between_the_first_snapshot_and_the_rebind_is_refused(self):
         """The judge half of the check reads the names jd._rebind_state moves as the diff across that call alone, against a snapshot
-        taken at the rebind (review round 3: read against setUp's first snapshot, a judge stub placed between that snapshot and the
+        taken at the rebind (the build's verifier pass after the round-2 fixes: read against setUp's first snapshot, a judge stub
+        placed between that snapshot and the
         rebind was filed as the rebind's, subtracted, and escaped the check with the module green). A throwaway harness subclass
         places a new-identity pass-through on a judge name outside both lists there, through the _before_rebind hook, restoring the
         real one by its own cleanup; setUp must raise the agreement check's AssertionError naming it."""
@@ -1214,7 +1242,8 @@ class TheCountersOneSite(unittest.TestCase):
         the door bumps, by `_shared_bump("<key>")` or `_SHARED_STATS["<key>"] += 1`, is a call key or a second key and every
         key of both rosters is bumped there, so a new key in the door reds here before it slips past the reconciliations; and
         every second-key bump sits below every call-key bump in the body, the structure the bound rests on (the fill road
-        follows the miss or compare_miss bump). Review round 4."""
+        follows the miss or compare_miss bump). Added in the consolidation pass beside ruling 1's bound, the fixer's addition beyond
+        the ruling's letter."""
         door = jd.load_goals_shared
         self.assertEqual((door.__code__.co_name, os.path.basename(os.path.realpath(door.__code__.co_filename))), ("load_goals_shared", JUDGE_FILE),
                          "the door read here is the judge's own (a harness case's recorder is gone by its cleanup)")
@@ -1242,7 +1271,8 @@ class TheCountersOneSite(unittest.TestCase):
         readers (_owned_yield_why and _session_stamp_read) only under stamp=True, which the walk's call does not pass, so
         the walk's road does not reach them; a helper the fixture does not replace is covered by execution instead. Each
         object is first checked to be the named helper, by the name inspect.unwrap reaches and by the def its source parses to
-        (review round 4): inspect follows __wrapped__ only through functools.wraps, so behind a decorator without it the census
+        (ruling 3 of the reviewer's rulings on the pre-emption): inspect follows __wrapped__ only through functools.wraps, so behind
+        a decorator without it the census
         would read the wrapper's source and answer no site for a body it never read."""
         targets = ([(k, getattr(km, k)) for k in REPLACED_KM if k not in REPLACED_DATA]
                    + [("jd." + k, getattr(jd, k)) for k in REPLACED_JD]
@@ -1266,8 +1296,8 @@ class TheCountersOneSite(unittest.TestCase):
         a `from romp_judge import load_goals_shared as _lgs` at module level, a dict of callables, a functools.partial, a closure
         variable, a parameter) or through a string constant (getattr, exec, eval, compile, operator.attrgetter, __getattribute__,
         importlib, `vars(jd)[...]`, `jd.__dict__[...]`, `jd.__dict__.get(...)`) is no site in that body, and inside a replaced
-        helper nothing else sees it (review round 4: every such form scanned as no site on 3.10 through 3.13 while a recorder saw
-        the real load; the pre-emption verifier then planted the two subscript forms and the dict read as a real load in
+        helper nothing else sees it (the consolidation pass: every such form scanned as no site on 3.10 through 3.13 while a recorder
+        saw the real load; a verifier of that pass then planted the two subscript forms and the dict read as a real load in
         _closer_settled, and the first cut of this pin, which read a dynamic lookup's arguments alone, let all three pass). So the
         kernel and the judge are each read once, whole, where any such name would be born, by _loader_births: in the kernel every
         reference to a loader by attribute is the callee of a call and no alias, bare name, parameter, keyword, or loader-naming
@@ -1275,7 +1305,7 @@ class TheCountersOneSite(unittest.TestCase):
         name is the callee of a call or the loader a boundary wrapper hands to _or_fault, the four doors are defined once each and
         undecorated, and the same list of births is empty. The population read is asserted too, so an empty file or a moved door
         cannot pass as clean: the kernel calls the judge's four doors by `jd.<door>` and no other spelling (58 references at this
-        round), and the two hand-offs are the two outer wrappers'. The limit that stays: a name assembled at run time or bound to a
+        head), and the two hand-offs are the two outer wrappers'. The limit that stays: a name assembled at run time or bound to a
         variable before the lookup is spelled in no constant the pin reads (the `assembled` class of _LIMITS, which the enumeration
         holds on that side)."""
         born, called, defs, handoffs = _loader_births(Path(os.path.realpath(km.__file__)), judge=False)
@@ -1311,8 +1341,8 @@ class TheCountersOneSite(unittest.TestCase):
         interpreter (correctness-1: the tokenizer gives 3.10 and 3.11 one STRING token for a whole f-string and 3.12 and later
         its FSTRING_* parts, and a census over blanked tokens read the call on the later ones only; the AST census does not
         consult the tokenizer); a loader imported under an alias is one site, the import line, and the alias's call is not
-        (review round 3: over Name and Attribute alone, an import alias inside a replaced helper's real body was no site and the
-        module stayed green)."""
+        (the build's verifier pass after the round-2 fixes: over Name and Attribute alone, an import alias inside a replaced helper's
+        real body was no site and the module stayed green)."""
         def mentions_only(sid):
             """The look's read is jd.load_goals_shared_or_fault(sid), named here and in no code line of this body."""
             note = "jd.load_goals_shared_or_fault(sid) in a string literal"   # jd.load_goals_shared_or_fault(sid) in a comment
@@ -1347,11 +1377,12 @@ class TheCountersOneSite(unittest.TestCase):
                          "alias node and is outside the census: the limit _loader_sites's docstring states, held by the census reading code and "
                          "not strings. The kernel-wide pin refuses the loader-naming constant where it is handed to those callables, to a dict "
                          "read or used as a subscript key, in the kernel and the judge; a name assembled at run time or bound to a variable "
-                         "before the lookup is outside that pin as well (review round 4; the enumeration holds both classes on their sides): %r"
+                         "before the lookup is outside that pin as well (the consolidation pass; the enumeration holds both classes on their "
+                         "sides): %r"
                          % _loader_sites(via_getattr, "load_goals"))
 
 
-# The census's form enumeration (review round 4). One sample module per form, written to a file and imported so inspect can read
+# The census's form enumeration (the consolidation pass). One sample module per form, written to a file and imported so inspect can read
 # it, with a stub judge standing in for the real one (its four loaders take any argument and return it, so a decorator form's
 # def-time call is harmless and no store is touched; the samples are otherwise never called). Each row of _LOADER_FORMS: the
 # form's id and description, the module body, the target's dotted name, the interpreter it needs (None: every one; a gated form
@@ -1627,14 +1658,15 @@ class TheCensusOverEveryForm(unittest.TestCase):
     """The census functions run over the enumeration above on the interpreter at hand: per loader form _loader_sites answers the
     sites the table expects for both needles (a form the census counts keeps counting, at the lines it counts it at; a form it
     misses stays a stated limit, named), per bump form _bump_sites answers the bumps and the adjacency the walk census reads,
-    and per hand-off form _pass_through_lines answers the lines and the call count setUp's guard reads. Review round 4: a lens
-    enumerated the forms on 3.10 through 3.13 and found the tables identical but for the gated forms; this is that enumeration
-    as the module's own check, so a census that visits one node kind less reds here naming the form (review round 3's alias
-    finding: over Name and Attribute alone, an import alias inside a helper's body was no site, and no sample said so). The loader
+    and per hand-off form _pass_through_lines answers the lines and the call count setUp's guard reads. The consolidation pass: a
+    lens enumerated the forms on 3.10 through 3.13 and found the tables identical but for the gated forms; this is that
+    enumeration as the module's own check, so a census that visits one node kind less reds here naming the form (the alias
+    finding of the build's verifier pass after the round-2 fixes: over Name and Attribute alone, an import alias inside a
+    helper's body was no site, and no sample said so). The loader
     forms of the string and the assembled classes are also run through the kernel-wide pin, _loader_births, over the form's own
     file: a birth from every string form and none from any assembled form, so the pin is held against the input it refuses and
-    the input it lets pass, and the two limit texts cannot overstate it (the pre-emption verifier of review round 4 found the
-    module's text saying the pin closed the string limit while vars(jd)[...] and jd.__dict__[...] passed it)."""
+    the input it lets pass, and the two limit texts cannot overstate it (a verifier of the consolidation pass found the module's
+    text saying the pin closed the string limit while vars(jd)[...] and jd.__dict__[...] passed it)."""
 
     def setUp(self):
         self.td = tempfile.TemporaryDirectory()
