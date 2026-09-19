@@ -70,9 +70,12 @@ in the same pass and outside the toggle guard, and takes one shared load per wak
 wake-set, not failed, moot or answered, not muted, and whose sid the walk did not visit or visited under a wedge gate.
 It keeps no memo, so it reads again every pass, and `memos.nudgeWalk.loads` does not count it. The harness holds it to
 that bound per sid per pass (`owned_records`, the records the seeding helper gave it): the first cases' ledger holds no
-wake record, so the sweep reads nothing there, and TheSweepIsItsOwnBoundedReader seeds one record for an unwalked private
-sid and shows one sweep load on each of two passes, once with a store whose nodes lack the goal and once with no store
-file, where the shared door falls back into load_goals and that fallback is one logical read of the shared door's.
+wake record, so the sweep reads nothing there, and TheSweepIsItsOwnBoundedReader drives both of its constituencies: one
+record for an unwalked private sid, with one sweep load on each of two passes, once with a store whose nodes lack the goal
+and once with no store file, where the shared door falls back into load_goals and that fallback is one logical read of
+the shared door's; and one live record for an alive sid whose look the walk leaves on a wedge gate (api-error), where the
+walk and the gate load nothing, the sweep loads once per pass and reaches the failure stamp (replaced by a recorder there,
+since its real body is a writer).
 
 Red in both directions, each mutation landed on kernel/kernel.py and reverted: a load creeping into the skip path (a shared
 read in the gated look before it consults the memo, or the skip's early return dropped) reds the skip pass on the walk's
@@ -163,6 +166,11 @@ KERNEL_FILE = os.path.basename(os.path.realpath(km.__file__))   # the kernel's r
 # setUp beside them). Their real bodies never run under the fixture, so the source census in TheCountersOneSite is the only
 # witness for a loader inside them. _session_working is not in the list: its real body runs (the event model reads the
 # fixture turns, both ended, as not working, the answer the stub gave), and the state-gate case replaces it for its own world.
+# CASE_KM: names a CASE may replace after setUp for its own world, saved with the rest and restored by the cleanup; setUp
+# leaves them real (the agreement check there). The two writers are the wedge-gate sweep case's: their real bodies load
+# through the writer door at their write moments by design (the module docstring names them among the store's other
+# readers), so the census has nothing to say about them.
+CASE_KM = ("_session_working", "_mark_nudge_failed", "_file_wake_answer")
 REPLACED_KM = ("_alive_sessions", "_wait_for_graph", "_session_flag", "_compacting_now", "_api_error",
                "_interrupt_suppresses_nudge", "_backend_rewind_pending", "_last_state",
                "_session_awaiting", "_turn_romp_injected", "_closer_settled", "_revivers_pending",
@@ -244,7 +252,7 @@ class _WalkHarness(unittest.TestCase):
         self.td = tempfile.TemporaryDirectory()
         self.addCleanup(self.td.cleanup)                  # cleanups run last in, first out: the seams go back, then the dir
         td = Path(self.td.name)
-        self.saved = {k: getattr(km, k) for k in REPLACED_KM + ("_session_working",)}   # saved too: the state-gate case stubs it
+        self.saved = {k: getattr(km, k) for k in REPLACED_KM + CASE_KM}   # CASE_KM saved too: a case replaces them after setUp
         self.saved_jd = {k: getattr(jd, k) for k in REPLACED_JD + ("load_goals", "load_goals_shared")}
         self.saved_state = jd.STATE
         self.saved_backend = km.Sessions.backend_for
@@ -575,22 +583,26 @@ class OneSharedLoadPerAliveSessionPerPass(_WalkHarness):
 
 class TheSweepIsItsOwnBoundedReader(_WalkHarness):
     """The wake sweep reads the store once per wake record it owns per pass, keeps no memo, and is counted apart from the
-    walk and the gate. One wake record for SID_C, a sid that is never alive (so never walked: the sweep's original
-    constituency), goes into the ledger before the first pass; the two alive sessions run their first pass as in the first
-    case, and the sweep takes exactly one shared load for SID_C on that pass and again on the skip pass. With a store whose
-    nodes lack the goal, the read is followed by the inert-record continue (no parse, no writer load, nothing sent). With
-    no store file, the shared door falls back into load_goals: one logical read, recorded once by the shared recorder as
-    the sweep's and never as a writer call. Not the wedge-gate recipe (an api-error gate on an alive sid with a live
-    record): past the read that sweep reaches _mark_nudge_failed, which loads through the writer door and stamps a failure."""
+    walk and the gate. Its records come from two constituencies, and a case drives each. The first two cases drive the
+    UNWALKED one: one wake record for SID_C, a sid that is never alive (so never walked: the sweep's original constituency),
+    goes into the ledger before the first pass; the two alive sessions run their first pass as in the first case, and the
+    sweep takes exactly one shared load for SID_C on that pass and again on the skip pass. With a store whose nodes lack
+    the goal, the read is followed by the inert-record continue (no parse, no writer load, nothing sent). With no store
+    file, the shared door falls back into load_goals: one logical read, recorded once by the shared recorder as the
+    sweep's and never as a writer call. The third case drives the WEDGE-GATED one: a live record for SID_A, an alive sid
+    whose look the walk visits and leaves on a wedge gate (api-error), the recipe round 1's refuters probed; past its read
+    that sweep reaches the failure stamp, whose real body loads through the writer door, so the case replaces the two
+    writers it can reach with recorders and asserts the stamp was reached (see the case)."""
 
-    def _seed_wake_record(self, store_file):
-        """One owned wake record for SID_C in the ledger (the toggle stays off), and its store: with `store_file`, a store
-        whose nodes lack the goal; without, no file at all."""
+    def _seed_wake_record(self, sid=SID_C, store_file=True):
+        """One owned wake record for `sid` in the ledger (the toggle stays off). For SID_C, never alive, its store too:
+        with `store_file`, a store whose nodes lack the goal; without, no file at all. An alive sid keeps the store
+        setUp seeded (a working top g1, the record's goal)."""
         (jd.STATE / "auto-nudge.json").write_text(json.dumps({"enabled": False, "nudged": {
-            SID_C + ":g1": {"wake": True, "at": NOW - 2 * H, "count": 1, "lastTurnId": "t1"}}}))
+            sid + ":g1": {"wake": True, "at": NOW - 2 * H, "count": 1, "lastTurnId": "t1"}}}))
         km._autonudge_cache.clear()
-        self.owned_records = {SID_C: 1}
-        if store_file:
+        self.owned_records = {sid: 1}
+        if sid == SID_C and store_file:
             (jd.GOALDIR / (SID_C + ".json")).write_text(json.dumps(
                 {"rompUuid": SID_C, "seq": 1, "placements": {}, "status": {}, "nodes": {}}))
 
@@ -626,6 +638,48 @@ class TheSweepIsItsOwnBoundedReader(_WalkHarness):
         self._one_sweep_load(p2, "p2")
         self.assertEqual(p2["shared"], {"absent": 1})
         self.assertEqual(self.fb.sent, [], "nothing sent: the fresh store has no node for the record")
+
+    def test_a_wedge_gated_alive_sid_the_walk_visited(self):
+        """The sweep's other constituency: a live wake record for SID_A, an alive sid the walk visits and leaves on a WEDGE
+        gate. _api_error answers with text, so every look ends at "api-error" before its parse and its store read, and the
+        walk journals that gate (a wedge gate has no session-produced ending event while a wake is dead, so the sweep acts
+        on the record now rather than leaving it with the walk). The walk and the gate load nothing on either pass, and the
+        sweep takes exactly one shared load for SID_A per pass, recorded as _awaiting_wake_outcomes's in the kernel's file.
+        Past the read this sweep reaches the failure stamp (_nudge_response_ready over the fixture turns: no response
+        segment and a record without armAtoms, so resp is None). _mark_nudge_failed's real body loads through the writer
+        door twice at its write moment and stamps the record failed, which the sweep then no longer owns; so this case
+        replaces it, and _file_wake_answer (the answered leg's writer), with recorders (CASE_KM, restored by the cleanup),
+        asserts the stamp was reached for the record with wake=True on each pass, and the record stays live so the sweep
+        reads it again on the second pass. The two writers are the module docstring's named readers, loading by design at
+        their write moments; the census is about helpers that should read nothing."""
+        km._api_error = lambda path: "API Error: 529 overloaded"
+        reached = []
+        km._mark_nudge_failed = lambda gid, ev_t=None, wake=False: reached.append(("failed", gid, wake)) or None
+        km._file_wake_answer = lambda sid, gid, now: reached.append(("answered", gid)) or False
+        self._seed_wake_record(sid=SID_A)
+        gid = SID_A + ":g1"
+        p1 = self._pass(NOW)
+        p2 = self._pass(NOW + 5)
+        for name, p in (("p1", p1), ("p2", p2)):
+            self.assertEqual((p["looks"], p["parses"], p["skippedParses"], p["wakeOnly"]), (2, 0, 0, 2),
+                             "%s: every look runs and ends at the wedge gate before its parse, so nothing is recorded to skip" % name)
+            self.assertEqual((p["walk"], p["gate"], p["memo"], p["loads"]), ({SID_A: 0, SID_B: 0}, {SID_A: 0, SID_B: 0}, (0, 0), 0),
+                             "%s: a look the wedge gate ends before its store read loads through neither mechanism, and the counter "
+                             "stays (condition 7, both bounds)" % name)
+            self.assertEqual(p["sweep"], {SID_A: 1}, "%s: the sweep takes exactly one shared load for the wedge-held record of an alive sid "
+                                                       "the walk visited, and none for SID_B, which owns no record" % name)
+            self.assertEqual([(c, f) for _s, c, f, _ln in p["calls"] if c in SWEEP], [("_awaiting_wake_outcomes", KERNEL_FILE)],
+                             "%s: the sweep's read is recorded as _awaiting_wake_outcomes's, in the kernel's real file" % name)
+            self.assertEqual((p["writer"], p["writerLoads"]), (0, 0), "%s: the stamp is a recorder here, so no writer load" % name)
+            self.assertEqual(p["parsedSids"], [SID_A], "%s: the sweep parses the record's session once past its read" % name)
+        self.assertEqual(p1["shared"], {"miss": 1}, "p1: the sweep's read fills SID_A's store, which no look read")
+        self.assertEqual(p2["shared"], {"hit": 1}, "p2: the sweep keeps no memo, so it reads again: a hit on its own fill")
+        self.assertEqual(reached, [("failed", gid, True)] * 2,
+                         "the sweep reached the failure stamp for the record, wake=True, once per pass, and the answered leg's writer never")
+        gates = km._auto_nudge_data().get("walkGates", {})
+        self.assertEqual({s[-4:]: g.get("gate") for s, g in gates.items()}, {"0001": "api-error", "0002": "api-error"},
+                         "the walk journaled the wedge gate for both sids: the class of gate whose records the sweep owns")
+        self.assertEqual(self.fb.sent, [], "nothing sent")
 
 
 class TheCountersOneSite(unittest.TestCase):
