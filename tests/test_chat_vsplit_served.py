@@ -538,10 +538,11 @@ BARS_HOLD_JS = r"""
 // The timeline's BARS held on the wire: every frame from the first {type:"bars"} full (or a bars delta) on the app=timeline
 // socket queues until releaseBars(), which the driver calls right after it has measured the drop zone. So the bars can land
 // only AFTER that measure, and what the band does before it is the timeline's own: with no bars it keeps its loader, and its
-// loader backstop (ui/romp-timeline-view.js, 12 s) draws the lanes without them. out.barsHold records that the hold took: a
-// test whose hold silently missed the socket would pass for nothing.
+// loader backstop (ui/romp-timeline-view.js, 12 s) draws the lanes without them. out.barsHold.atRelease is the queue depth
+// AT the release, which is what proves the hold spanned the measure: held alone counts frames queued after it too (the
+// resolved promise drains a microtask later), so it would prove only that a bars frame passed the hold at some point.
 let releaseBars = () => {}; const barsHeld = new Promise((r) => { releaseBars = r; });
-out.barsHold = { sockets: 0, held: 0 };
+out.barsHold = { sockets: 0, held: 0, atRelease: 0 };
 await page.routeWebSocket((u) => /[?&]app=timeline(&|$)/.test(String(u)), (ws) => {
   out.barsHold.sockets += 1;
   const server = ws.connectToServer(); let held = false; const q = [];
@@ -552,7 +553,7 @@ await page.routeWebSocket((u) => /[?&]app=timeline(&|$)/.test(String(u)), (ws) =
     if (!held && typeof m === "string") { try { const j = JSON.parse(m); if (j && (j.type === "bars" || (j.type === "delta" && j.slot === "bars"))) held = true; } catch (e) {} }
     if (!held) { ws.send(m); return; }
     q.push(m); out.barsHold.held += 1;
-    if (q.length === 1) barsHeld.then(() => { while (q.length) ws.send(q.shift()); held = false; });
+    if (q.length === 1) barsHeld.then(() => { out.barsHold.atRelease += q.length; while (q.length) ws.send(q.shift()); held = false; });
   });
 });
 """
@@ -588,9 +589,17 @@ class VSplitDragBarsHeldPastTheZone(VSplitDrag):
     at the lanes' height, and the bars landing mid-drag change nothing. A driver that measures without waiting measures the
     loader-height pane; the bars then collapse the band, the pane grows, the zone pinned to its bottom moves out from under
     the pointer, and the drop misses (CI 2026-09-18: 533 at the zone, 686 at the ghost, the ghost never on). The order of
-    events is fixed at both, whatever the box's speed: the release is keyed on the measure and the drag on the settle. The
-    waiting driver's green here rests on the view's backstop being shorter than its 40 s settle wait: without the backstop
-    the band never settles under held bars, and the wait names that step when it gives up."""
+    events is fixed at both, whatever the box's speed: the release is keyed on the measure and the drag on the settle.
+
+    Three couplings, all to the view's loader backstop, which is the only cause that can settle the band while the bars are
+    held. CEILING: the green side needs the backstop shorter than the settle wait plus the driver's lead to it, not shorter
+    than a flat 40 s; past that the band never settles and the wait names the step when it gives up, a loud red. FLOOR: the
+    RED side needs the backstop to fire after the pre-fix driver reaches its zone measure. On a box slow enough to invert
+    that, the band collapses before the measure, the pre-fix run passes, and the reproduction stops discriminating while
+    never giving a false red at the fix. The margin between the 12 s backstop and that lead is unmeasured on CI. HEIGHT: the
+    green side needs the released bars to add no height (no judge band, the same lane set), true of this lab's fixtures
+    because the svg's height follows lanes and judging rather than turns; a fixture that changes it is a loud red at both
+    shas rather than a silent pass."""
     DRIVER_JS = _bars_held_past_the_zone(POINTER_DRIVER)
     _cache = None
 
@@ -606,8 +615,9 @@ class VSplitDragBarsHeldPastTheZone(VSplitDrag):
     def test_5_the_bars_were_held_and_the_drop_landed_where_the_zone_was_measured(self):
         r = self._raw()
         hold, bz, g, d = r.get("barsHold") or {}, r.get("bottomZone") or {}, r.get("ghost") or {}, r.get("afterDrop") or {}
-        self.assertTrue(hold.get("sockets") and hold.get("held"),
-                        "the hold took: a timeline socket was routed and its bars frames queued: %r" % (hold,))
+        self.assertTrue(hold.get("sockets") and hold.get("atRelease"),
+                        "the hold SPANNED the zone measure: frames were still queued at the release, not merely queued at "
+                        "some point: %r" % (hold,))
         self.assertEqual(bz.get("paneHeight"), g.get("paneHeight"),
                          "the pane rect held from the zone to the ghost: %r at the zone, %r at the ghost; after the bars landed %r; "
                          "the ghost's class %r" % (bz.get("paneHeight"), g.get("paneHeight"), r.get("afterBars"), g.get("cls")))

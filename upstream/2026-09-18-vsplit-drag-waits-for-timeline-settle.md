@@ -26,3 +26,12 @@ at the fix, 5 failed at the parent). One coupling is stated in the class docstri
 the bars held, the settle at the fix comes from the timeline view's own loader backstop,
 so the reproduction depends on that backstop being shorter than the driver's settle wait,
 and it fails loudly with the wait's named message if that ceases to hold.
+
+2026-09-19: verified on the project's own base ea3c82725 (its copy of the test byte-identical to main's): the module at -n 4
+under a busy-loop load, nine runs each way: as-is 1 red with the CI shape (the driver dies on the 20 s split wait; pane 533 px
+at the zone measure, 686 at the ghost), with the settle wait 0 red; the VSplitDragBarsHeldPastTheZone case appended to their
+file: 5 failed without the wait, 5 passed with it, alone and under load, same geometry. Placement note for the port: PR 771's
+27-line settle block does not apply by context because the project's pointer driver finds and measures the tab in-page; it
+goes after the bottom tab is found and draggable and immediately before the pane measure (out.pane), with
+out.settled = await settled() as the last line before it.
+
