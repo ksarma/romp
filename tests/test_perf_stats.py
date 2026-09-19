@@ -1632,6 +1632,22 @@ class RoutingStatements(unittest.TestCase):
             finally:
                 fcntl.flock(fh, fcntl.LOCK_UN)
 
+    @staticmethod
+    def _flocks_this_process_holds(path):
+        """'READ' or 'WRITE' for every flock THIS process holds on `path`, read from /proc/locks (Linux: one line per lock,
+        "N: FLOCK ADVISORY WRITE <pid> <maj>:<min>:<inode> 0 EOF"). The composition pins below use it because a
+        non-blocking try on a second descriptor cannot tell this process's hold from a sibling xdist worker's: a
+        sibling's hold refuses the try whatever this process holds, so such a pin stayed green over a _places that
+        scanned outside its lock."""
+        ino = os.stat(path).st_ino
+        held = []
+        with open("/proc/locks") as fh:
+            for line in fh:
+                f = line.split()
+                if len(f) >= 6 and f[1] == "FLOCK" and int(f[4]) == os.getpid() and int(f[5].split(":")[2]) == ino:
+                    held.append(f[3])
+        return held
+
     def _scan(self, root):
         """{relative path: text} for every text file under `root` that git tracks or would track and that names a block."""
         # A skip only where the precedent skips (no git, no repository); a dubious-ownership 128 fails with git's
@@ -1844,7 +1860,9 @@ class RoutingStatements(unittest.TestCase):
         """A second process over this checkout with its own TMPDIR and no record of this run's system temp dir (the
         two-sweep-slots case a run-keyed lock misses) computes the same lock path, and its exclusive hold is seen here:
         a non-blocking flock in either mode is refused while it holds, a shared waiter stays blocked until it lets go
-        and gets in after. Event based, no sleep: the child says when it holds and is told when to release."""
+        and gets in after. Event based: the child says when it holds and is told when to release; the one timed step is
+        the 0.5 s bound on the negative check that the waiter is still blocked, which a working lock cannot fail and a
+        missing one fails at once."""
         root = Path(HERE).parent
         holder = ("import sys\n"
                   "from tests.test_perf_stats import RoutingStatements as R\n"
@@ -1888,6 +1906,21 @@ class RoutingStatements(unittest.TestCase):
             if thread.is_alive():
                 thread.join(60)
             errlog.close()
+
+    def test_places_scans_while_holding_the_shared_lock(self):
+        """The composition, not its halves: _places reads the tree INSIDE its shared hold. The lock test above pins the
+        key and the primitive, and a _places that took the shared lock, dropped it and then scanned left every test here
+        green (round 2's two-direction sweep), with the sibling-scan red the lock exists to prevent open again."""
+        if not os.path.exists("/proc/locks"):
+            self.skipTest("/proc/locks is how a process's own flocks are read")
+        seen = []
+
+        def probe(root):
+            seen.append(self._flocks_this_process_holds(self._lock_path(root)))
+            return {}
+        with mock.patch.object(RoutingStatements, "_scan", side_effect=probe):
+            self._places()
+        self.assertEqual(seen, [["READ"]], "_places scans while this process holds the shared lock")
 
     def test_this_modules_top_keys_comment_names_both_families(self):
         line = next(l for l in Path(__file__).read_text().splitlines() if l.strip().startswith('"stagesForeign",'))
