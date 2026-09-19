@@ -162,6 +162,28 @@ def _registered_clients(wids, want, deadline_s=5.0):
         time.sleep(0.02)
 
 
+_STACK_FRAME = re.compile(r"\S+ \((.+):\d+\)")          # _thread_stacks' "function (file:line)" form
+_STACK_FRAME_DIRS = (os.path.dirname(threading.__file__),   # where a sampled frame's file may live: the standard library, and
+                     os.path.dirname(HERE), os.path.join(os.path.dirname(HERE), "kernel"), BIN,    # this repo (a kernel frame's
+                     os.path.join(os.path.dirname(HERE), "cli"), HERE)                             # file is bin/romp-kernel, the
+#                                                                                                    path load_source read it by)
+
+
+def _assert_stack_sample(tc, row):
+    """`row` is a stack sample of a live thread: at least one frame, each in _thread_stacks' "function (file:line)" form and
+    naming a file the standard library or this repo ships. No frame is pinned by position or by function (2026-09-19): a
+    thread parked on an Event is sampled at wait, at the lock acquire inside it (Condition.__enter__ on the way into
+    Event.wait), at a helper wait calls (_release_save, _is_owned), or in run before wait, and the innermost-frame pins
+    that stood in four tests here read `wait (` and went red on the free-threaded 3.14 build when the sampler caught
+    __enter__ (3 module runs of 10)."""
+    tc.assertTrue(row["frames"], row)
+    for f in row["frames"]:
+        m = _STACK_FRAME.fullmatch(f)
+        tc.assertTrue(m, "function (file:line): %r" % f)
+        tc.assertTrue(any(os.path.exists(os.path.join(d, m.group(1))) for d in _STACK_FRAME_DIRS),
+                      "a file the standard library or this repo ships: %r" % f)
+
+
 class _HttpWatch:
     """Wait for the HTTP wrapper's record instead of racing it. _perf_http_timed counts a request in its
     `finally`, AFTER the handler put the response on the wire, so a test that reads the snapshot as soon
@@ -3046,8 +3068,11 @@ class PerfRoutes(unittest.TestCase):
 
     def test_get_perf_stacks_carries_one_frame_list_per_thread_with_its_stage_mark(self):
         """T401 (2)'s proof instrument: `?stacks=1` adds one row per live thread (name, ident, self, stage, frames innermost
-        last); a thread inside a tick job shows `jobs.<job>` and the frame it waits in; the plain snapshot carries no `stacks`;
-        the registry row is gone once the job returns."""
+        last); a thread inside a tick job shows `jobs.<job>` and its own frames under the launcher, outermost first; the plain
+        snapshot carries no `stacks`; the registry row is gone once the job returns. No wait frame is pinned or looked for
+        (2026-09-19): a thread parked on an Event is sampled at wait, at the lock acquire inside it, or before it enters wait,
+        so the row is pinned on the probe function's own frame, on the stack from its entry to its exit whatever it is inside,
+        under the launcher's frame, and on being a stack sample."""
         ev = threading.Event(); inside = threading.Event()
         def probe():
             inside.set(); ev.wait(10)
@@ -3065,10 +3090,15 @@ class PerfRoutes(unittest.TestCase):
         self.assertIn(key, rows, sorted(rows))                              #  reads other, the ident finds the row (T358's case)
         mine = rows[key]
         self.assertEqual(mine["stage"], "jobs.probe", mine)
-        self.assertTrue(any(f.startswith("wait (threading.py:") for f in mine["frames"]), mine["frames"])
+        self.assertTrue(any(f.startswith("probe (") for f in mine["frames"]), mine["frames"])       # the thread's own function,
+        #                                                                                                on the stack since inside.set()
         self.assertTrue(any(f.startswith("_job_stage (") for f in mine["frames"]), mine["frames"])   # the kernel's file name is
         #                                                                                                the launcher's here
-        self.assertEqual(mine["frames"][-1].split(" ")[0], "wait", "innermost last")
+        self.assertLess(next(i for i, f in enumerate(mine["frames"]) if f.startswith("_job_stage (")),
+                        next(i for i, f in enumerate(mine["frames"]) if f.startswith("probe (")),
+                        "outermost first: the launcher is outer to the function it runs")
+        self.assertIs(mine["self"], False, mine)
+        _assert_stack_sample(self, mine)
         self.assertEqual(sum(1 for r in rows.values() if r["self"]), 1, "the answering handler thread is marked once")
         self.assertTrue(all(len(r["frames"]) <= 40 for r in rows.values()))
         self.assertTrue(any(k.endswith(" handler") and rows[k]["self"] for k in rows), "the answering thread's kind is handler: %s" % sorted(rows))
@@ -3345,6 +3375,8 @@ class StacksField(unittest.TestCase):
     the thread's ident WITH its kind, so two workers sharing a kind stay two entries (the duplicate-worker case the aid is for),
     two threads outside the register, both `other`, included; None without the switch."""
     def test_two_threads_sharing_a_name_are_two_entries(self):
+        """The innermost frame is not pinned (2026-09-19): a thread parked on an Event is sampled at wait or at the lock acquire
+        inside it, so each row need only be a stack sample of a live thread (_assert_stack_sample)."""
         import threading
         from unittest import mock
         gate = threading.Event()
@@ -3364,8 +3396,7 @@ class StacksField(unittest.TestCase):
                 row = snap["stacks"][k]                                      #  boot diagnostic and romp perf stacks read
                 self.assertEqual(set(row), {"self", "stage", "frames"}, row)
                 self.assertIs(row["self"], False); self.assertIsNone(row["stage"])
-                self.assertTrue(row["frames"] and all(" (" in f and f.endswith(")") for f in row["frames"]), row["frames"])
-                self.assertTrue(row["frames"][-1].startswith("wait ("), "innermost last: the worker waits on its gate")
+                _assert_stack_sample(self, row)
         finally:
             gate.set()
             for t in ths:
@@ -3377,7 +3408,13 @@ class StacksField(unittest.TestCase):
     def test_two_threads_outside_the_register_are_two_entries_keyed_other(self):
         """2026-09-18: two threads whose names the register does not hold (a library's watchdog named with a test path, a worker
         named with an id) both read `other` and stay two rows, the ident half of the key keeping them apart; neither name
-        reaches the sample."""
+        reaches the sample. No frame is pinned (2026-09-19): a thread parked on an Event is sampled at wait, at the lock acquire
+        inside it (Condition.__enter__ on the way into Event.wait), at a helper wait calls (_release_save, _is_owned), or in run
+        before wait, and the test never waits for the threads to reach any of them. The pin that stood here read the innermost
+        frame as `wait (` and went red on the free-threaded 3.14 build in three module runs of ten. What each row must show is
+        that it is a stack sample of a live thread other than the sampler: at least one frame, each in the sampler's
+        "function (file:line)" form, every file one the standard library or this repo ships (_assert_stack_sample), self false
+        and no stage mark."""
         gate = threading.Event()
         names = ("pytest_timeout tests/test_perf_stats.py::StacksField::test_x", "worker 11111111-2222-3333-4444-555555555555")
         ths = [threading.Thread(target=gate.wait, name=n, daemon=True) for n in names]
@@ -3389,11 +3426,14 @@ class StacksField(unittest.TestCase):
             gate.set()
             for t in ths:
                 t.join(timeout=5)
-        keys = ["%d other" % t.ident for t in ths]
-        self.assertEqual(len(set(keys)), 2, keys)
+        idents = {str(t.ident) for t in ths}
+        keys = sorted(k for k in rows if k.split()[0] in idents)                     # the entries whose ident half is a planted thread's
+        self.assertEqual(len(keys), 2, "two threads, two entries: %s" % sorted(rows))
+        self.assertEqual(keys, sorted("%s other" % i for i in idents), "each keyed by its own ident and `other`")
         for k in keys:
-            self.assertIn(k, rows, sorted(rows))
-            self.assertTrue(rows[k]["frames"][-1].startswith("wait ("), rows[k]["frames"])
+            row = rows[k]
+            self.assertIs(row["self"], False, row); self.assertIsNone(row["stage"], row)
+            _assert_stack_sample(self, row)
         text = json.dumps(rows)
         self.assertFalse(any(n in text for n in names), "no planted name in the sample")
 
@@ -3653,7 +3693,9 @@ class ServedSnapshotIsPasteSafe(unittest.TestCase):
         read "<ident> pytest_timeout tests/test_perf_stats.py", outside the key grammar; a thread named with a path, a uuid or
         free text by any library reached the snapshot the same way. The kind is a word from the kernel's register or `other`,
         the ident keeping the row its own; the planted name, a node id with a session id and a home path appended, is nowhere
-        in the snapshot, and the whole walk stays clean with the thread alive."""
+        in the snapshot, and the whole walk stays clean with the thread alive. The frame is not pinned (2026-09-19): a thread
+        parked on an Event is sampled at wait or at the lock acquire inside it, so the row is the planted thread's by its key,
+        its self false and its empty stage mark, and need only be a stack sample."""
         gate = threading.Event()
         name = "pytest_timeout tests/test_perf_stats.py::ServedSnapshotIsPasteSafe::test_x %s %s" % (SID, self.home)
         th = threading.Thread(target=gate.wait, name=name, daemon=True); th.start()
@@ -3664,7 +3706,9 @@ class ServedSnapshotIsPasteSafe(unittest.TestCase):
             gate.set(); th.join(5)
         key = "%d other" % th.ident
         self.assertIn(key, snap["stacks"] or {}, sorted(snap["stacks"] or {}))
-        self.assertTrue(snap["stacks"][key]["frames"][-1].startswith("wait ("), "the row is the planted thread's")
+        row = snap["stacks"][key]                                            # the planted thread's row, not the sampler's: not
+        self.assertIs(row["self"], False, row); self.assertIsNone(row["stage"], row)   # self, no stage mark (this thread's row
+        _assert_stack_sample(self, row)                                      #  carries the request's), and a stack sample
         self.assertNotIn(name, json.dumps(snap), "the name is nowhere in the snapshot")
         self.problems = self._paste_problems(snap)
         self.assertEqual(self.problems, [], "%d leak(s) in the served snapshot:\n  %s" % (len(self.problems), "\n  ".join(map(str, self.problems))))
