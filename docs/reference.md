@@ -3276,12 +3276,24 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   deferred session is the resume cursor, so the next pass rotates the
   recency order to start there and every session is reached within as many
   passes as there are cold parses), `unbounded` (memos refused because a leg's release is not one
-  of the session's files: a deferral retired by a judge pass, a stamped wait
-  a peer's bounce can end, an owed reminder a refused ledger write left
-  standing), `clockDue` (memos refused because a noted flip has come) and
-  `wakeOnly` (looks with injected follow-ups off, which neither skip nor
-  record because the toggle is not a file, so that configuration keeps the
-  boot's cold parses); the files the memo keys on are the transcript, the
+  of the session's files: a deferral retired by a judge pass, a wait on
+  peers the live map still shows alive, an owed reminder a refused ledger
+  write left standing), `clockDue` (memos refused because a noted flip has come),
+  `wakeOnly` (looks with injected follow-ups off, or Task tracking off: the
+  awaiting dead-man, plus the debt reminders when the nudge toggle is on;
+  since 2026-09-18 such a look checks and
+  records like any other, under its own mode tag, so with the gear off
+  `skippedParses` rises toward `looks` on a quiet board, where until then
+  every wake-only look parsed) and `wakeOnlyRecorded` (memo rows a wake-only
+  look recorded); a memo row is the ten files' stat, the look's mode tag
+  (`full`, `wake`, or `wake+reminders` for tracking off with nudges on), the
+  earliest flip and the verdict, and a row serves a look of the same mode
+  only (a row of another mode counts a miss under
+  `memos.tickSeen.byJob.auto-nudge.missBy.mode`, a row of the pre-tag shape
+  once under `shape`); the nudge toggle lives in the ledger, the tenth keyed
+  file, so its flip re-evaluates every session once, and a Task tracking
+  flip changes the mode, which the tag catches the same way; the files the
+  memo keys on are the transcript, the
   state log, the goal store with its override journal and archive, the
   episode log, the clears log, the postal log, the kernel's downtime log
   (the working verdict's suspension check reads a list that log refills)
@@ -3292,8 +3304,9 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   recorded under; a debtor's key also carries the registry row
   (`STATE/sdk/<asker>.json`, an absent row as a stable absent marker) of
   each peer with an open ask on it, oldest asks first and at most eight
-  (the persisted memo row is 22 to 38 elements: the ten files and up to
-  eight rows), because a dead asker's ask becomes owed again only when the
+  (the persisted memo row is 23 to 39 elements: the ten files, up to eight
+  rows, then the mode tag, the earliest flip and the verdict), because a
+  dead asker's ask becomes owed again only when the
   asker revives and a revival writes that row; the debt leg reads a keyed
   asker's aliveness from that same row (alive true or false, the SDK
   backend's own liveness record), never from the pass's alive set, which is
@@ -3322,8 +3335,21 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   unbounded NOTES per leg at the look that recorded them; the legs the
   kernel emits are `askerOverflow`, `askerRowUnproved`, `debtUnproved`,
   `debtUnlanded`, `deferralNew`, `pausedTiers`, `deferralStanding`,
-  `queuedSend`, `storeFault`, `allDelegated`, `awaitingPeer`,
-  `stampedWait`, `unjudgeable`, `refusedWrite`, `legacyNoAnchor`, and
+  `queuedSend`, `storeFault`, `awaitingPeer`, `unjudgeable`,
+  `refusedWrite`, `legacyNoAnchor`, `freshFault`, `peerAlive`,
+  `dormantOwner` (the last three name the exits of the awaiting wake that
+  read no file: the writer's re-read raised, a peer wait on live local
+  peers, a holder absent from the live map; `allDelegated` and
+  `stampedWait` were retired on 2026-09-18, since the delegated check is
+  pure over the store and every ending of a stamped wait is a keyed file
+  or an instant the wake notes), `todoStandDown` (the status nudge stood
+  down behind an open user todo: the todo store is a file outside the ten,
+  and its clearing through the dashboard's dismiss route moves none of
+  them, so the look stays unbounded; with the two retired notes gone a
+  session holding a stamped or delegated top beside a plain working top
+  had recorded a skippable row here, and the plain top's status nudge was
+  held after the dismissal until the next box-wide keyed event or the
+  wake's dead-man instant, about six hours on a stamped session), and
   `unmarked:<verdict>` when no named leg noted the look (the None-site
   census in the gate's test pins that every site names its leg with a
   literal); the legs partition the NOTES,
@@ -3580,9 +3606,11 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   (the state log), `store` (the goal store), `overrides` (its journal),
   `archive`, `episode`, `cleared`, `messages` (the postal log), `downtime`,
   `ledger` (the nudge ledger, one file for the box), then `askerRow` for the
-  walk's asker registry rows and `shape` for a key of another length or an
-  unreadable entry; per job, hits plus misses plus neverSeen plus
-  noTranscript plus clockParse is the checks. The interrupt block's key
+  walk's asker registry rows, `mode` for a row the nudge walk recorded under
+  another look mode (the tag the `nudgeWalk` entry above describes), and
+  `shape` for a key of another length or an unreadable entry; per job, hits
+  plus misses plus neverSeen plus noTranscript plus clockParse is the
+  checks. The interrupt block's key
   keeps that shape but moves only with the files its road reads: the
   transcript, the state log, the downtime log, the goal store with its
   journal and archive, and the clears log (the store readers' override
