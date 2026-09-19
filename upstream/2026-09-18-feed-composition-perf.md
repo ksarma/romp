@@ -1,7 +1,7 @@
 ---
 title: GET /perf says what the feed frame is made of and what each pane would receive if sent only what it reads
 status: candidate
-where: kernel/kernel.py (_FeedComposition and its report-time fold, public_table and public_by; FEED_BY_FOLDED, the ledgers among its fields, and FEED_BY_ROWS beside FEED_FRAME_FIELDS; FEED_COMPOSITION_RESIDUALS; _FEED_BY_NAMES, FEED_APP_FIELDS, FEED_PROJECTIONS, _feed_parts with the estimators under their own guard), docs/reference.md (the memos.feedComposition entry), tests/test_feed_composition.py, tests/test_perf_stats.py (the Collector test's known-memo-key set gains feedComposition)
+where: kernel/kernel.py (_FeedComposition and its report-time fold, public_table and public_by, report() publishing the last pass alone; FEED_BY_FOLDED, the ledgers among its fields, and FEED_BY_ROWS beside FEED_FRAME_FIELDS; FEED_COMPOSITION_RESIDUALS and FEED_COMPOSITION_INVARIANT; _FEED_BY_NAMES, FEED_APP_FIELDS, FEED_PROJECTIONS, _feed_parts with the estimators under their own guard; _delta_split's count flag and _delta_parts, so the feed's split counts no entry under memos.wire), docs/reference.md (the memos.feedComposition entry and the memos.wire paragraph), tests/test_feed_composition.py, tests/test_wire_once_per_build.py (the entries counters no longer count the cards), tests/test_perf_stats.py (the Collector test's known-memo-key set gains feedComposition)
 added: 2026-09-18
 pr: 785
 tier: feature
