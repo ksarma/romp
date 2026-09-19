@@ -54856,8 +54856,8 @@ _FEED_BY_NAMES = frozenset(FEED_FRAME_FIELDS) | frozenset(_FEED_FRAME_LISTS)
 # the count says when, so a sum is an aggregate only while its N is unpublished, here or anywhere else in the
 # export. The card count is published nowhere else on /perf and not recoverable in general, so `cards` stands as an
 # aggregate; it is exact under one condition, on cards with no tree, where wire.bytes minus frame is a constant plus a
-# per-card term, measured on the test fixture's board (one ledger, a one-digit buildId, cards within two minutes of the
-# clock) as 82, 109, 136 and 190 bytes for one, two, three and five cards, 55 plus 27 per card (the second residual
+# per-card term, measured on the test fixture's board (one ledger, a one-digit buildId, cards younger than 459 seconds)
+# as 82, 109, 136 and 190 bytes for one, two, three and five cards, 55 plus 27 per card (the second residual
 # states the terms and a test holds the formula on those boards), a residual there, not a defeat of the fold. Until
 # this round it was recoverable from memos.wire: the feed's view-delta split, the path a ?delta=1 client without the feed
 # delta capability takes (the VS Code extension's pipes, federation's remote sockets), counted one entry per card
@@ -54934,12 +54934,15 @@ FEED_COMPOSITION_RESIDUALS = (
     "general, and exact under one condition: while `wire.exact` is 1, `wire.bytes` minus `frame` is the frame's "
     "`asks`, `buildId`, `ledgers` and `type` keys, brackets and separators plus each card's tint and separator and "
     "each tree node's tint, so on cards with no tree it is a constant plus a per-card term, measured on the test "
-    "fixture's board (one ledger, a one-digit `buildId`, cards within two minutes of the clock) as 82, 109, 136 and "
-    "190 bytes for one, two, three and five cards, 55 plus 27 per card (a 25-byte tint and a 2-byte separator; two "
-    "more bytes per further ledger, one more per further digit of `buildId`), and a tint is 22 to 25 bytes by the "
-    "card's age (three channels of the colour ramp, at three digits within two minutes of the clock and two digits at "
-    "the darker stops), so the count is exact from the difference on a board of fewer than eight tree-less cards "
-    "whatever their ages, and at any count when the ages fall in one band.",
+    "fixture's board (one ledger, a one-digit `buildId`, cards younger than 459 seconds) as 82, 109, 136 and 190 "
+    "bytes for one, two, three and five cards, 55 plus 27 per card (a 25-byte tint and a 2-byte separator; two more "
+    "bytes per further ledger, one more per further digit of `buildId`), and a tint is 22 to 25 bytes by the card's "
+    "age (16 bytes of key, brackets and separators plus one byte per digit of the three channels of the colour ramp: "
+    "nine digits through 458 seconds of a card's age, eight from 459 seconds, seven from about 27.1 hours with the "
+    "first channel at one digit, eight again from about 39.7 hours, seven from about 40.8 hours with the third "
+    "channel at two digits, and six from about 91.4 hours with the third channel at one digit), so the count is exact "
+    "from the difference on a board of fewer than eight tree-less cards whatever their ages, and at any count when "
+    "the ages fall in one band.",
 )
 # The block's invariant, universal since the review's third round (the Outline's card-field estimate is published as
 # its row's `cardFields`, so the exception the round before carried is gone). Stated in these words in
@@ -55169,7 +55172,7 @@ class _FeedComposition:
         object's measurement, and the count says when), so the sums stay aggregates only while their counts are
         unpublished. The card count is not recoverable in general and exact under one condition: on cards with no
         tree, `wire.bytes` minus `frame` is a constant plus a per-card term, measured on the test fixture's board (one
-        ledger, a one-digit buildId, cards within two minutes of the clock) as 82, 109, 136 and 190 bytes for one,
+        ledger, a one-digit buildId, cards younger than 459 seconds) as 82, 109, 136 and 190 bytes for one,
         two, three and five cards, 55 plus 27 per card (FEED_COMPOSITION_RESIDUALS states the terms; a test holds the
         formula on those boards), so there the withholding is a residual, not a defeat of the fold. Both counts
         remain in the stored tables, beside the sums the projections read, so a test holds a pass to them. `ledgers`

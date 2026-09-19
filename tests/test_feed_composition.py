@@ -1751,12 +1751,15 @@ class PublishedTable(unittest.TestCase):
         estimate, where the difference is a formula). `wire.bytes` minus `frame` is the frame's `asks`, `buildId`,
         `ledgers` and `type` keys, brackets and separators plus each card's tint and separator and each tree node's
         tint, so on tree-less cards it is a constant plus a per-card term: on the fixture's board (one ledger, a
-        one-digit buildId, cards within two minutes of the clock) 82, 109, 136 and 190 bytes for one, two, three and
-        five cards, 55 plus 27 per card; a second ledger adds its two-byte separator, a three-digit buildId two more
-        bytes, and a tree node its 25-byte tint. A tint's channels are the colour ramp's, three digits within two
-        minutes of the clock and two at the darker stops: 25 bytes at the clock, 24 from ten minutes to a day, 23 at
-        two days and 22 at four; the residual's "fewer than eight" follows from those widths (27N is below 24(N + 1)
-        while N is under eight). The sentence's figures are held to these measurements."""
+        one-digit buildId, cards younger than 459 seconds; the fixture's five are 0, 60, 120, 180 and 240 seconds old)
+        82, 109, 136 and 190 bytes for one, two, three and five cards, 55 plus 27 per card; a second ledger adds its
+        two-byte separator, a three-digit buildId two more bytes, and a tree node its 25-byte tint. A tint is 16 bytes
+        of key, brackets and separators plus one byte per digit of the colour ramp's three channels, measured second
+        by second over four days of age: 25 bytes through 458 seconds, 24 from 459 seconds, 23 from about 27.1 hours
+        (the first channel at one digit), 24 again from about 39.7 hours, 23 from about 40.8 hours (the third channel
+        at two digits) and 22 from about 91.4 hours (the third channel at one digit); the residual's "fewer than
+        eight" follows from those widths (27N is below 24(N + 1) while N is under eight). The sentence's figures are
+        held to these measurements."""
         def gap(frame):
             comp = _fresh_pass(frame)
             parts = km._feed_parts(frame)
@@ -1779,11 +1782,23 @@ class PublishedTable(unittest.TestCase):
         for nodes in (1, 6):
             self.assertEqual(gap(_feed(asks=[dict(one, tree=one["tree"][:nodes])], ledgers=[_ledger(tops=1)])),
                              82 + 25 * nodes, "a tree node's tint")
-        widths = {age: len(', "trgb": ' + json.dumps(list(km.cm.age_rgb(age)))) for age in (0, 120, 600, 86400, 172800, 345600)}
-        self.assertEqual(widths, {0: 25, 120: 25, 600: 24, 86400: 24, 172800: 23, 345600: 22})
+        self.assertEqual([NOW - c["t"] for c in (_card(i, tree=[]) for i in range(5))], [0, 60, 120, 180, 240],
+                         "the fixture's ages: every card younger than 459 seconds")
+        self.assertEqual(len(', "trgb": [, , ]'), 16, "a tint outside its digits")
+        bands = {0: (144, 136, 240), 459: (99, 148, 243), 97450: (9, 179, 126), 142908: (10, 180, 102),
+                 146735: (12, 180, 99), 328964: (80, 178, 9)}
+        self.assertEqual({age: km.cm.age_rgb(age) for age in bands}, bands, "the channels at each band's first second")
+        widths = {age: len(', "trgb": ' + json.dumps(list(km.cm.age_rgb(age))))
+                  for age in (0, 120, 458, 459, 600, 86400, 97449, 97450, 142907, 142908, 146734, 146735, 172800,
+                              328963, 328964, 345600)}
+        self.assertEqual(widths, {0: 25, 120: 25, 458: 25, 459: 24, 600: 24, 86400: 24, 97449: 24, 97450: 23,
+                                  142907: 23, 142908: 24, 146734: 24, 146735: 23, 172800: 23, 328963: 23, 328964: 22,
+                                  345600: 22})
         self.assertTrue(all(27 * n < 24 * (n + 1) for n in range(1, 8)) and 27 * 8 == 24 * 9, "fewer than eight")
         for figure in ("82, 109, 136 and 190", "55 plus 27 per card", "a 25-byte tint and a 2-byte separator",
-                       "22 to 25 bytes", "fewer than eight tree-less cards", "not recoverable in general"):
+                       "22 to 25 bytes", "fewer than eight tree-less cards", "not recoverable in general",
+                       "cards younger than 459 seconds", "nine digits through 458 seconds of a card's age",
+                       "eight again from about 39.7 hours", "six from about 91.4 hours"):
             self.assertIn(figure, km.FEED_COMPOSITION_RESIDUALS[1], figure)
 
     def test_the_invariant_is_stated_in_its_universal_form_everywhere_and_holds_in_one_assertion(self):
