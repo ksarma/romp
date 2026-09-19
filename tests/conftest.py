@@ -494,16 +494,24 @@ def restore_env(name, prior):
 # singleton. ViewBuilder (tests/test_kernel.py), CostWeighting (tests/test_token_usage.py),
 # BuildSessionDiffRows (tests/test_kernel_patch_rows.py), FeedWarmResolveBumpsTheLedgerRevision
 # (tests/test_ledger_anchors.py), and SharedViewInBuilds and PushSurvivesOneFailedChatBuild
-# (tests/test_kernel_goal_cache_wiring.py), each fixed in the commits before this fixture with one shape:
-# save km._sdk_backend beside the saved jd.STATE and put it back where jd.STATE is restored, before the
-# directory goes. The count comes from running every module ALONE with this fixture on: 316 modules (the
-# 247 a census plugin saw touch jd.STATE, the rebind or the build, united with the 94 that load the kernel
-# under its shared name), 311 green, these 4 modules red, and 1 unrelated pre-existing red
+# (tests/test_kernel_goal_cache_wiring.py), each fixed in a commit of its own on this branch with one shape
+# (ViewBuilder's before this fixture; the other four after it, one per module, found by the review round
+# that ran the modules alone): save km._sdk_backend beside the saved jd.STATE and put it back where jd.STATE
+# is restored, before the directory goes. The count comes from running every module ALONE with this fixture
+# on, over a population that is a union, every set saved beside the list with the script that derives it:
+# the 237 modules a census plugin (a scratch pytest plugin over two full -n 4 runs) saw take a road to a
+# root change (a jd.STATE assignment, a jd._rebind_state call, a singleton construction, or a singleton that
+# changed), the 94 that load the kernel under its shared name, the 272 whose text assigns jd.STATE or calls
+# _rebind_state in process (the private-kernel modules among them included: the private name isolates the
+# kernel's globals and not jd's, so they move the shared jd.STATE, and their own singletons are outside this
+# fixture by the stated limit below), and the 316 the first sweep ran; 364 modules in all. The first sweep,
+# over its 316 at the base, found these 4 modules red and 1 unrelated pre-existing red
 # (tests/test_sdk_rate_limit_usage.py: an unrestored ROMP_SERVE_TOKEN setdefault that
 # _shared_state_restored's environment check names, identical with this fixture off and byte-identical at
-# the base). The full-suite census saw none of the five: an earlier first builder in every worker made
-# their builds cache hits. A green suite run is therefore no evidence a module is clean; the module-alone
-# sweep is the measurement, and the review round that found the four ran the modules that way.
+# the base); at this head every one of the 364 is green alone except that one. The full-suite census saw
+# none of the five: an earlier first builder in every worker made their builds cache hits. A green suite run
+# is therefore no evidence a module is clean; the module-alone sweep is the measurement, and the review
+# round that found the four ran the modules that way.
 #
 # THE TRANSITION MODEL. The fixtures below read the singleton at fixed moments and judge what changed
 # between two reads, never the after value on its own: an absolute read of the after value (the first form

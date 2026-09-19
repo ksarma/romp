@@ -15,13 +15,20 @@ against 39 in a test that did nothing wrong, and only under an order that ran Vi
 
 The population, measured at this branch's base: six classes in five modules leaked the singleton (ViewBuilder,
 CostWeighting, BuildSessionDiffRows, FeedWarmResolveBumpsTheLedgerRevision, SharedViewInBuilds and
-PushSurvivesOneFailedChatBuild), each fixed in the commits before the ratchet with ViewBuilder's shape. The count
-comes from running every module ALONE with the ratchet on: 316 modules (the 247 a census plugin saw touch jd.STATE,
-the rebind or the build, united with the 94 that load the kernel under its shared name), 311 green, 4 red on these
-leaks, 1 unrelated pre-existing red (tests/test_sdk_rate_limit_usage.py, an unrestored ROMP_SERVE_TOKEN setdefault
-the judge fixture's environment check names; identical with the ratchet off). The full-suite census saw none of the
-five, because an earlier first builder in every worker made their builds cache hits: a green suite run is no
-evidence a module is clean, and the module-alone sweep is the measurement.
+PushSurvivesOneFailedChatBuild), each fixed in a commit of its own with ViewBuilder's shape: ViewBuilder's before the
+ratchet, the other four after it, one per module, found by the review round that ran the modules alone. The count
+comes from running every module ALONE with the ratchet on. The population is a union, every set saved beside the list
+with the script that derives it: the 237 modules a census plugin (a scratch pytest plugin over two full -n 4 runs) saw
+take a road to a root change (a jd.STATE assignment, a jd._rebind_state call, a singleton construction, or a singleton
+that changed), the 94 that load the kernel under its shared name, the 272 whose text assigns jd.STATE or calls
+_rebind_state in process (the private-kernel modules among them included: a private name isolates the kernel's
+globals and not jd's, so they move the shared jd.STATE, and their own singletons are outside this fixture by the
+stated limit), and the 316 the first sweep ran; 364 modules in all. The first sweep, over its 316 at the base, found
+the 4 red on these leaks and 1 red for an unrelated pre-existing reason (tests/test_sdk_rate_limit_usage.py, an
+unrestored ROMP_SERVE_TOKEN setdefault the judge fixture's environment check names; identical with the ratchet off);
+at this head every one of the 364 is green alone except that one. The full-suite census saw none of the five, because
+an earlier first builder in every worker made their builds cache hits: a green suite run is no evidence a module is
+clean, and the module-alone sweep is the measurement.
 
 The ratchet judges TRANSITIONS, at three windows. The test: the singleton read before the test and after its own
 teardown, and the test whose own transition made the bad state fails (a different object left, or the directory
