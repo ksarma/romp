@@ -167,6 +167,12 @@ alphabetically, and each case's `before` is what the previous case left):
     a kept root and restores jd.STATE before the module boundary's start read: a is the first test to meet it and
     carries the kept-root inherited report, its cause clause naming import-time code or a session- or package-scoped
     fixture; b is quiet, and both ends are quiet (no read brackets a session fixture).
+  T, a setUpClass that makes the worker's first build over a kept sandbox and restores jd.STATE: the module's start
+    read saw None, so One.a is not told import-time code made the object (no inherited report) and One's class
+    boundary names the change from None with the sandbox remedy at One.b's teardown; the module end is quiet.
+  Z, the first-window flag's pin (a pair): One.a's lazy first build passes unnamed, and the follower's class Moved
+    moves jd.STATE for its one test without building, so its window sees the object its module's start read found
+    over a root that is not jd.STATE; the flag says this is not the worker's first window, and nothing is said.
   M, class teardowns that install a value: One.a builds first; Two's tearDownClass builds over a kept sandbox (the
     class boundary names the change from the run root's backend to the sandbox's, sandbox remedy); Three's
     tearDownClass resets the slot to None (object remedy, no sandbox sentence); Four does nothing under the None and
@@ -234,7 +240,9 @@ fixture READS and the branch each read feeds, with the case that reds under each
   the inherited report: deleted (E.a passes: an import-time leak is never reported); without the named list (E.b
     errors too); fired only on a named object (E.a); raised at the setup again (E.a and S6.a run no body); the own
     verdict dropped beside it (S6.a); the inherited object not named (E.b, S6.b); the kept-root clause deleted (S6.a
-    passes silently); its first-window flag ignored (N's Sandboxed gets a false report).
+    passes silently); its first-window flag ignored (Z's Moved gets a false report); the kept-root report taken without
+    the identity term (T's One.a gets a false report blaming import-time code, and the run counts two errors, the
+    boundary verdict staying beside it).
   the boundary: the class end deleted (D.One.b and K.One.b show no boundary error, M, P); the module end deleted
     (L.b shows none); compared to its last read only (K.One passes silently); judged without the restore exemption
     (K.Two errors); the named skip dropped (a second report at the class or module end of A, B, C, D, E, K and L;
@@ -758,6 +766,57 @@ SCRATCH_W = SCRATCH_HEAD + textwrap.dedent("""\
 
         def test_b_does_nothing(self):
             pass
+""")
+
+SCRATCH_T = SCRATCH_HEAD + textwrap.dedent("""\
+
+    class One(unittest.TestCase):
+        root = None
+
+        @classmethod
+        def setUpClass(cls):
+            saved = jd.STATE
+            One.root = sandbox()
+            build_over(One.root)                      # the worker's first build, made by a class setup over a root that stands
+            jd.STATE = saved
+
+        def test_a_does_nothing_under_the_setups_object(self):
+            be = km._sdk_backend
+            assert be is not None and be.state_dir == One.root and One.root.is_dir() and jd.STATE != One.root
+
+        def test_b_does_nothing(self):
+            pass
+""")
+
+SCRATCH_Z = SCRATCH_HEAD + textwrap.dedent("""\
+
+    class One(unittest.TestCase):
+        def test_a_the_lazy_first_build(self):
+            assert km._sdk_backend is None
+            assert km._sdk().state_dir == jd.STATE
+""")
+
+SCRATCH_Z2 = textwrap.dedent("""\
+    import shutil, sys, tempfile, unittest
+    from pathlib import Path
+    km = sys.modules["romp_kernel"]                   # the kernel the first module loaded: no re-execution here
+    jd = km.jd
+
+    class Moved(unittest.TestCase):
+        @classmethod
+        def setUpClass(cls):
+            cls.saved_state = jd.STATE
+            cls.root = Path(tempfile.mkdtemp())
+            (cls.root / "session-hosts").write_text("off\\n")
+            jd.STATE = cls.root                       # moved for the tests, no build: One.a's singleton stays over the run root
+
+        @classmethod
+        def tearDownClass(cls):
+            jd.STATE = cls.saved_state
+            shutil.rmtree(cls.root)
+
+        def test_a_does_nothing_under_a_singleton_over_the_run_root(self):
+            assert km._sdk_backend is not None and km._sdk_backend.state_dir != jd.STATE
 """)
 
 SCRATCH_M = SCRATCH_HEAD + textwrap.dedent("""\
@@ -1651,7 +1710,9 @@ class BoundaryYieldsToTheTestsOwnWindows(_NestedRun, unittest.TestCase):
 
     def test_a_class_that_moves_jd_state_and_never_builds_is_quiet(self):
         # Sandboxed's test runs under an unnamed singleton whose state_dir is not jd.STATE, the picture the first-window
-        # report names at the worker's first window only; here One.a's window made it, judged there, and nothing is said.
+        # report names at the worker's first window only, and only for the object the module's start read found; here
+        # One.a's window made it, judged there, and nothing is said. Z pins the flag itself (this object is not the
+        # module start read's, so the identity term alone keeps this case quiet).
         self.assertRatchetPassed("Sandboxed", "test_a_does_nothing_under_a_singleton_over_the_run_root")
         self.assertIsNone(inherited(self.out, "Sandboxed", "test_a_does_nothing_under_a_singleton_over_the_run_root", head=INHERITED_KEPT))
         self.assertIsNone(boundary(self.out, "::Sandboxed"), self.out)
@@ -1722,6 +1783,53 @@ class SessionScopedFixtureInstallsBeforeTheModulesReads(_NestedRun, unittest.Tes
         self.assertRatchetPassed("Cases", "test_b_does_nothing")
         self.assertIsNone(boundary(self.out, "::Cases"), self.out)
         self.assertIsNone(boundary(self.out, ""), self.out)
+        self.assertEqual(boundary_scopes(self.out), set(), self.out)
+
+
+class ClassSetupBuildsOverAKeptSandboxAsTheWorkersFirstBuilder(_NestedRun, unittest.TestCase):
+    """T: setUpClass makes the worker's first build over a kept sandbox and restores jd.STATE. The module boundary's
+    start read saw None, so at One.a's window the object is not the one that read found, the kept-root inherited
+    report is not taken (the identity term), and One's class boundary names the change from None with the sandbox
+    remedy at One.b's teardown. At the round-3 head One.a carried the kept-root report blaming import-time code with
+    no remedy, and its naming silenced the class boundary; with the identity term dropped the report returns and, the
+    two naming lists being apart, the boundary verdict stays too, so the run counts two errors."""
+    SCRATCH = SCRATCH_T
+    ERRORS = 1
+
+    def test_the_first_test_is_not_told_import_time_code_made_the_setups_object(self):
+        self.assertRatchetPassed("One", "test_a_does_nothing_under_the_setups_object")
+        self.assertIsNone(inherited(self.out, "One", "test_a_does_nothing_under_the_setups_object", head=INHERITED_KEPT), self.out)
+
+    def test_the_class_boundary_names_the_setups_build_with_the_sandbox_remedy(self):
+        text = self.assertBoundaryFailed("::One", "One.test_b_does_nothing")
+        self.assertTrue(text.startswith("changed after its teardown: before None (not built), after SdkBackend over "), text)
+        self.assertNotIn(GONE, text)
+        self.assertIsNone(boundary(self.out, ""), "the module end is quiet on the object the class end named: %s" % self.out)
+        self.assertEqual(boundary_scopes(self.out), {"test_scratch.py::One"}, self.out)
+
+
+class ALaterModulesClassMovesJdStateUnderAnUnnamedFirstBuild(_NestedRun, unittest.TestCase):
+    """Z, the first-window flag's pin (a pair, one nested run): One.a's lazy first build passes unnamed; the follower's
+    module start read sees that object, and its class Moved moves jd.STATE for its one test without building, so at
+    Moved.a's window the singleton is the object the module's start read found and its state_dir is not jd.STATE, the
+    picture the kept-root report names at the worker's FIRST window only. The flag says this is not that window, and
+    nothing is said; with the flag ignored Moved.a gets a false report. Before the identity term N's Sandboxed pinned
+    the flag; its object is not its module's start value, so that cell went dead and this run replaces it."""
+    SCRATCH = SCRATCH_Z
+    FOLLOWER = SCRATCH_Z2
+    ERRORS = 0
+
+    def test_the_first_build_passes_and_the_later_class_that_moved_jd_state_is_quiet(self):
+        self.assertRatchetPassed("One", "test_a_the_lazy_first_build")
+        self.assertRatchetPassed("Moved", "test_a_does_nothing_under_a_singleton_over_the_run_root")
+        self.assertIsNone(inherited(self.out, "Moved", "test_a_does_nothing_under_a_singleton_over_the_run_root",
+                                    head=INHERITED_KEPT), self.out)
+        self.assertEqual(self.rc, 0, self.out)
+
+    def test_every_boundary_is_quiet(self):
+        for module, scope in (("test_scratch.py", "::One"), ("test_scratch.py", ""),
+                              ("test_scratch2.py", "::Moved"), ("test_scratch2.py", "")):
+            self.assertIsNone(boundary(self.out, scope, module=module), self.out)
         self.assertEqual(boundary_scopes(self.out), set(), self.out)
 
 
