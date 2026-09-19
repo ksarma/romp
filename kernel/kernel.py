@@ -795,7 +795,7 @@ class _PerfStats:
                                    _cached_feed and the ledgers attach), push.timeline (the skeleton
                                    and _cached_timeline), push.send (the feed/bars serialization and
                                    sends). Inside push.chat, its seams (2026-09-18): push.chat.sig
-                                   (each tab's _chat_build_sig, every tab every cycle, the post-build
+                                   (each tab's _chat_build_sig, every tab past the cold gate every cycle, the post-build
                                    one included; itself a container of push.chat.sig.static, the
                                    signature less its dependency tail, and push.chat.sig.deps, the
                                    tail _chat_sig_deps evaluates over the cached build's record,
@@ -859,9 +859,15 @@ class _PerfStats:
                                    call), so a reader summing the nine rows counts the signature a
                                    fourth time.
                                    Wall minus user minus sys over a window is the
-                                   stage's wait (GIL and syscalls); the split between user and sys is
-                                   tick-sampled by the kernel and scaled to the exact total, so read it
-                                   over a window, never off one cycle. EMPTY where the platform has no
+                                   stage's wait (GIL and syscalls). Read the block over a window, never
+                                   off one cycle: getrusage(RUSAGE_THREAD)'s total is the thread's
+                                   runtime as of its last scheduler update (a tick, 1 ms at HZ=1000, or
+                                   a context switch), not the instant of the read, split into user and
+                                   sys by the tick counts, so a mark over a sub-millisecond stage reads
+                                   0 on the marks no update fell in and a whole tick on the others
+                                   (0.3 ms spins read 0 in 111 of 200 trials at HZ=1000, 2026-09-19;
+                                   tests/test_perf_stats.py pins the zeros and the window sum), and
+                                   only the sum over a window estimates the CPU. EMPTY where the platform has no
                                    per-thread rusage (macOS): an empty block means no clock, not no CPU.
                                    A row takes the CPU of a mark whose wall went to the flat stages_ms
                                    row of its name (stage()'s routing): a connect push's push.* stage,
@@ -1031,9 +1037,10 @@ class _PerfStats:
                                    chat signature pass's own counters, _CHAT_SIG_STATS; stage 1 of the
                                    chat-signature design, 2026-09-18; the block comment at the table
                                    derives every key) -> pre / post (pre-build signatures the push loop
-                                   took, one per tab past the cold gate, and post-build ones: over any
-                                   window pre = builds.chat cached + built - targetedBuilds +
-                                   failedBuilds, and over a window with failedBuilds 0 post = built -
+                                   took, one per tab past the cold gate, and post-build ones: at rest
+                                   (between pushes; one ahead while a tab is in flight) pre =
+                                   builds.chat cached + built - targetedBuilds + failedBuilds, and
+                                   over a window with failedBuilds 0 post = built -
                                    targetedBuilds - nosig, else larger by at most failedBuilds; the
                                    nosig is this table's, which counts every tab where
                                    builds.chat.bg_miss.nosig counts background builds only),
@@ -1063,8 +1070,10 @@ class _PerfStats:
                                    posix modules, and on pathlib's accessor on 3.10; DirEntry.stat
                                    through _entry_stat and its twins in judge.py, event_model.py and
                                    sdk_backend.py, since a DirEntry stats in C; not countable from
-                                   Python and not counted: open()'s fstat and a DirEntry.is_dir
-                                   without d_type), namesReads (raw names-registry reads), switchReads
+                                   Python and not counted: open()'s and scandir()'s fstats, a
+                                   DirEntry predicate on a symlink entry or without d_type, and a
+                                   cold cwd memo's git children's stats), namesReads (raw
+                                   names-registry reads), switchReads
                                    (the user-todos switch file), regReads (sdk_backend.read_reg file
                                    reads), and the warm-tab census: warmEligible (a cached tab no
                                    client watches, every connected chat client holds as a skeleton,
@@ -37902,15 +37911,20 @@ def _chat_postal_relevant(ev):
 # Nothing counted what the pass does: signatures taken, the stats and reads inside one, how the cache compare is
 # answered, or how many warm tabs a warm-tab gate would reach, so every later stage of that design would have been
 # argued from a wall-clock seam alone. Measurement only: no frame, read or cache decision depends on these. The
-# per-signature counts accumulate on a thread-local while _chat_build_sig runs (_chat_sig_scope sets `active`, so
-# the same helper stat'ing a shared component once per push, or a build's own reads, counts nothing) and fold into
+# per-signature counts accumulate on a thread-local while _chat_build_sig runs (_chat_sig_scope sets `active`, so a
+# build's own reads count nothing, and the components every tab shares (_chat_sig_shared), which a push reads once
+# before its loop, count on no signature; a signature taken OUTSIDE a push, a comments frame's thread signature, reads
+# them inside its scope and counts them, so its stats run higher by _chat_sig_shared's own count, which
+# tests/test_kernel_delta_send.py pins) and fold into
 # the table under one lock hold per signature; the push loop folds its per-tab counts (pre, post, the compares) the
 # same way and the warm-tab census once per push after the tab loop. Served flat under memos.chatSig: identifier
 # keys, integer values, pasteable. Every row below says what its key counts BY EXECUTION and derives any figure it
 # invites (the review's round 2, 2026-09-19). The keys:
 #   pre / post           pre-build signatures the push loop took (one per tab past the cold gate, a raising one
-#                        included) and post-build ones (a rebuild that had a pre-build signature). Over any window
-#                        pre = builds.chat cached + built - targetedBuilds + failedBuilds. Over a window with
+#                        included) and post-build ones (a rebuild that had a pre-build signature). At rest (between
+#                        pushes; while a tab is in flight pre runs one ahead, since _chat_sig_note_pre folds it before
+#                        the tab's build_chat record) pre = builds.chat cached + built - targetedBuilds + failedBuilds.
+#                        Over a window with
 #                        failedBuilds 0, post = built - targetedBuilds - nosig; otherwise post exceeds that by the
 #                        failed builds whose signature was also None (nosig counts those tabs, built does not), so
 #                        by at most failedBuilds. The nosig in the identity is THIS table's: memos.chatSig.nosig
@@ -37959,10 +37973,15 @@ def _chat_postal_relevant(ev):
 #                        scandir entry's stat in kernel/ goes through, because a DirEntry stats in C and reaches no
 #                        wrapper; the source pin derives the entry names from every scandir in kernel/ and holds their
 #                        .stat() to those doors.
-#                        Not in the count, and not countable from Python: the fstat inside open() (C, part of a
-#                        read, counted by the read counters and the bytes column) and a DirEntry.is_dir on a
-#                        filesystem that reports no d_type. Per signature: stats / (pre + post + thread), and the
-#                        same denominator for the three read counts
+#                        Not in the count, and not countable from Python (C makes them with no Python call per
+#                        stat): the fstat inside open() (part of a read, counted by the read counters and the bytes
+#                        column), the fstat inside scandir() on the directory it opens, a DirEntry predicate
+#                        (is_dir, is_file, is_symlink) on a symlink entry or on a filesystem that reports no
+#                        d_type, and the stats of the git children a cold cwd memo forks (rev-parse, remote
+#                        get-url), made in another process. The round-2 review's strace over 74 harness signatures
+#                        found 229 such fd fstats (158 open()'s, 63 scandir's, 8 on pipes to git children) beside
+#                        5,779 counted path stats, every one of the latter in the count. Per signature:
+#                        stats / (pre + post + thread), and the same denominator for the three read counts
 #   namesReads           raw names-registry file reads inside a signature (_sdk_transcript_path, _names_parts
 #                        with no snapshot)
 #   switchReads          reads of the user-todos switch file inside a signature (_user_todos_on)
@@ -38584,8 +38603,10 @@ def _chat_build_sig(sess, tm=None, now=None, live_map=None, deps=None):
     caches like any other. `deps=False` appends the three components EMPTY: for a signature whose
     dependency tail is discarded (every post-build signature, compared on the static components only)
     the re-evaluation (stats, token resolves, card values) is skipped; every pre-build signature evaluates
-    it, since every tab checks the cache. The components shared by every tab come from _chat_sig_shared,
-    once per push. The session chip is NOT a component: it is a function of components that are (the
+    it, since every tab checks the cache. The components shared by every tab come from _chat_sig_shared:
+    once per push inside one (_live_scope.chat_shared, read before the loop, on no signature's count) and
+    per signature outside a push (a comments frame's thread signature), where they count on that signature
+    (memos.chatSig.stats). The session chip is NOT a component: it is a function of components that are (the
     parse and live tail, the row, the backend brackets, the clock booleans, the task rows, the watches,
     the states overlay, the store), so the build derives it once and the key derives nothing twice."""
     path = sess.get("path")
@@ -61104,7 +61125,7 @@ def _push(targets, connect=False, live_map=None):
                     if want_fleet:                       # the Outline's row for the skipped tab, from the store alone (the attach merges it in build order)
                         _prov_rows.append(_provisional_row(s["sid"], s.get("name", ""), _light))
                     continue
-                _t_seam = time.monotonic()               # push.chat.sig: the signature every tab pays every cycle (2026-09-18)
+                _t_seam = time.monotonic()               # push.chat.sig: the signature every tab past the cold gate pays every cycle (2026-09-18)
                 _c_seam = _thread_cpu()                  # ...and its thread CPU (stages_cpu_ms)
                 try:
                     sig = _chat_build_sig(s, _tm, now, live_map=live_map)
