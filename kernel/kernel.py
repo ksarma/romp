@@ -910,9 +910,11 @@ class _PerfStats:
                                    provisional-row ledger memo, _prov_ledger_memo_report) -> hit /
                                    miss / bypass_hold / bypass_empty and the gauge entries;
                                    feedComposition (the feed frame's bytes by component,
-                                   _FeedComposition) -> passes / failed, lifetime and last (frame /
-                                   cards / rest, the frame outside the cards; last's
-                                   ledgersAttached; `by` as published: the flag and count rows
+                                   _FeedComposition) -> passes / failed, last (frame / cards /
+                                   rest, the frame outside the cards; ledgersAttached; the
+                                   lifetime sums are stored and not published: at two passes on
+                                   one build they were a subtraction away from the folded
+                                   ledgers; `by` as published: the flag and count rows
                                    (FEED_BY_ROWS), the off frame's empty lists and `other`, the sum
                                    of the ledgers and the text-bearing fields; the card and ledger
                                    counts are stored and withheld; `apps` per consuming app and per
@@ -54864,7 +54866,11 @@ _FEED_BY_NAMES = frozenset(FEED_FRAME_FIELDS) | frozenset(_FEED_FRAME_LISTS)
 # them, `other` carries them, and every app that reads a folded field is credited with the atom, the ledgers
 # included: the feed and Waiting-on-you rows over-count by the ledgers they do not read, and the reference says so.
 # The stored tables keep the ledgers apart (SUMS) and the counts with them, so a test holds a pass to its counts and
-# its ledger bytes. What remains is stated in FEED_COMPOSITION_RESIDUALS below; whether the card figures stand as
+# its ledger bytes. The same re-check ACROSS passes removed the lifetime table from the published block (the same
+# round): the cold kernel's first push counts the cards-first frame without ledgers and then the send stage's refill
+# of the same build with them, so with passes published as 2 the lifetime table and the last table were two exact
+# sums over passes sharing a build, and 2 * last.rest - lifetime.rest was the ledgers again (_FeedComposition.report
+# says the rest). What remains is stated in FEED_COMPOSITION_RESIDUALS below; whether the card figures stand as
 # they are is the user's call.
 FEED_BY_FOLDED = frozenset({"ledgers", "selfHost", "working", "awaiting", "stateUnknown", "order", "sessions",
                             "userTodoRows", "userTodos", "views", "viewsFault", "judgeLimit", "bgServices",
@@ -54959,7 +54965,8 @@ FEED_PROJECTIONS = {"phoneFace": _phone_face_est}
 
 class _FeedComposition:
     """memos.feedComposition: what the feed frame is made of, per _feed_parts pass (a build, or a ledgers refill of the
-    same build), as lifetime sums and the last pass, and per consuming app (FEED_APP_FIELDS) the bytes it would receive
+    same build), as the last pass (lifetime sums over every pass are kept in the store and not published: report() says
+    why), and per consuming app (FEED_APP_FIELDS) the bytes it would receive
     if it were sent only the fields it reads (`projected`), beside the whole frame it receives today (`today`). Under
     the same `apps`, the projection rows (FEED_PROJECTIONS): frames no client receives yet, sized so the gap to a goal
     is measured before the frame is designed (`phoneFace`, the phone's face frame; its `today` is the whole frame the
@@ -54989,14 +54996,16 @@ class _FeedComposition:
     json.JSONEncoder over its fields, which takes about forty percent off that overhead. The lengths are always
     computed, never only while a reader is present: that would add a real second encode and an undefined event.
 
-    Paste-safe: identifier keys (the frame's own field names, the kernel's app names), numbers only, and the tables
-    are published FOLDED (public_table, in report(), on the last and the lifetime tables alike): the sums `frame`,
-    `cards` and `rest` (the frame outside the cards: the ledgers and the remainder); the `by` table as public_by
+    Paste-safe: identifier keys (the frame's own field names, the kernel's app names), numbers only, and the last
+    table is published FOLDED (public_table, in report(); the lifetime table is stored and not published): the sums
+    `frame`, `cards` and `rest` (the frame outside the cards: the ledgers and the remainder); the `by` table as public_by
     makes it, the flag and count rows (FEED_BY_ROWS), the off frame's empty federation lists and `other`, the sum of
     the ledgers and every text-bearing field (FEED_BY_FOLDED), so no published row is the length of one string; and
     the card and ledger counts withheld (the FEED_BY_FOLDED comment says why, and why the ledgers are in the fold).
     frame == cards + rest, and rest equals the sum of the published table exactly: the fold regroups bytes and drops
-    none. The per-app projections count the folded fields as one (project()): an app that reads any of them is
+    none. The stored lifetime table keeps the same sums over every pass, counts included, for the tests and for a
+    later decision; it is not published because at two passes it was a subtraction away from the ledgers (report()).
+    The per-app projections count the folded fields as one (project()): an app that reads any of them is
     credited with all of `other`, and the block's invariant holds in the scoped form FEED_COMPOSITION_INVARIANT
     states: every published number but the Outline's row is a sum of published rows, and no published number or
     difference of published numbers says which folded field a byte belongs to (the FEED_BY_FOLDED comment says what
@@ -55097,7 +55106,8 @@ class _FeedComposition:
 
     @staticmethod
     def public_table(t):
-        """A stored table (last or lifetime) as the block publishes it: of the sums (SUMS), PUBLISHED alone, with
+        """A stored table as the block publishes it (report() publishes the last pass this way and the lifetime table
+        not at all): of the sums (SUMS), PUBLISHED alone, with
         `rest` carrying the ledgers (the frame outside the cards), the `by` table folded with them (public_by), and
         every other key (last's ledgersAttached, apps) copied through. cardCount and ledgerCount are withheld
         deliberately: a count published beside a sum discloses the single-object case (a sum over one object is that
@@ -55127,8 +55137,20 @@ class _FeedComposition:
             sys.stderr.write("feed composition: the accounting raised (%s: %s); the frame is unaffected\n" % (kind, msg))
 
     def report(self):
+        """The block as GET /perf serves it: passes, failed, the last pass folded (public_table; the stored table stays
+        whole) and the wire row. The lifetime table is stored (record()) and NOT published, since the review's third
+        round: lifetime is the sum over passes and passes is published, and a ledgers refill re-counts the same build
+        with the ledgers attached, so at two passes (the cold kernel's first push with a feed pane connected: the
+        cards-first frame without ledgers, _feed_first, then the send stage's refill of that build with them) the two
+        published tables were exact sums over passes sharing a build, and 2 * last.rest - lifetime.rest (equally over
+        `other` and `frame`) was the ledgers' bytes: one ledger row on a one-session board, the figure the fold
+        withholds. No published lifetime sum survives that subtraction while a pass can share its build with the
+        pass before it, and a coarsened sum (a mean times passes) is the sum again; the base's sends.delta.feed.bytes
+        carried the same rows inside the first delta frame, so what this closes is an exact restatement of the
+        ledgers' bytes beside the block's own claim that no difference of published numbers is one of them.
+        tests/test_feed_composition.py drives the cold sequence on the real pusher and holds the row's length to no
+        published leaf, difference, sum or 2a - b."""
         with self.lock:
-            life = self.public_table(self.life)                  # published folded, the counts withheld (public_table);
             last = self.public_table(self.last) if self.last is not None else None   # the stored tables stay whole
             passes, failed = self.passes, self.failed
         w = _feed_wire                                   # tuple snapshot: rebound whole, never mutated
@@ -55139,7 +55161,7 @@ class _FeedComposition:
             wire = {"bytes": len(s) if s is not None else est,                # then a materialized() read let a
                     "exact": 1 if s is not None else 0}                       # materialization between the two pair
                                                                               # the estimate with `exact` (fresh-4)
-        return {"passes": passes, "failed": failed, "lifetime": life, "last": last or {}, "wire": wire}
+        return {"passes": passes, "failed": failed, "last": last or {}, "wire": wire}
 
 
 _FEED_COMP = _FeedComposition()

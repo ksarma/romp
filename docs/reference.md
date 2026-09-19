@@ -3719,9 +3719,19 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   first frame. `/feed.json`, which encodes the frame on its own, and the
   `/feed` page are not counted. `failed` counts the encodes whose accounting
   raised; the fault is said once on stderr and the frame goes out unchanged
-  either way. `lifetime` sums every counted pass and `last` is the latest
-  one; `last` alone says whether the ledgers were attached
-  (`ledgersAttached`). `wire` is `{}` until the first per-entry encode of a
+  either way. `last` is the latest counted pass and says whether the ledgers
+  were attached (`ledgersAttached`). The block keeps lifetime sums over every
+  counted pass in its store and publishes none of them: `passes` is
+  published, a ledgers refill re-counts the same build with the ledgers
+  attached, and at two passes (the cold kernel's first push with a feed pane
+  connected: the cards-first frame without ledgers, then the send stage's
+  refill of that build with them) a published lifetime table and `last` were
+  two exact sums over passes sharing a build, so twice `last.rest` minus
+  `lifetime.rest` (equally over `other` and `frame`) was the ledgers' bytes,
+  one ledger row on a one-session board, the figure the fold below withholds.
+  No lifetime sum survives that subtraction while a pass can share its build
+  with the pass before it, and a coarsened sum is the sum again, so the table
+  is stored for the tests and not served. `wire` is `{}` until the first per-entry encode of a
   frame and `last` until the first counted one; a cold kernel that has never
   had a feed-slot client serves both empty. `frame` is the frame's bytes as
   the pusher's size estimate counts them (the per-card strings minus their
@@ -3757,8 +3767,8 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   `selfHost`, a session name under `working`, a todo's text under
   `userTodoRows`, a session's ledger under `ledgers`); `other` mixes them,
   and `other` is present on every non-empty published table. `frame` is
-  `cards` plus `rest`, and `rest` is the exact sum of the published rows, in
-  `last` and in `lifetime`, because the fold regroups bytes and drops none.
+  `cards` plus `rest`, and `rest` is the exact sum of the published rows,
+  because the fold regroups bytes and drops none.
   `apps` has one row per
   consuming app and one projection row, `phoneFace`: `today`, the whole frame
   it receives, beside `projected`, the bytes of the fields its bundle reads,

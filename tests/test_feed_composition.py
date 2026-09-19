@@ -19,7 +19,7 @@ for the Outline's card fields and for the field federation.ts consumes on a pane
 local frame by mergeHostFeeds; applyViewerClears rewrites the merged cards and the ledgers from it, so the two panes
 that read those carry it), and the frame-fields list matches a built frame, the off frame and the views fault marker;
 (c) a synthetic build with a known ledger share projects the expected bytes per app, a ledgers refill re-sizes only the
-ledgers, and the lifetime sums accumulate; (d) the remainder's per-field encode is byte for byte the
+ledgers, and the stored lifetime sums accumulate; (d) the remainder's per-field encode is byte for byte the
 whole sort_keys encode, and a build encodes each card, ledger and remainder field once and a refill no card; (e) the
 `phoneFace` projection row (FEED_PROJECTIONS) beside the readers' rows sizes a frame that does not exist yet, a phone
 client's feed slot carrying a face per active card (the address, the title, the state and the age: fields feed.ts
@@ -32,9 +32,12 @@ tables are PUBLISHED folded (the review of 2026-09-18 and its third round, 2026-
 single-object case) and the ledgers, whose count /perf publishes elsewhere as the chat tab count, folded into `rest`
 and `other`; the `by` table as the flag and count rows (FEED_BY_ROWS), the off frame's empty federation lists and
 `other`, the sum of the ledgers and every text-bearing field (FEED_BY_FOLDED, a pinned list classified by what a
-field can carry, never a byte floor), folded at report time on the last and the lifetime tables alike, so no
+field can carry, never a byte floor), folded at report time on the last table, the one published, so no
 published row is the length of one string, while frame equals cards plus rest and rest the sum of the published
-table; the per-app projections read the stored tables but count the folded set as ONE atom (an app that reads any
+table; the lifetime table is stored and NOT published (the third round's re-check across passes: the cold kernel's
+first push counts the cards-first frame without ledgers and then the send stage's refill of the same build with
+them, so with passes at two twice last.rest minus lifetime.rest was the ledgers, and the cold sequence is driven on
+the real pusher here); the per-app projections read the stored tables but count the folded set as ONE atom (an app that reads any
 folded field is credited with all of `other`, the ledgers included), so the invariant holds in the scoped form the
 kernel's FEED_COMPOSITION_INVARIANT states (every published number but the Outline's row is a sum of published rows,
 and no published number or difference says which folded field a byte belongs to): a one-character step in any
@@ -62,6 +65,7 @@ import unittest
 import urllib.request
 from contextlib import redirect_stderr
 from http.server import ThreadingHTTPServer
+from pathlib import Path
 from unittest import mock
 from romp_load import load_source
 
@@ -215,33 +219,27 @@ def _report(comp):
 
 
 def _assert_shape(tc, block, after_pass, wire_went):
-    """The block's shape from the kernel's constants, never a hand-listed copy of the table's values: the five top-level
-    keys; lifetime as the PUBLISHED sums (frame, cards, rest: the ledgers folded, the two counts withheld) plus by and
-    apps; last the same plus ledgersAttached once a pass ran, else {}; wire as bytes and exact once a frame is held,
-    else {}; apps one row per reader and per projection, each today and projected. After a pass no sub-block is empty
-    and both tables hold only the published names."""
+    """The block's shape from the kernel's constants, never a hand-listed copy of the table's values: the four top-level
+    keys (no lifetime table: fails before, it was published, and at two passes on one build a subtraction away from
+    the folded ledgers); last as the PUBLISHED sums (frame, cards, rest: the ledgers folded, the two counts withheld)
+    plus ledgersAttached, by and apps once a pass ran, else {}; wire as bytes and exact once a frame is held, else {};
+    apps one row per reader and per projection, each today and projected. After a pass no sub-block is empty and the
+    table holds only the published names."""
     sums = set(km._FeedComposition.PUBLISHED)
     apps = set(km.FEED_APP_FIELDS) | set(km.FEED_PROJECTIONS)
-    tc.assertEqual(set(block), {"passes", "failed", "lifetime", "last", "wire"})
-    tc.assertEqual(set(block["lifetime"]), sums | {"by", "apps"})
+    tc.assertEqual(set(block), {"passes", "failed", "last", "wire"})
+    tc.assertNotIn("lifetime", block)
     for k in ("cardCount", "ledgerCount", "ledgers"):        # fails before: the counts and the ledgers were published
-        tc.assertNotIn(k, block["lifetime"], k)
         tc.assertNotIn(k, block["last"], k)
-    tc.assertEqual(set(block["lifetime"]["apps"]), apps)
-    for app, row in block["lifetime"]["apps"].items():
-        tc.assertEqual(set(row), {"today", "projected"}, app)
     if after_pass:
         tc.assertEqual(set(block["last"]), sums | {"ledgersAttached", "by", "apps"})
         tc.assertEqual(set(block["last"]["apps"]), apps)
         for app, row in block["last"]["apps"].items():
             tc.assertEqual(set(row), {"today", "projected"}, app)
         tc.assertIn("other", block["last"]["by"])
-        tc.assertIn("other", block["lifetime"]["by"])
         tc.assertLessEqual(set(block["last"]["by"]), PUBLIC_NAMES)
-        tc.assertLessEqual(set(block["lifetime"]["by"]), PUBLIC_NAMES)
     else:
         tc.assertEqual(block["last"], {})
-        tc.assertEqual(block["lifetime"]["by"], {})
     tc.assertEqual(set(block["wire"]), {"bytes", "exact"} if wire_went else set())
 
 
@@ -277,6 +275,71 @@ def _drive_push(tc, apps, fixture):
         km._built_feed[:] = saved_state[3]
     tc.assertNotIn("Traceback", err.getvalue(), err.getvalue())
     return out
+
+
+def _drive_cold_push(tc, fixture, tab):
+    """The cold kernel's first push on the real pusher, with a feed pane and an Outline connected and one chat tab
+    (`tab`: a synthetic build_session payload, whose `ledger` dict rides into the pusher's attach): _push's cold branch
+    runs _feed_first (the cards-first frame, no ledgers: one pass) and then its send stage refills the SAME build with
+    the ledgers the chat build attached (a second pass over the same cards). The build stage is stubbed to `fixture`
+    minus its ledgers, served as ONE object per push as the real cache serves it (the identity keys the wire tuple);
+    the chat build to `tab`, with no transcript file, so the cold-tab gate never holds it. Returns (the accumulator,
+    its report taken with this push's wire held, the frames per app). The pusher's state is restored after."""
+    stubs = ("_cached_feed", "_fleet_view_sig", "_chat_tab_sessions", "build_session", "_comments_frame",
+             "_push_subagents", "_live_map", "_retry_parked_creates", "build_timeline", "_cached_timeline", "NAMES")
+    saved = {nm: getattr(km, nm) for nm in stubs}
+    with km._clients_lock:
+        saved_clients = list(km._clients)
+    saved_state = (list(km._last_tab_order), km._feed_wire, km._bars_wire, list(km._built_feed), dict(km._BOOT_MARKS),
+                   dict(km._built_chat))
+    tmp = tempfile.mkdtemp()
+    src = dict(fixture)
+    src.pop("ledgers", None)                                     # the pusher attaches the ledgers itself
+    path = os.path.join(tmp, tab["id"] + ".jsonl")               # never written: a session without a transcript yet
+
+    def cached_feed(now, live, sig, connect=False):
+        km._built_feed[1] = src                                  # the real cache stores the build it serves
+        return src
+    km._cached_feed = cached_feed
+    km._fleet_view_sig = lambda now, live: ("SIG",)
+    km._chat_tab_sessions = lambda now, live: [{"sid": tab["id"], "name": tab["name"], "path": path, "anchor": tab["id"]}]
+    km.build_session = lambda sid, now, live_map=None, **kw: copy.deepcopy(tab)
+    km._comments_frame = lambda sid, live_map: None
+    km._push_subagents = lambda clients, now, live_map: None
+    km._live_map = lambda: {}
+    km._retry_parked_creates = lambda: None
+    timeline = lambda now, live, *a, **kw: {"lanes": [], "turns": {}, "judging": [], "messages": [], "now": now}
+    km.build_timeline = timeline
+    km._cached_timeline = timeline
+    km.NAMES = Path(tmp) / "names"
+    km.NAMES.mkdir()
+    comp = km._FeedComposition()
+    frames = {"feed": [], "fleet": []}
+    clients = [{"app": app, "alive": True, "sent": {}, "send": (lambda s, fr=frames[app]: fr.append(json.loads(s)))}
+               for app in frames]
+    err = io.StringIO()
+    try:
+        with km._clients_lock:
+            del km._clients[:]                                   # no chat page connected: the cold-tab gate stands down
+        km._built_chat.clear()
+        km._built_feed[:] = [None, None, 0.0, 0.0]               # cold: no feed built since the boot
+        km._BOOT_MARKS["firstServe"] = 1.0                       # a kernel that is serving
+        km._feed_wire = None
+        km._feed_cards_memo = None
+        with redirect_stderr(err), mock.patch.object(km, "_FEED_COMP", comp):
+            km._push(clients, connect=True)
+            rep = comp.report()                                  # with this push's wire tuple held
+    finally:
+        for nm, v in saved.items():
+            setattr(km, nm, v)
+        with km._clients_lock:
+            km._clients[:] = saved_clients
+        km._last_tab_order[:], km._feed_wire, km._bars_wire = saved_state[:3]
+        km._built_feed[:] = saved_state[3]
+        km._BOOT_MARKS.clear(); km._BOOT_MARKS.update(saved_state[4])
+        km._built_chat.clear(); km._built_chat.update(saved_state[5])
+    tc.assertNotIn("Traceback", err.getvalue(), err.getvalue())
+    return comp, rep, frames
 
 
 def _built_with_one_live_session(tc):
@@ -445,14 +508,12 @@ class ServedBlock(unittest.TestCase):
             last = block["last"]
             self.assertEqual(last["cards"] + last["rest"], last["frame"], "the two parts sum to the frame figure")
             self.assertEqual(sum(last["by"].values()), last["rest"], "the published rows sum to the published rest")
-            self.assertEqual(sum(block["lifetime"]["by"].values()), block["lifetime"]["rest"],
-                             "and so do the lifetime table's rows")
-            # the counts and the ledgers are withheld from both published tables (fails before: cardCount 60,
+            self.assertNotIn("lifetime", block, "the lifetime table is stored and not published (fails before)")
+            # the counts and the ledgers are withheld from the published table (fails before: cardCount 60,
             # ledgerCount 2 and the ledgers' bytes were published beside the sums); the stored pass keeps them apart
             stored = km._FEED_COMP.last
             for k in ("cardCount", "ledgerCount", "ledgers"):
                 self.assertNotIn(k, last, k)
-                self.assertNotIn(k, block["lifetime"], k)
             self.assertEqual((stored["cardCount"], stored["ledgerCount"], last["ledgersAttached"]), (60, 2, 1))
             self.assertEqual(stored["ledgers"], sum(len(json.dumps(l)) for l in fixture["ledgers"]))
             self.assertEqual(last["rest"], stored["rest"] + stored["ledgers"], "the published rest is the frame outside the cards")
@@ -460,7 +521,6 @@ class ServedBlock(unittest.TestCase):
             # rows the frame carries plus `other`, the text-bearing fields' sum, and no folded name in either table
             self.assertEqual(set(last["by"]), {f for f in km.FEED_BY_ROWS if f in frame} | {"other"})
             self.assertFalse(set(last["by"]) & km.FEED_BY_FOLDED)
-            self.assertFalse(set(block["lifetime"]["by"]) & km.FEED_BY_FOLDED)
             _assert_shape(self, block, True, True)
             n = len(received)
             self.assertLessEqual(last["frame"], n, "the estimate never exceeds the frame")
@@ -497,7 +557,7 @@ class ServedBlock(unittest.TestCase):
             self.assertEqual(last["apps"]["fleet"]["projected"], est + pub["other"] + pub.get("off", 0))
             # no published number and no difference of two is the ledgers' bytes (fails before: last.ledgers was, and
             # frame - cards - rest, and frame - feed.projected - userTodosOn)
-            ints = [(p, v) for p, v in _leaves({"last": last, "lifetime": block["lifetime"], "wire": block["wire"]})
+            ints = [(p, v) for p, v in _leaves({"last": last, "wire": block["wire"]})
                     if isinstance(v, int) and not isinstance(v, bool)]
             hits = [p for p, v in ints if v == stored["ledgers"]]
             hits += ["%s - %s" % (p, q) for p, v in ints for q, w in ints if p != q and v - w == stored["ledgers"]]
@@ -510,9 +570,8 @@ class ServedBlock(unittest.TestCase):
             # client received, and the served table is that table folded with the stored ledgers
             self.assertEqual(set(stored["by"]), set(frame) - VOLATILE - {"asks", "ledgers"})
             self.assertEqual(km._FeedComposition.public_by(stored["by"], stored["ledgers"]), pub)
-            for k in block["lifetime"]:
-                if k not in ("by", "apps"):
-                    self.assertGreaterEqual(block["lifetime"][k], last[k], k)
+            for k in km._FeedComposition.SUMS:
+                self.assertGreaterEqual(km._FEED_COMP.life[k], stored[k], "%s: the stored lifetime sum covers the pass" % k)
             # paste-safe: identifier keys, integer leaves, and the whole snapshot serializes
             for path, leaf in _leaves(block):
                 self.assertIsInstance(leaf, int, "%s = %r" % (path, leaf))
@@ -732,7 +791,7 @@ class SyntheticBuild(unittest.TestCase):
         feed = _feed(n=40)
         cards, leds, by = _expected(feed)
         rep0 = km._feed_composition_report()                    # fails before: no report
-        life_s0 = dict(km._FEED_COMP.life)                      # the stored lifetime sums (the ledgers and the counts among them)
+        life_s0 = copy.deepcopy(km._FEED_COMP.life)             # the stored lifetime sums (the ledgers and the counts among them)
         parts = km._feed_parts(feed)
         rep = km._feed_composition_report()
         last = rep["last"]
@@ -842,21 +901,21 @@ class SyntheticBuild(unittest.TestCase):
         self.assertEqual(last2["apps"]["feed"]["projected"] - apps["feed"]["projected"], leds2 - leds)
         self.assertEqual(last2["apps"]["phoneFace"]["projected"], apps["phoneFace"]["projected"],
                          "the face reads no ledger; its estimate is memoized with the cards, so a refill pays none of it")
-        life, life0 = rep2["lifetime"], rep0["lifetime"]
-        life_s = km._FEED_COMP.life
+        # the lifetime sums are STORED, whole and unfolded, and not published (the third round: at two passes on one
+        # build the published lifetime table was a subtraction away from the ledgers; fails before, it was published)
+        self.assertNotIn("lifetime", rep2)
+        self.assertNotIn("lifetime", rep0)
+        life, life0 = km._FEED_COMP.life, life_s0
         self.assertEqual(life["cards"] - life0["cards"], 2 * cards)
-        self.assertEqual(life_s["ledgers"] - life_s0["ledgers"], leds + leds2, "the stored lifetime ledgers")
+        self.assertEqual(life["ledgers"] - life0["ledgers"], leds + leds2, "the stored lifetime ledgers")
         self.assertEqual(life["frame"] - life0["frame"], last["frame"] + last2["frame"])
-        self.assertEqual(life["rest"] - life0["rest"], last["rest"] + last2["rest"])
-        self.assertEqual((life_s["cardCount"] - life_s0["cardCount"], life_s["ledgerCount"] - life_s0["ledgerCount"]), (80, 3),
+        self.assertEqual(life["rest"] + life["ledgers"] - life0["rest"] - life0["ledgers"], last["rest"] + last2["rest"],
+                         "the stored remainder and ledgers sum to the published rests")
+        self.assertEqual((life["cardCount"] - life0["cardCount"], life["ledgerCount"] - life0["ledgerCount"]), (80, 3),
                          "the stored lifetime counts")
-        self.assertFalse({"cardCount", "ledgerCount", "ledgers"} & set(life), "withheld from the lifetime table too")
-        expect = {k: 2 * v for k, v in _published(by).items()}
-        expect["other"] += leds + leds2
-        for k, v in expect.items():
-            self.assertEqual(life["by"][k] - life0["by"].get(k, 0), v, k)
-        self.assertEqual(set(life["by"]), set(last2["by"]), "the lifetime table has the published key set")
-        self.assertEqual(sum(life["by"].values()), life["rest"], "the lifetime rows sum to the lifetime rest")
+        for k, v in by.items():
+            self.assertEqual(life["by"][k] - life0["by"].get(k, 0), 2 * v, "%s: the stored table is per field" % k)
+        self.assertEqual(sum(life["by"].values()), life["rest"], "the stored rows sum to the stored remainder")
         for app in apps:
             self.assertEqual(life["apps"][app]["today"] - life0["apps"][app]["today"], last["frame"] + last2["frame"], app)
             self.assertEqual(life["apps"][app]["projected"] - life0["apps"][app]["projected"],
@@ -880,9 +939,11 @@ class SyntheticBuild(unittest.TestCase):
         self.assertEqual(rep["failed"], 0)
         self.assertEqual(rep["last"], {})
         self.assertEqual(rep["wire"], {})
-        self.assertEqual(rep["lifetime"]["by"], {})
-        self.assertEqual(rep["lifetime"]["apps"],
+        self.assertNotIn("lifetime", rep, "stored, never published")
+        self.assertEqual(fresh.life["by"], {})
+        self.assertEqual(fresh.life["apps"],
                          {a: {"today": 0, "projected": 0} for a in (*km.FEED_APP_FIELDS, *km.FEED_PROJECTIONS)})
+        self.assertEqual({k: fresh.life[k] for k in km._FeedComposition.SUMS}, {k: 0 for k in km._FeedComposition.SUMS})
         for path, leaf in _leaves(rep):
             self.assertIsInstance(leaf, int, path)
         json.dumps(rep)
@@ -947,13 +1008,10 @@ class SyntheticBuild(unittest.TestCase):
         self.assertNotIn("viewsFault", block2["last"]["by"])
         self.assertEqual(block2["last"]["by"]["other"], sum(v for k, v in by2.items() if k in km.FEED_BY_FOLDED) + leds2)
         self.assertIn("viewsFault", km.FEED_BY_FOLDED)
-        life = block2["lifetime"]["by"]
-        self.assertIn("off", life, "the lifetime table carries both passes")
-        self.assertFalse({"viewsFault", "views"} & set(life), "and no folded name")
-        self.assertEqual(life["other"], last["by"]["other"] + block2["last"]["by"]["other"],
-                         "the lifetime `other` is the two passes' folded sums")
-        self.assertEqual(set(life), set(last["by"]) | set(block2["last"]["by"]))
-        self.assertEqual(sum(life.values()), block2["lifetime"]["rest"])
+        self.assertNotIn("lifetime", block2, "the lifetime table is stored and not published")
+        life = km._FEED_COMP.life["by"]
+        self.assertLessEqual({"off", "viewsFault", "views"}, set(life), "the stored lifetime table carries both passes, per field")
+        self.assertEqual(sum(life.values()), km._FEED_COMP.life["rest"])
         _paste_safe(self, block2)
         # a REAL off frame (task tracking off: no build, every list the readers iterate, empty, the notice rings and the
         # bell's bits) through the same pass on a fresh accumulator: its four lists outside FEED_FRAME_FIELDS (items,
@@ -997,7 +1055,7 @@ class SyntheticBuild(unittest.TestCase):
         # the frame lists: the wider set, in case a row is ever published) and every app or projection row survive the
         # export whole. A name added to _FEED_FRAME_LISTS that the export drops or coarsens fails here.
         names = (set(km._FeedComposition.SUMS) | set(km._FeedComposition.PUBLISHED)
-                 | {"passes", "failed", "lifetime", "last", "wire", "bytes", "exact",
+                 | {"passes", "failed", "last", "wire", "bytes", "exact",
                                                    "ledgersAttached", "by", "apps", "today", "projected", "other"}
                  | set(km.FEED_FRAME_FIELDS) | set(km._FEED_FRAME_LISTS) | set(km.FEED_BY_ROWS) | PUBLIC_NAMES
                  | set(km.FEED_APP_FIELDS) | set(km.FEED_PROJECTIONS))
@@ -1131,12 +1189,13 @@ class SyntheticBuild(unittest.TestCase):
         with self.assertRaises(TypeError):
             km._feed_parts(mixed)
 
-    def test_an_empty_remainder_charges_its_braces_so_rest_is_the_sum_of_the_rows_in_last_and_lifetime(self):
+    def test_an_empty_remainder_charges_its_braces_so_rest_is_the_sum_of_the_rows_in_last_and_the_stored_lifetime(self):
         """correctness-3 and regression-3 of the second round: a frame whose remainder has no field (unreachable from
         the builders, which always emit fields) gave rest 2, the braces, against a published table summing to 0, and
         a lifetime table that carried the two-byte skew for the life of the process. The braces now go under `other`
-        (fails before), so rest == sum(by) holds in last and in lifetime whatever the order of the passes: an empty
-        remainder with ledgers, one without, then a populated frame, on one accumulator, checked after each pass."""
+        (fails before), so rest == sum(by) holds in the published last table and in the stored lifetime table
+        whatever the order of the passes: an empty remainder with ledgers, one without, then a populated frame, on
+        one accumulator, checked after each pass."""
         empty = _feed(n=2)
         for k in list(_rest_of(empty)):
             del empty[k]
@@ -1147,13 +1206,13 @@ class SyntheticBuild(unittest.TestCase):
         for frame in (empty, bare, _populated(), empty):
             _fresh_pass(frame, comp)
             rep = _report(comp)
-            last, life = rep["last"], rep["lifetime"]
-            total += last["rest"]
+            last, life = rep["last"], comp.life
+            total += comp.last["rest"]
             self.assertEqual(sum(last["by"].values()), last["rest"], "last")
-            self.assertEqual(sum(life["by"].values()), life["rest"], "lifetime")
+            self.assertEqual(sum(life["by"].values()), life["rest"], "the stored lifetime table")
             self.assertEqual(life["rest"], total)
             self.assertEqual(last["frame"], last["cards"] + last["rest"])
-            self.assertEqual(life["frame"], life["cards"] + life["rest"])
+            self.assertEqual(life["frame"], life["cards"] + life["ledgers"] + life["rest"])
         self.assertEqual(comp.last["rest"], 2, "the empty remainder is its two braces")
         self.assertEqual(comp.last["by"], {"other": 2})
         _, _, by_p = _expected(_populated())
@@ -1219,7 +1278,7 @@ class PublishedTable(unittest.TestCase):
     name; userTodoRows: a todo's text, which can name a path), a number the export's identifier scan cannot see. The
     remainder equals the sum of the table exactly, so dropping or coarsening one row alone re-derives it; the fix folds
     a PINNED list of fields (FEED_BY_FOLDED, classified by what a field can carry) into one row, `other`, at report
-    time, on the last and the lifetime tables alike, so the published table's shape is the same whatever the board.
+    time, on the last table (the one published), so the published table's shape is the same whatever the board.
     The projections read the stored table and count the folded set as ONE atom (an app that reads any folded field is
     credited with all of `other`): with per-field partial sums published beside the frame, the ledgers and the flag
     rows, the userTodoRows and sessions rows were re-derivable by subtraction on every board. So every published
@@ -1236,31 +1295,30 @@ class PublishedTable(unittest.TestCase):
         km._feed_cards_memo = None
 
     @staticmethod
-    def _tables(frame):
-        rep = _report(_fresh_pass(frame))
-        return rep["last"], rep["lifetime"]
+    def _table(frame):
+        return _report(_fresh_pass(frame))["last"]
 
     @staticmethod
     def _signature(rep_a, rep_b):
         """Every integer leaf of the published block that moved between two reports, with its delta: what a reader of
         the block sees of a step. Both reports have the same leaves."""
-        fa = {p: v for p, v in _leaves({"last": rep_a["last"], "lifetime": rep_a["lifetime"]}) if isinstance(v, int)}
-        fb = {p: v for p, v in _leaves({"last": rep_b["last"], "lifetime": rep_b["lifetime"]}) if isinstance(v, int)}
+        fa = {p: v for p, v in _leaves({"last": rep_a["last"]}) if isinstance(v, int)}
+        fb = {p: v for p, v in _leaves({"last": rep_b["last"]}) if isinstance(v, int)}
         assert set(fa) == set(fb), sorted(set(fa) ^ set(fb))
         return {p: fb[p] - fa[p] for p in fa if fb[p] != fa[p]}
 
     # the leaves a one-byte step in any folded field moves, each by one: the whole-frame figures, `other`, every app's
     # `today`, and the `projected` of every app that reads a folded field (the phoneFace row reads only cards)
-    STEP_LEAVES = frozenset(".%s.%s" % (t, leaf) for t in ("last", "lifetime")
+    STEP_LEAVES = frozenset(".last." + leaf
                             for leaf in ("frame", "rest", "by.other", "apps.feed.today", "apps.fleet.today",
                                          "apps.waiting.today", "apps.phoneFace.today", "apps.feed.projected",
                                          "apps.fleet.projected", "apps.waiting.projected"))
 
     def _one_char_step(self, field, base, variant, what):
         """`variant` is `base` with one string of `field` one character longer: the field's own bytes move by one and
-        no other field's; the published tables (last and lifetime) name no such field, have the same key set, agree on
-        every row but `other`, and `other` moves by exactly one; both remainders equal their table's sum; after both
-        passes on ONE accumulator the lifetime `other` is the two passes' folded sums; and over EVERY integer leaf of
+        no other field's; the published table names no such field, has the same key set, agrees on every row but
+        `other`, and `other` moves by exactly one; the remainder equals the table's sum; after both passes on ONE
+        accumulator the stored lifetime table is the two passes' per-field sums; and over EVERY integer leaf of
         the block the step moves exactly STEP_LEAVES, each by one, so no leaf and no difference of leaves says which
         field took the step (fails before: the step moved apps.waiting.projected for a todo's text or a session's
         name and not for the hostname, and apps.feed.projected for the hostname and not for a todo's text). Returns
@@ -1278,28 +1336,30 @@ class PublishedTable(unittest.TestCase):
             if k != field:
                 self.assertEqual(by_a.get(k), by_b.get(k), "%s: %s is unchanged" % (what, k))
         ra, rb = _report(_fresh_pass(base)), _report(_fresh_pass(variant))
-        la, lla, lb, llb = ra["last"], ra["lifetime"], rb["last"], rb["lifetime"]
+        la, lb = ra["last"], rb["last"]
+        self.assertNotIn("lifetime", ra, what)
         sig = self._signature(ra, rb)
         self.assertEqual(set(sig), self.STEP_LEAVES, "%s: the leaves the step moves" % what)
         self.assertEqual(set(sig.values()), {1}, "%s: each by the one byte" % what)
-        for name, ta, tb in (("last", la["by"], lb["by"]), ("lifetime", lla["by"], llb["by"])):
-            self.assertNotIn(field, ta, "%s: %s is not a published row (%s)" % (what, field, name))
-            self.assertNotIn(field, tb, "%s: %s is not a published row (%s)" % (what, field, name))
-            self.assertEqual(set(ta), set(tb), "%s: the same rows whatever the string's length (%s)" % (what, name))
-            self.assertLessEqual(set(ta), PUBLIC_NAMES, what)
-            self.assertEqual({k: v for k, v in ta.items() if k != "other"}, {k: v for k, v in tb.items() if k != "other"},
-                             "%s: every published row but `other` is unchanged (%s)" % (what, name))
-            self.assertEqual(tb["other"] - ta["other"], 1, "%s: `other` moves by the one byte (%s)" % (what, name))
-        for last, life in ((la, lla), (lb, llb)):
+        ta, tb = la["by"], lb["by"]
+        self.assertNotIn(field, ta, "%s: %s is not a published row" % (what, field))
+        self.assertNotIn(field, tb, "%s: %s is not a published row" % (what, field))
+        self.assertEqual(set(ta), set(tb), "%s: the same rows whatever the string's length" % what)
+        self.assertLessEqual(set(ta), PUBLIC_NAMES, what)
+        self.assertEqual({k: v for k, v in ta.items() if k != "other"}, {k: v for k, v in tb.items() if k != "other"},
+                         "%s: every published row but `other` is unchanged" % what)
+        self.assertEqual(tb["other"] - ta["other"], 1, "%s: `other` moves by the one byte" % what)
+        for last in (la, lb):
             self.assertEqual(sum(last["by"].values()), last["rest"], what)
-            self.assertEqual(sum(life["by"].values()), life["rest"], what)
         comp = _fresh_pass(base)
         _fresh_pass(variant, comp)
         rep = _report(comp)
-        self.assertEqual(set(rep["lifetime"]["by"]), set(rep["last"]["by"]), what)
-        self.assertEqual(rep["lifetime"]["by"]["other"], la["by"]["other"] + lb["by"]["other"], what)
-        self.assertEqual(sum(rep["lifetime"]["by"].values()), rep["lifetime"]["rest"], what)
-        self.assertEqual(rep["lifetime"]["rest"], la["rest"] + lb["rest"], what)
+        self.assertNotIn("lifetime", rep, what)
+        life = comp.life                                         # the stored lifetime table: per field, both passes
+        self.assertEqual(life["by"], {k: by_a.get(k, 0) + by_b.get(k, 0) for k in set(by_a) | set(by_b)}, what)
+        self.assertEqual(km._FeedComposition.folded_sum(life["by"], life["ledgers"]), la["by"]["other"] + lb["by"]["other"], what)
+        self.assertEqual(sum(life["by"].values()), life["rest"], what)
+        self.assertEqual(life["rest"] + life["ledgers"], la["rest"] + lb["rest"], what)
         return sig
 
     def test_a_one_character_step_in_any_text_bearing_field_moves_only_the_other_row(self):
@@ -1401,7 +1461,7 @@ class PublishedTable(unittest.TestCase):
                             "not the sessions row")
         # the ledger row's length is no published integer leaf, no difference of two and no sum of two (fails before:
         # last.ledgers, frame - cards - rest, frame - feed.projected - userTodosOn, and the lifetime twins)
-        ints = [(p, v) for p, v in _leaves({"last": last, "lifetime": rep["lifetime"]}) if isinstance(v, int)]
+        ints = [(p, v) for p, v in _leaves({"last": last}) if isinstance(v, int)]
         hits = [p for p, v in ints if v == row_len]
         hits += ["%s - %s" % (p, q) for p, v in ints for q, w in ints if p != q and v - w == row_len]
         hits += ["%s + %s" % (p, q) for p, v in ints for q, w in ints if p < q and v + w == row_len]
@@ -1430,6 +1490,48 @@ class PublishedTable(unittest.TestCase):
         self.assertEqual(by_l["selfHost"] - by["selfHost"], 1)
         self.assertEqual(candidate(longer) - candidate(rep), -1, "the candidate moves against the hostname row")
 
+    def test_the_cold_kernels_two_passes_publish_no_lifetime_sum_so_the_refills_ledgers_are_no_difference(self):
+        """The re-check ACROSS passes (the third round): a cold kernel's first push with a feed pane connected counts
+        the cards-first frame without ledgers (_feed_first) and then the send stage's refill of the SAME build with
+        the ledgers the chat build attached, so passes is 2, both passes share the cards, and the published lifetime
+        table was an exact sum over the two: 2 * last.rest - lifetime.rest (equally over `other` and `frame`) was
+        the ledgers' bytes, one ledger row on a one-tab board (fails before: the lifetime table was published and the
+        subtraction below found the row). Driven on the real pusher: passes 2, ledgersAttached 0 then 1, the stored
+        lifetime table gives the row by that subtraction, the published block has no lifetime table, and over every
+        published integer leaf (last, wire, passes, failed) the row's length is no leaf, no difference of two, no
+        sum of two and no 2a - b."""
+        tab = {"type": "session", "id": SID, "name": "web", "events": [],
+               "status": {"state": "working", "sinceEpoch": None},
+               "ledger": {"tops": ["Synthetic goal 1", "Synthetic goal 2"], "workingNote": "Decide the response shape"}}
+        comp, rep, frames = _drive_cold_push(self, _feed(n=2), tab)
+        self.assertEqual(comp.passes, 2, "the cards-first pass and the send stage's refill of the same build")
+        self.assertEqual(comp.failed, 0)
+        self.assertEqual((comp.last["ledgersAttached"], comp.last["ledgerCount"], comp.last["cardCount"]), (1, 1, 2))
+        self.assertEqual([f["type"] for f in frames["feed"]], ["feed", "feed"],
+                         "the pane took the cards-first frame, then the refill (a whole-frame client: the ledgers changed it)")
+        self.assertEqual([f["type"] for f in frames["fleet"]], ["feed"])
+        self.assertNotIn("ledgers", frames["feed"][0], "the cards-first frame carries no ledgers")
+        self.assertEqual(frames["feed"][1]["ledgers"], frames["fleet"][0]["ledgers"], "the refill carries them")
+        rows = frames["fleet"][0]["ledgers"]
+        self.assertEqual([r["sid"] for r in rows], [SID], "the chat build's one ledger row rode the attach")
+        row_len = len(json.dumps(rows[0]))
+        self.assertEqual(comp.last["ledgers"], row_len, "the stored ledgers sum is that one row")
+        self.assertEqual(comp.life["cards"], 2 * comp.last["cards"], "the same build's cards, twice")
+        self.assertEqual(comp.life["cardCount"], 2 * comp.last["cardCount"])
+        self.assertEqual(2 * (comp.last["rest"] + comp.last["ledgers"]) - (comp.life["rest"] + comp.life["ledgers"]), row_len,
+                         "the stored lifetime table is a subtraction away from the row: that is why it is not published")
+        self.assertEqual(set(rep), {"passes", "failed", "last", "wire"})
+        self.assertNotIn("lifetime", rep, "fails before")
+        self.assertEqual((rep["passes"], rep["last"]["ledgersAttached"], rep["wire"]["exact"]), (2, 1, 1))
+        self.assertEqual(rep["last"]["rest"], comp.last["rest"] + row_len)
+        ints = [(p, v) for p, v in _leaves(rep) if isinstance(v, int) and not isinstance(v, bool)]
+        hits = [p for p, v in ints if v == row_len]
+        hits += ["%s - %s" % (p, q) for p, v in ints for q, w in ints if p != q and v - w == row_len]
+        hits += ["%s + %s" % (p, q) for p, v in ints for q, w in ints if p < q and v + w == row_len]
+        hits += ["2*%s - %s" % (p, q) for p, v in ints for q, w in ints if p != q and 2 * v - w == row_len]
+        self.assertEqual(hits, [], "the ledger row's length (%d) is recoverable from the published block" % row_len)
+        _paste_safe(self, rep)
+
     def test_the_exported_table_carries_the_published_rows_and_no_row_recovers_the_hostname(self):
         """The export path (cli/perf_public.py fold, the form `romp perf export --public` writes): two boards identical
         but for the hostname's length export the same rows with the same values, `other` apart, so no exported row
@@ -1443,21 +1545,21 @@ class PublishedTable(unittest.TestCase):
             self.assertEqual(pp.fold(doc), doc, "the export keeps the block whole")
             docs.append(pp.fold(doc)["memos"]["feedComposition"])
         a, b = docs
-        for table in ("last", "lifetime"):
-            ta, tb = a[table]["by"], b[table]["by"]
-            self.assertEqual(set(ta), set(tb))
-            self.assertEqual(set(ta), {f for f in km.FEED_BY_ROWS if f in short} | {"other"})
-            self.assertNotIn("selfHost", ta)
-            self.assertEqual({k: v for k, v in ta.items() if k != "other"}, {k: v for k, v in tb.items() if k != "other"})
-            self.assertEqual(tb["other"] - ta["other"], len(long["selfHost"]) - len(short["selfHost"]))
+        ta, tb = a["last"]["by"], b["last"]["by"]
+        self.assertEqual(set(ta), set(tb))
+        self.assertEqual(set(ta), {f for f in km.FEED_BY_ROWS if f in short} | {"other"})
+        self.assertNotIn("selfHost", ta)
+        self.assertEqual({k: v for k, v in ta.items() if k != "other"}, {k: v for k, v in tb.items() if k != "other"})
+        self.assertEqual(tb["other"] - ta["other"], len(long["selfHost"]) - len(short["selfHost"]))
+        self.assertNotIn("lifetime", a)
         # the whole-frame figures move with the hostname, as the base's push.send bytes and the served body's own
         # length always did: the fold restores the base's exposure and does not remove the frame's total
         self.assertEqual(b["last"]["frame"] - a["last"]["frame"], len(long["selfHost"]) - len(short["selfHost"]))
 
     def test_every_published_table_holds_only_the_allowlisted_rows(self):
         """The allowlist, over every fixture the module builds: the flag and count rows (FEED_BY_ROWS), the off frame's
-        own lists and `other`, in the last and the lifetime tables alike (fails before: selfHost, sessions, views and
-        the rest were rows)."""
+        own lists and `other`, in the published table (fails before: selfHost, sessions, views and the rest were rows),
+        and the stored lifetime table over every fixture on one accumulator stays per field and unpublished."""
         every = ([_card(i, column="working") for i in range(4)]
                  + [_card(10 + i, column="needs_input", provisional=(i == 0)) for i in range(3)]
                  + [_card(20 + i, column="completed") for i in range(3)]
@@ -1478,15 +1580,16 @@ class PublishedTable(unittest.TestCase):
                   "live session": _built_with_one_live_session(self)}
         comp = km._FeedComposition()
         for name, frame in frames.items():
-            last, life = self._tables(frame)
+            last = self._table(frame)
             self.assertLessEqual(set(last["by"]), PUBLIC_NAMES, "%s: last" % name)
-            self.assertLessEqual(set(life["by"]), PUBLIC_NAMES, "%s: lifetime" % name)
             self.assertFalse(set(last["by"]) & km.FEED_BY_FOLDED, name)
             self.assertEqual(sum(last["by"].values()), last["rest"], name)
             _fresh_pass(frame, comp)
-        life = _report(comp)["lifetime"]
-        self.assertLessEqual(set(life["by"]), PUBLIC_NAMES, "every fixture on one accumulator")
-        self.assertEqual(sum(life["by"].values()), life["rest"])
+        rep = _report(comp)
+        self.assertNotIn("lifetime", rep, "every fixture on one accumulator: the lifetime table is stored, not published")
+        self.assertLessEqual(km.FEED_BY_FOLDED - {"ledgers"} | km.FEED_BY_ROWS, set(comp.life["by"]),
+                             "stored per field (the ledgers are a stored sum beside the table)")
+        self.assertEqual(sum(comp.life["by"].values()), comp.life["rest"])
 
     def test_a_key_outside_the_checked_in_names_is_counted_under_other_and_never_stands_as_a_row(self):
         """A frame with top-level keys outside FEED_FRAME_FIELDS and _FEED_FRAME_LISTS (a session-name-shaped key, a
@@ -1513,21 +1616,22 @@ class PublishedTable(unittest.TestCase):
         self.assertEqual(parts[2], rest)
         self.assertEqual(parts[3], json.dumps(rest, sort_keys=True), "the remainder is the same bytes")
         rep = _report(comp)
-        last, life = rep["last"], rep["lifetime"]
-        for table in (last["by"], life["by"]):
-            self.assertFalse(set(table) & set(rogue), "no rogue key is a row: %s" % sorted(set(table) & set(rogue)))
-            self.assertLessEqual(set(table), PUBLIC_NAMES)
-            self.assertEqual(table["other"], sum(v for k, v in by.items() if k in rogue or k in km.FEED_BY_FOLDED) + leds,
-                             "the rogue keys' bytes are in `other`, beside the folded fields' and the ledgers'")
-            bucketed = {}
-            for k, v in by.items():
-                name = k if k in km._FEED_BY_NAMES else "other"
-                bucketed[name] = bucketed.get(name, 0) + v
-            self.assertEqual(table, _published(bucketed, leds), "the table is the per-field sums bucketed, then folded")
+        last = rep["last"]
+        table = last["by"]
+        self.assertFalse(set(table) & set(rogue), "no rogue key is a row: %s" % sorted(set(table) & set(rogue)))
+        self.assertLessEqual(set(table), PUBLIC_NAMES)
+        self.assertEqual(table["other"], sum(v for k, v in by.items() if k in rogue or k in km.FEED_BY_FOLDED) + leds,
+                         "the rogue keys' bytes are in `other`, beside the folded fields' and the ledgers'")
+        bucketed = {}
+        for k, v in by.items():
+            name = k if k in km._FEED_BY_NAMES else "other"
+            bucketed[name] = bucketed.get(name, 0) + v
+        self.assertEqual(table, _published(bucketed, leds), "the table is the per-field sums bucketed, then folded")
         self.assertEqual(sum(last["by"].values()), last["rest"])
         self.assertEqual(last["rest"], len(parts[3]) + leds)
         self.assertEqual(comp.last["rest"], len(parts[3]))
-        self.assertEqual(sum(life["by"].values()), life["rest"])
+        self.assertFalse(set(comp.life["by"]) & set(rogue), "the stored table buckets the rogue keys under `other` too")
+        self.assertEqual(sum(comp.life["by"].values()), comp.life["rest"])
         # the projections credit an app that reads a folded field with the PUBLISHED `other`, the rogue keys' bytes
         # included (fails before: the folded fields alone, so feed.projected minus the cards and the flag rows was
         # `other` minus the rogue bytes, and the difference published them)
@@ -1548,9 +1652,10 @@ class PublishedTable(unittest.TestCase):
     def test_the_fold_is_at_report_time_and_the_stored_tables_keep_a_row_per_field(self):
         """The ruling's second point, pinned directly: the accumulator's last and lifetime tables hold a row per remainder
         field (selfHost, sessions and the rest among them) after a pass, with the ledgers and the two counts stored
-        apart as sums, and report() publishes each table folded by public_table (the ledgers into `rest` and `other`,
-        the counts withheld); folded_sum over the stored table with the stored ledgers is the published `other`, and
-        a fold moved before record() (the stored table already folded) fails here whatever it publishes."""
+        apart as sums, and report() publishes the last table folded by public_table (the ledgers into `rest` and
+        `other`, the counts withheld) and the lifetime table not at all; folded_sum over the stored table with the
+        stored ledgers is the published `other`, and a fold moved before record() (the stored table already folded)
+        fails here whatever it publishes."""
         frame = _populated()
         _, leds, by = _expected(frame)
         comp = _fresh_pass(frame)
@@ -1565,11 +1670,11 @@ class PublishedTable(unittest.TestCase):
         self.assertEqual((comp.life["cardCount"], comp.life["ledgerCount"]), (8, 4))
         rep = _report(comp)
         self.assertEqual(rep["last"]["by"], _published(by, leds))
-        self.assertEqual(rep["lifetime"]["by"], _published({k: 2 * v for k, v in by.items()}, 2 * leds))
         self.assertEqual(rep["last"]["rest"], comp.last["rest"] + leds)
-        self.assertEqual(rep["lifetime"]["rest"], comp.life["rest"] + 2 * leds)
-        for table in (rep["last"], rep["lifetime"]):
-            self.assertFalse({"cardCount", "ledgerCount", "ledgers"} & set(table), "withheld (fails before)")
+        self.assertFalse({"cardCount", "ledgerCount", "ledgers"} & set(rep["last"]), "withheld (fails before)")
+        self.assertNotIn("lifetime", rep, "the lifetime table is stored and not published (fails before)")
+        self.assertEqual(km._FeedComposition.public_table(comp.life)["by"], _published({k: 2 * v for k, v in by.items()}, 2 * leds),
+                         "the fold applies to the stored lifetime table as to any stored table")
         self.assertEqual(km._FeedComposition.folded_sum(by), _published(by)["other"])
         self.assertEqual(km._FeedComposition.folded_sum(by, leds), _published(by, leds)["other"])
         self.assertEqual(km._FeedComposition.folded_sum({}), 0)
@@ -1582,8 +1687,8 @@ class PublishedTable(unittest.TestCase):
 
     def test_the_counts_are_withheld_and_the_ledgers_folded_and_the_projections_credit_them(self):
         """Ruling (b) of the third round, on a fixture with cards in every column and two ledgers, and on the same
-        fixture with the ledgers detached: the published last and lifetime tables carry frame, cards and rest and
-        neither count nor a ledgers row (fails before: all three were published); the stored tables carry them; the
+        fixture with the ledgers detached: the published last table carries frame, cards and rest and neither count
+        nor a ledgers row (fails before: all three were published); the stored tables carry them; the
         published rest is the stored remainder plus the stored ledgers and `other` the folded fields plus the ledgers;
         frame == cards + rest and rest == sum(by) in both tables; every app that reads a folded field is credited with
         the ledgers (the feed row is the frame minus the switch, the Waiting-on-you row `other` plus the switch, the
@@ -1595,7 +1700,8 @@ class PublishedTable(unittest.TestCase):
         cards, leds, by = _expected(feed)
         comp = _fresh_pass(feed)
         rep = _report(comp)
-        for name, t in (("last", rep["last"]), ("lifetime", rep["lifetime"])):
+        self.assertNotIn("lifetime", rep)
+        for name, t in (("last", rep["last"]),):
             self.assertEqual(set(t) & {"frame", "cards", "rest", "ledgers", "cardCount", "ledgerCount"},
                              set(km._FeedComposition.PUBLISHED), name)
             self.assertEqual(t["frame"], t["cards"] + t["rest"], name)
@@ -1652,7 +1758,7 @@ class PublishedTable(unittest.TestCase):
                              % (name, [flat[max(0, i - 60):i + 60] for i in loose]))
         for frame in (_populated(), _feed(n=1, asks=[_card(0)], ledgers=[_ledger(tops=1)])):
             rep = _report(_fresh_pass(frame))
-            for t in (rep["last"], rep["lifetime"]):
+            for t in (rep["last"],):
                 pub, apps = t["by"], t["apps"]
                 flags = sum(pub[f] for f in ("dismissedCount", "showDismissed", "canUndoClear", "off") if f in pub)
                 self.assertEqual(t["frame"], t["cards"] + t["rest"])
@@ -1691,10 +1797,12 @@ class PublishedTable(unittest.TestCase):
             flat = flats[text] = " ".join(phrase.split())
             for needle in ("the folded fields as one", "credited with all of `other`", "report",
                            "difference of published numbers", "hostname", "`phoneFace`", "title",
-                           "withheld", "single-object case", "chat tab count", "builtChat.tabs", "Two residuals remain"):
+                           "withheld", "single-object case", "chat tab count", "builtChat.tabs", "Two residuals remain",
+                           "lifetime", "sharing a build"):
                 self.assertIn(needle, flat, "%s: %r" % (text, needle))
             for stale in ("tells the reader nothing", "forty percent under", "`cardCount`", "`ledgerCount`",
-                          "three parts", "Two residuals.", "Three residuals", "minus `ledgers`"):
+                          "three parts", "Two residuals.", "Three residuals", "minus `ledgers`",
+                          "`lifetime` sums every counted pass", "in `last` and in `lifetime`", "as lifetime sums and the last pass"):
                 self.assertNotIn(stale, flat, "%s: %r" % (text, stale))
             self.assertNotIn("\u2014", phrase, text)
             self.assertNotIn("\u2013", phrase, text)
