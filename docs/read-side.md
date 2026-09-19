@@ -260,7 +260,11 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   2026-09-18; the chat, the feed and the tab the phone was left on load at
   boot, the last unless the gear has that pane off), so a pane the phone never
   showed has no document and files no rows of any kind: its absence from the
-  rows is the saving, not a field.
+  rows is the saving, not a field. A lazy pane whose document fails to load
+  (the load event over an error page, or no document by the 30 s backstop) is
+  put back where a tap finds it, says so over the pane area with a tap to retry,
+  and files one `pane-load-failed` row (surface `shell`: `pane`, `via` `load`
+  or `backstop`, `n` the failures for that pane on this page).
   A redial declares itself (`reconnect=1` on the `/ws` URL) once the kernel's
   caps frame has answered the bundle's ready; before that, with the ready still
   queued, or after a socket that died before the caps frame came back, it dials

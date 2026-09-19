@@ -338,16 +338,17 @@ class ReturnFromBackground(unittest.TestCase):
             shutil.rmtree(cls.lab, ignore_errors=True)
 
     # ---- the driver ----
-    def _drive(self, shell, regime, outage_s, engine="chromium", tap=None, boot_tab=None):
+    def _drive(self, shell, regime, outage_s, engine="chromium", tap=None, boot_tab=None, abort=False):
         declared = os.environ.get("ROMP_SERVED_TESTS_ENGINES", "")
         if engine != "chromium" and declared and engine not in [e.strip() for e in declared.split(",")]:
             self.skipTest("optional: this runner declares no %s (ROMP_SERVED_TESTS_ENGINES=%s)" % (engine, declared))
-        name = "%s-%s-%s-%ds%s%s" % (engine, shell, regime, outage_s, "-tap-" + tap if tap else "", "-boot-" + boot_tab if boot_tab else "")
+        name = "%s-%s-%s-%ds%s%s%s" % (engine, shell, regime, outage_s, "-tap-" + tap if tap else "", "-abort" if abort else "", "-boot-" + boot_tab if boot_tab else "")
         eager = _eager(shell, tap)
         cfg = {"engine": engine, "shell": shell, "regime": regime, "outageMs": outage_s * 1000, "hiddenDwellMs": 400,
                "url": "http://127.0.0.1:%d/?token=%s" % (self.port, self.token),
                "healthz": "http://127.0.0.1:%d/healthz" % self.port, "diag": self.diag, "apps": list(APPS),
                "eagerApps": list(_eager(shell)), "freshApps": [a for a in eager if a in FRESH_APPS], "tapPane": tap,   # the boot wait is the eager panes' (a lazy pane has no shim to say up); the fresh wait includes a tapped pane
+               "abortPane": tap if abort else "",   # HIGH 2 (review round 1): the tapped pane's first document fetch is aborted; the shell must say so and the re-tap must load it
                "perfShare": True, "bootTimeoutMs": 30000, "freshTimeoutMs": 25000, "settleMs": 1500,
                "bootTab": boot_tab or "", "expectPrefetchAfterChatTap": bool(boot_tab and tap == "chat"),   # stage 0, review round 1: a phone left on another tab, then the Chat tab shown, arms the idle chain
                "activeSid": SESSIONS[0][0] if boot_tab else "",   # the chat blob's active tab (the dial's hint): with none the kernel serves the whole board and there is no skeleton set to prefetch
@@ -356,7 +357,7 @@ class ReturnFromBackground(unittest.TestCase):
         cfg_path = os.path.join(self.lab, "cfg-%s.json" % name)
         Path(cfg_path).write_text(json.dumps(cfg))
         try:
-            p = subprocess.run(["node", DRIVER], capture_output=True, text=True, timeout=180,
+            p = subprocess.run(["node", DRIVER], capture_output=True, text=True, timeout=240,   # an abort leg on WebKit waits out the shell's 30 s backstop
                                env=dict(os.environ, EXT_PKG=os.path.join(EXT, "package.json"), CFG=cfg_path))
         except subprocess.TimeoutExpired as e:
             so = e.stdout if isinstance(e.stdout, str) else (e.stdout or b"").decode()
@@ -375,9 +376,10 @@ class ReturnFromBackground(unittest.TestCase):
         self.assertEqual(len(full.get("dials") or []), r.get("dialsN"), "the full result carries every dial the compact line counted")
         return name, full
 
-    def _leg(self, shell, regime, outage_s, engine="chromium", tap=None, boot_tab=None):
-        name, r = self._drive(shell, regime, outage_s, engine, tap, boot_tab)
-        m = measure(_rows(self.diag), r)
+    def _leg(self, shell, regime, outage_s, engine="chromium", tap=None, boot_tab=None, abort=False):
+        name, r = self._drive(shell, regime, outage_s, engine, tap, boot_tab, abort)
+        rows = _rows(self.diag)
+        m = measure(rows, r)
         art = os.path.join(self.lab, "return-harness-%s.json" % name)
         Path(art).write_text(json.dumps(m, indent=1, sort_keys=True))
         type(self).measurements[name] = m
@@ -385,7 +387,36 @@ class ReturnFromBackground(unittest.TestCase):
         self._parked(name, r, m)
         self._lazy(name, r, m, tap)
         self._dial(name, r, boot_tab, tap)
+        if abort:
+            self._abort(name, r, rows, tap, engine)
         return m
+
+    # ---- HIGH 2 (review round 1, 2026-09-19): a lazy pane whose first document fetch fails is re-parked, says so, and loads on the re-tap ----
+    def _abort(self, name, r, rows, tap, engine):
+        """The tapped pane's document was aborted at the first tap. The shell must paint the failed state where the user looks
+        (body.pane-failed keeps #pane-load up at display:flex with the message and the loader down), re-park the pane (no src, the
+        url back under data-lazy-src) and file one `pane-load-failed` row whose keys survive CLIENT_DIAG_KEYS' allowlist; the re-tap
+        then loads it (the frame at the pane's url, its shim up, the failed state gone). Chromium detects the failure on the error
+        page's load event (`via` load); Firefox and WebKit fire no load event the shell can act on for the aborted navigation (the
+        frame keeps about:blank), so the 30 s backstop detects it (`via` backstop), which is what the WebKit leg's wait is for."""
+        where = name + ": "
+        a = r.get("abort") or {}
+        self.assertGreaterEqual(a.get("ms", -1), 0, where + "the shell said the pane failed (body.pane-failed) within the wait: %r" % (a,))
+        self.assertEqual(a.get("display"), "flex", where + "#pane-load is painted in the failed state: %r" % (a,))
+        self.assertEqual(a.get("loaderDisplay"), "none", where + "…with the loader itself down: %r" % (a,))
+        self.assertEqual(a.get("msg"), "Couldn't load this pane. Tap to try again.", where + "the first failure's copy: %r" % (a,))
+        self.assertEqual((a.get("src"), a.get("lazy")), (None, "/" + tap), where + "the pane is re-parked (no src, the url back under data-lazy-src): %r" % (a,))
+        self.assertFalse(a.get("loading"), where + "the loading state is over: %r" % (a,))
+        wid = r.get("wid") or ""
+        mine = [x for x in rows if x.get("wid") == wid and x.get("surface") == "shell" and x.get("what") == "pane-load-failed"]
+        self.assertEqual(len(mine), 1, where + "one pane-load-failed row for the one failure: %r" % (mine,))
+        data = mine[0].get("data") or {}
+        self.assertEqual((data.get("pane"), data.get("n")), (tap, 1), where + "the row names the pane and the count (the keys survive the allowlist): %r" % (data,))
+        self.assertEqual(data.get("via"), "load" if engine == "chromium" else "backstop", where + "the detector per engine, as observed under the route's abort: Chromium commits an error page and fires load; Firefox and WebKit fire no load event the shell can act on (the frame keeps about:blank), so the 30 s backstop detects it: %r" % (data,))
+        la = r.get("loadingAfterTap") or {}
+        self.assertFalse(la.get("failed"), where + "the re-tap cleared the failed state: %r" % (la,))
+        self.assertEqual(la.get("failedPanes"), [], where + "no .pane carries `failed` after the re-tap: %r" % (la,))
+        self.assertIn("/" + tap, r.get("frames") or [], where + "the re-tap loaded the pane's document (the frame at its url): %r" % (r.get("frames"),))
 
     # ---- stage 0's dial pins (review round 1, 2026-09-19): the phone's first chat dial takes the diet; the chain waits for the chat pane's show ----
     def _dial(self, name, r, boot_tab, tap):
@@ -549,7 +580,7 @@ class ReturnFromBackground(unittest.TestCase):
         self._leg("phone", "hung", 12)
 
     def test_phone_hung_12s_tab_tap(self):
-        self._leg("phone", "hung", 12, tap="fleet")   # stage 0: a lazy pane tapped before the suspend loads on the tap and parks at the return
+        self._leg("phone", "hung", 12, tap="fleet", abort=True)   # stage 0: a lazy pane tapped before the suspend loads on the tap and parks at the return; its FIRST fetch is aborted (HIGH 2, review round 1): the shell says so and the re-tap loads it
 
     def test_phone_opened_on_the_feed_tab_arms_the_chain_when_chat_is_shown(self):
         self._leg("phone", "hung", 12, tap="chat", boot_tab="feed")   # stage 0, review round 1 (F1): the chat display:none at boot asks nothing; its show arms the idle prefetch
@@ -582,11 +613,13 @@ class ReturnFromBackground(unittest.TestCase):
 
     # the optional engines, one leg each: Firefox has no Page Lifecycle `resume`, the closest desktop stand-in for Safari's
     # return; WebKit is Safari's engine. Both skip `optional:` where the browser is absent (CI installs Chromium alone).
+    # tests-1 (review round 1, 2026-09-19): both engine legs tap a lazy pane, so the parked-pane contract (D2) and the failed-load road
+    # (HIGH 2) each have a witness in every engine, not Chromium alone (~90 s per leg; WebKit's abort waits out the 30 s backstop)
     def test_firefox_phone_hung_12s(self):
-        self._leg("phone", "hung", 12, engine="firefox")
+        self._leg("phone", "hung", 12, engine="firefox", tap="fleet", abort=True)
 
     def test_webkit_phone_hung_12s(self):
-        self._leg("phone", "hung", 12, engine="webkit")
+        self._leg("phone", "hung", 12, engine="webkit", tap="fleet", abort=True)
 
 
 if __name__ == "__main__":

@@ -183,8 +183,17 @@ class LandingShell(unittest.TestCase):
         self.assertIn("<iframe id=f-files data-src=/files>", html)
         self.assertNotIn("<iframe id=f-files src=", html)
         self.assertEqual(html.count("<div id=pane-load>"), 1)
+        # tests-2 (review round 1, 2026-09-19): the element CARRIES the romp loader (ui/CLAUDE.md's wait-state rule), as the boot splash's pin
+        # does (tests/test_kernel_refresh_button.py), its first content; the failed-load message is its second child (HIGH 2)
+        self.assertIn("<div id=pane-load>" + km._loader_inner() + "<div id=pane-load-msg></div></div>", html, "the shell's pane loader is the romp loader first, then the failed-load message")
         self.assertLess(html.index("<div id=romp-boot>"), html.index("<div id=pane-load>"))
         self.assertIn("#pane-load{display:none}", html)
+        self.assertIn("#pane-load-msg{display:none;", html)
+        self.assertIn("body.pane-failed #pane-load{display:flex;flex-direction:column;gap:14px;cursor:pointer}", html, "the failed state keeps the element up (a tap on it retries)")
+        self.assertIn("body.pane-failed #pane-load>.rl-in{display:none}", html, "…with the loader down and the message in its place")
+        self.assertIn("body.pane-failed #pane-load-msg{display:block}", html)
+        self.assertLess(html.index("@media " + km._MOBILE_MQ + "{"), html.index("body.pane-failed #pane-load{display:flex"), "the failed paint lives inside the phone media block too")
+        self.assertIn("pane", km.CLIENT_DIAG_KEYS["shell"]); self.assertIn("n", km.CLIENT_DIAG_KEYS["shell"]); self.assertIn("via", km.CLIENT_DIAG_KEYS["shell"])   # the pane-load-failed row's keys survive the allowlist
         self.assertIn("#pane-load{position:fixed;left:0;right:0;top:0;bottom:var(--mtabs-h,2.6em);z-index:15;align-items:center;justify-content:center;background:#1e1e1e}", html)
         self.assertIn("body.pane-loading #pane-load{display:flex}", html)
         self.assertIn("body.theme-light #pane-load{background:#F1EAE2}", html)
@@ -196,7 +205,7 @@ class LandingShell(unittest.TestCase):
         self.assertLess(js.index("try{if(mobileOn()){promote(p);paintLoading();}}catch(e){}"), js.index("try{window.__rompPanesTell&&window.__rompPanesTell();}catch(e){}}\nwindow.__rompMobileTab=show;"))
         # the boot: the parking of data-src runs before the boot show, whose line is upstream's text
         self.assertLess(js.index("lf.setAttribute(LAZY,lu);lf.removeAttribute('data-src');"), js.index("var last='chat';try{var s=localStorage.getItem(KT);if(s&&F[s])last=s;}catch(e){}show(last);"))
-        self.assertIn("var LAZY='data-lazy-src',LOAD_MS=30000;", js)
+        self.assertIn("var LAZY='data-lazy-src',LOAD_MS=30000,URLS={},FAILS={},TOK={};", js)   # + the promoted urls, the failure counts and the promotion tokens (HIGH 2, review round 1)
         self.assertIn("window.__rompPanePromote=promote;", js)
         self.assertIn("if(en){if(f&&!f.getAttribute('src')&&f.getAttribute('data-src'))f.setAttribute('src',f.getAttribute('data-src'));", km._LANDING_COLLAPSE_JS, "the controller's promotion line is untouched")
 

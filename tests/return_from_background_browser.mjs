@@ -238,7 +238,36 @@ try {
   if (cfg.tapPane) {
     const prefetchBeforeTap = out.dials.filter((d) => d.app === "chat").reduce((n, d) => n + (d.needFull || []).filter((w) => w === "prefetch").length, 0);
     out.t.tap = now();
-    await page.click("#mtabs button[data-pane=" + cfg.tapPane + "]");
+    if (cfg.abortPane) {
+      // HIGH 2 (review round 1, 2026-09-19): the tapped pane's document fetch FAILS at the first tap (the route aborts the navigation).
+      // Chromium commits an error page and fires load; Firefox and WebKit keep about:blank with no load event the shell can act on,
+      // so the shell's 30 s backstop is their detector (the wait below outlasts it). The shell must re-park the pane, say so where the user looks
+      // (body.pane-failed, #pane-load painted with the message, the loader itself down) and load it on the re-tap.
+      const abortPath = "/" + cfg.abortPane;
+      const isAbortUrl = (u) => u.pathname === abortPath;
+      const aborter = (route) => route.abort();
+      await page.route(isAbortUrl, aborter);
+      await page.click("#mtabs button[data-pane=" + cfg.tapPane + "]");
+      const failDeadline = now() + 45000;
+      let failedSeen = null;
+      while (now() < failDeadline) {
+        failedSeen = await page.evaluate((pane) => {
+          if (!document.body.classList.contains("pane-failed")) return null;
+          const el = document.getElementById("pane-load"), f = document.getElementById("f-" + pane);
+          return { display: getComputedStyle(el).display, loaderDisplay: getComputedStyle(el.querySelector(".rl-in")).display,
+                   msg: (document.getElementById("pane-load-msg") || {}).textContent || "", src: f.getAttribute("src"), lazy: f.getAttribute("data-lazy-src"),
+                   loading: document.body.classList.contains("pane-loading") };
+        }, cfg.abortPane);
+        if (failedSeen) break;
+        await sleep(200);
+      }
+      out.abort = { ms: failedSeen ? now() - out.t.tap : -1, ...(failedSeen || {}) };
+      await page.unroute(isAbortUrl, aborter);
+      out.t.retap = now();
+      await page.click("#mtabs button[data-pane=" + cfg.tapPane + "]");   // the re-tap: the shell promotes the re-parked pane again, as a first tap would
+    } else {
+      await page.click("#mtabs button[data-pane=" + cfg.tapPane + "]");
+    }
     const tapDeadline = now() + (cfg.bootTimeoutMs || 30000);
     let tapUp = {};
     while (now() < tapDeadline) {
@@ -246,9 +275,9 @@ try {
       if (tapUp[cfg.tapPane] === "up") break;
       await sleep(100);
     }
-    out.tapUpMs = tapUp[cfg.tapPane] === "up" ? now() - out.t.tap : -1;
+    out.tapUpMs = tapUp[cfg.tapPane] === "up" ? now() - (out.t.retap || out.t.tap) : -1;   // from the tap that loaded it (the re-tap, under abortPane)
     out.srcAfterTap = await page.evaluate(() => Object.fromEntries(Array.from(document.querySelectorAll("iframe[id^=f-]")).map((f) => [f.id.slice(2), f.getAttribute("src")])));
-    out.loadingAfterTap = await page.evaluate(() => ({ body: document.body.classList.contains("pane-loading"), panes: Array.from(document.querySelectorAll(".pane.loading")).map((d) => d.id) }));
+    out.loadingAfterTap = await page.evaluate(() => ({ body: document.body.classList.contains("pane-loading"), failed: document.body.classList.contains("pane-failed"), panes: Array.from(document.querySelectorAll(".pane.loading")).map((d) => d.id), failedPanes: Array.from(document.querySelectorAll(".pane.failed")).map((d) => d.id) }));
     await page.click("#mtabs button[data-pane=chat]");
     await sleep(Math.max(300, (cfg.settleMs || 1500) / 2));
     out.tapped = cfg.tapPane;
