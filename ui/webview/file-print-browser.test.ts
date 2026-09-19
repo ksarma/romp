@@ -13,9 +13,14 @@
 // a note with no placeholder and its pictures complete prints on one click, in the click's own task, with no line shown;
 // the Raw view (a code view, no pictures) the same. (4) the deadline: a picture whose route never answers prints after
 // the deadline, shortened through the module's test seam (FV.setPrintSettleMs), with the picture still incomplete. (5) the
-// URL kind: a document from a link with a picture on another host arms the same way. FAILS BEFORE: the first assertion
-// of case 1, at the unchanged viewer (no button, no listener): the chord is not prevented while a placeholder stands and an
-// <img> is incomplete, so the browser's raw print is what runs. Skips loudly without a browser. Synthetic values only.
+// URL kind: a document from a link with a picture on another host arms the same way. (6) the body not in (P7): a file
+// whose answer is parked (the page's fetch stub wrapped to hold the report's GET until the test releases it) shows the
+// loader, and Print is disabled over it: a forced click, a programmatic click and the chord print nothing, the chord still
+// prevented (the browser's raw print would print the loader page); the answer released and the text seated, the button is
+// live and the next press prints. FAILS BEFORE: the first assertion of case 1, at the unchanged viewer (no button, no
+// listener): the chord is not prevented while a placeholder stands and an <img> is incomplete, so the browser's raw print
+// is what runs; and case 6 at the first build, whose button was live from the bar's build (the disabled assertion). Skips
+// loudly without a browser. Synthetic values only.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import { inBrowser, openViewer, frames, REPORT, ROOT, ORIGIN, type Mode } from "./real-viewer-leg";
@@ -32,7 +37,7 @@ const URL_NOTE = "# Linked\n\nA remote picture ![](" + REMOTE + ") alone.\n";
 
 type Print = { t: number; gates: number; incomplete: number; line: boolean; remoteReady: boolean | null };
 type Key = { key: string; ctrl: boolean; prevented: boolean; open: boolean; gates: number; incomplete: number };
-type Bar = { present: boolean; text: string | null; title: string | null; on: boolean; busy: boolean; expanded: string | null; phase: string | null; line: string | null; buttons: string[]; cardUp: boolean };
+type Bar = { present: boolean; label: string | null; title: string | null; glyph: boolean; disabled: boolean; ariaDisabled: string | null; on: boolean; busy: boolean; expanded: string | null; phase: string | null; line: string | null; buttons: string[]; cardUp: boolean };
 
 /** The page's record of the print stub's calls, the window's keydowns, and the bar as it stands. */
 const PAGE_PROBES = () => {
@@ -48,7 +53,7 @@ const PAGE_PROBES = () => {
   w.__bar = (): Bar => {
     const b = document.querySelector("#romp-fileview .fileview-bar .fileview-print") as HTMLButtonElement | null;
     const line = document.getElementById("fileview-print-line");
-    return { present: !!b, text: b ? b.textContent : null, title: b ? b.title : null, on: !!b && b.classList.contains("on"), busy: !!b && b.classList.contains("fileview-busy"), expanded: b ? b.getAttribute("aria-expanded") : null, phase: b ? (b.dataset.print || null) : null,
+    return { present: !!b, label: b ? b.getAttribute("aria-label") : null, title: b ? b.title : null, glyph: !!b && !!b.querySelector("svg") && (b.textContent || "").trim() === "", disabled: !!b && b.disabled, ariaDisabled: b ? b.getAttribute("aria-disabled") : null, on: !!b && b.classList.contains("on"), busy: !!b && b.classList.contains("fileview-busy"), expanded: b ? b.getAttribute("aria-expanded") : null, phase: b ? (b.dataset.print || null) : null,
       line: line ? (line.firstChild && line.firstChild.nodeType === 3 ? (line.firstChild.textContent || "") : line.textContent) : null, buttons: line ? Array.from(line.querySelectorAll("button")).map((x) => x.textContent || "") : [], cardUp: !!document.getElementById("romp-fileview") };
   };
 };
@@ -113,8 +118,9 @@ test("case 1: a gated note. The chord arms (FAILS BEFORE: the raw print runs unp
     assert.equal(k[0].prevented, true, "FAILS BEFORE: at the unchanged viewer the chord is not prevented, so the browser's own print runs over the placeholder and the half-loaded picture");
     assert.equal((await prints(page)).length, 0, "nothing printed yet: the bar armed instead");
     let b = await bar(page);
-    assert.equal(b.present, true, "the Print word button is in the bar");
-    assert.equal(b.text, "Print"); assert.equal(b.phase, "armed"); assert.equal(b.on, true); assert.equal(b.expanded, "true");
+    assert.equal(b.present, true, "the Print glyph button is in the bar");
+    assert.equal(b.label, "Print"); assert.equal(b.title, "Print"); assert.equal(b.glyph, true, "a glyph in Download's shape: an svg and no text, the words in the title and aria-label");
+    assert.equal(b.disabled, false, "the text is in: the button is live"); assert.equal(b.phase, "armed"); assert.equal(b.on, true); assert.equal(b.expanded, "true");
     assert.equal(b.line, "1 picture from another host is not loaded.");
     assert.deepEqual(b.buttons, ["Print with them", "Print without them"]);
     // Escape disarms and leaves the card up
@@ -277,6 +283,58 @@ test("case 5: the URL kind. A document from a link with a picture on another hos
     assert.equal(b.phase, null); assert.equal(b.line, null);
     assert.ok(!s.requests.some((u) => u.indexOf("https://" + REMOTE_HOST + "/") === 0), "no request reached the other host");
     assert.deepEqual(s.errors, [], "no script error");
+    await page.close();
+  });
+});
+
+const PARKED_NOTE = "# Parked\n\nText alone, no picture.\n\nLast line.\n";
+test("case 6: the body not in. A file whose answer is parked: Print is disabled over the loader, and a forced click, a programmatic click and the chord print nothing, the chord still prevented; the answer released, the button enables and the next press prints", { timeout: 120000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    // the file's own answer goes through the page's fetch stub (real-viewer-leg.ts pageHtml), so the park wraps the stub: the
+    // report's GET waits on a promise the test resolves through window.__release; a HEAD (the changed-on-disk probe) does not
+    const { page, errors } = await openViewer(browser, "pane", 900, 700, {
+      docs: { [REPORT]: PARKED_NOTE },
+      waitFor: "#romp-fileview .fileview-body .fileview-load",   // the first paint awaited is the loader's
+      before: async (pg: any) => {
+        await pg.evaluate(() => {
+          const w = window as any; const prev = w.fetch;
+          const gate = new Promise<void>((r) => { w.__release = r; });
+          w.fetch = async function (url: unknown, init: any) {
+            const m = /[?&]path=([^&]*)/.exec(String(url));
+            if (m && /\/report\.md$/.test(decodeURIComponent(m[1])) && !(init && init.method === "HEAD")) await gate;
+            return prev(url, init);
+          };
+        });
+        await pg.evaluate(PAGE_PROBES);
+      },
+    });
+    let b = await bar(page);
+    assert.equal(b.present, true, "the button is in the bar from the build");
+    assert.equal(b.disabled, true, "disabled while the loader holds the body");
+    assert.equal(b.ariaDisabled, "true"); assert.equal(b.phase, "disabled");
+    assert.equal(await page.evaluate(() => !!document.querySelector("#romp-fileview .fileview-body .fileview-load")), true, "the loader holds the body");
+    await page.click("#romp-fileview .fileview-print", { force: true });   // forced: Playwright would otherwise wait for an enabled button; the browser swallows a click on a disabled one
+    await page.evaluate(() => { (document.querySelector("#romp-fileview .fileview-print") as HTMLButtonElement).click(); });   // click() on a disabled button dispatches nothing either
+    await page.keyboard.press("Control+p");
+    await frames(page, 1);
+    const k = await chords(page);
+    assert.equal(k.length, 1, "the window heard one Ctrl+P"); assert.equal(k[0].open, true);
+    assert.equal(k[0].prevented, true, "the chord is prevented over the loader: the browser's raw print would print the loader page");
+    assert.equal((await prints(page)).length, 0, "nothing printed: the clicks and the chord over the loader change nothing");
+    b = await bar(page);
+    assert.equal(b.disabled, true, "still disabled"); assert.equal(b.line, null, "no line"); assert.equal(b.phase, "disabled");
+    await page.evaluate(() => { (window as any).__release(); });
+    await page.waitForFunction(() => !!document.querySelector("#romp-fileview .fileview-md > p"), null, { timeout: 10000 });
+    await frames(page, 1);
+    b = await bar(page);
+    assert.equal(b.disabled, false, "the text seated: the button is live"); assert.equal(b.ariaDisabled, null); assert.equal(b.phase, null);
+    const printed = await page.evaluate(() => {   // the click and the read in one task
+      (document.querySelector("#romp-fileview .fileview-print") as HTMLButtonElement).click();
+      return (window as any).__prints.length;
+    });
+    assert.equal(printed, 1, "the next press printed at once: no picture, no placeholder");
+    assert.equal((await prints(page))[0].incomplete, 0); assert.equal((await prints(page))[0].gates, 0);
+    assert.deepEqual(errors, [], "no script error");
     await page.close();
   });
 });

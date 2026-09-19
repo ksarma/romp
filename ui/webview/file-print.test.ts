@@ -1,10 +1,11 @@
 // The print flow's machine and its wait (file-print.ts; the print follow-on to plans/markdown-viewer.md's Slice 3, item 12),
-// executed under node with no DOM: `step` over every phase and event, the words, the chord, and settlePictures over fake
-// pictures and a fake clock (the deadline is the one timer in the module, and it is injected). The DOM driver, the button,
+// executed under node with no DOM: `step` over every phase and event (the disabled phase the driver starts in, P7, among
+// them), the words, the chord, and settlePictures over fake pictures and a fake clock (the deadline is the one timer in the
+// module, and it is injected). The DOM driver, the button,
 // the line and window.print run over the real viewer in file-print-browser.test.ts. Synthetic values only.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
-import { step, RESTING, armedWords, preparingWords, isPrintChord, settlePictures, collectPictures, PRINT_SETTLE_MS, setPrintSettleMs, printSettleMs,
+import { step, RESTING, DISABLED, armedWords, preparingWords, isPrintChord, settlePictures, collectPictures, PRINT_SETTLE_MS, setPrintSettleMs, printSettleMs,
   WITH_WORDS, WITHOUT_WORDS, TAB_WORDS, NO_TAB_WORDS, pdfFrameWindow, type PrintState, type Picture, type Timers } from "./file-print";
 
 // ── the machine ─────────────────────────────────────────────────────────────────────────────────────
@@ -251,4 +252,32 @@ test("pdfFrameWindow: the frame's window when it holds the PDF and can print; nu
   assert.equal(pdfFrameWindow(frameBody({ contentWindow: win(BLOB, "application/pdf", null), src: BLOB })), null, "print is no function");
   const throwing: FakeWin = { print: () => {}, get location(): { href: string } { throw new Error("cross-origin"); }, document: null };
   assert.equal(pdfFrameWindow(frameBody({ contentWindow: throwing, src: BLOB })), null, "a window that withholds its location");
+});
+
+// ── the body not in (P7) ────────────────────────────────────────────────────────────────────────────
+
+test("disabled until the body is in: the driver's start, where a press (the button's or the chord's), an Escape, a choice, a prepare, a ready and a printed change nothing; the body arriving rests; the body going out from rest, armed, the wait or the print disarms and disables; the body's arrival elsewhere changes nothing", () => {
+  assert.equal(DISABLED.phase, "disabled");
+  for (const ev of [{ kind: "press", gated: 0, pending: 0 }, { kind: "press", gated: 2, pending: 1 }, { kind: "press", gated: 0, pending: 0, file: "pdf" }, { kind: "escape" },
+    { kind: "choose", withGated: true }, { kind: "prepare", pending: 1 }, { kind: "ready" }, { kind: "printed" }, { kind: "body", in: false }] as const) {
+    const r = step(DISABLED, ev);
+    assert.equal(r.act, "none", ev.kind + " while disabled changes nothing");
+    assert.equal(r.state, DISABLED, ev.kind + " while disabled keeps the state");
+  }
+  const on = step(DISABLED, { kind: "body", in: true });
+  assert.equal(on.act, "none", "the body's arrival needs no act: the driver's sync reads the phase");
+  assert.equal(on.state.phase, "resting");
+  assert.equal(step(on.state, { kind: "press", gated: 0, pending: 0 }).act, "print", "the first press after the body is in prints");
+  const armed = step(RESTING, { kind: "press", gated: 1, pending: 0 }).state;
+  const preparing: PrintState = { phase: "preparing", gated: 0, pending: 2 };
+  const printing: PrintState = { phase: "printing", gated: 0, pending: 0 };
+  for (const [s, name] of [[RESTING, "rest"], [armed, "the armed line"], [preparing, "the wait"], [printing, "the print"]] as const) {
+    const out = step(s, { kind: "body", in: false });
+    assert.equal(out.act, "disarm", "the body going out during " + name + " disarms: the line goes and the driver cancels the wait");
+    assert.equal(out.state.phase, "disabled", "...and disables");
+    const stay = step(s, { kind: "body", in: true });
+    assert.equal(stay.act, "none", "the body's arrival during " + name + " changes nothing");
+    assert.equal(stay.state, s);
+  }
+  assert.equal(step(step(printing, { kind: "body", in: false }).state, { kind: "printed" }).act, "none", "a print's end after the body went out leaves the button disabled");
 });

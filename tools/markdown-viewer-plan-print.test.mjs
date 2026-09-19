@@ -1,15 +1,16 @@
 // The plan's print follow-on (plans/markdown-viewer.md, "## Follow-on: Print (2026-09-19)") records what the print
-// build did, and this module holds the record to the tree. The follow-on put a Print word button and Ctrl/Cmd+P in
+// build did, and this module holds the record to the tree. The follow-on put a Print glyph button and Ctrl/Cmd+P in
 // front of window.print (ui/webview/file-print.ts, called by both viewers in ui/webview/file-view.ts), a rule for a
-// picture opened directly in the print block of both sheets, and a PDF path through the frame's own print or the /file
-// tab; the record names each decision's key sentence, the words the bar shows, the two sheet rules, the guide's printing
-// sentence and the test modules. Each of those is read here from its source: the section is present once and last,
-// and carries the six decision heads, the ask, the tests and the open points; the flow module exists and both viewers
-// call it where the section says; the words quoted in the section are the module's literals; both sheets carry the two
-// rules right after the `.fileview-body` line inside byte-equal print blocks; the guide's sentence is the one the
-// section describes and the old sentence is gone; and the module list is two-way (every ui/webview/file-print*.test.ts
-// is named in the section, and every module the section names exists, this one included). Synthetic: only the repo's
-// own text.
+// picture opened directly in the print block of both sheets, a PDF path through the frame's own print or the /file tab,
+// and a disabled state until the body is in; the record names each decision's key sentence, the words the bar shows, the
+// two sheet rules, the guide's printing sentence and the test modules. Each of those is read here from its source: the
+// section is present once and last, and carries the seven decision heads, the ask, the tests and the open points; the
+// flow module exists and both viewers call it where the section says; the words quoted in the section are the module's
+// literals; both sheets carry the two rules right after the `.fileview-body` line inside byte-equal print blocks; the
+// button starts disabled and both viewers report the body at the seatings and the panes the section names; the guide's
+// sentence is the one the section describes and the old sentence is gone; and the module list is two-way (every
+// ui/webview/file-print*.test.ts is named in the section, and every module the section names exists, this one
+// included). Synthetic: only the repo's own text.
 // Run: node --test tools/markdown-viewer-plan-print.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -61,14 +62,15 @@ const RULE_IMG = '.fileview-img { max-width: 100%; max-height: 100vh; border-rad
 
 // ── the section's shape ─────────────────────────────────────────────────────────────────────────────
 
-test('the section states the ask, what existed, six decisions, the tests and the open points, in that order, with no em dash', () => {
+test('the section states the ask, what existed, seven decisions, the tests and the open points, in that order, with no em dash', () => {
   const marks = ['The user asked (2026-09-19) for a print from the viewer that carries the file\'s pictures', '**What existed.**', '**Decisions.**',
-    'P1. **A Print word button in the viewer bar, and Ctrl/Cmd+P runs the same flow.**',
+    'P1. **A Print glyph button in the viewer bar, beside Download and in its shape, and Ctrl/Cmd+P runs the same flow.**',
     'P2. **Over gated placeholders the bar arms instead of printing; then every picture is awaited, 8 s at most; then window.print.**',
     'P3. **A picture opened directly prints fitted to the page.**',
     'P4. **A PDF prints itself: the frame\'s own print when the frame holds the document, else the /file URL in a new tab and a line saying so.**',
     'P5. **The guide\'s printing sentence.**',
     'P6. **Nothing leaves the machine that did not before.**',
+    'P7. **Print is disabled until the body is in.**',
     '**Tests.**', '**Open points for the owner.**'];
   let last = -1;
   for (const m of marks) {
@@ -84,20 +86,30 @@ test('the section states the ask, what existed, six decisions, the tests and the
 
 // ── P1: the button and the chord, as the viewers wire them ─────────────────────────────────────────
 
-test('P1: the flow module builds a Print word button with a capture-phase document keydown listener, and both viewers place it where the section says', () => {
-  assert.ok(section.includes('`installFilePrint` in ui/webview/file-print.ts builds the button (`.fileview-btn.fileview-print`, the text "Print", a tooltip naming the chord)'));
-  assert.equal(literalAfter(flow, 'btn.textContent = '), 'Print');
-  assert.equal(literalAfter(flow, 'btn.className = '), 'fileview-btn fileview-print');
-  assert.match(literalAfter(flow, 'btn.title = '), /Ctrl\/Cmd\+P/, 'the tooltip names the chord');
+test('P1: the flow module builds a Print glyph button in Download\'s shape with a capture-phase document keydown listener, and both viewers place it where the section says', () => {
+  assert.ok(section.includes('`installFilePrint` in ui/webview/file-print.ts builds the button (`.fileview-btn.fileview-icon.fileview-print`, the printer glyph `ICON_PRINT` in icons.ts drawn in the bar\'s stroke family as Download\'s tray is, the title and aria-label "Print", the bar\'s `data-icon` mark)'));
+  assert.ok(flow.includes('btn.innerHTML = ICON_PRINT;'), 'the glyph');
+  assert.ok(flow.includes('import { ICON_PRINT } from "./icons";'));
+  const icons = read('ui', 'webview', 'icons.ts');
+  assert.match(icons, /^export const ICON_PRINT = svg\('/m, 'drawn through the family\'s svg(), as Download\'s tray is');
+  assert.match(icons, /^export const ICON_DOWNLOAD = svg\('/m);
+  assert.equal(literalAfter(flow, 'btn.className = '), 'fileview-btn fileview-icon fileview-print');
+  assert.equal(literalAfter(flow, 'btn.title = '), 'Print');
+  assert.ok(flow.includes('btn.setAttribute("aria-label", "Print");'));
+  assert.ok(flow.includes('btn.dataset.icon = "1";'), 'the bar\'s glyph mark, as Download carries it');
+  assert.ok(viewer.includes('dl.innerHTML = ICON_DOWNLOAD; dl.classList.add("fileview-icon"); dl.dataset.icon = "1";'), 'Download\'s shape, which the section names');
+  assert.ok(!/btn\.textContent = /.test(flow), 'no words in the button');
+  assert.ok(section.includes('the word widened the bar\'s wrapped action row past the chat modal\'s card at 380px'));
   assert.ok(flow.includes('doc.addEventListener("keydown", onKey, true);'), 'one document keydown listener, capture phase');
   assert.ok(flow.includes('doc.removeEventListener("keydown", onKey, true);'), 'removed by the close hook');
   assert.ok(section.includes('openFileView appends it to the file group right after Download, and openUrlView inserts it before Copy URL'));
   assert.ok(viewer.includes('import { installFilePrint } from "./file-print";'), 'the viewer imports the installer');
   const dl = viewer.indexOf('fileGroup.appendChild(dl);');
-  const local = viewer.indexOf('fileGroup.appendChild(installFilePrint({ card: box, bar, body, typing: typingHere, onClose: (cb) => { closeHooks.push(cb); },', dl);
-  assert.ok(dl >= 0 && local > dl, 'the local viewer appends the Print button after Download');
-  assert.ok(!viewer.slice(dl + 'fileGroup.appendChild(dl);'.length, local).includes('appendChild('), 'and nothing appended between Download and Print');
-  assert.ok(viewer.includes('acts.insertBefore(installFilePrint({ card: box, bar, body, typing: typingHere, onClose: (cb) => { closeHooks.push(cb); } }), copy);'), 'the URL viewer inserts it before Copy URL');
+  const local = viewer.indexOf('const print = installFilePrint({ card: box, bar, body, typing: typingHere, onClose: (cb) => { closeHooks.push(cb); },', dl);
+  const placed = viewer.indexOf('fileGroup.appendChild(print.button);', local);
+  assert.ok(dl >= 0 && local > dl && placed > local, 'the local viewer builds the Print button after Download and appends it to the file group');
+  assert.ok(!viewer.slice(dl + 'fileGroup.appendChild(dl);'.length, placed).includes('appendChild('), 'and nothing appended between Download and Print');
+  assert.ok(viewer.includes('const print = installFilePrint({ card: box, bar, body, typing: typingHere, onClose: (cb) => { closeHooks.push(cb); } });\n  acts.insertBefore(print.button, copy);'), 'the URL viewer inserts it before Copy URL');
   assert.ok(viewer.includes('function typingHere(): boolean {'), 'the typing predicate the section names');
   assert.ok(section.includes('(`typingHere`, beside isTypingTarget in file-view.ts)'));
   assert.ok(flow.includes('if (!doc.body.classList.contains("fileview-open") || !host.card.isConnected || host.typing()) return;'), 'the chord runs only with a file open and no text field focused');
@@ -160,8 +172,9 @@ test('P4: the frame detector reads the document type or the frame\'s own URL and
   assert.ok(flow.includes('const holds = (w.document !== null && w.document.contentType === "application/pdf") || (href !== "about:blank" && href === bare(frame.src));'), 'the tightened test');
   assert.ok(section.includes('its document\'s content type `application/pdf` (what Chromium\'s PDF viewer document reports) or the window\'s location the frame\'s own blob URL with any `#page=N` fragment set aside, and `print` a function'));
   assert.ok(section.includes('leaves the window at about:blank, where print is a function too and would print a blank page'));
-  assert.ok(viewer.includes('kind: () => (isPdf ? "pdf" : "document"), openTab: () => openFileTab(path, sid) }));'), 'the local viewer passes the kind and the opener');
-  assert.ok(!/acts\.insertBefore\(installFilePrint\(\{[^\n]*kind:/.test(viewer), 'the URL viewer passes no kind');
+  assert.ok(viewer.includes('kind: () => (isPdf ? "pdf" : "document"), openTab: () => openFileTab(path, sid) });'), 'the local viewer passes the kind and the opener');
+  assert.equal(viewer.split('installFilePrint(').length - 1, 2, 'two callers');
+  assert.equal(viewer.split('kind: () => (isPdf').length - 1, 1, 'one of them passes a kind: the local viewer (the URL viewer\'s call, quoted whole under P1, has none)');
   assert.ok(section.includes('openUrlView passes neither, so the URL viewer\'s flow is a document\'s'));
   const tab = literalAfter(flow, 'export const TAB_WORDS = ');
   const noTab = literalAfter(flow, 'export const NO_TAB_WORDS = ');
@@ -192,9 +205,43 @@ test('P5: the guide\'s printing sentence is the one the section describes, insid
 
 test('P6: the flow module imports the gate alone and fetches nothing itself', () => {
   const imports = [...flow.matchAll(/^import [^;]* from "([^"]+)";/gm)].map((m) => m[1]);
-  assert.deepEqual(imports, ['./figure-gate'], 'one import: the gate\'s load path and its mark');
+  assert.deepEqual(imports, ['./figure-gate', './icons'], 'two imports: the gate\'s load path and its mark, and the bar\'s glyph family; neither fetches');
   assert.ok(!/\bfetch\(/.test(flow), 'no fetch of its own');
   assert.ok(section.includes('No kernel change, no new route, no server-side render.'));
+});
+
+// ── P7: disabled until the body is in ──────────────────────────────────────────────────────────────
+
+test('P7: the flow starts disabled and the body event moves it, the button wears the attribute and aria-disabled under the sheets\' disabled dress, the chord is prevented before the press, a disarm cancels the wait, and both viewers report the body at the seatings and the panes the section names', () => {
+  assert.ok(flow.includes('export const DISABLED: PrintState = { phase: "disabled", gated: 0, pending: 0 };'));
+  assert.ok(flow.includes('let state: PrintState = DISABLED;'), 'the driver starts there');
+  assert.ok(flow.includes('| { kind: "body"; in: boolean }'), 'the host\'s event');
+  assert.ok(flow.includes('if (!ev.in) return s.phase === "disabled" ? { state: s, act: "none" } : { state: DISABLED, act: "disarm" };'), 'out: disabled from every phase, the line dropped');
+  assert.ok(flow.includes('return s.phase === "disabled" ? { state: RESTING, act: "none" } : { state: s, act: "none" };'), 'in: rests a disabled flow, changes nothing elsewhere');
+  assert.ok(flow.includes('btn.disabled = off;') && flow.includes('if (off) btn.setAttribute("aria-disabled", "true"); else btn.removeAttribute("aria-disabled");'), 'the attribute and aria-disabled');
+  assert.ok(section.includes('The flow starts in a `disabled` phase and the button wears the `disabled` attribute, `aria-disabled` and the sheets\' disabled dress'));
+  for (const [name, css] of Object.entries(sheets)) assert.ok(css.includes('.fileview-btn:disabled, .fileview-btn[aria-disabled="true"] { opacity: 0.55; cursor: default; }'), name + ': the disabled dress the section names');
+  const chord = flow.indexOf('if (!isPrintChord(e)) return;');
+  const prevented = flow.indexOf('e.preventDefault();', chord);
+  const pressed = flow.indexOf('press();', prevented);
+  assert.ok(chord > 0 && prevented > chord && pressed > prevented, 'the chord is prevented, then pressed, and the disabled phase ignores the press');
+  assert.ok(section.includes('a press there changes nothing, and the chord is still prevented, so the browser\'s raw print does not run over the loader either'));
+  assert.ok(flow.includes('case "disarm": dropSettle(); dropLine(); break;'), 'a disarm cancels a running wait');
+  assert.ok(flow.includes('return { button: btn, bodyIn };'), 'the installer hands the host the button and the report');
+  // the reports, at their seatings and panes in the viewer
+  for (const re of [/if \(objUrl === null\) return;[^\n]*\n\s+viewError = null;[^\n]*\n\s+print\.bodyIn\(true\);/, /print\.bodyIn\(true\);\s+\/\/ the text is in/, /body\.replaceChildren\(host\);\n\s+print\.bodyIn\(true\);/,
+    /body\.replaceChildren\(ta\);\n\s+print\.bodyIn\(true\);/, /landFragment\(\);[^\n]*\n\s+\}\);\n\s+print\.bodyIn\(true\);\s+\/\/ the document is in/]) {
+    assert.match(viewer, re, 'the body reported in at ' + re.source.slice(0, 50));
+  }
+  for (const re of [/viewError = words;[^\n]*\n\s+print\.bodyIn\(false\);\s+\/\/ a pane, not the file: Print is off until a landing seats a picture/, /rearmDiskBar\(my\);[^\n]*\n\s+print\.bodyIn\(false\);\s+\/\/ a pane, not the file: Print is off until a landing seats the text or the bytes/,
+    /body\.replaceChildren\(wait\);\n\s+print\.bodyIn\(false\);/, /body\.replaceChildren\(why\);\n\s+print\.bodyIn\(false\);\s+\/\/ a pane, not the document/]) {
+    assert.match(viewer, re, 'the body reported out at ' + re.source.slice(0, 50));
+  }
+  assert.equal(viewer.split('print.bodyIn(true);').length - 1, 5, 'five seatings report the body in: the media paint, the text paint, the editor\'s mount, the plain fallback, the URL viewer\'s paint');
+  assert.equal(viewer.split('print.bodyIn(false);').length - 1, 4, 'four takings report it out: a picture that would not decode, the fetch\'s failure pane, the editor\'s chunk wait, the URL viewer\'s failure');
+  assert.ok(section.includes('true at every paint that seats the file\'s content'));
+  assert.ok(section.includes('false where the loader or a failure pane takes the body'));
+  assert.ok(section.includes('The button is disabled until the body is in (P7).'), 'P1 hands the rule to P7');
 });
 
 // ── the tests the section names, two-way ───────────────────────────────────────────────────────────
@@ -214,5 +261,5 @@ test('every ui/webview/file-print*.test.ts is named in the section, every module
   assert.ok(named.includes(path.basename(fileURLToPath(import.meta.url))), 'the section names this pin');
   assert.ok(section.includes('`ls ui/webview/file-print*.test.ts` lists the follow-on\'s three modules'), 'the section names the command that produces the list');
   assert.equal(onDisk.length, 3, 'and the listing produces three today');
-  assert.ok(exists('ui', 'webview', 'file-view-text-size.test.ts'), 'open point 1\'s module');
+  assert.ok(exists('ui', 'webview', 'file-view-text-size.test.ts'), 'the leg P1 names');
 });

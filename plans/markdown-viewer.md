@@ -7731,10 +7731,15 @@ URL) printed as one viewport of a frame the sheet named nowhere.
 
 **Decisions.**
 
-P1. **A Print word button in the viewer bar, and Ctrl/Cmd+P runs the same flow.** `installFilePrint` in
-ui/webview/file-print.ts builds the button (`.fileview-btn.fileview-print`, the text "Print", a tooltip naming the
-chord) and the caller places it: openFileView appends it to the file group right after Download, and openUrlView
-inserts it before Copy URL, since the URL viewer has no Download. It carries a direct click listener like Download's:
+P1. **A Print glyph button in the viewer bar, beside Download and in its shape, and Ctrl/Cmd+P runs the same flow.**
+`installFilePrint` in ui/webview/file-print.ts builds the button (`.fileview-btn.fileview-icon.fileview-print`, the
+printer glyph `ICON_PRINT` in icons.ts drawn in the bar's stroke family as Download's tray is, the title and aria-label
+"Print", the bar's `data-icon` mark) and the caller places it: openFileView appends it to the file group right after
+Download, and openUrlView inserts it before Copy URL, since the URL viewer has no Download. The first build placed a word
+button reading "Print" here, and the word widened the bar's wrapped action row past the chat modal's card at 380px
+(file-view-text-size.test.ts's browser leg, red at that build: the row's leftmost action at x -5.2 against a card edge at
+9.5); the glyph fits, and the leg is green at 380, 420, 480 and 600px in both modals (2026-09-19). It carries a direct
+click listener like Download's:
 the bar is built once per open and is not rebuilt while it stands. The driver registers one document keydown listener
 per open, in the capture phase, and the viewer's close hooks remove it with the card. Ctrl+P or Cmd+P (either case of
 the key, so Caps Lock counts; not with Shift or Alt; not a key repeat, since a held chord would arm and disarm on
@@ -7743,8 +7748,7 @@ no text field in the document holds the keyboard (`typingHere`, beside isTypingT
 key stays the browser's, and with no file open nothing changes. The same listener reads Escape while the bar is armed:
 it disarms, and the event is stopped there, before the viewer's own Escape (a bubble listener on the document, which
 closes the card) hears it, so during that state a focused control's own Escape handler does not hear it either. At rest
-Escape is left alone. The button is live for every kind of file from the moment the bar is built, while the loader
-still holds the body included (open point 2).
+Escape is left alone. The button is disabled until the body is in (P7).
 
 P2. **Over gated placeholders the bar arms instead of printing; then every picture is awaited, 8 s at most; then
 window.print.** The machine is `step`, a pure function over a state (resting, armed, preparing, printing) and an event
@@ -7824,6 +7828,19 @@ P6. **Nothing leaves the machine that did not before.** No kernel change, no new
 them" makes the requests a click on each placeholder makes; the probe asks for a URL a poster or svg image element
 already fetched; a PDF's tab is the URL the modified click already opens.
 
+P7. **Print is disabled until the body is in.** The flow starts in a `disabled` phase and the button wears the `disabled`
+attribute, `aria-disabled` and the sheets' disabled dress (`.fileview-btn:disabled`, the dress Save wears while a save is in
+flight); a press there changes nothing, and the chord is still prevented, so the browser's raw print does not run over the
+loader either. The host reports the body through the installer's `bodyIn`: true at every paint that seats the file's
+content (openFileView's renderBody, its media paint and its text paint, so a reload's landing, a format pick and the
+editor's exit pass through it; the editor's mount and its plain fallback; openUrlView's paint) and false where the loader
+or a failure pane takes the body (the editor's chunk wait; the fetch's failure pane; a picture that would not decode; the
+URL viewer's failure; the open's own loader stands from the build, the phase the flow starts in). The body going out while
+the bar is armed or the wait runs disarms: the line goes, the wait is cancelled, the button disables; a print already
+running ends with the button disabled. `data-print` reads `disabled` meanwhile. A PDF before its bytes land, whose kind
+reads as a document, is covered the same way: nothing prints until the frame is in. Before this the button was live from
+the bar's build, and a press while the loader held the body printed the loader page (the first build's second open point).
+
 **Tests.** `ls ui/webview/file-print*.test.ts` lists the follow-on's three modules, and
 tools/markdown-viewer-plan-print.test.mjs holds this section to the tree: every module that listing produces is named
 here, every module named here exists, the sheets carry P3's two rules inside byte-equal print blocks, the flow module
@@ -7833,16 +7850,20 @@ exists and both viewers call it, and the words quoted here are the module's.
   `settlePictures` over fake pictures and a fake clock (the incomplete pictures alone are waited on; load or error
   settles each; the deadline resolves with listeners off; nothing pending resolves at once with no timer; cancel), the
   8 s constant and its seam, `collectPictures` over a body stand-in, the PDF press and `pdfFrameWindow` over window
-  stand-ins.
+  stand-ins, and the disabled phase (every other event changes nothing there; the body's arrival rests; the body going out
+  from rest, the armed line, the wait or the print disarms and disables).
 - ui/webview/file-print-browser.test.ts, headless Chromium over the real viewer through real-viewer-leg.ts: a gated
   note on the pane (the chord and the button arm; Escape and a second press disarm and leave the card up; "Print
   without them" keeps the placeholder, makes no request to the host and prints once a parked picture lands; "Print with
   them" restores the placeholder, the host's request appears, and the print comes after that picture settled; every
   recorded print has zero incomplete `<img>`); the chord on the chat modal (prevented, and printing a complete note at
   once; untouched with a text field focused or with no file open); one click on a complete note, Rendered and Raw,
-  inside the click handler; the deadline shortened to 300 ms through the seam and restored; the URL kind arming. Its
-  FAILS BEFORE, recorded at the unwired viewer: the chord unprevented with a placeholder standing and an `<img>`
-  incomplete.
+  inside the click handler; the deadline shortened to 300 ms through the seam and restored; the URL kind arming; a parked
+  answer on the pane (Print disabled over the loader, aria-disabled and `data-print` reading disabled; a forced click, a
+  programmatic click and the chord printing nothing, the chord prevented; the answer released, the button live and the
+  next press printing). Its FAILS BEFORE, recorded at the unwired viewer: the chord unprevented with a placeholder
+  standing and an `<img>` incomplete; and, for the parked answer, at the first build, whose button was live over the
+  loader.
 - ui/webview/file-print-media-browser.test.ts: the picture rule under emulated print media on the pane and the feed
   modal (the computed values, one A4 page for the tall picture, the screen values back, one click printing), and the
   PDF under two launches, Playwright's headless shell, which has no PDF viewer and takes the tab path of itself, and
@@ -7857,17 +7878,10 @@ exists and both viewers call it, and the words quoted here are the module's.
 
 **Open points for the owner.**
 
-1. The bar at 380px. ui/webview/file-view-text-size.test.ts's browser leg fails at this branch's head at its chat-modal
-   case at 380px and 100%: the Print word button widens the wrapped action row past the card, so its leftmost button
-   lies about 15px left of the card's edge (measured at the records commit, 2026-09-19: x from -5.2 against a card edge
-   at 9.5; the P3/P4 build's run recorded the leg green at the base f9fb8ec6e and red from Part A's tip). Not fixed
-   here. The fix belongs to the bar's layout: a glyph button like Download's, a shorter word, or a row rule at that
-   width.
-2. The button while the body is not in. Print is live from the bar's build: over a PDF before its bytes land, `kind`
-   answers document and a press prints the loader page; the same for any file while the loader holds the body. Whether
-   to hide or disable it until the body is in, and whether to hide it for a PDF whose frame cannot print, is a ruling.
-3. Wording. A gated clip counts as a picture in the armed line.
-4. Not measured here. Headless Chromium opens no print dialog, so "the raw print is prevented" is measured as
+1. Wording. A gated clip counts as a picture in the armed line.
+2. Not measured here. Headless Chromium opens no print dialog, so "the raw print is prevented" is measured as
    defaultPrevented on the chord, the afterprint path is exercised by the machine test and by print's return under the
    stub, and the frame's real print is measured as a call on its stub. The poster and svg probes are covered under node
    with fakes, not in Chromium. Desktop Firefox and Safari were not run.
+3. A PDF whose frame cannot print. Print opens the /file URL in a new tab and the line says so (P4); whether to hide
+   the button over such a frame instead is a ruling.

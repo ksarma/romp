@@ -2254,19 +2254,26 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   dl.title = "Download"; dl.setAttribute("aria-label", "Download");
   dl.addEventListener("click", () => startDownload(dlUrl, dl));
   fileGroup.appendChild(dl);
-  // ── print (the print follow-on to plans/markdown-viewer.md Slice 3, item 12; file-print.ts) ── a word button beside
-  // Download, a direct listener like its neighbours (the bar is built once per open). The flow: over a gated placeholder
-  // (figure-gate.ts) the press arms a line right under this bar, in the notice bar's dress, with "Print with them" and
-  // "Print without them" (Escape or a second press disarms); then the pictures are awaited, 8 s at most; then
-  // window.print(). Ctrl/Cmd+P with a file open runs the same flow through the one document keydown listener the driver
-  // installs, which leaves with the viewer through the close hooks both exits drain (runCloseHooks). A text field holding
-  // the keyboard leaves the chord to the browser (typingHere). The kind is read at each press (`kind`: the kernel's
-  // Content-Type sets isPdf when the bytes land, after this bar is built): a PDF prints itself through its frame's own
-  // window (pdfBlock's iframe.fileview-frame, when it holds the document), else the kernel's /file URL opens in a new tab
-  // through openFileTab, the opener a modified click on a PDF uses, and the line says to print from there; a picture opened
-  // directly (imgBlock) is a document whose one picture is awaited, and the print block fits it to the page.
-  fileGroup.appendChild(installFilePrint({ card: box, bar, body, typing: typingHere, onClose: (cb) => { closeHooks.push(cb); },
-    kind: () => (isPdf ? "pdf" : "document"), openTab: () => openFileTab(path, sid) }));
+  // ── print (the print follow-on to plans/markdown-viewer.md Slice 3, item 12; file-print.ts) ── a glyph button beside
+  // Download, in its shape (the printer glyph, icons.ts; the words in the title and aria-label; the word button the first
+  // build placed here widened the bar's wrapped action row past the chat modal's card at 380px), with a direct listener like
+  // its neighbours (the bar is built once per open). The flow: over a gated placeholder (figure-gate.ts) the press arms a
+  // line right under this bar, in the notice bar's dress, with "Print with them" and "Print without them" (Escape or a
+  // second press disarms); then the pictures are awaited, 8 s at most; then window.print(). Ctrl/Cmd+P with a file open runs
+  // the same flow through the one document keydown listener the driver installs, which leaves with the viewer through the
+  // close hooks both exits drain (runCloseHooks). A text field holding the keyboard leaves the chord to the browser
+  // (typingHere). The kind is read at each press (`kind`: the kernel's Content-Type sets isPdf when the bytes land, after
+  // this bar is built): a PDF prints itself through its frame's own window (pdfBlock's iframe.fileview-frame, when it holds
+  // the document), else the kernel's /file URL opens in a new tab through openFileTab, the opener a modified click on a PDF
+  // uses, and the line says to print from there; a picture opened directly (imgBlock) is a document whose one picture is
+  // awaited, and the print block fits it to the page. The button is disabled until the body is in (P7): `print.bodyIn(true)`
+  // at every paint that seats the file's content (renderBody's media and text paints, so a reload's landing passes through
+  // it; the editor's mount and its plain fallback) and `print.bodyIn(false)` where the loader or a failure pane takes the
+  // body (the editor's chunk wait, the fetch's failure pane, imgFailed), so a press or the chord over the loader prints
+  // nothing; the loader this open put up above stands from the build, the phase the flow starts in.
+  const print = installFilePrint({ card: box, bar, body, typing: typingHere, onClose: (cb) => { closeHooks.push(cb); },
+    kind: () => (isPdf ? "pdf" : "document"), openTab: () => openFileTab(path, sid) });
+  fileGroup.appendChild(print.button);
 
   // ── copy path (a glyph since T367) ── the acknowledgement is a glyph swap with the words in the tooltip and
   // aria-label: the press dims the button in the same tick (click-safe: every press acknowledges), then a check
@@ -2362,6 +2369,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     why.appendChild(offer);
     body.replaceChildren(why);
     viewError = words;                          // the pane's paint: the seam's error() answers its sentence until a content paint clears it (Slice 7, item 3)
+    print.bodyIn(false);                        // a pane, not the file: Print is off until a landing seats a picture (P7)
     // The pane is a paint of the body like any other, so the seam's hooks hear it: whenShown fires only for a
     // picture that decoded, and until this line the panel kept the layer it had built over the PREVIOUS picture
     // when a reload's bytes failed to decode — the overlay stood, armed, over a body with no picture, and the
@@ -2409,6 +2417,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       viewGroup.hidden = !(segBtns.some(([, b]) => !b.hidden) || !textSize.trigger.hidden || !srcBtn.hidden || !outlineBtn.hidden);   // the media branch decides the Source button after the group's first sync above, so the group is re-read here: the SVG Source view is the one media control in the view group (T367's grouping)
       if (objUrl === null) return;            // the romp loader holds the body until the bytes land
       viewError = null;                       // a media view paints below (the SVG Source view, the chunk's pages, the frame or the picture before whenShown; a kept frame stands): no pane shows once it does (Slice 7, item 3)
+      print.bodyIn(true);                     // the bytes are in: every branch below seats the picture, the frame or the pages' host, or keeps a frame standing, and a press prints the picture as a document or the PDF through its frame or the tab (P7)
       // a target on a picture or a PDF (a heading, a line, an offset) is judged by the landing, not here: landMedia, over a body
       // with a box, names it in the notice bar (the PR review's round 1; the review's round 3 had the heading judged here)
       if (svgSource && svgText !== null) {
@@ -2476,6 +2485,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       seat(kept);                             // then the place, after the hooks as the selection keeper orders it: the same passage at the same height
       landRemembered();                       // the first text paint of an open with a remembered place seats it (once; RememberedPlace)
     });
+    print.bodyIn(true);                       // the text is in (the swap stood, or the fallback's line and rows do): Print is live (P7); a reload's landing, a format pick and the editor's exit repaint through here too
     if ((rendered || !isMd) && pendingHeading !== null) spendHeading();   // a file that is not markdown has no sections and no Rendered toggle to wait for: its first text paint judges the target (the review's round 2)
   };
   // Item 4's heading, spent at a paint that can land it (a note's Rendered paint, any text paint of a file that is not markdown)
@@ -2899,6 +2909,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") { e.preventDefault(); doSave(); }
     });
     body.replaceChildren(ta);
+    print.bodyIn(true);                         // the plain editor holds the body (P7)
     ta.focus();
   };
   let editSeq = 0;                              // stale chunk resolutions (edit left before load) no-op
@@ -2939,11 +2950,13 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     wait.innerHTML = '<img src="/media/romp-swirl-glyph.svg" alt=""><span>romp</span>'
       + '<i class="fileview-dot"></i><i class="fileview-dot"></i><i class="fileview-dot"></i>';
     body.replaceChildren(wait);
+    print.bodyIn(false);                        // the chunk's loader holds the body: Print is off until the editor mounts (P7)
     const my = ++editSeq;
     editorChunk().then((ed) => {
       if (!editing || my !== editSeq) return;   // edit mode left (or re-entered) while the chunk loaded
       const host = el("div", "fileview-cm");
       body.replaceChildren(host);
+      print.bodyIn(true);                       // the editor takes the body (the mount below is synchronous): Print is live again (P7)
       cm = ed.mount(host, {
         text: norm(text!), ext: path.slice(path.lastIndexOf(".") + 1),
         onChange: () => { dirty = cm!.value() !== norm(text!); if (!dirty) dirty = decided(); },
@@ -3595,6 +3608,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       viewError = msg;                                          // the seam's error(): the pane's words, until the next content paint clears them (plans/markdown-viewer.md Slice 7, item 3; contract C1)
       fireRendered();                                           // the pane is a paint of the body like imgFailed's: fired AFTER the swap (a hook reading the body finds the pane) and before the re-arm (the re-arm reads the keyboard after the hooks), on every failure path, a first open's included, so a hook waiting on a reload hears it fail at the paint (before: no hook fired, and the Comments panel's loader stood until its 15 s deadline)
       rearmDiskBar(my);                                         // the changed-on-disk bar's own Reload failed: its button is armed again above the pane, AFTER the pane's paint: a keyboard the reader put on the old body's content during the flight (a link, a fold's summary), which that paint removed, then reads as nothing holding it and goes back on the button (the review's round 3: read before the paint, the link held it, the re-arm stood down, and the removal left the keyboard on the document's body)
+      print.bodyIn(false);                                      // a pane, not the file: Print is off until a landing seats the text or the bytes; an armed line or a wait under way is disarmed (P7)
     }));
   };
   fetchFile();
@@ -3715,8 +3729,10 @@ export function openUrlView(href: string): void {
   const stampBodyWidth = watchBodyWidth(body);        // the body's content width, for a top-level table's cap (the sheets read --fv-body-w)
   textSize.bindWheel(body);                            // Ctrl/Cmd + wheel over the text steps the size
   // Print, before Copy URL (the local viewer's button stands beside Download): the same flow over this viewer's body, the
-  // line under this bar, the chord through the driver's one keydown listener, dropped by the close hooks (file-print.ts)
-  acts.insertBefore(installFilePrint({ card: box, bar, body, typing: typingHere, onClose: (cb) => { closeHooks.push(cb); } }), copy);
+  // line under this bar, the chord through the driver's one keydown listener, dropped by the close hooks (file-print.ts);
+  // disabled until renderBody seats the document (print.bodyIn, P7), and again over fail's pane
+  const print = installFilePrint({ card: box, bar, body, typing: typingHere, onClose: (cb) => { closeHooks.push(cb); } });
+  acts.insertBefore(print.button, copy);
   // In-document links land on their heading (mdBlock's fv-anchor stamp): one delegated listener, the
   // local viewer's pattern. No fv-open here — a URL document's sibling links are made absolute and
   // the chat's own anchor delegate routes them.
@@ -3801,6 +3817,7 @@ export function openUrlView(href: string): void {
       seat(kept);                                      // the same passage at the same height across the Rendered/Raw switch, as in the local viewer
       landFragment();                                  // after the paint, and only a rendered one lands
     });
+    print.bodyIn(true);                              // the document is in: Print is live (P7)
   };
   renderBody();
 
@@ -3824,6 +3841,7 @@ export function openUrlView(href: string): void {
     why.appendChild(hint);
     why.appendChild(linkOut());
     body.replaceChildren(why);
+    print.bodyIn(false);                               // a pane, not the document: Print is off (P7)
   };
   const hostWord = (u: string) => urlTitleParts(u).dir.split("/")[0] || u;
   // Redraw the title from where the response actually CAME from: `/latest.md` → 302 →

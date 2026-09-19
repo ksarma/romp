@@ -2,7 +2,7 @@
 // contract of 2026-09-19, parts P1, P2 and P6). The @media print block in the sheets prints the open file alone, black on
 // white, but nothing awaited the pictures: the browser's own Ctrl/Cmd+P printed a gated figure as its placeholder and a
 // picture still loading as the browser had it at that instant. This module is the flow in front of window.print():
-//   1. A press (the bar's Print word button, or Ctrl/Cmd+P while a file is open and no text field holds the keyboard)
+//   1. A press (the bar's Print glyph button, Download's shape, or Ctrl/Cmd+P while a file is open and no text field holds the keyboard)
 //      counts the gated placeholders in the body (figure-gate.ts, found by their data-act as the gate finds them: an
 //      author can type the class, never the data attribute). With any, the bar ARMS instead of printing: one line under
 //      the title bar names the count and offers "Print with them" and "Print without them"; Escape or a second press
@@ -39,7 +39,16 @@
 // (preview.ts openFileTab), and the line reads "Print from the tab that opened." until the next press or the close; a tab
 // the browser did not open is said the same way. The Comments panel's PDF pages (the pdf.js canvases, up while the panel is
 // open, with no frame in the body) are not printed: Print prints the PDF, through the tab then.
+// The button is DISABLED until the body is in (P7): the flow starts in the `disabled` phase, the button wearing the disabled
+// attribute, aria-disabled and the sheets' disabled dress, and the host reports the body through the installer's `bodyIn`:
+// true at every paint that seats the file's content (file-view.ts renderBody's media and text paints, so a reload's landing
+// passes through it; the editor's mount and its plain fallback; openUrlView's paint), false where the loader or a failure
+// pane takes the body (the editor's chunk wait, the fetch's failure pane, a picture that would not decode, the URL viewer's
+// failure; the open's own loader stands from the build, the phase the flow starts in). A press there changes nothing, and
+// the chord is still prevented, so the browser's raw print does not run over the loader either; the body going out while
+// the bar is armed or the wait runs disarms (the line goes, the wait is cancelled) and disables.
 import { GATE_ACT, loadGatedHost } from "./figure-gate";
+import { ICON_PRINT } from "./icons";
 
 /** The wait's deadline: the print runs after this however many pictures are still loading. */
 export const PRINT_SETTLE_MS = 8000;
@@ -50,10 +59,13 @@ export function setPrintSettleMs(ms: number | null): void { settleMs = ms === nu
 export function printSettleMs(): number { return settleMs; }
 
 // ── the machine ─────────────────────────────────────────────────────────────────────────────────────
-export type PrintPhase = "resting" | "armed" | "preparing" | "printing";
+export type PrintPhase = "disabled" | "resting" | "armed" | "preparing" | "printing";
 /** `gated`: the placeholders counted at the press that armed; `pending`: the pictures still loading when the wait began. */
 export type PrintState = { phase: PrintPhase; gated: number; pending: number };
 export const RESTING: PrintState = { phase: "resting", gated: 0, pending: 0 };
+/** The body is not in (the loader, or a failure pane, holds it): the button is disabled and a press changes nothing. The
+ *  driver starts here and leaves on the host's `body` event (P7). */
+export const DISABLED: PrintState = { phase: "disabled", gated: 0, pending: 0 };
 /** The file's kind at a press: `document` prints the page (a note, code, text, a picture opened directly); `pdf` prints the
  *  document itself through its frame, or the /file tab. */
 export type PrintKind = "document" | "pdf";
@@ -63,23 +75,33 @@ export type PrintEvent =
   | { kind: "choose"; withGated: boolean }               // one of the armed line's two buttons
   | { kind: "prepare"; pending: number }                 // the driver, after the choice: the pictures still loading
   | { kind: "ready" }                                    // every picture settled, or the deadline
-  | { kind: "printed" };                                 // afterprint, or print returned
-/** What the driver does for a step: `arm` shows the line with its two buttons, `disarm` and `rest` remove the line and
- *  restore the button, `activate` loads every gated host and then prepares, `skip` prepares over the placeholders as they
- *  stand, `wait` shows the preparing line, `print` calls window.print, `printPdf` prints the PDF itself (the frame's window,
- *  or the /file tab). */
+  | { kind: "printed" }                                  // afterprint, or print returned
+  | { kind: "body"; in: boolean };                       // the host: the body holds the file's content (true), or the loader or a failure pane took it (false)
+/** What the driver does for a step: `arm` shows the line with its two buttons, `disarm` (a second press, Escape, or the body
+ *  going out, when the driver cancels a running wait too) and `rest` remove the line and restore the button, `activate` loads
+ *  every gated host and then prepares, `skip` prepares over the placeholders as they stand, `wait` shows the preparing line,
+ *  `print` calls window.print, `printPdf` prints the PDF itself (the frame's window, or the /file tab). The button's disabled
+ *  dress follows the phase, not an act: the driver syncs it after every step. */
 export type PrintAct = "none" | "arm" | "disarm" | "activate" | "skip" | "wait" | "print" | "printPdf" | "rest";
 
 const begin = (pending: number): { state: PrintState; act: PrintAct } =>
   pending > 0 ? { state: { phase: "preparing", gated: 0, pending }, act: "wait" } : { state: { phase: "printing", gated: 0, pending: 0 }, act: "print" };
 
-/** The next state and the act for it. A press while resting over a PDF prints the PDF itself (`printPdf`), whatever the
- *  counts (a frame holds no placeholder and no picture); over a document it arms over any gated placeholder and otherwise
- *  begins the wait (or prints at once with nothing pending); while armed a press or Escape disarms and a choice activates
- *  or skips, the driver's `prepare` then beginning the wait; `ready` prints; `printed` rests. Every other pairing changes
- *  nothing: a press or an Escape during the wait or the print, an Escape at rest, a late `ready` after a rest. */
+/** The next state and the act for it. The host's `body` event comes first: the body going out disables from every phase
+ *  and disarms (the line goes, and the driver cancels a wait), and its arrival rests a disabled flow and changes nothing
+ *  elsewhere. Then, by phase: while disabled every other event changes nothing. A press while resting over a PDF prints the
+ *  PDF itself (`printPdf`), whatever the counts (a frame holds no placeholder and no picture); over a document it arms over
+ *  any gated placeholder and otherwise begins the wait (or prints at once with nothing pending); while armed a press or
+ *  Escape disarms and a choice activates or skips, the driver's `prepare` then beginning the wait; `ready` prints; `printed`
+ *  rests. Every other pairing changes nothing: a press or an Escape during the wait or the print, an Escape at rest, a late
+ *  `ready` after a rest, a `printed` after the body went out (the button stays disabled). */
 export function step(s: PrintState, ev: PrintEvent): { state: PrintState; act: PrintAct } {
+  if (ev.kind === "body") {
+    if (!ev.in) return s.phase === "disabled" ? { state: s, act: "none" } : { state: DISABLED, act: "disarm" };
+    return s.phase === "disabled" ? { state: RESTING, act: "none" } : { state: s, act: "none" };
+  }
   switch (s.phase) {
+    case "disabled": break;
     case "resting":
       if (ev.kind !== "press") break;
       if (ev.file === "pdf") return { state: { phase: "printing", gated: 0, pending: 0 }, act: "printPdf" };
@@ -236,15 +258,21 @@ export const PRINT_LINE_ID = "fileview-print-line";
 export const PRINT_LINE_CLASS = "fileview-print-line";
 
 /** Build the Print button for a viewer and wire the flow to it and to the document's keydown; the caller puts the button
- *  in its bar. `data-print` on the button carries the phase while it is not resting, for the sheets and the tests. */
-export function installFilePrint(host: PrintHost): HTMLButtonElement {
+ *  in its bar and reports the body through `bodyIn` (P7): true at a paint that seats the file's content, false where the
+ *  loader or a failure pane takes the body; the button starts disabled. `data-print` on the button carries the phase while
+ *  it is not resting (`disabled` included), for the sheets and the tests. */
+export function installFilePrint(host: PrintHost): { button: HTMLButtonElement; bodyIn: (present: boolean) => void } {
   const doc = document;                        // the hosting document (the shims the node suites install give a fake element no ownerDocument)
   const btn = doc.createElement("button") as HTMLButtonElement;
   btn.type = "button";
-  btn.textContent = "Print";
-  btn.className = "fileview-btn fileview-print";
-  btn.title = "Print this file with its pictures loaded (Ctrl/Cmd+P)";
-  let state: PrintState = RESTING;
+  // a glyph in Download's shape (file-view.ts: the tray glyph, .fileview-icon, the words in the title and aria-label, the bar's
+  // data-icon mark): the word button the first build placed here widened the bar's wrapped action row past the chat modal's
+  // card at 380px (file-view-text-size.test.ts's browser leg)
+  btn.innerHTML = ICON_PRINT;
+  btn.className = "fileview-btn fileview-icon fileview-print";
+  btn.dataset.icon = "1";
+  btn.title = "Print"; btn.setAttribute("aria-label", "Print");
+  let state: PrintState = DISABLED;            // the loader holds the body from the build: the host's bodyIn(true) at the first paint rests the flow
   let line: HTMLElement | null = null;
   let notice = false;                          // the line is the PDF flow's notice (the tab), standing at rest until the next press or the close
   let settle: Settle | null = null;
@@ -265,8 +293,11 @@ export function installFilePrint(host: PrintHost): HTMLButtonElement {
     return row;
   };
   const syncButton = (): void => {
+    const off = state.phase === "disabled";
     const armed = state.phase === "armed";
     const busy = state.phase === "preparing" || state.phase === "printing";
+    btn.disabled = off;                        // the attribute (no click reaches a disabled button) and aria-disabled both; the sheets' disabled dress reads either (.fileview-btn:disabled)
+    if (off) btn.setAttribute("aria-disabled", "true"); else btn.removeAttribute("aria-disabled");
     btn.classList.toggle("on", armed);
     btn.classList.toggle("fileview-busy", busy);
     if (armed) btn.setAttribute("aria-expanded", "true"); else btn.removeAttribute("aria-expanded");
@@ -321,7 +352,8 @@ export function installFilePrint(host: PrintHost): HTMLButtonElement {
         }
         break;
       }
-      case "disarm": case "rest": dropLine(); break;
+      case "disarm": dropSettle(); dropLine(); break;   // the body going out during the wait: no wait survives a disarm
+      case "rest": dropLine(); break;
       case "activate": {
         // every host every placeholder names, through the gate's own load path: loadGatedHost is what the placeholder's
         // click runs (file-view.ts loadGate), and a placeholder naming two hosts takes two clicks, so both hosts are loaded
@@ -341,7 +373,7 @@ export function installFilePrint(host: PrintHost): HTMLButtonElement {
   };
   const press = (): void => {
     if (notice) dropLine();                    // the last press's notice (a PDF's tab) goes with this press
-    if (state.phase !== "resting") { feed({ kind: "press", gated: 0, pending: 0 }); return; }   // armed: the second press disarms; busy: nothing
+    if (state.phase !== "resting") { feed({ kind: "press", gated: 0, pending: 0 }); return; }   // disabled: nothing (the body is not in); armed: the second press disarms; busy: nothing
     const file: PrintKind = host.kind ? host.kind() : "document";
     if (file === "pdf") { feed({ kind: "press", gated: 0, pending: 0, file }); return; }   // the PDF prints itself: no placeholder, no picture to wait on
     const n = gates().length;
@@ -357,7 +389,7 @@ export function installFilePrint(host: PrintHost): HTMLButtonElement {
     }
     if (!isPrintChord(e)) return;
     if (!doc.body.classList.contains("fileview-open") || !host.card.isConnected || host.typing()) return;
-    e.preventDefault();                          // the browser's raw print, which would print placeholders and half-loaded pictures
+    e.preventDefault();                          // the browser's raw print, which would print placeholders and half-loaded pictures, and over the loader the loader page: prevented before the press, which the disabled phase ignores, so the chord over the loader prints nothing at all
     press();
   };
   doc.addEventListener("keydown", onKey, true);
@@ -367,5 +399,9 @@ export function installFilePrint(host: PrintHost): HTMLButtonElement {
     dropSettle();
     dropLine();
   });
-  return btn;
+  syncButton();                                // the disabled dress from the build
+  /** The host's word on the body (P7): true at a paint that seats the file's content, false where the loader or a failure
+   *  pane takes it; the machine rests or disables, and a flow under way is disarmed. */
+  const bodyIn = (present: boolean): void => { feed({ kind: "body", in: present }); };
+  return { button: btn, bodyIn };
 }
