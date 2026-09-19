@@ -5,8 +5,11 @@
 // the line and window.print run over the real viewer in file-print-browser.test.ts. Synthetic values only.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { step, RESTING, DISABLED, armedWords, preparingWords, stalledWords, isPrintChord, settlePictures, collectPictures, bodyReady, PRINT_SETTLE_MS, setPrintSettleMs, printSettleMs,
-  WITH_WORDS, WITHOUT_WORDS, ANYWAY_WORDS, KEEP_WORDS, TAB_WORDS, NO_TAB_WORDS, pdfFrameWindow, type PrintState, type Picture, type Timers, type BodyLike } from "./file-print";
+  WITH_WORDS, WITHOUT_WORDS, ANYWAY_WORDS, KEEP_WORDS, TAB_WORDS, NO_TAB_WORDS, pdfFrameWindow, READY_ROOTS, NOT_READY_ROOTS, LINE_ROOTS,
+  type PrintState, type Picture, type Timers, type BodyLike, type PrintableNode } from "./file-print";
 
 // ── the machine ─────────────────────────────────────────────────────────────────────────────────────
 
@@ -291,12 +294,15 @@ test("the deadline constant is 8 s and the seam moves it for a test and restores
 
 // ── the pictures the wait collects ─────────────────────────────────────────────────────────────────
 
-type FakeEl = Picture & { getAttribute(name: string): string | null; loading?: string };
+type FakeEl = Picture & PrintableNode & { getAttribute(name: string): string | null; loading?: string };
 /** A body stand-in: querySelectorAll answers each selector the collector asks with the nodes filed under it. */
 function fakeBody(filed: Record<string, FakeEl[]>): ParentNode {
   return { querySelectorAll: (sel: string) => (filed[sel] || []) as unknown as NodeListOf<Element> } as unknown as ParentNode;
 }
-const elm = (attrs: Record<string, string>, complete = false, loading?: string): FakeEl => ({ complete, getAttribute: (k) => (k in attrs ? attrs[k] : null), addEventListener() {}, removeEventListener() {}, ...(loading === undefined ? {} : { loading }) });
+/** An ancestor stand-in for the printable walk: its name, the attributes it carries and its parent. */
+const node = (localName: string, attrs: string[] = [], parentElement: PrintableNode | null = null): PrintableNode => ({ localName, parentElement, hasAttribute: (k) => attrs.includes(k) });
+/** A picture stand-in: its attributes (read by getAttribute and by the printable walk's hasAttribute), its parent for that walk (none: in the open body) and its name (an img unless said). */
+const elm = (attrs: Record<string, string>, complete = false, loading?: string, parentElement: PrintableNode | null = null, localName = "img"): FakeEl => ({ localName, parentElement, hasAttribute: (k) => k in attrs, complete, getAttribute: (k) => (k in attrs ? attrs[k] : null), addEventListener() {}, removeEventListener() {}, ...(loading === undefined ? {} : { loading }) });
 
 test("collectPictures: every img as itself; a poster and an svg image through a probe at the resolved URL; a gated poster or href (moved aside) and an unparseable value probe nothing", () => {
   const probed: string[] = [];
@@ -319,6 +325,24 @@ test("collectPictures sets a lazy img eager before the wait listens on it (FAILS
   assert.equal(pics.length, 3, "every img is collected, the lazy one among them");
   assert.equal(lazy.loading, "eager", "the lazy picture reads eager: its deferred fetch starts, and load or error will come");
   assert.equal(eager.loading, "eager"); assert.equal(plain.loading, undefined, "no attribute is added where none was");
+});
+
+test("collectPictures reads the printable rule the placeholders are counted by (FAILS BEFORE: every img, poster and svg image in the body was collected, so the wait counted, set eager and asked about a picture inside a closed fold or under hidden, one the print never shows): a picture under hidden, on itself or an ancestor, or inside a closed details is left out of each of the three collections and a lazy one among them is not set eager; a summary's picture and one inside an open details are collected", () => {
+  const closed = node("details"), open = node("details", ["open"]), hiddenDiv = node("div", ["hidden"]);
+  const summary = node("summary", [], closed);
+  const inBody = elm({}), inSummary = elm({}, false, undefined, summary), inOpen = elm({}, false, undefined, open);
+  const inClosed = elm({}, false, undefined, closed), inHidden = elm({}, false, "lazy", hiddenDiv), selfHidden = elm({ hidden: "until-found" });
+  const probed: string[] = [];
+  const probe = (url: string): Picture => { probed.push(url); return new FakePic(); };
+  const pics = collectPictures(fakeBody({
+    img: [inBody, inClosed, inSummary, inHidden, inOpen, selfHidden],
+    "video[poster]": [elm({ poster: "open-clip.png" }, false, undefined, null, "video"), elm({ poster: "folded-clip.png" }, false, undefined, closed, "video")],
+    image: [elm({ href: "open-d.svg" }, false, undefined, null, "image"), elm({ href: "hidden-d.svg" }, false, undefined, hiddenDiv, "image")],
+  }), "http://notes-api.test/files", probe);
+  assert.equal(pics.length, 3 + 2, "three imgs that reach the paper and two probes: the open clip's poster and the open diagram's image");
+  assert.equal(pics[0], inBody); assert.equal(pics[1], inSummary); assert.equal(pics[2], inOpen);
+  assert.deepEqual(probed, ["http://notes-api.test/open-clip.png", "http://notes-api.test/open-d.svg"], "no probe for the folded poster or the hidden svg image");
+  assert.equal(inHidden.loading, "lazy", "a hidden lazy picture keeps its attribute: no fetch is started for a picture that is not on the paper");
 });
 
 // ── the PDF kind (P4) ───────────────────────────────────────────────────────────────────────────────
@@ -371,7 +395,7 @@ test("bodyReady reads the body's children: the loader as content, the plain fall
   assert.equal(bodyReady(bodyOf("textarea.fileview-editor")), false, "the plain fallback editor: a print of it is one clipped page");
   assert.equal(bodyReady(bodyOf("div.fileview-err")), false, "a failure pane alone: the fetch's, imgFailed's, the URL viewer's");
   assert.equal(bodyReady(bodyOf("div.fileview-md")), true, "a rendered note");
-  assert.equal(bodyReady(bodyOf("pre.fileview-code")), true, "code or text");
+  assert.equal(bodyReady(bodyOf("div.fileview-code")), true, "code or text (codeBlock's root, file-view.ts)");
   assert.equal(bodyReady(bodyOf("div.fileview-err", "div.fileview-md")), true, "a line over content: an empty file's, a render that fell (the line above the rows)");
   assert.equal(bodyReady(bodyOf("div.fileview-imgbox")), true, "a picture opened directly");
   assert.equal(bodyReady(bodyOf("div.fileview-pdffall")), true, "a PDF frame's column (the pages attempt's loader inside it is not the body's child, and the frame stands)");
@@ -379,6 +403,112 @@ test("bodyReady reads the body's children: the loader as content, the plain fall
   assert.equal(bodyReady(bodyOf("div.fileview-pdfhost")), true, "the panel's pages once page 1 is drawn (the loader gone)");
   assert.equal(bodyReady(bodyOf("div.fileview-cm")), true, "the CodeMirror mount, which prints the whole file");
   assert.equal(bodyReady(bodyOf("div.fileview-md", "div.fileview-load")), false, "a loader anywhere among the children is the body loading, whatever else stands");
+});
+
+// ── the census of the body's roots (P7) ────────────────────────────────────────────────────────────
+// bodyReady classes a child it has never seen as content, on purpose (a false not-ready locks the button with no road out; a
+// false ready is a press that prints what stands), so a root the viewer gains would be classed silently unless something
+// reads the viewer. This census does: it reads file-view.ts, finds every site that seats an element in the body and resolves
+// each seated expression down to the root element's `el("<tag>", "<class>")`, then holds that set equal to the flow's three
+// lists (READY_ROOTS, NOT_READY_ROOTS, LINE_ROOTS) and executes bodyReady over each root as its list says. The sites, by
+// hand, are the lines this command prints:
+//   grep -nP '(?<!document\.)\bbody\.(replaceChildren|prepend|appendChild)\(' ui/webview/file-view.ts
+// and the census resolves each argument of those calls: a builder call (`mdBlock(...)`) to the `el(...)` assigned to the
+// variable the builder's last `return` names; a bare variable to the expression assigned to it last before the site; a
+// ternary to both its branches; an `el("<tag>", "<class>")` to itself. An expression it cannot resolve fails the census with
+// the expression, so a new shape is read by hand rather than skipped.
+/** file-view.ts with its trailing `//` comments removed (a space or a tab before the `//`; the newlines stay, so an index
+ *  still maps to its line): the test runs in vscode-extension, and reads the tree as real-viewer-leg.ts does. */
+const VIEWER_SRC = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "file-view.ts"), "utf8").replace(/[ \t]\/\/[^\n]*/g, "");
+/** The text between the bracket at `at` and its match, strings skipped. */
+function balancedAt(src: string, at: number): string {
+  let depth = 0;
+  for (let i = at; i < src.length; i++) {
+    const c = src[i];
+    if (c === '"' || c === "'" || c === "`") { i++; while (i < src.length && src[i] !== c) { if (src[i] === "\\") i++; i++; } continue; }
+    if (c === "(" || c === "[" || c === "{") depth++;
+    else if (c === ")" || c === "]" || c === "}") { depth--; if (depth === 0) return src.slice(at + 1, i); }
+  }
+  throw new Error("unbalanced bracket at " + at);
+}
+/** The index of the first `sep` in `expr` outside brackets and strings, or -1. */
+function indexTop(expr: string, sep: string): number {
+  let depth = 0;
+  for (let i = 0; i < expr.length; i++) {
+    const c = expr[i];
+    if (c === '"' || c === "'" || c === "`") { i++; while (i < expr.length && expr[i] !== c) { if (expr[i] === "\\") i++; i++; } continue; }
+    if (c === "(" || c === "[" || c === "{") depth++;
+    else if (c === ")" || c === "]" || c === "}") depth--;
+    else if (depth === 0 && expr.startsWith(sep, i)) return i;
+  }
+  return -1;
+}
+/** `expr` split at each top-level `sep`. */
+function splitTop(expr: string, sep: string): string[] {
+  const out: string[] = [];
+  let rest = expr;
+  for (let at = indexTop(rest, sep); at >= 0; at = indexTop(rest, sep)) { out.push(rest.slice(0, at)); rest = rest.slice(at + sep.length); }
+  out.push(rest);
+  return out;
+}
+/** The roots (`<tag>.<class>`) the expression `expr`, written at `before` in file-view.ts, seats. */
+function rootsOf(expr: string, before: number): string[] {
+  const e = expr.trim();
+  const q = indexTop(e, " ? ");
+  if (q >= 0) {
+    const branches = e.slice(q + 3);
+    const c = indexTop(branches, " : ");
+    assert.ok(c >= 0, "a ternary has both branches: " + e);
+    return [...rootsOf(branches.slice(0, c), before), ...rootsOf(branches.slice(c + 3), before)];
+  }
+  const built = /^el\("(\w+)", "([\w -]+)"\)$/.exec(e);
+  if (built) return [built[1] + "." + built[2].split(" ").join(".")];
+  const call = /^(\w+)\(/.exec(e);
+  if (call && call[1] !== "el") {
+    const head = "\nfunction " + call[1] + "(";
+    const at = VIEWER_SRC.indexOf(head);
+    assert.ok(at >= 0, "the builder " + call[1] + " is a top-level function of file-view.ts");
+    const end = VIEWER_SRC.indexOf("\n}\n", at);
+    const body = VIEWER_SRC.slice(at, end);
+    const returns = [...body.matchAll(/^\s+return (\w+);$/gm)];
+    assert.ok(returns.length >= 1, "the builder " + call[1] + " returns a variable");
+    return rootsOf(returns[returns.length - 1][1], at + body.length);
+  }
+  const name = /^(\w+)$/.exec(e);
+  if (name) {
+    const assigned = [...VIEWER_SRC.slice(0, before).matchAll(new RegExp("\\b" + name[1] + " = (?!=)([^;\\n]+?)(?: as \\w+)?;", "g"))];
+    assert.ok(assigned.length >= 1, "the variable " + name[1] + " is assigned before the site at " + before);
+    const last = assigned[assigned.length - 1];
+    return rootsOf(last[1], last.index!);
+  }
+  throw new Error("a seated expression the census cannot resolve: " + e);
+}
+
+test("the census of the body's roots: every element file-view.ts seats in the body resolves to a root the flow lists (READY_ROOTS, NOT_READY_ROOTS or LINE_ROOTS), every listed root is seated, no root is in two lists, bodyReady answers over each root as its list says, and an unlisted child reads as content, the fallthrough the lists guard", (t) => {
+  const sites = [...VIEWER_SRC.matchAll(/(?<!document\.)\bbody\.(replaceChildren|prepend|appendChild)\(/g)];
+  assert.ok(sites.length >= 10, "the seating sites are found in file-view.ts: " + sites.length);
+  const seated = new Map<string, number[]>();
+  for (const m of sites) {
+    const line = VIEWER_SRC.slice(0, m.index!).split("\n").length;
+    const args = balancedAt(VIEWER_SRC, m.index! + m[0].length - 1).replace(/\s+/g, " ").trim();
+    if (!args) continue;   // a clearing seats nothing: an empty body is executed above
+    for (const arg of splitTop(args, ",")) for (const root of rootsOf(arg, m.index!)) seated.set(root, [...(seated.get(root) || []), line]);
+  }
+  const roots = [...seated.keys()].sort();
+  t.diagnostic("census: " + roots.map((r) => r + " (line " + seated.get(r)!.join(", ") + ")").join("; "));
+  const listed = [...READY_ROOTS, ...NOT_READY_ROOTS, ...LINE_ROOTS].sort();
+  assert.deepEqual(roots, listed, "the roots the viewer seats in the body are the roots the flow lists, no more and no fewer");
+  assert.equal(new Set(listed).size, listed.length, "no root is in two lists");
+  for (const r of READY_ROOTS) assert.equal(bodyReady(bodyOf(r)), true, r + " alone: the body is in");
+  for (const r of NOT_READY_ROOTS) {
+    assert.equal(bodyReady(bodyOf(r)), false, r + " alone: not in");
+    for (const c of READY_ROOTS) assert.equal(bodyReady(bodyOf(c, r)), false, r + " beside " + c + ": not in, whatever else stands");
+  }
+  for (const r of LINE_ROOTS) {
+    assert.equal(bodyReady(bodyOf(r)), false, r + " alone: not in");
+    for (const c of READY_ROOTS) assert.equal(bodyReady(bodyOf(r, c)), true, r + " over " + c + ": a line over content, in");
+  }
+  assert.equal(bodyReady(bodyOf("div.fileview-unlisted")), true, "a child none of the lists names reads as content: the fallthrough this census guards");
 });
 
 test("disabled until the body is in: the driver's start, where a press (the button's or the chord's), an Escape, a choice, a prepare, a ready and a printed change nothing; the body arriving rests; the body going out from rest, armed, the wait or the print disarms and disables; the body's arrival elsewhere changes nothing", () => {

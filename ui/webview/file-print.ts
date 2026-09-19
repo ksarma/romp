@@ -29,9 +29,13 @@
 //      is counted again the same way, heard on the card after the body's handler ran, so the count and the title follow
 //      the one just loaded and the last one gone disarms (the review's consolidation, 2026-09-19: before this the count
 //      stood as the press left it until a repaint).
-//   2. Then the wait: every <img> in the body reaches complete (its load or its error), and a <video poster> or an svg
-//      <image> is awaited through a probe Image at the same URL (neither element reports completeness; the probe asks the
-//      browser for the URL the element itself fetched, so no other host is reached). The probes are ONE PER URL FOR THE
+//   2. Then the wait: every <img> in the body THAT REACHES THE PAPER (`printable`, the rule the placeholders are counted
+//      by; the shared-host probe, 2026-09-19: before this every picture in the body was awaited, so a host two placeholders
+//      shared, one open and one folded, had "with them" restore both and the wait count two, ask at the deadline about the
+//      folded one, which the print never shows, and print nothing until the person answered) reaches complete (its load or
+//      its error), and a <video poster> or an svg <image> under the same rule is awaited through a probe Image at the
+//      same URL (neither element reports completeness; the probe asks the browser for the URL the element itself
+//      fetched, so no other host is reached). The probes are ONE PER URL FOR THE
 //      LIFE OF ONE PRESS'S WAIT (a Map keyed by the resolved URL, cleared when a press or a choice begins its wait, handed to
 //      the collection as its probe factory): a re-aim finds the probe it already made, so a URL whose picture failed settles
 //      for good with that one probe complete. Before this every re-aim minted a fresh Image per URL, a failed URL is never
@@ -332,17 +336,25 @@ function resolved(value: string | null, base: string): string | null {
 }
 /** Every picture under `body` the print waits on: each <img> as itself, and a probe (`probe(url)`: the driver's, one Image
  *  per URL for the life of one press's wait) for each <video poster> and each svg <image href>, whose elements report no
- *  completeness. An <img loading="lazy"> is set eager first: the browser has deliberately not started fetching one far below
- *  the fold, so it would fire neither load nor error and the wait would run to its deadline over it; eager starts the
- *  deferred fetch at once, for the same URL (no other host is reached; a gated img has no src and fetches nothing), and the
- *  attribute stays eager after the print. A gated element has its poster or href moved aside (figure-gate.ts) and is not
- *  probed; a gated img has no src, and an img with no src is complete by HTML's definition, so "Print without them" waits on
- *  nothing for a placeholder. */
+ *  completeness. Each of the three collections is filtered by `printable`, the rule the placeholders are counted by (the
+ *  <img> itself; the <video> for its poster; the svg <image> element): the wait, its count on the line, the eager flip and
+ *  the deadline's ask cover the pictures that reach the paper alone. A picture inside a closed fold or under `hidden` can
+ *  still be loading during the wait, since the gate restores by HOST (figure-gate.ts regateFigures: "Print with them"
+ *  loads a host, and every placeholder naming it is restored, a folded one beside a printable one), and the browser
+ *  fetches an <img> the fold hides; before this the wait read it too, so the line counted a picture the print never
+ *  shows and, with that picture's route slow, the deadline asked about it and nothing printed until the person answered
+ *  (the shared-host probe, 2026-09-19). An <img loading="lazy"> is set eager first: the browser has deliberately not started
+ *  fetching one far below the fold, so it would fire neither load nor error and the wait would run to its deadline over
+ *  it; eager starts the deferred fetch at once, for the same URL (no other host is reached; a gated img has no src and
+ *  fetches nothing), and the attribute stays eager after the print; a hidden or folded lazy picture is left as it is, so
+ *  no fetch is started for a picture that is not on the paper. A gated element has its poster or href moved aside
+ *  (figure-gate.ts) and is not probed; a gated img has no src, and an img with no src is complete by HTML's definition, so
+ *  "Print without them" waits on nothing for a placeholder. */
 export function collectPictures(body: ParentNode, base: string, probe: (url: string) => Picture): Picture[] {
   const out: Picture[] = [];
-  body.querySelectorAll("img").forEach((el) => { const img = el as HTMLImageElement; if (img.loading === "lazy") img.loading = "eager"; out.push(img); });
-  body.querySelectorAll("video[poster]").forEach((v) => { const u = resolved(v.getAttribute("poster"), base); if (u) out.push(probe(u)); });
-  body.querySelectorAll("image").forEach((im) => { const u = resolved(im.getAttribute("href"), base); if (u) out.push(probe(u)); });
+  body.querySelectorAll("img").forEach((el) => { if (!printable(el)) return; const img = el as HTMLImageElement; if (img.loading === "lazy") img.loading = "eager"; out.push(img); });
+  body.querySelectorAll("video[poster]").forEach((v) => { if (!printable(v)) return; const u = resolved(v.getAttribute("poster"), base); if (u) out.push(probe(u)); });
+  body.querySelectorAll("image").forEach((im) => { if (!printable(im)) return; const u = resolved(im.getAttribute("href"), base); if (u) out.push(probe(u)); });
   return out;
 }
 
@@ -425,7 +437,11 @@ export type BodyLike = { children: ArrayLike<{ localName: string; classList: { c
  *  would not decode, the URL viewer's failure). Ready when any other child stands: the rendered root, the code block (a
  *  `.fileview-err` line above either, an empty file's or a render that fell, is a line over content, not a pane), a picture's
  *  box, a PDF frame's column (the pages attempt's notice inside it included), the pages' host once the loader has gone, the
- *  CodeMirror mount (`.fileview-cm`, which prints the whole file). An empty body is not ready. */
+ *  CodeMirror mount (`.fileview-cm`, which prints the whole file). An empty body is not ready. A child this has never seen
+ *  reads as content ON PURPOSE: a false not-ready locks the button with no road out, where a false ready is a press that
+ *  prints what stands; the three lists below name every root the viewer seats today and file-print.test.ts's census
+ *  derives that set from file-view.ts, so a root the viewer gains is classed here on purpose or fails the census rather
+ *  than being classed silently (the shared-host probe, 2026-09-19). */
 export function bodyReady(body: BodyLike): boolean {
   let content = false;
   for (const c of Array.from(body.children)) {
@@ -435,6 +451,16 @@ export function bodyReady(body: BodyLike): boolean {
   }
   return content;
 }
+/** The roots file-view.ts seats in the body, as `<tag>.<class>`, by how bodyReady reads each: content (READY_ROOTS: the
+ *  body is in with one standing), a wait (NOT_READY_ROOTS: not in while one stands, whatever else does) or a line
+ *  (LINE_ROOTS: alone not in, over content a notice above it). The sites are the viewer's `body.replaceChildren`,
+ *  `body.prepend` and `body.appendChild` calls, the seated element read down to the `el("<tag>", "<class>")` that builds
+ *  it; file-print.test.ts's census derives that set from file-view.ts and holds it equal to these three lists, and executes
+ *  bodyReady over each root as its list says. bodyReady reads none of these: its answer for an unlisted child is content
+ *  (the reason above), and the census is what makes that fallthrough a decision rather than an accident. */
+export const READY_ROOTS: readonly string[] = ["div.fileview-md", "div.fileview-code", "div.fileview-imgbox", "div.fileview-pdffall", "div.fileview-pdfhost", "div.fileview-cm"];
+export const NOT_READY_ROOTS: readonly string[] = ["div.fileview-load", "textarea.fileview-editor"];
+export const LINE_ROOTS: readonly string[] = ["div.fileview-err"];
 
 // ── the DOM driver ──────────────────────────────────────────────────────────────────────────────────
 export type PrintHost = {

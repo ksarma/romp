@@ -9,7 +9,9 @@
 // set a lazy picture eager, carried the wait's verdict as `ready` with `why`, derived the body's readiness from the body
 // itself (bodyReady, the viewers reporting nothing), dropped the button's `disabled` property for the bar's aria-disabled
 // rule with the keyboard handed through the host at a body-out disarm, and pinned the repaint re-aim's deadline by an
-// executed case; the fourth review (2026-09-19) gave the settle re-aim's deadline its own executed case.
+// executed case; the fourth review (2026-09-19) gave the settle re-aim's deadline its own executed case; the shared-host
+// probe (2026-09-19) had the wait's collection read the printable rule the placeholders are counted by, and guarded
+// bodyReady's fallthrough with a census of the roots the viewer seats in the body.
 // tools/markdown-viewer-plan-print.test.mjs holds the first
 // build's sentences; this module holds the rounds' sentences to the tree the same way, each read from its source, with
 // one difference: the TypeScript sources are read with their comments removed, so a pin here is met by a statement and
@@ -292,7 +294,76 @@ test('P2: only a placeholder that reaches the paper is counted, named and loaded
   // P6 carries the clause, and the armed leg executes the five-host case
   assert.ok(part('P6. **', 'P7. **').includes('and only for a placeholder that reaches the paper (P2\'s printable rule): a host only a folded or hidden placeholder names is not asked'));
   assert.ok(read('ui', 'webview', 'file-print-armed-browser.test.ts').includes('(C) only a placeholder that reaches the paper is counted, named and loaded'), 'the armed leg\'s case (C)');
-  assert.ok(OPEN.includes('6. The wait and the pictures that never reach the paper.'), 'the wait\'s reading of every picture is the owner\'s ruling');
+  assert.ok(!OPEN.includes('6. The wait and the pictures that never reach the paper.'), 'the fourth review\'s open point 6 is gone: the wait reads the rule now (the test below)');
+  assert.ok(P2.includes('the fourth review\'s open point 6, whether the wait should read the same rule, is taken by this one'), 'and P2 says where it went');
+});
+
+test('P2: the wait, its count, the eager flip and the ask cover the pictures that reach the paper: each of the three collections is filtered by printable, the egress leg executes the shared-host fold with the folded route parked, and the node test executes the three collections', () => {
+  assert.ok(P2.includes('The wait, its count on the line, the eager flip and the deadline\'s ask cover the pictures that reach the paper alone: `collectPictures` filters each of its three collections by `printable`, the rule the placeholders are counted by (the `<img>` itself; the `<video>` for its poster; the svg `<image>` element)'));
+  const collect = between(flow, 'export function collectPictures(body: ParentNode, base: string, probe: (url: string) => Picture): Picture[] {', '\n}');
+  assert.ok(collect.includes('body.querySelectorAll("img").forEach((el) => { if (!printable(el)) return; const img = el as HTMLImageElement; if (img.loading === "lazy") img.loading = "eager"; out.push(img); });'), 'the img itself, before the eager flip');
+  assert.ok(collect.includes('body.querySelectorAll("video[poster]").forEach((v) => { if (!printable(v)) return;'), 'the video for its poster');
+  assert.ok(collect.includes('body.querySelectorAll("image").forEach((im) => { if (!printable(im)) return;'), 'the svg image element');
+  assert.equal([...collect.matchAll(/querySelectorAll\(/g)].length, 3, 'three collections, no fourth outside the rule');
+  assert.equal([...collect.matchAll(/if \(!printable\(\w+\)\) return;/g)].length, 3, 'each filtered');
+  // why a folded picture can still be loading: the gate restores by host (the test above holds regateFigures's restore)
+  assert.ok(P2.includes('Such a picture can still be loading during the wait, since the gate restores by host: "with them" loads the host, `regateFigures` restores every placeholder naming it, a folded one beside a printable one, and the browser fetches an `<img>` the fold hides.'));
+  // the legs
+  const egress = read('ui', 'webview', 'file-print-egress-browser.test.ts');
+  assert.ok(egress.includes('test("(6) two placeholders on one host, one in the open body and one inside a closed <details>, the folded picture\'s route parked:'), 'the egress leg\'s case (6)');
+  assert.ok(egress.includes('heldThird: [SHARED_FOLDED]'), 'the folded picture\'s route parked');
+  assert.ok(egress.includes('assert.deepEqual(outcome, { afterClick: PREPARING_ONE, prints: 1, phase: null, line: null, foldedParked: 1, printedUnderDeadline: true, gates: 0, incomplete: ["https://" + HOST_SHARED + SHARED_FOLDED] },'), 'one picture on the line, one print under the deadline, the folded picture parked and incomplete, no ask');
+  assert.ok(egress.includes('{ third: { [HOST_SHARED + SHARED_OPEN]: 1, [HOST_SHARED + SHARED_FOLDED]: 1 }, printed: "window.print x1" }'), 'the host asked once per URL');
+  assert.ok(P2.includes('file-print-egress-browser.test.ts case (6) executes that shape with the folded picture\'s route parked (FAILS BEFORE, run at the module before the fix: the line read two pictures, the ask stood at the deadline and nothing printed)'));
+  assert.ok(read('ui', 'webview', 'file-print.test.ts').includes('test("collectPictures reads the printable rule the placeholders are counted by (FAILS BEFORE:'), 'the node test');
+  assert.ok(TESTS.includes('the printable rule over each of the three collections: a picture under hidden or inside a closed details left out and a lazy one among them not set eager, a summary\'s picture and an open details\' collected'));
+  assert.ok(TESTS.includes('(6) a host two placeholders share, one in the open body and one inside a closed `<details>`, the folded picture\'s route parked'));
+});
+
+test('P7: bodyReady\'s fallthrough to content is guarded by a census: the flow exports three root lists, the node census derives the seated roots from file-view.ts by the command the section names, and the nine roots the section names are the lists\' union', () => {
+  const P7 = part('P7. **', '**Tests.**');
+  assert.ok(P7.includes('A child `bodyReady` has never seen reads as content on purpose: a false not-ready would lock the button with no road out, where a false ready is a press that prints what stands.'));
+  assert.ok(P7.includes('So the fallthrough is guarded by a census rather than changed'));
+  const lists = {};
+  for (const name of ['READY_ROOTS', 'NOT_READY_ROOTS', 'LINE_ROOTS']) {
+    const lit = between(flow, 'export const ' + name + ': readonly string[] = [', '];');
+    lists[name] = [...lit.matchAll(/"([\w.-]+)"/g)].map((m) => m[1]);
+    assert.ok(lists[name].length >= 1, name + ' names a root');
+  }
+  const union = Object.values(lists).flat().sort();
+  assert.equal(new Set(union).size, union.length, 'no root in two lists');
+  const named = /Today the census derives (\w+) roots: (.*?`)\./.exec(P7);
+  assert.ok(named, 'the section counts and names the roots the census derives');
+  const inPlan = [...named[2].matchAll(/`([^`]+)`/g)].map((m) => m[1]).sort();
+  assert.deepEqual(inPlan, union, 'the roots the section names are the three lists\' union');
+  assert.equal(NUMBER_WORDS[named[1]] ?? Number(named[1]), union.length, 'the section says ' + named[1] + '; the lists hold ' + union.length);
+  // the census: the derivation command is the one the section names, and the test reads the viewer rather than a list
+  const census = read('ui', 'webview', 'file-print.test.ts');
+  const command = "grep -nP '(?<!document\\.)\\bbody\\.(replaceChildren|prepend|appendChild)\\(' ui/webview/file-view.ts";
+  assert.ok(P7.includes('`' + command + '`'), 'the section carries the derivation command');
+  assert.ok(census.includes('//   ' + command), 'the census\'s header carries the same command');
+  assert.ok(census.includes('const sites = [...VIEWER_SRC.matchAll(/(?<!document\\.)\\bbody\\.(replaceChildren|prepend|appendChild)\\(/g)];'), 'and the census matches the same sites in the source it read');
+  assert.ok(census.includes('fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "file-view.ts"), "utf8")'), 'read from the viewer\'s source');
+  assert.ok(census.includes('assert.deepEqual(roots, listed, "the roots the viewer seats in the body are the roots the flow lists, no more and no fewer");'), 'held equal to the lists');
+  assert.ok(census.includes('assert.equal(bodyReady(bodyOf("div.fileview-unlisted")), true,'), 'the fallthrough executed');
+  // bodyReady itself is unchanged by the lists: its body reads none of them
+  const ready = between(flow, 'export function bodyReady(body: BodyLike): boolean {', '\n}');
+  assert.ok(!/READY_ROOTS|NOT_READY_ROOTS|LINE_ROOTS/.test(ready), 'bodyReady reads no list: the lists are the census\'s, the answer is the rule\'s');
+  assert.ok(TESTS.includes('and the census of the body\'s roots (P7: the viewer\'s seating sites read from file-view.ts and resolved to their roots, the set held equal to the flow\'s three lists, `bodyReady` executed over each root and over an unlisted child)'));
+});
+
+test('Open points 6 and 7 record two pre-existing gate observations, each against the gate\'s source: the origin judgment with the hostname key, and a redirect the gate never reads', () => {
+  const gate = code(read('ui', 'webview', 'figure-gate.ts'));
+  assert.ok(OPEN.includes('6. The gate judges by origin and keys by hostname (figure-gate.ts `remoteHost`: a URL whose origin is the page\'s own is nobody\'s host, and any other http or https URL is its hostname).'));
+  const remote = between(gate, 'export function remoteHost(value: string, base: string): string | null {', '\n}');
+  assert.ok(remote.includes('if (own && u.origin === own) return null;'), 'judged by origin');
+  assert.ok(remote.includes('return u.hostname.toLowerCase();'), 'keyed by hostname');
+  assert.ok(between(gate, 'export function allowedFigureHosts(extra: Iterable<string> = []): Set<string> {', '\n}').includes('for (const h of loadedHosts) s.add(h);'), 'the allowed set is keyed by hostname too');
+  assert.ok(OPEN.includes('Loading that host allows every origin on it for the page, since the allowed set is keyed by hostname too (`allowedFigureHosts`).'));
+  assert.ok(OPEN.includes('7. A gated host that redirects to a second host. The gate names the host of the URL as written and nothing reads the response'));
+  assert.ok(!/\bfetch\(|currentSrc|responseURL|\bResponse\b/.test(gate), 'nothing in the gate reads a response');
+  for (const n of ['6.', '7.']) assert.ok(OPEN.includes(n + ' ') && OPEN.includes('Recorded, not fixed.'), 'open point ' + n + ' is recorded, not fixed');
+  inOrder(OPEN, ['1. Wording.', '5. Escape with a re-place pending', '6. The gate judges by origin', '7. A gated host that redirects'], 'the open points\' order');
 });
 
 test('P2: the wait\'s line carries the viewer\'s loader after its words, under one rule byte-equal in both sheets and pinned by the parity test', () => {

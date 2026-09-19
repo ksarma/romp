@@ -36,6 +36,11 @@
 // own files in place of that navigation (9 under its chrome-extension:// id and 8 under chrome://resources in the build
 // Playwright ships here, the URLs printed in full beside the count; a browser update moves these two numbers and nothing
 // else in this leg) and prints through the frame's own window, then takes the tab once print is taken from that window.
+// (6) a host two placeholders share, one in the open body and one inside a closed <details>, the folded picture's route
+// parked: "Print with them" restores both by host (the gate loads by host) and the host is asked once per URL, while the
+// wait counts the open picture alone and prints at its load, the folded picture still parked and no ask (the shared-host
+// probe, 2026-09-19: before this the wait read every picture in the body, so the line counted two, the deadline asked
+// about the folded picture, one the print never shows, and nothing printed until the person answered).
 // The counts this leg holds are the third review's target: one request per URL per press, and none for a host the
 // person did not choose. Skips loudly without a browser. Synthetic values only: an invented note, /repo/notes-api paths,
 // invented hosts under .test.
@@ -75,6 +80,10 @@ const GATED_SLOW_NOTE = "# Figures\n\nA local picture ![](" + QUICK + ") and a s
 // (4) the probes and the lazy picture
 const MEDIA_NOTE = "# Media\n\nA clip:\n\n<video poster=\"" + POSTER + "\" controls></video>\n\nA diagram:\n\n<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"8\" height=\"8\"><image href=\"" + IMAGE + "\" width=\"8\" height=\"8\"/></svg>\n\nLast line.\n";
 const LAZY_NOTE = "# Long\n\n" + Array.from({ length: 300 }, (_, i) => "Paragraph " + (i + 1) + ": lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor lorem ipsum dolor sit amet consectetur adipiscing elit.").join("\n\n") + "\n\n<img loading=\"lazy\" src=\"" + LAZY + "\" alt=\"\">\n\nLast line.\n";
+// (6) a host two placeholders share: one in the open body, one inside a closed <details>, whose picture's route is parked
+const HOST_SHARED = "shared.test";
+const SHARED_OPEN = "/open.svg", SHARED_FOLDED = "/folded.svg";
+const SHARED_NOTE = "# Shared host\n\nOpen ![](https://" + HOST_SHARED + SHARED_OPEN + ")\n\n<details><summary>Fold</summary><img src=\"https://" + HOST_SHARED + SHARED_FOLDED + "\" alt=\"\"></details>\n\nLast line.\n";
 // (5) the media kinds
 const SHORT = "# A short note\n\nOne paragraph, and that is all.\n";
 const PNG = ROOT + "/docs/figure.png";
@@ -92,7 +101,7 @@ const PREPARING_ONE = "Preparing 1 picture…";
 const STALLED_ONE = "1 picture has not loaded.";
 
 // ── the page's stubs and probes ────────────────────────────────────────────────────────────────────
-type Print = { gates: number; incomplete: string[]; line: boolean };
+type Print = { gates: number; incomplete: string[]; line: boolean; at: number };   // `at`: the page's performance.now() at the stub's call, for a bound on when a road printed
 type Counts = { prints: number; opens: number; framePrints: number };
 type Bar = { phase: string | null; line: string | null; buttons: string[]; titles: string[]; cardUp: boolean };
 /** window.print, window.open and the bar as it stands; the PDF frame's print is stubbed on the frame's window when a road
@@ -101,7 +110,7 @@ const PAGE_PROBES = () => {
   const w = window as any;
   w.__prints = []; w.__opens = []; w.__framePrints = [];
   const imgs = () => Array.from(document.querySelectorAll("#romp-fileview img")) as HTMLImageElement[];
-  w.print = () => { w.__prints.push({ gates: document.querySelectorAll('[data-act="fv-load"]').length, incomplete: imgs().filter((i) => !i.complete).map((i) => decodeURIComponent(i.src)), line: !!document.getElementById("fileview-print-line") }); };
+  w.print = () => { w.__prints.push({ gates: document.querySelectorAll('[data-act="fv-load"]').length, incomplete: imgs().filter((i) => !i.complete).map((i) => decodeURIComponent(i.src)), line: !!document.getElementById("fileview-print-line"), at: performance.now() }); };
   w.open = (url: unknown, target: unknown) => { w.__opens.push({ url: String(url), target: String(target) }); return { opener: {} }; };
   w.__counts = (): Counts => ({ prints: w.__prints.length, opens: w.__opens.length, framePrints: w.__framePrints.length });
   w.__bar = (): Bar => {
@@ -191,9 +200,11 @@ const hostsAsked = (s: Scene): string[] => Array.from(new Set(s.requests.filter(
 
 /** The viewer over `note` in `mode`, the ledger installed before the open: the quick picture and the loader glyph answered from
  *  the origin, each of `held` parked (its route held until release()), each of `missing` answered 404, every host under .test
- *  other than the origin answered after 150 ms with the svg, the probes installed. The first road, the render, is read here. */
-async function scene(t: any, browser: any, mode: Mode, note: string, opts: { held?: string[]; missing?: string[]; waitFor?: string; before?: (pg: any) => Promise<void>; open: { third?: Tally; local?: Tally; other?: Tally } }): Promise<Scene> {
+ *  other than the origin answered after 150 ms with the svg, except a URL whose path ends in one of `heldThird`, parked the
+ *  same way under that suffix as its name; the probes installed. The first road, the render, is read here. */
+async function scene(t: any, browser: any, mode: Mode, note: string, opts: { held?: string[]; heldThird?: string[]; missing?: string[]; waitFor?: string; before?: (pg: any) => Promise<void>; open: { third?: Tally; local?: Tally; other?: Tally } }): Promise<Scene> {
   const heldNames = opts.held || [];
+  const heldThird = opts.heldThird || [];
   const missing = opts.missing || [];
   const held: Array<{ name: string; route: any }> = [];
   const requests: string[] = [];
@@ -213,7 +224,11 @@ async function scene(t: any, browser: any, mode: Mode, note: string, opts: { hel
         const p = new URL(route.request().url()).searchParams.get("path") || "";
         held.push({ name: heldNames.find((n) => p.endsWith(n))!, route });
       });
-      await pg.route((u: URL) => u.origin !== ORIGIN && u.hostname.endsWith(".test"), async (route: any) => { await new Promise((r) => setTimeout(r, 150)); await route.fulfill({ status: 200, contentType: "image/svg+xml", body: SVG }); });
+      await pg.route((u: URL) => u.origin !== ORIGIN && u.hostname.endsWith(".test"), async (route: any) => {
+        const parked = heldThird.find((n) => new URL(route.request().url()).pathname.endsWith(n));
+        if (parked) { held.push({ name: parked, route }); return; }
+        await new Promise((r) => setTimeout(r, 150)); await route.fulfill({ status: 200, contentType: "image/svg+xml", body: SVG });
+      });
       await pg.evaluate(PAGE_PROBES);
       if (opts.before) await opts.before(pg);
     },
@@ -521,5 +536,40 @@ test("(5b) a PDF under the two launches: the open asks the origin for nothing (t
       assert.equal((await bar(page)).line, TAB_WORDS);
     });
     await tail(s, "(5b " + variant + ")");
+  });
+});
+
+// ── (6) a host two placeholders share, the folded picture's route parked ───────────────────────────
+
+test("(6) two placeholders on one host, one in the open body and one inside a closed <details>, the folded picture's route parked: Print with them restores both by host and asks the host once per URL; the wait counts the open picture alone and prints at its load, under the deadline, with the folded picture still parked and no ask (FAILS BEFORE: the line read two pictures, the deadline asked about the folded one, and nothing printed)", { timeout: 120000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const s = await scene(t, browser, "pane", SHARED_NOTE, { heldThird: [SHARED_FOLDED], open: { local: { ...PAGE_LOCAL } } });
+    const { page } = s;
+    await waitGates(page, 2);
+    const placed = await page.evaluate(() => Array.from(document.querySelectorAll('#romp-fileview [data-act="fv-load"]')).map((g) => { const d = g.closest("details"); return (g.getAttribute("data-fv-hosts") || "") + ":" + (d ? (d.hasAttribute("open") ? "open-details" : "closed-details") : "body"); }));
+    assert.deepEqual(placed, [HOST_SHARED + ":body", HOST_SHARED + ":closed-details"], "two placeholders naming one host: one in the open body, one inside a closed details");
+    await page.evaluate(() => { (window as any).FV.setPrintSettleMs(2000); });   // a deadline the road can reach: the print is bound to come well before it, and the module before the fix asked at it
+    await road(s, "press, then Print with them over the shared host (the folded picture's route parked)", { third: { [HOST_SHARED + SHARED_OPEN]: 1, [HOST_SHARED + SHARED_FOLDED]: 1 }, printed: "window.print x1" }, async () => {
+      await page.click(PRINT_BTN);
+      const armed = await bar(page);
+      assert.equal(armed.phase, "armed"); assert.equal(armed.line, ARMED_ONE, "the open placeholder alone is counted");
+      assert.deepEqual(armed.titles.slice(0, 1), ["Load the pictures from " + HOST_SHARED + ", then print"], "the title names the one host");
+      const clickAt: number = await page.evaluate(() => performance.now());
+      await page.click(WITH_BTN);
+      const afterClick = (await bar(page)).line;   // the wait's line as the click left it
+      // the print, or the deadline's ask about the folded picture, whichever comes first
+      await page.waitForFunction((w: string) => (window as any).__prints.length >= 1 || (document.getElementById("fileview-print-line")?.firstChild?.textContent || "") === w, STALLED_ONE, { timeout: 10000 });
+      await frames(page, 1);
+      const end = await bar(page);
+      const p = await prints(page);
+      const outcome = { afterClick, prints: p.length, phase: end.phase, line: end.line, foldedParked: s.heldCount(SHARED_FOLDED),
+        printedUnderDeadline: p.length ? p[0].at - clickAt < 1500 : null, gates: p.length ? p[0].gates : null, incomplete: p.length ? p[0].incomplete : null };
+      assert.deepEqual(outcome, { afterClick: PREPARING_ONE, prints: 1, phase: null, line: null, foldedParked: 1, printedUnderDeadline: true, gates: 0, incomplete: ["https://" + HOST_SHARED + SHARED_FOLDED] },
+        "the wait counted the open picture alone, printed at its load under the deadline with the folded picture still parked (incomplete at the print, both placeholders restored by the host's load), and never asked");
+    });
+    assert.deepEqual(hostsAsked(s), [HOST_SHARED], "the one host was asked, twice: once per URL, by the gate's load of the host");
+    await page.evaluate(() => { (window as any).FV.setPrintSettleMs(null); });
+    assert.equal(await page.evaluate(() => (window as any).FV.printSettleMs()), 8000, "the seam restored");
+    await tail(s, "(6)");
   });
 });
