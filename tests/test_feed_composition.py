@@ -1794,7 +1794,8 @@ class PublishedTable(unittest.TestCase):
         rows), the projections' one-atom rule, the withheld counts and the reason (a count beside a sum discloses the
         single-object case; the ledger count is the chat tab count, published elsewhere), and the residuals: each
         sentence of the kernel's FEED_COMPOSITION_RESIDUALS verbatim in both documents, whitespace apart, and no
-        other residual count claimed. The PR body is outside the repository, so it is not read here."""
+        other residual count claimed. The PR body is outside the repository and is read only when ROMP_TESTS_PR_BODY
+        names it (the next test)."""
         ref = open(os.path.join(ROOT, "docs", "reference.md"), encoding="utf-8").read()
         para = ref[ref.index("  `feedComposition` says what the feed frame is made of"):]
         para = para[:para.index("\n- `judge`:")]
@@ -1954,6 +1955,29 @@ class PublishedTable(unittest.TestCase):
             rep = comp.report()
             self.assertEqual(rep["wire"]["exact"], 1)
             self.assertGreater(rep["wire"]["bytes"] - rep["last"]["frame"], 0, "exact: the keys, separators and tints")
+
+    @unittest.skipUnless(os.environ.get("ROMP_TESTS_PR_BODY"),
+                         "the PR body lives outside the repository; ROMP_TESTS_PR_BODY names its file for a run that reads it")
+    def test_the_pr_body_repeats_the_kernels_invariant_and_residuals_when_named(self):
+        """The fourth text. The PR body is outside the repository, so no repo test can name its path (a home path in a
+        test is a personal identifier, and a contributor's clone has no such file). This arm reads it only when
+        ROMP_TESTS_PR_BODY names the file; the sweep runner and CI unset every ROMP_ variable, so they skip it and
+        never pass it. With the file named: the body states the kernel's invariant and each residual sentence exactly
+        once, whitespace apart, says "Two residuals remain" once, carries none of the superseded wordings, and keeps
+        the tier line first and the attribution last (the user's rule for the body's shape)."""
+        body = open(os.environ["ROMP_TESTS_PR_BODY"], encoding="utf-8").read()
+        flat = " ".join(body.split())
+        self.assertEqual(flat.count(km.FEED_COMPOSITION_INVARIANT), 1, "the body states the invariant in the kernel's words, once")
+        for i, sentence in enumerate(km.FEED_COMPOSITION_RESIDUALS):
+            self.assertEqual(flat.count(sentence), 1, "the body: residual %d in the kernel's words, once" % (i + 1))
+        self.assertEqual(flat.count("Two residuals remain"), 1)
+        for stale in ("Three residuals", "except the Outline's row", "lifetime sums and the last pass",
+                      "in `last` and in `lifetime`", "title, name, summary and background lengths", "scoped rather than"):
+            self.assertNotIn(stale, flat, stale)
+        self.assertNotIn("\u2014", body)
+        self.assertNotIn("\u2013", body)
+        self.assertTrue(body.startswith("Tier: feature\n"), "the tier line first")
+        self.assertTrue(body.rstrip().endswith("Generated with [Claude Code](https://claude.com/claude-code)"), "the attribution last")
 
     def test_the_perf_stats_docstring_row_names_every_key_of_the_last_pass(self):
         """The _PerfStats docstring's feedComposition row (the served snapshot's own reference) names every key of `last`
