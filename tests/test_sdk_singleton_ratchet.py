@@ -852,8 +852,13 @@ def nested_run(text, follower=None, sdk_stub=False):
 
     The child runs -vv, not -v, so its output has one shape on a box and on CI: pytest's short summary (-rA) repeats
     each error's message, whole when CI is set in the environment (pytest's running_on_ci) or at -vv, and trimmed to
-    the terminal width otherwise (_get_line_with_reprcrash_message; running_on_ci has no other use in pytest 9). At
-    -v a box saw every verdict once, in the ERRORS section, and CI saw each twice, so a count of occurrences over the
+    the terminal width otherwise (_get_line_with_reprcrash_message). running_on_ci is true when CI or BUILD_NUMBER is
+    non-empty (compat.py) and is read at three sites in pytest 9.1.1: that short-summary message, whole or trimmed
+    (terminal.py); assertion truncation (assertion/truncate.py); and the sequence-compare helper
+    (assertion/_compare_sequence.py). Each is gated on verbosity so that at -vv none of the three varies with the
+    environment (the message is whole at verbose >= 2, truncation happens only at verbose < 2, and the helper's CI
+    branch runs only at verbose <= 0), which is why -vv stays and lowering the child's verbosity is unsafe: at -v two
+    of the three vary. At -v a box saw every verdict once, in the ERRORS section, and CI saw each twice, so a count of occurrences over the
     output read 1 here and 2 there for the same one boundary verdict (CI red at the round-3 preparation head); the
     outer tests read the verdicts by the scope or test they name (boundary_scopes, boundary, verdict), never by
     occurrence, and that is the protection; -vv is not one. It only makes a box run print what CI prints so the two
