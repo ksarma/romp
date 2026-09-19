@@ -1743,6 +1743,16 @@ PROBLEM_ROW_MARK = " ;; problem-row "
 LEDGER_ROTATE_BYTES = 32 * 1024 * 1024   # a ledger past this size is rotated to <name>.1 (one predecessor kept),
 #                                          so the pair is bounded at twice this: at ~300 bytes a turn and a few
 #                                          thousand turns a day, turns.jsonl holds about a month; the reader reads both
+# The `host` a refused launch records in the registry's hostLogPos (SdkBackend._record_refused_launch_position): no
+# host identity, since a host that never served sent no hello, but a position the served road honours for the next
+# host of any identity, so the rows the refusal filed are not filed again (regression-1, round 3, 2026-09-19). The
+# position is host.log's WHOLE line count at the refusal, not the extent of what the refusal filed (correctness-1,
+# round 4, 2026-09-19): after a refused launch the served road, _file_host_log_rows, skips every line present then, a
+# previous host's row that no road had filed included (a reader-behind, an end-forced), so such a row VANISHES, with
+# no problem row anywhere. The queued served-road change, which bounds that road on the spawn watermark
+# (host_transport.host_log_mark), is where that is fixed; until then the drop is pinned as the head's behaviour in
+# tests/test_session_host_sdk_pin.py, and _record_refused_launch_position's docstring states the reach in full.
+HOST_LOG_POS_REFUSED = "refused-launch"
 
 
 _LEDGER_LOCK = threading.Lock()   # one appender at a time across the ledgers: two threads crossing the
@@ -12128,6 +12138,16 @@ class SdkBackend:
             # directly, unscoped.
             os.environ["ROMP_CLI_REAL"] = self.claude_bin
         self._cli_scope_wrapper_logged = False    # the missing-wrapper fallback is reported once per backend
+        # (installed, tested) SDK version pairs whose host.sdk-untested row this backend has filed (fresh-2, round 2
+        # of the review, 2026-09-18): the venv's version is a machine condition, the same for every host on this box,
+        # so it is reported once per kernel life like the wrapper fallback above, not once per launch (each launch was
+        # appending a byte-identical error-centre entry and bumping the feed's cache key, the repetition the ring's
+        # dedupe exists to prevent). The key is the version PAIR and not the sid (the closing check, 2026-09-18, on the
+        # round-2 ask for a sid in the key): the row is once per pair per kernel life, so the SECOND SESSION under the
+        # same pair files no row either, and which sessions ran on it is read from the plain kernel-log line
+        # _file_sdk_untested_row writes for every later one. A venv repinned to ANOTHER untested version mid-life is a
+        # new pair, reported anew.
+        self._sdk_untested_reported: set = set()
         # CLI launches since boot that the wrapper reported running WITHOUT a scope (its stderr notice,
         # see _on_cli_stderr), and when the last one was. The boot verdict above is taken once; these say
         # whether it stopped holding afterwards. Read by api_health_snapshot (cliScope.fallbacks).
@@ -12538,19 +12558,74 @@ class SdkBackend:
                 sock.unlink()
             except OSError:
                 pass
+            # the spawn watermark (host_log_mark; the closing check of the review, 2026-09-18): host.log's size before
+            # the host exists, so the two reads below see what THIS host wrote and nothing a previous host left in the
+            # same file (a stale kernel-held lease keeps the directory, and with it the log, across launches). Its
+            # reach is the refused roads below and nothing else (extra6-1, round 3 of the review, 2026-09-19): the
+            # served road, _file_host_log_rows at the hello and the exit, reads from an identity-keyed line position
+            # and not from this mark. Over a surviving log with no refused launch since, it files a previous host's
+            # rows as the new host's; after a refused launch it starts past host.log's WHOLE line count at the
+            # refusal (_record_refused_launch_position), so a previous host's row no road had filed vanishes
+            # (round 4, 2026-09-19). Bounding that road on the mark is the queued served-road change, by the
+            # reviewer's ruling.
+            mark = ht.host_log_mark(self.state_dir, sess.sid)
             proc = self._spawn_host(sess, spec_path, secrets)
             deadline = time.time() + ht.SOCKET_WAIT_S
             while not sock.exists():                          # loop-ok: a bounded wait on the socket appearing
                 if proc.poll() is not None:
-                    raise CLIConnectionErrorLike("the session host exited before serving its socket (code %s); see hosts/%s/host.log"
-                                                 % (proc.returncode, sess.sid))
+                    # the host's last word when it left one (an SDK pin mismatch names both versions and the repin
+                    # command there; a spawn failure its exception type, with the version it ran beside it when the
+                    # host wrote that fact), so the card says why, not just where to look
+                    reason = ht.host_exit_reason(self.state_dir, sess.sid, since=mark)
+                    said = "exited before serving its socket (code %s); see hosts/%s/host.log%s" % (
+                        proc.returncode, sess.sid, (": " + reason) if reason else "")
+                    # The drift fact first, on its own row (fresh-1 as the closing check ruled it, 2026-09-18): a
+                    # host that imported an untested SDK wrote so before it failed, and that fact is filed whatever
+                    # the failure was, with the remedy, once per kernel life per version pair. The failure's row below
+                    # keeps the failure's own type; nothing attributes the one to the other.
+                    self._file_refused_launch_context(sess, mark)
+                    # One ledger row per refused launch, under its own kind (fresh-3, round 1 of the review,
+                    # 2026-09-18): a host that never serves its socket sends no hello and no exit frame, the two
+                    # events that file host.log rows, so a refused launch left no session-events row at all and the
+                    # error centre, the ledger and the restart counts stayed at zero while the benign case (an
+                    # untested version whose internals resolve) got host.sdk-untested. Gated on the event, not on the
+                    # reason text (a host that died without a row gets a row too), and never host.spawn-failed here.
+                    # The one event is counted once because this road also records host.log's line count at the
+                    # refusal (_record_refused_launch_position; regression-1, round 3 of the review, 2026-09-19): until
+                    # then the served road, which starts a host it has not seen at line zero, re-filed this launch's
+                    # cli-spawn-failed row as host.spawn-failed when a later host served over a log that survived
+                    # (a stale kernel-held lease keeps the directory). That count is the whole file's, so it also
+                    # skips a previous host's rows in the same file (the reach is stated at that function). A retry
+                    # that is refused again is its own launch and its own row. This is the EXITED road; the deadline
+                    # road below files its own kind.
+                    problem_row(self.state_dir, "the session host for %s %s" % (sess.name, said), "host.exited-before-socket",
+                                sid=sess.sid, name=sess.name, log=self._log, code=proc.returncode)
+                    self._record_refused_launch_position(sess)
+                    raise CLIConnectionErrorLike("the session host " + said)
                 if time.time() > deadline:
                     # a host that never served is ended, or a resend would start a second host and two CLIs
                     try:
                         proc.terminate()
                     except ProcessLookupError:
                         pass
-                    raise CLIConnectionErrorLike("the session host did not serve its socket within %.0f s; it was ended" % ht.SOCKET_WAIT_S)
+                    # The same two filings as the exited road (kernel-2, round 2 of the review, ruled MISSING by the
+                    # closing check, 2026-09-18): until then this road raised and filed nothing, so a host that wedged
+                    # before its socket (a CLI that never answered, a hang in connect) was a refused launch with no
+                    # session-events row, invisible everywhere but the card. Its own kind, because this host was ended
+                    # rather than exited and has no return code; the wait it missed rides as waitS. The reason read
+                    # below is for a host that wrote a FAILING row (host-crashed, cli-spawn-failed) and then did not
+                    # exit within the wait (correctness-2, round 3 of the review, 2026-09-19: a real host leaves
+                    # some 16 to 19 ms between that row and its exit, so this read answers only for one that wedges
+                    # after failing); it never returns the untested-version row, which is not a reason and is filed
+                    # on its own by _file_refused_launch_context, the line after it.
+                    reason = ht.host_exit_reason(self.state_dir, sess.sid, since=mark)
+                    said = "did not serve its socket within %.0f s; it was ended; see hosts/%s/host.log%s" % (
+                        ht.SOCKET_WAIT_S, sess.sid, (": " + reason) if reason else "")
+                    self._file_refused_launch_context(sess, mark)
+                    problem_row(self.state_dir, "the session host for %s %s" % (sess.name, said), "host.never-served-socket",
+                                sid=sess.sid, name=sess.name, log=self._log, waitS=ht.SOCKET_WAIT_S)
+                    self._record_refused_launch_position(sess)
+                    raise CLIConnectionErrorLike("the session host " + said)
                 await asyncio.sleep(0.05)
         finally:
             with self._lock:
@@ -12776,10 +12851,90 @@ class SdkBackend:
         sess._fresh_cli_stamp(spawned, ident, mark_echoes=not getattr(sess, "_deliberate_connect", False))
         self._log("host (%s): a fresh CLI %s (spawned at %d); its epoch and launch login stamped" % (sess.name, ident, spawned))
 
+    def _file_sdk_untested_row(self, sess, row: dict) -> None:
+        """One `sdk-version-untested` host.log row (the host imports claude-agent-sdk at a version other than the one
+        its private imports are written against, and the internals still resolved, so it ran) as the host.sdk-untested
+        problem row, naming both versions and the repin command; visible so the machine is repinned before a release
+        moves one. Reached from _file_host_log_rows for a host that served, and from the refused roads of
+        _host_transport_for for one that did not (the closing check of the review, 2026-09-18, ruling on fresh-1 of
+        round 2: the fact is filed on its own whenever the host wrote it, and never composed into a launch failure's
+        row as that failure's remedy).
+
+        Once per kernel life per version PAIR, keyed on (installed, tested) and NOT on the sid (_sdk_untested_reported;
+        fresh-2, round 2; the key confirmed by the closing check, 2026-09-18): the venv is the machine's, so the first
+        host to say so speaks for every host on the box, and a later host under the same pair, in this session or in
+        ANOTHER, files no row and gets one plain kernel-log line instead. That line is where the per-session fact
+        lives (which sessions ran on the untested version); the row is not per session, and a second session with no
+        row of its own is this rule working, not a filing that went missing."""
+        pair = (str(row.get("installed")), str(row.get("tested")))
+        if pair in self._sdk_untested_reported:
+            self._log("host (%s): runs claude-agent-sdk %s, not the %s it is written against (reported once above, this kernel life)"
+                      % (sess.name, pair[0], pair[1]), problem=False)
+            return
+        self._sdk_untested_reported.add(pair)
+        relation = row.get("relation")
+        prose = ("the host for %s runs claude-agent-sdk %s, %s than the %s it is written against; run %s to install the tested version "
+                 "(the venv is this machine's, so every host runs it; reported once per kernel life)"
+                 % (sess.name, row.get("installed"), relation if relation in ("newer", "older") else "other",
+                    row.get("tested"), _ht().sh.SDK_REPIN_COMMAND))
+        fields = {k: v for k, v in row.items() if k not in ("kind", "t")}
+        problem_row(self.state_dir, prose, "host.sdk-untested", sid=sess.sid, name=sess.name, log=self._log, t=row.get("t"), **fields)
+
+    def _file_refused_launch_context(self, sess, mark: int) -> None:
+        """What a host that never served its socket wrote about the SDK it ran, filed on its own: the
+        sdk-version-untested row past the spawn watermark `mark` (host_log_mark, so a previous host's row in the same
+        file is not this launch's) becomes the host.sdk-untested row through _file_sdk_untested_row. The served
+        roads file it from _file_host_log_rows at the hello and the exit; a refused launch reaches neither, so until
+        the closing check of the review (2026-09-18) the only trace of the drift on this road was a sentence composed
+        into the failure's own reason, attributed by the failure's type name."""
+        for row in _ht().host_log_rows(self.state_dir, sess.sid, since=mark):
+            if row.get("kind") == "sdk-version-untested":
+                self._file_sdk_untested_row(sess, row)
+
+    def _record_refused_launch_position(self, sess) -> None:
+        """host.log's WHOLE line count at a refused launch, as `hostLogPos: {host: HOST_LOG_POS_REFUSED, pos: <lines>}`
+        (regression-1, round 3 of the review, 2026-09-19; the reach corrected in round 4). The refused roads file the
+        launch's own rows (the untested-version fact, the refusal itself) and the served road, _file_host_log_rows,
+        starts a host identity it has not seen at line zero, so over a host.log that survived the refusal (a stale
+        kernel-held lease keeps the directory) the next host that served re-filed the refused launch's
+        cli-spawn-failed row as host.spawn-failed: one event, two error-centre rows. The served road honours this
+        position for the next host whatever its identity; every road that clears the directory drops hostLogPos with
+        it (_host_orphan_recover, _host_ended), so the position never outlives the file it counts.
+
+        What the count reaches (correctness-1, round 4 of the review, 2026-09-19): every line present at the refusal,
+        not only the rows this launch filed. A previous host's row in the same file that no road had filed (a
+        reader-behind, an end-forced from a host of an earlier kernel life) sits below this position too, so after a
+        refused launch no road files it: on the tree before this position existed the next serving host filed it as
+        its own, misattributed; now it VANISHES, and the error centre's silence about that host means nothing. A
+        prefix position cannot both keep the rows before the spawn watermark and skip the rows after it (the refuters
+        executed both spellings: a position derived from the byte mark re-files the refusal's rows, and one counting
+        the lines up to the mark reds the refused-launch case), so the fix is the queued served-road change, which
+        bounds that road on the watermark; until then tests/test_session_host_sdk_pin.py pins the drop as the head's
+        behaviour so it cannot change unseen. A line count because that is the unit the served road keeps."""
+        p = _ht().host_dir(self.state_dir, sess.sid) / "host.log"
+        try:
+            lines = len(p.read_text().splitlines())
+        except OSError:
+            return
+        try:
+            self._update_reg(sess.sid, hostLogPos={"host": HOST_LOG_POS_REFUSED, "pos": lines})
+        except Exception as e:
+            self._log("host (%s): hostLogPos write failed after a refused launch: %s" % (sess.name, e))
+
     def _file_host_log_rows(self, sess) -> None:
         """host.log lines not yet filed become problem rows. The position is kept in the registry beside hostAck
         (`hostLogPos: {host, pos}`, keyed by the host's identity), so a restart never re-files a row and a new
-        host's log starts from zero."""
+        host's log starts from zero, unless a refused launch recorded host.log's line count at the refusal
+        (HOST_LOG_POS_REFUSED, _record_refused_launch_position): then the next host, whatever its identity, starts
+        past every line that was in the file then.
+
+        The reach of that bound, stated plainly (extra6-1, round 3 of the review; corrected in round 4, 2026-09-19):
+        every line present at the refusal, the refused launch's own rows and any earlier host's alike. So over a
+        host.log that survived a previous launch (a stale kernel-held lease keeps the directory) a previous host's
+        row that no road had filed is dropped by this road once a refused launch followed it, and filed as this
+        host's when none did; the spawn watermark the refused roads read past (host_log_mark, in bytes) does not
+        reach this road. Both are pinned as the head's behaviour in tests/test_session_host_sdk_pin.py; the queued
+        served-road change, by the reviewer's ruling, is where this road is bounded on the watermark."""
         p = _ht().host_dir(self.state_dir, sess.sid) / "host.log"
         try:
             lines = p.read_text().splitlines()
@@ -12790,9 +12945,10 @@ class SdkBackend:
         ident = "%s:%s" % (h.get("pid"), h.get("start")) if h else ""
         reg = read_reg(self.state_dir, sess.sid) or {}
         kept = reg.get("hostLogPos") if isinstance(reg.get("hostLogPos"), dict) else {}
-        pos = int(kept.get("pos") or 0) if kept.get("host") == ident else 0
+        pos = int(kept.get("pos") or 0) if kept.get("host") in (ident, HOST_LOG_POS_REFUSED) else 0
         kinds = {"hook-self-answered": "host.hook-self-answered", "reader-behind": "host.reader-behind",
-                 "end-forced": "host.end-forced", "cli-spawn-failed": "host.spawn-failed"}
+                 "end-forced": "host.end-forced", "cli-spawn-failed": "host.spawn-failed",
+                 "sdk-version-untested": "host.sdk-untested"}
         for ln in lines[pos:]:
             try:
                 row = json.loads(ln)
@@ -12809,6 +12965,9 @@ class SdkBackend:
                 prose = "the host's journal for %s fell behind the CLI's output" % sess.name
             elif kind == "host.end-forced":
                 prose = "the host had to SIGKILL %s's CLI: it did not exit within the grace after stdin closed" % sess.name
+            elif kind == "host.sdk-untested":
+                self._file_sdk_untested_row(sess, row)      # its own filing: once per kernel life per version pair
+                continue
             else:
                 prose = "the host for %s could not spawn its CLI" % sess.name
             problem_row(self.state_dir, prose, kind, sid=sess.sid, name=sess.name, log=self._log, t=row.get("t"), **fields)
@@ -18908,7 +19067,12 @@ class SdkBackend:
         dep = isinstance(exc, ImportError)
         # A provider failure happened before a new CLI existed. The previous
         # connection's stderr must not replace it or turn it into a quota hold.
-        tail = "" if dep or isinstance(exc, _cred.CredentialError) else sess.stderr_tail()
+        # A host launch or attach refusal (CLIConnectionErrorLike) too (correctness-1 and kernel-1, round 1 of
+        # the review, 2026-09-18): no CLI of THIS launch ever started, so the tail belongs to the previous one,
+        # and launch_failure_text prefers a tail over the exception's text. With the tail in, a session whose
+        # CLI had ever written a stderr line got that stale line as its card and the host's reason (an SDK
+        # pin mismatch naming both versions and the repin command) reached no card.
+        tail = "" if dep or isinstance(exc, (_cred.CredentialError, CLIConnectionErrorLike)) else sess.stderr_tail()
         text = (sdk_unavailable_text(self.state_dir, verdict=self.unavailable_verdict(),
                                      started_missing=self._sdk_missing)
                 if dep else launch_failure_text(exc, tail))

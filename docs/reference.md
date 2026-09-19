@@ -993,9 +993,17 @@ For `./install.sh`:
 - `ROMP_NO_SERVICE=1` skips the login service.
 - `ROMP_NO_EXT=1` skips the VS Code / Cursor extension.
 - `ROMP_NO_SDK=1` skips the Agent SDK venv. Claude Code sessions need it, so
-  run `bin/romp-sdk-setup` before starting one. Notifications to a phone or
-  browser read the `cryptography` package from the same venv, so they stay off
-  until it runs too.
+  run `bin/romp-sdk-setup` before starting one. The script installs one
+  `claude-agent-sdk` version, never the latest: the version the session host's
+  private SDK imports were verified against, declared once as
+  `SDK_TESTED_VERSION` in `kernel/session_host.py`. A host that finds another
+  version installed whose internals have moved refuses to start the session and
+  names both versions and the script in the launch error; one whose internals
+  still resolve runs and files a problem row saying so, once per kernel life for
+  each installed version (a later host on the same version, in any session, is a
+  kernel-log line and not a second row). Notifications to a
+  phone or browser read the `cryptography` package from the same venv, so they
+  stay off until it runs too.
 
 For the one-line installer (`bootstrap.sh`), which passes all of the above
 through to `install.sh`:
