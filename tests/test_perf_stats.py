@@ -54,7 +54,8 @@ SID = "11111111-2222-3333-4444-555555555555"
 # and node ids collide across test modules under the shared placeholder (CLAUDE.md, goal-store fixtures).
 GOAL_SID = "77777777-8888-9999-aaaa-bbbbbbbbbbbb"
 TOP_KEYS = {"now", "since", "uptime_s", "log", "process", "pusher", "jobs", "stages_ms", "builds", "sends",   # jobs: the jobs thread's passes
-            "stagesForeign",                               # stagesForeign: a `jobs.<job>` stage written by a thread owning neither loop (2026-09-18)
+            "stagesForeign",                               # stagesForeign: a `jobs.<job>` stage from a thread owning neither loop, or a push stage from a
+            #                                                  thread that neither owns the pusher's cycle nor carries a connect push's mark (2026-09-18)
             "heap",                                        # heap: where the resident size sits at the read, gauges over every content cache (2026-09-15)
             "gc",                                          # gc: the collector's pauses per generation, from the gc.callbacks hook (2026-09-16)
             "goals", "memos", "judge", "http", "parses",   # parses: cold event-model parses (T323 stage 1)
@@ -103,6 +104,18 @@ def _number_word(n):
         return _ONES[n]
     tens, ones = divmod(n, 10)
     return _TENS[tens] + ("-" + _ONES[ones] if ones else "")
+
+
+# Wordings about the stage routing that a review round retired, assembled from parts so this file does not carry them as
+# sentences (the sweep pin below reads this file too): a push stage is foreign unless its writer is the pusher within the
+# open cycle (ownership outlives the cycle: kernel-1, round two); a bare _push in a test always has a cycle open before it
+# (false of 21 modules: extra6-1, round two); a push stage from a thread that is not the pusher and not a connect push (a
+# thread identity, not ownership: round one's wording); the pass jobs' rows keep their values because the housekeeping was
+# the jobs thread's alone from the start (false of the part rows: round one).
+RETIRED_WORDINGS = {"push-inside-cycle": "inside its " + "cycle",
+                    "bare-push-opens-cycle": "_push in a test " + "opens a cycle first",
+                    "pusher-identity": "neither the pusher " + "nor a connect push",
+                    "housekeeping-already-alone": "already ran on the " + "jobs thread alone"}
 
 
 def _burn_cpu(seconds):
@@ -955,8 +968,10 @@ class JobRowsByOwner(unittest.TestCase):
     job that changed lists, or a test driving both loops on one thread, merged the two silently. Now stage() routes a
     dotted `jobs.` write by the WRITER'S OWNER: the jobs thread's to the flat row (stages_ms), the pusher's to
     pusher.cycleJobsMs under the job's name (the nine seeded at zero), and a thread owning neither loop's to stagesForeign
-    under the stage name, counted rather than dropped. No call site, mark, split row, boot row or CLI line changes; JOBS
-    stays the census as CYCLE_JOBS + PASS_JOBS."""
+    under the stage name, counted rather than dropped. No stage name, mark, split row or boot row changes; three call
+    sites did: the nudge walk's looks computation, a per-thread parse tally since the flat parse row moves for the jobs
+    owner alone, and the two loop bodies' owner guards, which open the loop's own cycle on a thread that owns the other
+    loop's cycle. JOBS stays the census as CYCLE_JOBS + PASS_JOBS."""
 
     NAME = "jobs.persistCheckpoints"      # a cycle job's name, written here from all three kinds of thread
 
@@ -1185,7 +1200,7 @@ class JobRowsByOwner(unittest.TestCase):
         """upstream/2026-09-18-stage-attribution.md states the jobs rows' meaning change with the same load-bearing words as the
         reference: the pass jobs' container rows, counted from PASS_JOBS, keep their values because the act-now path closes no
         `jobs.<job>` container, and a job's part rows shed that pass's share under stagesForeign. Round one replaced the
-        entry's reason (that the housekeeping jobs already ran on the jobs thread alone, which the act-now test in
+        entry's reason (that the housekeeping was the jobs thread's alone from the start, which the act-now test in
         tests/test_jobs_thread_split.py falsifies) and nothing held the replacement (2026-09-19 review)."""
         entry = " ".join(Path(HERE).parent.joinpath("upstream", "2026-09-18-stage-attribution.md").read_text().split())
         n_pass = _number_word(len(km._PerfStats.PASS_JOBS))
@@ -1193,7 +1208,7 @@ class JobRowsByOwner(unittest.TestCase):
                          "the rows that keep their values are the pass jobs' %s container rows, with a reason" % n_pass)
         self.assertRegex(entry, r"closes no `jobs\.<job>` container", "the reason: the act-now path closes no job container")
         self.assertRegex(entry, r"`jobs\.autoNudge\.<part>` rows shed.{0,60}`stagesForeign`", "the part rows narrow, under stagesForeign")
-        self.assertNotIn("already ran on the jobs thread alone", entry, "round one's false reason is gone")
+        self.assertNotIn(RETIRED_WORDINGS["housekeeping-already-alone"], entry, "round one's false reason is gone")
         self.assertNotRegex(entry, r"those rows keep their names and their values, since", "and its unscoped sentence with it")
 
 
@@ -1411,6 +1426,57 @@ class PushRowsByPurpose(unittest.TestCase):
         self.assertNotIn("EVERY caller", stages_row, "the fold sentence is gone")
         foreign_row = _doc_row(doc, "stagesForeign")
         self.assertIn("push", foreign_row, "the foreign block names the push stages as a second family")
+
+
+class RoutingStatements(unittest.TestCase):
+    """Every place in the tree that names a routed block (stagesForeign, pusher.cycleJobsMs, pusher.connectPush.stagesMs, or
+    their attributes) is where a sentence about the routing can live, and two review rounds found such a sentence wrong
+    in a way the code was not, each time in a file a hand-kept sweep had missed (2026-09-19 review). The sweep's scope is
+    therefore derived here from the tree, not listed: the files that name a block are found by reading them, pinned as a
+    set so a new one turns the test red until it is swept, and none of them may carry a wording a round retired
+    (RETIRED_WORDINGS at the top of this module). The truth of what the files say is measured by the routing tests above
+    (PushRowsByPurpose, JobRowsByOwner); this test holds only the scope and the retired wordings."""
+
+    ROOTS = ("kernel", "bin", "cli", "docs", "upstream", "tests", "scripts", "ui/webview")
+    TEXT = (".py", ".md", ".bats", ".ts", ".js", ".mjs", ".sh", ".css", ".html", ".txt", ".toml", ".yml", ".yaml", "")
+    SKIP_DIRS = {"node_modules", "dist", "out-tests", "__pycache__", "assets"}
+    BLOCKS = re.compile(r"stagesForeign|cycleJobsMs|connectPush\.stagesMs|stages_foreign|cycle_jobs_ms|connect_stages_ms")
+    # the places a routing sentence lives today; a file added here has been read against the measured cells
+    PLACES = {"bin/romp", "docs/reference.md", "kernel/kernel.py", "tests/test_first_cycle_stage_split.py",
+              "tests/test_jobs_thread_split.py", "tests/test_perf_stats.py", "upstream/2026-09-18-stage-attribution.md"}
+
+    def _places(self):
+        root = Path(HERE).parent
+        found = {}
+        for top in self.ROOTS:
+            for dirpath, dirnames, filenames in os.walk(root / top):
+                dirnames[:] = [d for d in dirnames if d not in self.SKIP_DIRS and not d.startswith(".")]
+                for fn in filenames:
+                    path = Path(dirpath) / fn
+                    if path.suffix not in self.TEXT or path.is_symlink():
+                        continue
+                    try:
+                        text = path.read_text()
+                    except (UnicodeDecodeError, OSError):
+                        continue
+                    if self.BLOCKS.search(text):
+                        found[str(path.relative_to(root))] = text
+        return found
+
+    def test_the_files_that_name_a_routed_block_are_the_swept_set(self):
+        found = self._places()
+        self.assertEqual(set(found), self.PLACES, "a file names a routed block and is not in the sweep (or left it): %r" % sorted(set(found) ^ self.PLACES))
+
+    def test_no_swept_file_carries_a_retired_wording(self):
+        for rel, text in sorted(self._places().items()):
+            joined = " ".join(text.split())
+            for key, phrase in sorted(RETIRED_WORDINGS.items()):
+                self.assertFalse(phrase in joined, "%s carries a wording a review round retired (%s): %r" % (rel, key, phrase))
+                #                                    not assertNotIn: its failure message would print the whole file
+
+    def test_this_modules_top_keys_comment_names_both_families(self):
+        line = next(l for l in Path(__file__).read_text().splitlines() if l.strip().startswith('"stagesForeign",'))
+        self.assertIn("push stage", line + " ", "the TOP_KEYS comment names the push family beside the jobs family")
 
 
 class ProcessStatsFallback(unittest.TestCase):

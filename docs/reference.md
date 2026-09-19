@@ -2688,10 +2688,10 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   (`beginCheckpointCycle`, `sessionsListing`, `applyPendingOps`,
   `turnNotify`, `persistCheckpoints`, `convergeCheckpoints`,
   `bootRowBackstop`, `kernelSample`, `apiHealth`). A `jobs.<job>` stage the
-  pusher's thread closes counts here and not in `stages_ms`, whose
-  `jobs.<job>` rows are the jobs thread's; the nine sum to at most
-  `stages_ms.jobs` over closed cycles (the `stages_ms` entry says how a
-  snapshot inside one reads).
+  thread that owns the pusher's cycle closes counts here and not in
+  `stages_ms`, whose `jobs.<job>` rows are the jobs thread's; the nine sum to
+  at most `stages_ms.jobs` over closed cycles (the `stages_ms` entry says how
+  a snapshot inside one reads).
   The interval is 1.0 s (`PUSH_MIN_INTERVAL_S` in the kernel): a cycle starts
   no sooner than that after the previous one began unless the live tail of a
   chat tab a connected client is watching changed (a Claude Code session's

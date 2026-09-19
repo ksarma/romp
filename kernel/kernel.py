@@ -1036,7 +1036,8 @@ class _PerfStats:
     # cycle (_pusher_cycle_jobs: what feeds a frame or shares the cycle's checkpoint byte budget), PASS_JOBS on the jobs thread
     # (_jobs_pass, the housekeeping split off the pusher on 2026-09-13), each in the order its function runs them; JOBS is the
     # census of both (tests/test_jobs_thread_split.py holds each list to its function's _job_stage calls). stage() credits a
-    # `jobs.<job>` write by its writer's owner: the jobs thread's to the flat stages_ms row, the pusher's to cycleJobsMs
+    # `jobs.<job>` write by its writer's owner: the jobs thread's to the flat stages_ms row, the pusher's to cycleJobsMs, a
+    # thread owning neither loop's to stagesForeign
     CYCLE_JOBS = ("beginCheckpointCycle", "sessionsListing", "applyPendingOps", "turnNotify", "persistCheckpoints", "convergeCheckpoints",
                   "bootRowBackstop", "kernelSample", "apiHealth")
     PASS_JOBS = ("liftSpentAwaiting", "deathSweep", "endOnIdle", "deferralSweep",
