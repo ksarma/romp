@@ -70,6 +70,19 @@ The REAL _amain runs here (its inputs() closure) against a stand-in SDK module w
 it was fed and in which phase of the scripted stream — installed in sys.modules for the test (the
 backend imports the SDK lazily, at the top of _amain) and removed after. Every id is synthetic (the
 placeholder uuid family), the hostname TESTHOST, every text invented.
+Timing discipline (2026-09-19): every negative read here ('still held', 'not counted', 'no teardown') is
+ordered after a POSITIVE event on the session's loop, never after a sleep: a frame the test pushed observed
+handled (_handled, the class-level record of _handle_stream_message returns) for the handler's own synchronous
+effects; a non-turn probe frame, pushed once every earlier frame of the client is handled and observed handled
+itself (_probe), for a read of the client's writes after an enqueue, and _reacted (handled, then the probe) for
+one after a frame, since a release inside a handler feeds in a LATER loop step; the move arm read back visible
+(_arm); or one of the _wait predicates. The bare 0.15 s settle these reads used to follow was not a bound on
+loop latency under load: on the free-threaded CI build the result's settle had queued the feeder's wakeup, the
+arm's setattr callback queued behind it, and an enqueue that landed before the loop ran either was fed with the
+arm still False (PR 833's red, 2 writes where the held read expected 1). The sleep hid the missing
+happens-before instead of supplying it, and the fake never sleeps in the code under test, so there is no bare
+sleep left to reach for in this class. The 833 mechanism is a case here now, with the loop parked in the
+settle on purpose, and the record's exit-time promise is pinned by its own case.
 """
 import asyncio
 import json
@@ -177,6 +190,7 @@ class OneFedTextAtATime(unittest.TestCase):
             self.writes = []                # (text, phase) — the test's own phase label at the write
             self.phase = "before-turn-1"
             self.frames = asyncio.Queue()   # the scripted stream: the test pushes frames
+            self.pushed = []                # every frame's uuid pushed to this client, in order (_probe's precondition)
             self.torn_down = False
 
         async def __aenter__(self):
@@ -241,6 +255,20 @@ class OneFedTextAtATime(unittest.TestCase):
         self.s._do_refresh_usage = _noop
         self.be.sessions[SID] = self.s
         self.n = 0
+        # every frame the stream handler FINISHED, by uuid: the event _handled waits on. A class-level wrap
+        # (restored by a cleanup, which runs after tearDown joined the session threads), so the session the
+        # backend respawns itself in the exit tests records too; the fake's frames all carry a uuid of
+        # _uid()'s minting, and a frame is recorded after the handler returned, contained failure or not
+        self._handled_frames = handled = []
+        real_handle = sb.SdkSession._handle_stream_message
+
+        def recording(session, msg, *a, **k):
+            try:
+                return real_handle(session, msg, *a, **k)
+            finally:
+                handled.append(getattr(msg, "uuid", None))
+        sb.SdkSession._handle_stream_message = recording
+        self.addCleanup(setattr, sb.SdkSession, "_handle_stream_message", real_handle)
 
     def tearDown(self):
         for q in _ControlChannel.instances:
@@ -276,39 +304,106 @@ class OneFedTextAtATime(unittest.TestCase):
                   % (what, [c.writes for c in self._Client.instances], self.s.pending(),
                      self.s._untaken, self.lines[-6:]))
 
-    def _settle(self, dt=0.15):
-        """Every chance for a (wrong) feed to happen: the loop runs its wakeups within this."""
-        time.sleep(dt)
-
     def _push(self, client, frame):
+        """Push a frame into the scripted stream. Returns its uuid, the handle _handled waits on, and records
+        it on the client (client.pushed), so _probe can wait for every earlier frame of that client to be
+        handled before it pushes its own."""
         client.loop.call_soon_threadsafe(client.frames.put_nowait, frame)
+        uid = getattr(frame, "uuid", None)
+        if uid is not None:
+            client.pushed.append(uid)
+        return uid
+
+    def _handled(self, uid, what=None):
+        """Wait until the frame with this uuid has been HANDLED: its _handle_stream_message returned (the
+        class-level record setUp installs, appended after the return, contained failure or not; pinned by
+        test_a_frame_is_recorded_handled_only_after_its_handler_returned), so every SYNCHRONOUS effect of the
+        handler is readable: the count check's inflight, the take check's clearing of _untaken or its fault
+        flag and log line, a consumed move arm. That is all it orders. Two things it does NOT order, so a
+        negative read of the client's WRITES never follows a bare _handled (use _reacted):
+          * the feeder's reaction to the handler. A release inside the handler (_untaken cleared, the arm
+            consumed) only SCHEDULES the feeder's resumption (_input_wake.set() is a call_soon), and the feed
+            it would make lands in the client's writes in a later loop step, so a read right after the
+            handler returned can see the writes before that step and pass with the kernel broken (the
+            review's mutation, 2026-09-19: a take check that releases on every frame plus 15 ms of loop
+            latency after the handler, and the splice case stayed green);
+          * the feeder's evaluation of an enqueue made BEFORE the frame was pushed, unless the drain was
+            parked at its queue when the frame's put ran: an earlier frame pushed and not yet handled makes
+            asyncio.Queue.get() return this frame without yielding, in the same drain step, ahead of the
+            feeder's step the enqueue's wake scheduled.
+        Until 2026-09-19 these reads followed a bare 0.15 s sleep, which is not a bound on loop latency under
+        load: the free-threaded CI build fed a text past an arm whose setattr callback had not run yet, and
+        the held read found two writes (PR 833's red)."""
+        self._wait(lambda: uid in self._handled_frames, what or "frame %s handled" % uid)
+
+    def _probe(self, client):
+        """Order a read of the client's writes after the feeder has evaluated everything before it: push a
+        non-turn `status` frame (pinned as releasing nothing and counting nothing by
+        test_only_turn_frames_witness_a_take_never_a_task_hook_or_progress_frame) and wait for it handled.
+        The feeder writes nothing when it holds, so a hold has no event of its own; the probe is the nearest
+        event after the evaluation that held. The argument: the probe's put runs with the drain PARKED at
+        its queue (the first wait below: every earlier frame of this client already handled, so no unhandled
+        frame can carry the probe into its own drain step), so the put schedules a fresh resumption of the
+        drain, behind every feeder resumption already scheduled: an enqueue's wake (queued from this thread
+        before the put) and a release's wake (queued on the loop inside a handler that returned before the
+        put). The feeder's step evaluates the queue and, when it feeds, lands the text in the client's
+        writes inside that step (inputs() has no await between its pop and its yield, and the fake's query()
+        appends inside its async for without one), so the probe handled implies every feed the state before
+        it could cause has landed."""
+        earlier = list(client.pushed)
+        self._wait(lambda: all(u in self._handled_frames for u in earlier),
+                   "every frame pushed to client %d before the probe handled (outstanding at the call: %r)"
+                   % (client.no, [u for u in earlier if u not in self._handled_frames]))
+        self._handled(self._sys(client, "status"), "the probe frame handled")
+
+    def _reacted(self, uid, client):
+        """Wait until the frame with this uuid has been handled AND the feeder has reacted to whatever its
+        handler did: _handled, then _probe. The form for a negative read of the client's writes after a
+        frame (a frame of the running turn that must not release a hold; an init that must not consume the
+        arm): a wrong release inside the handler feeds in a later loop step, which the probe's handling
+        follows (_probe has the argument), so the read cannot pass ahead of it."""
+        self._handled(uid)
+        self._probe(client)
+
+    def _arm(self, s=None):
+        """Arm the move settle from off the loop thread and wait until the arm is VISIBLE. move() itself sets
+        the flag directly under s._lock on its own thread, where the feeder reads it, so move()'s arm is
+        visible to the feeder at once; this fixture schedules the setattr on the loop instead, and that
+        construction is what needs the read-back: once this thread reads it True the loop has run the
+        setattr, so every loop callback after it (the feed an enqueue wakes) reads it too. The 833 red: the
+        result's settle had queued the feeder's wakeup before the arm was queued behind it, and an enqueue
+        that landed while the loop was busy was fed by that wakeup with the arm still False; the sleep
+        between the two stood in for a happens-before it could not supply."""
+        s = s or self.s
+        s.loop.call_soon_threadsafe(setattr, s, "_move_settle_expected", True)
+        self._wait(lambda: s._move_settle_expected, "the move arm is set")
 
     def _uid(self):
         self.n += 1
         return "11111111-2222-3333-4444-%012d" % self.n
 
     def _init(self, client):
-        self._push(client, _SystemMessage("init", {"model": "claude-x", "permissionMode": "acceptEdits",
+        return self._push(client, _SystemMessage("init", {"model": "claude-x", "permissionMode": "acceptEdits",
                                                     "session_id": FSID}, uuid=self._uid()))
 
     def _assistant(self, client, text="working on it"):
-        self._push(client, _AssistantMessage([_TextBlock(text)], uuid=self._uid()))
+        return self._push(client, _AssistantMessage([_TextBlock(text)], uuid=self._uid()))
 
     def _result_frame(self, client):
-        self._push(client, _result(uuid=self._uid(), subtype="success", is_error=False, num_turns=1,
+        return self._push(client, _result(uuid=self._uid(), subtype="success", is_error=False, num_turns=1,
                                    session_id=FSID, duration_ms=1, duration_api_ms=1, total_cost_usd=0.01,
                                    usage={"input_tokens": 1, "output_tokens": 1}, result="ok",
                                    parent_tool_use_id=None))
 
     def _move_result(self, client):
         """The turn-less result an accepted set_cwd emits after its init (verified 2026-09-02): num_turns 0."""
-        self._push(client, _result(uuid=self._uid(), subtype="success", is_error=False, num_turns=0,
+        return self._push(client, _result(uuid=self._uid(), subtype="success", is_error=False, num_turns=0,
                                    session_id=FSID, duration_ms=0, duration_api_ms=0, total_cost_usd=0.0,
                                    usage={}, result="", parent_tool_use_id=None))
 
     def _interrupted_result(self, client):
         """The result of an interrupted turn, as CLI 2.1.263 emits it: error_during_execution, is_error."""
-        self._push(client, _result(uuid=self._uid(), subtype="error_during_execution", is_error=True,
+        return self._push(client, _result(uuid=self._uid(), subtype="error_during_execution", is_error=True,
                                    num_turns=2, session_id=FSID, duration_ms=1, duration_api_ms=1,
                                    total_cost_usd=0.01, usage={"input_tokens": 1, "output_tokens": 1},
                                    result=None, parent_tool_use_id=None))
@@ -316,7 +411,7 @@ class OneFedTextAtATime(unittest.TestCase):
     def _sys(self, client, subtype):
         """A system frame that is NOT the init: the CLI's background-task, hook and status machinery
         streams these on its own clock, turn or no turn, and none says anything about its prompt queue."""
-        self._push(client, _SystemMessage(subtype, {"task_id": "t-1", "status": "running"}, uuid=self._uid()))
+        return self._push(client, _SystemMessage(subtype, {"task_id": "t-1", "status": "running"}, uuid=self._uid()))
 
     def _user_record(self, text):
         """The CLI's own transcript record of a user turn."""
@@ -389,6 +484,32 @@ class OneFedTextAtATime(unittest.TestCase):
         self.assertTrue(os.path.exists(sb.transcript_path(self.cwd, FSID)), "the record is under the CLI's sid")
         self.assertFalse(os.path.exists(sb.transcript_path(self.cwd, SID)), "…and not under the module's")
 
+    def test_a_frame_is_recorded_handled_only_after_its_handler_returned(self):
+        """The fixture's own promise, pinned (2026-09-19): _handled's record is appended after
+        _handle_stream_message RETURNED, never at its entry. Every negative read in this class rests on it
+        (a record at entry would let a read run beside the handler, with the count check and the take check
+        still to come). A handler stalled on a gate is observed from this thread: while the gate is shut the
+        frame's uuid is not in the record (the stall holds the loop thread inside the handler, so the append
+        cannot have run; no timing in that read), and _handled returns once the gate opens."""
+        s, c = self.s, self._first_turn()
+        entered, gate = threading.Event(), threading.Event()
+        self.addCleanup(gate.set)                        # a failed assertion must not leave the loop parked
+        real_on = s._on_message
+        frame = _SystemMessage("status", {"task_id": "t-1", "status": "running"}, uuid=self._uid())
+
+        def stalled(msg, *a, **k):
+            if getattr(msg, "uuid", None) == frame.uuid:
+                entered.set()
+                gate.wait(10)
+            return real_on(msg, *a, **k)
+        s._on_message = stalled                          # inside _handle_stream_message, inside the record's wrap
+        self._push(c, frame)
+        self.assertTrue(entered.wait(10), "the handler entered")
+        self.assertNotIn(frame.uuid, self._handled_frames, "not recorded while its handler is still running")
+        gate.set()
+        self._handled(frame.uuid)
+        self.assertIn(frame.uuid, self._handled_frames)
+
     def test_two_texts_sent_mid_turn_reach_the_client_one_at_a_time_and_in_order(self):
         """The incident's shape: two texts queued while a turn is open. The first forwards at once (the
         designed mid-turn forward); the second is HELD — through the rest of the turn and through its
@@ -399,18 +520,17 @@ class OneFedTextAtATime(unittest.TestCase):
         self._wait(lambda: len(c.writes) == 2, "the first mid-turn send forwarded")
         self.assertEqual(c.writes[1], ("please also update the changelog", "turn-1"))
         s.enqueue("and bump the version")
-        self._settle()
+        self._probe(c)
         self.assertEqual(len(c.writes), 2, "the second text is NOT fed while the first is untaken")
         self.assertEqual(s.pending(), ["and bump the version"], "…it waits, visibly, in the queue")
         self.assertTrue(self.be.queue_recallable(SID), "…and is still recallable there (the ✕ can win)")
         self._assistant(c, "still working")            # more of the same turn: nothing proves a take
-        self._push(c, _RateLimitEvent())                # a non-turn frame proves nothing either
-        self._settle()
+        self._reacted(self._push(c, _RateLimitEvent(self._uid())), c)  # a non-turn frame proves nothing either
         self.assertEqual(len(c.writes), 2, "a frame of the running turn does not release the hold")
         c.phase = "after-result-1"
         self._result_frame(c)
-        self._wait(lambda: s.inflight == 0, "the turn's result settles it")
-        self._settle()
+        self._wait(lambda: s.inflight == 0 and s._untaken and s._untaken.get("settled"), "the turn's result settles it")
+        self._probe(c)
         self.assertEqual(len(c.writes), 2, "the result alone does not release it: the CLI drains AFTER it")
         self.assertTrue(s._untaken and s._untaken.get("settled"), "the hold now waits for the next turn's frame")
         c.phase = "turn-2"
@@ -431,7 +551,7 @@ class OneFedTextAtATime(unittest.TestCase):
         self._wait(lambda: len(c.writes) == 2, "the composer message forwarded")
         answer = "Re: Which branch should I target? — main, please"
         s.enqueue(answer, todo="ut-11111111")
-        self._settle()
+        self._probe(c)
         self.assertEqual(len(c.writes), 2, "the answer waits behind the untaken composer message")
         self.assertEqual(getattr(s.pending()[0], "todo", ""), "ut-11111111", "the queued answer keeps its ask")
         self._result_frame(c)
@@ -453,13 +573,12 @@ class OneFedTextAtATime(unittest.TestCase):
         s.enqueue("first note")
         self._wait(lambda: len(c.writes) == 2, "the first note forwarded")
         s.enqueue("second note")
-        self._settle()
+        self._probe(c)
         self.assertEqual(len(c.writes), 2, "the second note waits")
         # a record of another text: not the take
         self._append({"type": "attachment", "uuid": self._uid(), "timestamp": _iso(time.time()),
                       "attachment": {"type": "queued_command", "prompt": "some other text"}})
-        self._assistant(c)
-        self._settle()
+        self._reacted(self._assistant(c), c)
         self.assertEqual(len(c.writes), 2, "another text's record releases nothing")
         # the fed text's own splice record
         self._append({"type": "attachment", "uuid": self._uid(), "timestamp": _iso(time.time()),
@@ -511,7 +630,7 @@ class OneFedTextAtATime(unittest.TestCase):
         self._result_frame(c1)
         self._wait(lambda: s.inflight == 0 and s._untaken and s._untaken.get("settled"),
                    "the turn settled with the note still in the CLI's queue")
-        self._settle()
+        self._probe(c1)
         self.assertEqual(len(self._Client.instances), 1, "no teardown at this result: the CLI still holds the note")
         self.assertFalse(c1.torn_down)
         self.assertTrue(s._reconnect_when_idle, "the arm waits for the take")
@@ -519,7 +638,7 @@ class OneFedTextAtATime(unittest.TestCase):
         self._init(c1)                                 # the drained turn: the note left the CLI's queue
         self._wait(lambda: s._untaken is None and s.inflight == 1, "the drain counted as a turn")
         self.assertEqual(s.fed_texts(), ["mid-turn note"], "the drained text rides the fed-turn twin")
-        self._settle()
+        self._probe(c1)
         self.assertEqual(len(self._Client.instances), 1, "the drained turn runs to its end first")
         self._result_frame(c1)
         self._wait(lambda: len(self._Client.instances) == 2 and self._Client.instances[1] is s.client,
@@ -549,7 +668,7 @@ class OneFedTextAtATime(unittest.TestCase):
         self.assertEqual(s.pending(), [])
         s.request_reconnect()
         self._wait(lambda: s._reconnect_when_idle, "deferred, not fired")
-        self._settle()
+        self._probe(c1)
         self.assertEqual(len(self._Client.instances), 1, "the CLI keeps running: it still holds the note")
         s.request_reconnect(defer=False)
         self._wait(lambda: any("not reconnected" in l for l in self.lines), "the no-defer form refused, loudly")
@@ -574,8 +693,7 @@ class OneFedTextAtATime(unittest.TestCase):
         self._wait(lambda: s.inflight == 0 and s._untaken and s._untaken.get("settled"), "settled, untaken")
         s.loop.call_soon_threadsafe(lambda: (setattr(s, "_reconnect", True), s._wake_set()))
         self._wait(lambda: len(self._Client.instances) == 2 and s.client is self._Client.instances[1],
-                   "the forced reconnect")
-        self._settle()
+                   "the forced reconnect")   # the loop top writes every state read below before it assigns the client
         self.assertIsNone(s._untaken)
         self.assertEqual(s.inflight, 0, "the reconcile settled the counter it was handed")
         self.assertEqual(s.fed_texts(), [])
@@ -610,16 +728,15 @@ class OneFedTextAtATime(unittest.TestCase):
         self.assertIs(s._untaken["fresh"], False, "C went into a running turn, not from idle")
         self.assertEqual(s.inflight, 2)
         s.enqueue("D behind C")
-        self._settle()
+        self._probe(c)
         self.assertEqual(len(c.writes), 3, "D waits: C is untaken")
-        self._assistant(c, "turn 2 keeps going")       # a frame of the running turn: not C's take
-        self._settle()
+        self._reacted(self._assistant(c, "turn 2 keeps going"), c)  # a frame of the running turn: not C's take
         self.assertEqual(len(c.writes), 3, "the drained turn's next frame does NOT release C's hold")
         self.assertEqual(s.pending(), ["D behind C"])
         c.phase = "after-result-2"
         self._result_frame(c)
-        self._wait(lambda: s.inflight == 0, "turn 2 settled")
-        self._settle()
+        self._wait(lambda: s.inflight == 0 and s._untaken and s._untaken.get("settled"), "turn 2 settled")
+        self._probe(c)
         self.assertEqual(len(c.writes), 3, "the result alone is not the take either")
         c.phase = "turn-3"
         self._init(c)
@@ -639,8 +756,7 @@ class OneFedTextAtATime(unittest.TestCase):
         self.assertFalse(self.be.busy(SID))
         self._sys(c, "task_notification")               # a background task finished: not a turn
         self._sys(c, "hook_started")
-        self._push(c, _RateLimitEvent())
-        self._settle()
+        self._handled(self._push(c, _RateLimitEvent(self._uid())))
         self.assertEqual(s.inflight, 0, "no turn frame, no turn")
         # the CLI-started turn's 0->1 raise in _on_message re-baselines the scope's OOM counter, like a fed turn's
         # raise in the feeder (the scope PR's round 3, 2026-09-10): count the snapshots through the instance
@@ -660,13 +776,12 @@ class OneFedTextAtATime(unittest.TestCase):
         self.assertIs(s._untaken["fresh"], False)
         self.assertEqual(s.inflight, 2)
         s.enqueue("second composer send")
-        self._assistant(c, "the auto turn continues")
-        self._settle()
+        self._reacted(self._assistant(c, "the auto turn continues"), c)
         self.assertEqual(len(c.writes), 2, "the second send waits: the first is untaken and the turn's frames prove nothing")
         c.phase = "after-auto"
         self._result_frame(c)
-        self._wait(lambda: s.inflight == 0, "the auto turn settled")
-        self._settle()
+        self._wait(lambda: s.inflight == 0 and s._untaken and s._untaken.get("settled"), "the auto turn settled")
+        self._probe(c)
         self.assertEqual(len(c.writes), 2, "not at the result either")
         c.phase = "turn-3"
         self._assistant(c, "the drained turn's first frame")   # an assistant frame at inflight 0 counts too
@@ -706,8 +821,7 @@ class OneFedTextAtATime(unittest.TestCase):
         for st in ("task_started", "task_progress", "task_notification", "background_tasks_changed",
                    "hook_started", "status", "compact_boundary"):
             self._sys(c, st)
-        self._push(c, _RateLimitEvent())
-        self._settle()
+        self._reacted(self._push(c, _RateLimitEvent(self._uid())), c)
         self.assertEqual(len(c.writes), 2, "no system subtype but the init releases a fresh hold")
         self.assertEqual(s.inflight, 1, "…and none counts a turn")
         c.phase = "turn-2"
@@ -720,8 +834,7 @@ class OneFedTextAtATime(unittest.TestCase):
         self._result_frame(c)
         self._wait(lambda: s.inflight == 0 and s._untaken and s._untaken.get("settled"), "settled")
         self._sys(c, "task_progress")
-        self._sys(c, "task_notification")
-        self._settle()
+        self._reacted(self._sys(c, "task_notification"), c)
         self.assertEqual(len(c.writes), 3, "a task frame in the drain gap is not the drain")
         self.assertEqual(s.inflight, 0)
         c.phase = "turn-3"
@@ -738,11 +851,10 @@ class OneFedTextAtATime(unittest.TestCase):
         s.enqueue("first note")
         self._wait(lambda: len(c.writes) == 2, "the first note forwarded")
         s.enqueue("second note")
-        self._settle()
+        self._probe(c)
         self.assertEqual(len(c.writes), 2)
         self._fault_the_transcript()
-        self._assistant(c)                              # the scan raises here
-        self._settle()
+        self._reacted(self._assistant(c), c)            # the scan raises here
         self.assertEqual(len(c.writes), 2, "the frame that met the fault is not yet the escape")
         self.assertTrue(s._untaken and s._untaken.get("fault"), "the hold knows")
         self.assertEqual(len(self._fault_lines()), 1, "one problem line")
@@ -750,8 +862,7 @@ class OneFedTextAtATime(unittest.TestCase):
         self._assistant(c)                              # the next turn frame
         self._wait(lambda: len(c.writes) == 3, "the second note fed: the hold escaped")
         self.assertEqual(c.writes[2], ("second note", "turn-1"))
-        self._assistant(c)
-        self._settle()
+        self._handled(self._assistant(c))
         self.assertEqual(len(self._fault_lines()), 1, "one line for that hold, however many frames followed")
 
     def test_a_faulted_hold_escapes_at_the_result_when_nothing_later_streams(self):
@@ -762,7 +873,7 @@ class OneFedTextAtATime(unittest.TestCase):
         s.enqueue("first note")
         self._wait(lambda: len(c.writes) == 2, "the first note forwarded")
         s.enqueue("second note")
-        self._settle()
+        self._probe(c)
         self._fault_the_transcript()
         c.phase = "after-result-1"
         self._result_frame(c)
@@ -813,14 +924,14 @@ class OneFedTextAtATime(unittest.TestCase):
         c.phase = "after-result-1"
         self._result_frame(c)
         self._wait(lambda: s.inflight == 0, "idle")
-        s.loop.call_soon_threadsafe(setattr, s, "_move_settle_expected", True)   # move() arms BEFORE its request
+        self._arm(s)                                     # move() arms BEFORE its request
         c.phase = "move"
         self._init(c)                                    # the CLI relocated: its init, no query behind it
         self._move_result(c)
         self._sys(c, "commands_changed")
-        self._sys(c, "commands_changed")
+        tail = self._sys(c, "commands_changed")
         self._wait(lambda: not s._move_settle_expected, "the move's turn-less result consumed")
-        self._settle()
+        self._handled(tail)
         self.assertEqual(s.inflight, 0, "the move's init is no turn of the CLI's")
         self.assertEqual(s.fed_texts(), [])
         self.assertFalse(self.be.busy(SID), "an idle session stays idle after an accepted move")
@@ -841,7 +952,7 @@ class OneFedTextAtATime(unittest.TestCase):
         self._init(c)                                    # counted: the arm was not up yet
         self._wait(lambda: s.inflight == 1, "a CLI-owned turn counted")
         self.assertTrue(self.be.busy(SID))
-        s.loop.call_soon_threadsafe(setattr, s, "_move_settle_expected", True)
+        self._arm(s)
         self._move_result(c)
         self._wait(lambda: s.inflight == 0, "the move's turn-less result zeroed the stray count")
         self.assertFalse(self.be.busy(SID))
@@ -880,7 +991,7 @@ class OneFedTextAtATime(unittest.TestCase):
         s.enqueue("B mid-turn")
         self._wait(lambda: len(c.writes) == 2, "B forwarded")
         s.enqueue("C behind B")
-        self._settle()
+        self._probe(c)
         self.assertEqual(len(c.writes), 2, "C waits behind B's hold")
         s.interrupt()                                    # the stop button: the control request rung
         self._wait(lambda: s._interrupted, "interrupting")
@@ -888,7 +999,7 @@ class OneFedTextAtATime(unittest.TestCase):
         self._interrupted_result(c)
         self._wait(lambda: s.inflight == 0 and s._untaken and s._untaken.get("settled"),
                    "the interrupted turn settled with B still in the CLI's queue")
-        self._settle()
+        self._probe(c)
         self.assertFalse(s._interrupted, "the result settled the interrupt")
         self.assertEqual(len(c.writes), 2, "nothing re-fed at the interrupt: the CLI keeps B")
         self.assertEqual(s.pending(), ["C behind B"], "C still waits for B's take")
@@ -937,7 +1048,7 @@ class OneFedTextAtATime(unittest.TestCase):
         c2 = self._Client.instances[1]
         self.assertEqual(c2.writes[0][0], "mid-turn note")
         self.assertEqual(str(s2.fed_texts()[0]), "mid-turn note", "the note itself rode into the fed-turn twin")
-        self._settle()
+        self._probe(c2)
         self.assertEqual(len(c2.writes), 1, "what queued behind it still waits for its take")
         c2.phase = "resumed"
         self._init(c2)
@@ -996,16 +1107,14 @@ class OneFedTextAtATime(unittest.TestCase):
         c.phase = "after-result-1"
         self._result_frame(c)
         self._wait(lambda: s.inflight == 0, "idle")
-        s.loop.call_soon_threadsafe(setattr, s, "_move_settle_expected", True)   # armed; no turn-less result comes
-        self._settle()
+        self._arm(s)                                     # armed, and read back visible; no turn-less result comes
         c.phase = "held-behind-the-arm"
         s.enqueue("A from idle")
-        self._settle()
+        self._probe(c)
         self.assertEqual(len(c.writes), 1, "held: a move's settle is expected (round 4)")
         c.phase = "cli-owned-turn"
         self._init(c)                                    # the CLI opened a turn on its own (a notification)
-        self._assistant(c, "the CLI's own turn")
-        self._settle()
+        self._reacted(self._assistant(c, "the CLI's own turn"), c)  # both consumed: the init's handling precedes this one's (FIFO)
         self.assertEqual(s.inflight, 0, "not counted while the arm stands (round 2)")
         self.assertEqual(len(c.writes), 1, "still held: the running turn's frames are not the event")
         c.phase = "after-the-drop"
@@ -1031,8 +1140,7 @@ class OneFedTextAtATime(unittest.TestCase):
         self._wait(lambda: len(c.writes) == 4, "C fed into B's turn")
         self.assertIs(s._untaken["fresh"], False, "C went into a running turn, not from idle")
         s.enqueue("D behind C")
-        self._assistant(c, "turn B keeps going")        # a frame of the running turn: not C's take
-        self._settle()
+        self._reacted(self._assistant(c, "turn B keeps going"), c)  # a frame of the running turn: not C's take
         self.assertEqual(len(c.writes), 4, "D waits: C is untaken and the running turn's frame proves nothing")
         c.phase = "after-result-B"
         self._result_frame(c)
@@ -1044,6 +1152,59 @@ class OneFedTextAtATime(unittest.TestCase):
                          ["first turn", "A from idle", "B mid-turn", "C into B's turn", "D behind C"])
         self.assertEqual(c.writes[4][1], "turn-C")
 
+    def test_the_arm_is_visible_before_the_enqueue_while_the_loop_is_parked_in_the_settle(self):
+        """PR 833's red, made deterministic (2026-09-19): the result's settle queues the feeder's wakeup
+        (_input_wake.set()) and then runs the turn-end count; with the loop thread parked there, an arm
+        scheduled from this thread is a callback the loop has not run, and an enqueue that lands while it is
+        parked is fed by that wakeup with the arm still False (2 writes where the held read expects 1). The
+        loop is parked at _turn_completed, the statement after the wake, until one of two events on this
+        thread: the arm wait has polled its predicate false twice (this thread is waiting, and the arm
+        cannot become visible while the loop is parked: _arm's world), or the enqueue landed in the queue
+        (the world before _arm read the arm back, which fed). The 10 s on the park is the failure path's
+        bound, the same as _wait's, never the proof: the proof is which event lifted the park, and the count
+        the probe then reads."""
+        s, c = self.s, self._first_turn()
+        polls, lifted = [], []
+        real_wait, real_completed = self._wait, self.be._turn_completed
+
+        def counting_wait(pred, what, timeout=10.0):
+            def counted():
+                r = pred()
+                if not r:
+                    polls.append(what)
+                return r
+            return real_wait(counted, what, timeout)
+
+        def parked(sid, *a, **k):
+            if sid == SID and not lifted:
+                end = time.monotonic() + 10.0
+                while time.monotonic() < end:
+                    if s.pending():
+                        lifted.append("the enqueue landed while the loop was parked"); break
+                    if len(polls) >= 2:
+                        lifted.append("the arm wait polled false twice"); break
+                    time.sleep(0.005)
+                else:
+                    lifted.append("the 10 s bound")
+            return real_completed(sid, *a, **k)
+        self.be._turn_completed = parked
+        c.phase = "after-result-1"
+        self._result_frame(c)
+        self._wait(lambda: s.inflight == 0, "idle")      # zeroed before the park, in the same settle block
+        self._wait = counting_wait                       # counts the arm wait's polls: installed for _arm alone
+        try:
+            self._arm(s)
+        finally:
+            del self._wait
+        c.phase = "held-behind-the-arm"
+        s.enqueue("A from idle")
+        self._probe(c)
+        self.assertEqual(lifted, ["the arm wait polled false twice"],
+                         "the enqueue must not land while the loop is parked in the settle: the arm was not read back")
+        self.assertEqual(len(c.writes), 1, "held: a move's settle is expected (round 4)")
+        self.assertTrue(s._move_settle_expected, "the arm stands")
+        self.assertEqual(s.pending(), ["A from idle"])
+
     def test_a_reconnect_drops_a_stale_move_arm_so_the_new_clients_turns_count(self):
         """The loop top's backstop: the client that owed the move's turn-less result is torn down (a
         reconnect), and the new one will never emit it. The arm is dropped there, so a turn the new CLI
@@ -1052,8 +1213,7 @@ class OneFedTextAtATime(unittest.TestCase):
         c.phase = "after-result-1"
         self._result_frame(c)
         self._wait(lambda: s.inflight == 0, "idle")
-        s.loop.call_soon_threadsafe(setattr, s, "_move_settle_expected", True)
-        self._settle()
+        self._arm(s)
         self.assertTrue(s._move_settle_expected)
         s.request_reconnect()                            # idle: fires at once
         self._wait(lambda: len(self._Client.instances) == 2 and self._Client.instances[1] is s.client,
@@ -1099,7 +1259,7 @@ class OneFedTextAtATime(unittest.TestCase):
         self.assertTrue(any("died mid-turn" in l for l in self.lines), "the crash heal ran")
         c2 = self._Client.instances[1]
         self.assertEqual(c2.writes[0][0], sb.CRASH_RESUME_NUDGE)
-        self._settle()
+        self._probe(c2)
         self.assertEqual(len(c2.writes), 1, "the text waits for the nudge's take")
         c2.phase = "resumed"
         self._init(c2)
@@ -1170,7 +1330,7 @@ class OneFedTextAtATime(unittest.TestCase):
                          "the request went out through the control channel while the arm stood")
         c.phase = "relocating"
         s.enqueue("sent during the move")
-        self._settle()
+        self._probe(c)
         self.assertEqual(c.writes, [("first turn", "turn-1")], "held: the CLI is relocating for the move")
         self.assertEqual(s.pending(), ["sent during the move"], "queued, visible, cancellable")
         self.assertTrue(self.be.busy(SID), "a queued text: a drive op pressed now parks")
@@ -1179,11 +1339,10 @@ class OneFedTextAtATime(unittest.TestCase):
         t.join(10)
         self.assertEqual(out.get("r"), "")
         self.assertEqual(s.cwd, new, "romp's half of the move followed the ok")
-        self._settle()
+        self._probe(c)
         self.assertEqual(len(c.writes), 1, "the ok is not the event: the CLI still owes its turn-less result")
         c.phase = "after-move-init"
-        self._init(c)                                    # the CLI's init, no query behind it
-        self._settle()
+        self._reacted(self._init(c), c)                  # the CLI's init, no query behind it
         self.assertEqual(len(c.writes), 1, "the move's init is not the event either")
         self.assertEqual(s.inflight, 0, "the init counted no turn: the arm stands")
         c.phase = "after-move-result"
@@ -1194,8 +1353,7 @@ class OneFedTextAtATime(unittest.TestCase):
         self.assertEqual(s.inflight, 1)
         self.assertIs(s._untaken["fresh"], True, "fed from idle, after the move")
         self.assertEqual(s.pending(), [])
-        self._sys(c, "commands_changed")                 # the move's tail frames prove nothing about the queue
-        self._settle()
+        self._handled(self._sys(c, "commands_changed"))  # the move's tail frames prove nothing about the queue
         self.assertIsNotNone(s._untaken, "still held until the turn shows")
 
     def test_a_refused_move_lowers_the_arm_and_the_held_text_is_fed_then(self):
@@ -1208,7 +1366,7 @@ class OneFedTextAtATime(unittest.TestCase):
         self.assertTrue(s._move_settle_expected, "armed before the request")
         c.phase = "relocating"
         s.enqueue("sent during the move")
-        self._settle()
+        self._probe(c)
         self.assertEqual(c.writes, [("first turn", "turn-1")], "held while the move is in flight")
         c.phase = "after-refusal"
         c._query.gate.set()                              # the CLI answers: rejected
