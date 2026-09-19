@@ -1898,7 +1898,14 @@ export class FederationManager {
    *  the row itself, ev and why, the why carrying the slot, the reason and the remote's build (peerTag), so the latch is
    *  keyed on the EVENT the row describes and not on the conn's life: the same row files once, however many frames or
    *  redials produce it; a changed reason, or a redial that finds the remote on another build, files its own row
-   *  (Conn.saidDelta). No time window: the event is what a window would approximate. */
+   *  (Conn.saidDelta). No time window: the event is what a window would approximate. The build is the /tunnels row's as
+   *  poll() last read it, one supervisor pass and one poll behind the remote's real build, so a reason that first fires on
+   *  a redialed socket inside that lag files under the old build and again under the new one when the poll lands it: at
+   *  most one extra row per (conn, slot, reason) per change of the row's sha (a deploy the hub's row records), never per
+   *  poll window (a poll that re-reads the same sha adds no key) and never a third through "" (the row keeps the last
+   *  successful probe's sha while the peer is down: kernel.py _remote_public). A fix followed by a rollback is the design,
+   *  not a limitation: the key names a state (this conn, slot, reason and build), and a rollback to a build with the same
+   *  reason returns to a state already said, so no row. */
   private sayDeltaOnce(conn: Conn, ev: string, why: string): boolean {
     const key = JSON.stringify([ev, why]);
     const said = (conn.saidDelta ||= new Set<string>());

@@ -755,3 +755,68 @@ test("the constructor-throw retry timer landing after the watchdog dialed: the s
     fm.conns.get(HOST).closed = true;
   });
 });
+
+// The build in the key is the /tunnels row's as poll() last read it, so it lags the remote's real build by one supervisor
+// pass and one poll: a reason that first fires on a redialed socket inside that lag files under the OLD build and again
+// under the new one when the poll lands it. That over-report is bounded: one extra row per (conn, slot, reason) per change
+// of the row's sha (a remote deploy the hub's row records), never per poll window (a poll that re-reads the same sha adds
+// no key) and never a third through "" (the row keeps the last successful probe's sha while the peer is down: kernel.py
+// _remote_public). A fix followed by a rollback is the design: the key names a state (this conn, this slot, this reason,
+// this build), and a rollback to a build with the same reason returns to a state already said, so no row.
+test("the stale-sha over-report is bounded to one extra row per conn, slot and reason per deploy: a reason first said on a redialed socket under the old build is said again when the poll lands the new one, and no third (the same reason, a poll re-reading the same sha, a rollback to the old build); another reason is its own row", async () => {
+  const row: Record<string, any> = { kernelSha: "aaaaaaaaa" };
+  const restore = tunnelsStub(row);
+  try {
+    await withManager("timeline", ({ fm, sent }) => countingConsoleErrors(async (errors) => {
+      seedLocalTimeline(fm);
+      const ws = attached(fm);   // the remote on build a serves a keyable frame: the refusal has never fired on this conn
+      await fm.poll();
+      const conn = fm.conns.get(HOST);
+      assert.equal(conn.peerSha, "aaaaaaaaa");
+      assert.deepEqual(unkeyedRows(sent), [], "nothing refused on the old build");
+      // the remote redeploys onto build b and restarts; the socket dies and the watchdog redials BEFORE the hub's
+      // supervisor has re-read the peer's /version (the row still says a): the new build's frame is refused and its
+      // first patch files under the stale build
+      clock += REMOTE_STALE_MS + 1000;
+      fm.watchdog(clock);
+      const ws2 = last(FakeWS.made);
+      assert.notEqual(ws2, ws, "redialed");
+      assert.equal(fm.conns.get(HOST), conn, "on the same conn");
+      const full = oldFull(SID_A, [oldJudging(1001, "unblocker", 1002)]);
+      ws2.open(); ws2.frame(full); ws2.frame(barsPatchEmpty(600));
+      assert.deepEqual(unkeyedRows(sent).map((r) => r.why), [REFUSED_JUDGING + " @aaaaaaaaa"], "the first row names the build the hub's row last had: the over-report's extra row");
+      // the supervisor's pass and the poll land the new sha; the same reason (the resync's whole frame refused again, its
+      // next patch) is news under the new build: the second row, the one naming the build that refused
+      row.kernelSha = "bbbbbbbbb";
+      await fm.poll();
+      assert.equal(conn.peerSha, "bbbbbbbbb");
+      ws2.frame(full); ws2.frame(barsPatchEmpty(605));
+      assert.deepEqual(unkeyedRows(sent).map((r) => r.why), [REFUSED_JUDGING + " @aaaaaaaaa", REFUSED_JUDGING + " @bbbbbbbbb"], "exactly two rows: one under the old build, one under the new");
+      assert.equal(errors.length, 2);
+      // no third: the same reason again, a poll that re-reads the same sha (a new poll window is not a new key), and the
+      // same reason after it
+      ws2.frame(full); ws2.frame(barsPatchEmpty(610));
+      await fm.poll();
+      ws2.frame(full); ws2.frame(barsPatchEmpty(615));
+      assert.equal(unkeyedRows(sent).length, 2, "no third row: the same reason under the same build, across a poll that re-read the same sha (the bound is per sha change, not per poll window)");
+      // a rollback to build a with the same reason: a state this conn already said, so no row (designed, not a limitation)
+      row.kernelSha = "aaaaaaaaa";
+      await fm.poll();
+      assert.equal(conn.peerSha, "aaaaaaaaa");
+      clock += REMOTE_STALE_MS + 1000;
+      fm.watchdog(clock);
+      const ws3 = last(FakeWS.made);
+      assert.notEqual(ws3, ws2, "redialed across the rollback");
+      ws3.open(); ws3.frame(full); ws3.frame(barsPatchEmpty(700));
+      assert.deepEqual(ws3.sent, [{ type: "needSlot", slot: "bars" }], "asked all the same: the resync is per patch");
+      assert.equal(unkeyedRows(sent).length, 2, "the rollback returns to a state already said (this reason, this build): no row");
+      assert.equal(errors.length, 2);
+      // a reason that changes inside the lag is a different event, its own row by design, under the same bound
+      const turnsAsList = { type: "bars", turns: [bar("seg-1", 1000, 1005, "first")], judging: {}, messages: [], now: 800, warming: false };
+      ws3.frame(turnsAsList); ws3.frame(barsPatchEmpty(805));
+      assert.deepEqual(unkeyedRows(sent).map((r) => r.why), [REFUSED_JUDGING + " @aaaaaaaaa", REFUSED_JUDGING + " @bbbbbbbbb", "bars turns dictlist:id is a list @aaaaaaaaa"], "another collection refused under a build already in the set is its own row: the key carries the reason");
+      assert.equal(errors.length, 3);
+      fm.conns.get(HOST).closed = true;
+    }));
+  } finally { restore(); }
+});
