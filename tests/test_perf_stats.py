@@ -2441,16 +2441,18 @@ class RoutingStatements(unittest.TestCase):
     def test_probe_is_eight_kib_and_every_spelling_of_it_reads_the_constant(self):
         """PROBE's VALUE, pinned by nothing before round 3: every fixture here derives from self.PROBE, so halving the
         constant left every test green while the prose spelled a probe the code no longer used (round 2's Cluster D).
-        The value is eight kibibytes, a whole number of them, and every '<n> KiB' in this class's source (docstrings
-        and comments; read through inspect.getsource, so the pin is indentation-relative and 3.13's docstring dedent
-        does not move it) spells that value and no other; the literal appears once, at the assignment, so a typed
-        copy in a comment reds here rather than drifting. The value is written as a product below so this pin is not
-        itself the second literal."""
+        The value is eight kibibytes, a whole number of them, and every '<n> KiB' or '<n>KiB' in this class's source
+        (docstrings and comments; read through inspect.getsource, so the pin is indentation-relative and 3.13's
+        docstring dedent does not move it) spells that value and no other: every KiB figure in the class is taken to be
+        the probe, so another quantity spelled in KiB here reds until it is written another way. The literal appears
+        once, at the assignment, which must stay a literal (a product there reds this count), so a typed copy in a
+        comment reds here rather than drifting. The value is written as a product below so this pin is not itself the
+        second literal."""
         self.assertEqual(RoutingStatements.PROBE, 8 * 1024)
         self.assertEqual(RoutingStatements.PROBE % 1024, 0, "a whole number of KiB, or the rendered spelling below would round")
         spelled = "%d KiB" % (RoutingStatements.PROBE // 1024)
         source = inspect.getsource(RoutingStatements)
-        hits = re.findall(r"\b\d+ KiB\b", source)
+        hits = ["%s KiB" % n for n in re.findall(r"\b(\d+)\s?KiB\b", source)]         # both spacings read as one
         self.assertTrue(hits, "the class spells the probe in KiB somewhere; a pin over no spelling would pass vacuously")
         self.assertEqual(set(hits), {spelled}, "every KiB spelling in the class is the constant's value")
         self.assertEqual(source.count(str(RoutingStatements.PROBE)), 1, "the literal appears once, at the assignment")
