@@ -17,8 +17,12 @@ The population, measured at this branch's base: six classes in five modules leak
 CostWeighting, BuildSessionDiffRows, FeedWarmResolveBumpsTheLedgerRevision, SharedViewInBuilds and
 PushSurvivesOneFailedChatBuild), each fixed in a commit of its own with ViewBuilder's shape: ViewBuilder's before the
 ratchet, the other four after it, one per module, found by the review round that ran the modules alone. The count
-comes from running every module ALONE with the ratchet on. The population is a union, every set saved beside the list
-with the script that derives it: the 237 modules a census plugin (a scratch pytest plugin over two full -n 4 runs) saw
+comes from running every module ALONE with the ratchet on, on the missing road, which is CI's: the test venv's
+interpreter has no claude_agent_sdk, and a module run alone does not import tests/test_host_transport.py (that module is
+the one exception in the union, since it puts the venv on sys.path itself). The population is a union, every set saved
+beside the list with the script that derives it: the 237 modules a census plugin (a scratch pytest plugin over two full
+-n 4 runs, on the SDK-importable road: tests/test_host_transport.py puts the box's SDK venv on sys.path at import, and
+every xdist worker imports every collected module, so a full run here takes that road, which CI never does) saw
 take a road to a root change (a jd.STATE assignment, a jd._rebind_state call, a singleton construction, or a singleton
 that changed), the 94 that load the kernel under its shared name, the 272 whose text assigns jd.STATE or calls
 _rebind_state in process (the private-kernel modules among them included: a private name isolates the kernel's
@@ -29,16 +33,19 @@ tests/test_kernel_interrupt_machine_cut.py leaves dangling and two of the three 
 tests/test_kernel_msgcaption.py; the loop cannot land here because the private-kernel harnesses carry 90 or more
 pre-existing teardown leaks, so their save-and-restore product code lands first, then the ratchet's private-kernel
 arm; Y pins the limit as behaviour, a private-name leak over a removed root with the ratchet silent and the run green,
-red the day that arm lands), and the 316 the first sweep ran; 364 modules in all. The first sweep, over its 316 at the base, found
-the 4 red on these leaks and 1 red for an unrelated pre-existing reason (tests/test_sdk_rate_limit_usage.py, an
+red the day that arm lands), and the 316 the first sweep ran, module alone on the missing road; 364 modules in all. The
+first sweep, over its 316 at the base, module alone on the missing road, found the 4 red on these leaks and 1 red for an unrelated pre-existing reason (tests/test_sdk_rate_limit_usage.py, an
 unrestored ROMP_SERVE_TOKEN setdefault the judge fixture's environment check names; identical with the ratchet off);
-at this head every one of the 364 is green alone except that one. The full-suite census saw none of the five, because
-an earlier first builder in every worker made their builds cache hits: a green suite run is no evidence a module is
-clean, and the module-alone sweep is the measurement.
+at this head every one of the 364 is green alone (the missing road, CI's) except that one. The full-suite census, on
+the importable road, saw none of the five, because an earlier first builder in every worker made their builds cache
+hits: a green suite run is no evidence a module is clean, and the module-alone sweep is the measurement; the green CI
+run at the round-3 head is the missing-road full-suite datum.
 
 The residual that leaves, a stated limit: a green run under the ratchet proves no leak occurred in that run and not that no
 test would leak alone, because a first builder that leaves its build masks a later sandboxed test's reach as a cache hit
-(no build, no transition, the ratchet silent). Measured at this head, tests/test_kernel_fleet_cache.py then
+(no build, no transition, the ratchet silent). Measured at this head, as a pair and module alone on the missing road,
+which is CI's (the test venv's interpreter has no claude_agent_sdk and neither run collects
+tests/test_host_transport.py), tests/test_kernel_fleet_cache.py then
 tests/test_token_usage.py with CostWeighting's fix reverted gave 77 passed and 0 verdicts, while the module alone gave 65
 passed and 1 error. An arm keyed on the build event inherits the masking, since a cache hit is no build, so the
 order-independent instrument is the module-alone sweep; a reach-under-moved-root arm with two signals (a leak keyed on
@@ -51,11 +58,13 @@ removed under the object it found, or that object's state_dir repointed, both si
 recorded text since the live attribute shows the after path on both). The class and module boundaries: a read at the scope's start and at its end,
 after tearDownClass or tearDownModule, and the scope whose setup or teardown made the bad state fails, the error
 landing on the scope's last test with the boundary named. The setup before a test: a singleton found over a gone
-directory that no verdict has named yet was made by something outside every window (import-time code) and is
-reported once per worker, at the first test that meets it, worded as inherited, raised after that test's own teardown
+directory that no verdict has named yet was made by something outside every window (import-time code, or a fixture
+of a scope wider than the function) and is reported once per worker, at the first test that meets it, worded as inherited, raised after that test's own teardown
 so its body runs and its own transition is judged beside it; every later test that inherits the same object is quiet.
-At the worker's first test window, where only import-time code has run, the same report covers a real backend over a
-directory that stands but is not jd.STATE. The class and module boundaries yield to the tests' own windows: when the
+At the worker's first test window, where only import-time code and any fixture of a scope wider than the function has
+run, the same report covers a real backend over a directory that stands but is not jd.STATE when that backend is the
+object the module's own start read found; a module or class setup's install there is left to its boundary, which names
+the scope and prints the sandbox remedy. The class and module boundaries yield to the tests' own windows: when the
 changing windows inside the scope run from the value the scope found to the value it ends on, each judged where it
 happened against the scope's own reference root, the boundary says nothing, so a test's accused reset or allowed
 rebuild is never re-attributed to a tearDownClass or tearDownModule that did nothing; a class that drops the object
@@ -75,9 +84,12 @@ anywhere else is named with the re-execution wording; the kernel's FIRST load in
 the same road, never an exemption.
 
 The SDK road is forced in every scratch head, never inherited from the interpreter: claude_agent_sdk is absent from
-CI's install and from the test venv here, and present on a box that installed it, and SdkBackend constructs either way
-(the probe at construction, importlib.util.find_spec, only sets _sdk_missing and prints the not-found notices on the
-missing road), so the transition the ratchet judges is the same on both roads. SCRATCH_HEAD sets None in sys.modules
+CI's install and from the test venv's interpreter here, present on a box that installed it, AND a run here that
+collects tests/test_host_transport.py takes the importable road (that module puts the box's SDK venv on sys.path at
+import, and every xdist worker imports every collected module), so a full run here is the importable road while a
+module-alone run is CI's; SdkBackend constructs either way (the probe at construction, importlib.util.find_spec, only
+sets _sdk_missing and prints the not-found notices on the missing road), so the transition the ratchet judges is the
+same on both roads, and the figures from this module's own runs carry no inherited road. SCRATCH_HEAD sets None in sys.modules
 for the name, which makes find_spec answer None and the import fail, so every run over it takes the missing road
 wherever it runs (A's outer test reads the notices); Q takes the importable road over a head without that line and a
 stub package importable by the child alone (nested_run's sdk_stub), asserts inside the child that the stub is what
@@ -278,7 +290,7 @@ fixture READS and the branch each read feeds, with the case that reds under each
     disappears) or without its reference condition (K.One passes silently); the windows never recorded (as the
     yield removed).
   the function fixture not naming the object it accused (A.h gets an inherited report, E, D).
-Fifty-four cells red. Three are pinned by no run, each for a stated reason: the unreadable reference root granting
+Sixty cells red. Three are pinned by no run, each for a stated reason: the unreadable reference root granting
 the allowance (not constructible: the kernel always binds jd); the yield's identity condition dropped (redundant by
 construction: when the end value is the last read's and is not the last window's value, a class teardown inside the
 scope installed it, and that class's own boundary judged it against its start, which only a restore of the value the
