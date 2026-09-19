@@ -856,11 +856,17 @@ class ByteIdenticalFrames(unittest.TestCase):
         removed if still empty. Premise 3, after the run and before any count: the furnished channels ran (the files
         stand until cleanup, the cwd resolved to the worktree, the worktree top, the task store and the postal store
         were read inside a signature, the names and registry reads landed), since a thinner world keeps the equality.
-        Premise 4, before the run: the kernel's counting wrappers stand on os.stat, os.lstat, posix.stat and posix.lstat
-        (each carries this kernel's thread-local). A peer module that displaced one and never restored it, or restored
-        the builtin, leaves the kernel counting a subset of what the interceptor sees, and the equality would be the
-        first to say so, with two numbers and no reason (constructed 2026-09-19: os.stat displaced read 76 against 531,
-        os.lstat 476, posix.stat 519)."""
+        Premise 4, before the run, in two halves: the kernel's counting wrappers stand on os.stat, os.lstat, posix.stat
+        and posix.lstat (each carries this kernel's thread-local), and each COUNTS (one call on an existing path inside a
+        forced-open signature moves the accumulator by exactly 1). The second half is there because functools.wraps
+        copies the marker with __dict__, so a marker proves only that a wrapper rides on the kernel's, not that it
+        counts: a marker-carrying wrapper that delegates to the builtin, or one that counts twice, passes the marker
+        half and would red the equality with two numbers and no reason (the closing check, 2026-09-19). A peer module
+        that displaced one and never restored it, or restored the builtin, leaves the kernel counting a subset of what
+        the interceptor sees: with os.stat, os.lstat or posix.stat displaced by its builtin the equality would be the
+        first to say so, reading the kernel's count short of the interceptor's, two numbers and no reason; with
+        posix.lstat displaced the count does not move (observed at the closing check, three repeats), so for it this
+        premise is the only detector and the equality would say nothing."""
         ps = km._PERF_STATS
         cfg = tempfile.TemporaryDirectory(); self.addCleanup(cfg.cleanup)
         if shutil.which("git") is None:
@@ -977,11 +983,27 @@ class ByteIdenticalFrames(unittest.TestCase):
                          "would run over nothing; this test refuses to run over that world rather than bind the singleton "
                          "(the cause is fixed at its source: tests/test_kernel.py ViewBuilder restores the singleton with its "
                          "sandbox): backend over %r, this world at %r" % (str(be.state_dir), str(km.jd.STATE)))
+        tl = km._CHAT_SIG_TL
         for name, fn in (("os.stat", os.stat), ("os.lstat", os.lstat), ("posix.stat", posix.stat), ("posix.lstat", posix.lstat)):
-            self.assertIs(getattr(fn, "_romp_sig_counting", None), km._CHAT_SIG_TL,
+            self.assertIs(getattr(fn, "_romp_sig_counting", None), tl,
                           "premise: the kernel's counting wrapper stands on %s (a peer that displaced it and never restored it "
-                          "leaves the kernel counting a subset of what the interceptor sees, and the equality would be the first "
-                          "to say so, with two numbers and no reason): %r" % (name, fn))
+                          "leaves the kernel counting a subset of what the interceptor sees; for os.stat, os.lstat and posix.stat "
+                          "the equality would be the first to say so, with two numbers and no reason, and for posix.lstat nothing "
+                          "would, since the count does not move when it is displaced, so this premise is its only detector): %r"
+                          % (name, fn))
+            # the second half: the marker rides any functools.wraps copy, so one counted call is the proof that it counts
+            was_active, was_stats = tl.active, tl.stats
+            tl.active = True
+            try:
+                fn(cfg.name)                              # an existing path for the world's life; restoring stats is hygiene
+                moved = tl.stats - was_stats              # only: _chat_sig_scope zeroes the accumulator at every signature open
+            finally:
+                tl.active, tl.stats = was_active, was_stats
+            self.assertEqual(moved, 1,
+                             "premise: the kernel's counting wrapper on %s counts: one call inside a forced-open signature moved the "
+                             "accumulator by %d, not 1 (a marker-carrying wrapper that delegates without counting, since "
+                             "functools.wraps copies the marker with __dict__, or one that counts twice, passes the marker check "
+                             "above and would red the equality with two numbers and no reason)" % (name, moved))
         sbmod = sys.modules["romp_sdk_backend"]
         real_list_regs = sbmod.list_regs
         scans = []                                        # (the root scanned, a signature open on this thread) per list_regs call
@@ -1144,12 +1166,15 @@ class ByteIdenticalFrames(unittest.TestCase):
         """Constructed case 3, for the world's fourth premise (the closing check on the exactness world, 2026-09-19): the
         kernel's counting wrappers stand on os.stat, os.lstat, posix.stat and posix.lstat. A peer module that patched one
         and never restored it, or restored the builtin, leaves the kernel counting a subset of what the interceptor
-        sees: with os.stat displaced by the builtin the equality read 76 against 531, with os.lstat 476, with posix.stat
-        519, each a count mismatch with two numbers and no reason. The world refuses to run over such a process: an
-        AssertionError naming the displaced wrapper, raised before any signature runs, and not the equality. Removing
-        the premise loop from _stats_world reds every leg here with no AssertionError raised: the world runs to its end
-        and returns, since the equality lives in the exactness test and not in the world (the main test would then red
-        on the equality, with the two numbers above and no reason)."""
+        sees: with os.stat, os.lstat or posix.stat displaced by its builtin the equality reads the kernel's count short
+        of the interceptor's, two numbers and no reason; with posix.lstat displaced the count does not move (observed at
+        the closing check over three repeats, and reproduced when this docstring was written: with the premise loop
+        removed and posix.lstat displaced, the exactness test stays green), so for it the premise is the only detector
+        and the equality would say nothing. The world refuses to run over such a process: an AssertionError naming the
+        displaced wrapper, raised before any signature runs, and not the equality. Removing the premise loop from
+        _stats_world reds every leg here with no AssertionError raised: the world runs to its end and returns, since the
+        equality lives in the exactness test and not in the world (the main test would then red on the equality for the
+        first three, two numbers and no reason, and stay green with posix.lstat displaced)."""
         for mod, name in ((os, "stat"), (os, "lstat"), (posix, "stat"), (posix, "lstat")):
             with self.subTest(wrapper="%s.%s" % (mod.__name__, name)):
                 builtin = getattr(mod, name).__wrapped__
