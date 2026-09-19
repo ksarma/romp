@@ -5,6 +5,14 @@
 // socket it dials (Conn.viewDeltas, 2026-09-18: the relay dial carries the page's delta=1, so a remote kernel serves
 // its timeline bars as patches, and the kernel's inline shim reassembles only its own LOCAL socket's frames).
 // One instance belongs to one socket. Consumers continue receiving complete frames.
+// A collection this table cannot key seeds no base (2026-09-19), the kernel's own rule for the shape (_delta_split:
+// unkeyable means the whole frame, never zero entries). The one producer is a kernel before T278c (328e46c26,
+// 2026-09-09: upstream kernels from a750f860d, 2026-09-03, and fork main from its 2026-09-05 fold until it folded
+// T278c), whose bars frame keys judging as a FLAT list (bykeys:sid,t,judge,t1) and ships its own key list (_keys).
+// Seeded, its first judging patch assembled to the patched entries alone, per lane and in the old entry shape, and a
+// lane's marks collapsed between full frames; unseeded, every patch from it recovers (needSlot) and the slot crosses
+// whole per change, the pre-delta cost, rendered from the flat list (federation.ts judgingToWire). Its feed frame
+// keys asks as this table does and seeds as any other.
 type Slot = "feed" | "bars";
 type Frame = Record<string, any>;
 type Collection = { order: string[]; items: Map<string, any> };
@@ -17,10 +25,17 @@ const KINDS = VIEW_DELTA_KINDS; // pinned to the kernel-produced fixture and the
 const SEP = "\u001f";
 const object = (v: any): v is Frame => !!v && typeof v === "object" && !Array.isArray(v);
 const slotOf = (s: any): Slot | null => s === "feed" || s === "bars" ? s : null;
+class Unkeyable extends Error {}   // a present collection whose container the kind cannot key: the frame seeds nothing
 
 function split(value: any, kind: string): Collection {
   if (kind !== "byid" && !kind.startsWith("byid:") && !kind.startsWith("dictlist:")) {
     throw new Error("unsupported view collection kind: " + kind);
+  }
+  // A list where the kind says dictlist, or an object where it says a list, is a wire keyed by another table (the
+  // header's pre-T278c judging); an absent collection is left as before (the kernel keys nothing for it either and
+  // sends such a frame whole, so a base seeded over it is never patched).
+  if (value !== undefined && value !== null && (kind.startsWith("dictlist:") ? !object(value) : !Array.isArray(value))) {
+    throw new Unkeyable(kind + " collection is " + (Array.isArray(value) ? "a list" : "not a list"));
   }
   const order: string[] = [], items = new Map<string, any>();
   const field = kind === "byid" ? "id" : kind.slice(kind.indexOf(":") + 1);
@@ -89,7 +104,15 @@ export class ViewDeltas {
     const full = slotOf(msg?.type);
     if (full) {
       const maps = new Map<string, Collection>();
-      for (const [name, kind] of Object.entries(KINDS[full])) maps.set(name, split(msg[name], kind));
+      try {
+        for (const [name, kind] of Object.entries(KINDS[full])) maps.set(name, split(msg[name], kind));
+      } catch (e) {
+        if (!(e instanceof Unkeyable)) throw e;
+        // the header's rule: no base for a frame this table cannot key, so the next patch recovers (needSlot) and
+        // that kernel serves the slot whole again; the frame itself continues whole, as every full frame does
+        this.bases.delete(full);
+        return msg;
+      }
       this.bases.set(full, { rev: 0, msg, maps });
       return msg;
     }
