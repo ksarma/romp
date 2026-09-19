@@ -57,7 +57,10 @@ test("render.ts: every mover of #content is a writeScroll — scrollBy and scrol
 });
 
 test("render.ts: a spacer re-size of the active view files a spacer row; the cap comes from localStorage", () => {
-  assert.match(RENDER, /if \(\(topAfter !== topBefore \|\| botAfter !== botBefore\) && activeId && views\.get\(activeId\) === v\) \{\s*\n\s*const content = document\.getElementById\("content"\);\s*\n\s*scrollDiagRow\("spacer", spacerRow\(activeId, topBefore, topAfter, botBefore, botAfter,/);
+  // the row is queued and filed on the next animation frame with the scroller read there (PR E: reading scrollHeight in the render task
+  // forced a layout; spacer-measure.test.ts drives the queue)
+  assert.match(RENDER, /if \(\(topAfter !== topBefore \|\| botAfter !== botBefore\) && activeId && views\.get\(activeId\) === v\) queueSpacerRow\(activeId, topBefore, topAfter, botBefore, botAfter\);/);
+  assert.match(RENDER, /for \(const \[rsid, a, b, c, d\] of rows\) scrollDiagRow\("spacer", spacerRow\(rsid, a, b, c, d, sh, ch\)\);/);
   assert.match(RENDER, /const scrollDiagCap = readScrollDiagCap\(\(k\) => \{ try \{ return localStorage\.getItem\(k\); \} catch \{ return null; \} \}\);\s*\n\s*const scrollDiag = new ScrollDiagBudget\(scrollDiagCap\);/);
   assert.match(RENDER, /function scrollDiagRow\(kind: "scrollwrite" \| "scrollgesture" \| "tailchange" \| "spacer" \| "tailmut" \| "unitchange" \| "regionask" \| "landmiss", data: any\): void \{/);
   assert.match(RENDER, /data: \{ sid: activeId \|\| "", perMinute: scrollDiagCap \} \}/, "the capped row says which cap");

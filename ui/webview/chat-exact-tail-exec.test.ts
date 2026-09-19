@@ -5,7 +5,8 @@
 // tail or a change inside a window the reader scrolled away from still rebuilds the window, chatTail hands its
 // `from` to the rewind pass as the bound, a gap asks for the full session; and the footer patch adds, removes
 // and re-homes the fork spot by unit, skips a day divider sharing its turn's unit number, maps compact-mode
-// units, and marks the view stale for a reply folded into a run. Synthetic events; epochs are seconds.
+// units, and reaches a reply folded into a run by its row's position when the run is open (PR E; it marked the
+// view stale before). Synthetic events; epochs are seconds.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import { inspect } from "node:util";
@@ -174,13 +175,15 @@ class FakeEl {
   appendChild(c: FakeEl): FakeEl { c.parent?.removeChild(c); c.parent = this; this.children.push(c); return c; }
   removeChild(c: FakeEl): void { this.children = this.children.filter((x) => x !== c); c.parent = null; }
   remove(): void { this.parent?.removeChild(this); }
-  querySelector(sel: string): FakeEl | null {
+  private select(sel: string): FakeEl[] {
     // ':scope > [data-unit="N"]:not(.day-divider)' and ':scope > .cls', the patch's two shapes
     const m = /^:scope > (.+)$/.exec(sel);
     if (!m) throw new Error("unsupported selector " + sel);
     const attr = /\[data-unit="([^"]*)"\]/.exec(m[1]), cls = /^\.([\w-]+)/.exec(m[1]), not = /:not\(\.([\w-]+)\)/.exec(m[1]);
-    return this.children.find((c) => (!attr || c.dataset.unit === attr[1]) && (!cls || c.has(cls[1])) && (!not || !c.has(not[1]))) ?? null;
+    return this.children.filter((c) => (!attr || c.dataset.unit === attr[1]) && (!cls || c.has(cls[1])) && (!not || !c.has(not[1])));
   }
+  querySelector(sel: string): FakeEl | null { return this.select(sel)[0] ?? null; }
+  querySelectorAll(sel: string): FakeEl[] { return this.select(sel); }   // the patch reads a run's nodes by position (PR E)
 }
 type FootHooks = { FakeEl: typeof FakeEl; workedFooterPlan: typeof workedFooterPlan };
 type Patch = (v: any, s: any, from: number, working: boolean, items?: any[] | null) => void;
@@ -191,7 +194,7 @@ function liftPatch(): (hooks: FootHooks) => Patch {
     const H = HOOKS;
     const workedFooterPlan = H.workedFooterPlan;
     const eventEpoch = (ev) => (ev.t == null ? null : ev.t);
-    const itemFirstEvent = (it) => (it.kind === "toolgroup" || it.kind === "retrygroup" ? it.indices[0] : it.index);
+    const itemFirstEvent = (it) => (it.kind === "toolgroup" || it.kind === "noticegroup" ? it.indices[0] : it.index);
     const elapsedFooter = (secs) => { const f = new H.FakeEl("div", "turn-elapsed"); f.textContent = String(secs); return f; };
   `;
   return new Function("HOOKS", prelude + js + "\nreturn patchWorkedFooters;") as (hooks: FootHooks) => Patch;
@@ -253,7 +256,7 @@ test("a day divider shares its turn's unit number and is never the footer's home
   assert.ok(nodes[2].querySelector(":scope > .turn-elapsed"), "the turn did");
 });
 
-test("compact mode: the window start is a unit and the plan wants an event index; the reply's event maps back to its unit; a reply folded into a run marks the view stale", () => {
+test("compact mode: the window start is a unit and the plan wants an event index; the reply's event maps back to its unit; a reply folded into a run is patched by position when the run is open, and left alone (never stale) when it is collapsed", () => {
   const events = [user(100), tool(110), tool(120), reply(160), user(200)];
   // units: the prompt, one folded tool run, the reply, the prompt
   const items = [{ kind: "event", index: 0 }, { kind: "toolgroup", indices: [1, 2] }, { kind: "event", index: 3 }, { kind: "event", index: 4 }];
@@ -261,12 +264,29 @@ test("compact mode: the window start is a unit and the plan wants an event index
   patch(v, s, 4, true, items);
   assert.ok(nodes[2].querySelector(":scope > .turn-elapsed"), "event 3 is unit 2: the footer lands on the reply's unit");
   assert.equal(v.stale, false);
-  // the reply itself folded into a retry run: no unit is addressable → the window path re-renders
-  const folded = [{ kind: "event", index: 0 }, { kind: "retrygroup", indices: [1, 2, 3] }, { kind: "event", index: 4 }];
+  // the reply itself folded into a notice run that is COLLAPSED: its row is not on screen, nothing is patched and the view is not
+  // marked stale (until PR E it was, and in compact mode's incremental tail that made the next paint a full rebuild whenever the
+  // event before the streaming reply sat inside a run: the everyday agentic shape)
+  const folded = [{ kind: "event", index: 0 }, { kind: "noticegroup", indices: [1, 2, 3] }, { kind: "event", index: 4 }];
   const w2 = footWorld(events, 3, 1);
   w2.patch(w2.v, w2.s, 4, true, folded);
-  assert.equal(w2.v.stale, true, "unit < 0: stale, so the window path draws the footer");
-  assert.ok(w2.nodes.every((n) => !n.querySelector(":scope > .turn-elapsed")), "…and nothing was patched by hand");
+  assert.equal(w2.v.stale, false, "a collapsed run shows no row for the reply: nothing to patch, no rebuild asked");
+  assert.ok(w2.nodes.every((n) => !n.querySelector(":scope > .turn-elapsed")), "…and nothing was patched by hand, the head least of all");
+  // the same run OPEN: the head, then a row per member, all carrying the run's unit; member 2 (event 3) is the third row of unit 1
+  const w4 = footWorld(events, 3, 1);
+  const rows = [1, 2, 3].map((i) => { const r = new FakeEl("div", "turn tg-child"); r.dataset.unit = "1"; return r; });
+  const headIdx = w4.v.el.children.indexOf(w4.nodes[1]);
+  w4.v.el.children.splice(headIdx + 1, 0, ...rows); for (const r of rows) r.parent = w4.v.el;
+  w4.patch(w4.v, w4.s, 4, true, folded);
+  assert.ok(rows[2].querySelector(":scope > .turn-elapsed"), "the reply's own row got the footer");
+  assert.ok(!rows[0].querySelector(":scope > .turn-elapsed") && !rows[1].querySelector(":scope > .turn-elapsed") && !w4.nodes[1].querySelector(":scope > .turn-elapsed"), "not the head, not the other members");
+  assert.equal(w4.v.stale, false);
+  // a tool inside a run before the streaming reply (the agentic shape): the plan names it, the collapsed run has no row for it, nothing happens
+  const agentic = [user(100), tool(110), tool(120), reply(160)];
+  const runItems = [{ kind: "event", index: 0 }, { kind: "toolgroup", indices: [1, 2] }, { kind: "event", index: 3 }];
+  const w5 = footWorld(agentic, 3, 1);
+  w5.patch(w5.v, w5.s, 3, true, runItems);   // the reply at 3 streams: the tail re-rendered [3, 4); the plan names the tool at 2
+  assert.equal(w5.v.stale, false, "no rebuild asked for the everyday agentic shape");
   // a window whose start unit is past the items: winEv falls to the event count, so the plan sees no reply before it
   const w3 = footWorld(events, 4, 2); w3.v.winStart = 9;
   w3.patch(w3.v, w3.s, 4, true, items);

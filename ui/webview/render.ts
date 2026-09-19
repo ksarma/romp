@@ -38,6 +38,8 @@ import { composeStatusWidgets, folderIconNode, folderLink, type StatusRecord } f
 import { REVEAL_LABEL, revealFraction, revealShownFraction, residentSpan, revealCountWords, revealPercentWords, messageCount } from "./reveal-progress";
 import { compactDisplay, isFoldableNoticeShape, itemAnchor, type DisplayItem } from "./compact";
 import { insertRun, regionsFromRuns, gapHeight, pagesToAsk, gapAt, gapFraction, landingNotice, runsOf, turnsBeforeTail, type Region, type Run, type Gap } from "./chat-regions";
+import { compactTailPlan } from "./chat-compact-tail";
+import { rowsFor, meanRowHeight, perTurnEstimate } from "./turn-estimate";
 import { senderKind, SenderKind } from "./sender-identity";
 import { loadSettings, saveSettings, onExternalSettingsChange, installSettingsSync, type RompSettings } from "./settings";
 import { backendLabel, effectiveDefaultBackend } from "./backend-names";
@@ -1413,7 +1415,7 @@ let landTrail: string[] = [];
 // count is NOT len − winStart + spacer: a unit may own more than one node (the day
 // divider that opens a new day precedes its turn), so anything mapping DOM back to
 // units reads data-unit off the node rather than counting children.
-interface View { el: HTMLElement; rendered: number; scrollTop: number; stick: boolean; shown: boolean; stale: boolean; winStart: number; winEnd?: number; avgTurnH?: number; pxPerTurn?: number; spacerCount?: number; spacerCountBot?: number; unitTotal?: number; gapUnits?: Map<number, number>; edgeTop?: number; edgeUp?: boolean; gestureScroll?: boolean; working?: boolean; uo?: ResizeObserver; uh?: WeakMap<Element, number>; ro?: ResizeObserver; mo?: MutationObserver; }   // working: the session's state at the last sync, the "worked …" footer's one non-event input (syncViewInner)
+interface View { el: HTMLElement; rendered: number; scrollTop: number; stick: boolean; shown: boolean; stale: boolean; winStart: number; winEnd?: number; avgTurnH?: number; pxPerTurn?: number; spacerCount?: number; spacerCountBot?: number; unitTotal?: number; gapUnits?: Map<number, number>; edgeTop?: number; edgeUp?: boolean; gestureScroll?: boolean; working?: boolean; units?: DisplayItem[]; measureDue?: boolean; measured?: { avg?: number; per?: number }; uo?: ResizeObserver; uh?: WeakMap<Element, number>; ro?: ResizeObserver; mo?: MutationObserver; }   // working: the session's state at the last sync, the "worked …" footer's one non-event input (syncViewInner); units: the display items the DOM was last built from (compact mode's tail plan reads them, chat-compact-tail.ts); measureDue: a window build or a reflow asks the unit observer for fresh figures (measureUnits); measured: the figures it read, waiting for the next paint to take them (applyMeasure)
 const views = new Map<string, View>();
 
 // Pending pickers (AskUserQuestion / tool-permission) keyed by session id. These
@@ -13437,10 +13439,14 @@ function ensureView(id: string): View {
         // observation records fresh ones, like a first show. Covers the tab switch and stripAftermath's blank.
         if (view3.el.style.display === "none") { for (const e of entries) unitHeights.delete(e.target); return; }
         // …and a width change reflows every unit at once (a resize, a scrollbar appearing): the new heights become
-        // the baselines and nothing is filed — a hundred honest rows would say nothing about any one unit.
+        // the baselines and nothing is filed — a hundred honest rows would say nothing about any one unit. The window's
+        // figures are re-read (every row's height moved).
+        // The heights recorded are BORDER-BOX (entryBoxHeight), and the window's figures are measured HERE, where the
+        // heights arrive at frame end after layout, never in the render task (measureUnits; PR E).
         const w = view3.el.clientWidth;
-        if (w !== unitW) { unitW = w; for (const e of entries) unitHeights.set(e.target, e.contentRect?.height ?? 0); return; }
-        const changes = unitChanges(entries.map((e) => ({ target: e.target, height: e.contentRect?.height ?? 0 })), view3.el.children, unitHeights, unitOf);
+        if (w !== unitW) { unitW = w; for (const e of entries) unitHeights.set(e.target, entryBoxHeight(e)); view3.measureDue = true; measureUnits(view3); return; }
+        const changes = unitChanges(entries.map((e) => ({ target: e.target, height: entryBoxHeight(e) })), view3.el.children, unitHeights, unitOf);
+        measureUnits(view3);
         const content = document.getElementById("content");
         if (!content || activeId !== id || !view3.shown) return;   // baselines are recorded above regardless; an inactive view files nothing
         for (const c of changes)
@@ -13534,6 +13540,12 @@ function syncViewInner(id: string, atBottom?: boolean): View {
     const start = Math.max(0, total - WINDOW_TAIL, lastCompactUnit(s, items));
     renderWindowItems(v, s, items, start, total, working); v.stale = false; return v;
   }
+  // The figures the unit observer measured since the last paint reach the spacers and the gap units HERE, inside the
+  // paint (PR E): appendActive reads the scroller after this sync and follows the tail or restores the reader's anchor
+  // over whatever moved, so a spacer written here is accounted for, where one written at frame end in the observer's
+  // callback would move a bottom reader off the bottom on an engine without scroll anchoring. Every later branch,
+  // the no-op fast path included, sees the re-sized spacers.
+  if (applyMeasure(v)) { redrawGapUnits(v); sizeSpacers(v); }
   // No-op fast path — a tab SWITCH / repaint with no event change: reveal the cached DOM, re-render nothing.
   // WITHOUT this, every showActive() re-built the trailing window (markdown + highlight.js) — the big-session
   // switch lag (the user 2026-06-25). A REAL change lowers v.rendered (delta-send sets it to the change index;
@@ -13546,7 +13558,38 @@ function syncViewInner(id: string, atBottom?: boolean): View {
   }
   if (v.rendered === len && !v.stale && v.el.childNodes.length > 0) return v;
   const wasAtTail = (v.winEnd ?? total) >= (v.unitTotal ?? total);   // window was covering the OLD end
-  // An in-place change (tool-group toggle, off-screen update) OR compact mode → re-render the CURRENT window
+  // Compact mode: the tail path by UNIT (PR E, 2026-09-19). Every paint that changed or appended an event used to take the
+  // rebuild below, and renderWindowItems removes every child and re-renders every unit of the current window (at least 80)
+  // once per animation frame while a turn streams: markdown, highlighting and the rail chrome for units that did not change
+  // (the phone, 2026-09-19: rAF gaps over 50 ms through every streamed turn). The plan (chat-compact-tail.ts, pure) names
+  // the first unit to re-render from the units the DOM was built from (v.units) against the units now and the first changed
+  // event: a growing reply is its own unit; a tool joining a run is that run's unit, whose head and rows all carry the unit,
+  // so the trim takes them and appendItem re-renders the run whole. The rebuild stays for what a trim cannot do (a stale
+  // view, a change among the hidden units above the window, a gap at or past the start, a bottom spacer); a browsed window
+  // grows its bottom spacer when the change lies below it, as normal mode does, and rebuilds when it lies inside.
+  if (settings.compact) {
+    const plan = compactTailPlan({ prev: v.units, items, from: v.rendered, winStart: v.winStart ?? 0, winEnd: v.winEnd ?? total, unitTotal: v.unitTotal,
+                                   stale: v.stale, bottomSpacer: !!v.el.querySelector(":scope > .tx-spacer-bot") });
+    if (plan.kind === "spacer") {
+      v.spacerCountBot = total - (v.winEnd ?? total); v.unitTotal = total; v.rendered = len; v.units = items; sizeSpacers(v); return v;
+    }
+    if (plan.kind === "append") {
+      // the window's span before the append, kept afterwards by evicting the top (as the rebuild's re-slice kept it) unless
+      // the reader is scrolled up (keepTop below: the content above the viewport stays where it is)
+      const span = Math.max(WINDOW_TAIL, (v.winEnd ?? total) - (v.winStart ?? 0));
+      const u0 = plan.u0;
+      trimUnitsFrom(v.el, u0);
+      let prevEpoch = u0 > 0 && u0 < total ? prevTimedEpoch(s.events, itemFirstEvent(items[u0])) : null;
+      const walk = dayWalkBefore(s, items, u0);   // the mark a walk from the top would hold here (T339), as renderWindowItems seeds it
+      const turns = s.regions ? turnOfEvents(s) : null;
+      for (let u = u0; u < total; u++) prevEpoch = appendItem(v, s, items, u, prevEpoch, walk, working, turns);
+      patchWorkedFooters(v, s, u0 < total ? itemFirstEvent(items[u0]) : len, working, items);
+      v.winEnd = total; v.spacerCount = v.winStart ?? 0; v.spacerCountBot = 0; v.unitTotal = total; v.rendered = len; v.units = items; v.measureDue = true;
+      if (!(wasAtTail && atBottom === false)) evictCompactTop(v, Math.max(0, total - span));
+      return v;
+    }
+  }
+  // An in-place change (tool-group toggle, off-screen update) OR compact mode's rebuild cases → re-render the CURRENT window
   // (so the change shows wherever the user is), extending to the new tail if it was at the tail.
   if (settings.compact || v.stale) {
     const span = Math.max(WINDOW_TAIL, (v.winEnd ?? total) - (v.winStart ?? 0));
@@ -13610,16 +13653,31 @@ function syncViewInner(id: string, atBottom?: boolean): View {
 // worked-footer.ts names the reply and the seconds; the footer goes on or comes off by unit. applyForkSpots
 // homes a turn's fork spot inside its elapsed row when the turn has one, so the spot moves with the footer
 // either way. `items` is compact mode's unit list: there a unit is a display item (a folded run, or one event),
-// so the window's start maps to its first event and the reply's event index back to the unit whose node carries
-// it; a reply folded into a run has no node of its own, and the view goes stale for the window path instead.
+// so the window's start maps to its first event and the reply's event index back to the node that carries it: a
+// lone event's own; a run's row by POSITION, the run's head and, when expanded, its rows in member order all carrying
+// the run's unit (appendItem), so member k's row is the (k+1)th node of that unit, and a collapsed run shows no row
+// for it. Marking the view stale for a folded reply, the rule until PR E, made the paint after every incremental
+// tail a full rebuild whenever the event before the streaming reply was a tool inside a run (the everyday agentic
+// shape); a hidden event (a thinking block compact mode never shows) has no node either. Nothing on screen, nothing
+// to patch.
 function patchWorkedFooters(v: View, s: Session, from: number, working: boolean, items: DisplayItem[] | null = null): void {
   const winStart = v.winStart ?? 0;
   const winEv = items ? (items[winStart] ? itemFirstEvent(items[winStart]) : s.events.length) : winStart;
-  const unitOfEvent = (i: number): number => items ? items.findIndex((it) => it.kind === "event" && it.index === i) : i;
+  const nodeOfEvent = (i: number): HTMLElement | null => {
+    if (!items) return v.el.querySelector(`:scope > [data-unit="${i}"]:not(.day-divider)`) as HTMLElement | null;
+    for (let u = 0; u < items.length; u++) {
+      const it = items[u];
+      if (it.kind === "gap") continue;
+      if (it.kind === "event") { if (it.index === i) return v.el.querySelector(`:scope > [data-unit="${u}"]:not(.day-divider)`) as HTMLElement | null; continue; }
+      const k = it.indices.indexOf(i);
+      if (k < 0) continue;
+      const rows = v.el.querySelectorAll(`:scope > [data-unit="${u}"]:not(.day-divider)`);
+      return rows.length > k + 1 ? rows[k + 1] as HTMLElement : null;   // the head, then a row per member when expanded; collapsed: none
+    }
+    return null;
+  };
   for (const { unit: ev, secs } of workedFooterPlan(s.events, from, winEv, working, eventEpoch)) {
-    const unit = unitOfEvent(ev);
-    if (unit < 0) { v.stale = true; continue; }
-    const node = v.el.querySelector(`:scope > [data-unit="${unit}"]:not(.day-divider)`) as HTMLElement | null;
+    const node = nodeOfEvent(ev);
     if (!node) continue;
     const have = node.querySelector(":scope > .turn-elapsed") as HTMLElement | null;
     if (secs != null && !have) {
@@ -13826,6 +13884,7 @@ function appendItem(v: View, s: Session, items: DisplayItem[], u: number, prevEp
 // Full (re)build of the window [unitStart, unitEnd) with head/tail spacers. Does NOT touch scroll (callers
 // anchor). prevEpoch for the first rendered unit chains off the real prior event so its time-marker is right.
 function renderWindowItems(v: View, s: Session, items: DisplayItem[], unitStart: number, unitEnd: number, working: boolean): void {
+  applyMeasure(v);   // a build takes the figures the observer measured since the last paint (PR E); its spacers and gap units read them below
   const total = items.length;
   unitStart = Math.max(0, Math.min(unitStart, total));
   unitEnd = Math.max(unitStart, Math.min(unitEnd, total));
@@ -13839,10 +13898,41 @@ function renderWindowItems(v: View, s: Session, items: DisplayItem[], unitStart:
   v.winStart = unitStart; v.winEnd = unitEnd;
   v.spacerCount = unitStart; v.spacerCountBot = total - unitEnd; v.unitTotal = total;
   v.rendered = s.events.length;
+  v.units = items;        // the units this DOM holds: compact mode's tail plan compares the next paint's against them (PR E)
+  v.measureDue = true;    // a fresh window: the unit observer measures it when the rows' heights arrive (measureUnits)
   // a gap unit's height is its own estimate, not the average row (T386 stage 2): the spacers and the scroll→unit map read it
+  v.gapUnits = gapUnitsOf(items, v.pxPerTurn);
+  sizeSpacers(v);
+}
+/** The spacer map's gap entries: unit → the gap's estimated height, per TURN, not per display unit (T386 stage 2, medium 2); undefined
+ *  when the list holds no gap. */
+function gapUnitsOf(items: readonly DisplayItem[], perTurn: number | undefined): Map<number, number> | undefined {
   const gu = new Map<number, number>();
-  for (let u = 0; u < total; u++) { const it = items[u]; if (it.kind === "gap") gu.set(u, gapHeight(it, v.pxPerTurn)); }   // per TURN, not per display unit (medium 2)
-  v.gapUnits = gu.size ? gu : undefined;
+  for (let u = 0; u < items.length; u++) { const it = items[u]; if (it.kind === "gap") gu.set(u, gapHeight(it, perTurn)); }
+  return gu.size ? gu : undefined;
+}
+/** The unit a node belongs to, off its data-unit; -1 for a node that carries none (a spacer), which ends a trim on its own. */
+function unitOfNode(n: ChildNode): number { return n instanceof HTMLElement && n.dataset.unit != null ? Number(n.dataset.unit) : -1; }
+/** Drop every node from unit `u0` onward off the END of a view (a unit's nodes are contiguous and units are in order, so the walk up
+ *  from the last child meets them all; a spacer, with no unit, ends it). Returns the count removed. Compact mode's tail path (PR E);
+ *  the normal-mode tail keeps its own copy of the walk, unchanged. */
+function trimUnitsFrom(host: HTMLElement, u0: number): number {
+  let n = 0;
+  while (host.lastChild && unitOfNode(host.lastChild) >= u0) { host.removeChild(host.lastChild); n++; }
+  return n;
+}
+/** Compact mode keeps its window's span while the reader follows the tail (PR E): after an append at the bottom the leading units past
+ *  the span leave the DOM and the top spacer stands for them, as the rebuild's re-slice did, so a watched session's DOM does not grow
+ *  without bound (normal mode grows until a switch re-collapses it). Only at the bottom: appendActive writes the bottom after the sync,
+ *  so a change above the reader is never seen; a scrolled-up reader's window is left whole (syncViewInner's keepTop). */
+function evictCompactTop(v: View, newWinStart: number): void {
+  const winStart = v.winStart ?? 0;
+  if (newWinStart <= winStart) return;
+  let top = v.el.querySelector(":scope > .tx-spacer-top") as HTMLElement | null;
+  if (!top) { top = el("div", "tx-spacer tx-spacer-top"); v.el.insertBefore(top, v.el.firstChild); }
+  let n: ChildNode | null = top.nextSibling;
+  while (n) { const next = n.nextSibling; const u = unitOfNode(n); if (u < 0 || u >= newWinStart) break; v.el.removeChild(n); n = next; }
+  v.winStart = newWinStart; v.spacerCount = newWinStart;
   sizeSpacers(v);
 }
 /** The estimated height of the units [from, to): a gap its own, every other unit the measured average. */
@@ -13852,31 +13942,15 @@ function hiddenHeight(v: View, from: number, to: number, avg: number): number {
   return Math.max(0, Math.round(h));
 }
 
-// Size the head/tail spacers to (hidden-unit count × avg rendered row height) so the scrollbar spans the
-// whole transcript. avgTurnH is measured once off the rendered rows (only when VISIBLE — a display:none
-// pre-built view reports offsetHeight 0, so don't cache a 0) and reused; the spacers sit off-viewport, so a
-// per-row estimate is invisible.
+// Size the head/tail spacers to the hidden units' estimated heights (a gap its own, every other unit the average row) so
+// the scrollbar spans the whole transcript. Nothing is measured here (PR E, 2026-09-19): the figures come from measureUnits,
+// off the unit observer's heights at frame end, so this write forces no layout inside the render task (it used to read
+// offsetHeight for every child right after the rebuild, and the scroller's scrollHeight for the diag row); the spacers sit
+// off-viewport, so a per-row estimate is invisible.
 function sizeSpacers(v: View): void {
   const top = v.el.querySelector(".tx-spacer-top") as HTMLElement | null;
   const bot = v.el.querySelector(".tx-spacer-bot") as HTMLElement | null;
   if (!top && !bot) return;
-  if (v.avgTurnH == null) {
-    let h = 0, n = 0;
-    for (const c of Array.from(v.el.children) as HTMLElement[]) {
-      if (c.classList.contains("tx-spacer") || c.classList.contains("tx-gap")) continue;   // the gap's own estimate must not feed the average that sizes it (T386 stage 2, medium 3)
-      h += c.offsetHeight; n++;
-    }
-    if (h > 0 && n > 0) v.avgTurnH = h / n;
-  }
-  if (v.pxPerTurn == null) {   // px per TURN (a gap counts turns, not display units): total rendered height over the rendered turns (a user row starts each)
-    let h = 0, turns = 0;
-    for (const c of Array.from(v.el.children) as HTMLElement[]) {
-      if (c.classList.contains("tx-spacer") || c.classList.contains("tx-gap") || !c.classList.contains("turn")) continue;   // only turn rows: cards and dividers are not turn content (round five)
-      h += c.offsetHeight;   // the whole row, action strip included: a gap stands for rows as they will render, and every user row carries the strip (the regions lab's sizing road: without it the gap ran 16 percent short)
-      if (c.classList.contains("turn-user")) turns++;
-    }
-    if (h > 0 && turns > 0) v.pxPerTurn = h / turns;
-  }
   const avg = v.avgTurnH ?? 60;
   const topBefore = top ? (parseFloat(top.style.height) || 0) : 0, botBefore = bot ? (parseFloat(bot.style.height) || 0) : 0;
   const total = v.unitTotal ?? ((v.spacerCount ?? 0) + (v.spacerCountBot ?? 0));
@@ -13884,11 +13958,74 @@ function sizeSpacers(v: View): void {
   if (top) top.style.height = topAfter + "px";
   if (bot) bot.style.height = botAfter + "px";
   // a spacer re-size is a layout change above or below the reader that no pane write accompanies; the browser's
-  // anchoring answers it on its own, so the journal names it (T262j) — for the ACTIVE view only
-  if ((topAfter !== topBefore || botAfter !== botBefore) && activeId && views.get(activeId) === v) {
+  // anchoring answers it on its own, so the journal names it (T262j) — for the ACTIVE view only. The row's scroll and
+  // client heights are read a frame later (queueSpacerRow): reading them here forced a layout inside the render task.
+  if ((topAfter !== topBefore || botAfter !== botBefore) && activeId && views.get(activeId) === v) queueSpacerRow(activeId, topBefore, topAfter, botBefore, botAfter);
+}
+// The spacer rows of one task, filed on the next animation frame with the scroller's heights read once there (PR E).
+let spacerRowsPending: Array<[string, number, number, number, number]> = [];
+let spacerRowsRaf: number | null = null;
+function queueSpacerRow(sid: string, topBefore: number, topAfter: number, botBefore: number, botAfter: number): void {
+  spacerRowsPending.push([sid, topBefore, topAfter, botBefore, botAfter]);
+  if (spacerRowsRaf != null) return;
+  spacerRowsRaf = requestAnimationFrame(() => {
+    spacerRowsRaf = null;
+    const rows = spacerRowsPending; spacerRowsPending = [];
     const content = document.getElementById("content");
-    scrollDiagRow("spacer", spacerRow(activeId, topBefore, topAfter, botBefore, botAfter, content ? content.scrollHeight : 0, content ? content.clientHeight : 0));
+    const sh = content ? content.scrollHeight : 0, ch = content ? content.clientHeight : 0;
+    for (const [rsid, a, b, c, d] of rows) scrollDiagRow("spacer", spacerRow(rsid, a, b, c, d, sh, ch));
+  });
+}
+
+// The window's two figures, measured where the heights arrive (PR E, 2026-09-19): the unit ResizeObserver's callback
+// (ensureView), at frame end after layout, off the border-box heights it recorded (v.uh) — never a layout property, so the
+// render task forces no layout for them. Due after every window build (renderWindowItems, the compact tail append and its
+// eviction) and after a reflow; a hidden view's observer records nothing, so a view built while hidden measures on its re-show.
+// The figures WAIT in v.measured for the next paint (applyMeasure: syncViewInner, renderWindowItems, landActive), which
+// writes the spacers and gap units where appendActive's scroll maths accounts for them; nothing here touches the DOM.
+// - avgTurnH, the rows' mean over every non-spacer, non-gap child, once per view as before (the resets that clear it re-arm it);
+// - pxPerTurn, the head gap's per-TURN figure: the MEDIAN over the turns the window holds WHOLE (turn-estimate.ts: a visible
+//   user row to the next; the partial leading turn and the streaming trailing turn are not counted), at least two of them,
+//   else the figure stands as it was (the default until a window has two). The old figure was the window's whole height
+//   over its user-row count, measured once for the view's life: a tail window of one user row and 79 dense rows measured
+//   about 7,150 px per turn, and the 200-turn head gap above it went from 24k px to 1.43M px on the paint after the first
+//   (the phone, 2026-09-19).
+function measureUnits(v: View): void {
+  if (!v.measureDue || !v.uh) return;
+  v.measureDue = false;
+  const uh = v.uh;
+  const rows = rowsFor(Array.from(v.el.children) as HTMLElement[], (c) => c.className, (c) => c.style.display === "none", (c) => uh.get(c));
+  if (v.avgTurnH == null && v.measured?.avg == null) { const h = meanRowHeight(rows); if (h != null) v.measured = { ...v.measured, avg: h }; }
+  const per = perTurnEstimate(rows);
+  if (per != null && per !== (v.measured?.per ?? v.pxPerTurn)) v.measured = { ...v.measured, per };
+}
+/** The measured figures become the view's, inside a paint: true when either changed, so the caller re-sizes the spacers and
+ *  re-draws the gap units (renderWindowItems does both as part of its build). The average is taken once per view. */
+function applyMeasure(v: View): boolean {
+  const m = v.measured;
+  if (!m) return false;
+  v.measured = undefined;
+  let changed = false;
+  if (m.avg != null && v.avgTurnH == null) { v.avgTurnH = m.avg; changed = true; }
+  if (m.per != null && m.per !== v.pxPerTurn) { v.pxPerTurn = m.per; changed = true; }
+  return changed;
+}
+/** The gap units at the current per-turn figure: the spacer map (hiddenHeight, the turn walks) and every rendered gap element. */
+function redrawGapUnits(v: View): void {
+  if (!v.units) return;
+  v.gapUnits = gapUnitsOf(v.units, v.pxPerTurn);
+  for (const g of Array.from(v.el.querySelectorAll(":scope > .tx-gap")) as HTMLElement[]) {
+    const lo = Number(g.dataset.lo), hi = Number(g.dataset.hi);
+    if (Number.isFinite(lo) && Number.isFinite(hi)) g.style.height = gapHeight({ lo, hi }, v.pxPerTurn) + "px";
   }
+}
+/** A unit observer entry's BORDER-BOX height (padding included: the height offsetHeight reports and the browser leg recomputes);
+ *  contentRect, the content box, is the fallback where an engine reports no box sizes. */
+function entryBoxHeight(e: ResizeObserverEntry): number {
+  const b = (e as { borderBoxSize?: readonly ResizeObserverSize[] | ResizeObserverSize }).borderBoxSize;
+  const s = Array.isArray(b) ? (b as readonly ResizeObserverSize[])[0] : (b as ResizeObserverSize | undefined);
+  if (s && typeof s.blockSize === "number") return s.blockSize;
+  return e.contentRect?.height ?? 0;
 }
 
 // Estimate the UNIT index at the viewport top: a spacer maps by avg height; a rendered row by its data-unit.
@@ -15007,8 +15144,9 @@ function landActive(content: HTMLElement | null, v: View): void {
     whenChatVisible(() => { const c = document.getElementById("content"); const vv = activeId ? views.get(activeId) : null; if (c && vv) landActive(c, vv); });
     return;
   }
-  sizeSpacers(v);  // the view is now VISIBLE (display set in showActive), so the spacers get a real height
-                   // measurement — a tab pre-built while display:none could only fall back until now
+  if (applyMeasure(v)) redrawGapUnits(v);   // the figures the observer measured on a previous show (a tab built while hidden had none until it was shown)
+  sizeSpacers(v);  // the view is now VISIBLE (display set in showActive): the spacers take the measured figures; the observer's
+                   // re-show delivery measures a tab built while display:none, and the next paint or show applies that (PR E)
   // The durable seek re-arms the per-pass attempt: every render pass retries until it lands, the
   // user cancels, or the backstop fires — never hijacking a scroll-back keep-offset restore.
   if (!pendingAnchor && pendingAnchorT == null && pendingAnchorKeepY == null && seek && seek.sid === activeId) {

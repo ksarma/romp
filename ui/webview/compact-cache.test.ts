@@ -14,8 +14,14 @@ test("a switch with no change is a NO-OP (the cached DOM is revealed), in compac
   assert.match(RENDER, /if \(v\.rendered === len && !v\.stale && v\.el\.childNodes\.length > 0\) return v;/);
 });
 
-test("compact / a stale view re-renders the CURRENT window (not a full transcript rebuild)", () => {
-  assert.match(RENDER, /if \(settings\.compact \|\| v\.stale\) \{[\s\S]*?renderWindowItems\(v, s, items, ws, we, working\); v\.stale = false; return v;/);
+test("compact mode paints its tail by unit first (PR E), and a stale view or a plan the trim cannot serve re-renders the CURRENT window (not a full transcript rebuild)", () => {
+  // the incremental seam (chat-compact-tail.test.ts drives the plan and the trim) sits ahead of the rebuild, which stays the fallback
+  const sync = RENDER.slice(RENDER.indexOf("function syncViewInner("), RENDER.indexOf("function patchWorkedFooters("));
+  const seam = sync.indexOf("if (settings.compact) {\n    const plan = compactTailPlan(");
+  const rebuild = sync.indexOf("if (settings.compact || v.stale) {");
+  assert.ok(seam > 0 && rebuild > seam, "the plan runs before the rebuild");
+  assert.match(sync, /if \(settings\.compact \|\| v\.stale\) \{[\s\S]*?renderWindowItems\(v, s, items, ws, we, working\); v\.stale = false; return v;/);
+  assert.match(sync, /if \(plan\.kind === "append"\) \{[\s\S]*?trimUnitsFrom\(v\.el, u0\);/, "an append trims by unit instead of clearing the window");
 });
 
 test("toggling a tool group forces a re-render past the cache (sets stale) — an expand still repaints", () => {

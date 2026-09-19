@@ -1,0 +1,240 @@
+// Compact mode's tail path by unit (PR E, 2026-09-19). Before it, every paint that changed or appended an event in compact
+// mode (the default) rebuilt the whole rendered window: renderWindowItems removed every child and re-rendered every unit of
+// the current window (at least 80) once per animation frame while a turn streamed. Now syncViewInner asks the plan
+// (chat-compact-tail.ts, pure) for the first unit to re-render and trims from there by data-unit, as normal mode's tail has
+// done since the exact-tail change. Three layers here: the plan EXECUTED over every rule; the trim and the eviction LIFTED
+// from render.ts and run over a fake DOM (the models-rev.test.ts / chat-exact-tail-exec.test.ts pattern); a replica of N
+// streamed frames over an 80-unit window that counts the nodes each frame replaces (the rebuild replaced them all); and
+// source pins on the seam's wiring, which no harness lifts. Synthetic events; the browser leg
+// (tests/test_history_regions_browser.py, ServedCompactStream) counts the same replacement end to end on the served page.
+import { test } from "node:test";
+import * as assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { createRequire } from "node:module";
+import { compactTailPlan, firstDifferingUnit, firstUnitReaching, itemLastEvent, sameItem, type TailPlan } from "./chat-compact-tail";
+import { compactDisplay, type DisplayItem } from "./compact";
+import { hideEdges } from "../test-dom-shim";
+
+const requireCjs = createRequire(__filename);
+const RENDER = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "render.ts"), "utf8");
+
+const ev = (index: number): DisplayItem => ({ kind: "event", index });
+const tg = (...indices: number[]): DisplayItem => ({ kind: "toolgroup", indices });
+const ng = (...indices: number[]): DisplayItem => ({ kind: "noticegroup", indices });
+const gap = (lo: number, hi: number, before: number): DisplayItem => ({ kind: "gap", lo, hi, before });
+/** A world at the tail: the window covers every unit, no bottom spacer, not stale, the DOM built from `prev`. */
+function atTail(prev: DisplayItem[], items: DisplayItem[], from: number, winStart = 0): Parameters<typeof compactTailPlan>[0] {
+  return { prev, items, from, winStart, winEnd: prev.length, unitTotal: prev.length, stale: false, bottomSpacer: false };
+}
+const append = (u0: number): TailPlan => ({ kind: "append", u0 });
+
+// ── the plan ─────────────────────────────────────────────────────────────────────────────────────
+
+test("a growing reply is its own unit: the same item list, the first changed event names the unit to re-render from", () => {
+  const items = [ev(0), tg(1, 2), ev(3)];   // a prompt, a folded run of two tools, the reply
+  assert.deepEqual(compactTailPlan(atTail(items.slice(), items, 3)), append(2), "the reply's unit, nothing above it");
+  assert.equal(firstDifferingUnit(items, items.slice()), -1, "the lists are the same list");
+});
+
+test("a new event appends one unit; a tool joining a lone tool, or extending a run, re-renders from the run's unit, never a rebuild", () => {
+  assert.deepEqual(compactTailPlan(atTail([ev(0), ev(1)], [ev(0), ev(1), ev(2)], 2)), append(2), "an appended reply");
+  // event{1} (a lone tool) becomes toolgroup{[1, 2]}: the lists part at unit 1, and that is where the trim starts
+  assert.deepEqual(compactTailPlan(atTail([ev(0), ev(1)], [ev(0), tg(1, 2)], 2)), append(1), "a run forming");
+  assert.deepEqual(compactTailPlan(atTail([ev(0), tg(1, 2)], [ev(0), tg(1, 2, 3)], 3)), append(1), "a run extending: the same unit, its item changed");
+  assert.deepEqual(compactTailPlan(atTail([ev(0), ev(1)], [ev(0), ng(1, 2)], 2)), append(1), "the notice twin");
+  // the real fold: compactDisplay over kinds, a tool landing after a lone tool
+  const before = compactDisplay(["user", "assistant", "tool"]);
+  const after = compactDisplay(["user", "assistant", "tool", "tool"]);
+  assert.deepEqual(after, [ev(0), ev(1), tg(2, 3)]);
+  assert.deepEqual(compactTailPlan(atTail(before, after, 3)), append(2), "from the unit that held the lone tool");
+});
+
+test("a change inside a run, or at a hidden event, re-renders from the unit that reaches it; a change past every visible event renders nothing", () => {
+  const items = [ev(0), tg(1, 3)];   // events 1 and 3 are tools, 2 a thinking block compact mode never shows
+  assert.equal(itemLastEvent(tg(1, 3)), 3); assert.equal(itemLastEvent(ev(7)), 7); assert.equal(itemLastEvent(gap(0, 9, 4)), -1, "a gap holds no event");
+  assert.equal(firstUnitReaching(items, 2), 1, "the run reaches past the hidden event");
+  assert.deepEqual(compactTailPlan(atTail(items.slice(), items, 2)), append(1));
+  const trailing = [ev(0), ev(1)];   // events: a prompt, a reply, then a thinking block at 2 that has no unit
+  assert.equal(firstUnitReaching(trailing, 2), 2, "no unit reaches it: the list's length");
+  assert.deepEqual(compactTailPlan(atTail(trailing.slice(), trailing, 2)), append(2), "trim nothing, render nothing, take the bookkeeping");
+});
+
+test("the rebuild stays for a stale view, a view with no unit record, and a record that does not describe the DOM", () => {
+  const items = [ev(0), ev(1)];
+  assert.deepEqual(compactTailPlan({ ...atTail(items, items, 1), stale: true }), { kind: "rebuild", why: "stale" });
+  assert.deepEqual(compactTailPlan({ ...atTail(items, items, 1), prev: undefined }), { kind: "rebuild", why: "no-record" });
+  assert.deepEqual(compactTailPlan({ ...atTail(items, items, 1), unitTotal: 5 }), { kind: "rebuild", why: "no-record" }, "a record of another build's length");
+  assert.deepEqual(compactTailPlan({ ...atTail(items, items, 1), unitTotal: undefined }), { kind: "rebuild", why: "no-record" });
+});
+
+test("a change among the hidden units above the window rebuilds; a bottom spacer under the window rebuilds; a gap at or past the start rebuilds", () => {
+  const prev = [ev(0), ev(1), ev(2), ev(3)];
+  const changedAbove = [ev(0), ng(1, 2), ev(3)];   // units 1 and 2 folded: the lists part at unit 1, above a window starting at 2
+  assert.equal(firstDifferingUnit(prev, changedAbove), 1);
+  assert.deepEqual(compactTailPlan(atTail(prev, changedAbove, 3, 2)), { kind: "rebuild", why: "below-window" });
+  assert.deepEqual(compactTailPlan({ ...atTail(prev, prev, 3), bottomSpacer: true }), { kind: "rebuild", why: "bottom-spacer" });
+  const withGap = [ev(0), gap(0, 16, 1), ev(1), ev(2)];
+  assert.deepEqual(compactTailPlan(atTail(withGap.slice(), withGap, 0)), { kind: "rebuild", why: "gap" }, "a gap past the start: keyed by unit, not re-appended");
+  assert.deepEqual(compactTailPlan(atTail(withGap.slice(), withGap, 2)), append(3), "a gap above the start is left where it is");
+});
+
+test("a window browsed away from the tail grows its bottom spacer when the change lies below it and rebuilds when it lies inside", () => {
+  const items = Array.from({ length: 10 }, (_, i) => ev(i));
+  const browsed = { prev: items, items, from: 8, winStart: 0, winEnd: 6, unitTotal: 10, stale: false, bottomSpacer: true };
+  assert.deepEqual(compactTailPlan(browsed), { kind: "spacer" }, "below the window: no node touched");
+  assert.deepEqual(compactTailPlan({ ...browsed, from: 4 }), { kind: "rebuild", why: "inside-browsed" });
+  const grown = items.concat([ev(10)]);
+  assert.deepEqual(compactTailPlan({ ...browsed, items: grown, from: 10 }), { kind: "spacer" }, "a new event below a browsed window");
+});
+
+test("sameItem compares the unit's shape: kind, the event, the members in order, a gap's turns and its place", () => {
+  assert.ok(sameItem(ev(3), ev(3))); assert.ok(!sameItem(ev(3), ev(4))); assert.ok(!sameItem(ev(3), tg(3)));
+  assert.ok(sameItem(tg(1, 2), tg(1, 2))); assert.ok(!sameItem(tg(1, 2), tg(1, 2, 3))); assert.ok(!sameItem(tg(1, 2), tg(2, 1)));
+  assert.ok(!sameItem(tg(1, 2), ng(1, 2)), "a tool run and a notice run are different units over the same events");
+  assert.ok(sameItem(gap(0, 16, 3), gap(0, 16, 3))); assert.ok(!sameItem(gap(0, 16, 3), gap(0, 32, 3))); assert.ok(!sameItem(gap(0, 16, 3), gap(0, 16, 4)));
+  assert.equal(firstDifferingUnit([ev(0), ev(1)], [ev(0), ev(1), ev(2)]), 2, "a longer list differs at the first extra unit");
+  assert.equal(firstDifferingUnit([ev(0), ev(1), ev(2)], [ev(0), ev(1)]), 2, "…and a shorter one at its end");
+});
+
+// ── the trim and the eviction, lifted from render.ts ─────────────────────────────────────────────
+
+/** A render.ts span, transpiled with esbuild at run time, required dynamically so the test bundle does not bundle esbuild. */
+function liftBetween(startAnchor: string, endAnchor: string): string {
+  const a = RENDER.indexOf(startAnchor), b = RENDER.indexOf(endAnchor, a);
+  assert.ok(a > 0 && b > a, `anchors not found: ${startAnchor.slice(0, 40)} or ${endAnchor.slice(0, 40)} moved; re-anchor`);
+  return requireCjs("esbuild").transformSync(RENDER.slice(a, b), { loader: "ts" }).code;
+}
+
+/** Enough of an element for the trim and the eviction: a class list, data-unit, a parent's child list and the sibling walk. */
+class FakeEl {
+  children!: FakeEl[]; parent: FakeEl | null = null; dataset: Record<string, string> = {}; style: Record<string, string> = {};
+  constructor(public tag: string, public className = "") {
+    Object.defineProperty(this, "children", { value: [], writable: true, enumerable: false, configurable: true });
+    hideEdges(this);
+  }
+  get classList() { const cls = this.className.split(/\s+/); return { contains: (c: string) => cls.includes(c) }; }
+  get firstChild(): FakeEl | null { return this.children[0] ?? null; }
+  get lastChild(): FakeEl | null { return this.children[this.children.length - 1] ?? null; }
+  get nextSibling(): FakeEl | null { const p = this.parent; if (!p) return null; const i = p.children.indexOf(this); return i >= 0 ? p.children[i + 1] ?? null : null; }
+  appendChild(c: FakeEl): FakeEl { c.parent?.removeChild(c); c.parent = this; this.children.push(c); return c; }
+  insertBefore(c: FakeEl, ref: FakeEl | null): FakeEl { c.parent?.removeChild(c); c.parent = this; const i = ref ? this.children.indexOf(ref) : -1; if (i < 0) this.children.push(c); else this.children.splice(i, 0, c); return c; }
+  removeChild(c: FakeEl): void { this.children = this.children.filter((x) => x !== c); c.parent = null; }
+  querySelector(sel: string): FakeEl | null {
+    const m = /^(?::scope > )?\.([\w-]+)$/.exec(sel);
+    if (!m) throw new Error("unsupported selector " + sel);
+    return this.children.find((c) => c.classList.contains(m[1])) ?? null;
+  }
+}
+type Lifted = { unitOfNode: (n: FakeEl) => number; trimUnitsFrom: (host: FakeEl, u0: number) => number; evictCompactTop: (v: any, newWinStart: number) => void };
+function liftTrim(hooks: { sized: number[] }): Lifted {
+  const js = liftBetween("function unitOfNode(", "/** The estimated height of the units [from, to)");
+  const prelude = `
+    const H = HOOKS;
+    const HTMLElement = H.FakeEl;
+    const el = (tag, cls) => new H.FakeEl(tag, cls || "");
+    const sizeSpacers = (v) => { H.sized.push(v.winStart); };
+  `;
+  return new Function("HOOKS", prelude + js + "\nreturn { unitOfNode, trimUnitsFrom, evictCompactTop };")({ ...hooks, FakeEl }) as Lifted;
+}
+/** A view host holding units [winStart, winEnd) with a top spacer when winStart > 0; a unit owns one node, or two when `dividerAt` names it. */
+function window(winStart: number, winEnd: number, dividerAt: number[] = []): FakeEl {
+  const host = new FakeEl("div");
+  if (winStart > 0) host.appendChild(new FakeEl("div", "tx-spacer tx-spacer-top"));
+  for (let u = winStart; u < winEnd; u++) {
+    if (dividerAt.includes(u)) { const d = new FakeEl("div", "day-divider"); d.dataset.unit = String(u); host.appendChild(d); }
+    const n = new FakeEl("div", "turn"); n.dataset.unit = String(u); host.appendChild(n);
+  }
+  return host;
+}
+const unitsIn = (host: FakeEl): number[] => host.children.filter((c) => c.dataset.unit != null).map((c) => Number(c.dataset.unit));
+
+test("the trim drops every node from the unit onward off the end, dividers included, and a spacer ends the walk on its own", () => {
+  const { unitOfNode, trimUnitsFrom } = liftTrim({ sized: [] });
+  const host = window(100, 180, [150, 179]);   // 80 units; two of them open a day
+  assert.equal(unitOfNode(host.children[0]), -1, "the spacer carries no unit");
+  assert.equal(trimUnitsFrom(host, 179), 2, "the streaming unit: its divider and its row");
+  assert.deepEqual(unitsIn(host).slice(-2), [177, 178], "the units before it stand");
+  assert.equal(trimUnitsFrom(host, 150), 30, "units 150..178 (29 rows), plus 150's divider");
+  assert.equal(host.children.length, 1 + 50);
+  assert.equal(trimUnitsFrom(host, 0), 50, "…down to the spacer, which stops the walk");
+  assert.equal(host.children.length, 1); assert.ok(host.children[0].classList.contains("tx-spacer-top"));
+  assert.equal(trimUnitsFrom(host, 0), 0, "nothing left to trim");
+});
+
+test("the eviction keeps the window's span after an append at the bottom: the leading units leave, the top spacer stands for them and is re-sized", () => {
+  const sized: number[] = [];
+  const { evictCompactTop } = liftTrim({ sized });
+  const host = window(100, 181);   // 81 units after one appended at the tail of an 80-unit window
+  const v: any = { el: host, winStart: 100, winEnd: 181, spacerCount: 100 };
+  evictCompactTop(v, 101);
+  assert.deepEqual(unitsIn(host)[0], 101, "unit 100 left");
+  assert.equal(host.children.length, 1 + 80, "the spacer and 80 units");
+  assert.equal(v.winStart, 101); assert.equal(v.spacerCount, 101);
+  assert.deepEqual(sized, [101], "the spacers were re-sized once, after the bookkeeping");
+  evictCompactTop(v, 101);
+  assert.deepEqual(sized, [101], "nothing to evict: no re-size");
+  evictCompactTop(v, 90);
+  assert.equal(v.winStart, 101, "a smaller start is not an eviction");
+  // a window that had no spacer (winStart 0) gets one when its first units leave
+  const whole = window(0, 81);
+  const v2: any = { el: whole, winStart: 0, winEnd: 81, spacerCount: 0 };
+  evictCompactTop(v2, 1);
+  assert.ok(whole.children[0].classList.contains("tx-spacer-top"), "a top spacer was put in front");
+  assert.deepEqual(unitsIn(whole)[0], 1);
+});
+
+// ── the replica: N streamed frames over an 80-unit window ────────────────────────────────────────
+
+test("replica: frames of a growing reply over an 80-unit window replace the reply's nodes alone; a new unit replaces itself and the evicted one; the rebuild replaced every unit", () => {
+  const { trimUnitsFrom, evictCompactTop } = liftTrim({ sized: [] });
+  const WINDOW_TAIL = 80;
+  const items: DisplayItem[] = Array.from({ length: 180 }, (_, i) => ev(i));
+  const host = window(100, 180);
+  const v: any = { el: host, winStart: 100, winEnd: 180, unitTotal: 180, spacerCount: 100, rendered: 180, stale: false, units: items.slice() };
+  const replaced: number[] = [];
+  const paint = (now: DisplayItem[], from: number) => {   // syncViewInner's compact branch, with appendItem standing in as one node per unit
+    const total = now.length;
+    const plan = compactTailPlan({ prev: v.units, items: now, from, winStart: v.winStart, winEnd: v.winEnd, unitTotal: v.unitTotal, stale: v.stale, bottomSpacer: false });
+    assert.equal(plan.kind, "append", "every streamed frame at the tail takes the incremental path: " + JSON.stringify(plan));
+    const span = Math.max(WINDOW_TAIL, v.winEnd - v.winStart);
+    const u0 = (plan as { u0: number }).u0;
+    let n = trimUnitsFrom(host, u0);
+    for (let u = u0; u < total; u++) { const node = new FakeEl("div", "turn"); node.dataset.unit = String(u); host.appendChild(node); n++; }
+    v.winEnd = total; v.spacerCount = v.winStart; v.unitTotal = total; v.rendered = total; v.units = now;
+    const before = host.children.length;
+    evictCompactTop(v, Math.max(0, total - span));
+    replaced.push(n + (before - host.children.length));
+  };
+  assert.equal(host.children.length - 1, WINDOW_TAIL, "the window holds 80 units: a rebuild would replace 80 nodes a frame");
+  for (let f = 0; f < 6; f++) paint(items, 179);              // the reply at unit 179 grows, six frames
+  assert.deepEqual(replaced, [2, 2, 2, 2, 2, 2], "one node out, one node in, per frame");
+  const grown = items.concat([ev(180)]);
+  paint(grown, 180);                                           // a new unit lands at the tail
+  assert.deepEqual(replaced.slice(-1), [2], "the new unit in, the evicted first unit out");
+  assert.deepEqual([v.winStart, v.winEnd, host.children.length - 1], [101, 181, WINDOW_TAIL], "the span held");
+  for (let f = 0; f < 3; f++) paint(grown, 180);
+  assert.ok(replaced.every((n) => n <= 2), "no frame replaced more than two nodes: " + replaced.join(","));
+});
+
+// ── source pins on the seam ──────────────────────────────────────────────────────────────────────
+
+test("syncViewInner asks the plan in compact mode between the fast path and the rebuild, and executes an append by trim, appendItem, footer patch, bookkeeping and eviction", () => {
+  const sync = RENDER.slice(RENDER.indexOf("function syncViewInner("), RENDER.indexOf("function patchWorkedFooters("));
+  const fast = sync.indexOf("if (v.rendered === len && !v.stale && v.el.childNodes.length > 0) return v;");
+  const seam = sync.indexOf("if (settings.compact) {\n    const plan = compactTailPlan({ prev: v.units, items, from: v.rendered, winStart: v.winStart ?? 0, winEnd: v.winEnd ?? total, unitTotal: v.unitTotal,");
+  const rebuild = sync.indexOf("if (settings.compact || v.stale) {");
+  const normal = sync.indexOf("// Normal mode, pure append.");
+  assert.ok(fast > 0 && seam > fast && rebuild > seam && normal > rebuild, "fast path, then the plan, then the rebuild, then normal mode");
+  assert.match(sync, /stale: v\.stale, bottomSpacer: !!v\.el\.querySelector\(":scope > \.tx-spacer-bot"\) \}\);/, "the plan reads the stale mark and the bottom spacer off the view");
+  assert.match(sync, /if \(plan\.kind === "spacer"\) \{\s*\n\s*v\.spacerCountBot = total - \(v\.winEnd \?\? total\); v\.unitTotal = total; v\.rendered = len; v\.units = items; sizeSpacers\(v\); return v;/, "below a browsed window: the bottom spacer grows, as normal mode's does");
+  const app = sync.slice(sync.indexOf('if (plan.kind === "append") {'), rebuild);
+  assert.match(app, /const span = Math\.max\(WINDOW_TAIL, \(v\.winEnd \?\? total\) - \(v\.winStart \?\? 0\)\);/, "the span is read before the append");
+  assert.match(app, /trimUnitsFrom\(v\.el, u0\);\s*\n\s*let prevEpoch = u0 > 0 && u0 < total \? prevTimedEpoch\(s\.events, itemFirstEvent\(items\[u0\]\)\) : null;\s*\n\s*const walk = dayWalkBefore\(s, items, u0\);/, "the trim, then renderWindowItems' seeds for the first re-rendered unit");
+  assert.match(app, /const turns = s\.regions \? turnOfEvents\(s\) : null;\s*\n\s*for \(let u = u0; u < total; u\+\+\) prevEpoch = appendItem\(v, s, items, u, prevEpoch, walk, working, turns\);/, "the same appendItem loop as a window build");
+  assert.match(app, /patchWorkedFooters\(v, s, u0 < total \? itemFirstEvent\(items\[u0\]\) : len, working, items\);/, "the footer patch by unit, from the first re-rendered event");
+  assert.match(app, /v\.winEnd = total; v\.spacerCount = v\.winStart \?\? 0; v\.spacerCountBot = 0; v\.unitTotal = total; v\.rendered = len; v\.units = items; v\.measureDue = true;/, "the bookkeeping records the units and asks for a measure");
+  assert.match(app, /if \(!\(wasAtTail && atBottom === false\)\) evictCompactTop\(v, Math\.max\(0, total - span\)\);\s*\n\s*return v;/, "the top is evicted to the span unless the reader is scrolled up (keepTop)");
+  assert.match(RENDER, /v\.units = items;\s*\/\/[^\n]*\n\s*v\.measureDue = true;/, "renderWindowItems records the units its DOM holds");
+  assert.match(RENDER, /import \{ compactTailPlan \} from "\.\/chat-compact-tail";/);
+});

@@ -119,10 +119,12 @@ test("render.ts wires one observer per view over every unit, through the mutatio
   // the active gate, so an inactive view's baselines stay current
   const uo = ev.split("v.uo = new ResizeObserver((entries) => {")[1].split("\n      });")[0];
   assert.match(uo, /^[\s\S]*?if \(view3\.el\.style\.display === "none"\) \{ for \(const e of entries\) unitHeights\.delete\(e\.target\); return; \}/, "the hide guard is the first statement");
-  assert.match(uo, /const w = view3\.el\.clientWidth;\s*\n\s*if \(w !== unitW\) \{ unitW = w; for \(const e of entries\) unitHeights\.set\(e\.target, e\.contentRect\?\.height \?\? 0\); return; \}/, "a reflow refreshes baselines and files nothing");
+  // the heights recorded are border boxes (entryBoxHeight: the height offsetHeight reports, so the window's per-turn figure stands for rows as
+  // they lay out), and a reflow re-measures the window's figures (PR E; spacer-measure.test.ts drives the measure)
+  assert.match(uo, /const w = view3\.el\.clientWidth;\s*\n\s*if \(w !== unitW\) \{ unitW = w; for \(const e of entries\) unitHeights\.set\(e\.target, entryBoxHeight\(e\)\); view3\.measureDue = true; measureUnits\(view3\); return; \}/, "a reflow refreshes baselines, re-measures and files nothing");
   assert.ok(uo.indexOf('display === "none"') < uo.indexOf("w !== unitW") && uo.indexOf("w !== unitW") < uo.indexOf("const changes = unitChanges("), "hide, then reflow, then the fold");
-  assert.match(uo, /const changes = unitChanges\(entries\.map\(\(e\) => \(\{ target: e\.target, height: e\.contentRect\?\.height \?\? 0 \}\)\), view3\.el\.children, unitHeights, unitOf\);\s*\n\s*const content = document\.getElementById\("content"\);\s*\n\s*if \(!content \|\| activeId !== id \|\| !view3\.shown\) return;/,
-    "the fold runs BEFORE the active/shown gate, so an inactive view's baselines stay current");
+  assert.match(uo, /const changes = unitChanges\(entries\.map\(\(e\) => \(\{ target: e\.target, height: entryBoxHeight\(e\) \}\)\), view3\.el\.children, unitHeights, unitOf\);\s*\n\s*measureUnits\(view3\);\s*\n\s*const content = document\.getElementById\("content"\);\s*\n\s*if \(!content \|\| activeId !== id \|\| !view3\.shown\) return;/,
+    "the fold and the measure run BEFORE the active/shown gate, so an inactive view's baselines and figures stay current");
   assert.match(ev, /const unitOf = \(n: Element\) => \{ const u = \(n as HTMLElement\)\.dataset\?\.unit; return u != null && u !== "" \? Number\(u\) : undefined; \};/, "fromTail counts the pane's data-unit");
   assert.match(ev, /scrollDiagRow\("unitchange", unitChangeRow\(id, c\.dh, c\.cls, c\.fromTail, view3\.stick, atBottom\(content\), content\.scrollHeight, content\.clientHeight\)\)/);
   assert.match(ev, /rec\.addedNodes\.forEach\(\(n\) => \{ if \(n instanceof Element\) view2\.uo\?\.observe\(n\); \}\);/, "units entering the window are observed");

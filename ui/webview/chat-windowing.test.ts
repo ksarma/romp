@@ -11,6 +11,7 @@ import * as path from "node:path";
 
 const RENDER = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "render.ts"), "utf8");
 const CSS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "styles.css"), "utf8");
+const ESTIMATE = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "turn-estimate.ts"), "utf8");   // the measures' rules since PR E
 
 test("windowing constants are sane: a tail, a render radius and a re-window margin, a switch cap", () => {
   // (the trailing re-check window, TAIL_RECHECK, is gone: the tail path re-renders exactly from the kernel's
@@ -43,11 +44,17 @@ test("renderWindowItems renders [unitStart, unitEnd) with a TOP and a BOTTOM spa
   assert.match(RENDER, /v\.spacerCount = unitStart; v\.spacerCountBot = total - unitEnd;/);
 });
 
-test("sizeSpacers sizes BOTH spacers by hidden-unit count × avg, caching only a visible measurement", () => {
+test("sizeSpacers sizes BOTH spacers by hidden-unit count × avg and measures nothing itself; the average is taken once, off the observer's heights", () => {
   assert.match(RENDER, /function sizeSpacers\(v: View\): void/);
   assert.match(RENDER, /const topAfter = top \? hiddenHeight\(v, 0, v\.spacerCount \?\? 0, avg\) : 0, botAfter = bot \? hiddenHeight\(v, total - \(v\.spacerCountBot \?\? 0\), total, avg\) : 0;/, "both spacers by the hidden units' own heights: a gap's estimate, else the average (T386 stage 2)");
   assert.match(RENDER, /if \(top\) top\.style\.height = topAfter \+ "px";\s*\n\s*if \(bot\) bot\.style\.height = botAfter \+ "px";/);
-  assert.match(RENDER, /if \(h > 0 && n > 0\) v\.avgTurnH = h \/ n;/);   // don't cache a display:none 0
+  // PR E: the measure moved out of the render task into the unit observer's callback (measureUnits), and the figures wait for the next
+  // paint (applyMeasure); the average is still taken once per view (the resets that clear it re-arm it), and a population with no height
+  // (a display:none view's rows are never reported) yields no figure, so a 0 is never cached (spacer-measure.test.ts drives it)
+  const size = RENDER.slice(RENDER.indexOf("function sizeSpacers(v: View): void {"), RENDER.indexOf("// The spacer rows of one task"));
+  assert.doesNotMatch(size, /offsetHeight|avgTurnH = |pxPerTurn = /, "no measure in the spacer write");
+  assert.match(RENDER, /if \(v\.avgTurnH == null && v\.measured\?\.avg == null\) \{ const h = meanRowHeight\(rows\); if \(h != null\) v\.measured = \{ \.\.\.v\.measured, avg: h \}; \}/, "the average, once, from the rows' reported heights");
+  assert.match(RENDER, /if \(m\.avg != null && v\.avgTurnH == null\) \{ v\.avgTurnH = m\.avg; changed = true; \}/, "…taken by the paint");
 });
 
 test("unitAtScroll maps a spacer by avg height and a rendered row by its data-unit", () => {
@@ -106,8 +113,11 @@ test("syncView: a pure tab switch is a NO-OP render (reveal the cached DOM)", ()
   assert.match(RENDER, /if \(v\.rendered === len && !v\.stale && v\.el\.childNodes\.length > 0\) return v;/);
 });
 
-test("syncView: compact / an in-place change re-renders the CURRENT window; a browse append just grows the bottom spacer", () => {
-  // compact mode and any stale (tool-group toggle, off-screen update) re-render where the user is
+test("syncView: compact paints its tail by unit, else compact / an in-place change re-renders the CURRENT window; a browse append just grows the bottom spacer", () => {
+  // compact mode's tail path by unit comes first (PR E, chat-compact-tail.test.ts): the plan, then an append by trim or a spacer growth
+  assert.match(RENDER, /if \(settings\.compact\) \{\s*\n\s*const plan = compactTailPlan\(\{ prev: v\.units, items, from: v\.rendered,/);
+  assert.match(RENDER, /if \(plan\.kind === "append"\) \{[\s\S]*?trimUnitsFrom\(v\.el, u0\);[\s\S]*?evictCompactTop\(v, Math\.max\(0, total - span\)\);/);
+  // …and any stale (tool-group toggle, off-screen update) or a plan the trim cannot serve re-renders where the user is
   assert.match(RENDER, /if \(settings\.compact \|\| v\.stale\) \{[\s\S]*?renderWindowItems\(v, s, items, ws, we, working\);/);
   // browsing history away from the tail: appended events land below the window → grow the bottom spacer only
   assert.match(RENDER, /if \(!wasAtTail\) \{\s*\n\s*v\.spacerCountBot = total - \(v\.winEnd \?\? total\);/);
@@ -145,11 +155,12 @@ test("round two/three code fixes each carry a pin (T386 stage 2, low 1)", () => 
   const cTurns = RENDER.slice(RENDER.indexOf("function chatTurns(msg: any)"), RENDER.indexOf("function chatHead(msg: any)") >= 0 ? RENDER.indexOf("function chatHead(msg: any)") : winStart);
   // the socket death clears every in-flight ask's state, not the glyph alone (medium 1)
   assert.match(RENDER, /function onWireDown\(\): void \{[\s\S]*?if \(hostOf\(parseGapKey\(k\)\.sid\) === ""\) gapLoading\.delete\(k\);[\s\S]*?windowAsks\.clear\(\); loadingOlder\.clear\(\);[\s\S]*?hideLandingNotice\(\);/, "the wire's down edge (the socket's or the pane's) clears the page asks, every ask record, the older-ask set and the notice");
-  // sizeSpacers does not average the gap element (medium 3, round one)
-  const pxBlock = RENDER.slice(RENDER.indexOf("if (v.pxPerTurn == null) {"), RENDER.indexOf("if (h > 0 && turns > 0) v.pxPerTurn = h / turns;"));
-  assert.match(pxBlock, /if \(c\.classList\.contains\("tx-spacer"\) \|\| c\.classList\.contains\("tx-gap"\) \|\| !c\.classList\.contains\("turn"\)\) continue;/, "the px-per-turn measure skips the gap element and every non-turn child (pinned inside its own block; round four low 3, round five)");
-  const unitBlock = RENDER.slice(RENDER.indexOf("if (v.avgTurnH == null) {"), RENDER.indexOf("if (h > 0 && n > 0) v.avgTurnH = h / n;"));
-  assert.match(unitBlock, /c\.classList\.contains\("tx-gap"\)\) continue;/, "…and so does the per-unit measure");
+  // the measures do not average the gap element (medium 3, round one): since PR E both rules live in turn-estimate.ts and run in
+  // turn-estimate.test.ts; render.ts hands the rows over with their class lists (measureUnits), and the module skips spacers and gaps
+  assert.match(RENDER, /const rows = rowsFor\(Array\.from\(v\.el\.children\) as HTMLElement\[\], \(c\) => c\.className, \(c\) => c\.style\.display === "none", \(c\) => uh\.get\(c\)\);/, "the rows, their hidden state and their reported heights");
+  assert.match(ESTIMATE, /export const isSpacerRow = \(r: EstRow\): boolean => has\(r\.cls, "tx-spacer"\) \|\| has\(r\.cls, "tx-gap"\);/);
+  assert.match(ESTIMATE, /export const isTurnRow = \(r: EstRow\): boolean => has\(r\.cls, "turn"\) && !isSpacerRow\(r\);/, "the px-per-turn measure counts turn rows only, never the gap element or a divider");
+  assert.match(ESTIMATE, /if \(isSpacerRow\(r\)\) continue;\s*\/\/ the gap's own estimate must not feed the average/, "…and so does the per-unit measure");
   // the region-fill view resets (chatTurns, chatWindow) keep the measured averages across fills (low 1); chatHead's prepend reset may still clear them
   assert.ok(cTurns.includes("v.rendered = 0; v.winStart = 0; v.winEnd = 0; v.spacerCount = undefined;"), "chatTurns resets the window");
   assert.doesNotMatch(cTurns, /v\.winEnd = 0; v\.avgTurnH = undefined;/, "…without clearing the measured average (the fill keeps it, low 1)");
@@ -176,8 +187,9 @@ test("round four and five fixes each carry a pin (T386 stage 2, round five low 1
   assert.match(RENDER, /const liveLanding = !!landingNoticeSid \|\| Array\.from\(windowAsks\.values\(\)\)\.some\(\(a\) => a\.some\(\(r\) => !r\.cancelled && !!r\.gap\)\);/, "the wsdown toast fires only for a landing the reader had not cancelled (low 1)");
   assert.match(RENDER, /const nospan = !msg\.missing && Array\.isArray\(msg\.events\) && msg\.events\.length > 0 && !Array\.isArray\(msg\.span\);/, "missing is tested first; only a reply with events and no span is an older host (medium 3; round five low 3)");
   assert.match(RENDER, /const preJumpOrigin = rec\.origin;/, "the pre-jump origin is consumed by every window reply (low 2)");
-  const px = RENDER.slice(RENDER.indexOf("if (v.pxPerTurn == null) {"), RENDER.indexOf("if (h > 0 && turns > 0) v.pxPerTurn = h / turns;"));
-  assert.match(px, /\|\| !c\.classList\.contains\("turn"\)\) continue;/, "px-per-turn counts turn rows only, never cards or dividers (round five)");
+  // px-per-turn counts turn rows only, never cards or dividers (round five): the rule is turn-estimate.ts completeTurnHeights since PR E
+  const turns = ESTIMATE.slice(ESTIMATE.indexOf("export function completeTurnHeights("), ESTIMATE.indexOf("export function median("));
+  assert.match(turns, /if \(!isTurnRow\(r\)\) continue;/, "px-per-turn counts turn rows only, never cards or dividers (round five)");
 });
 
 test("round six fixes each carry a pin (T386 stage 2): rows name their turn, the fill reads it, a fill that shows nothing re-windows", () => {
@@ -205,9 +217,12 @@ test("round six fixes each carry a pin (T386 stage 2): rows name their turn, the
   assert.doesNotMatch(turnsFn, /let t = r\.lo - 1;/, "…the unconditional lo - 1 is gone");
   // the px-per-turn measure takes the WHOLE row, action strip included: a gap stands for rows as they will render, and every user row
   // (history rows too) carries the strip; subtracting it drew the gap 16 percent short in the regions lab's sizing road
-  const px = RENDER.slice(RENDER.indexOf("if (v.pxPerTurn == null) {"), RENDER.indexOf("if (h > 0 && turns > 0) v.pxPerTurn = h / turns;"));
-  assert.match(px, /h \+= c\.offsetHeight;/, "px-per-turn sums whole rows");
-  assert.doesNotMatch(px, /msg-acts/, "…and subtracts no action strip");
+  // since PR E the rows' heights are the unit observer's BORDER boxes (entryBoxHeight: what offsetHeight reports, padding included), so
+  // a turn's height is its whole rows, action strip included, and nothing subtracts the strip
+  assert.match(RENDER, /function entryBoxHeight\(e: ResizeObserverEntry\): number \{[\s\S]*?if \(s && typeof s\.blockSize === "number"\) return s\.blockSize;/, "px-per-turn sums whole rows (border boxes)");
+  assert.doesNotMatch(ESTIMATE, /msg-acts/, "…and subtracts no action strip");
+  const measure = RENDER.slice(RENDER.indexOf("function measureUnits(v: View): void {"), RENDER.indexOf("function entryBoxHeight("));
+  assert.doesNotMatch(measure, /msg-acts/);
 });
 
 test("round seven fixes each carry a pin (T386 stage 2): a fault has its own word, a cancelled landing is not busy, the dead evidence writers are gone", () => {

@@ -70,3 +70,65 @@ test("a plain human-prompt append does not set stale: the signature reads the pr
   // (that chatTail hands its `from` over as the bound, lowers v.rendered to it, and still rebuilds the window on a
   // shrunken tail or a change inside a scrolled-away window, runs in chat-exact-tail-exec.test.ts)
 });
+
+// ── the desktop's tail path is untouched by PR E (2026-09-19) ─────────────────────────────────────
+// Compact mode's tail path by unit (chat-compact-tail.test.ts) was inserted ABOVE normal mode's block and the two fixes to the
+// spacers' measurement live in functions of their own; the normal-mode block (from "Normal mode, pure append." to syncViewInner's
+// closing brace) is recorded here line by line and pinned byte for byte, so a change to the desktop's path is a deliberate edit
+// of this record, never a side effect. On a failure the diff says what moved.
+const NORMAL_MODE_BLOCK = [
+  "  // Normal mode, pure append. While BROWSING history (window not at the tail), the new events land below the",
+  "  // rendered window → just grow the bottom spacer (no DOM churn); the user sees them on scroll-down.",
+  "  if (!wasAtTail) {",
+  "    v.spacerCountBot = total - (v.winEnd ?? total); v.unitTotal = total; v.rendered = len; sizeSpacers(v); return v;",
+  "  }",
+  "  // Normal mode, append AT the tail (unit === event, top spacer only): the cheap incremental hot path —",
+  "  // re-render EXACTLY from the first changed event, tagging data-unit so the scroll↔unit map stays valid.",
+  "  // v.rendered is exact: the kernel's chatTail names the first changed index (its _chat_diff compares by",
+  "  // identity first, then equality, and the fold never writes an event in place), and every client pass that",
+  "  // touches a prefix event marks the view stale instead — reconcileRewind (the editable set, the rewind dim),",
+  "  // reconcileOptimistic (the echo set), a full session frame (upsert) — which takes the window rebuild above.",
+  "  // A trailing window of 25 events re-rendered on every tail used to stand in for those signals, and was",
+  "  // most of a tail's render. The one render that depends on LATER events, the \"worked …\" footer of a turn's",
+  "  // last reply, is patched by unit after the loop (patchWorkedFooters).",
+  "  const from = Math.max(v.rendered, v.winStart ?? 0);",
+  "  // Drop every node from unit `from` onward, then re-render that span. Trim by DATA-UNIT, never by",
+  "  // child COUNT: a unit can put more than one node in the thread (a day divider precedes the turn",
+  "  // that opens a new day), so `keep = spacer + (from - winStart)` counted one node per unit and the",
+  "  // extra dividers made it delete that many live turns off the tail, which then never came back.",
+  "  // Reading the unit off the node is exact however many nodes a unit owns; the top spacer carries no",
+  "  // data-unit, so it stops the walk on its own.",
+  "  const unitOf = (n: ChildNode): number =>",
+  "    n instanceof HTMLElement && n.dataset.unit != null ? Number(n.dataset.unit) : -1;",
+  "  while (v.el.lastChild && unitOf(v.el.lastChild) >= from) v.el.removeChild(v.el.lastChild);",
+  "  const walk = dayWalkBeforeEvent(s.events, from);   // the day walk's high-water mark up to here (T339)",
+  "  for (let i = from; i < len; i++) {",
+  "    const prev = prevTimedEpoch(s.events, i);   // the rail's raw previous epoch (the same-minute rule)",
+  "    const ep = eventEpoch(s.events[i]);",
+  "    if (ep != null) {   // a day boundary opens with its divider here too, or the tail append would drop it",
+  "      const dv = dayDividerFor(ep, walk);",
+  "      if (dv) { dv.dataset.unit = String(i); v.el.appendChild(dv); }",
+  "    }",
+  "    const node = renderEvent(s.events[i], prev, turnWorkedSecs(s.events, i, working));",
+  "    node.dataset.unit = String(i);   // unit === event in normal mode",
+  "    v.el.appendChild(node);",
+  "    walk.pass(ep);",
+  "    stampWalkDay(node, walk);",
+  "  }",
+  "  patchWorkedFooters(v, s, from, working);",
+  "  v.winEnd = total; v.spacerCount = v.winStart ?? 0; v.spacerCountBot = 0; v.unitTotal = total; v.rendered = len;",
+  "  return v;",
+  "}"
+].join("\n") + "\n";
+
+test("normal mode's tail block is byte-identical to the recorded text, sits after compact mode's seam and the rebuild, and reads none of the compact seam's helpers", () => {
+  const sync = RENDER.slice(RENDER.indexOf("function syncViewInner("), RENDER.indexOf("function patchWorkedFooters("));
+  const at = sync.indexOf("  // Normal mode, pure append.");
+  assert.ok(at > 0, "the block's opening comment");
+  assert.equal(sync.slice(at, at + NORMAL_MODE_BLOCK.length), NORMAL_MODE_BLOCK, "normal mode's tail path changed; if that is deliberate, re-record the block here");
+  assert.ok(sync.slice(at + NORMAL_MODE_BLOCK.length).trimStart().startsWith("//"), "the block closes syncViewInner: only the next function's comment follows it");
+  const seamAt = sync.indexOf("if (settings.compact) {\n    const plan = compactTailPlan("), rebuildAt = sync.indexOf("if (settings.compact || v.stale) {");
+  assert.ok(seamAt > 0 && seamAt < rebuildAt && rebuildAt < at, "the compact seam, then the rebuild, then normal mode");
+  assert.doesNotMatch(NORMAL_MODE_BLOCK, /compactTailPlan|trimUnitsFrom|evictCompactTop|v\.units|measureDue|applyMeasure/, "no compact or measurement helper inside normal mode's block");
+  assert.ok(NORMAL_MODE_BLOCK.split("\n").length > 30, "the record holds the whole block, not a stub");
+});
