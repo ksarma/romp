@@ -92,17 +92,50 @@ const scene = (page: any): Promise<Scene> => page.evaluate(() => {
     marks: document.querySelectorAll(".fileview-body mark.fc-hl").length };
 });
 const near = (a: number, b: number, what: string) => assert.ok(Math.abs(a - b) < 0.01, what + ": " + a + " against " + b);
+/** The page's timeline: `window.__events`, strings each stamped with `performance.now()`, pushed by the listeners openWith installs
+ *  (every selectionchange with the count and the selection's text, every write of the float's `hidden` with the place the write found
+ *  it at, the keys, the mouse, the body's scroll events, the seam's paints and every change in the count of marks on the body) and by
+ *  every settled wait's predicate as its verdict changes (waitTraced). The expiry report prints its tail, so a red says what the page
+ *  did and in what order, before and after the wait's predicate first ran. */
+const TAIL = 40;
+/** A settled wait's predicate, run in the page under a record on the timeline: `src` is the predicate's own text (the function
+ *  playwright would have serialized), compiled once per text, and its verdict for `arg` is pushed as a timeline entry on the first
+ *  run of the step and on every change of the verdict, so the timeline says when the wait first looked and when it was met. */
+const waitTraced = (p: { step: string; src: string; arg: unknown }): boolean => {
+  const w = window as any;
+  const fns = (w.__waitFns ||= {}) as Record<string, (a: unknown) => unknown>;
+  const f = fns[p.src] || (fns[p.src] = new Function("return (" + p.src + ")")());
+  const met = !!f(p.arg);
+  const last = w.__waitLast as { step: string; met: boolean } | undefined;
+  if (!last || last.step !== p.step || last.met !== met) {
+    w.__waitLast = { step: p.step, met };
+    (w.__events ||= []).push(performance.now().toFixed(1) + " wait " + (met ? "MET" : "unmet") + " [" + p.step.slice(-70) + "]");
+  }
+  return met;
+};
 /** A five-second deadline on the DOM's own state after a real gesture (the float offered, the selection grown, the float hidden), as
- *  `waitForFunction` gives it, that names the step when it expires and puts beside it what the next assertion would have read: the
- *  selection's text, the float's state and inline place, the selectionchange and float-show counts and the body's scroll offset. Playwright's own
- *  message names no step, so every such wait read alike in a sweep log. The deadline is a deadline; the predicate is the event. */
+ *  `waitForFunction` gives it, that names the step when it expires and puts beside it each witness the predicate could have read and
+ *  what it had to be: the selection's text, whether it is collapsed and its range count, the float's state and inline place, the
+ *  selectionchange and float-show counts beside the counts the wait was given to exceed (`need`, the wait's own argument), the live last
+ *  range's rect, the left showFloat's arithmetic gives for it and the float's distance from it, the body's scroll offset, and the tail of
+ *  the page's timeline. Playwright's own message names no step, so every such wait read alike in a sweep log, and the first report of the
+ *  keyboard-offer wait's expiry under load (a real selection, a shown float at a place) could not say which of its five witnesses was
+ *  unmet. The deadline is a deadline; the predicate is the event. */
 async function settled(page: any, step: string, fn: any, arg: unknown = null): Promise<void> {
-  try { await page.waitForFunction(fn, arg, { timeout: 5000 }); }
+  try { await page.waitForFunction(waitTraced, { step, src: String(fn), arg }, { timeout: 5000 }); }
   catch (e) {
-    const seen = await page.evaluate(() => {
-      const f = document.querySelector(".fc-float") as HTMLElement | null; const sel = getSelection()!; const b = document.querySelector(".fileview-body") as HTMLElement | null;
-      return { selected: String(sel).slice(0, 60), collapsed: sel.isCollapsed, float: f ? { hidden: f.hidden, left: f.style.left, top: f.style.top } : null, selChanges: (window as any).__selChanges, floatShows: (window as any).__floatShows, bodyScrollTop: b ? b.scrollTop : null };
-    }).catch(() => null);
+    const seen = await page.evaluate(([need, tail]: [unknown, number]) => {
+      const w = window as any; const f = document.querySelector(".fc-float") as HTMLElement | null; const sel = getSelection()!; const b = document.querySelector(".fileview-body") as HTMLElement | null;
+      const r = sel.rangeCount ? sel.getRangeAt(sel.rangeCount - 1).getBoundingClientRect() : null;
+      const expectedLeft = r ? Math.min(Math.max(8, r.right + 6), window.innerWidth - 90) : NaN;
+      const left = f ? parseFloat(f.style.left) : NaN;
+      return { selected: String(sel).slice(0, 60), collapsed: sel.isCollapsed, rangeCount: sel.rangeCount,
+        float: f ? { hidden: f.hidden, left: f.style.left, top: f.style.top } : null,
+        selChanges: w.__selChanges, floatShows: w.__floatShows, need,
+        rect: r ? { left: r.left, top: r.top, right: r.right, bottom: r.bottom, width: r.width, height: r.height } : null,
+        expectedLeft, leftDiff: left - expectedLeft, bodyScrollTop: b ? b.scrollTop : null,
+        now: performance.now(), events: ((w.__events || []) as string[]).slice(-tail) };
+    }, [arg, TAIL]).catch(() => null);
     throw new Error(step + ": " + String((e as Error).message).split("\n")[0] + "; seen " + JSON.stringify(seen));
   }
 }
@@ -124,7 +157,17 @@ async function openWith(browser: any, comments: unknown[], markSel: string | nul
       }
       return real(url, init);
     };
-    w.__selChanges = 0; document.addEventListener("selectionchange", () => { w.__selChanges++; });
+    // the page's timeline (the file's header on `window.__events`): each entry a string stamped with performance.now()
+    const ev = (w.__ev = (what: string) => { (w.__events ||= []).push(performance.now().toFixed(1) + " " + what); });
+    w.__selChanges = 0; document.addEventListener("selectionchange", () => { w.__selChanges++; const sel = getSelection()!; ev("selectionchange #" + w.__selChanges + " sel=" + JSON.stringify(String(sel).slice(0, 40)) + " collapsed=" + sel.isCollapsed + " ranges=" + sel.rangeCount); });
+    for (const k of ["keydown", "keyup"]) document.addEventListener(k, (e) => ev(k + " " + (e as KeyboardEvent).key), true);
+    for (const k of ["mousedown", "mouseup"]) document.addEventListener(k, (e) => ev(k + " at " + (e as MouseEvent).clientX + "," + (e as MouseEvent).clientY), true);
+    document.addEventListener("scroll", (e) => ev("scroll " + ((e.target as HTMLElement).className || e.target!.constructor.name) + " scrollTop=" + ((e.target as HTMLElement).scrollTop ?? "")), true);
+    if (w.__seam) w.__seam.onRendered((why: string) => ev("rendered " + why));
+    const body = document.querySelector(".fileview-body");
+    // the marks on the body: their count, and the identity of the first (a re-paint unwraps and re-wraps every mark, so a paint that
+    // keeps the count still shows as a new first node)
+    if (body) { let marks = -1, first: Element | null = null; new MutationObserver(() => { const all = document.querySelectorAll(".fileview-body mark.fc-hl"); const n = all.length, f0 = all[0] || null; if (n !== marks || f0 !== first) { ev("marks=" + n + (n === marks ? " re-painted (a new first mark node)" : "")); marks = n; first = f0; } }).observe(body, { childList: true, subtree: true }); }
   }, [withComments(comments, STORE_MT_1), STATUS.configMtimeNs]);
   await openPanel(page);
   // the float's show count: showFloat writes `hidden = false` on every offer, at the same place or a new one, so an accessor on the
@@ -135,7 +178,11 @@ async function openWith(browser: any, comments: unknown[], markSel: string | nul
     if (!f) throw new Error("no .fc-float once the panel opened");
     const d = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "hidden")!;
     w.__floatShows = 0;
-    Object.defineProperty(f, "hidden", { configurable: true, enumerable: true, get() { return d.get!.call(this); }, set(v: boolean) { if (!v) w.__floatShows++; d.set!.call(this, v); } });
+    Object.defineProperty(f, "hidden", { configurable: true, enumerable: true, get() { return d.get!.call(this); }, set(v: boolean) {
+      if (!v) w.__floatShows++;
+      // the timeline: showFloat writes the place and then `hidden = false`, so a show's entry carries the place it was offered at
+      w.__ev((v ? "float hide" : "float show #" + w.__floatShows) + " was=" + d.get!.call(this) + " at left=" + f.style.left + " top=" + f.style.top);
+      d.set!.call(this, v); } });
   });
   if (markSel) await page.waitForFunction((s: string) => !!document.querySelector(s), markSel, { timeout: 10000 });
   await frames(page, 3);
@@ -539,7 +586,17 @@ async function openWithLogo(browser: any, comments: unknown[]): Promise<{ page: 
       }
       return real(url, init);
     };
-    w.__selChanges = 0; document.addEventListener("selectionchange", () => { w.__selChanges++; });
+    // the page's timeline (the file's header on `window.__events`): each entry a string stamped with performance.now()
+    const ev = (w.__ev = (what: string) => { (w.__events ||= []).push(performance.now().toFixed(1) + " " + what); });
+    w.__selChanges = 0; document.addEventListener("selectionchange", () => { w.__selChanges++; const sel = getSelection()!; ev("selectionchange #" + w.__selChanges + " sel=" + JSON.stringify(String(sel).slice(0, 40)) + " collapsed=" + sel.isCollapsed + " ranges=" + sel.rangeCount); });
+    for (const k of ["keydown", "keyup"]) document.addEventListener(k, (e) => ev(k + " " + (e as KeyboardEvent).key), true);
+    for (const k of ["mousedown", "mouseup"]) document.addEventListener(k, (e) => ev(k + " at " + (e as MouseEvent).clientX + "," + (e as MouseEvent).clientY), true);
+    document.addEventListener("scroll", (e) => ev("scroll " + ((e.target as HTMLElement).className || e.target!.constructor.name) + " scrollTop=" + ((e.target as HTMLElement).scrollTop ?? "")), true);
+    if (w.__seam) w.__seam.onRendered((why: string) => ev("rendered " + why));
+    const body = document.querySelector(".fileview-body");
+    // the marks on the body: their count, and the identity of the first (a re-paint unwraps and re-wraps every mark, so a paint that
+    // keeps the count still shows as a new first node)
+    if (body) { let marks = -1, first: Element | null = null; new MutationObserver(() => { const all = document.querySelectorAll(".fileview-body mark.fc-hl"); const n = all.length, f0 = all[0] || null; if (n !== marks || f0 !== first) { ev("marks=" + n + (n === marks ? " re-painted (a new first mark node)" : "")); marks = n; first = f0; } }).observe(body, { childList: true, subtree: true }); }
   }, [withComments(comments, STORE_MT_1), STATUS.configMtimeNs]);
   await openPanel(page);
   await page.waitForFunction((withRect: boolean) => {
