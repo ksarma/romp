@@ -177,3 +177,7 @@ sys.modules.setdefault("fs_clock", _fs_clock)
 # runner, registered the same way for the same reason.
 from . import git_fixture as _git_fixture  # noqa: E402
 sys.modules.setdefault("git_fixture", _git_fixture)
+# `from env_ring_census import census` (tests/env_ring_census.py, review round 6 of the env-pick door, 2026-09-19): the
+# ring-keyed census of the problem ring's doors that tests/test_session_env.py pins, registered the same way.
+from . import env_ring_census as _env_ring_census  # noqa: E402
+sys.modules.setdefault("env_ring_census", _env_ring_census)

@@ -25,8 +25,13 @@ The mechanics under test:
     unlink removed a file the refused call had not created).
   * The problem rows about a per-session env or its file are a DERIVED population (review round 4,
     2026-09-19, after the round-3 comment claimed every row while two reserved-name rows carried no
-    ring text): the module's `# ENV ROWS:` line is the AST walk's enumeration (EnvRowsPopulation), every
-    format named on it has a worst case computed here from the format (CredentialShapedNamesEndToEnd),
+    ring text), and since review round 6 (2026-09-19) the derivation is keyed on the problem RING, not
+    on call-site names: tests/env_ring_census.py enumerates every door to the ring by resolution (the
+    one appender, every call reaching it on any receiver or through a parameter, alias or conduit, the
+    kernel's feeders) and derives the CONTENT rows as the door calls whose text carries a value of the
+    pick or its file; the module's `# ENV ROWS:` line is that derivation (EnvRowsPopulation), every
+    value-tainted door call declares problem= explicitly, every format on the line has a worst case
+    computed here from the format with the repeat suffix on the KEYED rows (CredentialShapedNamesEndToEnd),
     each row is driven past its budgets through the real writer, and the lock-order sentence is pinned
     by a held-state probe inside the real _options and an AST census of the three sites
     (FlagSettingsLockOrder, EnvRowsPopulation).
@@ -51,6 +56,7 @@ Values are assembled at run time, never a token-shaped literal (gitleaks reads t
 door tests deliberately plant credential-shaped NAMES, since refusing them is what they pin.
 """
 import ast
+import collections
 import errno
 import glob
 import inspect
@@ -65,6 +71,7 @@ import unittest
 import uuid
 from pathlib import Path
 from romp_load import load_source
+from env_ring_census import Census, DEFAULT_SOURCES, census
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
@@ -120,9 +127,6 @@ def _temps(d):
 SDK_BACKEND = os.path.join(os.path.dirname(HERE), "kernel", "sdk_backend.py")
 KERNEL_PY = os.path.join(os.path.dirname(HERE), "kernel", "kernel.py")
 CREDENTIALS_PY = os.path.join(os.path.dirname(HERE), "kernel", "credentials.py")
-ENV_ROW_HEADS = ("env (", "flag settings")   # the two heads a problem row about a per-session env or its file begins with
-
-
 def _parsed(path):
     """A module's AST and its parent map (the walk needs the enclosing def and the enclosing handlers of a call)."""
     tree = ast.parse(Path(path).read_text(encoding="utf-8"))
@@ -156,115 +160,37 @@ def _lock_withs_above(node, parents):
     return out
 
 
-def _env_rows(path):
-    """THE PREDICATE, and the walk that applies it (review round 4 of the env-pick door, 2026-09-19). A problem row about
-    a per-session env or its flag-settings file is a call to `_log` or `log` whose kernel log line begins with one of
-    ENV_ROW_HEADS and that either carries `problem=` with a value other than the constant False, or carries no
-    `problem=` and sits inside an except handler, where _log classifies the line as a problem by the live exception.
-    A call with such a head that is neither is a routine line, returned apart. Each row's ring_text is resolved to
-    the module-level FORMAT it starts from: a `%` or `+` is followed down its left side, a name assigned in the
-    function is followed to every assignment (a tuple unpacking to the element's position), a call to a module-level
-    function is followed into that function's returns, and a module-level name ends the walk; the head is resolved the
-    same way to its string literal. A row with no ring_text resolves to no format. Returns {"rows": [(lineno, owner,
-    sorted formats, heads)], "routine": [(lineno, owner, heads)], "line": the `# ENV ROWS:` text this derivation
-    spells, one format per row grouped by the writing function in source order}."""
-    tree, parents = _parsed(path)
-    top_defs = {n.name: n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
-    top_names = {t.id for st in tree.body if isinstance(st, ast.Assign) for t in st.targets if isinstance(t, ast.Name)}
-
-    def assigns_to(fn, name, before):
-        out = []
-        for n in ast.walk(fn):
-            if isinstance(n, ast.Assign) and n.lineno < before:
-                for t in n.targets:
-                    if isinstance(t, ast.Name) and t.id == name:
-                        out.append((n.value, None))
-                    elif isinstance(t, ast.Tuple):
-                        for i, e in enumerate(t.elts):
-                            if isinstance(e, ast.Name) and e.id == name:
-                                out.append((n.value, i))
-        return out
-
-    def returns_of(fn, index):
-        out = []
-        for r in ast.walk(fn):
-            if isinstance(r, ast.Return) and r.value is not None:
-                if index is None:
-                    out.append(r.value)
-                elif isinstance(r.value, ast.Tuple) and index < len(r.value.elts):
-                    out.append(r.value.elts[index])
-        return out
-
-    def resolve(expr, fn, before, depth=0):
-        if depth > 16:
-            return {("deep", "")}
-        if isinstance(expr, ast.Constant) and isinstance(expr.value, str):
-            return {("lit", expr.value)}
-        if isinstance(expr, ast.BinOp) and isinstance(expr.op, (ast.Mod, ast.Add)):
-            return resolve(expr.left, fn, before, depth + 1)
-        if isinstance(expr, ast.Call):
-            f = expr.func
-            if isinstance(f, ast.Name) and f.id in top_defs:
-                out = set()
-                for r in returns_of(top_defs[f.id], None):
-                    out |= resolve(r, top_defs[f.id], 10 ** 9, depth + 1)
-                return out or {("call", f.id)}
-            return {("call", ast.unparse(f))}
-        if isinstance(expr, ast.Name):
-            if expr.id in top_names or expr.id in top_defs:
-                return {("name", expr.id)}
-            out = set()
-            for value, idx in assigns_to(fn, expr.id, before):
-                if idx is None:
-                    out |= resolve(value, fn, before, depth + 1)
-                elif isinstance(value, ast.Tuple):
-                    out |= resolve(value.elts[idx], fn, before, depth + 1)
-                elif isinstance(value, ast.Call) and isinstance(value.func, ast.Name) and value.func.id in top_defs:
-                    for r in returns_of(top_defs[value.func.id], idx):
-                        out |= resolve(r, top_defs[value.func.id], 10 ** 9, depth + 1)
-            return out or {("unresolved", expr.id)}
-        return {("other", ast.unparse(expr))}
-
-    rows, routine = [], []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call) or not node.args:
-            continue
-        f = node.func
-        callee = f.attr if isinstance(f, ast.Attribute) else (f.id if isinstance(f, ast.Name) else None)
-        if callee not in ("_log", "log"):
-            continue
-        fn = _enclosing_def(node, parents)
-        if fn is None:
-            continue
-        heads = sorted(h[1] for h in resolve(node.args[0], fn, node.lineno) if h[0] == "lit")
-        if not any(h.startswith(ENV_ROW_HEADS) for h in heads):
-            continue
-        kws = {k.arg: k.value for k in node.keywords}
-        handler = False
-        up = node
-        while up in parents:
-            up = parents[up]
-            if isinstance(up, ast.ExceptHandler):
-                handler = True
-            if isinstance(up, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                break
-        if "problem" in kws:
-            problem = not (isinstance(kws["problem"], ast.Constant) and kws["problem"].value is False)
-        else:
-            problem = handler
-        if not problem:
-            routine.append((node.lineno, fn.name, heads))
-            continue
-        formats = sorted(t[1] for t in resolve(kws["ring_text"], fn, node.lineno) if t[0] == "name") if "ring_text" in kws else []
-        rows.append((node.lineno, fn.name, formats, heads))
-    rows.sort()
-    groups = []
-    for _ln, owner, formats, _heads in rows:
-        if not groups or groups[-1][0] != owner:
-            groups.append((owner, []))
-        groups[-1][1].append(formats[0] if len(formats) == 1 else "UNBOUNDED" if not formats else "AMBIGUOUS(%s)" % ",".join(formats))
-    line = "# ENV ROWS: " + " | ".join("%s -> %s" % (owner, " ".join(tags)) for owner, tags in groups)
-    return {"rows": rows, "routine": routine, "line": line}
+CENSUS_FILES = (SDK_BACKEND, KERNEL_PY, CREDENTIALS_PY)
+# The content rows at review round 6, by identity: the writing function, the module-level format the ring text
+# starts from, and whether the call passes key= (the rows the launch files at every connect are keyed)
+NINE = [
+    ("flag_settings_path", "FLAG_SID_RING", False), ("flag_settings_path", "FLAG_LINK_RING", False),
+    ("flag_settings_path", "FLAG_UNWRITABLE_RING", False),
+    ("_options", "RESERVED_DROP_RING", True), ("_options", "STORED_OFFENDER_RING", True),
+    ("fork", "FORK_RESERVED_RING", False), ("fork", "FORK_DROP_RING", False),
+    ("set_env", "REFUSAL_RING_HEAD", False), ("set_env", "REFUSAL_RING_HEAD", False),
+]
+# The floors: what the census found at review round 6's head (5d5507ee3 plus this round's commit), each with its
+# derivation. A run that finds FEWER is a blind derivation, not a cleaner module; lowering one is a deliberate edit.
+FLOORS = {
+    "doors": 395,                  # 1 appender + 330 calls reaching it + 31 conduit and feeder call sites + 18 door-as-argument
+    #                                sites + 10 parameter-bound functions + 2 feeder appends + 3 merge reads
+    "calls_reaching_writer": 330,  # self._log in SdkBackend 183, another receiver 101, ApiHealth's bound self._log 7,
+    #                                a log= parameter 34, a local alias 5
+    "log_param_fns": 10,           # problem_row, ApiHealth.__init__, flag_settings_path, cli_scope_supported, cli_scope_limits and
+    #                                its pass-through _cli_scope_settle, helper_fast_org_env and its pass-through key_fast_org_env,
+    #                                relocate_transcripts, sweep_dead_test_roots
+    "door_value_sites": 18,        # call sites passing a door as an argument: 11 problem_row (one in kernel.py, through getattr),
+    #                                ApiHealth, cli_scope_supported, cli_scope_limits, sweep_dead_test_roots, flag_settings_path,
+    #                                helper_fast_org_env, relocate_transcripts
+    "problem_row_sites": 11,
+    "sdk_problem_sites": 8,
+    "feeder_appends": 2,           # _SDK_BOOT_PROBLEMS in _sdk_problem, _WS_DROPS in _note_ws_drop
+    "merge_reads": 3,              # _sdk_problem_rows reads the two lists and be.problems()
+    "content_rows": 9,
+    "functions": 3157,             # every def and lambda of the three files, nested ones included
+}
+CALLS_BY_KIND = {"self": 183, "typed": 101, "bound-self": 7, "param": 34, "alias": 5}   # the 330's derivation, a floor each
 
 
 class _Backend(unittest.TestCase):
@@ -952,76 +878,206 @@ class OptionsThreadsEnv(_OptionsBackend):
 
 class EnvRowsPopulation(unittest.TestCase):
     """The problem rows about a per-session env or its flag-settings file are a DERIVED population (review round 4 of
-    the env-pick door, 2026-09-19): the round-3 comment claimed every such row carried a bounded ring text while two
-    rows in the same two functions, the _options reserved skip and the fork reserved drop, carried none and rendered
-    244 and 241 characters against the 240 cap at ordinary session names, and the owner's rows lens had rendered 24
-    rows and called the population complete. So the list is written into the module as one machine-readable line and
-    derived here from the file's AST by the predicate _env_rows states; the two must agree, and every row on the list
-    must resolve to a module-level format (no ring_text resolves to none). PR 792's POOL SITES line and its pin in
-    tests/test_perf_stats.py are the precedent."""
+    the env-pick door, 2026-09-19: the round-3 comment claimed every such row carried a bounded ring text while two rows
+    carried none), and the derivation is keyed on the problem RING (review round 6, 2026-09-19: round 5 found the walk
+    over calls NAMED _log or log with an env head narrower than the universal it enforced, four ways: problem_row was a
+    third door it never read, kernel.py names no call _log so its negative half passed by construction, a message it
+    could not reduce fell out of both assertions, and the head filter stood in for a rule). tests/env_ring_census.py
+    enumerates every door by resolution and derives the content rows by taint; this class holds the module to it: the
+    ENV ROWS line is the derivation, every value-tainted door call declares problem=, an unreduced message is named and
+    never dropped, the negative half finds the kernel's doors before it asserts them clean, the counts meet their floors,
+    and the parameter-indirection road is exercised on planted modules, one the walk follows and one it cannot, which
+    must fail loudly. PR 792's POOL SITES line and its pin in tests/test_perf_stats.py are the precedent."""
 
-    def test_the_env_rows_line_is_the_ast_walks_enumeration(self):
-        got = _env_rows(SDK_BACKEND)
+    @classmethod
+    def setUpClass(cls):
+        cls.c = census(CENSUS_FILES)
+
+    def _assert_pin(self, c):
+        """The pin's first assertions, shared with the planted-module tests: a failure of the derivation itself refuses
+        before anything is compared, and the content rows are the nine."""
+        self.assertEqual(c.failures, [], "the derivation failed (a door value the walk could not follow, or a writer it "
+                         "could not resolve): %r" % (c.failures,))
+        self.assertEqual((c.writer.qual, c.door, c.msg_param), ("SdkBackend._log", "_log", "m"), "the one appender to self._problems")
+        self.assertEqual(c.content_identities(), NINE,
+                         "the content rows (env-tainted, problem=True) by identity; the census found %d at lines %s. A new row "
+                         "needs a module-level format for its ring_text, a worst case in CredentialShapedNamesEndToEnd's table, "
+                         "and the ENV ROWS line re-derived" % (len(c.content_rows), c.sites(c.content_rows)))
+
+    def test_the_census_keys_on_the_ring_and_the_env_rows_line_is_its_content_rows(self):
+        c = self.c
+        self._assert_pin(c)
         src = Path(SDK_BACKEND).read_text(encoding="utf-8")
         written = [ln for ln in src.splitlines() if ln.startswith("# ENV ROWS: ")]
         self.assertEqual(len(written), 1, "exactly one ENV ROWS line in kernel/sdk_backend.py: %r" % (written,))
-        self.assertEqual(written[0], got["line"],
-                         "kernel/sdk_backend.py's ENV ROWS line is the AST walk's enumeration; the walk found %d rows at lines %s. "
-                         "Update the line to the derived text; a row named UNBOUNDED carries no ring_text and needs one built "
-                         "from a module-level format, with its worst case added to the table in CredentialShapedNamesEndToEnd"
-                         % (len(got["rows"]), [ln for ln, _o, _f, _h in got["rows"]]))
-        for ln, owner, formats, heads in got["rows"]:
-            self.assertEqual(len(formats), 1, "one format per row, resolved from its ring_text: line %d in %s: %r" % (ln, owner, formats))
-            fmt = getattr(sb, formats[0])
-            self.assertIsInstance(fmt, str, "%s names a module-level string format" % formats[0])
-            self.assertTrue(fmt.startswith(ENV_ROW_HEADS), "the ring text opens with the row's head too: %r" % fmt)
+        self.assertEqual(written[0], c.content_rows_line(), "kernel/sdk_backend.py's ENV ROWS line is the census's derivation")
+        for dc in c.content_rows:
+            self.assertEqual(dc.base, "sdk_backend.py")
+            self.assertEqual(dc.problem_decl, ("const", True))
+            self.assertIn("env", dc.taint)
+            self.assertEqual(len(dc.ring_formats), 1, "one format per row, resolved from its ring_text: line %d in %s: %r" % (dc.lineno, dc.owner, dc.ring_formats))
+            fmt = getattr(sb, dc.ring_formats[0])
+            self.assertIsInstance(fmt, str, "%s names a module-level string format" % dc.ring_formats[0])
+            self.assertTrue(fmt.startswith(("env (", "flag settings")), "the ring text opens with the row's head too: %r" % fmt)
             self.assertNotIn("\u2014", fmt)
-        self.assertEqual(sorted({o for _ln, o, _f, _h in got["rows"]}), ["_options", "flag_settings_path", "fork", "set_env"],
-                         "the four functions that write such a row at review round 4")
-        self.assertEqual(len(got["rows"]), 9, "nine rows at review round 4: three in the writer, two each in _options and fork, two in set_env")
-        # the routine lines with the same head are outside every handler and carry no problem= (set_env's success line)
-        self.assertEqual([(o, h[0][:24]) for _ln, o, h in got["routine"]], [("set_env", "env (%s): per-session en")],
-                         "the one routine env-headed line at review round 4: %r" % (got["routine"],))
-        # kernel.py and credentials.py write no such row: the kernel's problem rows are the backend ring's (_sdk_problem_rows)
-        for path in (KERNEL_PY, CREDENTIALS_PY):
-            other = _env_rows(path)
-            self.assertEqual(other["rows"], [], "%s writes a problem row with an env head: %r" % (os.path.basename(path), other["rows"]))
+            self.assertTrue(dc.heads and all(h.startswith(("env (", "flag settings")) for h in dc.heads), (dc.lineno, dc.heads))
         self.assertIn("SdkBackend._log, problem=True", Path(KERNEL_PY).read_text(encoding="utf-8"),
                       "the kernel names the backend ring as where its problem rows come from")
 
-    def test_the_predicate_reads_a_head_through_a_name_a_tuple_and_a_helper(self):
-        """The walk's resolver is itself pinned on a synthetic module: a head held in a name assigned from a tuple-returning
-        helper, a ring text built by a helper from a module-level format, a `problem=False` routine line, a keyword-less
-        line inside an except handler, and a row with no ring_text (UNBOUNDED)."""
-        src = (
-            "FMT = 'env (%s): a'\n"
-            "OTHER = 'env (%s): b'\n"
-            "def helper(x):\n"
-            "    return FMT % x\n"
-            "def rows(sid):\n"
-            "    line = 'flag settings (%s): c' % sid\n"
-            "    return line, OTHER % sid\n"
-            "class B:\n"
-            "    def one(self, sid):\n"
-            "        line, ring = rows(sid)\n"
-            "        self._log(line, problem=True, ring_text=ring)\n"
-            "        self._log('env (%s): d' % sid, problem=True, ring_text=helper(sid))\n"
-            "        self._log('env (%s): routine' % sid, problem=False)\n"
-            "        self._log('env (%s): plain' % sid)\n"
-            "        try:\n"
-            "            pass\n"
-            "        except OSError:\n"
-            "            self._log('env (%s): in a handler' % sid)\n"
-            "    def two(self, sid):\n"
-            "        self._log('flag settings: e', problem=bool(sid))\n"
-        )
-        path = os.path.join(tempfile.mkdtemp(), "synthetic.py")
-        Path(path).write_text(src)
-        got = _env_rows(path)
-        self.assertEqual([(o, f) for _ln, o, f, _h in got["rows"]], [("one", ["OTHER"]), ("one", ["FMT"]), ("one", []), ("two", [])])
-        self.assertEqual(got["line"], "# ENV ROWS: one -> OTHER FMT UNBOUNDED | two -> UNBOUNDED")
-        self.assertEqual([h for _ln, _o, _f, h in got["rows"]][0], ["flag settings (%s): c"], "the head read through the tuple-returning helper")
-        self.assertEqual([(o, h) for _ln, o, h in got["routine"]], [("one", ["env (%s): routine"]), ("one", ["env (%s): plain"])])
+    def test_every_value_tainted_door_call_declares_problem_explicitly(self):
+        """Rule (2) of the ring census (review round 6 of the env-pick door, 2026-09-19; the problem= class of round 5:
+        correctness-1, tests-1, regression-4). _log classifies a line left without problem= by the LIVE exception,
+        while the population decides lexically, so a line whose text carries a per-session env value or names a pending
+        pick must declare its classification: False for a routine line, or True with a ring text that reduces to one
+        module-level format (an existence-only row, tainted through the surface set alone, owes the constant and no
+        format: a surface name adds a fixed word). Red on 5d5507ee3 at twelve lines: _log_quietly's conduit and its
+        six pick-naming callers, the mode landing's two routine lines, set_mode's line, the thinking override note and
+        set_env's success line; closed by problem=False inside _log_quietly and on the five lines."""
+        c = self.c
+        self.assertEqual([(dc.base, dc.lineno, dc.owner, why) for dc, why in c.explicit_violations], [],
+                         "value-tainted door calls without an explicit constant problem= (or a content row with no single format)")
+        declared_false = collections.Counter(dc.owner for dc in c.tainted if dc.problem_decl == ("const", False))
+        self.assertEqual(declared_false, collections.Counter({
+            "_log_quietly": 1, "_served_by_connect": 1, "_arm_reconnect_if_quiet": 2, "_note_work_ended": 1, "_settle_withdrawal": 1,
+            "_reset_reconnect_state": 1, "_do_set_mode": 4, "set_mode": 1, "_options": 1, "set_env": 1,
+            "_note_env_credential_names": 1, "_host_transport_for": 1}),
+            "the routine lines declared problem=False by writing function: round 6's twelve (the conduit's own call, its six "
+            "callers, two landing lines, set_mode, the thinking note, set_env's success line), the landing's two earlier "
+            "declarations, and the two boot-time notices")
+
+    def test_an_unreduced_door_call_is_named_never_dropped(self):
+        """Rule (3): a door call whose message the walk cannot reduce to a literal head stays in the population (taint
+        decides, not reduction) and is held here by identity, so a new one reds until it is reduced or named with its
+        reason. One at this head: _lease_problem's problem_row call, whose prose is the host's own problem text, run-time
+        data with no head to read. The four the round named reduce: problem_row's two inner calls through its eleven
+        sites, _log_quietly's through its eight, and the crash line, an f-string."""
+        c = self.c
+        self.assertEqual(sorted((dc.base, dc.owner, dc.kind) for dc in c.unreduced), [("sdk_backend.py", "_lease_problem", "conduit:problem_row")])
+        self.assertEqual([dc.lineno for dc in c.unreduced if dc.taint], [], "an unreduced call carries no env taint")
+        inner = {(dc.owner, dc.kind): dc.heads for dc in c.door_calls if dc.owner in ("problem_row", "_log_quietly") and dc.kind in ("param", "typed")}
+        self.assertEqual(sorted(inner), [("_log_quietly", "typed"), ("problem_row", "param")])
+        for k, heads in inner.items():
+            self.assertTrue(heads and all(heads), (k, heads))
+        fstrings = [dc for dc in c.door_calls if isinstance(dc.message, ast.JoinedStr)]
+        self.assertTrue(fstrings and all(dc.heads for dc in fstrings), "an f-string message reduces to its leading text: %r"
+                        % [(dc.lineno, dc.heads) for dc in fstrings])
+        self.assertIn("sdk session ", {h for dc in fstrings for h in dc.heads}, "the crash line is one of them")
+
+    def test_existence_only_lines_declare_a_constant_and_are_outside_the_population(self):
+        """The one sentence beside the nine, pinned: lines tainted through the pending-pick surface set alone (the
+        reconnect heading's, the mode landing's) name a pick's existence in a fixed vocabulary plus the session name,
+        never a value; every one declares a constant, none is a content row, and the ones filed problem=True are the
+        landing's three failure reports (the mode-truth tests own those)."""
+        c = self.c
+        ex = c.existence_rows
+        self.assertGreaterEqual(len(ex), 15)
+        for dc in ex:
+            self.assertEqual(dc.taint, frozenset({"pick"}), (dc.lineno, dc.taint))
+            self.assertEqual(dc.problem_decl[0], "const", (dc.lineno, dc.problem_decl))
+        self.assertEqual(sorted({h.split(" (")[0] for dc in ex for h in dc.heads}), ["mode", "permission consult", "reconnect", "set_permission_mode"])
+        self.assertFalse(set(ex) & set(c.content_rows))
+        filed = sorted((dc.owner, dc.heads[0][:36]) for dc in ex if dc.problem_decl == ("const", True))
+        self.assertEqual(filed, [("_do_set_mode", "mode (%s): the landed process runs %"), ("_do_set_mode", "mode (%s): the landed process runs %"),
+                                 ("_do_set_mode", "set_permission_mode (%s -> %s) refus")])
+
+    def test_the_negative_half_finds_the_kernels_doors_before_asserting_none_carries_env_taint(self):
+        """Round 5's regression-1: the earlier negative half passed because kernel.py contains no call named _log. The
+        census finds the kernel's real doors first (the eight _sdk_problem sites, the two _note_ws_drop sites, the
+        problem_row call in _spend_guard_row with log=getattr(be, "_log", None) and its own two callers), and only then
+        asserts that none carries env taint; credentials.py has no door, and the census shows it read the file by
+        finding its twelve source definitions."""
+        c = self.c
+        kernel = [dc for dc in c.door_calls if dc.base == "kernel.py"]
+        kinds = collections.Counter(dc.kind for dc in kernel)
+        self.assertEqual(kinds, collections.Counter({"conduit:_sdk_problem": 8, "feeder:_note_ws_drop": 2, "conduit:problem_row": 1,
+                                                     "conduit:_spend_guard_row": 2, "feeder-append:_SDK_BOOT_PROBLEMS": 1,
+                                                     "feeder-append:_WS_DROPS": 1}), "the kernel's doors, found")
+        self.assertEqual(sorted(fn.name for fn, _call, _lst in c.feeder_appends), ["_note_ws_drop", "_sdk_problem"])
+        self.assertEqual(sorted(name for _k, name, _ln in c.merge_reads), ["_SDK_BOOT_PROBLEMS", "_WS_DROPS", "problems"])
+        self.assertEqual([("kernel.py", 1, "parameter log of problem_row")[2]], [how for b, _ln, how, _f in c.door_value_sites if b == "kernel.py"])
+        self.assertEqual([(dc.lineno, dc.owner, sorted(dc.taint)) for dc in kernel if dc.taint], [], "no kernel door carries env taint")
+        cred = c.mods["credentials.py"]
+        self.assertEqual([dc.lineno for dc in c.door_calls if dc.base == "credentials.py"], [])
+        self.assertEqual([s for s in c.door_value_sites if s[0] == "credentials.py"], [])
+        defined = sorted(n for (b, n) in list(DEFAULT_SOURCES["name"]) + list(DEFAULT_SOURCES["func"])
+                         if b == "credentials.py" and (n in cred.top_defs or n in cred.top_assigns))
+        self.assertEqual(len(defined), 12, defined)
+        self.assertGreaterEqual(len(cred.fns), 20)
+
+    def test_the_derivation_meets_its_floors(self):
+        c = self.c
+        got = {"doors": c.counts["doors"], "calls_reaching_writer": c.counts["calls_reaching_writer"],
+               "log_param_fns": c.counts["log_param_fns"], "door_value_sites": c.counts["door_value_sites"],
+               "problem_row_sites": c.counts["conduit_sites"]["conduit:problem_row"],
+               "sdk_problem_sites": c.counts["conduit_sites"]["conduit:_sdk_problem"],
+               "feeder_appends": c.counts["feeder_appends"], "merge_reads": c.counts["merge_reads"],
+               "content_rows": c.counts["content_rows"], "functions": c.counts["functions"]}
+        for k, floor in FLOORS.items():
+            self.assertGreaterEqual(got[k], floor, "derivation blind: %s found %d, the floor at review round 6 is %d" % (k, got[k], floor))
+        for kind, floor in CALLS_BY_KIND.items():
+            self.assertGreaterEqual(c.by_kind[kind], floor, "derivation blind: %s calls %d, the floor is %d" % (kind, c.by_kind[kind], floor))
+        self.assertEqual(sum(c.by_kind.values()), got["calls_reaching_writer"])
+
+    def test_the_kernel_adds_no_content_row_so_a_module_copy_is_read_with_credentials_alone(self):
+        """The planted-module and module-copy tests below run the census over kernel/sdk_backend.py and
+        kernel/credentials.py (a second under a second, against five with kernel.py); this holds that the shortcut loses
+        no content row: the kernel taints set_env's parameter, and its rows are tainted by the door's own reads too."""
+        self.assertEqual(census((SDK_BACKEND, CREDENTIALS_PY)).content_identities(), self.c.content_identities())
+
+    PLANT = (
+        "FMT = 'env (%s): planted %s'\n"
+        "def planted(sess, log=None):\n"
+        "    log('env (%s): planted %s' % (sess.name, ', '.join(sorted(sess.env_vars)))@DECL@)\n"
+        "def caller(be, sess):\n"
+        "    planted(sess, log=getattr(be, '_log', None))\n"
+    )
+
+    def _plant(self, name, src):
+        path = os.path.join(tempfile.mkdtemp(), name)
+        Path(path).write_text(src, encoding="utf-8")
+        return path
+
+    def test_a_door_planted_behind_a_parameter_indirection_is_found_and_reds_without_problem(self):
+        """Rule (6): a synthetic module plants a door behind a parameter (a function taking log= and calling it with an
+        env-tainted message, invoked with log=be._log through getattr). The walk finds it as a content row (the tenth,
+        so the identity pin reds), finds the door value at the call site, and reds rule (2) when the planted call lacks
+        problem=; a planted message with no literal head lands in the unreduced set."""
+        declared = ", problem=True, ring_text=FMT % (sess.name[:20], len(sess.env_vars))"
+        c = Census((SDK_BACKEND, CREDENTIALS_PY, self._plant("plant.py", self.PLANT.replace("@DECL@", declared))), DEFAULT_SOURCES)
+        self.assertEqual(c.failures, [])
+        self.assertIn(("planted", "FMT", False), c.content_identities())
+        self.assertEqual(len(c.content_rows), 10)
+        found = [dc for dc in c.door_calls if dc.base == "plant.py"]
+        self.assertEqual([(dc.lineno, dc.kind, dc.owner, sorted(dc.taint), dc.heads) for dc in found],
+                         [(3, "param", "planted", ["env"], ["env (%s): planted %s"])])
+        self.assertIn(("plant.py", 5, "parameter log of planted"), [(b, ln, how) for b, ln, how, _f in c.door_value_sites])
+        with self.assertRaises(AssertionError) as cm:
+            self._assert_pin(c)
+        self.assertIn("planted", str(cm.exception))
+        c2 = Census((SDK_BACKEND, CREDENTIALS_PY, self._plant("plant.py", self.PLANT.replace("@DECL@", ""))), DEFAULT_SOURCES)
+        self.assertEqual([(dc.base, dc.lineno, why) for dc, why in c2.explicit_violations if dc.base == "plant.py"],
+                         [("plant.py", 3, "no explicit problem=")])
+        self.assertNotIn("planted", [o for o, _f, _k in c2.content_identities()], "without problem=True it is no content row: rule (2) is what catches it")
+        c3 = Census((SDK_BACKEND, CREDENTIALS_PY, self._plant("plant.py", self.PLANT.replace("@DECL@", declared)
+                                                              + "def noisy(be, e):\n    be._log(str(e))\n")), DEFAULT_SOURCES)
+        self.assertIn(("plant.py", 7, "noisy", "typed"), [(dc.base, dc.lineno, dc.owner, dc.kind) for dc in c3.unreduced])
+
+    def test_a_door_whose_binding_the_walk_cannot_follow_fails_loudly(self):
+        """The second plant: the door reaches the planted function through a helper's RETURN (`log=pick(be)` with
+        `pick` returning be._log), a binding the walk does not follow. The planted call is then NOT found, so a silent
+        pass here would be the round-5 defect again; instead the door value's escape is a failure named by site, and
+        the pin's first assertion refuses on it."""
+        src = ("def pick(be):\n    return be._log\n"
+               "def planted(sess, log=None):\n    log('env (%s): planted %s' % (sess.name, ', '.join(sess.env_vars)))\n"
+               "def caller(be, sess):\n    planted(sess, log=pick(be))\n")
+        c = Census((SDK_BACKEND, CREDENTIALS_PY, self._plant("plant2.py", src)), DEFAULT_SOURCES)
+        self.assertEqual([(k, b, ln) for k, b, ln, _t in c.failures], [("door-escapes", "plant2.py", 2)])
+        self.assertIn("through its return", c.failures[0][3])
+        self.assertEqual([dc.lineno for dc in c.door_calls if dc.base == "plant2.py"], [], "the planted call is invisible to the walk, which is why the escape must be loud")
+        self.assertEqual([dc for dc, _w in c.explicit_violations if dc.base == "plant2.py"], [])
+        with self.assertRaises(AssertionError) as cm:
+            self._assert_pin(c)
+        self.assertIn("plant2.py", str(cm.exception))
 
     def test_the_writer_its_caller_and_the_locks_taker_sit_outside_every_lexical_with_over_a_lock(self):
         """The caller-side half of _flag_settings_lock's order sentence (correctness-3, tests-4, regression-2; review round 4,
@@ -1886,6 +1942,7 @@ class CredentialShapedNamesEndToEnd(_OptionsBackend):
                     self.assertEqual(len(rows), 1, self.logged)
                     expect = sb.FORK_RESERVED_RING % (cut_child, sb._cred.first_and_count(names, sb.RING_NAME_BUDGET))
                     self.assertEqual(rows[0][1]["ring_text"], expect, "the fork's reserved drop, bounded")
+                    self.assertNotIn("key", rows[0][1], "unkeyed: the fork fires once, so no repeat suffix rides its rows")
                     self.assertTrue(expect.startswith("env (%s): dropping reserved %s" % (cut_child, names[0])), expect)
                     if count > 1:
                         self.assertIn(" and %d more from the inherited env" % (count - 1), expect)
@@ -1902,7 +1959,8 @@ class CredentialShapedNamesEndToEnd(_OptionsBackend):
                     cut_sess = sb._cred.cut_to(long_child + "-%d" % count, sb.RING_SESSION_BUDGET)
                     expect = sb.RESERVED_DROP_RING % (cut_sess, sb._cred.first_and_count(names, sb.RING_NAME_BUDGET))
                     self.assertEqual(rows[0][1]["ring_text"], expect, "the launch's reserved skip, bounded")
-                    self.assertLessEqual(len(expect), cap)
+                    self.assertEqual(rows[0][1].get("key"), ("env-reserved-skip", sid), "keyed (round 6): a second connect counts on the row")
+                    self.assertLessEqual(len(expect) + 59, cap, "with the repeat suffix at four digits")
                     self.assertIn(long_child + "-%d" % count, rows[0][0], "the whole session name on the log line")
                     for n in names:
                         self.assertIn(n, rows[0][0])
@@ -1910,38 +1968,55 @@ class CredentialShapedNamesEndToEnd(_OptionsBackend):
         finally:
             os.environ.pop("CLAUDE_CONFIG_DIR", None)
 
-    def test_every_format_on_the_env_rows_line_has_its_worst_case_computed_from_the_format_and_fits_the_cap(self):
-        """The tie between the derived population (EnvRowsPopulation) and the bounds (review round 4 of the env-pick door,
-        2026-09-19): one worst case per format the ENV ROWS line names, computed HERE from the format's own pieces with
-        every budget spent and the count text at its widest, no more entries and no fewer, so a new row reds this test
-        until its worst case is written down. The stored-offender row is keyed, so _log's repeat suffix at a four-digit
-        count, read from the real ring, rides its worst case; the refusal head has three bodies (the credential ring
-        text under the longest road, the registry-road sentence, and any other body cut to what the cap leaves). Each
-        is under ERROR_CENTER_TEXT_CAP and whole through the feed's cut, and the two-piece formats' lengths are the
-        identity fixed text + session budget + name budget + widest count."""
-        km = self._real_ring()
-        suffix4 = self._repeat_suffix(9999)
-        cap = sb.ERROR_CENTER_TEXT_CAP
+    TWO_PIECE = ("RESERVED_DROP_RING", "STORED_OFFENDER_RING", "FORK_RESERVED_RING", "FORK_DROP_RING")
+
+    @staticmethod
+    def _worst_cases(formats, keyed, suffix4, cap):
+        """One worst case per format on the ENV ROWS line, computed from the format's own pieces with every budget spent
+        and the count text at its widest; _log's repeat suffix at a four-digit count rides every KEYED row's (review
+        round 6 of the env-pick door, 2026-09-19: round 5 hand-added it to the stored-offender row alone, so keying the
+        launch's skip, the natural fix for its per-connect churn, would have crossed the cap under a green table).
+        `formats` maps each name on the line to its text (the real module's, or a copy's), `keyed` is derived from
+        the key= keyword at each call by the census."""
         S, N, D = "x" * sb.RING_SESSION_BUDGET, "x" * sb.RING_NAME_BUDGET, "x" * sb.RING_SID_BUDGET
         count_worst = " and %s more" % sb._cred.count_text(sb._cred.COUNT_CAP + 1)
-        self.assertEqual(count_worst, " and 999+ more")
         keys = ", ".join(sb.FLAG_SETTINGS_KEYS)
         road = max(sb._cred.CREDENTIAL_RING_ROADS.values(), key=len)
-        head = sb.REFUSAL_RING_HEAD % S
-        two_piece = ("RESERVED_DROP_RING", "STORED_OFFENDER_RING", "FORK_RESERVED_RING", "FORK_DROP_RING")
+        head = formats["REFUSAL_RING_HEAD"] % S
         worst = {
-            "FLAG_SID_RING": [sb.FLAG_SID_RING % (max(sb.FLAG_SID_REASONS, key=len), D, keys)],
-            "FLAG_LINK_RING": [sb.FLAG_LINK_RING % D],
-            "FLAG_UNWRITABLE_RING": [sb.FLAG_UNWRITABLE_RING % (D, "x" * sb.RING_CLASS_BUDGET, keys)],
-            "RESERVED_DROP_RING": [sb.RESERVED_DROP_RING % (S, N + count_worst)],
-            "STORED_OFFENDER_RING": [sb.STORED_OFFENDER_RING % (S, N + count_worst) + suffix4],
-            "FORK_RESERVED_RING": [sb.FORK_RESERVED_RING % (S, N + count_worst)],
-            "FORK_DROP_RING": [sb.FORK_DROP_RING % (S, N + count_worst)],
+            "FLAG_SID_RING": [formats["FLAG_SID_RING"] % (max(sb.FLAG_SID_REASONS, key=len), D, keys)],
+            "FLAG_LINK_RING": [formats["FLAG_LINK_RING"] % D],
+            "FLAG_UNWRITABLE_RING": [formats["FLAG_UNWRITABLE_RING"] % (D, "x" * sb.RING_CLASS_BUDGET, keys)],
+            "RESERVED_DROP_RING": [formats["RESERVED_DROP_RING"] % (S, N + count_worst)],
+            "STORED_OFFENDER_RING": [formats["STORED_OFFENDER_RING"] % (S, N + count_worst)],
+            "FORK_RESERVED_RING": [formats["FORK_RESERVED_RING"] % (S, N + count_worst)],
+            "FORK_DROP_RING": [formats["FORK_DROP_RING"] % (S, N + count_worst)],
             "REFUSAL_RING_HEAD": [head + sb._cred.CREDENTIAL_RING_FORMAT % (N + count_worst, "are", road),
                                   head + sb.REFUSAL_NO_REG,
                                   head + sb._cred.cut_to("B" * 1000, cap - len(head))],
         }
-        on_line = sorted({f for _ln, _o, formats, _h in _env_rows(SDK_BACKEND)["rows"] for f in formats})
+        return {name: [t + (suffix4 if name in keyed else "") for t in texts] for name, texts in worst.items()}
+
+    def test_every_format_on_the_env_rows_line_has_its_worst_case_computed_from_the_format_and_fits_the_cap(self):
+        """The tie between the derived population (EnvRowsPopulation) and the bounds (review round 4 of the env-pick door,
+        2026-09-19; keyed rows derived since round 6): one worst case per format the census's content rows name, no more
+        entries and no fewer, so a new row reds this test until its worst case is written down. Which rows are keyed is
+        read from the census (the key= keyword at each call): the two rows _options files at every connect, the stored
+        offender's and the reserved skip's, and _log's repeat suffix at a four-digit count, read from the real ring,
+        rides both; the refusal head has three bodies (the credential ring text under the longest road, the registry-road
+        sentence, and any other body cut to what the cap leaves). Each is under ERROR_CENTER_TEXT_CAP and whole through
+        the feed's cut, and the two-piece formats' lengths are the identity fixed text + session budget + name budget +
+        widest count (+ the suffix when keyed)."""
+        km = self._real_ring()
+        suffix4 = self._repeat_suffix(9999)
+        cap = sb.ERROR_CENTER_TEXT_CAP
+        count_worst = " and %s more" % sb._cred.count_text(sb._cred.COUNT_CAP + 1)
+        self.assertEqual((count_worst, len(suffix4)), (" and 999+ more", 59))
+        c = census(CENSUS_FILES)
+        keyed = {fmt for _o, fmt, k in c.content_identities() if k}
+        self.assertEqual(keyed, {"RESERVED_DROP_RING", "STORED_OFFENDER_RING"}, "the keyed rows at review round 6, derived from key= at each call")
+        on_line = sorted({fmt for _o, fmt, _k in c.content_identities()})
+        worst = self._worst_cases({n: getattr(sb, n) for n in on_line}, keyed, suffix4, cap)
         self.assertEqual(sorted(worst), on_line, "one worst case per format on the ENV ROWS line, no more and no fewer")
         lengths = {}
         for fmt_name in on_line:
@@ -1951,15 +2026,93 @@ class CredentialShapedNamesEndToEnd(_OptionsBackend):
                 self.assertEqual(km._sdk_problem_text(text), text, (fmt_name, "whole in the feed"))
                 self.assertTrue(text.startswith(fmt.split("%s")[0]), (fmt_name, text))
             lengths[fmt_name] = max(len(t) for t in worst[fmt_name])
-            if fmt_name in two_piece:
+            if fmt_name in self.TWO_PIECE:
                 self.assertEqual(fmt.count("%s"), 2, fmt_name)
-                self.assertEqual(len(worst[fmt_name][0].removesuffix(suffix4 if fmt_name == "STORED_OFFENDER_RING" else "")),
+                self.assertEqual(len(worst[fmt_name][0]) - (len(suffix4) if fmt_name in keyed else 0),
                                  len(fmt % ("", "")) + sb.RING_SESSION_BUDGET + sb.RING_NAME_BUDGET + len(count_worst),
                                  "%s: the format's worst case is its fixed text plus both budgets and the widest count" % fmt_name)
         self.assertEqual(lengths["REFUSAL_RING_HEAD"], cap, "the refusal ring's worst case is the cap exactly (round 3's arithmetic)")
         self.assertEqual(lengths["STORED_OFFENDER_RING"], 178 + len(suffix4), "the stored row: 178 plus the suffix at four digits")
-        self.assertEqual((lengths["RESERVED_DROP_RING"], lengths["FORK_RESERVED_RING"]), (196, 187),
-                         "the two reserved rows' worst cases at review round 4 (the whole log lines rendered 244 and 241)")
+        self.assertEqual(lengths["RESERVED_DROP_RING"], 175 + len(suffix4),
+                         "the keyed skip (round 6): 117 fixed + session 20 + name 24 + count 14, plus the suffix at four digits, 234 of 240")
+        self.assertEqual(lengths["FORK_RESERVED_RING"], 187, "the fork's reserved drop, unkeyed: it fires once per fork (round 4's 187)")
+        self.assertEqual(lengths["FORK_DROP_RING"], 160)
+
+    SKIP_FORMAT = ('RESERVED_DROP_RING = ("env (%s): ignoring reserved %s from the stored session env: romp sets the identity env; a credential is "\n'
+                   '                      "Claude Code\'s own")')
+    SKIP_FORMAT_ROUND_4 = ('RESERVED_DROP_RING = ("env (%s): ignoring reserved %s from the stored session env: romp sets the identity env itself, and a "\n'
+                           '                      "session\'s credential is Claude Code\'s own")')
+    SKIP_KEY = ' key=("env-reserved-skip", sess.sid),'
+    FORK_RESERVED_CALL = '% (name, ", ".join(dropped)), problem=True,\n'
+
+    def _module_copy(self, edit):
+        src = Path(SDK_BACKEND).read_text(encoding="utf-8")
+        new = edit(src)
+        self.assertNotEqual(new, src, "the copy's edit must apply")
+        path = os.path.join(tempfile.mkdtemp(), "sdk_backend.py")
+        Path(path).write_text(new, encoding="utf-8")
+        return path
+
+    def _copy_table(self, path, suffix4, cap):
+        """The census over a module copy (with credentials.py; EnvRowsPopulation holds that kernel.py adds no content row),
+        the copy's own format texts, and the table's longest worst case per format."""
+        c = Census((path, CREDENTIALS_PY), DEFAULT_SOURCES)
+        self.assertEqual(c.failures, [])
+        keyed = {fmt for _o, fmt, k in c.content_identities() if k}
+        on_line = sorted({fmt for _o, fmt, _k in c.content_identities()})
+        tree = ast.parse(Path(path).read_text(encoding="utf-8"))
+        consts = {t.id: ast.literal_eval(node.value) for node in tree.body if isinstance(node, ast.Assign)
+                  for t in node.targets if isinstance(t, ast.Name) and t.id in on_line}
+        self.assertEqual(sorted(consts), on_line)
+        worst = self._worst_cases(consts, keyed, suffix4, cap)
+        return keyed, {n: max(len(t) for t in texts) for n, texts in worst.items()}
+
+    def test_the_worst_case_table_reds_where_a_keyed_reserved_row_crosses_the_cap(self):
+        """kernel-2 with extra6-1 (review round 5 of the env-pick door, 2026-09-19) and the round-6 roster item: the
+        table is re-run against copies of the module with each reserved row keyed, and it reds where a keyed row's
+        bound crosses the cap. Both boundary cases: the fork's reserved drop keyed (187 + 59 = 246, over the cap; it
+        stays unkeyed, firing once per fork), the launch's skip keyed under round 4's longer format (196 + 59 = 255,
+        the way the obvious fix for kernel-2 would have crossed it under round 5's table), and the skip with its key
+        removed (175, no suffix, under the cap), so the derivation is shown to read the key= keyword both ways."""
+        self._real_ring()
+        suffix4 = self._repeat_suffix(9999)
+        cap = sb.ERROR_CENTER_TEXT_CAP
+        src = Path(SDK_BACKEND).read_text(encoding="utf-8")
+        for needle in (self.SKIP_FORMAT, self.SKIP_KEY, self.FORK_RESERVED_CALL):
+            self.assertEqual(src.count(needle), 1, "the copy's anchors are in the module once each: %r" % needle)
+        with self.subTest(copy="the fork's reserved drop keyed"):
+            keyed, lengths = self._copy_table(self._module_copy(lambda s: s.replace(
+                self.FORK_RESERVED_CALL, '% (name, ", ".join(dropped)), problem=True, key=("env-fork-reserved", sid),\n')), suffix4, cap)
+            self.assertEqual(keyed, {"RESERVED_DROP_RING", "STORED_OFFENDER_RING", "FORK_RESERVED_RING"})
+            self.assertEqual(lengths["FORK_RESERVED_RING"], 187 + len(suffix4))
+            self.assertEqual([n for n, ln in sorted(lengths.items()) if ln > cap], ["FORK_RESERVED_RING"], "the table reds on the keyed row alone")
+        with self.subTest(copy="the skip keyed under round 4's format"):
+            keyed, lengths = self._copy_table(self._module_copy(lambda s: s.replace(self.SKIP_FORMAT, self.SKIP_FORMAT_ROUND_4)), suffix4, cap)
+            self.assertIn("RESERVED_DROP_RING", keyed)
+            self.assertEqual(lengths["RESERVED_DROP_RING"], 196 + len(suffix4))
+            self.assertEqual([n for n, ln in sorted(lengths.items()) if ln > cap], ["RESERVED_DROP_RING"])
+        with self.subTest(copy="the skip with its key removed"):
+            keyed, lengths = self._copy_table(self._module_copy(lambda s: s.replace(self.SKIP_KEY, "")), suffix4, cap)
+            self.assertEqual(keyed, {"STORED_OFFENDER_RING"})
+            self.assertEqual(lengths["RESERVED_DROP_RING"], 175, "unkeyed, no suffix rides it")
+            self.assertEqual([n for n, ln in sorted(lengths.items()) if ln > cap], [])
+
+    def test_the_reserved_skip_row_is_keyed_so_a_second_connect_counts_on_it(self):
+        """kernel-2 (review round 5 of the env-pick door, 2026-09-19): the launch's reserved skip runs at every connect of
+        the same session, and unkeyed it appended a fresh ring entry each time while its sibling 21 lines below was keyed
+        to avoid exactly that. Through the real ring: two connects of one session storing a reserved name leave ONE row,
+        keyed on the session, counted twice, with _log's repeat suffix, and the short form is the format's."""
+        self._real_ring()
+        sid = self.be.spawn("web", "/tmp", env=ENV)
+        self.be._update_reg(sid, env={**ENV, "ROMP_SID": PARENT})
+        s = self._sess(sid)
+        self.be._options(s, dict)
+        self.be._options(s, dict)
+        rows = [r for r in self.be.problems() if "ignoring reserved" in r["text"]]
+        self.assertEqual(len(rows), 1, "one row for the session, not one per connect: %r" % (rows,))
+        self.assertEqual((rows[0].get("key"), rows[0].get("count")), (("env-reserved-skip", sid), 2))
+        self.assertTrue(rows[0]["text"].startswith(sb.RESERVED_DROP_RING % ("web", "ROMP_SID") + " (1 repeat"), rows[0]["text"])
+        self.assertNotIn(PARENT, rows[0]["text"], "names, never a value")
 
     def _real_ring(self):
         """The row as the dashboard reads it: the class stubs _log to capture lines, so the stub goes and the kernel

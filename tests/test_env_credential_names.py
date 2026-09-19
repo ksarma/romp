@@ -466,3 +466,55 @@ class BootWiring(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RuleStatementCount(unittest.TestCase):
+    """extra8-1 (review round 5 of the env-pick door, 2026-09-19): the body's count of the credential-shape rule's
+    statements was called non-behavioural and is not; it is pinned here by the definition the body states. A rule
+    statement is a line matching `_API_KEY.{0,12}_TOKEN` that names 1Password on the same line or on the next (the
+    two split statements: the boot notice's _log call and env_credential_names' docstring, each stating the suffix half
+    with the 1Password half on the next line); a matching line with 1Password on neither is code (the suffix tuple,
+    the reference lister's own test) and not a statement. Over kernel/, cli/, bin/, docs/ and ui/, with the
+    bin/romp_sdk_backend.py symlink to kernel/sdk_backend.py excluded (it would count the module twice) and binary
+    files skipped. Mutating one statement away (dropping 1Password from one) reds it."""
+    DIRS = ("kernel", "cli", "bin", "docs", "ui")
+    SKIP_DIRS = {"node_modules", "dist", "__pycache__", ".git"}
+    PATTERN = re.compile(r"_API_KEY.{0,12}_TOKEN")
+
+    def _statements(self):
+        single, split, code = [], [], []
+        for d in self.DIRS:
+            for root, dirs, files in os.walk(ROOT / d):
+                dirs[:] = sorted(x for x in dirs if x not in self.SKIP_DIRS and not os.path.islink(os.path.join(root, x)))
+                for f in sorted(files):
+                    path = os.path.join(root, f)
+                    if os.path.islink(path):
+                        continue
+                    try:
+                        data = Path(path).read_bytes()
+                    except OSError:
+                        continue
+                    if b"\0" in data[:4096]:
+                        continue
+                    lines = data.decode("utf-8", errors="replace").splitlines()
+                    for i, line in enumerate(lines):
+                        if not self.PATTERN.search(line):
+                            continue
+                        rel = "%s:%d" % (os.path.relpath(path, ROOT), i + 1)
+                        if "1Password" in line:
+                            single.append(rel)
+                        elif i + 1 < len(lines) and "1Password" in lines[i + 1]:
+                            split.append(rel)
+                        else:
+                            code.append(rel)
+        return single, split, code
+
+    def test_the_rule_is_stated_fourteen_times_twelve_on_one_line_and_two_split(self):
+        single, split, code = self._statements()
+        self.assertTrue(os.path.islink(ROOT / "bin" / "romp_sdk_backend.py"), "the symlink the count excludes is a symlink")
+        self.assertFalse([p for p in single + split + code if p.startswith("bin/romp_sdk_backend.py")])
+        self.assertEqual((len(single), len(split)), (12, 2), "12 single-line statements and 2 split ones: %r / %r" % (single, split))
+        self.assertEqual(sorted(p.split(":")[0] for p in split), ["kernel/sdk_backend.py", "kernel/sdk_backend.py"])
+        self.assertEqual(sorted(p.split(":")[0] for p in code), ["docs/reference.md", "kernel/credentials.py"],
+                         "the suffix tuple and the lister's own test are code, not statements: %r" % (code,))
+        self.assertEqual(len(single) + len(split), 14)

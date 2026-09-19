@@ -5116,25 +5116,30 @@ FLAG_SETTINGS_DIR = "sdk-flag-settings"   # per-session --settings payloads, one
 # 2026-09-18: set_env's refusal row, whose ring text was then the whole line, ran to 414 characters and was clipped
 # mid-word on both surfaces). Pinned to the TypeScript literal by tests/test_session_env.py.
 ERROR_CENTER_TEXT_CAP = 240
-# The problem rows this module writes about a per-session env or its flag-settings file are the ones on the ENV ROWS
-# line below the ring formats, and each has a ring_text whose length is a function of its FORMAT, never of what a pick
-# or a stored env carries (review round 3 of the env-pick door, 2026-09-19: round 2's addendum had bounded the
-# stored-offender row so, and the reviewer found every sibling row still unbounded, the symbolic-link row at 383 to
-# 453 characters and the refusal row pinned by measurements taken with a three-character session name; review round
-# 4, 2026-09-19: this paragraph then claimed every row while the two reserved-name rows, the _options skip and the
-# fork drop, carried no ring_text and rendered 244 and 241 characters against the cap at ordinary names, so the list
-# is derived now and this paragraph names the list, not a universal). The line is machine-readable and
-# tests/test_session_env.py derives it from this file's AST and compares: a _log or log call whose kernel log line
-# begins "env (" or "flag settings" and that carries problem= other than False, or carries none and sits in an except
-# handler (where _log classifies the line as a problem), is a row; its ring_text is resolved to the module-level format
-# or helper it starts from, and a row with none resolves to nothing and reds the test, as does a row the line does not
-# name. The same test computes a worst case for every name on the line, so a row the line carries with no worst case
-# is red too. The pieces: fixed text; a session name or a sid cut to a budget with the feed's marker (kernel.NAME_RE
-# caps no length, so the bound must not rest on one); ONE variable named, the first in sorted order, cut to a budget,
-# with the rest counted through a bounded count text (credentials.first_and_count); an OSError class name cut to a
-# budget; and the flag-settings keys, a fixed set tied to what the writer writes (FLAG_SETTINGS_KEYS). Each worst case
-# is asserted under ERROR_CENTER_TEXT_CAP (the stored-offender row with _log's repeat suffix at a four-digit count,
-# the one piece of a row this module does not shape). The kernel log line of every row keeps each name, path and
+# The problem rows this module writes about a per-session env or its flag-settings file are a DERIVED population, and
+# the derivation is a rule over RING WRITERS, not over call-site names (review round 6 of the env-pick door, 2026-09-19;
+# rounds 3 and 4 stated a universal and then a list, backed by a walk over calls named _log or log with an env head,
+# which round 5 found narrower than the claim four ways: problem_row was a third door it never read, kernel.py names no
+# call _log so its negative half passed by construction, a message the walk could not reduce fell out of both
+# assertions, and the head filter stood in for a rule). tests/env_ring_census.py derives, from the AST of this file,
+# kernel.py and credentials.py: the one appender to the ring (SdkBackend._log); every call that resolves to it, on any
+# receiver, through a log= parameter followed to every call site (getattr, partial, a forwarded parameter, a closure),
+# through a local alias, and through a conduit whose message is its own parameter (SdkSession._log_quietly,
+# problem_row); the kernel's feeders of the same bell (_sdk_problem and _note_ws_drop, whose lists _sdk_problem_rows
+# merges beside this ring); and every door passed as a value, followed to a call or reported as a failure. Over those
+# doors it derives the rows whose message or ring text carries a value of the pick, its file or its rule (the sources:
+# the session's env attributes, the 'env' key of a registry row or launch shape, the flag-settings constants and
+# helpers, the reserved and credential name sets and the functions judging them) and that are filed problem=True, and
+# holds them to the ENV ROWS line below the ring formats: each has a ring_text whose length is a function of its FORMAT,
+# never of what a pick or a stored env carries, and tests/test_session_env.py computes a worst case for every format on
+# the line (a keyed row's with _log's repeat suffix at a four-digit count, the one piece of a row this module does not
+# shape) and asserts each under ERROR_CENTER_TEXT_CAP. The pieces: fixed text; a session name or a sid cut to a budget
+# with the feed's marker (kernel.NAME_RE caps no length, so the bound must not rest on one); ONE variable named, the
+# first in sorted order, cut to a budget, with the rest counted through a bounded count text
+# (credentials.first_and_count); an OSError class name cut to a budget; and the flag-settings keys, a fixed set tied to
+# what the writer writes (FLAG_SETTINGS_KEYS). Every other door call whose text carries such a value declares problem=
+# explicitly (False for a routine line: the census reds a line left to _log's live-exception default), so no such line
+# joins the ring by the accident of a handler's extent. The kernel log line of every row keeps each name, path and
 # session name whole.
 RING_SESSION_BUDGET = 20                             # a session name, or the sid a nameless row falls back to
 RING_SID_BUDGET = 40                                 # a kernel-minted uuid4 is 36 characters and stays whole
@@ -5165,18 +5170,29 @@ FLAG_UNWRITABLE_RING = "flag settings (%s): the per-session settings file could 
 # The two reserved-name rows' short forms (review round 4 of the env-pick door, 2026-09-19: both rows predate the door and
 # carried no ring_text, so the error centre showed the whole log line, 244 and 241 characters at ordinary names against
 # the 240 cap): the session name cut to its budget, the first reserved name in sorted order cut to the name budget and
-# the rest counted, like the sibling rows. The kernel log line keeps every reserved name whole.
-RESERVED_DROP_RING = ("env (%s): ignoring reserved %s from the stored session env: romp sets the identity env itself, and a "
-                      "session's credential is Claude Code's own")                       # _options' skip at the launch
+# the rest counted, like the sibling rows. The kernel log line keeps every reserved name whole. The launch's skip is
+# KEYED like the stored-offender row (review round 6, 2026-09-19: unkeyed, it appended a fresh entry at every connect of
+# the same session), so its fixed text gave up 21 characters to _log's repeat suffix at a four-digit count (59): 117 +
+# 20 + 24 + 14 + 59 = 234 against the cap. The fork's drop fires once per fork and stays unkeyed (187, no suffix).
+# tests/test_session_env.py derives which rows are keyed from the key= keyword at each call, not from a list, and reds
+# when a keyed row's worst case crosses the cap.
+RESERVED_DROP_RING = ("env (%s): ignoring reserved %s from the stored session env: romp sets the identity env; a credential is "
+                      "Claude Code's own")                                               # _options' skip at the launch
 FORK_RESERVED_RING = ("env (%s): dropping reserved %s from the inherited env: romp sets the identity env itself (the parent "
                       "reg predates the reserved names)")                                # fork's drop at the copy
-# ENV ROWS: flag_settings_path -> FLAG_SID_RING FLAG_LINK_RING FLAG_UNWRITABLE_RING | _options -> RESERVED_DROP_RING STORED_OFFENDER_RING | fork -> FORK_RESERVED_RING FORK_DROP_RING | set_env -> REFUSAL_RING_HEAD REFUSAL_RING_HEAD
-# ^ every problem row this module writes about a per-session env or its flag-settings file, grouped by the function that
-#   writes it in source order, one name per row: the module-level FORMAT the row's ring_text starts from (a helper such
-#   as stored_offender_ring_text is followed into its return; set_env's two rows both open with the refusal head).
-#   Derived from this file's AST by tests/test_session_env.py (the paragraph above the ring budgets says how), which reds
-#   when the two differ; kernel.py and credentials.py write no such row (the kernel's problem rows are this module's
-#   ring, _sdk_problem_rows), and the same test walks them and asserts none.
+# ENV ROWS: flag_settings_path -> FLAG_SID_RING FLAG_LINK_RING FLAG_UNWRITABLE_RING | _options -> RESERVED_DROP_RING(keyed) STORED_OFFENDER_RING(keyed) | fork -> FORK_RESERVED_RING FORK_DROP_RING | set_env -> REFUSAL_RING_HEAD REFUSAL_RING_HEAD
+# ^ the CONTENT rows: every door to the problem ring whose message or ring text carries a value derived from the
+#   per-session env sources and that is filed problem=True, grouped by the writing function in source order, one name
+#   per row: the module-level FORMAT the row's ring_text starts from (a helper such as stored_offender_ring_text is
+#   followed into its return; set_env's two rows both open with the refusal head), and "(keyed)" where the call passes
+#   key= (the worst-case table adds _log's repeat suffix to those). Derived by tests/env_ring_census.py over the ring's
+#   writers (the paragraph above the ring budgets says how) and compared by tests/test_session_env.py, which reds when
+#   the two differ. Beside these, EXISTENCE-ONLY lines exist: the reconnect heading's lines (SdkSession._log_quietly's
+#   callers) and the mode landing's, whose text can name the env pick's existence through the pending-pick surface set,
+#   a fixed vocabulary plus the session name and never a value; they are not in this population, and the routine ones
+#   are closed by problem=False. kernel.py and credentials.py write no such row: the kernel's problem rows are this
+#   module's ring and its two feeders (_sdk_problem, _note_ws_drop), and the census finds those doors before it asserts
+#   that none carries env taint.
 
 
 def stored_offender_ring_text(session_name, names) -> str:
@@ -7200,9 +7216,15 @@ class SdkSession:
         """A log line from a place that must not raise: the kernel's callback runs bare in _log, and a
         callback failing (a closed stderr under a service restart) would otherwise escape a hook (the SDK
         turns that into an error control_response) or the settle's finally (skipping its failed-step
-        report). The ring row, when the line is a problem, lands before the callback runs (see _log)."""
+        report). Every line through here is routine bookkeeping (the reconnect's arms, holds and
+        withdrawals; the consult under a held bypass pick), so it is filed problem=False (review round 6
+        of the env-pick door, 2026-09-19): left to _log's default, a line reached inside a handler's
+        dynamic extent (the mode landing's except, _on_message's finally) became a ring row, and its text
+        can name a pending pick, so the ring census (tests/env_ring_census.py) requires this conduit to
+        declare the classification rather than hand every caller the exception state it happens to run in.
+        Never a ring row, then; the kernel log keeps every line."""
         try:
-            self.backend._log(line)
+            self.backend._log(line, problem=False)
         except Exception:
             pass
 
@@ -8367,15 +8389,17 @@ class SdkSession:
                 # A LIVE newer pick supersedes the reconnect the superseded pick armed in the spawn window
                 # (review round 7; _retire_arm_for_live_pick says why): retired here, before the waker exists
                 retired = self._retire_arm_for_live_pick()
+                # problem=False on both landing lines: routine, and their text can name a pending pick, so the ring
+                # census requires the classification declared (review round 6 of the env-pick door, 2026-09-19)
                 self.backend._log("mode (%s): the pending %s pick applied live at the landing; a newer %s pick made "
                                   "during the switch stands, and its own request applies it%s"
                                   % (self.name, mode, self.mode,
                                      ("; the reconnect armed for the %s pick is disarmed, the live switch applies "
-                                      "the newer pick" % mode) if retired else ""))
+                                      "the newer pick" % mode) if retired else ""), problem=False)
                 self.backend._poke()
                 return True
             self.backend._log("mode (%s): the pending %s pick applied live at the landing, before any queued "
-                              "turn; the process launched %s" % (self.name, mode, prev))
+                              "turn; the process launched %s" % (self.name, mode, prev), problem=False)
             self._settle_withdrawal("mode", "applied")   # on the loop already: settled now, before the feeder
             self.backend._poke()
         return True
@@ -15016,7 +15040,8 @@ class SdkBackend:
             note = thinking_override_note(tk, {**os.environ, **kw["env"]})
             if note and not self._thinking_override_logged:
                 self._thinking_override_logged = True
-                self._log(note)
+                self._log(note, problem=False)   # routine, and its text carries the overlay's cap value: declared so
+                #                                  explicitly for the ring census (round 6 of the env-pick door)
         # romp's harness prompt is APPENDED via the SDK's DESIGNED system_prompt field — the Claude Code preset
         # plus an `append` (types.py SystemPromptPreset) — NOT extra_args={"append-system-prompt"}. Same effect
         # (append to the default Claude Code system prompt) but it's the typed, documented option; extra_args is
@@ -15092,12 +15117,15 @@ class SdkBackend:
         # shape's (_launch_shape), so the stamp and the launch agree by construction. The ring text is
         # bounded by construction (RESERVED_DROP_RING; review round 4 of the env-pick door, 2026-09-19: the
         # row carried none and rendered 244 characters against the error centre's 240 at an ordinary name).
+        # Keyed like the stored-offender row below (review round 6 of the env-pick door, 2026-09-19): the skip runs at
+        # every connect of the session, and unkeyed it appended a fresh ring entry each time; keyed, the ring counts the
+        # repeat on one row, and the format's worst case carries _log's repeat suffix (the comment above RESERVED_DROP_RING).
         env_vars = shape["env"]
         legacy = [k for k in ENV_RESERVED_NAMES + AUTH_ENV_NAMES if k in sess.env_vars]
         if legacy:
             self._log("env (%s): ignoring reserved %s from the stored session env: romp sets the identity "
                       "env itself, and a session's credential is Claude Code's own"
-                      % (sess.name, ", ".join(legacy)), problem=True,
+                      % (sess.name, ", ".join(legacy)), problem=True, key=("env-reserved-skip", sess.sid),
                       ring_text=RESERVED_DROP_RING % (_cred.cut_to(sess.name, RING_SESSION_BUDGET),
                                                       _cred.first_and_count(legacy, RING_NAME_BUDGET)))
         # A stored env carrying a credential-shaped name of another spelling (accepted before the door refused
@@ -17725,7 +17753,8 @@ class SdkBackend:
                 outcome = "applied live" if live else "no connected client for the live switch; the reg carries the pick to the next connect"
                 tail = ("; the held bypass pick is withdrawn" if declared == "bypassPermissions"
                         else "; the pending %s pick is withdrawn" % declared) if withdrawn else ""
-                self._log("mode (%s): set to %s; %s%s" % (s.name, mode, outcome, tail))
+                self._log("mode (%s): set to %s; %s%s" % (s.name, mode, outcome, tail), problem=False)   # routine; its
+                #   tail can name a pending pick, so the classification is declared (ring census, round 6 of the env-pick door)
         return True
 
     def stop_task(self, sid: str, task_id: str) -> bool:
@@ -17939,7 +17968,14 @@ class SdkBackend:
             else:
                 outcome = s._note_reconnect_ask("env")
                 s.request_reconnect(pick="env")
-            self._log("env (%s): per-session env set (%s); %s" % (s.name, names, outcome))
+            # problem=False, explicitly (review round 6 of the env-pick door, 2026-09-19): this line names every variable
+            # of the accepted pick and carries no ring_text, so had _log's live-exception default ever filed it the ring
+            # row would have been the whole line, unbounded. The declaration is DEFENSIVE: at this head no caller of
+            # set_env runs inside a live handler (the kernel's _set_env_or_park from _apply_new_session_prefs and the
+            # /new route, and the parked-op drain's thunk, which runs in a try body), so the default classified the line
+            # routine on every path; the explicit False is what the ring census requires of every env-tainted line, a
+            # guard against a future caller, not the correction of a live row.
+            self._log("env (%s): per-session env set (%s); %s" % (s.name, names, outcome), problem=False)
             self._wake_push()
         return True
 
