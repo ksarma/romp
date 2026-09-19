@@ -38059,12 +38059,13 @@ def _stat_counting_install():
     differs from the builtin, derived by running the same observations on the wrapper and on the builtin it holds in
     __wrapped__, both in one process (the list is checked by tests/test_kernel_delta_send.py's WrapperDifferential test,
     which runs the differential on the interpreter under test and reds on a difference this docstring does not name; the
-    set is not constant over the interpreters the suite runs, since 3.10 and 3.11 lack __type_params__): the type
-    (a Python function, not builtin_function_or_method: inspect.isbuiltin False and isfunction True, repr and pydoc's
-    header say function, dis and inspect.getfile work, and the function attributes __code__, __globals__, __closure__,
-    __defaults__, __kwdefaults__, __dict__, __annotations__, __builtins__, __get__ and, from 3.12, __type_params__ exist
-    where __self__ and __text_signature__ do not, so vars() and dir() read more on the wrapper, vars() raising TypeError
-    on the builtin); the wrapper is mutable (an attribute can be set on it and __name__ reassigned, where the builtin
+    set is not constant over the interpreters the suite runs, since 3.10 and 3.11 lack __type_params__ and __annotate__
+    arrives with 3.14): the type (a Python function, not builtin_function_or_method: inspect.isbuiltin False and
+    isfunction True, repr and pydoc's header say function, dis and inspect.getfile work, and the function attributes
+    __code__, __globals__, __closure__, __defaults__, __kwdefaults__, __dict__, __annotations__, __builtins__, __get__
+    and, from 3.12, __type_params__ and, from 3.14, __annotate__ exist where __self__ and __text_signature__ do not, so
+    vars() and dir() read more on the wrapper, vars() raising TypeError on the builtin); the wrapper is mutable (an
+    attribute can be set on it and __name__ reassigned, where the builtin
     raises AttributeError); sys.getsizeof reads larger, and gc.get_referents reaches its code, its globals (this
     module's namespace, so any holder of os.stat keeps this module reachable) and its closure, where the builtin's
     referents are the posix module and its name; __get__ makes the wrapper a descriptor, so as a CLASS attribute it

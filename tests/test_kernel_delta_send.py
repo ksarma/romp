@@ -2428,17 +2428,20 @@ class WrapperDifferential(unittest.TestCase):
     which an interceptor's is not, posix.stat is the same object, no signature is open); then every differing
     observation must have a class in CLASS_OF, every class's token from TOKEN_OF_CLASS must appear in the docstring
     (whitespace-normalized; for the attribute class the token is the attribute's own name), every key of CLASS_OF must
-    be a real observation name, the __type_params__ attribute must differ exactly from 3.12 up, the docstring must name
+    be a real observation name, the __type_params__ attribute must differ exactly from 3.12 up and __annotate__ exactly
+    from 3.14 up (the closing check's probe ran no 3.14 attribute the builtin lacks; the follow-up verification found
+    this one, so the population here is one attribute wider than the reviewer's), the docstring must name
     this test and not the two-interpreter reading, and functools.WRAPPER_ASSIGNMENTS is recomputed: the names that read
     the same on both arms are exactly __module__, __name__, __qualname__ and __doc__, and the docstring carries that
     number in words. The counts are printed on the [live] line and asserted nowhere: they are recomputed, never copied,
-    and the ported subset's count is the probe's own on the same interpreter, the added observation one more. The
+    and the ported subset's count is the probe's own on the same interpreter (one more from 3.14, the __annotate__
+    attribute the probe never read), the added observation one more. The
     population is the reviewer's: a difference outside these observations is not seen here, and a new observation that
     differs reds until it is mapped and, if its class is new, named."""
 
     ATTRIBUTES = ("__name__", "__qualname__", "__module__", "__self__", "__text_signature__", "__code__", "__globals__",
                   "__closure__", "__defaults__", "__kwdefaults__", "__dict__", "__annotations__", "__get__", "__wrapped__",
-                  "_romp_sig_counting", "__type_params__", "__builtins__", "__call__", "__hash__")
+                  "_romp_sig_counting", "__type_params__", "__builtins__", "__annotate__", "__call__", "__hash__")
     # the class of a difference -> the token _stat_counting_install's docstring carries for it, verbatim; the attribute
     # class has no single token, its token is the attribute's own name
     TOKEN_OF_CLASS = {
@@ -2469,7 +2472,8 @@ class WrapperDifferential(unittest.TestCase):
                                       "Signature.bind with follow_symlinks")]
         + [("attribute %s" % a, "attribute") for a in ("__self__", "__text_signature__", "__code__", "__globals__", "__closure__",
                                                      "__defaults__", "__kwdefaults__", "__dict__", "__annotations__", "__get__",
-                                                     "__wrapped__", "_romp_sig_counting", "__type_params__", "__builtins__")]
+                                                     "__wrapped__", "_romp_sig_counting", "__type_params__", "__builtins__",
+                                                     "__annotate__")]
         + [("dir()", "vars and dir"), ("vars()", "vars and dir"),
            ("set then delete an attribute", "mutability"), ("assign __name__", "mutability"),
            ("sys.getsizeof", "size"), ("gc.get_referents types", "referents"),
@@ -2752,6 +2756,8 @@ class WrapperDifferential(unittest.TestCase):
         self.assertEqual(sorted(set(self.CLASS_OF.values()) - set(self.TOKEN_OF_CLASS) - {"attribute"}), [], "a class with no token")
         self.assertEqual("attribute __type_params__" in differing, sys.version_info >= (3, 12),
                          "__type_params__ is a function attribute from 3.12: the docstring's version clause rests on this")
+        self.assertEqual("attribute __annotate__" in differing, sys.version_info >= (3, 14),
+                         "__annotate__ is a function attribute from 3.14: the docstring's version clause rests on this")
         doc = " ".join(km._stat_counting_install.__doc__.split())
         same = sorted(n for n in functools.WRAPPER_ASSIGNMENTS
                       if self._render(lambda f, n=n: getattr(f, n, "absent"), B, norm) == self._render(lambda f, n=n: getattr(f, n, "absent"), W, norm))
