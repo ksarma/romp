@@ -5264,7 +5264,12 @@ class Disclosed(unittest.TestCase):
         the plain export's perf has no perSession); the malformed shape (a perSession whose sessions is not a number, the third
         document here) given the predates reason instead of its own, perSession.sessions-not-a-number, which the derivation
         writes exactly when the plain export's perf carries a perSession with no number under sessions (the ruling of the same
-        day on the leaf: one reason over two causes was false for this shape)."""
+        day on the leaf: one reason over two causes was false for this shape); the nulled count (the fourth document here: the
+        count replaced by 2**1024, an int no double holds, which usage_block writes as the count and the fold nulls under perf
+        and under usage alike, pp.finite_number's rule), where the block carries parsed null and no leaf, the third of the
+        three outcomes usage_block's docstring names, which the derivation writes exactly when the plain export's perf carries
+        a perSession with null under sessions. Fails on the null arm removed: the fourth document reds, the derivation giving
+        the nulled count the malformed leaf while the export's block carries parsed null."""
         snap = self._planted_snapshot()
         plain = pe.export_document(snap, usage=False, now=self.STAMP)
         self.assertFalse("usage" in plain, "no usage block without the flag; the keys: %s" % sorted(plain))   # by boolean: never dumps the document
@@ -5285,12 +5290,18 @@ class Disclosed(unittest.TestCase):
             written), and where it does not, the absence stated by a fixed string in the count's place (the second closing
             check, 2026-09-19): a constant, not a number, derived from the plain export's SHAPE, which is the fact each states
             (the ruling of the same day on the leaf): no perSession under parses is the predates reason; a perSession there
-            with no number under sessions is the malformed reason."""
+            with no number under sessions is the malformed reason; a perSession there with NULL under sessions is the fold's
+            output for a count no double holds (2**1024), which usage_block wrote as the count and the fold nulled, so parsed
+            null is derived and no leaf (the third outcome; a null typed into a snapshot by hand folds to the same plain shape
+            and usage_block gives it the leaf, but no kernel writes one, _PerfStats.snapshot writing an int there, so the null
+            under a plain export's sessions is read as the fold's)."""
             http = perf["http"]
             sessions = {"chatBuilt": len(perf["builds"]["chat"]["bySession"]), "stamped": perf["caches"]["session_stamp"]["entries"]}
             per = perf["parses"].get("perSession")
             if per is None:
                 sessions["parsedUnavailable"] = "predates-parses.perSession"
+            elif "sessions" in per and per["sessions"] is None:
+                sessions["parsed"] = None                  # the fold's null for a count no double holds: the count, nulled, and no leaf
             elif isinstance(per.get("sessions"), (int, float)) and not isinstance(per.get("sessions"), bool):
                 sessions["parsed"] = per["sessions"]
             else:
@@ -5329,6 +5340,22 @@ class Disclosed(unittest.TestCase):
                          "no count from a string; the two counts the plain body gives, and what is wrong with the snapshot stated")
         self.assertEqual(derived(plain_bad["perf"]), withu_bad["usage"], "the malformed shape: the reason from the plain export's shape")
         self.assertEqual({k: v for k, v in withu_bad.items() if k != "usage"}, plain_bad)
+        # the nulled count: the same planted counts with the count replaced by an int no double holds, which usage_block writes
+        # as the count and the fold nulls (pp.finite_number) under perf and under usage alike, so the folded block carries
+        # parsed null and no leaf beside it, and the plain export's null under sessions is the shape it is derived from
+        huge = self._planted_snapshot()
+        huge["parses"]["perSession"]["sessions"] = 2 ** 1024
+        self.assertIsNone(pp.finite_number(2 ** 1024), "an int no double holds is null in any fold's output")
+        self.assertEqual(pe.usage_block(huge)["sessions"], {"parsed": 2 ** 1024, "chatBuilt": 2, "stamped": 17},
+                         "usage_block writes the count as it is, no leaf beside it: the fold is where it is nulled")
+        plain_huge = pe.export_document(huge, usage=False, now=self.STAMP)
+        withu_huge = pe.export_document(huge, usage=True, now=self.STAMP)
+        self.assertEqual(plain_huge["perf"]["parses"]["perSession"], {"sessions": None, "max": huge["parses"]["perSession"]["max"]},
+                         "the count is nulled under perf and the key kept: the shape the derivation reads")
+        self.assertEqual(withu_huge["usage"]["sessions"], {"parsed": None, "chatBuilt": 2, "stamped": 17},
+                         "parsed null and no leaf: the third outcome, the two counts the plain body gives beside it")
+        self.assertEqual(derived(plain_huge["perf"]), withu_huge["usage"], "the nulled count: parsed null from the plain export's null")
+        self.assertEqual({k: v for k, v in withu_huge.items() if k != "usage"}, plain_huge)
 
     def test_the_http_table_travels_in_every_export_one_row_per_route_served_with_a_count_and_a_millisecond_total(self):
         """The http sentence the closing check at the re-run's head (2026-09-19) had the paragraph gain: the `http` table is in every

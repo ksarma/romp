@@ -904,9 +904,9 @@ NUMBER_CHARS = frozenset("+-.0123456789e")
 # real export's float sits in those ranges today (none is exponent-spelled), and the count is not corrected for it because a
 # significant-digit floor would drop 0.000015 and 1.5e-05 from the numeric arm, a design change the ruling did not make.
 # The list this was measured beside holds eleven entries, none spelled like a number or as a run of digit-only tokens, so
-# none is counted by the line, and none carries seven digits, so none is applied to a number (at the head the closing check read, the
-# line's longest-run trigger counted the entries carrying a letter and fired on every run here, which the closing check caught); the floor is a guard for a
-# list that later holds a numeric value.
+# none is counted by the line, and none carries seven digits, so none is applied to a number (at the head the closing check
+# read, the line's longest-run trigger counted the entries carrying a digit run under the floor beside a letter and fired on
+# every run here, which the closing check caught); the floor is a guard for a list that later holds a numeric value.
 # What the floor leaves as it was. A hostname or a login (WORD_KINDS) is matched as a run of whole tokens, so over a number
 # it matches a whole digit group only (an all-digit hostname or login of PROBE_MIN or more characters; rare, the cost
 # identifier_hits' docstring names), and it stays applied to numbers at any length. Every other probe is a substring match

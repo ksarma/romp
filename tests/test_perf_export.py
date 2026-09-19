@@ -2321,8 +2321,11 @@ class Cli(unittest.TestCase):
         self.assertEqual(pp.identifier_hits({"a": {"n": 123456}}, [pp.Probe(pp.PRIVATE_KIND, "(123456)", 1)]), [], "six digits: under the floor, no hit")
         listed = os.path.join(self.state, "list.txt")
         env = {"HOME": HOME, "USER": "tester", "ROMP_PRIVATE_STRINGS": listed}
+        shapes = ["(123456)", "_123456", "123456/", "1 23456", "12-3456", "123456"]
+        self.assertEqual([s for s in shapes if pp.number_shaped(s)], ["12-3456", "123456"],
+                         "the docstring's 2 of 6 sentence, recomputed: the two shapes of the six in the number alphabet")
         with open(listed, "w", encoding="utf-8") as fh:
-            fh.write("(123456)\n_123456\n123456/\n1 23456\n12-3456\n123456\n")
+            fh.write("".join(s + "\n" for s in shapes))
         err = io.StringIO()
         with mock.patch.object(pp.socket, "gethostname", return_value="TESTHOST.example"), contextlib.redirect_stderr(err):
             pp.machine_probes(None, env=env)
