@@ -1622,6 +1622,11 @@ class BoundaryYieldsToTheTestsOwnWindows(_NestedRun, unittest.TestCase):
         self.assertIsNone(boundary(self.out, "", module="test_scratch2.py"), self.out)
         self.assertEqual(boundary_scopes(self.out), {"test_scratch.py::Six"},
                          "the one boundary verdict in the run is Six's: %s" % self.out)
+        # The "(N sub-exceptions)" suffix is CPython's BaseExceptionGroup str, and "errors while tearing down" around it
+        # is pytest's. This absence read is the rendering-agnostic backstop that catches a second teardown exception
+        # from outside the ratchet and the judge, which no structured read above sees; the presence twins in J, R1
+        # and R2 make a rendering change loud, and the boundary_scopes equality two lines above is the structural pin
+        # (deleting this line alone changes nothing: a planted fold reds there).
         self.assertNotIn("sub-exceptions", self.out, "no verdict folds into another's teardown report: %s" % self.out)
 
     def test_a_class_that_dropped_the_object_it_found_before_its_tests_rebuild_stays_the_author(self):
