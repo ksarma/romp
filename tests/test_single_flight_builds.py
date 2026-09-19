@@ -275,6 +275,7 @@ class ChatTabSingleFlight(unittest.TestCase):
         a, b = self._client(active=S1), self._client(active=S1)
         km._clients[:] = [a, b]
         w0 = km._VIEW_STATS["chatWaited"]
+        cs0, b0 = km._chat_sig_stats_report(), km._PERF_STATS.snapshot()["builds"]["chat"]
         _race_fns = [lambda: km._push([a, b]), lambda: km._push([b], connect=True)]
         go = threading.Event()
         def run(i):
@@ -283,9 +284,101 @@ class ChatTabSingleFlight(unittest.TestCase):
         for t in ths: t.start()
         go.set()
         for t in ths: t.join(30)
+        cs1, b1 = km._chat_sig_stats_report(), km._PERF_STATS.snapshot()["builds"]["chat"]
+        d = {k: cs1[k] - cs0[k] for k in cs1}
         self.assertEqual(sorted(self.builds), [S1, S2], "each tab built once across the two pushes: %r" % self.builds)
         self.assertGreaterEqual(km._VIEW_STATS["chatWaited"] - w0, 1, "the later push waited and served the cache")
+        self.assertGreaterEqual(d["waited"], 1, "memos.chatSig.waited moved beside it (2026-09-18 review, low 10)")
+        # compares counts every cache READ that met an entry with a signature in hand (2026-09-19 review, kernel-1): on a cold
+        # cache the pre-flight reads and the claim re-reads meet nothing, and each of the two served tab visits met the other
+        # thread's fresh entry at exactly one counted read, the re-read after its single-flight wait (or a pre-flight read,
+        # should the other thread have stored first), so compares equals the served count here and equals waited when both
+        # served visits waited. Before this the post-wait re-read was not counted and compares read 0 against 2.
+        served = b1["cached"] - b0["cached"]
+        self.assertEqual(served, 2, "two of the four tab visits were served from the other thread's build")
+        self.assertEqual(d["compares"], served, "each served visit met the entry at one counted read: %r" % (d,))
+        self.assertGreaterEqual(d["compares"], d["waited"], "a waiter's post-wait re-read is one of them")
+        self.assertEqual(d["pushes"], 2, "the cycle push and the connect push each ran the chat tab loop (memos.chatSig.pushes)")
         self.assertEqual({f["id"] for f in b["_frames"] if f["type"] == "session"}, {S1, S2}, "the connect client still got both tabs")
+        self.assertEqual(km._CHAT_INFLIGHT, {}, "no claim left behind")
+
+    @staticmethod
+    def _sig_rows(d):
+        return {k: v for k, v in (d or {}).items() if k.startswith("push.chat.sig")}
+
+    def test_pushes_counts_the_cycle_push_and_a_chat_pages_connect_push_and_not_a_feed_pages_and_the_seam_rows_split_by_purpose(self):
+        """memos.chatSig.pushes by execution (2026-09-19 review, fresh-2), in both directions: the pusher's cycle push counts
+        one and its signature seam's wall lands on the flat push.chat.sig rows with a CPU row; a chat page's connect push
+        counts one, takes its signatures (the numerator includes it) and its seam wall lands on pusher.connectPush.stagesMs
+        while the flat and CPU rows do not move (the mixed-population sentence: the table includes the push the rows
+        exclude); a FEED page's connect push runs no chat tab loop and counts nothing, pre included. A bump at the top of
+        _push, before the chat-or-Sessions target check, reads 1 on the feed push; a bump inside the tab loop reads 2 on
+        the cycle push; a bump gated to the pusher alone reads 0 on the connect push."""
+        a, b = self._client(active=S1), self._client(active=S1)
+        km._clients[:] = [a, b]
+        ps = km._PERF_STATS
+        cs0, s0 = km._chat_sig_stats_report(), ps.snapshot()
+        ps.cycle_begin()
+        try:
+            km._push([a, b])                                   # the pusher's cycle push: two tabs built
+        finally:
+            ps.cycle(0.001)
+        cs1, s1 = km._chat_sig_stats_report(), ps.snapshot()
+        self.assertEqual(cs1["pushes"] - cs0["pushes"], 1, "one per cycle push that ran the chat loop")
+        self.assertEqual(cs1["pre"] - cs0["pre"], 2, "a pre-build signature per tab")
+        flat0, flat1 = self._sig_rows(s0["stages_ms"]), self._sig_rows(s1["stages_ms"])
+        self.assertGreater(sum(flat1.values()) - sum(flat0.values()), 0.0, "the cycle push's seam wall is on the flat rows: %r" % (flat1,))
+        cpu1 = self._sig_rows(s1["stages_cpu_ms"])
+        if km._RUSAGE_THREAD is not None:
+            self.assertTrue(cpu1, "the cycle push records CPU rows for the seam: %r" % (cpu1,))
+        conn1 = self._sig_rows(s1["pusher"]["connectPush"]["stagesMs"])
+        km._push([b], connect=True)                            # a chat page's connect push: served from the cache, signatures taken
+        cs2, s2 = km._chat_sig_stats_report(), ps.snapshot()
+        self.assertEqual(cs2["pushes"] - cs1["pushes"], 1, "one per connect push that ran the chat loop")
+        self.assertEqual(cs2["pre"] - cs1["pre"], 2, "the connect push took its signatures: the table's numerator includes it")
+        conn2 = self._sig_rows(s2["pusher"]["connectPush"]["stagesMs"])
+        self.assertGreater(sum(conn2.values()) - sum(conn1.values()), 0.0, "the connect push's seam wall went to connectPush.stagesMs: %r" % (conn2,))
+        self.assertEqual(self._sig_rows(s2["stages_ms"]), flat1, "the flat push.chat.sig rows did not move on the connect push")
+        self.assertEqual(self._sig_rows(s2["stages_cpu_ms"]), cpu1, "and the connect push recorded no CPU row for the seam")
+        f = {"app": "feed", "alive": True, "sent": {}, "send": lambda s: None, "ready": True, "proto": 2, "caps": ()}
+        km._clients[:] = [f]
+        with mock.patch.object(km.sys, "stderr", mock.Mock()):   # the harness's feed builder answers None: "no feed build this cycle"
+            km._push([f])                                      # a feed page's push: no chat or Sessions target, no tab loop
+        cs3 = km._chat_sig_stats_report()
+        self.assertEqual((cs3["pushes"] - cs2["pushes"], cs3["pre"] - cs2["pre"]), (0, 0), "a feed-only push runs no chat tab loop and counts nothing")
+
+    def test_a_stale_entry_makes_every_pre_flight_read_count_and_a_served_waiter_count_two(self):
+        """The compares gloss by execution (2026-09-19 review, kernel-1: the descriptions said a waiter counts three, which no
+        served waiter does). The same race over a WARM cache holding a stale tuple for both tabs: every pre-flight read
+        meets the stale entry (four: two threads, two tabs), each built tab's claim re-read meets it too (two), and each
+        served visit that waited meets the fresh entry at its post-wait re-read (one per wait), so compares = 6 + waited,
+        8 when both served visits waited. A served waiter counts two here (its pre-flight read and its post-wait re-read)
+        where the cold race's counts one; a visit served from the fresh entry at its pre-flight read (the other thread
+        stored first) counts one and waits none, which the identity absorbs. Three is a visit whose wait ended with no
+        usable entry and then claimed: a rebuild, not a waiter."""
+        n = len(km._CHAT_SIG_LABELS)
+        for sid in (S1, S2):
+            km._built_chat[sid] = ((("stale", 0),) + (None,) * (n - 1), {"type": "session", "id": sid, "events": []}, None, None)
+        a, b = self._client(active=S1), self._client(active=S1)
+        km._clients[:] = [a, b]
+        cs0, b0 = km._chat_sig_stats_report(), km._PERF_STATS.snapshot()["builds"]["chat"]
+        _race_fns = [lambda: km._push([a, b]), lambda: km._push([b], connect=True)]
+        go = threading.Event()
+        def run(i):
+            go.wait(); _race_fns[i]()
+        ths = [threading.Thread(target=run, args=(i,)) for i in range(2)]
+        for t in ths: t.start()
+        go.set()
+        for t in ths: t.join(30)
+        cs1, b1 = km._chat_sig_stats_report(), km._PERF_STATS.snapshot()["builds"]["chat"]
+        d = {k: cs1[k] - cs0[k] for k in cs1}
+        self.assertEqual(sorted(self.builds), [S1, S2], "each tab built once: the stale entries served nothing, the fresh ones served the other thread")
+        served = b1["cached"] - b0["cached"]
+        self.assertEqual(served, 2, "two of the four tab visits were served from the other thread's build")
+        self.assertGreaterEqual(d["waited"], 1, "the later visit waited")
+        self.assertEqual(d["compares"], 4 + 2 + d["waited"],
+                         "four pre-flight reads met the stale entry, two claim re-reads met it, and one post-wait re-read per wait met the fresh one: %r" % (d,))
+        self.assertEqual(d["pre"], 4)
         self.assertEqual(km._CHAT_INFLIGHT, {}, "no claim left behind")
 
     def test_a_failing_build_releases_its_waiters(self):
@@ -296,6 +389,7 @@ class ChatTabSingleFlight(unittest.TestCase):
                 self.builds.append(sid)
             time.sleep(0.2); raise RuntimeError("read failed")
         km.build_session = boom
+        cs0 = km._chat_sig_stats_report()
         with mock.patch.object(km, "CHAT_INFLIGHT_WAIT_S", 5.0), mock.patch.object(km.sys, "stderr", mock.Mock()):
             t0 = time.monotonic()
             go = threading.Event()
@@ -308,6 +402,13 @@ class ChatTabSingleFlight(unittest.TestCase):
             dt = time.monotonic() - t0
         self.assertLess(dt, 4.0, "the waiter was released by the failing builder, not by the bound: %.1f s" % dt)
         self.assertEqual(km._CHAT_INFLIGHT, {}, "no claim left behind")
+        # memos.chatSig.waited counts a tab SERVED after a wait (2026-09-19 review, the two-direction lens): a waiter released by
+        # a failing builder found nothing usable, claimed and built (and raised) itself, so waited stays 0 while every build
+        # that raised counts under failedBuilds; a waited bumped on every wait reads 2 here
+        d = {k: v - cs0[k] for k, v in km._chat_sig_stats_report().items()}
+        self.assertEqual(d["waited"], 0, "released, not served: %r" % (d,))
+        self.assertEqual(d["failedBuilds"], len(self.builds), "every build raised: %r" % (d,))
+        self.assertEqual((d["pre"], d["compares"]), (len(self.builds), 0), "a signature per visit; no read met an entry on the cold cache")
 
 
 if __name__ == "__main__":

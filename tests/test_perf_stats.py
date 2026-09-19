@@ -28,6 +28,7 @@ import tempfile
 import tracemalloc
 import threading
 import time
+import types
 import unittest
 import shutil
 import socket
@@ -62,6 +63,7 @@ GOAL_SID = "77777777-8888-9999-aaaa-bbbbbbbbbbbb"
 TOP_KEYS = {"now", "since", "uptime_s", "log", "process", "pusher", "jobs", "stages_ms", "builds", "sends",   # jobs: the jobs thread's passes
             "stagesForeign",                               # stagesForeign: a `jobs.<job>` stage from a thread owning neither loop, or a push stage from a
             #                                                  thread that neither owns the pusher's cycle nor carries a connect push's mark (2026-09-18)
+            "stages_cpu_ms",                               # stages_cpu_ms: a stage's thread CPU (user, sys) beside its wall (2026-09-18)
             "heap",                                        # heap: where the resident size sits at the read, gauges over every content cache (2026-09-15)
             "gc",                                          # gc: the collector's pauses per generation, from the gc.callbacks hook (2026-09-16)
             "goals", "memos", "judge", "http", "parses",   # parses: cold event-model parses (T323 stage 1)
@@ -93,6 +95,42 @@ def _doc_row(doc, name):
         raise ValueError("no docstring row starts with %r" % name)
     nxt = re.compile(r"^ {0,%d}\S" % len(m.group(1)), re.M).search(doc, m.end())
     return doc[m.start():nxt.start() if nxt else len(doc)]
+
+
+# The microsecond-figure predicate the reference-alone pin reads with (the closing check of 2026-09-19 planted twenty-four
+# spellings of a quarter-microsecond figure into a pinned region and fourteen passed the `<number> us` pattern). Derived
+# over units rather than sampled from spellings: any number before a micro or nano unit in any spelling is a microsecond
+# figure; a number before a milli unit is one when under a millisecond; a number of seconds is one when under a
+# millisecond (the scientific spelling included); and a number WORD before microsecond(s) or nanosecond(s) is one. The
+# number may be decimal, comma-decimal, scientific or a fraction glyph; the separator may be spaces, a hyphen or the
+# literal `&nbsp;` entity; the unit is read case-insensitively and must not run on into a word (`5 sessions` is no figure).
+_TIME_UNITS = (                # (the unit's spellings, the value below which a figure in that unit is a microsecond figure)
+    (r"microseconds?|microsecs?|[uµμ]secs?|[uµμ]s", float("inf")),
+    (r"nanoseconds?|nanosecs?|nsecs?|ns", float("inf")),
+    (r"milliseconds?|millisecs?|msecs?|ms", 1.0),
+    (r"seconds?|secs?|s", 1e-3),
+)
+_TIME_FIGURE = re.compile(r"(?<![\w.])(\d+(?:[.,]\d+)?(?:e[-+]?\d+)?|[¼½¾⅓⅔⅛])(?:\s|-|&nbsp;)*(%s)(?![a-z])"
+                          % "|".join(u for u, _ in _TIME_UNITS), re.I)
+_TIME_WORDS = re.compile(r"\b(?:an?|one|two|three|four|five|six|seven|eight|nine|ten|half|quarter|third|tenth|hundredth|"
+                         r"thousandth|few|several|couple|dozen)\b(?:\s+of)?(?:\s+an?)?\s+(?:micro|nano)seconds?\b", re.I)
+_FRACTION_GLYPHS = {"¼": 0.25, "½": 0.5, "¾": 0.75, "⅓": 1 / 3, "⅔": 2 / 3, "⅛": 0.125}
+
+
+def _microsecond_figures(text):
+    """Every microsecond-scale time figure in `text`, as written (see the comment above for what counts). Callers hand
+    whitespace-normalized text, so a figure split across a line break reads as one."""
+    out = []
+    for m in _TIME_FIGURE.finditer(text):
+        num, unit = m.group(1), m.group(2)
+        val = _FRACTION_GLYPHS.get(num)
+        if val is None:
+            val = float(num.replace(",", "."))
+        limit = next(lim for u, lim in _TIME_UNITS if re.fullmatch(u, unit, re.I))
+        if val < limit:
+            out.append(m.group(0))
+    out.extend(m.group(0) for m in _TIME_WORDS.finditer(text))
+    return out
 
 
 _ONES = ("zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve",
@@ -232,6 +270,19 @@ class _HttpWatch:
         return True
 
 
+def _leaves(node, path=""):
+    """(path, leaf) for every non-container value under `node`, the path as a/b/c: the paste-safe test's walk over the
+    populated chat-signature blocks, so a failure names the leaf."""
+    if isinstance(node, dict):
+        for k, v in node.items():
+            yield from _leaves(v, "%s/%s" % (path, k) if path else str(k))
+    elif isinstance(node, (list, tuple)):
+        for i, v in enumerate(node):
+            yield from _leaves(v, "%s/%d" % (path, i))
+    else:
+        yield path, node
+
+
 class Collector(unittest.TestCase):
     """_PerfStats on its own: every writer lands where the docstring says, and the read-time work
     (percentiles, the goals and judge reads, the process reads) produces the documented shape."""
@@ -259,6 +310,9 @@ class Collector(unittest.TestCase):
         # would be one a connect push can never move); the block's counters start at zero beside it
         self.assertEqual(p["connectPush"]["stagesMs"], {})
         self.assertEqual((p["connectPush"]["count"], p["connectPush"]["ms_sum"]), (0, 0.0))
+        for k in ("push.chat.sig.static", "push.chat.sig.deps"):   # the signature seam's sub-seams (the chat-signature design, stage 1)
+            self.assertIn(k, km._PerfStats.STAGES, "%s is listed at zero from the start" % k)
+        self.assertEqual(km._PerfStats.CONTAINERS.get("push.chat.sig"), "push.chat.sig.", "the signature seam contains its two sub-seams")
         self.assertEqual(set(snap["builds"]), {"chat", "feed", "timeline", "feedJson", "thread"})   # thread: the comment popover's build (2026-09-08)
         self.assertEqual(set(snap["builds"]["timeline"]), {"cached", "built", "ms"})
         self.assertEqual(set(snap["builds"]["chat"]), {"cached", "built", "ms", "active_built", "bg_built", "bg_miss", "moved",
@@ -303,6 +357,7 @@ class Collector(unittest.TestCase):
                                               "judgingBand",   # the judging band's per-row memo and horizon cursor (2026-09-16)
                                               "subagentTree",   # the subagents directory walk memo (2026-09-16): served vs walked, roots held
                                               "chatMergeSets", "chatPostal", "chatLedger", "chatFoldTasks",   # the chat build's fixed-cost memos (2026-09-09)
+                                              "chatSig",   # the chat signature pass's counters (stage 1 of the chat-signature design, 2026-09-18)
                                               "outlineProvisional",   # the Outline's provisional-row ledger memo, parse-free (plans/outline-pane-provisional-row.md, 2026-09-15)
                                               "feedComposition",   # the feed frame's bytes by component and per consuming app (2026-09-18, tests/test_feed_composition.py)
                                               "notices",   # the notice files' parsed rows (T370, plans/notice-cards.md): bytes against their bound
@@ -419,6 +474,332 @@ class Collector(unittest.TestCase):
         self.assertEqual(set(snap["caches"]), CACHE_NAMES, "one exact-occupancy block per declared cache (M1-lite)")
         self.assertGreaterEqual(snap["uptime_s"], 0)
         json.dumps(snap)                                     # the whole thing serializes as-is
+
+    def test_the_signature_sub_seams_roll_into_the_seam_and_once_into_the_chat_and_the_push(self):
+        """The nested-sum rule (fork PR 759) applied one level down: push.chat.sig is a container of push.chat.sig.static
+        and push.chat.sig.deps, so the bytes read inside a signature land on the sub-seam row that closes first, the seam
+        carries their sum, no glue row appears when the seam closes with nothing read since the sub-seams, and push.chat
+        and push count the seam's bytes once, through the seam's row (a row under a nested container counts through it)."""
+        ps = self.st
+        ps.cycle_begin(); ps.stage_boundary()
+        km.em._count_read("/lab/a.jsonl", 200)                # the signature's names read
+        ps.stage("push.chat.sig.static", 0.003)
+        ps.stage("push.chat.sig.deps", 0.001)
+        ps.stage("push.chat.sig", 0.004)
+        ps.stage("push.chat.send", 0.001)
+        ps.stage("push.chat", 0.006)
+        ps.stage("push", 0.007); ps.stage("jobs", 0.001); ps.cycle(0.008)
+        st = ps.snapshot()["pusher"]["firstCycle"]["stages"]
+        self.assertEqual(st["push.chat.sig.static"]["bytes"], 200, "the first sub-seam closed carries the signature's read")
+        self.assertEqual(st["push.chat.sig.deps"]["bytes"], 0)
+        self.assertEqual(st["push.chat.sig"]["bytes"], 200, "the seam carries its sub-seams' sum")
+        self.assertNotIn("push.chat.sig.other", st, "nothing read between the sub-seams and the seam: no glue row")
+        self.assertEqual(st["push.chat"]["bytes"], 200, "the chat counts the seam once, not again through its sub-seams")
+        self.assertEqual(st["push"]["bytes"], 200)
+        self.assertEqual((st["push.chat.sig.static"]["ms"], st["push.chat.sig.deps"]["ms"], st["push.chat.sig"]["ms"]), (3.0, 1.0, 4.0),
+                         "the ms are the callers' own, never summed")
+        self.assertTrue(km._PerfStats._through_nested("push.chat.", "push.chat.sig.static", st))
+        self.assertTrue(km._PerfStats._through_nested("push.", "push.chat.sig.deps", st))
+
+    def test_a_containers_kid_rows_are_cached_until_a_row_is_added(self):
+        """A container close sums its kid rows (the split's rows under its prefix, less those counted through a nested
+        container's row); the list is cached in the cycle's state per prefix and rebuilt only when a row appears (the row
+        count is the version), so the signature seam's per-tab closes walk no rows: under a counting _through_nested,
+        twenty tab closes after the rows exist make no call, a new row under the chat (the first build seam) makes one
+        rebuild and the next close none, and every sum stays exact (2026-09-18 review, low 3)."""
+        ps = self.st
+        calls = []
+        real = km._PerfStats._through_nested
+
+        def spy(pfx, key, stages):
+            calls.append((pfx, key)); return real(pfx, key, stages)
+
+        def sig_close(nbytes):
+            km.em._count_read("/lab/a.jsonl", nbytes)         # the signature's read: lands on the static row
+            ps.stage("push.chat.sig.static", 0.003); ps.stage("push.chat.sig.deps", 0.001); ps.stage("push.chat.sig", 0.004)
+        ps.cycle_begin(); ps.stage_boundary()
+        with mock.patch.object(km._PerfStats, "_through_nested", spy):
+            sig_close(100)                                     # the rows appear: the seam's first close builds its list
+            self.assertGreater(len(calls), 0, "the first container close walks the rows")
+            del calls[:]
+            for _ in range(20):
+                sig_close(10)
+            self.assertEqual(calls, [], "twenty tab closes over existing rows: no row walked")
+            ps.stage("push.chat.build", 0.002)                 # a new row under the chat, outside the seam's prefix
+            sig_close(5)
+            self.assertGreater(len(calls), 0, "a row was added: the seam's list is rebuilt once")
+            n = len(calls)
+            sig_close(5)
+            self.assertEqual(len(calls), n, "...and cached again")
+            ps.stage("push.chat.send", 0.001); ps.stage("push.chat", 0.006); ps.stage("push", 0.007); ps.cycle(0.008)
+        st = ps.snapshot()["pusher"]["firstCycle"]["stages"]
+        self.assertEqual(st["push.chat.sig.static"]["bytes"], 100 + 20 * 10 + 5 + 5)
+        self.assertEqual(st["push.chat.sig"]["bytes"], 310, "the seam's sum over every close")
+        self.assertEqual(st["push.chat.sig.deps"]["bytes"], 0)
+        self.assertEqual((st["push.chat"]["bytes"], st["push"]["bytes"]), (310, 310), "the chat and the push count the seam once")
+        self.assertNotIn("push.chat.sig.other", st)
+
+    def test_the_cpu_stages_accumulate_user_and_sys_beside_the_wall(self):
+        """Stage 1 of the chat-signature design (2026-09-18): stage(name, dt, cpu=(user_s, sys_s)) folds the caller's thread-CPU
+        delta into stages_cpu_ms[name] = {user, sys} in ms, cumulative like stages_ms; the containers and the chat seams are
+        listed at zero from the start; a call with no cpu moves the wall alone; a name outside the list gains a row when a
+        caller hands it a figure. The cycle split's rows keep their shape (ms, bytes, hydrated): the CPU columns are the
+        cumulative block only."""
+        if km._RUSAGE_THREAD is None:
+            self.skipTest("no per-thread rusage on this platform: the block is served empty (pinned in the next test)")
+        snap = self.st.snapshot()
+        self.assertEqual(set(snap["stages_cpu_ms"]), set(km._PerfStats.CPU_STAGES))
+        self.assertEqual(km._PerfStats.CPU_STAGES, ("push", "jobs", "jobsPass", "push.chat", "push.chat.sig", "push.chat.sig.static",
+                                                    "push.chat.sig.deps", "push.chat.build", "push.chat.send"))
+        for k, v in snap["stages_cpu_ms"].items():
+            self.assertEqual(v, {"user": 0.0, "sys": 0.0}, k)
+        self.st.cycle_begin()
+        self.st.stage("push.chat.sig", 0.004, cpu=(0.001, 0.0005)); self.st.stage("push.chat.sig", 0.004, cpu=(0.001, 0.0005))
+        self.st.stage("push.chat.sig", 0.001)                                 # no cpu handed: the wall alone
+        self.st.stage("push.feed", 0.002, cpu=(0.002, 0.0))                   # a stage outside the list: a row appears
+        self.st.stage("push", 0.010, cpu=(0.004, 0.001)); self.st.cycle(0.010)
+        snap = self.st.snapshot()
+        self.assertAlmostEqual(snap["stages_ms"]["push.chat.sig"], 9.0)
+        self.assertEqual(snap["stages_cpu_ms"]["push.chat.sig"], {"user": 2.0, "sys": 1.0})
+        self.assertEqual(snap["stages_cpu_ms"]["push"], {"user": 4.0, "sys": 1.0})
+        self.assertEqual(snap["stages_cpu_ms"]["push.feed"], {"user": 2.0, "sys": 0.0})
+        self.assertEqual(snap["stages_cpu_ms"]["push.chat.build"], {"user": 0.0, "sys": 0.0}, "untouched rows stay at zero")
+        row = snap["pusher"]["stageRing"][-1]["stages"]["push.chat.sig"]
+        self.assertEqual(set(row), {"ms", "bytes", "hydrated"}, "the split's rows carry no CPU column")
+        self.st.reset()
+        self.assertEqual(self.st.snapshot()["stages_cpu_ms"]["push.chat.sig"], {"user": 0.0, "sys": 0.0}, "a reset zeroes the block")
+
+    def test_the_thread_cpu_reader_reads_getrusage_and_is_absent_without_a_per_thread_clock(self):
+        """_thread_cpu is (user, sys) seconds of the calling thread from getrusage(RUSAGE_THREAD), _cpu_delta the difference
+        since an earlier reading; with no RUSAGE_THREAD on the platform both answer None, stage() records the wall alone and
+        the snapshot serves stages_cpu_ms EMPTY (no clock), never zeros (which would read as no CPU)."""
+        calls = []
+
+        def fake(who):
+            calls.append(who)
+            return types.SimpleNamespace(ru_utime=1.0 + 0.25 * len(calls), ru_stime=0.5 + 0.125 * len(calls), ru_maxrss=0)
+        with mock.patch.object(km, "_RUSAGE_THREAD", 7), mock.patch.object(km.resource, "getrusage", fake):
+            c0 = km._thread_cpu()
+            self.assertEqual(c0, (1.25, 0.625))
+            self.assertEqual(km._cpu_delta(c0), (0.25, 0.125), "one more read: its delta")
+            self.assertEqual(calls, [7, 7], "RUSAGE_THREAD is what the reader asks for, twice for a delta")
+            self.assertEqual(set(self.st.snapshot()["stages_cpu_ms"]), set(km._PerfStats.CPU_STAGES))
+        with mock.patch.object(km, "_RUSAGE_THREAD", None):
+            self.assertIsNone(km._thread_cpu())
+            self.assertIsNone(km._cpu_delta(None))
+            self.assertIsNone(km._cpu_delta((0.0, 0.0)))
+            self.st.cycle_begin()                                     # this thread is the pusher: a push stage is routed by its writer
+            self.st.stage("push.chat.sig", 0.002, cpu=km._cpu_delta(None))
+            snap = self.st.snapshot()
+            self.assertEqual(snap["stages_cpu_ms"], {}, "no per-thread clock: the block is empty")
+            self.assertAlmostEqual(snap["stages_ms"]["push.chat.sig"], 2.0, "the wall is recorded as before")
+        self.assertIn("stages_cpu_ms", TOP_KEYS)
+
+    def test_the_per_thread_rusage_clock_advances_at_scheduler_updates_so_a_sub_millisecond_mark_reads_zero_on_some_marks(self):
+        """The clock behind stages_cpu_ms, by execution (2026-09-19 review, the meaning lens: the row said the split is scaled
+        to the exact total). getrusage(RUSAGE_THREAD)'s total is the thread's runtime as of its LAST SCHEDULER UPDATE (a
+        tick, 1 ms at HZ=1000 and 4 ms at 250, or a context switch), not the instant of the read; the user and sys split
+        is by tick counts. So a mark over a sub-millisecond stage reads exactly 0 on the marks no update fell in and a whole
+        tick on the others, and only the sum over a window estimates the CPU, which is why the row and the reference say to
+        read the block over a window and never off one cycle. 300 spins of about 0.3 ms of CPU each (pure arithmetic,
+        calibrated by wall clock: a thread-CPU clock read inside the spin would itself update the runtime, and no mark
+        would read 0), each bracketed by _thread_cpu and _cpu_delta: at least one mark reads 0, some mark reads above 0,
+        and the marks' sum tracks time.thread_time over the whole window (read once at each end) within a few ticks. The
+        property is what this test, the docstring row and the reference state; no copy carries a count of the zero
+        marks, which is one run's reading (the row and the reference point here)."""
+        if km._RUSAGE_THREAD is None:
+            self.skipTest("no per-thread rusage on this platform: the block is served empty")
+
+        def spin(n):
+            x = 0
+            for i in range(n):
+                x += i * i
+            return x
+        n = 1000
+        while True:                                                             # about 0.3 ms of spinning, by wall clock
+            t0 = time.perf_counter(); spin(n)
+            if time.perf_counter() - t0 >= 0.0003:
+                break
+            n *= 2
+        marks = []
+        th0 = time.thread_time()
+        for _ in range(300):
+            c0 = km._thread_cpu(); spin(n)
+            d = km._cpu_delta(c0)
+            marks.append(d[0] + d[1])
+        th = time.thread_time() - th0
+        self.assertIn(0.0, marks, "no mark read exactly zero over 300 sub-millisecond spins: the clock advanced per read here")
+        self.assertGreater(max(marks), 0.0, "some mark took a tick")
+        self.assertLess(abs(sum(marks) - th), 0.012 + 0.15 * th,
+                        "the marks' sum tracks the window's thread CPU within a few ticks: rusage %.4f s, thread_time %.4f s" % (sum(marks), th))
+
+    def test_the_cpu_follows_the_wall_and_a_mark_routed_off_the_flat_row_records_no_cpu_row(self):
+        """stage() credits a push stage to the thread that owns the pusher's cycle (a connect push's, under its "connect"
+        mark, to pusher.connectPush.stagesMs first) and a `jobs.<job>` stage by its writer's owner (the stage-attribution
+        fix, 2026-09-18); the CPU handed with a mark follows the wall: folded into stages_cpu_ms when the wall went to the
+        flat row, dropped when the wall went to pusher.connectPush.stagesMs, pusher.cycleJobsMs or stagesForeign. So a
+        stages_cpu_ms row is the same writer's CPU as the stages_ms row of its name and their difference is that row's
+        wait; a connect push's or a foreign writer's CPU has no row and is not kept. Six writers, each expectation read
+        off stage()'s body at the fix's round-1 head: the cycle owner's push.chat.sig under the "push" mark (the flat row,
+        CPU kept), its cycle job (cycleJobsMs, no CPU row), a connect push (the connect table, no CPU row), a thread with
+        no cycle and no mark (stagesForeign, no CPU row), a thread under the "push" mark that owns no cycle
+        (stagesForeign, no CPU row), and a thread that owns the JOBS cycle writing a push stage (stagesForeign, no CPU
+        row). The fifth is the case the round settled: it dropped the clause that took the mark alone as the pusher's
+        stand-in, so the mark says what _push was called for, not whose cycle it ran in. Before the drop that writer's wall
+        reached the flat row and its CPU the row of its name, and this test is red with the clause restored
+        (push.chat.build 2.0 in the flat row and {2.0, 1.0} in its CPU row, none of it under stagesForeign). The sixth is
+        the WIDENING case (2026-09-19 review, kernel-2): the rule is `elif kind == "pusher"`, and a rule widened to any
+        cycle owner (`elif kind:`) left the five green, so the jobs owner's push.chat.send pins the other edge: red with
+        the rule widened (5.0 in the flat row and {3.0, 2.0} in its CPU row). Its thread stays alive until the snapshot is
+        read, so its owner ident is not recycled by another thread."""
+        if km._RUSAGE_THREAD is None:
+            self.skipTest("no per-thread rusage on this platform: the block is served empty")
+        st = self.st
+        st.cycle_begin()                                                        # this thread is the pusher
+        km._stage_marked("push")(lambda: st.stage("push.chat.sig", 0.004, cpu=(0.002, 0.001)))()   # the cycle owner's: flat
+        st.stage("jobs.persistCheckpoints", 0.003, cpu=(0.003, 0.0))          # the pusher's cycle job: cycleJobsMs, no CPU row
+        done = {}
+        wrote, release = threading.Event(), threading.Event()
+
+        def jobs_owner():                                                       # owns the JOBS cycle: a cycle owner, not the pusher
+            st.cycle_begin("jobs")
+            st.stage("push.chat.send", 0.005, cpu=(0.003, 0.002))              # stagesForeign, no CPU row (the widening case)
+            done["jobs"] = True
+            wrote.set()
+            release.wait(5)                                                     # alive until the snapshot below: the ident stays its own
+        th_jobs = threading.Thread(target=jobs_owner); th_jobs.start()
+        self.assertTrue(wrote.wait(5), "the jobs owner wrote")
+
+        @km._stage_marked("connect")                                            # a reload's full push on its handler thread
+        def connect_push():
+            st.stage("push.chat.sig", 0.020, cpu=(0.010, 0.005))               # connectPush.stagesMs, no CPU row
+            done["connect"] = True
+
+        def foreign_thread():                                                   # no cycle, no mark: nobody's
+            st.stage("push.chat.sig", 0.001, cpu=(0.001, 0.0))                 # stagesForeign, no CPU row
+            done["foreign"] = True
+
+        @km._stage_marked("push")                                               # _push's mark on a thread owning no cycle: no owner
+        def marked_no_cycle():
+            st.stage("push.chat.build", 0.002, cpu=(0.002, 0.001))              # stagesForeign, no CPU row (the dropped clause)
+            done["marked"] = True
+        for target in (connect_push, foreign_thread, marked_no_cycle):
+            th = threading.Thread(target=target); th.start(); th.join(5)
+        self.assertEqual(done, {"connect": True, "foreign": True, "marked": True, "jobs": True}, "all four threads wrote")
+        st.stage("push", 0.006, cpu=(0.004, 0.001)); st.cycle(0.008)          # the container, the pusher's by its cycle
+        snap = st.snapshot()
+        release.set(); th_jobs.join(5)
+        self.assertAlmostEqual(snap["stages_ms"]["push.chat.sig"], 4.0, msg="the flat wall is the cycle owner's alone")
+        self.assertEqual(snap["stages_cpu_ms"]["push.chat.sig"], {"user": 2.0, "sys": 1.0}, "and so is the CPU beside it")
+        self.assertEqual(snap["stages_cpu_ms"]["push"], {"user": 4.0, "sys": 1.0})
+        self.assertEqual(snap["pusher"]["connectPush"]["stagesMs"], {"push.chat.sig": 20.0}, "the connect push's wall, apart")
+        self.assertEqual(snap["stagesForeign"], {"push.chat.sig": 1.0, "push.chat.build": 2.0, "push.chat.send": 5.0},
+                         "the foreign walls, apart: the unmarked thread's, the push-marked thread's owning no cycle, and the jobs owner's")
+        self.assertEqual(snap["stages_ms"]["push.chat.build"], 0.0, "the flat row takes nothing from the push-marked thread owning no cycle")
+        self.assertEqual(snap["stages_cpu_ms"]["push.chat.build"], {"user": 0.0, "sys": 0.0},
+                         "and its CPU row, listed at zero from the start, stays there: a wall routed to stagesForeign records no CPU")
+        self.assertEqual(snap["stages_ms"]["push.chat.send"], 0.0, "the flat row takes nothing from the jobs owner either: only the PUSHER's cycle is the flat row's")
+        self.assertEqual(snap["stages_cpu_ms"]["push.chat.send"], {"user": 0.0, "sys": 0.0}, "and no CPU row for a wall routed to stagesForeign")
+        self.assertAlmostEqual(snap["pusher"]["cycleJobsMs"]["persistCheckpoints"], 3.0, msg="the cycle job's wall, apart")
+        self.assertEqual(set(snap["stages_cpu_ms"]), set(km._PerfStats.CPU_STAGES),
+                         "no CPU row appeared for the five routed marks: the cycle job (jobs.persistCheckpoints), the connect push, the "
+                         "unmarked thread, the push-marked thread owning no cycle, and the jobs owner's push.chat.send")
+
+    def test_the_chat_signature_counters_are_a_flat_integer_table(self):
+        """Stage 1 of the chat-signature design (2026-09-18): memos.chatSig is the pass's own table, one integer per
+        key, pasteable (identifier keys, numbers), served as a copy: the signature counts (pre, post, nosig, waited,
+        and since the 2026-09-19 review failedBuilds and targetedBuilds, the two terms the reconciliation identities
+        need), the compare (compares, compareIdenticalComponents: renamed from compareIdentity, which invited a division
+        by compares alone), the reads inside a signature (stats, namesReads, switchReads, regReads), the warm-tab census
+        (warmEligible, warmBlockedByOutline, heldBody), thread (the comment-thread signatures, the read counts fold from
+        those too) and pushes (the per-push denominator). The family's rule (tests-6): every reader of this table takes a
+        DELTA over its own window and never assumes the table clean, since the module's table is shared by every test
+        here (PushStages' real pushes leave it moved on the green path), and a bump is restored under try/finally, as the
+        populated-blocks sibling does, so a failed assertion leaves nothing moved for the tests after it."""
+        snap = self.st.snapshot()
+        blk = snap["memos"]["chatSig"]
+        self.assertEqual(set(blk), {"pre", "post", "failedBuilds", "targetedBuilds", "thread", "nosig", "waited",
+                                    "compares", "compareIdenticalComponents",
+                                    "stats", "namesReads", "switchReads", "regReads",
+                                    "warmEligible", "warmBlockedByOutline", "heldBody", "pushes"})
+        for k, v in blk.items():
+            self.assertIs(type(v), int, k)
+            self.assertTrue(km._PERF_IDENT.fullmatch(k), "an identifier key: %s" % k)
+        self.assertEqual(blk, km._chat_sig_stats_report())
+        blk["pre"] += 1000
+        self.assertNotEqual(blk["pre"], km._chat_sig_stats_report()["pre"], "the report is a copy, not the table")
+        km._chat_sig_bump(pre=2, nosig=1)
+        try:
+            after = km._chat_sig_stats_report()
+            self.assertEqual((after["pre"] - blk["pre"] + 1000, after["nosig"] - blk["nosig"]), (2, 1), "the bump adds under the lock")
+        finally:
+            km._chat_sig_bump(pre=-2, nosig=-1)         # this module's table is shared by every test: put it back, whatever the assertion said
+
+    def test_the_populated_chat_signature_blocks_pass_the_exports_paste_safe_walk_whole(self):
+        """The three blocks stage 1 of the chat-signature design adds, POPULATED (every chatSig counter moved, every CPU stage
+        handed a user and sys figure, the two sub-seams timed), walk through cli/perf_public.py the way `romp perf export
+        --public` and the served-snapshot test run it: no problem under the served snapshot's key grammar (the kernel's
+        _PERF_IDENT) with synthetic strings planted, none under the export's own; the fold is the identity over the blocks
+        (no key denied, none folded to `other`, nothing coarsened, so the export carries every number); the identifier
+        scan finds nothing against synthetic probes; and every leaf is a number, an int in the counter table and a float
+        in the CPU rows, never a bool, a string or null. The CPU row's `user` is on the export's IDENTITY_KEYS and is kept
+        because its value is a number (the same rule that keeps builds.chat.bg_miss.names); this pins that a leaf there
+        stays a number, since a string under that key would be dropped and the row read as sys alone."""
+        ps = self.st
+        b0 = km._chat_sig_stats_report()
+        bump = {k: i + 1 for i, k in enumerate(sorted(b0))}          # every counter moved, each by a different amount
+        km._chat_sig_bump(**bump)
+        try:
+            with mock.patch.object(km, "_RUSAGE_THREAD", 11):         # the block is served whatever the platform's clock
+                ps.cycle_begin()
+                for i, name in enumerate(km._PerfStats.CPU_STAGES):
+                    ps.stage(name, 0.010 * (i + 1), cpu=(0.001 * (i + 1), 0.0005 * (i + 1)))
+                ps.cycle(0.100)
+                snap = ps.snapshot()
+        finally:
+            km._chat_sig_bump(**{k: -v for k, v in bump.items()})    # the table is shared by every test: put it back
+        blk = snap["memos"]["chatSig"]
+        self.assertEqual(blk, {k: b0[k] + bump[k] for k in b0}, "premise: every counter moved")
+        cpu = snap["stages_cpu_ms"]
+        self.assertEqual(set(cpu), set(km._PerfStats.CPU_STAGES))
+        for name, row in cpu.items():
+            self.assertGreater(row["user"], 0.0, name); self.assertGreater(row["sys"], 0.0, name)
+        subs = {k: snap["stages_ms"][k] for k in ("push.chat.sig.static", "push.chat.sig.deps")}
+        self.assertTrue(all(v > 0.0 for v in subs.values()), subs)
+        doc = {"memos": {"chatSig": blk}, "stages_cpu_ms": cpu, "stages_ms": subs}
+        home = os.path.join(tempfile.gettempdir(), "home", "tester")   # an absolute home path, synthetic (the class below builds its own the same way)
+        planted = [SID, SID[:8], "TESTHOST", home, "tester"]
+        problems = pp.paste_problems(doc, planted=planted, ident=km._PERF_IDENT)
+        self.assertEqual(problems, [], "%d problem(s):\n  %s" % (len(problems), "\n  ".join(map(str, problems))))
+        self.assertEqual(pp.paste_problems(doc, planted=planted), [], "and under the export's own grammar")
+        self.assertEqual(pp.fold(doc), doc, "the export keeps the blocks whole: no key denied, none folded, nothing coarsened")
+        self.assertEqual(pp.identifier_hits(doc, [("session id", SID.lower()), ("session id", SID[:8].lower()),
+                                                  ("hostname", "testhost"), ("username", "tester"),
+                                                  ("home directory", home.lower())]), [])
+        for path, leaf in _leaves(doc):
+            self.assertIsInstance(leaf, (int, float), "%s = %r" % (path, leaf))
+            self.assertNotIsInstance(leaf, bool, path)
+        for k, v in blk.items():
+            self.assertIs(type(v), int, "chatSig.%s is a count" % k)
+        for name, row in cpu.items():
+            self.assertEqual(set(row), {"user", "sys"}, name)
+            for c, v in row.items():
+                self.assertIs(type(v), float, "stages_cpu_ms.%s.%s is milliseconds" % (name, c))
+        # the identity-key rule the CPU row leans on: `user` over a number is a counter and stays; over text it would go
+        self.assertFalse(pp.denied("user", cpu["push"]["user"]))
+        self.assertTrue(pp.denied("user", "tester"))
+        self.assertNotIn("user", pp.fold({"stages_cpu_ms": {"push": {"user": "tester", "sys": 1.0}}})["stages_cpu_ms"]["push"],
+                         "a string under the key would be dropped, and the row would read as sys alone")
+
+    def test_every_cpu_stage_is_named_in_the_collectors_stages_cpu_ms_row(self):
+        # the same rule for the CPU block: the docstring's stages_cpu_ms row (from its key to the next row's key) names
+        # every stage the snapshot serves a CPU row for from the start (2026-09-18 review, low 17: the row listed seven
+        # of the nine, the signature seam's two sub-seams missing). The row is cut by _doc_row, relative to its own
+        # indentation: Python 3.13 and later strip a docstring's common leading whitespace at compile time, so the old
+        # match on six leading spaces found no row on the 3.13 and 3.14t CI cells (a StopIteration)
+        row = _doc_row(km._PerfStats.__doc__, "stages_cpu_ms")
+        for k in km._PerfStats.CPU_STAGES:
+            self.assertIn(k, row, "stages_cpu_ms row lacks %s" % k)
 
     def test_every_memo_key_is_named_in_the_collectors_docstring(self):
         # the /perf reader's reference for a memo block is _PerfStats's own docstring (its `memos` rows): a memo
@@ -1004,6 +1385,58 @@ class Collector(unittest.TestCase):
         self.assertEqual(snap["pusher"]["wakes"], 16000)
         self.assertEqual(snap["sends"]["full"]["chat"]["count"], 16000)
         self.assertEqual(snap["http"]["GET /p"]["count"], 16000)
+
+
+class ContainerKidsCache(unittest.TestCase):
+    """_container_kids caches the rows a container's bytes sum over, per prefix, keyed on the split's row count (rows are only
+    added within a cycle). The cache lives on the owner's cycle state and is RESET with the split at the in-place closes
+    (cycle, jobs_pass), not only at cycle_begin (2026-09-19 review, extra8-1): a container closed in the gap between a close
+    and the next begin, when the fresh split's row count reads the same as the cached one, summed the PREVIOUS split's row
+    objects. Rows carry bytes through the thread's reader counter (em._count_read), so the wrong sum is a visible figure."""
+
+    def _rows(self, st, pfx, container, reads):
+        for name, n in reads:
+            km.em._count_read("/lab/%s" % name, n)
+            st.stage(pfx + name, 0.001)
+        st.stage(container, 0.003)
+
+    def test_a_container_closed_in_the_gap_after_an_in_place_close_sums_the_gaps_rows_not_the_previous_splits(self):
+        """The two-boundary gap: a cycle with three plain sub-rows and its container (four rows: the kids cached at a count of
+        four), closed in place; then, before the next cycle_begin, three sub-rows and the container again, so the row count
+        reads four against the cached four. Plain sub-rows (build, send, x), not the push.chat.sig seam, which is a
+        container itself and adds a glue row when it closes; and no stage_boundary after the begin, which would add a
+        jobs.other row: either makes the two counts differ and the cache rebuild, and the pin would hold at any head. A
+        single stage_boundary in the gap (a mark, no row: the previous mark is None after the close) leaves the count
+        alone. Read off the ring after a second in-place close, so the figure is the served one."""
+        for owner, pfx, container, close, ring in (
+                ("pusher", "push.chat.", "push.chat", lambda st: st.cycle(0.01), lambda snap: snap["pusher"]["stageRing"]),
+                ("jobs", "jobs.", "jobsPass", lambda st: st.jobs_pass(0.01), lambda snap: snap["jobs"]["stageRing"])):
+            with self.subTest(owner=owner):
+                st = km._PerfStats()
+                st.cycle_begin(owner)                              # the begin sets the first byte mark
+                self._rows(st, pfx, container, [("build", 100), ("send", 200), ("x", 300)])   # four rows: kids cached at 4
+                close(st)                                          # the in-place close: the split emptied, and the kids cache with it
+                st.stage_boundary()                                # the gap before the next begin: a mark, no row (prev None)
+                self._rows(st, pfx, container, [("build", 50), ("send", 70), ("x", 0)])       # four rows again, so the count reads 4
+                close(st)                                          # a second in-place close: the gap's split lands on the ring
+                row = ring(st.snapshot())[-1]["stages"][container]
+                self.assertEqual(row["bytes"], 120, "%s: the gap's rows (50 + 70 + 0), not the previous split's 600" % owner)
+
+    def test_the_cache_is_reused_while_no_row_was_added_and_rebuilt_when_one_was(self):
+        """The other edge: resetting the cache at every stage() call would pass the gap pin and lose the cache. A container
+        closed twice with no row added in between rebuilds nothing (no _through_nested call, the per-row cost the cache
+        exists to save); one new row rebuilds the list once, one call per row."""
+        st = km._PerfStats()
+        st.cycle_begin()
+        st.stage_boundary()
+        st.stage("push.chat.sig", 0.001); st.stage("push.chat", 0.001)         # the first close builds the list (two rows)
+        calls = []
+        real = km._PerfStats._through_nested
+        with mock.patch.object(km._PerfStats, "_through_nested", classmethod(lambda cls, *a: calls.append(a) or real(*a))):
+            st.stage("push.chat", 0.001)
+            self.assertEqual(calls, [], "no row added since: the cached list serves")
+            st.stage("push.chat.send", 0.001); st.stage("push.chat", 0.001)
+            self.assertEqual(len(calls), 2, "a row was added: rebuilt once, one _through_nested per row under the prefix (sig, send)")
 
 
 class JobRowsByOwner(unittest.TestCase):
@@ -1662,7 +2095,9 @@ class RoutingStatements(unittest.TestCase):
     BLOCKS = re.compile(r"stagesForeign|cycleJobsMs|connectPush\.stagesMs|stages_foreign|cycle_jobs_ms|connect_stages_ms")
     # the places a routing sentence lives today; a file added here has been read against the measured cells
     PLACES = {"bin/romp", "docs/reference.md", "kernel/kernel.py", "tests/test_first_cycle_stage_split.py",
-              "tests/test_jobs_thread_split.py", "tests/test_perf_stats.py", "upstream/2026-09-18-stage-attribution.md"}
+              "tests/test_jobs_thread_split.py", "tests/test_perf_stats.py", "upstream/2026-09-18-stage-attribution.md",
+              "upstream/2026-09-18-chat-signature-stage1.md",   # its stages_cpu_ms clause names connectPush.stagesMs (2026-09-19 review, fresh-2)
+              "tests/test_single_flight_builds.py"}             # its pushes test asserts a connect push's seam wall lands on connectPush.stagesMs
     PROBE = 8192                                  # the bytes read first from every file; a NUL among them ends the read, so a png, a
     #                                               font or a recording costs its header and nothing more
     CHUNK = 8 * PROBE                             # the bytes read per piece after the probe. A piece is held raw and decoded at once,
@@ -3016,6 +3451,191 @@ class GoalIoCounters(unittest.TestCase):
         self.assertIn("`memos.shared`", doc)
         self.assertIn("- `heap`:", doc, "the heap block is a documented top-level block (tests/test_perf_heap_block.py pins its keys)")
 
+    def test_the_reference_doc_names_the_chat_signature_stage_1_keys(self):
+        # stage 1 of the chat-signature design (2026-09-18): the CPU block, the signature seam's sub-seams and the
+        # memos.chatSig table are documented where the reader of GET /perf looks
+        doc = Path(HERE).parent.joinpath("docs", "reference.md").read_text()
+        self.assertIn("- `stages_cpu_ms`:", doc)
+        for k in ("`chatSig`", "`push.chat.sig.static`", "`push.chat.sig.deps`", "`compareIdenticalComponents`", "`regReads`",
+                  "`warmEligible`", "`warmBlockedByOutline`", "`heldBody`",
+                  "`thread`",                           # the comment-thread signatures, the third taker (2026-09-18 review)
+                  "`failedBuilds`", "`targetedBuilds`", "`pushes`"):   # the identities' two terms and the per-push denominator (2026-09-19 review)
+            self.assertIn(k, doc, k)
+        self.assertNotIn("`compareIdentity`", doc, "the retired name: it invited a division by compares alone (2026-09-19 review, regression-5)")
+
+    def test_the_reference_doc_says_what_each_chat_signature_counter_counts_by_execution(self):
+        """The round-2 sentences (2026-09-19 review) the reference must carry, phrase by phrase, each matched tolerant of
+        backticks and line wraps. The kernel's block comment at _CHAT_SIG_STATS carries the same sentences (the fix lines'
+        wording, copied into both), so a copy that drifts turns one of these red: what stats counts by execution and what
+        Python cannot count (regression-1), compares at the three reads and not the final compare (kernel-1), the share's
+        denominator (regression-5), the identities' two terms and which nosig (extra5-1), the census without the gate's
+        live-row clause (regression-4), the CPU containers (extra5-3), the per-push denominator and the mixed population
+        (fresh-2), the split's bytes on the static row (fresh-3) and the instrumentation's own cost per stat (fresh-4);
+        and the round-3 sentences (the same review's second round): every key but SIX is a delta over pushes, the four
+        read counters dividing by the signature count pre plus post plus thread since the thread signatures feed them
+        outside a push too (correctness-1: the sentence said two, in every copy), and the stats a signature's git children
+        make stated by class, any git child a signature forks, with a child's CPU on no row (extra7-1: the list named the
+        cwd memo's two children and missed the dependency tail's ls-files; tests/test_chat_build_sig_inputs.py pins the
+        set by execution)."""
+        doc = " ".join(Path(HERE).parent.joinpath("docs", "reference.md").read_text().split())
+        for why, pattern in (
+                ("regression-1: stats counts by execution, whoever makes the stat", r"whichever function or module makes them"),
+                ("regression-1: the wrappers on os.stat and os.lstat", r"`?os\.lstat`? in the wrappers"),
+                ("regression-1: the posix module is wrapped too (importlib)", r"posix"),
+                ("regression-1: DirEntry.stat through the one door", r"`?_entry_stat`?"),
+                ("regression-1: what Python cannot count, the fstat inside open()", r"fstat inside"),
+                ("regression-1: what Python cannot count, a DirEntry.is_dir without d_type", r"d_type"),
+                ("kernel-1: the final compare is not a read", r"not (at )?the final compare"),
+                ("kernel-1: a rebuild counts two, so compares can exceed pre", r"`?compares`? can exceed `?pre`?"),
+                ("regression-5: the share's denominator, compares * len(_CHAT_SIG_LABELS)", r"`?compares`? \* len\("),
+                ("regression-5: counted at every position", r"whether or not the tuple compare reached it"),
+                ("extra5-1: which nosig the identity means", r"background builds only"),
+                ("extra5-1: the pre identity's two terms", r"less `?targetedBuilds`? plus `?failedBuilds`?"),
+                ("extra5-1: the bound when builds raised", r"at most `?failedBuilds`?"),
+                ("regression-4: the census drops the gate's live-row clause", r"without the gate's live-row clause"),
+                ("extra5-3: push.chat.sig's CPU row is exactly its two sub-seams", r"exactly `?push\.chat\.sig\.static`? plus `?push\.chat\.sig\.deps`?"),
+                ("extra5-3: push.chat's row covers its seams plus the glue, a superset", r"plus the loop's glue \(a superset, not a sum"),
+                ("fresh-2, correctness-1: every key but six is a delta over pushes", r"every key here but six is a delta over `?pushes`?"),
+                ("correctness-1: the four read counters divide by pre plus post plus thread, never by pushes",
+                 r"`?stats`?, `?namesReads`?, `?switchReads`? and `?regReads`?[^.]{0,200}`?pre`? plus `?post`? plus `?thread`?"),
+                ("extra7-1: the uncounted git children are stated by class, not as a closed list", r"any git child a signature forks"),
+                ("extra7-1: a forked child's CPU lands on no row", r"RUSAGE_THREAD`? excludes a child"),
+                ("fresh-2: a pusher.cycles denominator runs high by the connect pushes", r"runs high by those connect pushes"),
+                ("fresh-2: the seam rows exclude connect pushes while the table includes them", r"(exclude|EXCLUDE) connect pushes"),
+                ("fresh-3: the signature's bytes in the split land on the static row", r"land on the static row"),
+                ("fresh-3: the deps row records wall and CPU only", r"deps`? row records wall and CPU only"),
+                ("fresh-4: the wrappers' cost per stat", r"wrappers?[^.]{0,240}per stat|per stat[^.]{0,240}wrappers?")):
+            self.assertTrue(re.search(pattern, doc), "%s: no match for %r in docs/reference.md" % (why, pattern))   # not assertRegex: its message would print the whole doc
+
+    @staticmethod
+    def _reference_entry(doc, start):
+        """The reference's text from index `start` to the next top-level entry line (a line beginning "- `")."""
+        end = doc.find("\n- `", start)
+        return doc[start:end if end != -1 else len(doc)]
+
+    def test_the_microsecond_figures_live_in_the_reference_alone(self):
+        """The instrumentation's measured cost is stated in ONE place, the stages_cpu_ms entry of docs/reference.md, and the
+        kernel's copies point there (the 2026-09-19 round-2 rulings on rules-2, tests-4, extra5-3, extra8-2 and extra8-7:
+        three hand-kept copies of one benchmark disagreed on two terms, so reduce the copies rather than reconcile them;
+        the round-3 fix made the reduction and this pin refuses the next copy). A microsecond figure is `<number> us`; none may
+        stand in the kernel's stages_cpu_ms block comment (its header line to the `try:` that imports resource), in
+        _stat_counting_install's docstring, in the memos.chatSig block comment (its header to class _ChatSigLocal) or in
+        the _PerfStats docstring's stages_cpu_ms and memos rows (the chatSig row is inside the latter); the reference's
+        stages_cpu_ms entry carries at least ten and its memos.chatSig paragraph none. A figure is what
+        _microsecond_figures reads (the module comment above it says what counts): a number in any spelling before a
+        micro or nano unit in any spelling, a sub-millisecond number before a milli unit, a sub-millisecond number of
+        seconds, or a number word before microsecond(s). The first pattern read `<number> us` alone (the round-3 review
+        pasted `0.25us` and `0.25 microseconds` past it); the closing check of 2026-09-19 planted twenty-four spellings
+        into _stat_counting_install's docstring and fourteen passed the second (`250 ns`, `0.00025 ms`, `2.5e-7 s`,
+        `a quarter of a microsecond`, `0.25 usec`, `0.25-us`, `0.25 US` and the literal `&nbsp;` entity among them); the
+        test after this one pins every spelling tried. The figures themselves are not pinned: InstrumentationCostTerms
+        below recomputes them and prints the line the entry is filled from."""
+        lines = Path(km.__file__).read_text(encoding="utf-8").splitlines()
+
+        def block(header, ends):
+            i = next(n for n, ln in enumerate(lines) if ln.startswith(header))
+            j = next(n for n in range(i + 1, len(lines)) if ends(lines[n]))
+            return "\n".join(lines[i:j])
+        regions = (("the kernel's stages_cpu_ms block comment", block("# ── stages_cpu_ms", lambda ln: ln == "try:")),
+                   ("_stat_counting_install's docstring", km._stat_counting_install.__doc__),
+                   ("the kernel's memos.chatSig block comment", block("# ── memos.chatSig", lambda ln: ln.startswith("class _ChatSigLocal"))),
+                   ("the _PerfStats docstring's stages_cpu_ms row", _doc_row(km._PerfStats.__doc__, "stages_cpu_ms")),
+                   ("the _PerfStats docstring's memos row (chatSig inside it)", _doc_row(km._PerfStats.__doc__, "memos")))
+        for where, text in regions:
+            self.assertGreater(len(text), 200, "premise: %s was found" % where)
+            found = _microsecond_figures(" ".join(text.split()))
+            self.assertEqual(found, [], "%s states a microsecond figure %r. The stages_cpu_ms entry of docs/reference.md is the "
+                             "only home for a measured cost: to pass, state the figure there and point at it from here, or "
+                             "write the sentence without a sub-millisecond time figure (a figure of a millisecond or more, "
+                             "or a unit word with no number, reads as none). The reader is _microsecond_figures in "
+                             "tests/test_perf_stats.py; the comment above it says what counts." % (where, found))
+        doc = Path(HERE).parent.joinpath("docs", "reference.md").read_text(encoding="utf-8")
+        cpu_entry = " ".join(self._reference_entry(doc, doc.index("- `stages_cpu_ms`:")).split())
+        n = len(_microsecond_figures(cpu_entry))
+        self.assertGreaterEqual(n, 10, "the reference's stages_cpu_ms entry carries the cost terms: %d microsecond figures found" % n)
+        memos = doc.index("- `memos`:")
+        sig_entry = " ".join(self._reference_entry(doc, doc.index("`chatSig`", memos)).split())
+        found = _microsecond_figures(sig_entry)
+        self.assertEqual(found, [], "the reference's memos.chatSig paragraph states a microsecond figure %r" % (found,))
+
+    def test_the_microsecond_predicate_reads_every_spelling_the_closing_check_planted(self):
+        """The corpus behind the pin above (the closing check of 2026-09-19): the twenty-four spellings planted into a pinned
+        region, the ten the `<number> us` pattern caught and the fourteen it passed, each read as a figure once
+        whitespace-normalized the way the pin normalizes; and a SAMPLE of the legitimate figures the pinned regions and the
+        reference carry (a millisecond count, a seconds backstop, the bare unit word, a version, a plural noun after a
+        digit, the pronoun), each read as none. The sample is not the population: the population is every sentence
+        written in those regions from now on, so the pin's failure message names the remedy (state the cost in the
+        reference, or write the sentence without a sub-millisecond figure) rather than this list growing by one each time
+        innocent prose trips it. Dropping a unit from _TIME_UNITS reds the escaped spelling of that unit."""
+        caught = ["0.25us", "0.25 us", "0.25 \u00b5s", "0.25 \u03bcs", "0.25 microseconds", "0.25 microsecond", "0,25 us",
+                  "0.25\u00a0us", "`0.25 us`", "0.25\nus"]
+        escaped = ["250 ns", "250ns", "0.00025 ms", "2.5e-7 s", "a quarter of a microsecond", "0.25&nbsp;us", "\u00bc us",
+                   "0.25 usec", "0.25 \u00b5sec", "250 nanoseconds", "0.25 microsecs", "half a microsecond", "0.25-us", "0.25 US"]
+        self.assertEqual((len(caught), len(escaped)), (10, 14), "the corpus is the closing check's twenty-four spellings")
+        for sp in caught + escaped:
+            text = " ".join(("the wrapper costs about %s per stat." % sp).split())
+            self.assertEqual(len(_microsecond_figures(text)), 1, "not read as one microsecond figure: %r" % sp)
+        legitimate_sample = ("157 ms per cycle", "a tick, 1 ms at HZ=1000, or a context switch", "the 0.5 s backstop ran it",
+                      "how the loop's 3 s wait ended", "what each term costs in microseconds is stated once",
+                      "38 tabs and four clients", "Python 3.12, a 30-core (60-thread) dev box", "the count tells us",
+                      "over 300 sub-millisecond spins", "2.9 to 7.1 percent", "since the 1970s", "5 sessions", "12 GB resident",
+                      "a 5-second grace")
+        for legit in legitimate_sample:
+            self.assertEqual(_microsecond_figures(legit), [], "a legitimate figure read as a microsecond one: %r" % legit)
+
+    def test_the_per_push_denominator_rule_lives_in_the_reference_alone_and_the_kernel_copies_point_there(self):
+        """correctness-1 (the 2026-09-19 round-2 review): the sentence saying which memos.chatSig keys are a delta over
+        pushes stood in three copies and was wrong in all three (two exceptions where there are six). The rule is stated
+        once now, in the memos.chatSig entry of docs/reference.md (the sibling doc pins hold its text), and the kernel's
+        two copies, the memos.chatSig block comment and the _PerfStats docstring's memos row, point there. This pin refuses
+        the next copy: neither kernel region may say "delta over pushes" (the round-3 review re-added the old sentence
+        beside the pointer and no pin moved)."""
+        lines = Path(km.__file__).read_text(encoding="utf-8").splitlines()
+        i = next(n for n, ln in enumerate(lines) if ln.startswith("# ── memos.chatSig"))
+        j = next(n for n in range(i + 1, len(lines)) if lines[n].startswith("class _ChatSigLocal"))
+        regions = (("the kernel's memos.chatSig block comment", "\n".join(lines[i:j])),
+                   ("the _PerfStats docstring's memos row", _doc_row(km._PerfStats.__doc__, "memos")))
+        rule = re.compile(r"delta over `?pushes`?")
+        for where, text in regions:
+            self.assertGreater(len(text), 200, "premise: %s was found" % where)
+            self.assertIn("memos.chatSig entry of docs/reference.md", " ".join(text.split()), "%s points at the reference" % where)
+            found = [m.group(0) for m in rule.finditer(" ".join(text.split()))]
+            self.assertEqual(found, [], "%s states the per-push rule %r: the reference's memos.chatSig entry is its only home" % (where, found))
+
+    def test_the_signature_has_the_forty_labels_the_prose_names(self):
+        """The share's denominator is compares times len(_CHAT_SIG_LABELS), written as the literal 40 in the reference's
+        memos.chatSig entry, the kernel's memos.chatSig block comment and the _CHAT_SIG_LABELS derivation beside
+        stages_cpu_ms, the ledger entry, the PR body and InstrumentationCostTerms' docstring below (the round-3 review,
+        2026-09-19: nine copies and no pin). A label added later reds this, which names the copies to update; the
+        reference's entry is checked to carry the literal so the pin and the prose agree."""
+        self.assertEqual(len(km._CHAT_SIG_LABELS), 40,
+                         "the signature has 40 labels: update the literal in docs/reference.md (memos.chatSig), kernel.py (the "
+                         "memos.chatSig block comment's compareIdenticalComponents row and the stages_cpu_ms derivation), the "
+                         "ledger entry, the PR body and InstrumentationCostTerms")
+        doc = Path(HERE).parent.joinpath("docs", "reference.md").read_text(encoding="utf-8")
+        memos = doc.index("- `memos`:")
+        sig_entry = " ".join(self._reference_entry(doc, doc.index("`chatSig`", memos)).split())
+        self.assertIn("40", sig_entry, "the reference's memos.chatSig entry names the label count")
+
+    def test_the_stages_cpu_ms_container_sentence_is_carried_whole_by_the_docstring_row_and_the_reference(self):
+        """The CPU containers gloss (2026-09-19 review, extra5-3): one sentence in the _PerfStats docstring's stages_cpu_ms row
+        and in docs/reference.md, checked phrase by phrase in BOTH copies (the first pin read the reference alone and
+        accepted "the sum of", which "at least the sum of" also matched, so a copy that weakened the relation stayed green
+        and the docstring's sentence could be deleted outright): push.chat.sig's row is EXACTLY its two sub-rows; push.chat
+        covers its three seams plus the loop's glue and is a superset, not a sum; push covers the whole of _push_all; and a
+        reader summing the nine rows counts the signature a fourth time. The arithmetic behind the words is pinned by
+        execution in tests/test_kernel_delta_send.py's rusage test (static plus deps equals the seam exactly; push.chat 54
+        against its seams' 30 under the fake clock)."""
+        row = " ".join(_doc_row(km._PerfStats.__doc__, "stages_cpu_ms").split())
+        doc = " ".join(Path(HERE).parent.joinpath("docs", "reference.md").read_text().split())
+        for why, pattern in (
+                ("push.chat.sig's CPU row is exactly its two sub-seams", r"exactly `?push\.chat\.sig\.static`? plus `?push\.chat\.sig\.deps`?"),
+                ("push.chat's row covers its seams plus the loop's glue, a superset", r"plus the loop's glue \(a superset, not a sum"),
+                ("push covers the whole of _push_all", r"`?push`? covers the whole of `?_push_all`?"),
+                ("the nine-row sum counts the signature a fourth time", r"counts the signature a fourth time")):
+            for where, text in (("the _PerfStats docstring's stages_cpu_ms row", row), ("docs/reference.md", doc)):
+                self.assertTrue(re.search(pattern, text), "%s: no match for %r in %s" % (why, pattern, where))
+
     def test_the_reference_doc_names_the_shared_memos_by_their_camelcase_keys(self):
         # the memo keys upstream also reports are spelled one way in GET /perf and in the doc (bgTops, liftGate,
         # intrMarks, statesOverlay, chatMergeSets, chatPostal, chatLedger, chatFoldTasks); the older snake_case
@@ -3038,6 +3658,110 @@ class GoalIoCounters(unittest.TestCase):
         self.assertEqual(after["loads"], before["loads"], "two shared loads: no writer-side load counted")
         self.assertEqual((snap["miss"] - snap0["miss"], snap["hit"] - snap0["hit"]), (1, 1),
                          "...the fill and the hit are the shared cache's, on the snapshot")
+
+
+class InstrumentationCostTerms(unittest.TestCase):
+    """What the chat-signature instrumentation costs per operation, MEASURED in one process and PRINTED, never pinned
+    (2026-09-19 round-2 rulings: reduce the copies, recompute what a test can recompute, and have the body quote the
+    test's own live output instead of a hand-copied number). The stages_cpu_ms entry of docs/reference.md is the only
+    in-repo home of the microsecond figures (GoalIoCounters' source pin holds the kernel's copies to pointers) and is
+    filled from the `[live] cost terms` line this test prints (`pytest -rA` shows it) at the head the entry names; a
+    shared box moves the values run to run, so nothing here asserts a value. The assertions are sanity (every term above
+    zero and under a millisecond) and the counts the instrumentation must land while it runs: the wrapped stat, the
+    DirEntry door and the count call each counted exactly the calls made with a signature open. The terms mirror the
+    round-2 microbenchmark (bench.py at the round-2 head), best of five each, in one process over the loaded kernel: one
+    getrusage read (_thread_cpu), os.stat through the counting wrapper with a signature open against the bare builtin
+    (os.stat.__wrapped__) on one existing file, _entry_stat on a cached DirEntry with the signature closed and open, a
+    signature scope's enter and exit, the per-tab note over a 40-component hit, a re-read's note, a count call, and the
+    census at 38 tabs by four clients holding every tab, once for the tabs the gate did not walk (held_live None, the
+    census walks all) and once for tabs it did (True, the census walks none). The iteration counts are sized so the
+    test runs in about a second."""
+
+    N_CHEAP, N_STAT, N_CENSUS = 20000, 4000, 2000
+
+    @staticmethod
+    def _best_of_five(fn, n):
+        best = None
+        for _ in range(5):
+            t0 = time.perf_counter()
+            for _ in range(n):
+                fn()
+            dt = (time.perf_counter() - t0) / n * 1e6
+            best = dt if best is None else min(best, dt)
+        return best
+
+    def test_the_instrumentations_cost_terms_are_measured_in_one_run_and_printed(self):
+        tl = km._CHAT_SIG_TL
+        self.assertTrue(hasattr(os.stat, "__wrapped__"), "premise: the kernel's counting wrapper is on os.stat")
+        saved_active = tl.active
+        with km._CHAT_SIG_STATS_LOCK:
+            saved = dict(km._CHAT_SIG_STATS)
+
+        def restore():                                   # the notes and the census fold into the shared table: put it back
+            tl.active = saved_active
+            tl.stats = tl.namesReads = 0
+            with km._CHAT_SIG_STATS_LOCK:
+                km._CHAT_SIG_STATS.clear()
+                km._CHAT_SIG_STATS.update(saved)
+        self.addCleanup(restore)
+        bench, out = self._best_of_five, {}
+        tl.active = False
+        out["getrusage"] = bench(km._thread_cpu, self.N_CHEAP)
+
+        def scope():
+            with km._chat_sig_scope():
+                pass
+        out["scope"] = bench(scope, self.N_STAT)
+        sig = tuple(object() if i % 3 else (i, "x%d" % i) for i in range(len(km._CHAT_SIG_LABELS)))
+        hit = (sig, None, None)                          # a hit's operands: the same objects at every position
+        tabs = []
+
+        def note_pre():
+            km._chat_sig_note_pre("s", sig, hit, False, None, tabs)
+            if len(tabs) > 1000:
+                tabs.clear()
+        out["note_pre"] = bench(note_pre, self.N_STAT)
+        out["note_compare"] = bench(lambda: km._chat_sig_note_compare(hit, sig), self.N_STAT)
+        p = os.path.realpath(__file__)
+        bare = os.stat.__wrapped__
+        out["stat_bare"] = bench(lambda: bare(p), self.N_STAT)
+        with os.scandir(os.path.dirname(p)) as it:
+            e = next(x for x in it if x.name == os.path.basename(p))
+        e.stat()                                         # cached from here: the door's own cost, not the syscall's
+        out["door_closed"] = bench(lambda: km._entry_stat(e), self.N_CHEAP)
+        sids = ["%08d-1111-2222-3333-444444444444" % i for i in range(38)]
+        clients = [{"skeleton": set(sids), "dlock": threading.RLock(), "active": None} for _ in range(4)]
+        rows_none = [(s, False, True, True, None) for s in sids]
+        rows_all = [(s, False, True, True, True) for s in sids]
+        out["census_none"] = bench(lambda: km._chat_sig_note_census(rows_none, clients, False), self.N_CENSUS)
+        out["census_all"] = bench(lambda: km._chat_sig_note_census(rows_all, clients, False), self.N_CENSUS)
+        tl.active = True                                 # a signature open on this thread: the counted terms
+        try:
+            tl.stats = 0
+            out["stat_wrapped_open"] = bench(lambda: os.stat(p), self.N_STAT)
+            self.assertEqual(tl.stats, 5 * self.N_STAT, "the wrapper counted exactly the stats made with the signature open")
+            tl.stats = 0
+            out["door_open"] = bench(lambda: km._entry_stat(e), self.N_CHEAP)
+            self.assertEqual(tl.stats, 5 * self.N_CHEAP, "the door counted exactly the entry stats made")
+            tl.namesReads = 0
+            out["count"] = bench(lambda: km._chat_sig_count("namesReads"), self.N_CHEAP)
+            self.assertEqual(tl.namesReads, 5 * self.N_CHEAP, "the count call landed every call made")
+        finally:
+            tl.active = False
+            tl.stats = tl.namesReads = 0
+        for k, v in out.items():
+            self.assertGreater(v, 0.0, k)
+            self.assertLess(v, 1000.0, "%s: %.3f us is not a per-call figure" % (k, v))
+        try:
+            r = subprocess.run(["git", "-C", str(Path(HERE).parent), "rev-parse", "--short", "HEAD"], capture_output=True, text=True, timeout=10)
+            head = r.stdout.strip() if r.returncode == 0 and r.stdout.strip() else "unknown"
+        except (OSError, subprocess.SubprocessError):
+            head = "unknown"
+        py = sys.version.split()[0] + ("" if getattr(sys, "_is_gil_enabled", lambda: True)() else "t")
+        print("[live] cost terms head=%s python=%s: getrusage=%.3f stat_wrapped_open=%.3f stat_bare=%.3f door_closed=%.3f door_open=%.3f "
+              "scope=%.3f note_pre=%.3f note_compare=%.3f count=%.3f census_none=%.3f census_all=%.3f (us, best of five)"
+              % (head, py, out["getrusage"], out["stat_wrapped_open"], out["stat_bare"], out["door_closed"], out["door_open"], out["scope"],
+                 out["note_pre"], out["note_compare"], out["count"], out["census_none"], out["census_all"]))
 
 
 class JudgeCpu(unittest.TestCase):
@@ -3634,6 +4358,93 @@ class PusherRecords(unittest.TestCase):
             after = km._PERF_STATS.snapshot()["stages_ms"]
             self.assertEqual(after["push"], before["push"])
             self.assertAlmostEqual(after["jobs"] - before["jobs"], (reads[0] - n_first - 1) * 1.0, places=6, msg="the no-client cycle's jobs span every read but its first")
+
+    def test_cycle_jobs_split_their_thread_cpu_into_push_and_jobs(self):
+        # the CPU twin of the wall split above (2026-09-18 review, medium 8): under a fake getrusage that advances one ms of
+        # user and half a ms of system time per read, with _push_all a stub that reads the thread clock ONCE, the push row's
+        # CPU is that read plus the closing read (2 ms exactly), jobs is the function's CPU span less the push's, the two
+        # summing to every read but the first, and a cycle with no client moves jobs alone. The snapshots are taken inside
+        # the patch, so the block is served whatever the platform's clock; their own reads are discarded from the count
+        for nm in self.JOBS:
+            setattr(km, nm, lambda *a, **k: None)
+        km._push_all = lambda live_map=None: km._thread_cpu()
+        reads = []
+
+        def fake(who):
+            reads.append(who)
+            return types.SimpleNamespace(ru_utime=0.001 * len(reads), ru_stime=0.0005 * len(reads), ru_maxrss=0)
+
+        def cpu():
+            s = km._PERF_STATS.snapshot()["stages_cpu_ms"]
+            return {k: dict(s[k]) for k in ("push", "jobs")}
+        with mock.patch.object(km, "_RUSAGE_THREAD", 11), mock.patch.object(km.resource, "getrusage", fake):
+            before = cpu()
+            del reads[:]
+            km._pusher_cycle_jobs(int(time.time()), {}, True)
+            n = len(reads)
+            after = cpu()
+            push = after["push"]["user"] - before["push"]["user"]
+            jobs = after["jobs"]["user"] - before["jobs"]["user"]
+            self.assertAlmostEqual(push, 2.0, places=6, msg="the push's CPU spans the stub's read and the closing read")
+            self.assertGreater(jobs, 0.0, "the jobs' CPU is the function's less the push's, never negative")
+            self.assertAlmostEqual(push + jobs, (n - 1) * 1.0, places=6, msg="push plus jobs is the function's whole CPU span: every read but the first")
+            self.assertAlmostEqual(after["push"]["sys"] - before["push"]["sys"], 1.0, places=6, msg="the system half rides too")
+            self.assertAlmostEqual(after["jobs"]["sys"] - before["jobs"]["sys"], jobs / 2.0, places=6)
+            before = cpu()
+            del reads[:]
+            km._pusher_cycle_jobs(int(time.time()), {}, False)   # no client: no push, the jobs still run
+            n = len(reads)
+            after = cpu()
+            self.assertEqual(after["push"], before["push"], "no client: the push row stands")
+            self.assertAlmostEqual(after["jobs"]["user"] - before["jobs"]["user"], (n - 1) * 1.0, places=6,
+                                   msg="the no-client cycle's jobs span every read but its first")
+
+    def test_a_push_whose_cpu_read_failed_leaves_the_jobs_row_without_cpu(self):
+        """kernel-1 (2026-09-19 round-2 review, latent): the jobs container's wall is the function's less the push's
+        unconditionally, but its CPU was reduced by the push's only when the push's own delta was read, so a push whose
+        OPEN rusage read failed left its CPU inside the jobs row beside a wall that excludes it, and the row's documented
+        wait (wall minus user minus sys) could read negative. Under the sibling's fake clock (one ms of user and half a ms
+        of system per read) with _thread_cpu answering None on its SECOND call, the push's open read, without reading: the
+        thread-clock calls are the jobs open (read 1), the push's open (None; _cpu_delta short-circuits, so no push close
+        read), _push_all's own (read 2) and the jobs close (read 3). Fails before the fix with the jobs row moved by 2.0 ms
+        of user and 1.0 ms of system (reads 3 less 1: the push's CPU inside a row whose wall excludes the push); with it the
+        jobs row stands (the CPU follows the wall: no push CPU, no jobs CPU), the push row stands (stage("push", ...,
+        cpu=None)) and both walls moved. The sibling's no-client case stays the widening edge: a cycle with no push still
+        moves the jobs row."""
+        for nm in self.JOBS:
+            setattr(km, nm, lambda *a, **k: None)
+        km._push_all = lambda live_map=None: km._thread_cpu()
+        reads, calls, real_cpu = [], [0], km._thread_cpu
+
+        def fake(who):
+            reads.append(who)
+            return types.SimpleNamespace(ru_utime=0.001 * len(reads), ru_stime=0.0005 * len(reads), ru_maxrss=0)
+
+        def cpu_read():
+            calls[0] += 1
+            if calls[0] == 2:                            # the push's open read fails: None, and no rusage read behind it
+                return None
+            return real_cpu()
+
+        def rows():
+            s = km._PERF_STATS.snapshot()
+            return {k: dict(s["stages_cpu_ms"][k]) for k in ("push", "jobs")}, {k: s["stages_ms"][k] for k in ("push", "jobs")}
+        with mock.patch.object(km, "_RUSAGE_THREAD", 11), mock.patch.object(km.resource, "getrusage", fake), \
+                mock.patch.object(km, "_thread_cpu", cpu_read):
+            cpu0, wall0 = rows()
+            del reads[:]
+            calls[0] = 0
+            km._pusher_cycle_jobs(int(time.time()), {}, True)
+            n_calls, n_reads = calls[0], len(reads)
+            cpu1, wall1 = rows()
+        self.assertEqual((n_calls, n_reads), (4, 3), "premise: four thread-clock calls (jobs open, push open, the stub's, jobs close), three read")
+        self.assertGreater(wall1["push"], wall0["push"], "the push's wall moved")
+        self.assertGreater(wall1["jobs"], wall0["jobs"], "the jobs' wall moved")
+        self.assertEqual(cpu1["push"], cpu0["push"], "the push row stands: its open read failed, so stage() got cpu=None")
+        self.assertEqual(cpu1["jobs"], cpu0["jobs"],
+                         "the jobs row stands: with no push CPU to take out, the span (the push's CPU inside it) is not folded into a row "
+                         "whose wall excludes the push (before the fix: user +%.1f ms, sys +%.1f ms)"
+                         % (cpu1["jobs"]["user"] - cpu0["jobs"]["user"], cpu1["jobs"]["sys"] - cpu0["jobs"]["sys"]))
 
     def test_a_connect_serves_the_build_it_tested_when_the_cache_is_replaced_between_its_reads(self):
         # _cached_timeline tested the cached payload and returned it as two reads of the shared list while the

@@ -606,6 +606,60 @@ _CHAT_SIG_LABELS = ("transcript", "states", "store", "hold", "archive", "episode
                     "taskout", "pathlink", "postal")
 _CHAT_SIG_DEPS = ("taskout", "pathlink", "postal")
 
+# ── stages_cpu_ms: a stage's CPU beside its wall (stage 1 of the chat-signature design, 2026-09-18) ────────────────
+# stage() records wall time, so a seam over a stat storm holds the GIL waits and the syscall waits of every other thread
+# with it, and the pusher's stage wall exceeded its own thread CPU by 157 ms per cycle in the chat-signature design note's
+# second-boot readings of 2026-09-18 (a reading outside this repo) with no way to say which stage carried the wait.
+# getrusage(RUSAGE_THREAD) splits the calling thread's CPU into user and system;
+# the chat seams and the push and jobs containers read it at their open and close and hand stage() the delta. What
+# the instrumentation executes, by regime, is derived here and pinned by tests; what each term costs in microseconds
+# is stated ONCE, in the stages_cpu_ms entry of docs/reference.md (one dated run's readings, not a contract), so no
+# figure is maintained by hand in two places. Per served tab per cycle: six getrusage reads (the signature seam's
+# pair, the deps sub-seam's pair inside it and the send seam's pair), one signature scope (_chat_sig_scope's enter and
+# exit), one per-tab note (_chat_sig_note_pre: a lock hold and a zip over the 40 components) whose pre-flight read is
+# the tab's one compare, one os.stat or os.lstat wrapper call per stat the signature makes (_entry_stat for a
+# DirEntry's) and a _chat_sig_count call per counted raw read (namesReads, switchReads). Per rebuilt tab: ten reads
+# (the build seam's pair and the post-build signature's pair more), two scopes, the note and one claim re-read
+# (_chat_sig_note_compare: the second compare), and the stats twice. Per push: the chat container's pair of reads and
+# one census (_chat_sig_note_census) over the tabs the gate did not walk. tests/test_kernel_delta_send.py pins these
+# counts over one tab through six cycles, rebuilt and served alternately: the scopes, notes, compares and clock reads
+# per cycle kind (12 reads on a rebuilt cycle, 8 on a served one, the container's pair included) in
+# test_the_per_tab_counts_the_cost_derivation_uses_hold_by_execution, the reads again by a fake clock in
+# test_the_chat_seams_record_their_thread_cpu_from_a_bounded_number_of_rusage_reads, and the census once per push in
+# test_the_census_reads_each_clients_skeleton_set_once_per_push_not_once_per_tab. The live CPU share is read once
+# this deploys, since the running kernel carries no CPU rows yet. RUSAGE_THREAD is Linux; where the platform lacks it
+# (macOS) _thread_cpu answers None, every stage records its wall alone, and the snapshot serves stages_cpu_ms EMPTY
+# rather than zeros that would read as "no CPU".
+try:
+    import resource
+    _RUSAGE_THREAD = getattr(resource, "RUSAGE_THREAD", None)
+except ImportError:                          # no resource module at all: the CPU columns are absent, nothing else changes
+    resource = None
+    _RUSAGE_THREAD = None
+
+
+def _thread_cpu():
+    """(user, sys) CPU seconds of the CALLING thread so far, from getrusage(RUSAGE_THREAD); None where the platform has no
+    per-thread rusage, or the read fails. One syscall."""
+    if _RUSAGE_THREAD is None:
+        return None
+    try:
+        ru = resource.getrusage(_RUSAGE_THREAD)
+    except (OSError, ValueError, AttributeError):
+        return None
+    return (ru.ru_utime, ru.ru_stime)
+
+
+def _cpu_delta(c0):
+    """The (user, sys) seconds since `c0`, a _thread_cpu reading taken at a stage's open; None when either reading is
+    unavailable, which stage() records as no CPU figure for the mark."""
+    if c0 is None:
+        return None
+    c1 = _thread_cpu()
+    if c1 is None:
+        return None
+    return (c1[0] - c0[0], c1[1] - c0[1])
+
 
 _STAGE_RING_LEN = [None]          # resolved once (the first cycle), like the other memory-fraction bounds' module constants
 
@@ -755,8 +809,11 @@ class _PerfStats:
                                    _cached_feed and the ledgers attach), push.timeline (the skeleton
                                    and _cached_timeline), push.send (the feed/bars serialization and
                                    sends). Inside push.chat, its seams (2026-09-18): push.chat.sig
-                                   (each tab's _chat_build_sig, every tab every cycle, the post-build
-                                   one included), push.chat.build (build_session, a rebuild only) and
+                                   (each tab's _chat_build_sig, every tab past the cold gate every cycle, the post-build
+                                   one included; itself a container of push.chat.sig.static, the
+                                   signature less its dependency tail, and push.chat.sig.deps, the
+                                   tail _chat_sig_deps evaluates over the cached build's record,
+                                   recorded only when the tail ran), push.chat.build (build_session, a rebuild only) and
                                    push.chat.send (the events diff and the per-client chat sends);
                                    inside push.send: push.send.feedParts (the feed's per-entry pass
                                    and its signature, a wire miss only), push.send.barsSplit (the
@@ -801,6 +858,37 @@ class _PerfStats:
                                    session looked at); any other key names a stage that ran outside
                                    both loops. The keys are the kernel's own stage literals, never a
                                    client's text
+      stages_cpu_ms                the calling thread's CPU over a stage, beside its wall (2026-09-18):
+                                   {stage: {user, sys}} in milliseconds from getrusage(RUSAGE_THREAD)
+                                   read at the stage's open and close, for the containers push, jobs
+                                   and jobsPass and the chat loop's seams push.chat, push.chat.sig,
+                                   push.chat.sig.static, push.chat.sig.deps, push.chat.build and
+                                   push.chat.send (CPU_STAGES; each listed at zero from the start).
+                                   Three rows are containers of rows listed after them, as in
+                                   stages_ms: push.chat.sig's CPU row is exactly push.chat.sig.static
+                                   plus push.chat.sig.deps (by construction in _chat_sig_seam_close),
+                                   push.chat's row covers its three seams plus the loop's glue (a
+                                   superset, not a sum: the glue has no CPU row of its own), and push
+                                   covers the whole of _push_all (the pusher's push stage wraps the
+                                   call), so a reader summing the nine rows counts the signature a
+                                   fourth time.
+                                   Wall minus user minus sys over a window is the
+                                   stage's wait (GIL and syscalls). Read the block over a window, never
+                                   off one cycle: getrusage(RUSAGE_THREAD)'s total is the thread's
+                                   runtime as of its last scheduler update (a tick, 1 ms at HZ=1000, or
+                                   a context switch), not the instant of the read, split into user and
+                                   sys by the tick counts, so a mark over a sub-millisecond stage reads
+                                   0 on the marks no update fell in and a whole tick on the others
+                                   (tests/test_perf_stats.py pins it on the real clock: over 300
+                                   sub-millisecond spins some mark reads 0, some a whole tick, and
+                                   the marks' sum tracks the window's thread CPU), and
+                                   only the sum over a window estimates the CPU. EMPTY where the platform has no
+                                   per-thread rusage (macOS): an empty block means no clock, not no CPU.
+                                   A row takes the CPU of a mark whose wall went to the flat stages_ms
+                                   row of its name (stage()'s routing): a connect push's push.* stage,
+                                   the pusher's jobs.<job> and a foreign writer's stage (a push-marked
+                                   write from a thread owning no cycle included) record no CPU row, so
+                                   each row's CPU is the same writer's as its wall
       builds                       chat / feed / timeline / feedJson -> {cached, built, ms}: served
                                    from the build cache vs rebuilt, and the rebuild time. feedJson is
                                    GET /feed.json's own reads (_pure_feed), kept apart from `feed`,
@@ -960,7 +1048,67 @@ class _PerfStats:
                                    bypass_live (live atoms merged), bypass_hold (a rewind hold armed),
                                    bypass_empty (a store with no nodes), evict, and the gauge entries;
                                    chatFoldTasks (the per-turn task fold, see _fold_tasks) -> hit /
-                                   miss counted per TURN and the gauge entries (sids held). The
+                                   miss counted per TURN and the gauge entries (sids held); chatSig (the
+                                   chat signature pass's own counters, _CHAT_SIG_STATS; stage 1 of the
+                                   chat-signature design, 2026-09-18; the block comment at the table
+                                   derives every key) -> pre / post (pre-build signatures the push loop
+                                   took, one per tab past the cold gate, and post-build ones: at rest
+                                   (between pushes; one ahead while a tab is in flight) pre =
+                                   builds.chat cached + built - targetedBuilds + failedBuilds, and
+                                   over a window with failedBuilds 0 post = built -
+                                   targetedBuilds - nosig, else larger by at most failedBuilds; the
+                                   nosig is this table's, which counts every tab where
+                                   builds.chat.bg_miss.nosig counts background builds only),
+                                   failedBuilds (the loop's builds that raised past a pre-build
+                                   signature: under neither cached nor built), targetedBuilds (the
+                                   targeted push's builds, which take no signature and which
+                                   builds.chat labels targeted only when the tab is unwatched), thread
+                                   (the comment-thread signatures _thread_events takes, one per
+                                   non-promoted thread per push and per HTTP comments frame, a raising
+                                   one included: the third caller, so a per-signature figure for the
+                                   read counts divides by pre + post + thread), nosig (signatures that
+                                   raised or found no transcript path: built, never cached), waited
+                                   (tabs served after another thread's build of the same tab),
+                                   compares (cache reads that met a cached entry with a signature in
+                                   hand: the pre-flight read, the re-read after a single-flight wait
+                                   and the re-read under a claim, not the final compare, so a rebuild
+                                   counts two, a served waiter one on a cold cache or two when its
+                                   pre-flight read met a stale entry, and compares can exceed pre) and
+                                   compareIdenticalComponents (over those reads' operands the
+                                   components equal by object identity, at every position whether or
+                                   not the tuple compare reached it; the share is
+                                   compareIdenticalComponents / (compares * len(_CHAT_SIG_LABELS)),
+                                   both operands always full-length), stats (the os.stat, os.lstat and
+                                   DirEntry.stat calls made on the thread while a signature is open,
+                                   whichever function or module makes them: os.stat and os.lstat
+                                   through the wrappers _stat_counting_install puts on the os and
+                                   posix modules, and on pathlib's accessor on 3.10; DirEntry.stat
+                                   through _entry_stat and its twins in judge.py, event_model.py and
+                                   sdk_backend.py, since a DirEntry stats in C; not countable from
+                                   Python and not counted: open()'s and scandir()'s fstats, a
+                                   DirEntry predicate on a symlink entry or without d_type, and the
+                                   stats made in another process by any git child a signature forks
+                                   (the set is pinned by execution in
+                                   tests/test_chat_build_sig_inputs.py; a fork's wall lands on the
+                                   row of the part that forked it, its CPU on no row, since
+                                   RUSAGE_THREAD excludes a child)), namesReads (raw
+                                   names-registry reads), switchReads
+                                   (the user-todos switch file), regReads (sdk_backend.read_reg file
+                                   reads), and the warm-tab census: warmEligible (a cached tab no
+                                   client watches, every connected chat client holds as a skeleton,
+                                   with a transcript and no plain Outline connected: the cold gate's
+                                   predicate with its not-yet-built clause negated and without the
+                                   gate's live-row clause, so an upper bound on what a cold-gate-shaped
+                                   warm gate would skip, the excess the tabs with no live row),
+                                   warmBlockedByOutline (the same with a plain Outline connected) and
+                                   heldBody (a tab some connected chat client holds as a body, the
+                                   watched tab included); pushes, the pushes that ran the chat tab
+                                   loop (the pusher's cycles and a chat or Sessions page's connect
+                                   pushes). Which keys divide by pushes and which by the signature
+                                   count pre + post + thread (the four read counters, fed by the
+                                   thread signatures outside a push too), and how connect pushes
+                                   enter the denominators, is stated once, in the memos.chatSig entry
+                                   of docs/reference.md. The
                                    judge's own memos, reported through its
                                    readers (2026-09-09): courierSkip (the courier's per-session
                                    inputs key, jd.courier_skip_stats), plannerSkip (the planner's,
@@ -1102,6 +1250,7 @@ class _PerfStats:
     JOBS = CYCLE_JOBS + PASS_JOBS
     STAGES = ("prelude", "jobs", "push",
               "push.chat", "push.chat.sig", "push.chat.build", "push.chat.send",         # the chat stage and its seams (2026-09-18)
+              "push.chat.sig.static", "push.chat.sig.deps",                              # the signature seam's two sub-seams (the chat-signature design, stage 1)
               "push.feed", "push.timeline",
               "push.send", "push.send.feedParts", "push.send.barsSplit", "push.send.compare",   # the send stage and its seams
               "push.warm", "push.feedFirst",
@@ -1116,8 +1265,16 @@ class _PerfStats:
     # the incremental-push design, 2026-09-18): a seam's bytes count in the seam, the container's glue in `<container>.other`,
     # and a container counts a nested container's rows through that container's own row (`_through_nested` below), so `push`
     # counts the chat's bytes once, not again through push.chat.build; a dotted stage under a plain job (jobs.autoNudge.parse)
-    # counts directly, as it did before the seams
-    CONTAINERS = {"push": "push.", "push.chat": "push.chat.", "push.send": "push.send.", "jobs": "jobs.", "jobsPass": "jobs."}
+    # counts directly, as it did before the seams. push.chat.sig is a container of its own two sub-seams (the static
+    # components and the dependency tail, _chat_sig_seam_close), so push.chat counts the signature's bytes once, through
+    # the seam's row
+    CONTAINERS = {"push": "push.", "push.chat": "push.chat.", "push.send": "push.send.", "jobs": "jobs.", "jobsPass": "jobs.",
+                  "push.chat.sig": "push.chat.sig."}
+    # the stages whose callers hand stage() a thread-CPU delta beside the wall (stages_cpu_ms, 2026-09-18): the two threads'
+    # containers and the chat loop's seams; a fresh snapshot lists each at zero, and a caller may add a CPU figure for any
+    # other stage name, which then appears too
+    CPU_STAGES = ("push", "jobs", "jobsPass", "push.chat", "push.chat.sig", "push.chat.sig.static", "push.chat.sig.deps",
+                  "push.chat.build", "push.chat.send")
     BUILDS = ("chat", "feed", "timeline", "feedJson", "thread")
     # builds.chat's bg_miss labels: _chat_build_sig's components, a tab with no cached build, and a tab whose
     # signature could not be taken
@@ -1168,6 +1325,7 @@ class _PerfStats:
             # alone and never appear here), so the table lists what connect pushes ran rather than zeros for stages they cannot
             # reach. Keyed by the kernel's own stage literals, never a client's text
             self.connect_stages_ms = {}
+            self.stages_cpu = {k: {"user": 0.0, "sys": 0.0} for k in self.CPU_STAGES}   # stages_cpu_ms: thread CPU per stage, ms
             # T397: the stage split PER CYCLE. `cycle_stages` fills as the cycle's stages close (wall ms, the reader's bytes
             # and the hydrated bytes since the previous stage boundary); cycle() keeps the boot's FIRST cycle's split for
             # the process (firstCycleS alone could not name the stage a 59 s boot spent its time in, 2026-09-12) and
@@ -1380,6 +1538,7 @@ class _PerfStats:
             st["stages"] = {}
             st["mark"] = None
             st["gc"] = None
+            st["kids"] = {}                               # _container_kids' cache goes with the split it indexed (its docstring says why)
 
     @staticmethod
     def _split(dt, st, gc_now=None):
@@ -1426,6 +1585,7 @@ class _PerfStats:
             st["stages"] = {}
             st["mark"] = None
             st["gc"] = None
+            st["kids"] = {}                               # _container_kids' cache goes with the split it indexed (its docstring says why)
 
     def pass_failed(self):
         """A jobs pass that raised out of its loop and was skipped (the loop's guard), the jobs thread's cycleFailed."""
@@ -1481,6 +1641,25 @@ class _PerfStats:
         head, dot, _rest = key[len(pfx):].partition(".")
         return bool(dot) and (pfx + head) in cls.CONTAINERS and (pfx + head) in stages
 
+    @classmethod
+    def _container_kids(cls, st, pfx):
+        """The rows a container's bytes sum over (the rows under its prefix, less those counted through a nested
+        container's row), cached in the cycle's state per prefix and rebuilt only when a row was added since: rows are
+        only ever added within a cycle, so the row count is the cache's version, and a new row anywhere (a nested
+        container's first close changes _through_nested's answers too) rebuilds the list. Without the cache every
+        container close walked every row of the split with _through_nested on each, under the collector's lock, and
+        the signature seam closes once per served tab and twice per rebuilt one (2026-09-18 review, low 3). The cache
+        is RESET with the split at the in-place closes (cycle, jobs_pass) as well as at cycle_begin, which bounds it
+        to one split: a container closed in the gap between a close and the next begin, when the fresh split's row
+        count reads the same as the cached one, would otherwise sum the previous split's row objects (2026-09-19
+        review)."""
+        stages = st["stages"]
+        cache = st.setdefault("kids", {})
+        ent = cache.get(pfx)
+        if ent is None or ent[0] != len(stages):
+            ent = cache[pfx] = (len(stages), [v for k, v in stages.items()
+                                              if k.startswith(pfx) and not cls._through_nested(pfx, k, stages)])
+        return ent[1]
     @staticmethod
     def _purpose():
         """The calling thread's stage mark (_STAGE_TL, the thread-local _set_stage writes): "push" inside the pusher's _push and
@@ -1489,7 +1668,7 @@ class _PerfStats:
         its writer (2026-09-18)."""
         return getattr(_STAGE_TL, "name", None)
 
-    def stage(self, name, dt):
+    def stage(self, name, dt, cpu=None):
         """A stage closed on the calling thread, `dt` its wall seconds: added to the flat row of its name (stages_ms) and to
         the calling owner's open split. Two families are credited by their WRITER instead (2026-09-18). A dotted `jobs.`
         name (a tick job from _job_stage, or a job's part from _sub_stage) by the writer's owner: the jobs thread's to the
@@ -1504,14 +1683,25 @@ class _PerfStats:
         what _push was called for, not whose cycle it ran in). A connect push runs the same stage calls as the cycle, and
         until then its walls were added to the flat push.* rows, whose one consumer divides them by the pusher's cycle
         time. The split rows already keep the owners apart and are unchanged; every other stage (`jobs`, `jobsPass`,
-        `prelude`) is a flat row for every writer, as before."""
+        `prelude`) is a flat row for every writer, as before.
+
+        `cpu`, when the caller read the thread's rusage at the open and the close (_thread_cpu / _cpu_delta), is the
+        (user, sys) CPU seconds over the stage, folded into stages_cpu_ms under the stage name (the cumulative totals
+        only; the cycle split's rows stay {ms, bytes, hydrated}). The CPU follows the wall's route and is kept for the
+        FLAT row alone: a mark whose wall went to cycleJobsMs, connectPush.stagesMs or stagesForeign records no CPU row
+        (a push-marked write from a thread owning no cycle among the last, the mark alone being no owner), so every
+        stages_cpu_ms row is the same writer's CPU as the stages_ms row of its name and wall minus user minus sys reads
+        as that row's own wait (a connect push's or a foreign writer's CPU has no consumer and is not kept; the pusher's
+        cycle jobs hand stage() no CPU). None leaves the CPU row alone."""
         marks = self._byte_marks()
         ms = dt * 1000.0
         with self.lock:
             kind = self._mine()
+            flat = False                                    # whether the wall went to the flat row: the CPU follows it (below)
             if name.startswith("jobs."):
                 if kind == "jobs":
                     self.stages[name] = self.stages.get(name, 0.0) + ms
+                    flat = True
                 elif kind == "pusher":
                     job = name[5:]
                     self.cycle_jobs_ms[job] = self.cycle_jobs_ms.get(job, 0.0) + ms
@@ -1523,11 +1713,19 @@ class _PerfStats:
                     self.connect_stages_ms[name] = self.connect_stages_ms.get(name, 0.0) + ms
                 elif kind == "pusher":                      # the cycle's owner: its push.* under the "push" mark, its `push` outside it
                     self.stages[name] = self.stages.get(name, 0.0) + ms
+                    flat = True
                 else:                                       # neither a connect push nor the cycle's owner (a "push" mark alone is no
                     #                                         owner): counted apart, never merged
                     self.stages_foreign[name] = self.stages_foreign.get(name, 0.0) + ms
             else:
                 self.stages[name] = self.stages.get(name, 0.0) + ms
+                flat = True
+            if flat and cpu is not None:                    # stages_cpu_ms: the CPU beside the wall, for the flat row alone; a
+                c = self.stages_cpu.get(name)               #  mark routed elsewhere records no CPU row (the docstring says why)
+                if c is None:
+                    c = self.stages_cpu[name] = {"user": 0.0, "sys": 0.0}
+                c["user"] += cpu[0] * 1000.0
+                c["sys"] += cpu[1] * 1000.0
             if not kind:
                 return                                      # another thread's push: the totals alone
             st = self._cycle_state[kind]
@@ -1541,7 +1739,7 @@ class _PerfStats:
                     g = stages.setdefault(pfx + "other", {"ms": 0.0, "bytes": 0, "hydrated": 0})
                     g["bytes"] += max(0, marks[0] - prev[0]); g["hydrated"] += max(0, marks[1] - prev[1])
                 st["mark"] = marks
-                kids = [v for k, v in stages.items() if k.startswith(pfx) and not self._through_nested(pfx, k, stages)]
+                kids = self._container_kids(st, pfx)
                 cs["bytes"] = sum(v["bytes"] for v in kids)
                 cs["hydrated"] = sum(v["hydrated"] for v in kids)
             else:
@@ -1561,7 +1759,7 @@ class _PerfStats:
             for k in [k for k, ident in self._owners.items() if ident == tid and k != kind]:
                 del self._owners[k]                    # a thread owns one cycle kind at a time (a test drives both loops on one)
             self._owners[kind] = tid
-            self._cycle_state[kind] = {"stages": {}, "mark": marks, "gc": gc_mark}
+            self._cycle_state[kind] = {"stages": {}, "mark": marks, "gc": gc_mark, "kids": {}}   # kids: _container_kids' cache
 
     _GC_ZERO = (0, 0.0, 0.0, 0.0, 0)          # a generation's tally before its first collection: (collections, msSum, msMax, msLast, collectedLast)
 
@@ -1916,6 +2114,9 @@ class _PerfStats:
             jobs["stageRing"] = pr if ring_all else pr[-self.STAGE_RING_SERVED:]
             jobs["stageRingLen"] = len(pr)
             stages = dict(self.stages)
+            # the per-stage thread CPU (2026-09-18), served only where the platform has a per-thread rusage: an empty block
+            # says "no clock", zeros would say "no CPU"
+            stages_cpu = {k: dict(v) for k, v in self.stages_cpu.items()} if _RUSAGE_THREAD is not None else {}
             builds = {k: dict(v) for k, v in self.builds.items()}
             builds["chat"]["bg_miss"] = dict(self.builds["chat"]["bg_miss"])   # the nested map: a copy too
             builds["chat"]["bySession"] = [                    # the per-session timer, the largest max first, each row by its RANK
@@ -2004,6 +2205,7 @@ class _PerfStats:
                           # sets, the fold's sealed postal cards, the ledger's goal-tree walk, the task fold
                           ("chatMergeSets", _merge_sets_report), ("chatPostal", _chat_postal_report),
                           ("chatLedger", _ledger_memo_report), ("chatFoldTasks", _task_fold_report),
+                          ("chatSig", _chat_sig_stats_report),   # the chat signature pass's counters (stage 1 of the chat-signature design, 2026-09-18)
                           ("outlineProvisional", _prov_ledger_memo_report),
                           ("feedComposition", _feed_composition_report),   # the feed frame's bytes by component and per
                           #                                                    consuming app (2026-09-18, _FeedComposition)
@@ -2046,6 +2248,7 @@ class _PerfStats:
                 "gc": gc_block,                                       # gc: the collector's collections and pauses (2026-09-16)
                 "pusher": pusher, "jobs": jobs, "stages_ms": stages,
                 "stagesForeign": foreign,                            # a `jobs.` stage written by a thread owning neither loop, or a push stage by a thread neither owning the pusher's cycle nor under a connect push's mark (2026-09-18)
+                "stages_cpu_ms": stages_cpu,                          # the stages' thread CPU beside the wall (2026-09-18)
                 "builds": builds, "sends": sends, "goals": goals, "memos": memos, "judge": judge, "skillLoadIndex": skill_idx, "http": http,
                 "fileSlice": file_slice,                   # T351: the preview popover's slice cache (hit / miss / bytes / warm)
                 "glossary": glossary_stats,                # T351 stage 2: files parsed, frames / terms / bytes BUILT per cycle, entries cut, files refused
@@ -3844,6 +4047,7 @@ def _names_parts(sid):
     snap = getattr(_live_scope, "names", None)
     if snap is not None:
         return snap.get(str(sid))
+    _chat_sig_count("namesReads")                      # a raw names read inside a signature (memos.chatSig)
     try:
         return (NAMES / str(sid)).read_text().rstrip("\n").split("\t")
     except Exception:
@@ -4320,7 +4524,7 @@ def _reported_model_ids():
             continue
         seen.add(de.path)
         try:
-            st = de.stat()
+            st = _entry_stat(de)                     # the door for a scandir entry's stat (memos.chatSig.stats, when a signature is open)
         except OSError:
             continue
         key = (st.st_mtime_ns, st.st_size, st.st_ino)
@@ -11766,6 +11970,7 @@ _USER_TODOS_OFF_WARN = ("User todos are turned off on this machine, so nothing w
 def _user_todos_on():
     """OFF unless this install's switch file says yes: absent, unreadable or malformed all read False —
     the opt-in must be provable, and reading never creates the file (shipping never turns it on)."""
+    _chat_sig_count("switchReads")                     # a switch read inside a signature (memos.chatSig)
     try:
         return bool(json.loads((jd.STATE / USER_TODOS_SWITCH_FILE).read_text()).get("enabled"))
     except Exception:
@@ -19166,7 +19371,7 @@ def _working_notes():
         with os.scandir(WORKING_DIR) as it:
             for e in it:
                 try:
-                    st = e.stat()
+                    st = _entry_stat(e)
                 except OSError:
                     continue        # unlinked between readdir and stat (a clear, an atomic write's temp renamed
                     #                 away): that note is gone and the others still stand. One try around the whole
@@ -19750,7 +19955,7 @@ def _list_dir(raw, sid=None, hidden=False, limit=DIR_LIST_MAX):
                 is_link = False
                 try:
                     is_link = e.is_symlink()
-                    st = e.stat()                       # follows too; a dangling link keeps the zeros
+                    st = _entry_stat(e)                 # follows too; a dangling link keeps the zeros
                     size, mtime = int(st.st_size), int(st.st_mtime)
                 except OSError:
                     pass
@@ -20695,6 +20900,7 @@ def _thread_events(tsid, cut_uuid, now, live_map):
     sess = _sdk_sess(tsid, now)
     tm = live_map.get(tsid)
     key = None
+    _chat_sig_bump(thread=1)                        # memos.chatSig.thread: the signature below, a raising one included
     try:
         sig = _chat_build_sig(sess, tm, now, live_map=live_map, deps=False)
         _chat_sig_ok(tsid)                          # a signature that was taken ends its fault episode
@@ -31699,7 +31905,8 @@ def _sessions_listing_key(live_map, names):
                         for sid, m in (live_map or {}).items()))
     try:
         with os.scandir(WORKING_DIR) as it:
-            notes = tuple(sorted((e.name, e.stat().st_mtime_ns, e.stat().st_size, e.stat().st_ino) for e in it if e.is_file()))
+            notes = tuple(sorted((e.name, st.st_mtime_ns, st.st_size, st.st_ino)
+                                 for e, st in ((e, _entry_stat(e)) for e in it if e.is_file())))
     except OSError:                                        # (name, mtime_ns, size, ino): the key _working_notes itself memoizes on
         notes = ()
     nm = names if names is not None else {}
@@ -36787,7 +36994,7 @@ def _task_store_resolve(fsid, fold):
     root_key = []
     for e in cands:
         try:
-            root_key.append((e.name, e.stat().st_mtime_ns))
+            root_key.append((e.name, _entry_stat(e).st_mtime_ns))
         except OSError:
             root_key.append((e.name, None))
     root_key = tuple(sorted(root_key))
@@ -36845,7 +37052,7 @@ def _task_store_fp(fsid):
                 if not e.name.endswith(".json"):
                     continue
                 try:
-                    st = e.stat()
+                    st = _entry_stat(e)
                 except OSError:
                     continue                              # unlinked between readdir and stat → not in the store
                 ents.append((e.name, st.st_mtime_ns, st.st_size, st.st_ino))   # ns + size + inode: a same-size
@@ -36891,7 +37098,7 @@ def _read_task_store(fsid, fold=None):
                 if not e.name.endswith(".json"):
                     continue
                 try:
-                    st = e.stat()
+                    st = _entry_stat(e)
                 except OSError:
                     continue                              # unlinked between readdir and stat → not part of the store
                 fp.append((e.name, st.st_mtime_ns, st.st_size, st.st_ino))
@@ -37117,7 +37324,7 @@ def _judge_store_fp():
             with os.scandir(d) as it:
                 for e in it:
                     try:
-                        st = e.stat()
+                        st = _entry_stat(e)
                     except OSError:
                         continue
                     out.append((d.name, e.name, st.st_mtime_ns, st.st_size, st.st_ino))
@@ -37716,8 +37923,378 @@ def _chat_postal_relevant(ev):
     return False
 
 
+# ── memos.chatSig: the chat signature pass's own counters (stage 1 of the chat-signature design, 2026-09-18) ──────
+# Nothing counted what the pass does: signatures taken, the stats and reads inside one, how the cache compare is
+# answered, or how many warm tabs a warm-tab gate would reach, so every later stage of that design would have been
+# argued from a wall-clock seam alone. Measurement only: no frame, read or cache decision depends on these. The
+# per-signature counts accumulate on a thread-local while _chat_build_sig runs (_chat_sig_scope sets `active`, so a
+# build's own reads count nothing, and the components every tab shares (_chat_sig_shared), which a push reads once
+# before its loop, count on no signature; a signature taken OUTSIDE a push, a comments frame's thread signature, reads
+# them inside its scope and counts them, so its stats run higher by _chat_sig_shared's own count, which
+# tests/test_kernel_delta_send.py pins) and fold into
+# the table under one lock hold per signature; the push loop folds its per-tab counts (pre, post, the compares) the
+# same way and the warm-tab census once per push after the tab loop. Served flat under memos.chatSig: identifier
+# keys, integer values, pasteable. Every row below says what its key counts BY EXECUTION and derives any figure it
+# invites (the review's round 2, 2026-09-19). The keys:
+#   pre / post           pre-build signatures the push loop took (one per tab past the cold gate, a raising one
+#                        included) and post-build ones (a rebuild that had a pre-build signature). At rest (between
+#                        pushes; while a tab is in flight pre runs one ahead, since _chat_sig_note_pre folds it before
+#                        the tab's build_chat record) pre = builds.chat cached + built - targetedBuilds + failedBuilds.
+#                        Over a window with
+#                        failedBuilds 0, post = built - targetedBuilds - nosig; otherwise post exceeds that by the
+#                        failed builds whose signature was also None (nosig counts those tabs, built does not), so
+#                        by at most failedBuilds. The nosig in the identity is THIS table's: memos.chatSig.nosig
+#                        counts every tab, while builds.chat.bg_miss.nosig counts background builds only (a
+#                        watched tab's rebuild lands in active_built with no label), so the two differ whenever the
+#                        watched tab's signature raises
+#   failedBuilds         the push loop's chat builds that raised past a pre-build signature (bumped in the fault
+#                        branch right after _chat_build_fault): counted under neither builds.chat cached nor built
+#   targetedBuilds       the targeted push's builds (_push_session_now, beside its build_chat record): they take no
+#                        signature, and builds.chat counts them under built, labelled targeted only when the tab is
+#                        unwatched (a watched tab's lands in active_built with no label)
+#   thread               the comment-thread signatures _thread_events takes (one per non-promoted thread of every
+#                        session with a comments store, per push and per HTTP comments frame, a raising one
+#                        included): the third caller of _chat_build_sig, and the reads below count inside its
+#                        signatures too, so a per-signature figure divides by pre + post + thread, never by
+#                        pre + post alone, which over-reads the per-signature figure by the thread signatures'
+#                        share (2026-09-18 review)
+#   nosig                pre-build signatures that raised or found no transcript path: the tab built, never cached
+#   waited               tabs served after waiting for another thread's build of the same tab (the single flight)
+#   compares             cache reads that met a cached entry with a signature in hand: the pre-flight read of every
+#                        tab past the gate (_chat_sig_note_pre), the re-read after a single-flight wait and the
+#                        re-read under a claim (_chat_sig_note_compare at both), and NOT the final compare, which
+#                        re-evaluates the last read's operands. A rebuild counts two (its pre-flight read and its
+#                        claim re-read: every ordinary rebuild takes the claim road); a served waiter counts one on a
+#                        cold cache (its post-wait re-read) or two when its pre-flight read met a stale entry; a visit
+#                        whose wait ended with no usable entry and then claimed counts up to three and is a rebuild,
+#                        not a waiter (tests/test_single_flight_builds.py pins the cold and the stale race). So
+#                        compares can exceed pre
+#   compareIdenticalComponents
+#                        over those reads' operands, the components equal by object identity (a tuple compare
+#                        answers a member by pointer before by value), counted at every position whether or not the
+#                        tuple compare reached it (a miss stops at the first unequal position), so exact for a hit
+#                        and an upper bound of the pointer answers a miss took. The share stage 3's identity memos
+#                        widen is compareIdenticalComponents / (compares * len(_CHAT_SIG_LABELS)), 40 today: both
+#                        operands are always full-length signatures (tests/test_chat_build_sig_inputs.py pins the
+#                        length), so the product is exact and no second denominator key is published (a copy of a
+#                        derived number would have nothing to check it against). Named for what it counts, so a
+#                        division by compares alone reads as identical components per compare (0 to 40), not a share
+#   stats                the os.stat, os.lstat and DirEntry.stat calls made on the thread while a signature is open,
+#                        whichever function or module makes them: os.stat and os.lstat through the wrappers
+#                        _stat_counting_install puts on the os and posix modules at import (and on pathlib's
+#                        accessor on Python 3.10), which every os.path, pathlib and importlib caller reaches;
+#                        DirEntry.stat through _entry_stat and its same-bodied twins in judge.py, event_model.py and
+#                        sdk_backend.py (list_regs: the fork component's memo misses whenever a reg write moved the
+#                        sdk/ directory's mtime, and then every reg is one stat inside the signature), the doors every
+#                        scandir entry's stat in kernel/ goes through, because a DirEntry stats in C and reaches no
+#                        wrapper; the source pin derives the entry names from every scandir in kernel/ and holds their
+#                        .stat() to those doors.
+#                        Not in the count, and not countable from Python (C makes them with no Python call per
+#                        stat): the fstat inside open() (part of a read, counted by the read counters and the bytes
+#                        column), the fstat inside scandir() on the directory it opens, a DirEntry predicate
+#                        (is_dir, is_file, is_symlink) on a symlink entry or on a filesystem that reports no
+#                        d_type, and the stats made in another process by any git child a signature forks (the set
+#                        is pinned by execution in tests/test_chat_build_sig_inputs.py; a fork's wall lands on the
+#                        row of the part that forked it, its CPU on no row, since RUSAGE_THREAD excludes a child).
+#                        A strace over the harness's signatures (a review probe recorded in a review-round commit,
+#                        2026-09-19, with no command kept) found fd fstats from open(), scandir() and the pipes to git
+#                        children beside the counted path stats, every path stat in the count: a reading, not
+#                        recomputed by a test. Per signature:
+#                        stats / (pre + post + thread), and the same denominator for the three read counts
+#   namesReads           raw names-registry file reads inside a signature (_sdk_transcript_path, _names_parts
+#                        with no snapshot)
+#   switchReads          reads of the user-todos switch file inside a signature (_user_todos_on)
+#   regReads             sdk_backend.read_reg file reads inside a signature (launch_error, a dead tab's queue)
+#   warmEligible         the warm-tab census (_skeleton_census once per push after the tab loop, folded by
+#                        _chat_sig_note_census): a tab with a cached build, watched by no connected chat client,
+#                        held as a skeleton by every connected chat client, with a transcript, and no plain Outline
+#                        connected. That is the cold gate's predicate with its not-yet-built clause negated (a
+#                        cached build) and WITHOUT the gate's live-row clause (the gate skips only a tab whose
+#                        liveness row exists; the census counts a tab with none too), so warmEligible is an upper
+#                        bound on what a cold-gate-shaped warm gate would skip, the excess being tabs with no live
+#                        row (a dead session reopened read-only). The cold tabs the gate skips today count under
+#                        builds.chat.coldSkipped
+#   warmBlockedByOutline the same tab with a plain Outline pane connected (the pane needs every ledger slice)
+#   heldBody             a tab some connected chat client holds as a body, the watched tab included
+#   pushes               the pushes that ran the chat tab loop (a _push with a chat or Sessions target: the pusher's
+#                        cycles and the connect pushes of a chat or Sessions page; a feed, timeline or other page's
+#                        connect push runs no loop and does not count), bumped once where the loop opens. Which
+#                        keys divide by pushes and which by the signature count pre + post + thread (the four read
+#                        counters, fed by the thread signatures outside a push too), and how connect pushes enter
+#                        the denominators, is stated once, in the memos.chatSig entry of docs/reference.md.
+class _ChatSigLocal(threading.local):
+    """The per-thread accumulator of the chat signature pass (memos.chatSig): class defaults, so the hot check in the
+    stat wrappers is a plain attribute read on any thread, one that never opened a signature included."""
+    active = False
+    stats = 0
+
+
+def _stat_counting_install():
+    """Once per process: os.stat and os.lstat wrapped so every stat made on a thread while its chat signature is open
+    counts on the thread-local (memos.chatSig.stats), whichever module makes it. The same wrapper objects go on the os
+    module and the posix module (importlib's path finder calls posix.stat directly, so a fresh import's stats reach
+    no os-module wrapper; the exactness test's posix channel pins that they are counted) and, on Python 3.10, on
+    pathlib._NormalAccessor, which bound os.stat at pathlib's import so Path.stat,
+    Path.exists and Path.is_dir bypassed an os-module wrapper there (verified on 3.10; with the accessor patched
+    3.10, 3.12 and 3.13 count alike: Path.stat 1, Path.exists 1, Path.is_dir 1). The thread-local lives on the wrapper
+    (_romp_sig_counting), so a second load of this module in one process (the test suite loads the kernel many times
+    per worker) finds the wrapper installed, reuses its thread-local and installs nothing: the chain stays one deep
+    (os.stat.__wrapped__ is the builtin) and every load shares one accumulator. Returns the thread-local. A
+    DirEntry.stat reaches no wrapper (C); _entry_stat is its door. What a wrapped stat and a stat through the door
+    cost is stated once, in the stages_cpu_ms entry of docs/reference.md.
+
+    The wrappers carry the builtins' membership in the os capability sets, os.supports_dir_fd,
+    os.supports_effective_ids, os.supports_fd and os.supports_follow_symlinks (os.py builds the four at import, keyed
+    by the builtin function objects; a rebind alone took os.stat out of three of them for the life of the process, so
+    every stdlib probe on it answered unsupported: pytest's tmpdir guard, shutil.copystat's lookup; the round-2
+    review, 2026-09-19): wherever the builtin is a member the wrapper is added beside it, in place, so a reader
+    holding the set object sees it, and the builtin stays a member. A derivation over the stdlib of 3.10, 3.12, 3.13
+    and 3.14t (a grep of every module for the supports_* names, for os.stat or os.lstat used as a value rather than
+    called, for a getattr of either by name, and for an identity or membership test against either) found no fifth
+    registry keyed by os.stat or os.lstat, and two import-time bindings of the builtin, both patched above: 3.10's
+    pathlib accessor and 3.13's glob._StringGlobber.lstat (pathlib imports glob, so Path.glob over a literal trailing
+    part reached the builtin past the wrapper there and counted nothing; the round-3 review, 2026-09-19); 3.14's
+    realpath binds os.lstat inside the call, so it reads the wrapper. The consumers at call time are shutil.copystat's
+    follow_symlinks=False lookup and pytest's guard; shutil's fd-based rmtree gate (_use_fd_functions) is an import-time
+    constant evaluated before this module loads (tempfile has no gate that runs: on 3.12 its copy sits in an import
+    fallback that shutil's presence skips); 3.13's shutil asserts `func is os.lstat` against the current os.lstat (the
+    wrapper on both sides); and 3.14's pathlib asks about utime, setxattr, chmod and chflags, not stat. What still
+    differs from the builtin, derived by running every observation a probe could name on the wrapper and on the builtin
+    captured before this module loaded (2026-09-19, on 3.12 and 3.13, which agree): the type (a Python function, not
+    builtin_function_or_method: inspect.isbuiltin False and isfunction True, repr and pydoc's header say function, dis
+    and inspect.getfile work, and the function attributes __code__, __globals__, __closure__, __defaults__,
+    __kwdefaults__, __dict__, __annotations__ and __get__ exist where __self__ and __text_signature__ do not); __get__
+    makes the wrapper a descriptor, so as a CLASS attribute it binds as a method and hands the instance in as `path`,
+    which is why the accessor and the globber above receive a staticmethod; inspect.signature with follow_wrapped=False
+    and inspect.getfullargspec read (path, *a, **kw) (signature's default follows __wrapped__ and reads the builtin's);
+    the TypeError text on a missing argument (a wrong keyword or an extra positional argument raises the builtin's own
+    text, since the wrapper passes both through); one more frame on a traceback through it, a Python call event to a
+    tracer or profiler, and one more level of recursion depth; mock's autospec builds a function-shaped mock where the
+    builtin's is a MagicMock; pickling by name resolves to posix.stat, the wrapper (the builtin kept in __wrapped__ no
+    longer pickles, since posix.stat names another object); the capability sets are one member larger wherever the
+    builtin was a member; and identity, since `is` against a reference taken before this module loaded is False.
+    functools.wraps carries __name__, __qualname__, __module__, __doc__ and sets __wrapped__ to the builtin, so those
+    five read the same."""
+    tl = getattr(os.stat, "_romp_sig_counting", None)
+    if tl is not None:
+        return tl
+    tl = _ChatSigLocal()
+
+    def _wrap(real):
+        @functools.wraps(real)
+        def counting(path, *a, **kw):
+            if tl.active:
+                tl.stats += 1
+            return real(path, *a, **kw)
+        counting._romp_sig_counting = tl
+        return counting
+    real_stat, real_lstat = os.stat, os.lstat
+    st, lst = _wrap(real_stat), _wrap(real_lstat)
+    os.stat, os.lstat = st, lst
+    posix = sys.modules.get("posix")
+    if posix is not None:
+        posix.stat, posix.lstat = st, lst
+    acc = getattr(sys.modules.get("pathlib"), "_NormalAccessor", None)   # 3.10 alone: its accessor bound os.stat at import
+    if acc is not None:
+        acc.stat, acc.lstat = staticmethod(st), staticmethod(lst)
+    globber = getattr(sys.modules.get("glob"), "_StringGlobber", None)   # 3.13 alone: glob's globber bound os.lstat at import
+    held = globber.__dict__.get("lstat") if globber is not None else None  #  (pathlib imports glob), so Path.glob over a literal
+    if getattr(held, "__func__", None) is real_lstat:                    #  trailing part reached the builtin past the wrapper
+        globber.lstat = staticmethod(lst)
+    for name in ("supports_dir_fd", "supports_effective_ids", "supports_fd", "supports_follow_symlinks"):
+        members = getattr(os, name, None)                # the capability sets os.py built at import, keyed by the builtins
+        if members is None:
+            continue
+        for real, wrapper in ((real_stat, st), (real_lstat, lst)):
+            if real in members and wrapper not in members:
+                if hasattr(members, "add"):              # a plain set on CPython 3.10 to 3.14t: mutated in place, so a reader
+                    members.add(wrapper)                 #  holding the set object sees the wrapper; the builtin stays a member
+                else:                                    # an immutable set: rebound on os with the wrapper added
+                    members = type(members)(members | {wrapper})
+                    setattr(os, name, members)
+    return tl
+
+
+_CHAT_SIG_TL = _stat_counting_install()
+_CHAT_SIG_STATS_LOCK = threading.Lock()
+_CHAT_SIG_STATS = {"pre": 0, "post": 0, "failedBuilds": 0, "targetedBuilds": 0, "thread": 0, "nosig": 0, "waited": 0,
+                   "compares": 0, "compareIdenticalComponents": 0,
+                   "stats": 0, "namesReads": 0, "switchReads": 0, "regReads": 0,
+                   "warmEligible": 0, "warmBlockedByOutline": 0, "heldBody": 0, "pushes": 0}
+
+
+def _entry_stat(e, **kw):
+    """The door for a scandir entry's stat in this file (memos.chatSig.stats): a DirEntry stats in C and reaches no
+    os.stat wrapper, so the count is taken here, when a signature is open on the thread, before the call. Counted as
+    attempted, like a missing file's stat (the syscall was made whatever it answered); every site calls it once per
+    entry, and a DirEntry caches its answer, so a call is one syscall. judge.py, event_model.py and sdk_backend.py carry
+    same-bodied twins reading the thread-local off os.stat by attribute. A source pin (tests/test_kernel_delta_send.py)
+    derives every scandir entry name in kernel/ from the AST and holds each one's .stat() to this helper and the twins:
+    a pin on the spellings `e.stat(` and `entry.stat(` was green over two `de.stat(` sites (2026-09-19 review)."""
+    tl = _CHAT_SIG_TL
+    if tl.active:
+        tl.stats += 1
+    return e.stat(**kw)
+
+
+def _chat_sig_count(field, n=1):
+    """One more `field` (namesReads, switchReads) on the calling thread's OPEN signature; nothing outside one
+    (_chat_sig_scope sets the thread-local's `active` for _chat_build_sig's duration). A getattr and an add. The stats
+    count takes no site call: the os.stat and os.lstat wrappers and _entry_stat bump the thread-local themselves."""
+    tl = _CHAT_SIG_TL
+    if tl.active:
+        setattr(tl, field, getattr(tl, field, 0) + n)
+
+
+def _chat_sig_bump(**counts):
+    """Add `counts` to the memos.chatSig table under its lock: one hold per call (the push loop's per-tab counts, a
+    signature's fold)."""
+    with _CHAT_SIG_STATS_LOCK:
+        for k, v in counts.items():
+            _CHAT_SIG_STATS[k] += v
+
+
+def _chat_sig_stats_report():
+    """/perf memos.chatSig: a copy of the table (the block comment above names every key)."""
+    with _CHAT_SIG_STATS_LOCK:
+        return dict(_CHAT_SIG_STATS)
+
+
+def _reg_reads_on_thread():
+    """The registry file reads sdk_backend.read_reg has made on the calling thread so far (its per-thread counter,
+    reg_reads_on_thread), or 0 while the module is not loaded: _chat_sig_scope reports the delta over one signature
+    as memos.chatSig.regReads. Looked up by module name because the kernel holds the backend, not the module."""
+    mod = sys.modules.get("romp_sdk_backend")
+    fn = getattr(mod, "reg_reads_on_thread", None) if mod is not None else None
+    return fn() if fn is not None else 0
+
+
+@contextlib.contextmanager
+def _chat_sig_scope():
+    """The thread-local scope of one _chat_build_sig call: the per-signature counts zeroed at entry and THEN `active`
+    set (so no stat between the two lands on the count), counted by the stat wrappers, _entry_stat and the read sites
+    while `active`, folded into memos.chatSig at exit, a raise included (a signature that raised still paid its
+    reads). The sub-seam fields (deps_dt, deps_cpu, deps_ran; push.chat.sig.deps) are zeroed here per signature and
+    left for the caller's seam close, so a seam close reads the signature that just ran and nothing earlier;
+    _chat_sig_seam_close clears them again after reading. No test pins this zeroing on its own (the suite pins the
+    pair: with both clears removed, tests in tests/test_kernel_delta_send.py red; with either alone, none), and every
+    signature that runs the tail today (deps None or a record: the chat tab loop's pre-build signature) is followed at
+    once by its seam close, so the zeroing is defence against a caller that does not exist yet (the round-2 review,
+    2026-09-19, tests-2)."""
+    tl = _CHAT_SIG_TL
+    tl.stats = tl.namesReads = tl.switchReads = 0
+    tl.deps_dt = 0.0
+    tl.deps_cpu = None
+    tl.deps_ran = False
+    r0 = _reg_reads_on_thread()
+    tl.active = True
+    try:
+        yield
+    finally:
+        tl.active = False
+        _chat_sig_bump(stats=tl.stats, namesReads=tl.namesReads, switchReads=tl.switchReads,
+                       regReads=_reg_reads_on_thread() - r0)
+
+
+def _chat_sig_compare_of(hit, sig):
+    """(compares, identical components) of one cache read: (1, n) when the read `hit` returned an entry with a tuple
+    signature and a signature `sig` is in hand, n the components equal by object identity at every position (the
+    compareIdenticalComponents row above); (0, 0) otherwise. Arithmetic only; the callers fold it."""
+    if hit is not None and sig is not None and isinstance(hit[0], tuple):
+        return 1, sum(1 for a, b in zip(hit[0], sig) if a is b)
+    return 0, 0
+
+
+def _chat_sig_note_compare(hit, sig):
+    """A cache RE-READ (after a single-flight wait, or under a claim) folded into memos.chatSig: compares and
+    compareIdenticalComponents by _chat_sig_compare_of, one lock hold when the read met an entry, none otherwise. The
+    pre-flight read is folded by _chat_sig_note_pre with the tab's other counts; the final compare is never counted."""
+    compares, n_id = _chat_sig_compare_of(hit, sig)
+    if compares:
+        _chat_sig_bump(compares=compares, compareIdenticalComponents=n_id)
+
+
+def _chat_sig_note_pre(sid, sig, hit, watched, held_live, tabs):
+    """The push loop's per-tab counts after a pre-build signature (memos.chatSig): the signature taken (pre; nosig when
+    none could be) and the pre-flight cache read it is about to compare (compares and compareIdenticalComponents by
+    _chat_sig_compare_of), folded in one lock hold; and the tab's row for the census after the loop appended to
+    `tabs`, the push's list (_chat_sig_note_census reads it): (sid, watched, cached, has a transcript, held_live).
+    `hit` is the tab's cached entry from the pre-flight read, `watched` whether this push's or any connected client's
+    active tab is this one, `held_live` the cold gate's live _held_as_skeleton_by_all answer when the gate walked
+    this tab (True or False) and None when it did not (a warm tab, a watched one, a transcript-less one, a plain
+    Outline connected), so the census asks only about those. The transcript's existence is read off the signature's
+    own component (sig[0] is None when the file is missing), never a second stat."""
+    compares, n_id = _chat_sig_compare_of(hit, sig)
+    tabs.append((sid, watched, hit is not None, sig is not None and sig[0] is not None, held_live))
+    with _CHAT_SIG_STATS_LOCK:
+        st = _CHAT_SIG_STATS
+        st["pre"] += 1
+        if sig is None:
+            st["nosig"] += 1
+        st["compares"] += compares
+        st["compareIdenticalComponents"] += n_id
+
+
+def _chat_sig_note_census(tabs, clients, plain_outline):
+    """The warm-tab census, once per push after the tab loop (memos.chatSig: warmEligible, warmBlockedByOutline,
+    heldBody), over the rows _chat_sig_note_pre recorded. ONE _skeleton_census over the tabs the cold gate did not
+    walk (held_live None), so the skeleton question is asked once per tab per push: the gate's live answer where it
+    exists, the census set elsewhere (before this the census asked about every tab before the loop and the gate asked
+    again about the cold ones, a second clients-by-tabs walk on exactly the pushes where the gate is live, 2026-09-19
+    review). `clients` are the connected chat clients (the census answers None with none, and heldBody counts
+    nothing then) and `plain_outline` whether an Outline pane without the provisional-row capability is connected. A
+    tab is a skeleton when it is unwatched and every client holds it; warm when cached, a skeleton and with a
+    transcript (the block comment's warmEligible row names the gate clauses that is); a body when some client is
+    connected and it is not a skeleton, the watched tab included. One lock hold folds the three. A tab another
+    thread built between the gate's not-yet-built check and its turn was asked by the gate, as before."""
+    census = _skeleton_census([sid for sid, _w, _c, _t, held_live in tabs if held_live is None], clients)
+    warm = blocked = body = 0
+    for sid, watched, cached, transcript, held_live in tabs:
+        skel = not watched and (held_live if held_live is not None else (census is not None and sid in census))
+        if cached and skel and transcript:
+            if plain_outline:
+                blocked += 1
+            else:
+                warm += 1
+        if census is not None and not skel:
+            body += 1
+    if warm or blocked or body:
+        _chat_sig_bump(warmEligible=warm, warmBlockedByOutline=blocked, heldBody=body)
+
+
+def _chat_sig_seam_close(t0, c0):
+    """Close the push.chat.sig seam opened at wall `t0` (time.monotonic) and thread CPU `c0` (_thread_cpu), recording its
+    two sub-seams first (stage 1 of the chat-signature design, 2026-09-18): push.chat.sig.deps, the dependency tail
+    (_chat_sig_deps: the task-output stats, the path-token re-resolves and the postal values), from the wall and CPU
+    _chat_build_sig left on the thread-local, and push.chat.sig.static, the rest of the signature, as the remainder;
+    then the seam itself, a container of the two (CONTAINERS), so the chat container counts the signature's bytes once,
+    through the seam's row. The deps sub-seam is recorded only when the tail ran (a post-build signature, deps=False,
+    skips it); the static one always. Bytes read inside the signature land on the static row, the first of the two
+    closed since the last byte mark (the seam's reads are the names read and a registry decode, both static
+    components); the deps row records its wall and CPU. The CPU follows the wall exactly, and a row whose CPU cannot
+    follow records its wall alone: a tail that ran but read no CPU leaves the static row, whose wall excludes the tail,
+    without a CPU figure, while the seam's own row keeps the CPU it read. The thread-local is cleared here, and
+    _chat_sig_scope zeroes it at every signature's entry, so a signature taken outside a seam never hands a stale tail
+    to the next seam."""
+    dt = time.monotonic() - t0
+    cpu = _cpu_delta(c0)
+    tl = _CHAT_SIG_TL
+    d_dt, d_cpu, ran = getattr(tl, "deps_dt", 0.0), getattr(tl, "deps_cpu", None), getattr(tl, "deps_ran", False)
+    tl.deps_dt, tl.deps_cpu, tl.deps_ran = 0.0, None, False
+    # the CPU follows the wall exactly; a row whose CPU cannot follow records its wall alone: a tail that ran with no CPU
+    # reading (d_cpu None, ran True) leaves the static row's CPU unknown too, its wall excluding the tail, while the seam's
+    # own row keeps the CPU it read (the round-2 review, 2026-09-19, kernel-1: before this the static row took the whole
+    # seam's CPU beside a wall that excluded the tail, so its wall minus user minus sys could read negative)
+    s_cpu = (cpu[0] - d_cpu[0], cpu[1] - d_cpu[1]) if (cpu is not None and d_cpu is not None) else (None if ran else cpu)
+    _PERF_STATS.stage("push.chat.sig.static", max(0.0, dt - d_dt), cpu=s_cpu)
+    if ran:
+        _PERF_STATS.stage("push.chat.sig.deps", d_dt, cpu=d_cpu)
+    _PERF_STATS.stage("push.chat.sig", dt, cpu=cpu)
+
+
 def _chat_stat_key(path):
-    """(mtime, size) of a file, or None when it is missing — the task-output gate's identity."""
+    """(mtime, size) of a file, or None when it is missing: the task-output gate's identity. The stat counts on an
+    open signature through the os.stat wrapper (memos.chatSig.stats), as every stat does."""
     try:
         st = os.stat(path)
         return (st.st_mtime, st.st_size)
@@ -38100,8 +38677,10 @@ def _chat_build_sig(sess, tm=None, now=None, live_map=None, deps=None):
     caches like any other. `deps=False` appends the three components EMPTY: for a signature whose
     dependency tail is discarded (every post-build signature, compared on the static components only)
     the re-evaluation (stats, token resolves, card values) is skipped; every pre-build signature evaluates
-    it, since every tab checks the cache. The components shared by every tab come from _chat_sig_shared,
-    once per push. The session chip is NOT a component: it is a function of components that are (the
+    it, since every tab checks the cache. The components shared by every tab come from _chat_sig_shared:
+    once per push inside one (_live_scope.chat_shared, read before the loop, on no signature's count) and
+    per signature outside a push (a comments frame's thread signature), where they count on that signature
+    (memos.chatSig.stats). The session chip is NOT a component: it is a function of components that are (the
     parse and live tail, the row, the backend brackets, the clock booleans, the task rows, the watches,
     the states overlay, the store), so the build derives it once and the key derives nothing twice."""
     path = sess.get("path")
@@ -38118,14 +38697,15 @@ def _chat_build_sig(sess, tm=None, now=None, live_map=None, deps=None):
     # the handed map is served to every nested liveness read for the duration (_bg_live_norm, the awaiting
     # sources, the watch rows), so the components read the snapshot the build will; a pusher cycle's own
     # scope is already set and left alone
-    with _serve_live(live_map):
+    with _serve_live(live_map), _chat_sig_scope():     # the scope: memos.chatSig's per-signature counts (2026-09-18)
         shared = getattr(_live_scope, "chat_shared", None) or _chat_sig_shared()
         if deps is None:
             _hit = _built_chat.get(sid)
             deps = _hit[3] if _hit is not None and len(_hit) > 3 else None
         be = Sessions.backend_for(sid)
         sig = []
-        # transcript: (mtime, size), or None while the file does not exist yet (a just-created session).
+        # transcript: (mtime, size), or None while the file does not exist yet (a just-created session). Every stat
+        # below, this one included, counts on the scope through the os.stat wrapper (memos.chatSig.stats): no site call.
         try:
             st = os.stat(path)
             sig.append((st.st_mtime, st.st_size))
@@ -38289,7 +38869,15 @@ def _chat_build_sig(sess, tm=None, now=None, live_map=None, deps=None):
         # floor: the render floor decision (T323 stage 4b): True while a proto-1 client is connected (the pusher's
         # per-push flag), so a payload built from turn 0 is never served from the cache once the floor climbs
         sig.append(bool(getattr(_live_scope, "chat_floor0", False)))
-        sig.extend(((), (), None) if deps is False else _chat_sig_deps(sid, deps))   # taskout, pathlink, postal
+        if deps is False:
+            sig.extend(((), (), None))                      # taskout, pathlink, postal: empty for a static-only signature
+        else:
+            _t_deps = time.monotonic()                      # push.chat.sig.deps: the tail's own wall and thread CPU, left on the
+            _c_deps = _thread_cpu()                         #  thread-local for the seam close (_chat_sig_seam_close)
+            sig.extend(_chat_sig_deps(sid, deps))           # taskout, pathlink, postal
+            _CHAT_SIG_TL.deps_dt = time.monotonic() - _t_deps
+            _CHAT_SIG_TL.deps_cpu = _cpu_delta(_c_deps)
+            _CHAT_SIG_TL.deps_ran = True
         return tuple(sig)
 
 
@@ -41881,6 +42469,7 @@ def _sdk_transcript_path(sid):
     """The would-be transcript path for an SDK session (its cwd's project dir / <sid>.jsonl). Needed
     BEFORE the session has run and written a transcript — the spawn is lazy, so a just-created SDK
     session has no transcript and discover() can't see it yet."""
+    _chat_sig_count("namesReads")                      # a raw names read inside a signature (memos.chatSig)
     try:
         parts = (NAMES / sid).read_text().rstrip("\n").split("\t")
         cwd = parts[1] if len(parts) > 1 and parts[1] else os.path.expanduser("~")
@@ -48529,12 +49118,12 @@ def _spend_tree_list_dir(d, m, known):
                 continue
             if e.is_dir(follow_symlinks=False):
                 new = e.path not in known
-                m["dirs"][e.path] = e.stat(follow_symlinks=False).st_mtime; _SPEND_TREE_STATS["entryStats"] += 1
+                m["dirs"][e.path] = _entry_stat(e, follow_symlinks=False).st_mtime; _SPEND_TREE_STATS["entryStats"] += 1
                 if new:
                     known.add(e.path)
                     _spend_tree_list_dir(e.path, m, known)
             elif e.name.endswith(".jsonl") and e.is_file(follow_symlinks=False):
-                m["files"][e.path] = e.stat(follow_symlinks=False).st_mtime; _SPEND_TREE_STATS["entryStats"] += 1
+                m["files"][e.path] = _entry_stat(e, follow_symlinks=False).st_mtime; _SPEND_TREE_STATS["entryStats"] += 1
         except OSError:
             continue
 
@@ -54588,21 +55177,47 @@ def _held_as_skeleton_by_all(sid, clients):
         return False
     for c in clients:
         with _client_lock(c):
-            if sid in (c.get("skeleton") or ()):
-                continue
-            # A client that declared the diet but whose set is not resolved yet (its redial or skeleton dial armed
-            # `reconnect`, and no strip sender has reached it: round two, low 2, a connect push targeting another column)
-            # will hold every tab but its watched one as a skeleton once it is (_resolve_reconnect's rule), so it is read
-            # that way here; a client with no diet, or no watched tab, holds nothing as a skeleton. A RELAY diet client
-            # with NO watched tab holds EVERY tab as a skeleton (the federated no-active rule above), so the per-session
-            # push route does not build a tab the resolve is about to skeleton (2026-09-15, cost only).
-            _act = c.get("active")
-            _held_here = (_act and sid != str(_act)) or (not _act and c.get("dietSkeleton") and c.get("kind") == "relay")
-            if (c.get("reconnect") or c.get("skeletonOnReady")) and _held_here \
-                    and sid not in (c.get("echat") or {}):
-                continue
-            return False
+            if not _skeleton_held_here(c, sid):
+                return False
     return True
+
+
+def _skeleton_held_here(c, sid):
+    """Whether chat client `c` holds `sid` as a skeleton tab, read under the CALLER's hold of the client's slot lock: the
+    per-client half of _held_as_skeleton_by_all, one place for its rules (the census below asks it for every tab under
+    one hold). A client that declared the diet but whose set is not resolved yet (its redial or skeleton dial armed
+    `reconnect`, and no strip sender has reached it: round two, low 2, a connect push targeting another column) will
+    hold every tab but its watched one as a skeleton once it is (_resolve_reconnect's rule), so it is read that way
+    here; a client with no diet, or no watched tab, holds nothing as a skeleton. A RELAY diet client with NO watched
+    tab holds EVERY tab as a skeleton (the federated no-active rule above), so the per-session push route does not
+    build a tab the resolve is about to skeleton (2026-09-15, cost only)."""
+    if sid in (c.get("skeleton") or ()):
+        return True
+    _act = c.get("active")
+    _held_here = (_act and sid != str(_act)) or (not _act and c.get("dietSkeleton") and c.get("kind") == "relay")
+    return bool((c.get("reconnect") or c.get("skeletonOnReady")) and _held_here and sid not in (c.get("echat") or {}))
+
+
+def _skeleton_census(sids, clients):
+    """The sids among `sids` that EVERY chat client in `clients` holds as a skeleton (_held_as_skeleton_by_all's answer
+    for each), from ONE read of each client under its slot lock; None with no client, set() with clients and nothing
+    to ask about. The warm-tab census's input (memos.chatSig, _chat_sig_note_census): taken once per push AFTER the
+    tab loop, over the tabs the cold gate did not walk (the gate's live answer stands for the rest), so the census
+    costs one lock hold per connected chat client per push and the skeleton question is asked once per tab per push.
+    Asked per tab it took the lock per client per tab (about 150 holds per cycle at 38 tabs and four pages, each able
+    to wait behind a handler thread's send to that client), a second full clients-by-tabs walk on the hot loop
+    beside the cold gate's (2026-09-18 review); asked before the loop over every tab it repeated the gate's question
+    for the cold ones (2026-09-19 review). A set the clients change during the loop is read as it stood at the loop's
+    end: a count, not a gate."""
+    if not clients:
+        return None
+    held = set(sids)
+    for c in clients:
+        if not held:
+            break
+        with _client_lock(c):
+            held = {s for s in held if _skeleton_held_here(c, s)}
+    return held
 
 
 def _skeleton_for(c, act, chat_list):
@@ -59886,7 +60501,9 @@ def _repo_index_key(cwd):
     the repo top dir's mtime and the mtimes of the top's immediate subdirs (see _repo_file_index). None when
     the tree cannot be scanned (the same backstop as _git_branch: no key means an uncached listing, never a
     raise). Shared with the chat-build signature's pathlink pre-check, which vouches for a message's
-    unresolved tokens only while this key and the message's candidate directories hold."""
+    unresolved tokens only while this key and the message's candidate directories hold. Inside a signature
+    every stat here counts under memos.chatSig.stats: the subdirectories' through _entry_stat, the two
+    getmtime calls through the os.stat wrapper, and the tree memos' (_tree_of, _git_head_file) the same way."""
     tree = _tree_of(cwd)[0] or cwd                   # _tree_of returns (toplevel, branch)
     try:
         gi = _git_head_file(tree)                    # <gitdir>/HEAD: the index sits beside it
@@ -59894,9 +60511,12 @@ def _repo_index_key(cwd):
         with os.scandir(tree) as it:
             for e in it:
                 if e.name != ".git" and e.is_dir(follow_symlinks=False):
-                    subs.append((e.name, e.stat().st_mtime))
-        return ((os.path.getmtime(os.path.join(os.path.dirname(gi), "index")) if gi else None),
-                os.path.getmtime(tree), tuple(sorted(subs)))
+                    subs.append((e.name, _entry_stat(e).st_mtime))   # a DirEntry stat: counted through the helper (memos.chatSig)
+        if gi:                                       # the index's mtime only when there is a git dir to hold one
+            idx = os.path.getmtime(os.path.join(os.path.dirname(gi), "index"))
+        else:
+            idx = None
+        return (idx, os.path.getmtime(tree), tuple(sorted(subs)))
     except (OSError, UnicodeDecodeError):
         return None
 
@@ -60120,8 +60740,8 @@ def _pin_mention(fp):
             # bound the store on the write event, oldest first (mtime; serves don't touch it — a pin
             # for a busy old chat can age out, and the fallback is the live file)
             try:
-                rows = [(e.stat().st_mtime, e.stat().st_size, e.path)
-                        for e in os.scandir(d) if e.is_file() and not e.name.endswith(".tmp")]
+                rows = [(st.st_mtime, st.st_size, e.path)
+                        for e, st in ((e, _entry_stat(e)) for e in os.scandir(d) if e.is_file() and not e.name.endswith(".tmp"))]
                 total = sum(sz for _, sz, _ in rows)
                 for _, sz, path_ in sorted(rows):
                     if total <= _PIN_STORE_MAX_BYTES:
@@ -60504,6 +61124,7 @@ def _push(targets, connect=False, live_map=None):
         chat_sessions = []
         _prov_rows = []                                  # the Outline's provisional rows for the tabs the gate skips this push (plans/outline-pane-provisional-row.md)
         _t_stage = time.monotonic()                      # /perf stage clock: chat, then feed, then timeline
+        _c_stage = _thread_cpu()                         # ...and the chat container's thread CPU (stages_cpu_ms, 2026-09-18)
         if want_chat or want_fleet:   # the fleet needs every session's ledger slice (built below, attached to feed)
             # TABS-FIRST (the user 2026-06-26): ship name+color per tab so the client can paint the WHOLE strip
             # as placeholders up front (no tab popping in one-by-one as each build_session lands). The full
@@ -60547,6 +61168,8 @@ def _push(targets, connect=False, live_map=None):
             _live_scope.chat_floor0 = _chat_floor0_of(_all_chat)
             _all_active = {c.get("active") for c in _all_chat if c.get("active")}   # every connected column's watched tab,
             #                                                                          not this push's targets alone (round two, low 2)
+            _chat_sig_bump(pushes=1)                     # memos.chatSig.pushes: a push that runs the chat tab loop, the table's per-push denominator
+            _sig_tabs = []                               # memos.chatSig: the per-tab rows the warm-tab census folds after the loop (_chat_sig_note_census)
             for s in build_order:
                 is_active = s["sid"] in active           # the watched tab(s): served like any tab while the key holds
                 # THE COLD-TAB GATE (2026-09-14; the user, after the boot review): on the 3:58 PM PT restart the first
@@ -60561,10 +61184,13 @@ def _push(targets, connect=False, live_map=None):
                 # plans/outline-pane-provisional-row.md); a page that declared no diet holds no set and is served whole, as today.
                 _tm = live_map.get(s["sid"])
                 _light = None
+                _held_live = None                        # the gate's live skeleton answer when it asked; None when it did not
+                #                                          (the warm-tab census after the loop asks only about those, _chat_sig_note_census)
                 if (not is_active and s["sid"] not in _all_active and not _plain_outline
-                        and s["sid"] not in _built_chat and os.path.exists(s["path"])
-                        and _held_as_skeleton_by_all(s["sid"], _all_chat)):   # every CONNECTED chat client, as the floor reads
-                    _light = _light_status(s["sid"], s["path"], _tm, now)   # no live row: no status to state, so build as before
+                        and s["sid"] not in _built_chat and os.path.exists(s["path"])):
+                    _held_live = _held_as_skeleton_by_all(s["sid"], _all_chat)   # every CONNECTED chat client, as the floor reads
+                    if _held_live:
+                        _light = _light_status(s["sid"], s["path"], _tm, now)   # no live row: no status to state, so build as before
                 if _light is not None:
                     for c in chat_clients:               # a status per skeleton tab still goes (the diet's contract),
                         _send_light_status(c, s["sid"], _light)   # the live row's word until the tab's first build
@@ -60573,23 +61199,27 @@ def _push(targets, connect=False, live_map=None):
                     if want_fleet:                       # the Outline's row for the skipped tab, from the store alone (the attach merges it in build order)
                         _prov_rows.append(_provisional_row(s["sid"], s.get("name", ""), _light))
                     continue
-                _t_seam = time.monotonic()               # push.chat.sig: the signature every tab pays every cycle (2026-09-18)
+                _t_seam = time.monotonic()               # push.chat.sig: the signature every tab past the cold gate pays every cycle (2026-09-18)
+                _c_seam = _thread_cpu()                  # ...and its thread CPU (stages_cpu_ms)
                 try:
                     sig = _chat_build_sig(s, _tm, now, live_map=live_map)
                     _chat_sig_ok(s["sid"])               # a signature that was taken ends its fault episode
                 except Exception as e:
                     _chat_sig_fault(s, e)                # once per fault episode: stderr and a bell row
                     sig = None                           # an input that cannot be keyed: build, never cache
-                _PERF_STATS.stage("push.chat.sig", time.monotonic() - _t_seam)
+                _chat_sig_seam_close(_t_seam, _c_seam)   # the seam and its static / deps sub-seams (stages_ms, the split)
                 hit = _built_chat.get(s["sid"])
+                _chat_sig_note_pre(s["sid"], sig, hit, is_active or s["sid"] in _all_active, _held_live, _sig_tabs)   # memos.chatSig
                 _claimed = False
                 if not (hit is not None and sig is not None and hit[0] == sig):
                     _ev = _chat_inflight_claim(s["sid"])            # single-flight (2026-09-14): another thread building this tab?
                     if _ev is not None:
                         _ev.wait(CHAT_INFLIGHT_WAIT_S)              # wait for it, then re-read what it stored
                         hit = _built_chat.get(s["sid"])
+                        _chat_sig_note_compare(hit, sig)            # memos.chatSig.compares: the post-wait re-read that met an entry
                         if hit is not None and sig is not None and hit[0] == sig:
                             _VIEW_STATS["chatWaited"] += 1
+                            _chat_sig_bump(waited=1)
                         else:
                             _claimed = _chat_inflight_claim(s["sid"]) is None   # nothing usable stored: build, as before
                     else:
@@ -60598,6 +61228,7 @@ def _push(targets, connect=False, live_map=None):
                         hit = _built_chat.get(s["sid"])             # re-read under the claim (round two, low c): a builder that
                         #                                             stored between the first read and the claim is served, as
                         #                                             _cached_feed re-checks under its lock
+                        _chat_sig_note_compare(hit, sig)            # memos.chatSig.compares: the claim re-read that met an entry
                 post, served, _rec = None, False, None
                 if hit is not None and sig is not None and hit[0] == sig:
                     if _claimed:
@@ -60609,6 +61240,7 @@ def _push(targets, connect=False, live_map=None):
                 else:
                     _VIEW_STATS["chatBuildActive" if is_active else "chatBuildBg"] += 1
                     _t0 = time.monotonic()
+                    _c0 = _thread_cpu()                  # the build seam's thread CPU (stages_cpu_ms)
                     try:
                         m = build_session(s["sid"], now, live_map)
                     except Exception as e:
@@ -60618,8 +61250,9 @@ def _push(targets, connect=False, live_map=None):
                         # every cycle would freeze the board for as long as its input stands (2026-09-06).
                         # Said ONCE per fault episode, on stderr and as a dashboard bell row, so the pane
                         # that stopped updating is not a silent degrade (review find, 2026-09-08).
-                        _PERF_STATS.stage("push.chat.build", time.monotonic() - _t0)   # a failed build's time is build time too
+                        _PERF_STATS.stage("push.chat.build", time.monotonic() - _t0, cpu=_cpu_delta(_c0))   # a failed build's time is build time too
                         _chat_build_fault(s, e)
+                        _chat_sig_bump(failedBuilds=1)   # memos.chatSig.failedBuilds: a build that raised past its pre-build signature
                         _chat_dep_scope.deps = None      # the failed build's record is nobody's
                         if _claimed:
                             _chat_inflight_done(s["sid"])   # the waiters build their own, as before this change
@@ -60633,7 +61266,7 @@ def _push(targets, connect=False, live_map=None):
                     # it back; the post-send cache store below keeps whatever materialized.
                     ms = None
                     _dt = time.monotonic() - _t0
-                    _PERF_STATS.stage("push.chat.build", _dt)   # push.chat.build: build_session alone (2026-09-18)
+                    _PERF_STATS.stage("push.chat.build", _dt, cpu=_cpu_delta(_c0))   # push.chat.build: build_session alone (2026-09-18)
                     # The build's dependency record (_chat_build_deps) and the POST-build signature: the cache
                     # entry is stored only when the static components held across the build (an input that
                     # moved mid-build would otherwise be served stale); the dependency tail is skipped here
@@ -60642,11 +61275,13 @@ def _push(targets, connect=False, live_map=None):
                     _chat_dep_scope.deps = None          # consumed: a reader outside a build must not append to it
                     if sig is not None:
                         _t_seam = time.monotonic()       # the post-build signature is signature time too
+                        _c_seam = _thread_cpu()
                         try:
                             post = _chat_build_sig(s, _tm, now, live_map=live_map, deps=False)
                         except Exception:
                             post = None
-                        _PERF_STATS.stage("push.chat.sig", time.monotonic() - _t_seam)
+                        _chat_sig_seam_close(_t_seam, _c_seam)   # static only: deps=False ran no tail
+                        _chat_sig_bump(post=1)
                     # WHY a tab rebuilt (2026-09-09): the labelled _chat_build_sig components that moved
                     # against the cached signature, so /perf can say which input drives the rebuilds; the
                     # watched tab's rebuilds are counted under active_built and not attributed
@@ -60688,6 +61323,7 @@ def _push(targets, connect=False, live_map=None):
                 # transcript resident in the browser (instant scrollback) while the per-change wire payload
                 # drops from the whole events array to just what changed.
                 _t_seam = time.monotonic()               # push.chat.send: the diff and the per-client sends (2026-09-18)
+                _c_seam = _thread_cpu()
                 change_from = _chat_diff(_prev_chat_events.get(m["id"]), m.get("events") or [])
                 led_changed = m.get("ledger") != _prev_chat_ledger.get(m["id"])
                 # The baseline is SHARED by every client, so only a push that reaches them all may advance it.
@@ -60706,7 +61342,7 @@ def _push(targets, connect=False, live_map=None):
                     # serialization ONCE and every later client (and the cache below) reuses it. A tab the
                     # client holds as a skeleton gets only its status (2026-09-07)
                     ms = _send_chat_or_status(c, m, ms, change_from, led_changed)
-                _PERF_STATS.stage("push.chat.send", time.monotonic() - _t_seam)
+                _PERF_STATS.stage("push.chat.send", time.monotonic() - _t_seam, cpu=_cpu_delta(_c_seam))
                 # cache AFTER the sends, so a serialization a full send just paid for is kept — the next
                 # connect-push for this unchanged tab reuses it instead of dumping again
                 if sig is not None:
@@ -60726,6 +61362,7 @@ def _push(targets, connect=False, live_map=None):
                                   moved=",".join(l for l in _chat_sig_miss(sig, post) if l not in _CHAT_SIG_DEPS))
                 if _claimed:
                     _chat_inflight_done(s["sid"])        # stored (or not cacheable): the waiters re-read the cache now
+            _chat_sig_note_census(_sig_tabs, _all_chat, _plain_outline)   # memos.chatSig: the warm-tab census, once per push, over the tabs the gate did not walk
             shown_sids = {s["sid"] for s in chat_list}
             for sid in list(_built_chat):                # drop cache for tabs no longer shown (closed/×-hidden)
                 if sid not in shown_sids:
@@ -60792,7 +61429,7 @@ def _push(targets, connect=False, live_map=None):
             _forget_chat_positions({s["sid"] for s in chat_list})   # the per-session wire memos of tabs that left
             _live_scope.chat_floor0 = None            # the decision is the chat loop's alone
             _chat_push_scopes_close()                    # after the threads' signatures, which read the shared components too
-        _PERF_STATS.stage("push.chat", time.monotonic() - _t_stage)
+        _PERF_STATS.stage("push.chat", time.monotonic() - _t_stage, cpu=_cpu_delta(_c_stage))
         _t_stage = time.monotonic()
         fsig = _fleet_view_sig(now, live_map) if (want_feed or want_tl) else None
         feed_src = _cached_feed(now, live_map, fsig, connect) if want_feed else None
@@ -61179,6 +61816,7 @@ def _push_session_now(sid):
             _nbytes = None
         _active = sid in {c.get("active") for c in targets if c.get("active")}   # the watched tab, as _push reads it from its clients
         _PERF_STATS.build_chat(False, _dt, active=_active, miss=("targeted",), sid=sid, nbytes=_nbytes)
+        _chat_sig_bump(targetedBuilds=1)             # memos.chatSig.targetedBuilds: a targeted build, no signature taken, watched or not
         #   the per-session timer (round three, 2026-09-15): this push builds too (27 attach handshakes at a boot run it), and an
         #   unrecorded build here warmed the cache the pusher's first recorded build then read, so the row's `first` and `max` and
         #   the aggregate's `built` missed the worst builds; the label `targeted` says the push, not a signature component, drove it.
@@ -64695,6 +65333,8 @@ def _pusher_cycle_jobs(now, live_map, any_client):
     cycle (the user asked why the reminder walk had to finish before the UI showed at all), and their writers already end in
     _mark_views_dirty, which wakes this loop, so nothing they decide waits for anything here."""
     _t_jobs = time.monotonic()            # /perf: this function minus the _push_all below is the `jobs` stage
+    _c_jobs = _thread_cpu()               # ...and the thread's CPU over it, the push's share taken out below (stages_cpu_ms)
+    _cpu_push = None
     if _PERF_STATS._mine() != "pusher":
         _PERF_STATS.cycle_begin()         # a caller that did not open the cycle (a test driving the jobs alone) opens it here; a thread
         #                                   owning the OTHER loop's cycle flips to this one (2026-09-18 review: the guard read "owns
@@ -64705,6 +65345,7 @@ def _pusher_cycle_jobs(now, live_map, any_client):
     except Exception:
         sys.stderr.write("checkpoint-cycle: %s\n" % traceback.format_exc())
     _t_push = 0.0
+    _pushed = False                       # whether the push ran: its CPU leaves the jobs row exactly when its wall does (below)
     try:                                  # GET /sessions rows from this cycle's snapshot (plans/sessions-route-from-the-cycle.md):
         _job_stage('sessionsListing', lambda: _sessions_listing_refresh(now, live_map))   # its own try, so a fault in the key or
     except Exception:                     #  the build never skips the parked ops below, and the line names the listing
@@ -64716,7 +65357,9 @@ def _pusher_cycle_jobs(now, live_map, any_client):
     except Exception:                     # FIRST, so a delivered op's echo / retired chip rides this push;
         sys.stderr.write("pending-ops: %s\n" % traceback.format_exc())   # never behind a judge pass (2026-09-03)
     if any_client:
+        _pushed = True
         _t_push = time.monotonic()
+        _c_push = _thread_cpu()
         try:
             _push_all(live_map=live_map)
         except Exception:                 # _push guards its build and its sends; anything escaping it rode
@@ -64725,7 +65368,8 @@ def _pusher_cycle_jobs(now, live_map, any_client):
             sys.stderr.write("push: %s\n" % traceback.format_exc())
         finally:
             _t_push = time.monotonic() - _t_push
-            _PERF_STATS.stage("push", _t_push)
+            _cpu_push = _cpu_delta(_c_push)
+            _PERF_STATS.stage("push", _t_push, cpu=_cpu_push)
     try:                                  # the turn-finished push (bell popover): AFTER the feed build above,
         _job_stage('turnNotify', lambda: _turn_notify_tick(now, live_map))      # so a bell event the same settle produced files its buzz first
     except Exception:
@@ -64748,7 +65392,16 @@ def _pusher_cycle_jobs(now, live_map, any_client):
         _job_stage('apiHealth', lambda: _api_health_push(_api_health_frame(now, live_map)))   # decisions, every cycle (a connecting shell gets a
     except Exception:                     # current frame), sent only when it changed
         sys.stderr.write("api-health-frame: %s\n" % traceback.format_exc())
-    _PERF_STATS.stage("jobs", (time.monotonic() - _t_jobs) - _t_push)
+    _cpu_jobs = _cpu_delta(_c_jobs)
+    # the jobs container is this function minus the push: its CPU follows its wall exactly, and a row whose CPU cannot
+    # follow records its wall alone (the round-2 review, 2026-09-19, kernel-1). A push that ran with its CPU unknown
+    # (_cpu_push None after a failed read) leaves the jobs row with no CPU figure rather than one holding the push's
+    # beside a wall that excludes it, whose documented wall minus user minus sys would read negative.
+    if _pushed and _cpu_push is None:
+        _cpu_jobs = None
+    elif _cpu_jobs is not None and _cpu_push is not None:
+        _cpu_jobs = (_cpu_jobs[0] - _cpu_push[0], _cpu_jobs[1] - _cpu_push[1])
+    _PERF_STATS.stage("jobs", (time.monotonic() - _t_jobs) - _t_push, cpu=_cpu_jobs)
 
 
 
@@ -64762,6 +65415,7 @@ def _jobs_pass(now, live_map):
     _mark_views_dirty (a dirty mark plus the pusher's wake), so a card move a job decides rides the pusher's next cycle exactly
     as it did when the job ran on that thread. The stage container is `jobsPass`; each job is still its `jobs.<name>` stage."""
     _t_pass = time.monotonic()
+    _c_pass = _thread_cpu()               # the pass container's thread CPU (stages_cpu_ms, 2026-09-18)
     if _PERF_STATS._mine() != "jobs":
         _PERF_STATS.cycle_begin("jobs")   # a caller that did not open the pass (a test driving the jobs alone) opens it here; a thread
         #                                   owning the pusher's cycle flips to the jobs owner (2026-09-18 review, as in _pusher_cycle_jobs),
@@ -64850,7 +65504,7 @@ def _jobs_pass(now, live_map):
     except Exception:
         sys.stderr.write("clear-working-notes: %s\n" % traceback.format_exc())
     _files_stat_pass_close(_own_stat)
-    _PERF_STATS.stage("jobsPass", time.monotonic() - _t_pass)
+    _PERF_STATS.stage("jobsPass", time.monotonic() - _t_pass, cpu=_cpu_delta(_c_pass))
 
 
 JOBS_PASS_S = 0.5                                  # the jobs thread's pace between passes: the pusher's backstop, so a job that read
