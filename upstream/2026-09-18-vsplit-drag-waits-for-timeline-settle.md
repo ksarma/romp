@@ -1,6 +1,6 @@
 ---
 title: The vertical-split drag test waits for the timeline band to settle before it measures
-status: candidate
+status: approved
 where: tests/test_chat_vsplit_served.py (the pointer driver: the settled() wait on the band, test_0 pane-rect hold, VSplitDragLateTimeline; and the failing-before reproduction BARS_HOLD_JS, BARS_RELEASE_JS, _bars_held_past_the_zone and VSplitDragBarsHeldPastTheZone)
 added: 2026-09-18
 pr:
@@ -35,3 +35,5 @@ file: 5 failed without the wait, 5 passed with it, alone and under load, same ge
 goes after the bottom tab is found and draggable and immediately before the pane measure (out.pane), with
 out.settled = await settled() as the last line before it.
 
+
+2026-09-19: approved for offer by the user (his answer, about 07:03Z, to the consolidated ask that named this entry with the two other test fixes outside the 2026-09-18 plan's batches: yes). Offered on its own branch from the project's tip, not stacked, since no open offer touches this file; publish waits for a slot under the open-offer throttle.
