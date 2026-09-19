@@ -56,8 +56,8 @@
 // touch, viewport, pixel ratio, the entry types the browser supports from a fixed list, requestIdleCallback, the dist
 // token); every row `vis` (visibility transitions and hidden time inside the minute), `wsBytes` (text-frame characters
 // the shim received on the pane's LOCAL socket in the minute, from its counter), `wsBytesByHost` (the same unit, per
-// REMOTE host by its position on the page, h1 the first remote host this page attached, at most MAX_HOSTS named and the
-// rest summed under hmore, from federation's page-lifetime totals through window.__rompFed.wsBytesByHost and the hosts
+// REMOTE host by its position on the page, h1 the first remote host this page attached, one key per host the page
+// attached, however many, from federation's page-lifetime totals through window.__rompFed.wsBytesByHost and the hosts
 // attached at the flush through window.__rompFed.attachedHostOrdinals: a position is on the row when its host is attached
 // at the flush or received characters in the minute, so the row closing a detach's minute carries the host and the rows
 // after it do not, an attached idle host reads 0, and the key is absent, not null, when no host is attached and none
@@ -87,7 +87,6 @@ export const SHARE_SETTING = "perfShare";      // the store's key for the opt-in
 export const MUTE_SETTING = "perfMute";        // the store's key for the kill switch: `true` alone turns it on
 export const RAF_GAP_MS = 50;                  // an animation-frame gap over this counts (one long frame at 60 Hz is three missed paints)
 export const MAX_RES = 24;                     // named resource entries per page; the rest fold into "other"
-export const MAX_HOSTS = 4;                    // wsBytesByHost: remote host positions named per row (h1..h4); the rest sum under "hmore"
 /** The entry types `env.entryTypes` may name, in this order: what the browser supports of the observers this module
  *  and the phone work could use. Anything else the browser lists is left out. */
 export const ENV_ENTRY_TYPES: readonly string[] = ["longtask", "long-animation-frame", "event", "largest-contentful-paint", "layout-shift", "paint", "resource", "navigation"];
@@ -364,8 +363,8 @@ export function pageMarks(marks: Record<string, unknown> | null, paints: readonl
  *  federation cannot say, a bundle before the read). A position is on the row when its host is attached at the flush or
  *  received characters in the minute: the row closing a detach's minute carries the host's characters and the rows after
  *  it carry no key for it, an attached idle host (a down one; an up one hears a keepalive every 10 s) reads 0, and a
- *  position both detached and silent is left off. Positions 1..MAX_HOSTS keep their own keys; every later position that
- *  qualifies sums under `hmore`, present only when one does. Null when no position qualifies (no remote host attached at
+ *  position both detached and silent is left off. Every qualifying position keeps its own key, h1, h2 and so on; no cap,
+ *  one number per attached host (the owner's decision of 2026-09-19). Null when no position qualifies (no remote host attached at
  *  the flush and none received characters in the minute, a page that never attached one included), and the caller leaves
  *  the key off the row. Pure. */
 export function bytesByHost(now: Record<string, unknown> | null, base: Record<string, number>, attached: readonly string[] | null): Record<string, number> | null {
@@ -379,15 +378,12 @@ export function bytesByHost(now: Record<string, unknown> | null, base: Record<st
   }
   ords.sort((a, b) => a - b);
   const out: Record<string, number> = {};
-  let more = 0, folded = false;
   for (const o of ords) {
     const k = "h" + o;
     const d = Math.max(0, Math.round((now[k] as number) - (base[k] || 0)));
     if (d <= 0 && !up.has(k)) continue;   // detached at the flush and silent in the minute: no key
-    if (o <= MAX_HOSTS) out[k] = d;
-    else { more += d; folded = true; }
+    out[k] = d;
   }
-  if (folded) out.hmore = more;
   return Object.keys(out).length ? out : null;
 }
 

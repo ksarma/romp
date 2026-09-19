@@ -3494,8 +3494,8 @@ def _client_diag_append(fp, line):
 # identifier, since federation.ts times a frame as `fed:` plus its classified type), each with a 14-bucket histogram,
 # 16.5 KB at six-digit counts; MAX_TOP long-frame keys at the string cut, the free sample, the slow counts and the
 # envelope add about 1.4 KB (17.9 KB share off); the shared fields (MAX_RES named resources and the fold, nav, marks,
-# env, vis, wsBytes, wsBytesByHost at its widest, MAX_HOSTS positions and the hmore fold at nine digits each, 107 bytes,
-# and rafGap) add about 3.5 KB (21.4 KB share on). 24 KiB holds both with margin (today's minute rows run to 2.5 KB);
+# env, vis, wsBytes, wsBytesByHost at its widest (no cap on positions: the worst-case row test states eight at nine digits
+# each, 155 bytes, about 17 bytes more per further host) and rafGap) add about 3.5 KB (21.5 KB share on). 24 KiB holds both with margin (today's minute rows run to 2.5 KB);
 # above it the shed and the marker are the backstops for a row no collector builds. The table lists the
 # keys as the posters build them: perf-telemetry.ts (minute, slowframe), the pane shim (staleDiag, the return rows,
 # wsclose, wsconnfail, page-load), the reload core's held row, the shell scripts, federation.ts, render.ts and
@@ -3504,7 +3504,7 @@ def _client_diag_append(fp, line):
 # (said once per what), so a forged wsopen cannot land beside the kernel's; the entry names the kernel's own keys. A
 # surface not in the table keeps no key at all, and a data that is not an object is stored as null.
 CLIENT_DIAG_STR_MAX = 64
-CLIENT_DIAG_ROW_MAX = 24 * 1024   # above the collector's worst case with share on (21.4 KB; the derivation above)
+CLIENT_DIAG_ROW_MAX = 24 * 1024   # above the collector's worst case with share on (21.5 KB; the derivation above)
 CLIENT_DIAG_DEPTH_MAX = 8      # nesting past this reads null: the rows are flat or two deep
 CLIENT_DIAG_SAID_MAX = 512     # (surface, key) pairs the stderr latch holds; at the bound one more line says so and nothing else is said
 CLIENT_DIAG_ROW_SAY_MAX = 8    # foreign keys of ONE row said by name; the rest are one counting line, so a row spends at most this many latch entries and one
@@ -3516,10 +3516,10 @@ CLIENT_DIAG_KEYS = {
                        "type", "ms",                                                # slowframe (app, dom, loaf as above)
                        "nav", "res", "marks", "env", "vis", "wsBytes", "rafGap",     # the shared fields, on when the gear says so
                        "wsBytesByHost")),   # the shared field the user approved on 2026-09-19 (the bytes each attached host sent, one number per host, no
-                                            # content): {h1..h4: int, hmore?: int}, the text-frame characters each REMOTE host's sockets delivered in the
+                                            # content): {h1: int, h2: int, ...}, one key per attached host and no cap, the text-frame characters each REMOTE host's sockets delivered in the
                                             # minute (wsBytes's unit; the two are disjoint), keyed by the host's attach ORDINAL on the page: h1 the first
                                             # remote host the page attached, assigned when the host first attaches, kept for the page's life and never
-                                            # shifting on a detach (a re-attached host keeps its ordinal; hmore sums the ordinals past h4), so h2 names
+                                            # shifting on a detach (a re-attached host keeps its ordinal), so h2 names
                                             # one host across every row of a page life. The perf minute row carries positions, never names; the file's shell
                                             # and federation surfaces and the kernel's own wsopen row carry host names already (the `host` key of the shell
                                             # and federation entries below, an earlier approval, and of the kernel entry below, written by one of the kernel's four

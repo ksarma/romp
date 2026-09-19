@@ -1029,7 +1029,7 @@ export class FederationManager {
   // (attachedHostOrdinals): the row closing a minute in which the host received characters carries it whether or not the
   // host is still attached, an attached idle host reads 0, and a detached silent host has no key. Never reused; a reload
   // starts over, so h1 can name another host after a reload. Positions, never names: the minute row carries these keys
-  // (h1..h4, hmore) and no host name. Read through window.__rompFed.wsBytesByHost (wsBytesByHost()).
+  // (h1, h2 and so on, one per host the page attached) and no host name. Read through window.__rompFed.wsBytesByHost (wsBytesByHost()).
   private hostOrdinal = new Map<string, number>();
   private wsBytesByOrdinal = new Map<number, number>();
   // false until the first /tunnels answer is absorbed (poll): before it, hostSeq is the local host alone and says

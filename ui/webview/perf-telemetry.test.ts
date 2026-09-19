@@ -24,9 +24,8 @@ import {
 } from "./perf-telemetry";
 import * as pt from "./perf-telemetry";
 import { FederationManager } from "./federation";
-// wsBytesByHost's constant and fold (2026-09-19), read off the module namespace so this file still bundles (and runs red)
-// against a perf-telemetry.ts that predates them, as federation-remote-feed-delta.test.ts reads REMOTE_DIAL_CAPS
-const MAX_HOSTS: number = (pt as any).MAX_HOSTS;
+// wsBytesByHost's collector rule (2026-09-19), read off the module namespace so this file still bundles (and runs red)
+// against a perf-telemetry.ts that predates it, as federation-remote-feed-delta.test.ts reads REMOTE_DIAL_CAPS
 const bytesByHost: (now: Record<string, unknown> | null, base: Record<string, number>, attached: readonly string[] | null) => Record<string, number> | null = (pt as any).bytesByHost;
 
 const PAGE = "http://h:1/feed";
@@ -1278,11 +1277,11 @@ test("share ON on a page without the APIs: nav and res are null, marks empty, ws
 
 // ── wsBytesByHost (2026-09-19): the per-position fold and the collector's baselines ──
 
-test("bytesByHost: the minute's characters per remote host position from federation's totals against the minute's baselines, for the positions attached at the flush or delivered to in the minute; a position with no baseline counts from 0; positions past MAX_HOSTS sum under hmore, present only when one qualifies; a key off the h<n> pattern or a non-number is ignored; no position reads null", () => {
+test("bytesByHost: the minute's characters per remote host position from federation's totals against the minute's baselines, for the positions attached at the flush or delivered to in the minute; a position with no baseline counts from 0; every qualifying position keeps its own key, however many; a key off the h<n> pattern or a non-number is ignored; no position reads null", () => {
   const all = (m: Record<string, unknown>) => Object.keys(m);
   assert.equal(bytesByHost(null, {}, []), null, "no federation");
   assert.equal(bytesByHost({}, {}, []), null, "federation with no remote host ever attached");
-  assert.equal(bytesByHost({ h0: 5, host: 9, hmore: 3, h2x: 1 }, {}, ["h0", "host"]), null, "nothing on the pattern: no position");
+  assert.equal(bytesByHost({ h0: 5, host: 9, more: 3, h2x: 1 }, {}, ["h0", "host"]), null, "nothing on the pattern: no position");
   assert.deepEqual(bytesByHost({ h1: 500, h2: 40 }, { h1: 100, h2: 40 }, ["h1", "h2"]), { h1: 400, h2: 0 }, "an attached host that received nothing reads 0");
   assert.deepEqual(bytesByHost({ h1: 500, h2: 40 }, { h1: 100, h2: 40 }, ["h1"]), { h1: 400 }, "a detached host that received nothing in the minute has no key");
   assert.deepEqual(bytesByHost({ h1: 500, h2: 40 }, { h1: 100, h2: 40 }, []), { h1: 400 }, "a host that received characters carries them whether or not it is attached at the flush: the detach minute");
@@ -1294,18 +1293,16 @@ test("bytesByHost: the minute's characters per remote host position from federat
   assert.deepEqual(bytesByHost({ h2: 7, h1: 3 }, {}, []), { h1: 3, h2: 7 }, "positions in numeric order whatever the map's");
   assert.deepEqual(bytesByHost({ h1: 1, h2: "2" as any, h3: NaN, h4: Infinity }, {}, ["h1", "h2", "h3", "h4"]), { h1: 1 }, "a non-number or a non-finite total is ignored");
   assert.deepEqual(bytesByHost({ h1: 500, h2: 40 }, { h1: 100, h2: 40 }, null), { h1: 400 }, "federation cannot say who is attached (a bundle before the read): a position is on the row for the minute's characters alone");
-  assert.equal(MAX_HOSTS, 4, "the fold's constant (the allowlist's worst-case row is built from it)");
-  const many: Record<string, number> = {}; for (let i = 1; i <= MAX_HOSTS + 3; i++) many["h" + i] = i * 1000;
-  const folded = bytesByHost(many, { h1: 500 }, all(many));
-  assert.deepEqual(folded, { h1: 500, h2: 2000, h3: 3000, h4: 4000, hmore: 5000 + 6000 + 7000 }, "h1..h4 named, positions 5, 6 and 7 summed under hmore");
-  assert.deepEqual(Object.keys(bytesByHost(many, {}, [])!), ["h1", "h2", "h3", "h4", "hmore"], "hmore last; a detached position with characters folds too");
-  assert.equal("hmore" in bytesByHost({ h1: 1, h2: 2, h3: 3, h4: 4 }, {}, [])!, false, "exactly MAX_HOSTS positions: no fold key");
-  assert.deepEqual(bytesByHost({ h1: 1, h5: 9 }, { h5: 9 }, ["h1"]), { h1: 1 }, "a fifth position detached and silent folds nothing: no hmore");
-  assert.deepEqual(bytesByHost({ h1: 1, h5: 9 }, { h5: 9 }, ["h1", "h5"]), { h1: 1, hmore: 0 }, "a fifth position attached and idle folds 0: hmore present");
-  assertIdentifiersOnly(folded);
+  const many: Record<string, number> = {}; for (let i = 1; i <= 8; i++) many["h" + i] = i * 1000;
+  const named = bytesByHost(many, { h1: 500 }, all(many));
+  assert.deepEqual(named, { h1: 500, h2: 2000, h3: 3000, h4: 4000, h5: 5000, h6: 6000, h7: 7000, h8: 8000 }, "every qualifying position keeps its own key: no cap, no fold key");
+  assert.deepEqual(Object.keys(named!), ["h1", "h2", "h3", "h4", "h5", "h6", "h7", "h8"], "in numeric order, and no key of another shape");
+  assert.deepEqual(bytesByHost({ h1: 1, h5: 9 }, { h5: 9 }, ["h1", "h5"]), { h1: 1, h5: 0 }, "a fifth position attached and idle reads 0 under its own key");
+  assert.deepEqual(bytesByHost({ h1: 1, h5: 9 }, { h5: 9 }, ["h1"]), { h1: 1 }, "a fifth position detached and silent has no key, like any other");
+  assertIdentifiersOnly(named);
 });
 
-test("the detach minute: a host that received characters in the minute and detached before the flush carries its position on the row closing that minute and not on the row after; an attached host with no characters carries 0; the key is absent when no host is attached at the flush and none received characters; a re-attached host keeps its position; hmore folds the qualifying positions alike", () => {
+test("the detach minute: a host that received characters in the minute and detached before the flush carries its position on the row closing that minute and not on the row after; an attached host with no characters carries 0; the key is absent when no host is attached at the flush and none received characters; a re-attached host keeps its position; a fifth and later position is named like the first", () => {
   const fed: Record<string, number> = {};
   let attached: string[] = [];
   const h = beaconHarness({ share: true, mute: false }, { raf: null, fedBytes: () => fed, fedAttached: () => attached });
@@ -1326,16 +1323,16 @@ test("the detach minute: a host that received characters in the minute and detac
   // minute 5: h1 re-attaches under its old position (federation's history holds it) and delivers
   fed.h1 += 50; attached = ["h1", "h2"];
   assert.deepEqual(minute().wsBytesByHost, { h1: 50, h2: 0 }, "a re-attached host keeps its position; the idle attached host still reads 0");
-  // hmore: a fifth position detached and silent folds nothing; detached with characters folds them; attached and idle folds 0
+  // a fifth position, named like the first: detached with characters carries them under its own key; detached and silent has no key; attached and idle reads 0
   fed.h3 = 0; fed.h4 = 0; fed.h5 = 10; attached = ["h1", "h2", "h3", "h4"];
-  assert.deepEqual(minute().wsBytesByHost, { h1: 0, h2: 0, h3: 0, h4: 0, hmore: 10 }, "a detached fifth host's characters fold under hmore");
-  assert.deepEqual(minute().wsBytesByHost, { h1: 0, h2: 0, h3: 0, h4: 0 }, "…and silent, it folds nothing: no hmore");
+  assert.deepEqual(minute().wsBytesByHost, { h1: 0, h2: 0, h3: 0, h4: 0, h5: 10 }, "a detached fifth host's characters are on the row under h5");
+  assert.deepEqual(minute().wsBytesByHost, { h1: 0, h2: 0, h3: 0, h4: 0 }, "…and silent, it has no key");
   attached = ["h1", "h2", "h3", "h4", "h5"];
-  assert.deepEqual(minute().wsBytesByHost, { h1: 0, h2: 0, h3: 0, h4: 0, hmore: 0 }, "attached and idle, it folds 0");
+  assert.deepEqual(minute().wsBytesByHost, { h1: 0, h2: 0, h3: 0, h4: 0, h5: 0 }, "attached and idle, it reads 0");
   for (const r of minuteRows(h.posted)) if (r.data.wsBytesByHost) assertIdentifiersOnly(r.data.wsBytesByHost);
 });
 
-test("wsBytesByHost on the collector: the per-position baselines carry across an idle minute and a muted one, a host appearing mid-minute counts from 0 under the next position, the key is absent until a remote host exists and present while one is attached, and a fifth host folds under hmore", () => {
+test("wsBytesByHost on the collector: the per-position baselines carry across an idle minute and a muted one, a host appearing mid-minute counts from 0 under the next position, the key is absent until a remote host exists and present while one is attached, and a fifth and sixth host are named", () => {
   const fed: Record<string, number> = {};   // the page starts with no remote host
   const h = beaconHarness({ share: true, mute: false }, { raf: null, fedBytes: () => fed });
   const p = createPerfTelemetry("feed", h.deps);
@@ -1372,20 +1369,20 @@ test("wsBytesByHost on the collector: the per-position baselines carry across an
   h.clock.wall += 60_000;
   p.tick();
   assert.deepEqual(minuteRows(h.posted)[3].data.wsBytesByHost, { h1: 570, h2: 0 }, "the muted minute's 500 and this minute's 70; h2 sent nothing and reads 0 while attached");
-  // more hosts than MAX_HOSTS: the fifth and sixth positions fold
+  // a fifth and a sixth host: named like the first, no cap
   fed.h3 = 1; fed.h4 = 2; fed.h5 = 300; fed.h6 = 400;
   h.frame(p, { type: "feed" }, 10);
   h.clock.wall += 60_000;
   p.tick();
   const r = minuteRows(h.posted)[4].data.wsBytesByHost;
-  assert.deepEqual(r, { h1: 0, h2: 0, h3: 1, h4: 2, hmore: 700 });
-  assert.deepEqual(Object.keys(r), ["h1", "h2", "h3", "h4", "hmore"]);
-  // the fold's baseline is per position too: the next minute's hmore is the fifth and sixth positions' own deltas
+  assert.deepEqual(r, { h1: 0, h2: 0, h3: 1, h4: 2, h5: 300, h6: 400 });
+  assert.deepEqual(Object.keys(r), ["h1", "h2", "h3", "h4", "h5", "h6"]);
+  // the baseline is per position: the next minute's h5 and h6 are their own deltas
   fed.h5 += 10; fed.h6 += 20;
   h.frame(p, { type: "feed" }, 10);
   h.clock.wall += 60_000;
   p.tick();
-  assert.deepEqual(minuteRows(h.posted)[5].data.wsBytesByHost, { h1: 0, h2: 0, h3: 0, h4: 0, hmore: 30 });
+  assert.deepEqual(minuteRows(h.posted)[5].data.wsBytesByHost, { h1: 0, h2: 0, h3: 0, h4: 0, h5: 10, h6: 20 });
   assert.equal(slowRows(h.posted).length, 0);
 });
 

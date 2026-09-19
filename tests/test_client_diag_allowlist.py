@@ -434,10 +434,10 @@ class ClientDiagAllowlistTest(unittest.TestCase):
             self.assertIsNotNone(m, name)
             return m.group(1)
         max_types = int(const("MAX_FRAME_TYPES")); max_top = int(const("MAX_TOP")); free_ring = int(const("FREE_RING"))
-        slow_rows = int(const("SLOW_ROWS_PER_MINUTE")); max_res = int(const("MAX_RES")); max_hosts = int(const("MAX_HOSTS"))
+        slow_rows = int(const("SLOW_ROWS_PER_MINUTE")); max_res = int(const("MAX_RES"))
         buckets = len(json.loads(const("HIST_EDGES"))) + 1
         ident_cap = int(re.search(r"\^\[A-Za-z0-9_\.:-\]\{1,(\d+)\}\$", src).group(1))    # ident(): a frame type at most this long
-        self.assertEqual((max_types, max_top, free_ring, slow_rows, max_res, buckets, ident_cap, max_hosts), (32, 5, 64, 5, 24, 14, 32, 4), "the constants this derivation was made with")
+        self.assertEqual((max_types, max_top, free_ring, slow_rows, max_res, buckets, ident_cap), (32, 5, 64, 5, 24, 14, 32), "the constants this derivation was made with")
         entry_types = json.loads(re.search(r"^export const ENV_ENTRY_TYPES: readonly string\[\] = (\[[^\]]*\]);", src, re.M).group(1))
         big = 999999                                         # six-digit counts: more than a minute of frames at 60 Hz can hold
         ms = 60000.0                                         # one-decimal ms, a whole minute
@@ -457,10 +457,13 @@ class ClientDiagAllowlistTest(unittest.TestCase):
                   "dom": 9999999, "visible": False, "hidden_pane": False, "ua": "chrome-desktop", "heap_mb": 99999.9}
         res = {"r" * 20 + "%03d.woff2" % i: {"transferSize": 99999999, "encodedBodySize": 99999999, "duration": ms} for i in range(max_res)}
         res["other"] = {"transferSize": 99999999, "encodedBodySize": 99999999, "duration": ms}
-        # wsBytesByHost at its widest (2026-09-19): MAX_HOSTS positions named plus the fold key, each at wsBytes's nine digits
-        by_host = {"h%d" % i: 999999999 for i in range(1, max_hosts + 1)}
-        by_host["hmore"] = 999999999
-        self.assertEqual(len(by_host), max_hosts + 1, "the fold's whole vocabulary: h1..h%d and hmore" % max_hosts)
+        # wsBytesByHost at its widest (2026-09-19): the field has no cap (one key per attached host, the owner's decision), so the
+        # row states a count rather than reading one. Eight is twice the four an earlier cut capped at and more than any lab or
+        # deployment attaches to one page (the labs' widest is two); each further host adds about 17 bytes to the row; a row
+        # budget, if one is ever needed, is the owner's question through the design.
+        HOSTS = 8
+        by_host = {"h%d" % i: 999999999 for i in range(1, HOSTS + 1)}
+        self.assertEqual(len(by_host), HOSTS, "one key per stated host, no fold key")
         shared = {"nav": {"type": "back_forward", "responseEnd": big, "domContentLoaded": big, "loadEventEnd": big}, "res": res,
                   "marks": {"wsOpen": big, "bundleReady": big, "firstFrame": big, "fp": big, "fcp": big},
                   "env": {"standalone": True, "iosMajor": 17, "touch": True, "vw": 99999, "vh": 99999, "dpr": 3.5, "entryTypes": entry_types, "ric": True, "dv": 1757100000000},
@@ -477,20 +480,6 @@ class ClientDiagAllowlistTest(unittest.TestCase):
             self.assertNotIn("capped", row["data"])
             self.assertEqual(len(row["data"]["frames"]), 2 * (max_types + 1), "every frame type intact")
         self.assertEqual(self.rows()[-1]["data"]["wsBytesByHost"], by_host, "the per-host map lands whole: the admit filters top-level keys only, the scrub walks it")
-
-    def test_the_docs_positions_count_is_max_hosts(self):
-        # docs/reference.md states in a word how many positions a minute row names; this ties the word to MAX_HOSTS as
-        # perf-telemetry.ts declares it, so a later change to the constant cannot leave the doc stale silently (the
-        # worst-case row test above derives the row from the same constant and guards it at 4).
-        src = open(os.path.join(UI, "perf-telemetry.ts"), encoding="utf-8").read()
-        m = re.search(r"^export const MAX_HOSTS = (\d+);", src, re.M)
-        self.assertIsNotNone(m, "MAX_HOSTS")
-        words = ("zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine")
-        self.assertLess(int(m.group(1)), len(words), "a count this test can spell")
-        doc = open(os.path.join(os.path.dirname(HERE), "docs", "reference.md"), encoding="utf-8").read()
-        said = re.findall(r"at most (\w+) positions named", doc)
-        self.assertEqual(len(said), 1, "the reference doc states the count once, in the minute row's wsBytesByHost sentence")
-        self.assertEqual(said[0], words[int(m.group(1))], "the doc's word for the positions named is MAX_HOSTS")
 
     def test_one_fixture_row_per_poster_call_site_passes_whole_and_the_table_names_nothing_else(self):
         """The table against the posters: one synthetic row per clientDiag call site in the bundles (render.ts and
