@@ -25,10 +25,11 @@ frame's remainder and the guard sends a whole frame instead, which is why tests/
 never sees a patch) where the remote serves the route, a todo (POST /usertodo) where it serves that alone, else a
 transcript append. The notice is a completed card, not a needs-you one, on purpose: a needs-you card also flips the
 session's needs-input state, which lands in the frame's remainder a cycle later, and on THIS board that remainder move
-crosses as a whole frame (the size guard sends a change whole when the changed cards plus the whole remainder reach 0.6 of
-the frame, which the lab's ledger rows and scalars, about 78 percent of an 18.5 KB frame, meet; a card-heavy board patches
-the flip too: tests/test_view_deltas.py CatchUpRoadsOfAWholeFrameClient), and that frame would catch an old bundle up and
-hide the freeze this lab is meant to show. The visible observable is the card on the hub's
+crosses as a whole frame (the size guard sends a change whole when its PATCH reaches 0.6 of the frame; a remainder move's
+patch is the changed cards plus the whole remainder, and this lab board meets the condition at its composition, ledger rows
+and scalars about 79 percent of an 18.5 KB frame in the round-1 drive's record, where the kernel's recorded live board, 660
+cards with a 17 percent remainder in 5.76 MB, does not, so there the same flip is a patch: tests/test_view_deltas.py
+CatchUpRoadsOfAWholeFrameClient), and that frame would catch an old bundle up and hide the freeze this lab is meant to show. The visible observable is the card on the hub's
 feed page ([data-key="a:notice:..."]) or, for a transcript append, two: the appended pair's bar on the remote lane of
 the hub's TIMELINE page (those corners open the timeline too and read the drawn bars off its SVG), and the text of api's
 provisional row on the hub's Outline, which swaps from the seed's last prompt to the appended one. The Outline lists a
@@ -858,22 +859,31 @@ class CornerOldLocal(_Corner):
     bundle decodes none: a user sees the remote host's rows frozen where its first full frame put them, no toast, no
     banner; the Outline files a delta-unapplied row per patch and posts a needSlot to the LOCAL kernel (which
     resyncs its own slot, never the remote's), the feed and Waiting panes drop the patches silently. The old page moves
-    only when the remote serves a change WHOLE, and the roads to that, measured against the encoder (review round 4 of
-    PR 815 driving km._send_slot on a synthetic 8-session board, 2026-09-19; pinned in tests/test_view_deltas.py
-    CatchUpRoadsOfAWholeFrameClient), are a relay redial (a fresh upstream socket is served whole once), the size guard
-    on a change that moves the frame's remainder while the changed cards plus the whole remainder reach 0.6 of the
-    frame (this board meets it: its ledger rows and scalars are about 78 percent of an 18.5 KB frame, so a needs-you
-    card's state flip a cycle later crosses whole here and the old page shows the card 1.8 s late instead of never; a
-    card-heavy board does not, and there the same flip is a patch and drops: the kernel's recorded live board, 660
-    cards, has a 17 percent remainder in 5.76 MB), and an encoder error; an unkeyable collection is never frozen at all
-    (such a remote sends whole frames always). The busier the board, the less often an old page catches up, and every
-    change confined to the cards drops on every board. That is why the card is a completed one here: on this board a
-    needs-you card's whole frame would hide the freeze. PR 815 changes no kernel, so it repairs this corner through the
-    hub's bundle alone: the hub reloads its page onto the new bundle. A remote-side guard (whole feed frames to a relay
-    socket that announces no cap; the module docstring says why it is not taken here) would also cover the old hub's
-    feed during a mixed-build window, not its timeline. This is the production state of a dashboard served by a box
-    that has not taken PR 815, where the catch-up is rarer than on this board: the phone's 86 rows in 2.4 minutes were
-    rev 1 to 86 monotone, a board that caught up not once in the window."""
+    only when the remote serves a change WHOLE. The rule is a ratio, never a category: an un-updated hub applies whole
+    frames only, so it drops any change whose patch stays under 0.6 of the whole frame (the size guard, kernel.py
+    _DELTA_MAX_FRACTION), and on the kernel's recorded shape (about 660 cards, asks 4.8 MB against 0.95 MB of everything
+    else) that is nearly every change: a needs-you flip is a 0.34 MB patch there. The roads to a whole frame, measured
+    against the encoder (review round 4 of PR 815 driving km._send_slot on a synthetic 8-session board, 2026-09-19; pinned
+    in tests/test_view_deltas.py CatchUpRoadsOfAWholeFrameClient), are a relay redial (a fresh upstream socket is served
+    whole once); the size guard, when the PATCH reaches 0.6 of the frame: for a remainder move the patch is the changed
+    cards plus the whole remainder, which happens on this lab board at its composition (ledger rows and scalars about 79
+    percent of an 18.5 KB frame in the round-1 drive's record, so a needs-you card's state flip a cycle later crosses
+    whole here and the old page shows the card 1.8 s late instead of never) and not on the measured live board at 17
+    percent of 5.76 MB, where a remainder move is a patch too; for a change confined to the cards the patch is the
+    changed cards alone, which reaches 0.6 for a change touching most cards (20 of 30 on the class's 8-session board;
+    about 72 percent on the recorded shape, derived from its figures) or for a shrink whose del list reaches 0.6 of
+    what remains, which needs a light remainder (30 to 2 cards on one session crosses; 30 to 0 on eight sessions is a
+    patch; on the recorded shape 660 dels against the 0.95 MB remainder are 0.05, so that road is closed there); and an
+    encoder error. An unkeyable collection is never frozen at all (such a remote sends whole frames always). Every other
+    change confined to the cards (a card appearing, leaving, moving column or changing text) is lost until reload on
+    every board, and the busier the board, the less often an old page catches up. That is why the card is a completed
+    one here: on this board a needs-you card's whole frame would hide the freeze. PR 815 changes no kernel, so it
+    repairs this corner through the hub's bundle alone: the hub reloads its page onto the new bundle. A remote-side
+    guard (whole feed frames to a relay socket that announces no cap; the module docstring says why it is not taken
+    here) would also cover the old hub's feed during a mixed-build window, not its timeline. A dashboard served by a
+    box that has not taken PR 815 is in this corner; whether it catches up is its board's ratio, and on the measured
+    live board the guard never fires on a remainder move: the phone's 86 rows in 2.4 minutes, rev 1 to 86 monotone,
+    were such a board, one that caught up not once in the window."""
 
     @classmethod
     def _knobs(cls):

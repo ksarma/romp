@@ -1353,7 +1353,14 @@ class CatchUpRoadsOfAWholeFrameClient(unittest.TestCase):
           UP. The variable is the remainder's weight against the cards', not the item count: the same board at the
           crossover goes whole with a heavier remainder and delta with a lighter one. A whole frame does not imply an empty
           prior dstate: the guard pops a held one and re-bases.
-      (b) a change confined to the cards (a new card, a text edit, a card leaving) is a delta at every size: never a road.
+      (b) a change confined to the cards (a new card, a text edit, a card leaving) is a delta while its patch stays under
+          0.6 of the frame, which at every size here it does (test c); the two exceptions, measured in test (i): a change
+          touching MOST cards (the set entries reach 0.6 of the frame: 20 of 30 cards on the 8-session board, past half;
+          about 72 percent on the kernel's recorded 660-card shape by its figures, 0.6 of 5.75 MB over 7.3 KB a card, derived
+          and not measured), and a shrink whose del list reaches 0.6 of what remains, which needs a light remainder (30 to 2
+          cards on ONE session crosses whole; 30 to 0 on the 8-session board is a patch, the ledgers and scalars that remain
+          outweighing the del list; on the recorded shape 660 dels are about 50 KB against a 0.95 MB remainder, so that road
+          is closed there). Every other change confined to the cards is never a road.
       (c) the timeline bars: the remainder is three fields (type, now, warming), so a warming flip and an appended bar are
           deltas on the lab's board and on a lane of three bars; the guard is dead for the bars.
       (d) a fresh client (a relay redial opens a fresh upstream socket, a new client dict) is served whole once and deltas
@@ -1503,6 +1510,64 @@ class CatchUpRoadsOfAWholeFrameClient(unittest.TestCase):
         self.assertEqual([f["type"] for f in c.frames], ["feed", "feed", "feed"], "whole on every push: a whole-frame client sees every change, so the slot is never frozen for it")
         self.assertNotIn("feed", c.get("dstate", {}), "the kernel holds nothing for the client")
         self.assertEqual(err.getvalue().count("cannot be keyed"), 1, "said once")
+
+    @staticmethod
+    def _set_delta(p2, which):
+        # the delta the kernel builds for an edit of the cards at `which`: their entries set under their ids, the clock in the
+        # remainder and no order (the keys stand); the guard compares its bytes with 0.6 of the new frame's
+        return json.dumps({"type": "delta", "slot": "feed", "base": 0, "rev": 1,
+                           "coll": {"asks": {"set": {p2["asks"][i]["itemId"]: p2["asks"][i] for i in which}}}, "rest": {"now": p2["now"]}})
+
+    @staticmethod
+    def _del_delta(p1, p2):
+        # the delta for a shrink: the ids that left, the clock in the remainder
+        kept = {c["itemId"] for c in p2["asks"]}
+        return json.dumps({"type": "delta", "slot": "feed", "base": 0, "rev": 1,
+                           "coll": {"asks": {"del": [c["itemId"] for c in p1["asks"] if c["itemId"] not in kept]}}, "rest": {"now": p2["now"]}})
+
+    def _card_change(self, p1, p2, delta):
+        """Push p1, then p2, a change confined to the cards whose kernel delta would be `delta`: (the frame's type, the
+        guard's ratio: the delta's bytes over the new frame's), the type checked against the ratio's side of 0.6 and, for a
+        patch, the constructed delta checked against the kernel's byte for byte."""
+        st = _Stream("feed")
+        self.assertEqual([f["type"] for f in st.push(p1)], ["feed"]); self.assertIn("feed", st.c["dstate"], "a base is held before the change")
+        frames = st.push(p2)
+        self.assertEqual(len(frames), 1, frames)
+        ratio = len(delta) / len(json.dumps(p2))
+        if frames[0]["type"] == "delta":
+            self.assertEqual(set(frames[0]["coll"]), {"asks"}); self.assertNotIn("restAll", frames[0])
+            self.assertEqual(len(json.dumps(frames[0])), len(delta), "the constructed delta is the kernel's, byte for byte")
+            self.assertLess(ratio, km._DELTA_MAX_FRACTION, "a delta because it stays under the guard")
+        else:
+            self.assertEqual(frames[0]["type"], "feed")
+            self.assertGreaterEqual(ratio, km._DELTA_MAX_FRACTION, "whole because the delta would reach the guard")
+            self.assertEqual(st.c["dstate"]["feed"]["rev"], 0, "the guard re-based: a whole frame from a NON-empty dstate, popped and re-held")
+        return frames[0]["type"], round(ratio, 3)
+
+    def test_i_a_change_touching_most_cards_or_a_shrink_to_a_light_remainder_crosses_whole_the_two_card_only_exceptions(self):
+        # k of 30 cards edited on the 8-session board: the set entries grow with k and the frame barely, so the ratio is
+        # monotone in k; the crossover, where the patch reaches 0.6 of the frame, sits past half the cards ("most")
+        p1 = self._feed(30)
+        sweep = []
+        for k in range(1, 31):
+            p2 = json.loads(json.dumps(p1)); p2["now"] = 1005
+            for i in range(k):
+                p2["asks"][i]["text"] += " (edited)"
+            sweep.append((k,) + self._card_change(p1, p2, self._set_delta(p2, range(k))))
+        types = [t for _, t, _ in sweep]
+        self.assertEqual(types[0], "delta", "one card edited: a patch, (b)'s rule: %r" % (sweep,))
+        self.assertEqual(types[-1], "feed", "every card edited: whole, the exception: %r" % (sweep,))
+        first = types.index("feed")
+        self.assertNotIn("delta", types[first:], "monotone in the cards touched: %r" % (sweep,))
+        self.assertGreater(sweep[first][0], 15, "the crossover is past half the cards on this board: %r" % (sweep[first],))
+        # a shrink: the del list against what remains. On ONE session 30 to 2 cards crosses whole (a light remainder); on the
+        # 8-session board 30 to 0 stays a patch, the ledgers and scalars that remain outweighing the del list
+        p1 = self._feed(30, nsess=1); p2 = self._feed(2, nsess=1, now=1005)
+        kind, ratio = self._card_change(p1, p2, self._del_delta(p1, p2))
+        self.assertEqual(kind, "feed", "30 to 2 cards on one session: whole at %s" % ratio)
+        p1 = self._feed(30); p2 = self._feed(0, now=1005)
+        kind, ratio = self._card_change(p1, p2, self._del_delta(p1, p2))
+        self.assertEqual(kind, "delta", "30 to 0 cards on eight sessions: a patch at %s, which a whole-frame client drops" % ratio)
 
     def test_h_the_repost_of_an_unchanged_slot_is_a_clock_patch_not_a_road(self):
         st = _Stream("feed"); p = self._feed(3); st.push(p)
