@@ -1146,22 +1146,33 @@ class ByteIdenticalFrames(unittest.TestCase):
         user and half a ms of system time per read: every signature seam moves the sig row by at least one read's worth,
         the send row moves too, the container's CPU covers its seams, and the reads per cycle stay within the stated
         bound (two per mark: the container, the signature and its deps sub-seam, the send; a rebuild adds the build seam
-        and the post-build signature; the harness's own snapshot may add one)."""
+        and the post-build signature: 12 reads on a rebuilt cycle, 8 on a served one, 60 over the six)."""
         ps = km._PERF_STATS
         reads, fake = self._thread_rusage_fake()
         # `before` is read INSIDE the patch (2026-09-19 review, tests-1): with the platform's own _RUSAGE_THREAD None (macOS) the
         # snapshot's block is empty and the before/after join raised KeyError where the two test_perf_stats siblings skip;
         # under the patch the block is populated on every platform. The fake counts only the seams' thread reads (who 11)
         # and delegates any other `who` to the real getrusage, because _process_stats falls back to getrusage(RUSAGE_SELF)
-        # where /proc is absent (the same macOS shape), inside the harness's snapshots: with those reads faked too they
-        # advanced the fake clock and landed in `reads`, and the 21/6/15 arithmetic below and the count bound were red.
+        # where /proc is absent (the same macOS shape): one per cycle's kernelSample, between the cycles, plus two from the
+        # harness's snapshots. Faked too, they landed in `reads` as RUSAGE_SELF and failed the former "every read asked for the
+        # thread's rusage" assertion; they fall between the seams' pairs, so the 21/6/15 arithmetic and the count bound held
+        # (67 of 96). The dispatch keeps only thread reads on the fake clock, so the arithmetic stays exact should a
+        # process-stats read ever land inside a seam, and the exact read count and the process block below pin the dispatch.
         with mock.patch.object(km, "_RUSAGE_THREAD", 11), mock.patch.object(km.resource, "getrusage", fake):
             before = ps.snapshot()["stages_cpu_ms"]
             del reads[:]
             _wire, calls, rows = self._run(km._chat_diff, perf=ps)
-            after = ps.snapshot()["stages_cpu_ms"]
+            snap = ps.snapshot()
+            after = snap["stages_cpu_ms"]
         self.assertEqual(calls, [False, True, False, True, False, True], "premise: rebuilt, served, alternating")
         self.assertLessEqual(len(reads), 6 * 16, "at most sixteen thread reads per cycle: %d over six" % len(reads))
+        # the dispatch pinned in both directions: exactly the thread reads (a rebuilt cycle reads twice each for the container,
+        # the signature, its deps tail, the build, the post-build signature and the send, 12; a served cycle twice each for the
+        # container, the signature, the deps tail and the send, 8; three of each), which a fake recording every `who` exceeds
+        # (67 under the macOS shape); and the process block of the in-patch snapshot is the real clock's (rss_kb above 0),
+        # which a fake answering RUSAGE_SELF itself with zeros fails where /proc is absent
+        self.assertEqual(len(reads), 3 * 12 + 3 * 8, "the thread reads alone: %d" % len(reads))
+        self.assertGreater(snap["process"]["rss_kb"], 0, "the process block was read from the real clock, not the fake")
         d = {k: {c: after[k][c] - before[k][c] for c in ("user", "sys")} for k in after if k in before}
         self.assertGreaterEqual(d["push.chat.sig"]["user"], 9 * 1.0 - 1e-6, "nine signatures, each at least one read apart")
         self.assertAlmostEqual(d["push.chat.sig"]["sys"], d["push.chat.sig"]["user"] / 2.0, msg="the fake's ratio survives the fold")
@@ -1169,6 +1180,15 @@ class ByteIdenticalFrames(unittest.TestCase):
         self.assertGreater(d["push.chat.build"]["user"], 0.0)
         self.assertGreaterEqual(d["push.chat"]["user"] + 1e-6, sum(d[k]["user"] for k in ("push.chat.sig", "push.chat.build", "push.chat.send")),
                                 "the container's CPU covers its seams")
+        # ...and is a SUPERSET of them, not their sum (2026-09-19 review, extra5-3: the glue between the seams has no CPU row of
+        # its own). Under the fake clock every read advances the clock one ms of user, so a container's delta is the reads
+        # inside it plus one: a rebuilt cycle has ten reads inside push.chat (the signature's four, the build's two, the
+        # post-build signature's two, the send's two) and a served one six, so over three of each push.chat reads
+        # 3 * 11 + 3 * 7 = 54 against seams of 21 + 3 + 6 = 30; the 24 of glue are the seams' own opening and closing reads
+        self.assertAlmostEqual(d["push.chat"]["user"], 54.0, places=6, msg="the container: its reads plus one, per cycle")
+        self.assertAlmostEqual(sum(d[k]["user"] for k in ("push.chat.sig", "push.chat.build", "push.chat.send")), 30.0, places=6,
+                               msg="the seams: the signature's 21, the build's 3, the send's 6")
+        self.assertGreater(d["push.chat"]["user"], 30.0, "a superset, not a sum")
         # the sub-seams' CPU (2026-09-18 review, low 12): static is the seam's CPU net of the deps tail, so the two sum to the
         # seam exactly. Under the fake clock a pre-build signature is three reads apart (the tail's pair inside the seam's
         # pair) and a post-build one a single read, so over six pre and three post: sig 21, deps 6, static 15, in ms of user

@@ -855,8 +855,9 @@ class _PerfStats:
                                    plus push.chat.sig.deps (by construction in _chat_sig_seam_close),
                                    push.chat's row covers its three seams plus the loop's glue (a
                                    superset, not a sum: the glue has no CPU row of its own), and push
-                                   covers the whole push, so a reader summing the nine rows counts the
-                                   signature a fourth time.
+                                   covers the whole of _push_all (the pusher's push stage wraps the
+                                   call), so a reader summing the nine rows counts the signature a
+                                   fourth time.
                                    Wall minus user minus sys over a window is the
                                    stage's wait (GIL and syscalls); the split between user and sys is
                                    tick-sampled by the kernel and scaled to the exact total, so read it
