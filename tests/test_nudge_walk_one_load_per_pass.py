@@ -150,12 +150,11 @@ rule), their override journals cleaned in the teardown; the state root rebound t
 into its session-hosts."""
 import ast
 import inspect
-import io
 import json
 import os
+import sys
 import tempfile
 import textwrap
-import tokenize
 import unittest
 from romp_load import load_source
 from pathlib import Path
@@ -223,26 +222,35 @@ def _pass_through_lines(fn, callee):
                      if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == callee)
 
 
-def _code_lines(obj):
-    """`obj`'s source with every comment and string literal (docstrings included) blanked, as (index, text) pairs indexed as
-    inspect.getsource(obj).splitlines() is: the one rule the three source censuses share. A census reads a loader's NAME in
-    code, and a mention in a comment or a docstring is not a call site (review round 2: the look's census and the replaced
-    helpers' skipped comment lines, while the gate wrapper's scan read its whole source, docstring included, so a docstring
-    mention of the loader there would have red the pin with no load). Tokenised, so a string spanning lines is blanked whole
-    and an f-string's literal parts go with it; a string's own text is blanked, never a line's code around it."""
+def _loader_sites(obj, needle):
+    """Every place `obj`'s source names a loader whose spelling contains `needle`, read from the AST: (index, line) pairs, one
+    per node, indexed as inspect.getsource(obj).splitlines() is, so a census can check adjacency against a line index. A site
+    is an ast.Name whose id contains the needle or an ast.Attribute whose dotted spelling (the value chain and the attribute,
+    `jd.load_goals_shared_or_fault`) contains it, so `jd.load_goals_shared` counts both spellings of the shared door and
+    nothing else, and a mention in a comment, a docstring or any string literal is no node of either kind and no site: the
+    one rule the source censuses share. Two calls on one line are two sites. Read from the tree and not from tokenised text
+    (review round 2, correctness-1): the first cut blanked comments and strings token by token, and on 3.10 and 3.11 the
+    tokenizer gives a whole f-string as one STRING token (3.12 and later split it into FSTRING_* parts), so a loader CALL
+    written inside an f-string was blanked with the literal and invisible on two of the five CI interpreters; ast.walk reaches
+    the JoinedStr's FormattedValue and its Call on every interpreter, and reads the f-string's literal text on none."""
     src = textwrap.dedent(inspect.getsource(obj))
-    rows = [list(ln) for ln in src.splitlines(keepends=True)]
-    blank = {tokenize.COMMENT, tokenize.STRING} | {getattr(tokenize, n) for n in
-             ("FSTRING_START", "FSTRING_MIDDLE", "FSTRING_END", "TSTRING_START", "TSTRING_MIDDLE", "TSTRING_END") if hasattr(tokenize, n)}
-    for tok in tokenize.generate_tokens(io.StringIO(src).readline):
-        if tok.type in blank:
-            (r0, c0), (r1, c1) = tok.start, tok.end
-            for r in range(r0, r1 + 1):
-                row = rows[r - 1]
-                for c in range(c0 if r == r0 else 0, c1 if r == r1 else len(row)):
-                    if row[c] not in "\r\n":
-                        row[c] = " "
-    return [(i, "".join(row)) for i, row in enumerate(rows)]
+    lines = src.splitlines()
+    out = []
+    for node in ast.walk(ast.parse(src)):
+        if isinstance(node, ast.Name):
+            spelled = node.id
+        elif isinstance(node, ast.Attribute):
+            parts, v = [node.attr], node.value
+            while isinstance(v, ast.Attribute):
+                parts.append(v.attr)
+                v = v.value
+            parts.append(v.id if isinstance(v, ast.Name) else "...")
+            spelled = ".".join(reversed(parts))
+        else:
+            continue
+        if needle in spelled:
+            out.append((node.lineno - 1, lines[node.lineno - 1]))
+    return sorted(out)
 
 
 def _caller(frame, boundary):
@@ -789,25 +797,30 @@ class TheRecorderNamesTheAsker(unittest.TestCase):
 class TheCountersOneSite(unittest.TestCase):
     def test_the_walk_has_one_shared_load_site_and_the_counter_is_bumped_beside_it(self):
         """A census over the look's own source (the gate decorator unwraps): one shared load by either spelling of the shared
-        door (`jd.load_goals_shared` is a prefix of both), counted over code lines (_code_lines: comments and strings blanked,
-        so a mention in a comment or a docstring is not a site), the counter bumped on the line after it so the two cannot
-        drift, and the gate around the look reads no store (a skipped look needs no data), scanned by the same rule."""
-        at = [i for i, ln in _code_lines(km._auto_nudge_session) if "jd.load_goals_shared" in ln]
+        door (`jd.load_goals_shared` is a prefix of both), read from the AST (_loader_sites: a name in code is a site, a
+        mention in a comment, a docstring or a string is not), the counter bumped on the line after it so the two cannot
+        drift, and the gate around the look reads no store (a skipped look needs no data), scanned by the same rule. The bump
+        is read as a statement too, an augmented `+= 1` on `_NUDGE_WALK_STATS["loads"]`, never as a line of text (review round
+        2, correctness-3: a comment quoting the statement counted as a second bump)."""
+        at = [i for i, _ln in _loader_sites(km._auto_nudge_session, "jd.load_goals_shared")]
         self.assertEqual(len(at), 1, "one shared load in the walk's look, by either spelling of the shared door: a second call site is "
                                      "a second load per look (condition 7, the walk's bound)")
-        lines = inspect.getsource(km._auto_nudge_session).splitlines()
-        bump = [i for i, ln in enumerate(lines) if '_NUDGE_WALK_STATS["loads"] += 1' in ln]
-        self.assertEqual(len(bump), 1, "the counter is bumped once")
+        tree = ast.parse(textwrap.dedent(inspect.getsource(km._auto_nudge_session)))
+        bump = [n.lineno - 1 for n in ast.walk(tree)
+                if isinstance(n, ast.AugAssign) and isinstance(n.op, ast.Add) and isinstance(n.target, ast.Subscript)
+                and isinstance(n.target.value, ast.Name) and n.target.value.id == "_NUDGE_WALK_STATS"
+                and isinstance(n.target.slice, ast.Constant) and n.target.slice.value == "loads"]
+        self.assertEqual(len(bump), 1, "the counter is bumped once, by one `_NUDGE_WALK_STATS[\"loads\"] += 1` statement")
         self.assertEqual(bump[0], at[0] + 1, "on the line after the load")
-        gated = [ln.strip() for _i, ln in _code_lines(km._nudge_look_gated) if "load_goals" in ln]
+        gated = [ln.strip() for _i, ln in _loader_sites(km._nudge_look_gated, "load_goals")]
         self.assertEqual(gated, [], "the gate around the look reads no store: a skipped look loads through neither mechanism: %s" % "; ".join(gated))
         self.assertIn("loads", km._NUDGE_WALK_STATS, "the counter is a key of the served block")
 
     def test_the_replaced_helpers_sources_load_no_store(self):
         """The road limit as a check: the fixture replaces the callables in REPLACED_KM (less the two data names), REPLACED_JD
         and Sessions.backend_for, so a loader planted in any of their real bodies never runs under the harness and the
-        execution witness cannot see it; this scan of each real source for either door's name (over code lines, _code_lines)
-        is the only witness for those bodies. One level deep, the helper's own source: _session_awaiting reaches two bare-door
+        execution witness cannot see it; this scan of each real source for either door's name (by the AST, _loader_sites, on
+        every interpreter) is the only witness for those bodies. One level deep, the helper's own source: _session_awaiting reaches two bare-door
         readers (_owned_yield_why and _session_stamp_read) only under stamp=True, which the walk's call does not pass, so
         the walk's road does not reach them; a helper the fixture does not replace is covered by execution instead."""
         targets = ([(k, getattr(km, k)) for k in REPLACED_KM if k not in REPLACED_DATA]
@@ -815,9 +828,35 @@ class TheCountersOneSite(unittest.TestCase):
                    + [("Sessions.backend_for", km.Sessions.backend_for)])
         self.assertEqual(len(targets), 21, "the census covers every replaced callable")
         for label, obj in targets:
-            hits = [ln.strip() for _i, ln in _code_lines(obj) if "load_goals" in ln]
+            hits = [ln.strip() for _i, ln in _loader_sites(obj, "load_goals")]
             self.assertEqual(hits, [], "%s: a loader planted in a replaced helper never runs under the fixture, so this scan is the only "
                                        "witness for its body: %s" % (label, "; ".join(hits)))
+
+    def test_the_census_reads_code_not_prose_and_sees_a_call_inside_an_f_string_on_every_interpreter(self):
+        """The rule the censuses share, exercised (review round 2, tests-3: no scanned source carried a mention of a loader, so
+        the rule was held by no assertion), over three local samples that are never called (inspect reads them; no store is
+        touched and no recorder window entered): the loader named in a docstring, a string literal and a comment and nowhere
+        in code is no site; one call is one site; one call inside an f-string is one site on every interpreter (correctness-1:
+        the tokenizer gives 3.10 and 3.11 one STRING token for a whole f-string and 3.12 and later its FSTRING_* parts, and a
+        census over blanked tokens read the call on the later ones only; the AST census does not consult the tokenizer)."""
+        def mentions_only(sid):
+            """The look's read is jd.load_goals_shared_or_fault(sid), named here and in no code line of this body."""
+            note = "jd.load_goals_shared_or_fault(sid) in a string literal"   # jd.load_goals_shared_or_fault(sid) in a comment
+            return note
+
+        def one_call(sid):
+            store, fault = jd.load_goals_shared_or_fault(sid)
+            return store, fault
+
+        def in_fstring(sid):
+            return f"{jd.load_goals_shared_or_fault(sid)}"
+
+        self.assertEqual(_loader_sites(mentions_only, "load_goals"), [],
+                         "a loader named in a docstring, a string literal or a comment is not a site")
+        self.assertEqual(len(_loader_sites(one_call, "load_goals")), 1, "one call is one site: %r" % _loader_sites(one_call, "load_goals"))
+        self.assertEqual(len(_loader_sites(in_fstring, "load_goals")), 1,
+                         "a call inside an f-string is one site on every interpreter, this one %s: %r"
+                         % (sys.version.split()[0], _loader_sites(in_fstring, "load_goals")))
 
 
 class Docs(unittest.TestCase):
