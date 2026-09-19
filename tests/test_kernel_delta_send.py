@@ -1186,6 +1186,76 @@ class ByteIdenticalFrames(unittest.TestCase):
                               "the failure names the displaced wrapper: %s" % msg)
                 self.assertNotIn("equals every stat intercepted", msg, "not the equality")
 
+    def test_a_marker_carrying_wrapper_that_does_not_count_once_fails_the_premise_not_a_count(self):
+        """Constructed case 4, for the fourth premise's second half (the closing check on the exactness world, 2026-09-19).
+        The marker half alone has a blind family: functools.wraps copies __dict__, so any wraps copy of the kernel's
+        wrapper carries _romp_sig_counting and passes the marker check whether or not it counts, and a class attribute
+        holding the thread-local passes it on a callable that is no function at all. Three such worlds on each of the
+        four wrappers: a wraps spy delegating to the builtin (the marker rides, the count does not move), a wraps copy
+        that counts once itself and then calls the kernel's wrapper (the count moves by 2), and a callable instance
+        whose class holds the marker and whose call delegates to the builtin (the count does not move). Each is refused
+        by the counted-call half before any signature runs, with the wrapper's name and the count that moved, and not
+        by the equality, which with the marker half alone read two numbers and no reason for the first two kinds on
+        os.stat at the closing check. Closed on all four wrappers, posix.lstat included, where the equality alone would
+        detect nothing (its count does not move when it is displaced). The accept case beside them: an equivalent
+        wrapper, a wraps copy that delegates to the kernel's wrapper itself, the shape a _StatInterceptor wrapper left
+        behind would have, moves the accumulator by exactly 1 and the world runs to its end (the exactness equality is
+        the exactness test's and is not asserted here). Two neighbours are separate premises this test does not build:
+        a wrapper that counts once but stands on the WRONG builtin (os.stat delegating to lstat), and the DirEntry doors
+        (_entry_stat and its twins). Deleting the counted-call assertion from _stats_world reds the twelve refuse legs
+        here with no AssertionError raised (the world runs to its end and returns, since the equality lives in the
+        exactness test) while the four displaced legs and the accept leg stay green."""
+        import functools
+        tl = km._CHAT_SIG_TL
+
+        def spy_of(fn):                                    # a wraps copy over the builtin: the marker rides, nothing counts
+            builtin = fn.__wrapped__
+
+            @functools.wraps(fn)
+            def spy(path, *a, **kw):
+                return builtin(path, *a, **kw)
+            return spy
+
+        def twice_of(fn):                                  # counts once itself, then the kernel's wrapper counts again
+            @functools.wraps(fn)
+            def twice(path, *a, **kw):
+                if tl.active:
+                    tl.stats += 1
+                return fn(path, *a, **kw)
+            return twice
+
+        class Marked:                                      # the marker as a class attribute on a callable instance
+            _romp_sig_counting = tl
+
+            def __init__(self, builtin):
+                self.builtin = builtin
+
+            def __call__(self, path, *a, **kw):
+                return self.builtin(path, *a, **kw)
+
+        def equivalent_of(fn):                             # the accept case: a wraps copy delegating to the kernel's wrapper
+            @functools.wraps(fn)
+            def same(path, *a, **kw):
+                return fn(path, *a, **kw)
+            return same
+        kinds = (("a wraps spy over the builtin", spy_of), ("a wraps copy that counts twice", twice_of),
+                 ("the marker on a class attribute", lambda fn: Marked(fn.__wrapped__)))
+        for mod, name in ((os, "stat"), (os, "lstat"), (posix, "stat"), (posix, "lstat")):
+            for kind, make in kinds:
+                with self.subTest(wrapper="%s.%s" % (mod.__name__, name), kind=kind):
+                    fn = getattr(mod, name)
+                    self.assertIs(getattr(fn, "_romp_sig_counting", None), tl, "premise: the kernel's wrapper is in place before the plant")
+                    with mock.patch.object(mod, name, make(fn)):
+                        with self.assertRaises(AssertionError) as cm:
+                            self._stats_world()
+                    msg = str(cm.exception)
+                    self.assertIn("premise: the kernel's counting wrapper on %s.%s counts" % (mod.__name__, name), msg,
+                                  "the failure names the wrapper that did not count once: %s" % msg)
+                    self.assertNotIn("equals every stat intercepted", msg, "not the equality")
+        with self.subTest(wrapper="os.stat", kind="an equivalent wrapper, accepted"):
+            with mock.patch.object(os, "stat", equivalent_of(os.stat)):
+                self._stats_world()                        # returns: both halves of premise 4 hold, and the world runs
+
     REG_PEERS = ["11111111-2222-4333-8444-0000000009%02d" % i for i in range(20, 30)]   # the stats world's registry peers
 
     def _world_files(self):
