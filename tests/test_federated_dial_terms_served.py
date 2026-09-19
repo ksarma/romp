@@ -81,7 +81,7 @@ def _transcript(sid, tag, cwd, pairs):
 def _kernel(lab, name, port, token, sessions, bin_dir=BIN):
     """Boot one hermetic kernel: its own state root and dist, and `sessions` [(sid, name, tag)] with closed-turn transcripts.
     `bin_dir` is the checkout whose bin/romp-kernel runs: this one by default; another vintage's for a mixed-build lab
-    (tests/test_federated_capability_corners.py boots an older remote or hub against this checkout's pages)."""
+    (tests/test_federated_capability_corners_served.py boots an older remote or hub against this checkout's pages)."""
     state = os.path.join(lab, name, "xdg", "romp")
     claude = os.path.join(lab, name, "claude")
     cwd = os.path.join(lab, name, "proj")

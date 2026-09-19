@@ -249,7 +249,7 @@ class _Corner(unittest.TestCase):
         if cls.hub_root:
             src = os.path.join(cls.hub_root, "vscode-extension", "dist")
             if not os.path.isfile(os.path.join(src, "federation.js")):
-                raise unittest.SkipTest("no prebuilt dist under %s (run node esbuild.js there first)" % cls.hub_root)
+                raise unittest.SkipTest("no prebuilt dist under %s (build the extension there first)" % cls.hub_root)
             lab_dist.copy_prebuilt(src, os.path.join(cls.lab, "dist"))
         else:
             lab_dist.copy_dist(os.path.join(cls.lab, "dist"))

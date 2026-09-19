@@ -12,7 +12,7 @@ the Outline filed a `delta-unapplied` row per dropped frame and posted a needSlo
 answer (86 rows in 2.4 minutes on the user's phone), and the Waiting pane dropped the same frames silently.
 Now federation.ts announces caps=feedDelta on every remote dial (REMOTE_DIAL_CAPS) and applies a remote host's
 feedDelta onto the raw frame it holds for that host (and, since the same day, reassembles a remote's view-delta
-slot patches per conn, so a kernel that ignores the term is decoded too: tests/test_federated_capability_corners.py).
+slot patches per conn, so a kernel that ignores the term is decoded too: tests/test_federated_capability_corners_served.py).
 
 Five observables, green with the change:
   1. each relay dial URL (window.__dials) carries caps=feedDelta;
