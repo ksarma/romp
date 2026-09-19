@@ -10,9 +10,10 @@ sends, and that other parts of Romp make requests of their own) and points here,
 docs/reference.md's subsection "Requests Romp makes on its own" carries what this census finds
 today, pinned equal to ALLOWLIST below so the prose and the code cannot drift apart (the Docs case).
 
-What is read. Every regular Python file under kernel/, cli/ and postal/, and under bin/ the regular
-files with a python shebang; bin/'s symlinks resolve into those three directories and are skipped
-(pinned: every symlink's target is a scanned file). Each file is parsed and every call, list literal
+What is read. Every regular Python file under kernel/, cli/ and postal/ at any depth, and under bin/
+the regular files with a python shebang; bin/'s symlinks resolve into those three directories and are
+skipped (pinned: every symlink's target is a scanned file), and so are __pycache__ and symlinked
+directories (pinned on a planted tree). Each file is parsed and every call, list literal
 and subprocess argument is matched against FORMS, a literal tuple, so a reader compares the form space
 word for word with the ruling that asked for it; the FormSpace case plants one instance of every form
 in a synthetic module and shows each found, so a matcher silently dropped from the scanner reds by
@@ -31,7 +32,13 @@ command run over them), `npm install` (the bundle build's repair) and `pip insta
 Codex runtime). A reader asking what leaves the machine needs those too, and leaving them out would
 repeat the guide's mistake, so the tool class is in the space with this paragraph as the reason. The
 same words are read inside shell scripts the code hands to `bash -c` (the release update's script
-fetches a tag) and in bin/'s scripts.
+fetches a tag) and in bin/'s scripts. A verifier's probe of the scanner at the consolidation of the
+neighbours added the forms the code does not use today but a reader of the ruling's list would not
+think of, so each is refused by name if it arrives rather than passed unseen: urlretrieve, a datagram
+sendto, the stdlib protocol clients (smtplib and its kin), a subclass of a connection class (its
+constructor read as the base's dial), `git remote update` and `git submodule update`, and a browser
+opened on a URL (loopback when the URL is the dashboard's own, which is how the kernel's one such call
+reads).
 
 What is outside the space, by construction and stated here rather than left implicit. A command
 whose text arrives at run time is not in the code and cannot be read from it: the apiKeyHelper
@@ -40,9 +47,14 @@ watch predicates a user registers (`romp watch`), the folder and terminal opener
 configures. Programs Romp starts that make requests of their own: `claude` (the agents' turns, the
 judge pipeline's calls, kernel/judge.py's `claude -p`, and the login flow), `codex` (Codex sessions
 through the Codex SDK, and the judges when the engine is set to Codex, kernel/judge.py's `codex exec`)
-and `install.sh` inside the release update. A browser opened on the dashboard's own 127.0.0.1
-address. Directories outside the runtime: tests/, scripts/, tools/, assets/, ui/, hooks/ and the
-repo-root installers, which are the maintainers' and the installer's, not the kernel's. One connect
+and `install.sh` inside the release update. Directories outside the runtime: tests/, scripts/, tools/,
+assets/, ui/, hooks/ and the repo-root installers, which are the maintainers' and the installer's, not
+the kernel's. A callee the code does not name as a call cannot be read as one: a dial function bound
+to a name or handed to another call, a getattr on a network module, an importlib.import_module or
+__import__ of one (or of a name the constants do not spell). Those are not passed: the bound-reference
+and dynamic-dispatch forms red on the reference itself, naming it, and the two the tree has today (the
+upload's deadline connection classes handed to urllib's do_open) are in the allowlist. A callee
+assembled from string pieces at run time is the one shape left outside, stated here. One connect
 that sends nothing: kernel/kernel.py's `_primary_addr` connects a UDP socket to a documentation
 address to learn the local address the routing table picks; a UDP connect sends no datagram, the
 scanner classes it route-probe by the socket's SOCK_DGRAM constructor, and ROUTE_PROBES pins it in
@@ -54,7 +66,8 @@ for-loop iterables, a function's return values and, for a parameter, the argumen
 (each a hop, six hops at most; anything unresolved renders as a placeholder). The site is loopback
 only when every rendering has 127.0.0.1 as its host, a bare host or a URL's; a placeholder host, a
 `localhost`, or a lookalike such as `127.0.0.1.example` is outbound, the safe side. A tool form is
-outbound unless it is curl or wget aimed at 127.0.0.1 alone. Every outbound site must match an
+outbound unless it is curl or wget aimed at 127.0.0.1 alone; a bound reference and a dynamic dispatch
+are outbound with no host to resolve. Every outbound site must match an
 ALLOWLIST entry by file and function (the outermost def, with its class when it is a method) and
 carry a kind the entry names, else the census reds naming the file, the line and the call; every entry
 must match at least one site, else the census reds naming the entry. The same two conditions hold
@@ -64,6 +77,7 @@ import ast
 import itertools
 import os
 import re
+import shutil
 import tempfile
 import unittest
 from collections import namedtuple
@@ -97,6 +111,14 @@ FORMS = (
     ("open_connection", "asyncio.open_connection(host, port, ...)"),
     ("http-library", "any call into requests, httpx, aiohttp or urllib3"),
     ("websocket", "websockets.connect(url), websocket.create_connection(url) or websocket.WebSocketApp(url)"),
+    ("urlretrieve", "urllib.request.urlretrieve(url, filename)"),
+    ("socket.sendto", "s.sendto(data, (host, port)) or s.sendto(data, flags, (host, port)) on a socket bound from "
+                      "socket.socket(...): a datagram leaves, whatever the socket's type"),
+    ("stdlib-client", "a client of a stdlib protocol module built on a host or uri: smtplib.SMTP, SMTP_SSL or LMTP, "
+                      "ftplib.FTP or FTP_TLS, poplib.POP3 or POP3_SSL, imaplib.IMAP4 or IMAP4_SSL, nntplib.NNTP, "
+                      "telnetlib.Telnet, xmlrpc.client.ServerProxy"),
+    ("webbrowser", "webbrowser.open(url), open_new(url) or open_new_tab(url): a browser started on a URL, loopback when "
+                   "the URL is the dashboard's own 127.0.0.1 address"),
     ("tool", "a command line, as a list literal anywhere or as a subprocess call's argv, that runs a network "
              "tool: curl, wget, ssh, scp, sftp, rsync or gh; git with ls-remote, fetch, push, pull or clone "
              "(also through the _git_out and _git_net_out wrappers); npm, npx, pnpm or yarn with install, ci, "
@@ -105,13 +127,22 @@ FORMS = (
                      "os.popen or asyncio.create_subprocess_shell) whose script text, as far as its constants "
                      "reach, spells one of those tool commands in command position"),
     ("GIT_SSH_COMMAND", "a subprocess call whose env= spells GIT_SSH_COMMAND (git about to ride ssh)"),
+    ("bound-reference", "a dial function or connection class above, or a subclass of one defined in the module, named "
+                        "anywhere but as the callee of a call: bound to a name, passed as an argument (functools.partial, "
+                        "a handler's do_open), stored for a later call; outbound, since the call it feeds cannot be read"),
+    ("dynamic-dispatch", "getattr(<network module>, <name>) where the name is not a constant or spells a dial function, "
+                         "and importlib.import_module or __import__ of a network module by name or of a name the "
+                         "constants do not spell; outbound, since the callee is a string the scanner cannot read as a "
+                         "call"),
 )
 FORM_KINDS = tuple(kind for kind, _ in FORMS)
 DIAL_KINDS = ("urlopen", "Request", "opener.open", "HTTPConnection", "HTTPSConnection", "create_connection",
-              "socket.connect", "wrap_socket", "open_connection", "http-library", "websocket")
+              "socket.connect", "wrap_socket", "open_connection", "http-library", "websocket", "urlretrieve",
+              "socket.sendto", "stdlib-client", "webbrowser")
 
 TOOL_COMMANDS = ("curl", "wget", "ssh", "scp", "sftp", "rsync", "gh")
 NET_GIT = ("ls-remote", "fetch", "push", "pull", "clone")
+NET_GIT_PAIRS = (("remote", "update"), ("submodule", "update"))     # two words in order: `git remote update` fetches
 NPM_HEADS = ("npm", "npx", "pnpm", "yarn")
 NET_NPM = ("install", "ci", "add", "update")
 PIP_HEADS = ("pip", "pip3")
@@ -126,11 +157,29 @@ SHELL_TEXT_CALLS = ("subprocess.getoutput", "subprocess.getstatusoutput", "async
 HTTP_LIBRARIES = ("requests", "httpx", "aiohttp", "urllib3")
 WEBSOCKET_DIALS = ("websockets.connect", "websockets.client.connect", "websockets.sync.client.connect",
                    "websocket.create_connection", "websocket.WebSocketApp", "websocket.WebSocket")
+STDLIB_CLIENTS = ("smtplib.SMTP", "smtplib.SMTP_SSL", "smtplib.LMTP", "ftplib.FTP", "ftplib.FTP_TLS", "poplib.POP3",
+                  "poplib.POP3_SSL", "imaplib.IMAP4", "imaplib.IMAP4_SSL", "nntplib.NNTP", "telnetlib.Telnet",
+                  "xmlrpc.client.ServerProxy")
+WEBBROWSER_OPENS = ("webbrowser.open", "webbrowser.open_new", "webbrowser.open_new_tab")
+SUBCLASSABLE = ("http.client.HTTPConnection", "http.client.HTTPSConnection") + STDLIB_CLIENTS
+# the dial functions a bound reference or a dynamic dispatch can reach; a name under an http library counts too
+DIAL_FUNCTIONS = (("urllib.request.urlopen", "urllib.request.Request", "urllib.request.urlretrieve", "socket.create_connection",
+                   "asyncio.open_connection", "ssl.wrap_socket") + SUBCLASSABLE + WEBSOCKET_DIALS + WEBBROWSER_OPENS)
+NETWORK_MODULE_ROOTS = ("urllib", "http", "socket", "ssl", "asyncio", "websockets", "websocket", "smtplib", "ftplib",
+                        "poplib", "imaplib", "nntplib", "telnetlib", "xmlrpc", "webbrowser") + HTTP_LIBRARIES
 STR_METHODS = ("rstrip", "strip", "lstrip", "lower", "upper", "format", "replace", "removesuffix",
                "removeprefix", "encode", "decode", "expanduser", "resolve")
 UNKNOWN = "<?>"
 
 Site = namedtuple("Site", "file line function kind klass tool text")     # klass: loopback | outbound | route-probe
+
+
+def _is_dial(name):
+    return name in DIAL_FUNCTIONS or (name.split(".")[0] in HTTP_LIBRARIES and "." in name)
+
+
+def _network_module(name):
+    return name.split(".")[0] in NETWORK_MODULE_ROOTS
 
 
 # ---------------------------------------------------------------------------------------------------
@@ -160,7 +209,12 @@ def tool_in(words):
         return head
     if head == "git":
         sub = [w for w in rest if w in NET_GIT]
-        return "git " + sub[0] if sub else None
+        if sub:
+            return "git " + sub[0]
+        for first, second in NET_GIT_PAIRS:
+            if first in rest and second in rest[rest.index(first) + 1:]:
+                return "git %s %s" % (first, second)
+        return None
     if head in NPM_HEADS:
         sub = [w for w in rest if w in NET_NPM]
         return head + " " + sub[0] if sub else None
@@ -235,6 +289,17 @@ class _Module:
             elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
                 for a in node.names:
                     self.aliases[a.asname or a.name] = node.module + "." + a.name
+        for _ in range(4):                                     # a subclass of a subclass: a bounded fixpoint
+            grew = False
+            for node in ast.walk(self.tree):
+                if isinstance(node, ast.ClassDef) and node.name not in self.aliases:
+                    for base in node.bases:
+                        if self.canonical(base) in SUBCLASSABLE:
+                            self.aliases[node.name] = self.canonical(base)   # the subclass's constructor is the base's dial
+                            grew = True
+                            break
+            if not grew:
+                break
         self.functions = {}
         for node in self.tree.body:
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -299,8 +364,11 @@ class _Module:
             if isinstance(t, ast.Name):
                 add(t.id, kind, expr)
             elif isinstance(t, (ast.Tuple, ast.List)):
-                for e in t.elts:
-                    targets(e, "unknown", None)
+                for i, e in enumerate(t.elts):
+                    if kind == "iter" and isinstance(e, ast.Name):
+                        add(e.id, "iter-elt", (expr, i))       # `for mod, name in PAIRS`: the i-th item of each pair
+                    else:
+                        targets(e, "unknown", None)
             elif isinstance(t, ast.Starred):
                 targets(t.value, "unknown", None)
 
@@ -319,6 +387,9 @@ class _Module:
                     targets(child.target, "value", child.value)
                 elif isinstance(child, (ast.For, ast.AsyncFor)):
                     targets(child.target, "iter", child.iter)
+                elif isinstance(child, (ast.ListComp, ast.SetComp, ast.GeneratorExp, ast.DictComp)):
+                    for g in child.generators:
+                        targets(g.target, "iter", g.iter)
                 elif isinstance(child, (ast.With, ast.AsyncWith)):
                     for item in child.items:
                         if item.optional_vars is not None:
@@ -433,6 +504,8 @@ class _Module:
                 for kind, value in bindings:
                     if kind == "unknown":
                         out.add(UNKNOWN)
+                    elif kind == "iter-elt":
+                        out |= self._render_item(value[0], value[1], scopes, hops - 1, seen)
                     else:
                         out |= self.render(value, scopes, hops - 1, seen)
                 return out
@@ -454,6 +527,27 @@ class _Module:
                 return out or {UNKNOWN}
             return {UNKNOWN}
         return {UNKNOWN}
+
+    def _render_item(self, container, index, scopes, hops, seen):
+        """The strings the index-th item of each element of a literal container can spell (`for mod, name in PAIRS`
+        with PAIRS a tuple of pairs), the container followed through a name's single binding."""
+        node = container
+        for _ in range(max(hops, 1)):
+            if not isinstance(node, ast.Name):
+                break
+            values = [v for k, v in (self.lookup(node.id, scopes) or []) if k == "value"]
+            if len(values) != 1:
+                return {UNKNOWN}
+            node = values[0]
+        if not isinstance(node, (ast.Tuple, ast.List, ast.Set)):
+            return {UNKNOWN}
+        out = set()
+        for elt in node.elts:
+            if isinstance(elt, (ast.Tuple, ast.List)) and index < len(elt.elts):
+                out |= self.render(elt.elts[index], scopes, hops, seen)
+            else:
+                out.add(UNKNOWN)
+        return out or {UNKNOWN}
 
     def _render_call(self, call, scopes, hops, seen):
         name = self.canonical(call.func)
@@ -511,7 +605,7 @@ class _Module:
             out = []
             if bindings is not None:
                 for kind, value in bindings:
-                    if kind != "unknown":
+                    if kind in ("value", "iter"):
                         out += self.argv_alternatives(value, scopes, hops - 1, seen)
                 return out
             param = self.parameter_of(expr.id, scopes)
@@ -614,7 +708,7 @@ def _env_spells_git_ssh(module, expr, scopes, hops=3):
             return True
         if isinstance(node, ast.Name) and hops > 0:
             for kind, value in (module.lookup(node.id, scopes) or []):
-                if kind != "unknown" and value is not expr and _env_spells_git_ssh(module, value, scopes, hops - 1):
+                if kind in ("value", "iter") and value is not expr and _env_spells_git_ssh(module, value, scopes, hops - 1):
                     return True
     return False
 
@@ -682,6 +776,21 @@ def scan_module(rel, src):
                 dial(node, "urlopen", _arg(node, 0, "url"))
             elif name == "urllib.request.Request":
                 dial(node, "Request", _arg(node, 0, "url"))
+            elif name == "urllib.request.urlretrieve":
+                dial(node, "urlretrieve", _arg(node, 0, "url"))
+            elif name in STDLIB_CLIENTS:
+                dial(node, "stdlib-client", _arg(node, 0, "host", "uri"))
+            elif name in WEBBROWSER_OPENS:
+                dial(node, "webbrowser", _arg(node, 0, "url"))
+            elif name == "getattr" and node.args:
+                target = m.canonical(node.args[0])
+                if target and _network_module(target):
+                    attr = node.args[1] if len(node.args) > 1 else None
+                    if not (isinstance(attr, ast.Constant) and isinstance(attr.value, str)) or _is_dial(target + "." + attr.value):
+                        add(node, "dynamic-dispatch", "outbound", "getattr")
+            elif name in ("importlib.import_module", "__import__") and node.args:
+                if any(UNKNOWN in n or _network_module(n) for n in m.render(node.args[0], scopes)):
+                    add(node, "dynamic-dispatch", "outbound", name.rsplit(".", 1)[-1])
             elif name in ("http.client.HTTPConnection", "http.client.HTTPSConnection"):
                 dial(node, name.rsplit(".", 1)[1], _arg(node, 0, "host"))
             elif name == "socket.create_connection":
@@ -700,6 +809,9 @@ def scan_module(rel, src):
             elif isinstance(node.func, ast.Attribute) and node.func.attr == "open" and bound_from(
                     node.func.value, scopes, ("urllib.request.build_opener",)):
                 dial(node, "opener.open", _arg(node, 0, "fullurl", "url"))
+            elif isinstance(node.func, ast.Attribute) and node.func.attr == "sendto" and node.args:
+                if socket_ctor(node.func.value, scopes) is not None:
+                    dial(node, "socket.sendto", _first_of_pair(_arg(node, len(node.args) - 1, "address")))
             elif isinstance(node.func, ast.Attribute) and node.func.attr in ("connect", "connect_ex"):
                 ctor = socket_ctor(node.func.value, scopes)
                 if ctor is not None:
@@ -733,6 +845,20 @@ def scan_module(rel, src):
                         tool = _words_tool([{"git"}] + payload)
                         if tool:
                             add(node, "tool", "outbound", tool)
+        elif isinstance(node, (ast.Attribute, ast.Name)):
+            # a dial function named anywhere but as a callee: bound to a name, handed to a call, stored. The call it
+            # feeds cannot be read here, so the reference itself is the site (a verifier planted the shapes and showed
+            # them passing unseen); a subclass's base is read as the subclass's constructor instead
+            name = m.canonical(node)
+            if name and _is_dial(name):
+                parent = m.parent.get(node)
+                if isinstance(parent, ast.Call) and parent.func is node:
+                    continue
+                if isinstance(parent, ast.ClassDef) and node in parent.bases:
+                    continue
+                if isinstance(parent, ast.Attribute):
+                    continue
+                add(node, "bound-reference", "outbound", name)
         elif isinstance(node, (ast.List, ast.BinOp)):
             # a command line built as a literal anywhere (an assignment, a return): the argv the tunnel
             # supervisor spawns is built by _tunnel_argv and spawned elsewhere
@@ -795,21 +921,24 @@ def _tool_klass(tool, texts):
 
 
 def scope_files(root):
-    """The (relative path, absolute path) of every file the Python census reads."""
+    """The (relative path, absolute path) of every file the Python census reads: every regular .py file under each
+    scope directory at any depth, plus under bin/ the regular files with a python shebang; symlinks (files and
+    directories) and __pycache__ skipped. Sorted by path."""
     out = []
     for d in SCOPE_DIRS:
         base = os.path.join(root, d)
         if not os.path.isdir(base):
             continue
-        for name in sorted(os.listdir(base)):
-            path = os.path.join(base, name)
-            if os.path.islink(path) or not os.path.isfile(path):
-                continue
-            if name.endswith(".py"):
-                out.append((d + "/" + name, path))
-            elif d == "bin" and _shebang(path).find("python") >= 0:
-                out.append((d + "/" + name, path))
-    return out
+        for dirpath, dirnames, filenames in os.walk(base):
+            dirnames[:] = sorted(n for n in dirnames if n != "__pycache__" and not os.path.islink(os.path.join(dirpath, n)))
+            for name in sorted(filenames):
+                path = os.path.join(dirpath, name)
+                if os.path.islink(path) or not os.path.isfile(path):
+                    continue
+                rel = os.path.relpath(path, root).replace(os.sep, "/")
+                if name.endswith(".py") or (d == "bin" and _shebang(path).find("python") >= 0):
+                    out.append((rel, path))
+    return sorted(out)
 
 
 def _shebang(path):
@@ -1058,6 +1187,12 @@ ALLOWLIST = (
           "POST one public export to the configured receiver",
           "only when the user runs romp perf upload and confirms (or --yes); the receiver from --receiver, "
           "ROMP_PERF_RECEIVER or ~/.config/romp/perf-receiver, none shipping", DOC_UPLOAD),
+    Entry("cli/perf_upload.py", "_DeadlineHTTPHandler.http_open", ("bound-reference",),
+          "the deadline HTTP connection class handed to urllib's do_open, which dials the receiver's host with it",
+          "the upload's opener alone: post builds it for the one request", DOC_UPLOAD),
+    Entry("cli/perf_upload.py", "_DeadlineHTTPSHandler.https_open", ("bound-reference",),
+          "the deadline HTTPS connection class handed to urllib's do_open (TLS by urllib's default verified context)",
+          "the upload's opener alone: post builds it for the one request", DOC_UPLOAD),
     Entry("kernel/kernel.py", "_latest_release_tag", ("tool",),
           "git ls-remote --tags of the release remote, for the update check's newest-release notice",
           "_update_check: off under ROMP_UPDATE_CHECK=off or the update mode off; a release clone only", DOC_UPDATE),
@@ -1223,11 +1358,36 @@ class Census(unittest.TestCase):
         self.assertGreater(len([s for s in self.shell if s.klass == "loopback"]), 0, "bin/romp's curls to the kernel")
         self.assertGreater(len([s for s in self.shell if s.klass == "outbound"]), 0)
         for kind in ("urlopen", "Request", "HTTPConnection", "create_connection", "socket.connect", "tool",
-                     "shell-string", "GIT_SSH_COMMAND", "opener.open"):
+                     "shell-string", "GIT_SSH_COMMAND", "opener.open", "bound-reference", "webbrowser"):
             self.assertTrue(any(s.kind == kind for s in self.sites), "no site of kind %s in the tree" % kind)
         files = {rel for rel, _ in scope_files(ROOT)}
         self.assertTrue({"kernel/kernel.py", "kernel/sdk_backend.py", "cli/perf_upload.py", "postal/postal_service.py",
                          "bin/romp-session-host"} <= files, sorted(files))
+
+    def test_scope_files_walks_subdirectories_and_skips_symlinks_and_pycache(self):
+        # a verifier found the census reading one level of each scope directory (os.listdir), so a request site in a
+        # future subdirectory was silently outside it; every scope directory is walked, and the walk is pinned here
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, True)
+
+        def put(rel, text="x = 1\n"):
+            path = os.path.join(root, rel)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(text)
+        put("kernel/top.py")
+        put("kernel/sub/nested.py", "import urllib.request\ndef f():\n    return urllib.request.urlopen('https://example.invalid/n')\n")
+        put("kernel/__pycache__/stale.py")
+        put("bin/tool", "#!/usr/bin/env python3\nx = 1\n")
+        put("bin/script", "#!/usr/bin/env bash\ncurl -s http://127.0.0.1:1/\n")
+        put("bin/sub/deep.py")
+        os.makedirs(os.path.join(root, "cli"))
+        os.symlink(os.path.join(root, "kernel", "top.py"), os.path.join(root, "bin", "romp-top"))
+        os.symlink(os.path.join(root, "kernel", "sub"), os.path.join(root, "kernel", "linked"))
+        self.assertEqual([rel for rel, _ in scope_files(root)],
+                         ["bin/sub/deep.py", "bin/tool", "kernel/sub/nested.py", "kernel/top.py"])
+        found = [(s.file, s.line, s.kind, s.klass) for s in scan_tree(root)]
+        self.assertEqual(found, [("kernel/sub/nested.py", 3, "urlopen", "outbound")], "the nested site is read")
 
     def test_every_bin_symlink_resolves_into_a_scanned_file(self):
         scanned = {os.path.realpath(p) for _, p in scope_files(ROOT)}
@@ -1263,6 +1423,10 @@ import sys
 import urllib.request
 from urllib import request as ur
 import http.client
+import importlib
+import functools
+import smtplib
+import webbrowser
 import requests
 import websockets
 import websocket
@@ -1365,6 +1529,44 @@ def f_system():
 def f_star(*argv):
     return urllib.request.urlopen(*argv)                                        # L26 urlopen, an unknown shape: outbound
 
+def f_retrieve():
+    return urllib.request.urlretrieve("https://example.invalid/f", "/x/f")     # L27 urlretrieve outbound
+
+def f_sendto():
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    s.sendto(b"x", ("example.invalid", 9))                                      # L28 socket.sendto outbound (a datagram leaves)
+
+def f_smtp():
+    return smtplib.SMTP("example.invalid", 25)                                  # L29 stdlib-client outbound
+
+def f_browser():
+    webbrowser.open("https://example.invalid/")                                 # L30 webbrowser outbound
+
+class _Deadline(http.client.HTTPSConnection):
+    pass
+
+def f_subclass():
+    return _Deadline("example.invalid")                                         # L31 HTTPSConnection through a subclass
+
+def f_bound():
+    fn = urllib.request.urlopen                                                 # L32 bound-reference: a name bound to a dial
+    return fn("https://example.invalid/b")
+
+def f_handed(do_open):
+    return do_open(_Deadline, "x")                                              # L33 bound-reference: a class handed on
+
+def f_getattr():
+    return getattr(urllib.request, "urlopen")("https://example.invalid/g")      # L34 dynamic-dispatch getattr
+
+def f_importlib():
+    return importlib.import_module("urllib.request").urlopen("https://x/i")     # L35 dynamic-dispatch import_module
+
+def f_git_remote_update():
+    subprocess.run(["git", "remote", "update"])                                 # L36 tool git remote update
+
+def f_git_submodule_update():
+    subprocess.run(["git", "submodule", "update", "--init"])                    # L37 tool git submodule update
+
 
 # ---- loopback twins -------------------------------------------------------------------------
 
@@ -1422,6 +1624,19 @@ def t_percent(port, route):
     req = ur.Request("http://127.0.0.1:%d%s" % (port, route))                   # T15 percent formatting
     return urllib.request.urlopen(req, timeout=3)                               # T16 a Request bound to a name
 
+def t_retrieve():
+    return urllib.request.urlretrieve("http://127.0.0.1:1/f", "/x/f")          # T17
+
+def t_sendto():
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    s.sendto(b"x", ("127.0.0.1", 9))                                            # T18
+
+def t_smtp():
+    return smtplib.SMTP("127.0.0.1", 25)                                        # T19
+
+def t_browser():
+    webbrowser.open("http://127.0.0.1:1/?c=x")                                  # T20
+
 
 # ---- lookalikes, the route probe and the shapes that are not forms --------------------------------
 
@@ -1450,6 +1665,12 @@ def n_open():
     print("ssh -t host")
     be = object()
     be.connect("sid")
+    getattr(os, "environ")
+    getattr(socket, "SO_REUSEPORT", None)
+    importlib.import_module("json")
+    subprocess.run(["git", "remote", "-v"])
+    subprocess.run(["git", "submodule", "status"])
+    functools.partial(print, "x")
 '''
 
 
@@ -1490,7 +1711,11 @@ class FormSpace(unittest.TestCase):
             "L17": ("tool", "npm install"), "L18": ("tool", "pip install"), "L19": ("shell-string", "git fetch"),
             "L20": ("GIT_SSH_COMMAND", "git over ssh"), "L21": ("tool", "git ls-remote"), "L22": ("tool", "ssh"),
             "L23": ("tool", "ssh"), "L24": ("shell-string", "ssh"), "L25": ("shell-string", "rsync"),
-            "L26": ("urlopen", None),
+            "L26": ("urlopen", None), "L27": ("urlretrieve", None), "L28": ("socket.sendto", None),
+            "L29": ("stdlib-client", None), "L30": ("webbrowser", None), "L31": ("HTTPSConnection", None),
+            "L32": ("bound-reference", None), "L33": ("bound-reference", None), "L34": ("dynamic-dispatch", "getattr"),
+            "L35": ("dynamic-dispatch", "import_module"), "L36": ("tool", "git remote update"),
+            "L37": ("tool", "git submodule update"),
         }
         for marker, (kind, tool) in expected.items():
             self._one(marker, kind, "outbound", tool)
@@ -1506,7 +1731,9 @@ class FormSpace(unittest.TestCase):
         for marker, kind in (("T1", "urlopen"), ("T2", "Request"), ("T3", "opener.open"), ("T4", "HTTPConnection"),
                              ("T5", "HTTPSConnection"), ("T6", "create_connection"), ("T7", "socket.connect"),
                              ("T9", "open_connection"), ("T10", "http-library"), ("T11", "websocket"),
-                             ("T13", "urlopen"), ("T14", "urlopen"), ("T15", "Request"), ("T16", "urlopen")):
+                             ("T13", "urlopen"), ("T14", "urlopen"), ("T15", "Request"), ("T16", "urlopen"),
+                             ("T17", "urlretrieve"), ("T18", "socket.sendto"), ("T19", "stdlib-client"),
+                             ("T20", "webbrowser")):
             self._one(marker, kind, "loopback")
         self._one("T12", "tool", "loopback", "curl")
 
@@ -1530,6 +1757,10 @@ class FormSpace(unittest.TestCase):
         self.assertEqual(tool_in(['"$VENV/bin/pip"', "install", "-q", "x"]), "pip install")
         self.assertEqual(tool_in(["python3", "-m", "pip", "download", "x"]), "pip download")
         self.assertIsNone(tool_in(["python3", "-m", "venv", "install"]))
+        self.assertEqual(tool_in(["git", "remote", "update"]), "git remote update")
+        self.assertEqual(tool_in(["git", "-C", "/x", "submodule", "update", "--init"]), "git submodule update")
+        self.assertIsNone(tool_in(["git", "remote", "-v"]))
+        self.assertIsNone(tool_in(["git", "update-index", "--refresh", "remote"]))   # the pair reads in order
         self.assertEqual(tools_in_text('if command -v curl >/dev/null 2>&1; then curl -fsSL "$1" -o "$2"; fi'),
                          [("curl", ["curl", "-fsSL", '"$1"', "-o", '"$2"'])])
         self.assertEqual(tools_in_text('echo "  curl -fsSL https://example.invalid/x | bash"'), [])
