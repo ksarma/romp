@@ -68398,11 +68398,14 @@ function filesCtlM(){try{var st=JSON.parse(localStorage.getItem('romp:settings')
 // the hand-over is not visible.
 // A FAILED load (review round 1, 2026-09-19, HIGH 2): a src is never reassigned, and promote()'s first guard reads it, so a
 // document fetch that failed at the first tap left the pane blank for the life of the page, the backstop clearing the loader
-// over nothing. The detector is committed(): a good load reads a same-origin document at the pane's own url; the iframe's
+// over nothing. The detector is committed(): a good load reads the pane's OWN document, same-origin at the pane's url with the
+// pane shim run in its window (window.__rompApp); an HTTP error body at that url (a proxy's 502 during a kernel restart) is
+// same-origin too and has no shim, so it fails like an error page (review round 2 closeout: before, any committed document counted
+// as loaded, and the 502 kept its src for the page's life with no retry road). The iframe's
 // `error` event never fires for a failed navigation in any engine; Chromium commits an error page (cross-origin, contentDocument
 // null) and fires `load`; Firefox and WebKit keep about:blank with no load event to act on (observed under an aborted route, the
 // served leg), so the load listener and the 30 s backstop both read committed() and a document that has not committed by the
-// backstop is a failure too (a committed document without a load event by then is a slow load: the loader clears, as before).
+// backstop is a failure too (a pane document without a load event by then is a slow load: the loader clears, as before).
 // failed() re-parks the pane (src removed, the url back under
 // data-lazy-src, so the next show() promotes it again as a first tap would), swaps the div's `loading` for `failed`, counts the
 // failures and files one shell client-diag row (`pane-load-failed` {pane, via, n}). The failed state is painted where the user
@@ -68415,7 +68418,7 @@ function paintLoading(){try{var k=document.body.getAttribute('data-tab'),d=paneD
 var bad=!!(d&&d.classList.contains('failed'));document.body.classList.toggle('pane-failed',bad);
 var msg=document.getElementById('pane-load-msg');if(msg)msg.textContent=bad?((FAILS[k]||0)>=2?MSG_FAILED_AGAIN:MSG_FAILED):'';}catch(e){}}
 function loaded(k){try{var d=paneDiv(F[k]);if(d){d.classList.remove('loading');d.classList.remove('failed');}}catch(e){}paintLoading();}
-function committed(f){try{var d=f.contentDocument;return !!(d&&d.URL&&d.URL!=='about:blank');}catch(e){return false;}}   // a same-origin document at the pane's url: the navigation committed (an error page is cross-origin and reads null; a never-committed frame keeps about:blank)
+function committed(f){try{var d=f.contentDocument,w=f.contentWindow;return !!(d&&d.URL&&d.URL!=='about:blank'&&w&&typeof w.__rompApp==='string');}catch(e){return false;}}   // the pane's OWN document: same-origin at a url other than about:blank, with the pane shim run in its window (window.__rompApp, set as the shim parses, ahead of the bundle and the load event). An HTTP error body (a proxy's 502 while the kernel restarts) is same-origin at the pane's url too and carries no shim, so it is a failure (review round 2 closeout); an error page is cross-origin and reads null; a never-committed frame keeps about:blank
 function failed(k,via){var f=F[k];if(!f)return;try{f.removeAttribute('src');}catch(e){}try{if(URLS[k])f.setAttribute(LAZY,URLS[k]);}catch(e){}   // re-parked: promote()'s src guard reads nothing, the url is back where a first tap finds it
 try{var d=paneDiv(f);if(d){d.classList.remove('loading');d.classList.add('failed');}}catch(e){}
 FAILS[k]=(FAILS[k]||0)+1;try{shellDiag('pane-load-failed',{pane:k,via:via,n:FAILS[k]});}catch(e){}paintLoading();}
@@ -68426,8 +68429,8 @@ if(window.__rompPaneEnabled&&!window.__rompPaneEnabled(k))return false;   // off
 try{f.removeAttribute(LAZY);}catch(e){}
 URLS[k]=u;
 if(mobileOn()){var tok=TOK[k]=(TOK[k]||0)+1;try{var d=paneDiv(f);if(d){d.classList.add('loading');d.classList.remove('failed');}}catch(e){}   // tok: this promotion's; a listener or backstop of an earlier promotion (a retry after a failure) is inert
-f.addEventListener('load',function(){if(TOK[k]!==tok)return;try{if(f.contentDocument&&f.contentDocument.URL==='about:blank')return;}catch(e){}if(committed(f))loaded(k);else failed(k,'load');});   // the empty document's own load, not the page's (the gear opener's guard); a load that committed no readable document is an error page
-setTimeout(function(){if(TOK[k]!==tok)return;var dd=paneDiv(f);if(!dd||!dd.classList.contains('loading'))return;if(committed(f))loaded(k);else failed(k,'backstop');},LOAD_MS);}   // still loading at the backstop: a committed document is slow (the loader clears, as before), none is a failure (WebKit's road)
+f.addEventListener('load',function(){if(TOK[k]!==tok)return;try{if(f.contentDocument&&f.contentDocument.URL==='about:blank')return;}catch(e){}if(committed(f))loaded(k);else failed(k,'load');});   // the empty document's own load, not the page's (the gear opener's guard); a load that committed no pane document (an error page, an HTTP error body) is a failure
+setTimeout(function(){if(TOK[k]!==tok)return;var dd=paneDiv(f);if(!dd||!dd.classList.contains('loading'))return;if(committed(f))loaded(k);else failed(k,'backstop');},LOAD_MS);}   // still loading at the backstop: a pane document is slow (the loader clears, as before); none, or one without the shim, is a failure (WebKit's road)
 f.setAttribute('src',u);paintLoading();return true;}
 try{var pl=document.getElementById('pane-load');if(pl)pl.addEventListener('click',function(){try{var k=document.body.getAttribute('data-tab');if(k&&paneDiv(F[k])&&paneDiv(F[k]).classList.contains('failed'))show(k);}catch(e){}});}catch(e){}   // the failed state's tap: retry the shown tab's pane (show() promotes a re-parked pane again)
 window.__rompPanePromote=promote;   // the one road a pane's src is set by on the phone (the tests drive it; a relay that must post into a lazy pane would promote first)

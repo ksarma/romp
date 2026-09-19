@@ -1095,6 +1095,7 @@ const words = (k) => (POSTED[k] || []).map((m) => m.on && m.on[k]);
 const divCls = (k) => Array.from(DIVS[k].cls).filter((c) => c !== 'pane').sort();
 const diagRows = (what) => SOCKS.flatMap((s) => s.sent.map((x) => JSON.parse(x))).filter((m) => m.type === 'clientDiag' && m.surface === 'shell' && m.what === what).map((m) => m.data);
 const backstops = () => TIMERS.filter((t) => t.ms === 30000).forEach((t) => t.f());   // every 30 s backstop armed so far (a stale promotion's is inert on its token)
+const shimUp = (k, url) => { frames['f-' + k].contentDocument = { URL: url || ('http://TESTHOST:1/' + k) }; frames['f-' + k].contentWindow.__rompApp = k; };   // the pane's OWN document: committed at its url with the pane shim run in its window (window.__rompApp, as the served shim sets it while parsing); what committed() takes for a good load (review round 2 closeout: a committed document alone no longer does)
 const out = {};
 const origTell = window.__rompPanesTell; window.__rompPanesTell = () => { LOG.push('tell'); origTell(); };
 """
@@ -1103,7 +1104,7 @@ out.boot = { tab: TAB, src: src(), lazy: lazy(), dataSrc: dataSrc(), sets: Objec
 LOG.length = 0;
 window.__rompMobileTab('waiting');   // the first tap on the Waiting tab
 out.tap = { tab: TAB, src: src(), lazy: lazy(), log: LOG.slice(), loading: loading(), bodyLoading: BODY_CLS.has('pane-loading'), words: words('waiting'), timers: TIMERS.filter((t) => t.ms === 30000).length };
-frames['f-waiting'].contentDocument = { URL: 'http://TESTHOST:1/waiting' };
+shimUp('waiting');
 (LOADS.waiting || []).forEach((f) => f());   // the document loads: the controller's load hook re-tells it, the loading state ends
 out.loaded = { loading: loading(), bodyLoading: BODY_CLS.has('pane-loading'), words: words('waiting') };
 window.__rompMobileTab('chat'); window.__rompMobileTab('waiting');   // back and forth: the src is never reassigned
@@ -1114,7 +1115,7 @@ window.__rompMobileTab('chat');
 out.awayFromLoading = { bodyLoading: BODY_CLS.has('pane-loading'), loading: loading() };   // the Outline still loads off screen: no loader over the chat
 window.__rompMobileTab('fleet');
 out.backToLoading = { bodyLoading: BODY_CLS.has('pane-loading') };
-frames['f-fleet'].contentDocument = { URL: 'http://TESTHOST:1/fleet' }; frames['f-feed'].contentDocument = { URL: 'http://TESTHOST:1/feed' };   // both documents committed, neither fired load yet: slow loads
+shimUp('fleet'); shimUp('feed');   // both documents committed with their shims run, neither fired load yet: slow loads (the bundle still downloading)
 backstops();   // the backstop: a load event that never comes cannot trap the loader; a committed document is a slow load, not a failure (review round 1: the failed road is LazyPanes' failed-load case)
 out.backstop = { loading: loading(), bodyLoading: BODY_CLS.has('pane-loading'), failed: KEYS.filter((k) => DIVS[k].cls.has('failed')), src: src() };
 window.__rompMobileTab('timeline');
@@ -1133,7 +1134,7 @@ out.boot = { tab: TAB, src: src(), lazy: lazy(), sets: Object.assign({}, SETS), 
 // promote()'s guard tells it from the page's load, so the loading state stands until the page itself has loaded (executed: review round 1)
 frames['f-timeline'].contentDocument = { URL: 'about:blank' }; (LOADS.timeline || []).forEach((f) => f());
 out.blankLoad = { loading: loading(), bodyLoading: BODY_CLS.has('pane-loading') };
-frames['f-timeline'].contentDocument = { URL: 'http://TESTHOST:1/timeline' }; (LOADS.timeline || []).forEach((f) => f());
+shimUp('timeline'); (LOADS.timeline || []).forEach((f) => f());
 out.pageLoad = { loading: loading(), bodyLoading: BODY_CLS.has('pane-loading') };
 console.log(JSON.stringify(out));
 """
@@ -1213,7 +1214,7 @@ console.log(JSON.stringify(out));
 # tab's re-tap, the tap on #pane-load); the mirror (a committed document's backstop clears the loader, re-parks nothing).
 _LAZY_FAILED_DRIVER = _LAZY_TOOLS + r"""
 SOCKS.forEach((s) => { s.readyState = 1; s.onopen && s.onopen(); });   // the shell socket opens: a client-diag row goes out at once from here (the queue is for a socket not yet open)
-frames['f-feed'].contentDocument = { URL: 'http://TESTHOST:1/feed' }; (LOADS.feed || []).forEach((f) => f());   // the exempt feed's document loaded at boot
+shimUp('feed'); (LOADS.feed || []).forEach((f) => f());   // the exempt feed's document loaded at boot
 const snap = () => ({ src: src().waiting, lazy: lazy().waiting, div: divCls('waiting'), bodyLoading: BODY_CLS.has('pane-loading'), bodyFailed: BODY_CLS.has('pane-failed'), msg: MSG.textContent, sets: Object.assign({}, SETS), rows: diagRows('pane-load-failed') });
 window.__rompMobileTab('waiting');   // the first tap: the document starts loading
 out.tap = snap();
@@ -1227,7 +1228,7 @@ backstops();   // ...so only the 30 s backstop sees it (the first promotion's ba
 out.backstopFailed = snap();
 CLICKS.forEach((f) => f());   // the tap on the message itself (#pane-load) retries too
 out.loaderTap = snap();
-frames['f-waiting'].contentDocument = { URL: 'http://TESTHOST:1/waiting' };
+shimUp('waiting');
 (LOADS.waiting || []).forEach((f) => f());   // the good load: every promotion's listener fires, the live one alone acts
 out.goodLoad = snap();
 backstops();   // the mirror: a loaded pane's backstop finds no loading state and re-parks nothing
@@ -1235,6 +1236,59 @@ out.mirror = snap();
 window.__rompMobileTab('chat'); window.__rompMobileTab('waiting');
 out.again = snap();
 out.feed = { src: src().feed, div: divCls('feed') };
+console.log(JSON.stringify(out));
+"""
+# HIGH 2, review round 2 closeout (2026-09-19): committed() reads the pane's OWN document (the shim's window.__rompApp beside the
+# same-origin url), so an HTTP error body at the pane's url (a proxy's 502 while the kernel restarts: same origin, no shim) fails on
+# its load event, or at the backstop, as an error page does. Before, any committed same-origin document counted as loaded, and the
+# 502 kept the src for the page's life with no retry road. The refused input is recorded beside the refusal.
+_LAZY_ERROR_BODY_DRIVER = _LAZY_TOOLS + r"""
+SOCKS.forEach((s) => { s.readyState = 1; s.onopen && s.onopen(); });
+shimUp('feed'); (LOADS.feed || []).forEach((f) => f());
+const snapK = (k) => ({ src: src()[k], lazy: lazy()[k], div: divCls(k), bodyLoading: BODY_CLS.has('pane-loading'), bodyFailed: BODY_CLS.has('pane-failed'), msg: MSG.textContent, sets: Object.assign({}, SETS), rows: diagRows('pane-load-failed') });
+window.__rompMobileTab('waiting');
+out.tap = snapK('waiting');
+frames['f-waiting'].contentDocument = { URL: 'http://TESTHOST:1/waiting' };   // an HTTP error body: the response committed a same-origin document AT the pane's url, and no shim ran in it
+out.errorBodyDoc = { url: frames['f-waiting'].contentDocument.URL, shim: typeof frames['f-waiting'].contentWindow.__rompApp };   // the input the detector must refuse
+(LOADS.waiting || []).forEach((f) => f());   // ...and fired load, as every engine does for a committed error response
+out.errorBodyLoad = snapK('waiting');
+window.__rompMobileTab('waiting');   // the re-tap promotes it again
+out.retap = snapK('waiting');
+shimUp('waiting'); (LOADS.waiting || []).forEach((f) => f());   // the kernel is back: the pane's own document, its shim run
+out.goodLoad = snapK('waiting');
+window.__rompMobileTab('fleet');   // the same body with no load event by the backstop: a failure too, not a slow load
+frames['f-fleet'].contentDocument = { URL: 'http://TESTHOST:1/fleet' };
+backstops();
+out.errorBodyBackstop = snapK('fleet');
+out.waitingAfter = snapK('waiting');
+console.log(JSON.stringify(out));
+"""
+# HIGH 2, review round 2 closeout: the per-promotion token (TOK). The iframe element keeps every promotion's load listener and
+# every promotion arms its own 30 s backstop, so a retry after a failure has the FIRST promotion's listener and backstop still
+# live beside its own. Each guard is proven by the input it refuses: the stale backstop fired over the loading retry (without
+# its guard it re-parks the retry), the stale listener fired beside the live one on the retry's failure (without its guard a
+# second row is filed and the count runs by two).
+_LAZY_TOKEN_DRIVER = _LAZY_TOOLS + r"""
+SOCKS.forEach((s) => { s.readyState = 1; s.onopen && s.onopen(); });
+shimUp('feed'); (LOADS.feed || []).forEach((f) => f());
+const snap = () => ({ src: src().waiting, lazy: lazy().waiting, div: divCls('waiting'), bodyFailed: BODY_CLS.has('pane-failed'), msg: MSG.textContent, sets: Object.assign({}, SETS), rows: diagRows('pane-load-failed'), listeners: (LOADS.waiting || []).length, backstops: TIMERS.filter((t) => t.ms === 30000).length });
+const t30 = () => TIMERS.filter((t) => t.ms === 30000);
+window.__rompMobileTab('waiting');   // the first promotion: one listener, one backstop (beside the feed's)
+const firstBackstops = t30().length;
+frames['f-waiting'].contentDocument = null; (LOADS.waiting || []).forEach((f) => f());   // the first fetch fails on its load (an error page)
+out.firstFailure = snap();
+window.__rompMobileTab('waiting');   // the retry: a second listener on the same element, a second backstop; the first promotion's stay live
+out.retry = snap();
+frames['f-waiting'].contentDocument = { URL: 'about:blank' };   // the retry's document has not committed yet...
+t30().slice(0, firstBackstops).forEach((t) => t.f());   // ...when the FIRST promotion's backstop fires (the feed's too, inert over a loaded pane)
+out.staleBackstop = snap();
+frames['f-waiting'].contentDocument = null; (LOADS.waiting || []).forEach((f) => f());   // the retry fails on its load too: BOTH listeners fire
+out.secondFailure = snap();
+window.__rompMobileTab('waiting');   // the third promotion
+shimUp('waiting'); (LOADS.waiting || []).forEach((f) => f());   // the good load: three listeners fire, the live one alone acts
+out.goodLoad = snap();
+backstops();   // every backstop armed so far, the two stale ones included, over the loaded pane
+out.mirror = snap();
 console.log(JSON.stringify(out));
 """
 
@@ -1406,6 +1460,45 @@ class LazyPanes(unittest.TestCase):
         self.assertEqual(o["mirror"], g, "a loaded pane's backstop changes nothing (the mirror: no re-park of a healthy pane)")
         self.assertEqual(o["again"]["sets"], {"feed": 1, "waiting": 3}, "a later show of the loaded pane reassigns nothing")
         self.assertEqual(o["feed"], {"src": "/feed", "div": []}, "the feed's document, committed at boot, is untouched throughout")
+
+    def test_an_http_error_body_at_the_panes_url_is_a_failed_load_not_a_loaded_pane(self):
+        # HIGH 2, review round 2 closeout (2026-09-19). committed() reads the pane's OWN document: same-origin at the pane's url AND the
+        # pane shim run in its window (window.__rompApp). A proxy's 502 during a kernel restart is same-origin at the url with no shim;
+        # before this it committed, loaded() cleared the loader over the error body, and the src stayed set for the page's life with
+        # no retry road. The guard is proven by the input it refuses, recorded beside the refusal.
+        o = _lazy(self.seed, _LAZY_ERROR_BODY_DRIVER)
+        self.assertEqual(o["errorBodyDoc"], {"url": "http://TESTHOST:1/waiting", "shim": "undefined"}, "the refused input: a same-origin document at the pane's own url with no shim in its window")
+        e = o["errorBodyLoad"]
+        self.assertEqual((e["src"], e["lazy"], e["div"], e["bodyFailed"], e["bodyLoading"]), (None, "/waiting", ["failed"], True, False), "the error body's load re-parks the pane and paints the failed state where the user looks")
+        self.assertEqual(e["rows"], [{"pane": "waiting", "via": "load", "n": 1}], "one row, via the load event")
+        self.assertEqual(e["msg"], "Couldn't load this pane. Tap to try again.")
+        r = o["retap"]
+        self.assertEqual((r["src"], r["div"], r["sets"]["waiting"]), ("/waiting", ["loading"], 2), "the re-tap promotes it again")
+        g = o["goodLoad"]
+        self.assertEqual((g["src"], g["div"], g["bodyFailed"], g["msg"], g["rows"]), ("/waiting", [], False, "", e["rows"]), "the pane's own document with its shim run: loaded, no new row")
+        b = o["errorBodyBackstop"]
+        self.assertEqual((b["src"], b["lazy"], b["div"], b["bodyFailed"]), (None, "/fleet", ["failed"], True), "the same body with no load event by the 30 s backstop: a failure, not the slow-load road (a slow load has its shim run)")
+        self.assertEqual(b["rows"], e["rows"] + [{"pane": "fleet", "via": "backstop", "n": 1}], "a second row, via the backstop, for the other pane")
+        self.assertEqual((o["waitingAfter"]["src"], o["waitingAfter"]["div"]), ("/waiting", []), "the loaded pane's stale backstops moved nothing")
+
+    def test_the_promotion_token_makes_a_stale_listener_and_a_stale_backstop_inert_across_a_retry(self):
+        # HIGH 2, review round 2 closeout: the two `if(TOK[k]!==tok)return;` guards were unpinned (the failed-load case above reaches its
+        # second failure through the backstop, whose loading guard masks a stale timer). Here the stale backstop fires over a retry that
+        # is still loading, and the stale listener fires beside the live one on the retry's own failure.
+        o = _lazy(self.seed, _LAZY_TOKEN_DRIVER)
+        f1 = o["firstFailure"]
+        self.assertEqual((f1["src"], f1["rows"], f1["backstops"]), (None, [{"pane": "waiting", "via": "load", "n": 1}], 2), "the first failure: one row, two backstops (the feed's and this promotion's)")
+        self.assertGreaterEqual(f1["listeners"], 1, "the element carries load listeners (the promotion's beside the boot wirings' own: the panes-word hook, the focus ring, Escape)")
+        r = o["retry"]
+        self.assertEqual((r["src"], r["div"], r["listeners"], r["backstops"]), ("/waiting", ["loading"], f1["listeners"] + 1, 3), "the retry adds a second promotion listener to the same element and a third backstop; the first promotion's stay live")
+        s = o["staleBackstop"]
+        self.assertEqual((s["src"], s["lazy"], s["div"], s["rows"]), ("/waiting", None, ["loading"], f1["rows"]), "the first promotion's backstop fires over the still-loading retry (its document at about:blank): inert on its stale token; without the guard it re-parks the retry via backstop")
+        s2 = o["secondFailure"]
+        self.assertEqual(s2["rows"], [{"pane": "waiting", "via": "load", "n": 1}, {"pane": "waiting", "via": "load", "n": 2}], "the retry's failure fires BOTH listeners: one new row, n 2; without the guard the stale listener files a third row and n runs to 3")
+        self.assertEqual((s2["src"], s2["div"], s2["msg"]), (None, ["failed"], "Still not loading. Tap to try again, or reload the page."))
+        g = o["goodLoad"]
+        self.assertEqual((g["src"], g["div"], g["bodyFailed"], g["sets"]["waiting"], g["rows"], g["listeners"]), ("/waiting", [], False, 3, s2["rows"], f1["listeners"] + 2), "the third promotion's good load: three promotion listeners fire, the pane loads, no new row")
+        self.assertEqual(o["mirror"], g, "every backstop armed so far fires over the loaded pane: nothing moves")
 
     def test_the_show_calls_the_shown_panes_hook_before_the_re_tell_on_the_phone_alone(self):
         # D3 (review round 2, 2026-09-19): the feed's held first paint lands in the tap's own task (feed.ts window.__rompPaneShown), so the
