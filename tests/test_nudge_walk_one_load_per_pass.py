@@ -327,5 +327,22 @@ class TheCountersOneSite(unittest.TestCase):
         self.assertIn("loads", km._NUDGE_WALK_STATS, "the counter is a key of the served block")
 
 
+class Docs(unittest.TestCase):
+    def test_the_reference_states_condition_7_in_the_jobs_paragraph_and_names_the_counter(self):
+        doc = Path(HERE).parent.joinpath("docs", "reference.md").read_text()
+        jobs = doc[doc.index("- `jobs`: the jobs thread"):]
+        jobs = " ".join(jobs[:jobs.index("\n- `caches`:")].split())   # the paragraph is wrapped: one space between words
+        for words in ("at most one shared goal-store load per alive session per pass", "exactly one on a pass whose look runs",
+                      "zero on a pass whose look is skipped", "`memos.nudgeWalk.loads`", "tests/test_nudge_walk_one_load_per_pass.py"):
+            self.assertIn(words, jobs, "the jobs paragraph states condition 7 and names the counter and this test: %r" % words)
+        walk = doc[doc.index("`nudgeWalk` is the auto-nudge walk's"):]
+        walk = walk[:walk.index("a memo row is the ten files' stat")]
+        self.assertIn("`loads`", walk, "memos.nudgeWalk.loads is named in the walk's entry")
+        gloss = km._PerfStats.__doc__
+        field = gloss[gloss.index("nudgeWalk (the auto-nudge walk's"):]
+        field = " ".join(field[:field.index("nudgeGate")].split())   # wrapped too
+        self.assertIn("loads (the walk's shared goal-store reads", field, "the _PerfStats field docstring names the counter")
+
+
 if __name__ == "__main__":
     unittest.main()
