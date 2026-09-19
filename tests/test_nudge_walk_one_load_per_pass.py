@@ -293,6 +293,15 @@ argument as a spelling, the via_getattr sample and F07 (2 failed, 15 passed); th
 bump forms at B08, `-= -1` (1 failed, 16 passed); the hand-off count taken from the lines, the hand-off forms at P04, two
 calls on one line (1 failed, 16 passed). The clean module: 17 passed single-process on 3.10, 3.11, 3.12, 3.13 and 3.14t.
 
+Review round 3 (2026-09-19; nine findings, all low, and the reviewer's version demand restated for the AST readers). Each state
+below was landed on kernel/kernel.py, kernel/judge.py or this module and reverted, the module run single-process on 3.12 through
+the clean runner unless another interpreter is named; a figure names the case count it reads against, since the round's fixes
+add cases. The bare-name sample (extra5-1): the census's Name branch dropped reds the sample case, naming the bare form, and the
+enumeration at F01, the bare from-import's call (2 failed, 15 passed of 17); a bare-name shared load as the first statement of
+the real jd._segs reds the replaced-helpers census naming jd._segs and the planted line (1 failed, 16 passed of 17); the same
+plant with the Name branch dropped escapes that census and is caught by the sample case and the enumeration alone (2 failed, 15
+passed of 17), the state that read 12 passed at the head of the build's verifier pass after the round-2 fixes.
+
 Drives the real pass (_auto_nudge_tick) over two alive sessions with real transcript files and real goal stores, on the
 suite's fake clock (the pass takes `now`). SYNTHETIC fixtures only; a PRIVATE synthetic sid pair (the goal-store fixture
 rule), their override journals cleaned in the teardown; the state root rebound through jd._rebind_state and `off` written
@@ -1335,14 +1344,18 @@ class TheCountersOneSite(unittest.TestCase):
 
     def test_the_census_reads_code_not_prose_and_sees_a_call_inside_an_f_string_on_every_interpreter(self):
         """The rule the censuses share, exercised (review round 2, tests-3: no scanned source carried a mention of a loader, so
-        the rule was held by no assertion), over four local samples that are never called (inspect reads them; no store is
+        the rule was held by no assertion), over six local samples that are never called (inspect reads them; no store is
         touched, no recorder window entered and the import never runs): the loader named in a docstring, a string literal and a
         comment and nowhere in code is no site; one call is one site; one call inside an f-string is one site on every
         interpreter (correctness-1: the tokenizer gives 3.10 and 3.11 one STRING token for a whole f-string and 3.12 and later
         its FSTRING_* parts, and a census over blanked tokens read the call on the later ones only; the AST census does not
         consult the tokenizer); a loader imported under an alias is one site, the import line, and the alias's call is not
         (the build's verifier pass after the round-2 fixes: over Name and Attribute alone, an import alias inside a replaced helper's
-        real body was no site and the module stayed green)."""
+        real body was no site and the module stayed green); a loader called by bare name is one site, its call line (review round 3,
+        extra5-1: the census claims three node kinds, Name, Attribute and alias, and the samples held Attribute and alias, so the Name
+        branch was held here by nothing; with it dropped, a bare-name loader planted in a replaced judge helper escaped the census,
+        and at the head of the build's verifier pass after the round-2 fixes the module stayed green; the enumeration's F01 has held
+        the branch since the consolidation pass, and this sample holds it in the case that states the rule)."""
         def mentions_only(sid):
             """The look's read is jd.load_goals_shared_or_fault(sid), named here and in no code line of this body."""
             note = "jd.load_goals_shared_or_fault(sid) in a string literal"   # jd.load_goals_shared_or_fault(sid) in a comment
@@ -1362,6 +1375,10 @@ class TheCountersOneSite(unittest.TestCase):
         def via_getattr(sid):
             return getattr(jd, "load_goals_shared")(sid)         # the loader reached through a string: spelled in no Name, Attribute or alias
 
+        def bare_name(sid):
+            return load_goals_shared(sid)                        # a bare Name, the judge's own spelling of its door: bound nowhere in this
+            #                                                      module and never called, so the name never resolves; the census reads source
+
         self.assertEqual(_loader_sites(mentions_only, "load_goals"), [],
                          "a loader named in a docstring, a string literal or a comment is not a site")
         self.assertEqual(len(_loader_sites(one_call, "load_goals")), 1, "one call is one site: %r" % _loader_sites(one_call, "load_goals"))
@@ -1371,6 +1388,10 @@ class TheCountersOneSite(unittest.TestCase):
         alias_sites = _loader_sites(under_an_alias, "load_goals")
         self.assertEqual([ln.split()[0] for _i, ln in alias_sites], ["from"],
                          "a loader imported under an alias is one site, the import line, and the alias's call is not: %r" % alias_sites)
+        bare_sites = _loader_sites(bare_name, "load_goals")
+        self.assertEqual([ln.split()[0] for _i, ln in bare_sites], ["return"],
+                         "a loader called by bare name is one site, its call line, through the census's ast.Name branch (review round 3, "
+                         "extra5-1: the samples held the Attribute and alias branches and this branch was held here by nothing): %r" % bare_sites)
         self.assertEqual(_loader_sites(via_getattr, "load_goals"), [],
                          "a loader reached through a string, getattr here (exec, eval, compile, operator.attrgetter, vars(), __dict__ and "
                          "__getattribute__ the same, and getattr on an importlib.import_module result), is spelled in no Name, Attribute or "
