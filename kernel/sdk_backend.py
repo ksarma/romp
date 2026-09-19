@@ -7636,6 +7636,7 @@ class SdkSession:
                     # a pick's, which drew a boot slot (_clear_served_auth_pending is the landing's half)
                     self._relaunch_bounded = False
                     if not in_progress:
+                        self._landing_ask_bounded = False   # the memo goes with the pending it belonged to (_clear_served_auth_pending)
                         # THE RUNNING PROCESS ALREADY RUNS THE PENDING SIDE, so the pending is decided HERE (round 1 of the
                         # reviewer's review, 2026-09-18; its kernel-1 and tests-1): this arm withdraws the request as served
                         # and no landing is coming to clear the pending, so a follower's ask written from a window read a
@@ -8185,12 +8186,21 @@ class SdkSession:
         slot flag spent. The slot flag (_relaunch_bounded) goes with the ask it belonged to: set by a walk between the
         loop top's re-clear and the compose, it was served by that connect and stood into the next reconnect, a pick's,
         which then drew a boot slot; this is the event that spends it (the served check's withdrawal is the other,
-        _served_by_connect)."""
+        _served_by_connect). THE WALK'S SLOT MEMO DIES WITH THE PICK IT BELONGS TO (round 1 of the billing verb's
+        review, 2026-09-19; its correctness-6, kernel-3, extra5-2 and extra6-3): _landing_ask_bounded, written with a
+        pick parked on a never-landed object (set_auth) and spent only where that pick is ASKED (_ask_parked_pick),
+        outlived a pick that was SERVED instead, or withdrawn, or reverted, and the next landing that asked an
+        ordinary pick's relaunch drew the walk's spawn-stagger slot from it and told the user so. So every disposal of
+        the pending clears the memo beside the slot flag: this clear, the served check's withdrawal, set_auth's revert
+        and unchanged branches, the follower step's withdrawals and the unlanded step's clear of a moot pending; the
+        guard's restore puts it back with the pair (_follow_default_guarded), and set_auth's request branch writes it
+        from the same `bounded` its slot flag comes from, so a new pending never inherits an old pending's memo."""
         with self._hold_write():
             if self._auth_pending_target() == tuple(pending):
                 self._auth_pending = ""
                 self._auth_pending_login = ""
                 self._relaunch_bounded = False
+                self._landing_ask_bounded = False   # the memo dies with the pick it belonged to (the docstring's last paragraph)
 
     def _recover_picked_pending_at_init(self) -> None:
         """THE CLI'S FIRST INIT IS THE CLOSING EVENT for a PICKED session's pending that a cannot-tell attach left
@@ -8227,8 +8237,12 @@ class SdkSession:
         called bare, six lines from the guarded follower step, and its docstring called the entry gate "guarded", a
         word this module uses for exception containment, which the gate is not. _launched_auth was stamped None by
         the attach and auth_live is the fresh report the caller just wrote. Fork PR #813 (the billing verb) reaches
-        this same closer from a pick parked on a never-landed object and folds its _decide_parked_pick into this
-        shape at its rebase."""
+        this same closer from a pick parked on a never-landed object and folded its own closer into this shape at its
+        rebase (its round 1, 2026-09-19). BOTH BRANCHES END IN A LOG LINE, filed through _log_quietly (that round's
+        regression-5): the served branch's line and the ask's tail run after the decision is made and the request
+        scheduled (request_reconnect never raises: _call_on_loop), so a kernel log callback that raises (a closed stderr
+        under a service restart, _log_quietly's case) must not reach the guard's handler, whose restore would put a
+        served pick's pending back or spend the ask's slot flag on a relaunch that is already armed."""
         with self._hold_write():
             if self._launched_auth is None:
                 self._launched_auth = self.auth_live
@@ -8242,7 +8256,7 @@ class SdkSession:
             self._clear_served_auth_pending(pending_ask)
             self._mirror_auth_pending()
             self.backend._poke()
-            self.backend._log("auth (%s): this session's surviving CLI reported its billing, the %s, which its pick names: "
+            self._log_quietly("auth (%s): this session's surviving CLI reported its billing, the %s, which its pick names: "
                               "the pick is served, no reconnect"
                               % (self.name, ("%s login" % self.backend.login_display(running_login)) if running_login
                                  else self._launched_auth))
@@ -8305,12 +8319,15 @@ class SdkSession:
         launched_login = getattr(self, "_launched_login", "") or ""
         runs = ("the %s login" % self.backend.login_display(launched_login)) if (self._launched_auth == "login" and launched_login) \
             else "the %s" % self._launched_auth
+        # the tail is a log line after the ask is made (the request scheduled, the flag and the memo written): filed
+        # through _log_quietly (round 1 of the billing verb's review, 2026-09-19; its regression-5), so a callback that
+        # raises cannot hand a made ask to the guard's restore, which would spend its slot flag and re-arm its memo
         if how == "init":
-            self.backend._log("auth (%s): this session's surviving CLI reported its billing, %s, while its pick is %s; the pick was "
+            self._log_quietly("auth (%s): this session's surviving CLI reported its billing, %s, while its pick is %s; the pick was "
                               "left to this report and nothing was armed for it, so it is asked now; %s"
                               % (self.name, runs, picked, outcome))
         else:
-            self.backend._log("auth (%s): %s this session's %s CLI, which runs on %s while its pick is %s; the pick was left to "
+            self._log_quietly("auth (%s): %s this session's %s CLI, which runs on %s while its pick is %s; the pick was left to "
                               "this landing, so it is asked now; %s"
                               % (self.name, "attached to" if how == "attach" else "launched", "surviving" if how == "attach"
                                  else "new", runs, picked, outcome))
@@ -8450,8 +8467,15 @@ class SdkSession:
             # when the CLI bills it and ASKS it when the CLI bills something else with no arm standing (round 5,
             # 2026-09-19: round 4 closed the served half alone). A pick parked on a never-landed object (set_auth's
             # never-landed branch, fork PR #813) waits for the same init when this landing cannot tell, and is asked by
-            # this landing when it can (the branch below, _ask_parked_pick)
-            if pending_auth and ((self._launched_auth is None and not attach) or self._launched_unkeyed_pick
+            # this landing when it can (the branch below, _ask_parked_pick). THE UNKEYED-PICK CLAUSE TAKES THE SAME GUARD
+            # (round 1 of the billing verb's review, 2026-09-19; its regression-1, the round's high): the compose flags an
+            # explicit key pick this box cannot bill as the key (_stamp_compose: Claude Code's settings unreadable, so
+            # the launch goes plain and the CLI's own credential pays), and on a LAUNCH that flag serves the pending
+            # (the dots-forever case). On the attach road nothing was launched, so the flag says nothing about what the
+            # surviving CLI bills; read as a serve there it cleared a pick parked across the attach while the survivor
+            # billed the other account, with no reconnect, no dots and no row (the per-init check is silenced by the
+            # same flag). Both clauses end in `and not attach`, so it is said once
+            if pending_auth and (((self._launched_auth is None or self._launched_unkeyed_pick) and not attach)
                                  or (pending_auth == self._launched_auth
                                      and (pending_auth != "login"
                                           or launched_login == (getattr(self, "auth_login", "") or "")))):
@@ -16125,6 +16149,56 @@ class SdkBackend:
                       % PROMPT_HOOK_TIMEOUT_S_DEFAULT, problem=True, key="prompt-hook-matcher-timeout")
             return HookMatcher(matcher=None, hooks=[sess._prompt_submit_hook])
 
+    def _stamp_compose(self, sess: SdkSession, side: str, login_id: str) -> tuple:
+        """The compose's SHAPE and the stamps _options writes for it, from the billing decision _options made (`side`
+        and `login_id`, _decide_auth's; the token step between them stays in _options): _launching, _connecting, the
+        fast ask, _launched_keyed, _options_login and _launched_unkeyed_pick, in one hold. Returns (shape, fast_opt).
+        Extracted from _options (round 1 of the billing verb's review, 2026-09-19; its regression-1): the tests that
+        drive a landing against an explicit key pick this box cannot bill as the key (Claude Code's settings
+        unreadable, key_state "unknown": _launch_shape names the login for it and the compose flags it unkeyed) build
+        that state through THIS, the real compose, and never by hand-setting the flag, since a flag set beside a
+        shape the compose could not produce pins a state the code cannot reach. _options needs the SDK's option
+        types and the CLI; this needs neither, so the compose's stamps are reachable in a test with no CLI."""
+        shape = self._launch_shape(sess, auth=side, login_id=login_id)   # what this connect hands the CLI; stamped as _launching below
+        launch_keyed = shape["auth"] == "key"     # the box's helper bills this launch (no login pick, a helper configured)
+        with sess._hold_write():
+            # settings file below is composed with, and what _fast_unlocked is stamped from. Until round 6 the
+            # reconnect loop snapshotted _fast_unlocked from fast_opt AFTER this returned, so a set_fast landing
+            # between this read and that snapshot made a flagless connect read as flagged: the served check
+            # then dropped the fast pick, and the next fast on sent a literal /fast to a CLI that refused it.
+            # THE STAMPS LAND HERE, AT THE READ (review round 7; the review's correctness-2 and kernel-3), not at
+            # the end of the compose: the body below is file I/O and, on a key-billed launch, a network probe
+            # (helper_fast_org_env), and a set_fast landing inside it read the OLD connection's flag. An on
+            # inside a flagless compose on a previously flagged session took the live send (lost: the new
+            # process refuses the literal /fast), an off inside a flagged compose took the spawn-window branch
+            # and left the new process running fast against a reg saying off. set_fast decides against these
+            # stamps under the same lock. The rest of the launched shape rides the same hold: what this connect
+            # is ABOUT to run, stamped by _connect_landed once it does (a pick equal to the stamp is nothing to
+            # apply; one equal to a pending value is already applying); the arm stamped the same shape when it
+            # scheduled this reconnect (_launch_shape says why), this is the composed truth, and it follows a
+            # pick made between the two, which rides this connect. _connecting marks the composed half of the
+            # window, in which a redundant arm can be disarmed; the loop is past the teardown here. And the
+            # billing intent for _note_auth_source's per-init check: keyed when the box's helper will bill the
+            # key for this session; an explicit key pick with no helper anywhere (and no login to fall to) leaves
+            # the CLI to decide, and a login landing then is the pick contradicted
+            fast_opt = sess.fast_opt
+            sess._fast_unlocked = fast_opt
+            sess._launching = shape
+            sess._connecting = True
+            sess._launched_keyed = launch_keyed
+            # What a launch from THESE options carries ("" = the machine's own). For a LAUNCH the stamp records it as the
+            # launched login and resets the init evidence to none: a relaunch that stops carrying the helper (the login
+            # went unavailable, then a model or effort reconnect) must not keep the old init's word, or a revoked KEY's
+            # auth error would refuse the stored login and a reply served on the fallback would clear a real refusal.
+            # For an ATTACH to the CLI the reg already names nothing is stamped: no CLI launches, no init replays, and the
+            # evidence and the launched login stand as the reg restored them (review 2026-09-11, twice). The stamp is made
+            # per CLI: at a kernel child's connect from this value, at a host's hello from the login the spawn's spec carried
+            # (this value, written into the spec by the host road), so a retry attaching to a CLI a failed handshake left
+            # running stamps the login the launch used (2026-09-14). Stamped with the shape, under the same hold.
+            sess._options_login = login_id
+            sess._launched_unkeyed_pick = side == "key" and not launch_keyed
+        return shape, fast_opt
+
     def _options(self, sess: SdkSession, ClaudeAgentOptions):
         from claude_agent_sdk import HookMatcher
         # ONE read of the billing pick (review round 7, 2026-09-10; the review's fresh-1): the shape, the helper
@@ -16180,46 +16254,9 @@ class SdkBackend:
                          "API key" if side == "key" else ("machine's own login" if auth_login else "login")),
                       problem=True)
         login = side == "login"
-        shape = self._launch_shape(sess, auth=side, login_id=login_id)   # what this connect hands the CLI; stamped as _launching below
+        shape, fast_opt = self._stamp_compose(sess, side, login_id)   # what this connect hands the CLI, stamped as _launching
         effort_shape = shape["effort"]
         launch_keyed = shape["auth"] == "key"     # the box's helper bills this launch (no login pick, a helper configured)
-        with sess._hold_write():
-            # ONE read of the fast ask (review round 6, 2026-09-10; the review's regression-1): what the flag-
-            # settings file below is composed with, and what _fast_unlocked is stamped from. Until round 6 the
-            # reconnect loop snapshotted _fast_unlocked from fast_opt AFTER this returned, so a set_fast landing
-            # between this read and that snapshot made a flagless connect read as flagged: the served check
-            # then dropped the fast pick, and the next fast on sent a literal /fast to a CLI that refused it.
-            # THE STAMPS LAND HERE, AT THE READ (review round 7; the review's correctness-2 and kernel-3), not at
-            # the end of the compose: the body below is file I/O and, on a key-billed launch, a network probe
-            # (helper_fast_org_env), and a set_fast landing inside it read the OLD connection's flag. An on
-            # inside a flagless compose on a previously flagged session took the live send (lost: the new
-            # process refuses the literal /fast), an off inside a flagged compose took the spawn-window branch
-            # and left the new process running fast against a reg saying off. set_fast decides against these
-            # stamps under the same lock. The rest of the launched shape rides the same hold: what this connect
-            # is ABOUT to run, stamped by _connect_landed once it does (a pick equal to the stamp is nothing to
-            # apply; one equal to a pending value is already applying); the arm stamped the same shape when it
-            # scheduled this reconnect (_launch_shape says why), this is the composed truth, and it follows a
-            # pick made between the two, which rides this connect. _connecting marks the composed half of the
-            # window, in which a redundant arm can be disarmed; the loop is past the teardown here. And the
-            # billing intent for _note_auth_source's per-init check: keyed when the box's helper will bill the
-            # key for this session; an explicit key pick with no helper anywhere (and no login to fall to) leaves
-            # the CLI to decide, and a login landing then is the pick contradicted
-            fast_opt = sess.fast_opt
-            sess._fast_unlocked = fast_opt
-            sess._launching = shape
-            sess._connecting = True
-            sess._launched_keyed = launch_keyed
-            # What a launch from THESE options carries ("" = the machine's own). For a LAUNCH the stamp records it as the
-            # launched login and resets the init evidence to none: a relaunch that stops carrying the helper (the login
-            # went unavailable, then a model or effort reconnect) must not keep the old init's word, or a revoked KEY's
-            # auth error would refuse the stored login and a reply served on the fallback would clear a real refusal.
-            # For an ATTACH to the CLI the reg already names nothing is stamped: no CLI launches, no init replays, and the
-            # evidence and the launched login stand as the reg restored them (review 2026-09-11, twice). The stamp is made
-            # per CLI: at a kernel child's connect from this value, at a host's hello from the login the spawn's spec carried
-            # (this value, written into the spec by the host road), so a retry attaching to a CLI a failed handshake left
-            # running stamps the login the launch used (2026-09-14). Stamped with the shape, under the same hold.
-            sess._options_login = login_id
-            sess._launched_unkeyed_pick = side == "key" and not launch_keyed
         kw = dict(
             cli_path=self.claude_bin,
             cwd=sess.cwd,
@@ -19362,6 +19399,7 @@ class SdkBackend:
                     s._auth_pending_login = ""
                     s._relaunch_bounded = False   # a follower's withdrawn ask (round 2 of the review, 2026-09-18): the flag was
                     #   its, and the next relaunch is a pick's own, which draws no boot slot (_take_relaunch_slot says why)
+                    s._landing_ask_bounded = False   # and the walk's memo with it (_clear_served_auth_pending says why)
                 s._mirror_auth()
                 s._withdraw_held_pick("auth")
                 self._log("auth (%s): set to %s; the pending %s pick is withdrawn" % (s.name, value, reverted))
@@ -19376,6 +19414,7 @@ class SdkBackend:
                         if clear:
                             s._auth_pending = ""
                             s._auth_pending_login = ""
+                            s._landing_ask_bounded = False   # the memo dies with the pending (_clear_served_auth_pending)
                     s._mirror_auth()
                 self._log("auth (%s): set to %s; unchanged, no reconnect" % (s.name, value))
         else:
@@ -19403,6 +19442,7 @@ class SdkBackend:
                     s._auth_pending = side
                     s._auth_pending_login = login_id if side == "login" else ""
                     s._relaunch_bounded = bounded_arm
+                    s._landing_ask_bounded = bounded_arm   # a new pending never inherits an old one's memo (_clear_served_auth_pending)
                 s._wrong_landing_reconnected = False   # a new pick may take the documented fall again (review 2026-09-11)
                 s._mirror_auth(apiKeyAuth=None)
                 outcome = s._note_reconnect_ask("auth")
@@ -19433,7 +19473,7 @@ class SdkBackend:
             self._ack_cmd_chip(sid, "/auth", "/auth " + value, s.resume_sid)
         return True
 
-    def set_auth_followers(self, value: str) -> "dict | None":
+    def set_auth_followers(self, value: str, park=None, after_write=None) -> "dict | None":
         """`romp billing --all-following <pick>` (the user 2026-09-18): write `value` as the OWN pick of every live session
         that follows the machine default, so each bills it from now and stops following the default. The walk shares
         set_auth_default's roster read and filter (an ended session is nothing to move, a session with a pick of its own
@@ -19458,7 +19498,21 @@ class SdkBackend:
         the failed session as the step found it, a follower with whatever ask it already carried, said as a problem row;
         through _follow_default_guarded since the rebase onto the reviewer's round 2, 2026-09-19). An asked relaunch is STAGGERED (round 1 of the
         reviewer's review): the arm waits for a spawn slot with the CLI still serving, the outlook says "staggered" for
-        it, and the head promises no moment the stagger delays. Kernel thread."""
+        it, and the head promises no moment the stagger delays. Kernel thread.
+
+        Two hooks of the kernel's, both None from any other caller (round 1 of the billing verb's review, 2026-09-19).
+        `park(sid) -> bool`: asked before a follower's step; True means the kernel PARKED the pick for this follower
+        instead of the walk writing it (its drive queue is held by a move in flight, `_moving`: the walk's request on
+        a quiet mover armed the client's teardown under be.move()'s pending set_cwd, the state the verb's other two
+        gate-off roads refuse; parked, the pick applies when the move ends, as a plain pick's park does, where a
+        skipped follower would be left on the default with nothing to retry), so the follower is filed under
+        "parked" and nothing is written or asked for it (that round's tests-1 and extra8-2; the same ungated walk
+        stands on the machine default's own road, _reconnect_default_followers, which this does not touch). `after_write(sid)
+        -> int`: run right after a follower's SUCCESSFUL write, before the next follower's, and its return added to
+        "superseded" (its correctness-2): the kernel drops the follower's parked auth picks there, per follower, since
+        a drop before the write lost a still-parked pick for a follower the walk then skipped or failed, and a drop
+        after the whole walk left every earlier follower's parked pick to fire over the walk's write at the drain's
+        next quiet cycle. A parked follower is not in movedSids, so its own parked picks are never dropped."""
         side, login_id = _logins.parse_pick(value)
         if not side:
             return None
@@ -19469,12 +19523,16 @@ class SdkBackend:
             return None
         with self._lock:                       # the roster moves under other threads: _reconnect_default_followers' idiom
             sessions = list(self.sessions.values())
-        moved, skipped, unwritten, failed, outlook = [], [], [], [], {}
+        moved, skipped, unwritten, failed, parked, outlook = [], [], [], [], [], {}
+        superseded = 0
         for s in sessions:
             if s.ended:
                 continue
             if s.auth in ("login", "key"):
                 skipped.append(s.name)
+                continue
+            if park is not None and park(s.sid):
+                parked.append(s.name)          # the kernel parked the pick behind this follower's move (the docstring's hook)
                 continue
             # ONE FOLLOWER'S FAULT NEVER ABORTS THE WALK (round 1 of the reviewer's review, 2026-09-18, its regression-4 and
             # kernel-2, the default walk's rule carried into this walk by the rebase follow-up): a reg write refused
@@ -19499,6 +19557,8 @@ class SdkBackend:
             if not written:
                 unwritten.append(s.name)   # its record would not read (the side was checked above): nothing was written
                 continue
+            if after_write is not None:
+                superseded += int(after_write(s.sid) or 0)   # this follower's parked picks go now, before the next follower's write
             moved.append((s.name, s.sid))
             outlook[s.name] = word
         moved.sort()
@@ -19510,7 +19570,7 @@ class SdkBackend:
         staggered = any(w == "staggered" for w in outlook.values())
         self._log("auth: %d session%s following the default now carr%s the pick %s (%s); %d asked to reconnect (%s)%s, the rest "
                   "already bill it, apply it at their next launch or leave it to their landing or their CLI's first report; %d "
-                  "skipped with a pick of their own (%s)%s%s"
+                  "skipped with a pick of their own (%s)%s%s%s"
                   % (n, "" if n == 1 else "s", "ies" if n == 1 else "y", label, ", ".join(name for name, _ in moved) or "none",
                      len(asked), ", ".join(asked) or "none",
                      ", staggered: each relaunch waits for a spawn slot and its CLI serves until its turn" if staggered else "",
@@ -19518,9 +19578,11 @@ class SdkBackend:
                      ("; %d record%s would not read (%s)" % (len(unwritten), "" if len(unwritten) == 1 else "s",
                                                              ", ".join(sorted(unwritten)))) if unwritten else "",
                      ("; %d step%s failed (%s), left following the default as the step found %s" % (len(failed), "" if len(failed) == 1 else "s",
-                                                                                                  ", ".join(sorted(failed)), "it" if len(failed) == 1 else "them")) if failed else ""))
+                                                                                                  ", ".join(sorted(failed)), "it" if len(failed) == 1 else "them")) if failed else "",
+                     ("; %d parked behind a move in flight (%s), the pick applies when the move finishes" % (len(parked), ", ".join(sorted(parked)))) if parked else ""))
         return {"moved": [name for name, _ in moved], "skipped": sorted(skipped), "unwritten": sorted(unwritten),
-                "failed": sorted(failed), "movedSids": [sid for _, sid in moved], "outlook": outlook}
+                "failed": sorted(failed), "parked": sorted(parked), "movedSids": [sid for _, sid in moved], "outlook": outlook,
+                "superseded": superseded}
 
     def follow_default_auth(self, sid: str) -> bool:
         """`romp billing <session> default` (the user 2026-09-18): the session gives up its own pick and follows the machine
@@ -19652,6 +19714,7 @@ class SdkBackend:
                         s._auth_pending = ""
                         s._auth_pending_login = ""
                         s._relaunch_bounded = False   # the flag was the pick's ask's, and that ask is withdrawn here
+                        s._landing_ask_bounded = False   # the memo dies with the pending (_clear_served_auth_pending)
                 elif s._auth_pending and s._auth_pending_target() != target:
                     retargeted = True
                     s._auth_pending, s._auth_pending_login = target
@@ -19693,6 +19756,18 @@ class SdkBackend:
         side = self.fallback_auth()
         lid = self.explicit_default_login() if side == "login" else ""
         return self.login_display(lid) if lid else side
+
+    def record_reads(self, sid: str) -> bool:
+        """Whether `sid`'s registry record reads as an object right now: the one other reason set_auth and
+        follow_default_auth answer False (a record that would not read; the box's reason, auth_unavailable_why, is the
+        first). POST /billing asks it AHEAD of dropping the parked picks its two gate-off roads supersede (round 1 of
+        the billing verb's review, 2026-09-19; its regression-2 and its twins): the `default` road dropped the user's
+        queued pick, then the write refused, and the answer said nothing was changed; the `--now` road did the same on
+        its second refusal reason. A read-only probe, so the drop stays before the write on the success path (a drop
+        after the write reopens the drain race round 2 closed). The predicate is the record reading as an OBJECT, the
+        very read those two make, not the kernel's unreadable-file gate: an absent record reads as not unreadable
+        there while set_auth still refuses it. Kernel thread; never raises (read_reg answers None for every fault)."""
+        return bool(read_reg(self.state_dir, sid))
 
     def auth_apply_outlook(self, sid: str) -> str:
         """When the billing change just recorded for `sid` applies, for the caller's answer (`romp billing`): "none" when
@@ -20148,6 +20223,7 @@ class SdkBackend:
                     s._auth_pending = ""
                     s._auth_pending_login = ""
                     s._relaunch_bounded = False   # the flag was the ask's (round 2 of the review; the docstring says why)
+                    s._landing_ask_bounded = False   # and the walk's memo (_clear_served_auth_pending says why)
                 s._mirror_auth_pending()
                 s._withdraw_held_pick("auth")
                 self._poke()
@@ -20221,6 +20297,7 @@ class SdkBackend:
                         s._auth_pending = ""
                         s._auth_pending_login = ""
                         s._relaunch_bounded = False
+                        s._landing_ask_bounded = False   # the memo dies with the pending (_clear_served_auth_pending)
                     s._mirror_auth_pending()
                     s._withdraw_held_pick("auth")
                     self._poke()

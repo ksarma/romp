@@ -425,6 +425,30 @@ PY
     grep -q "^/send$" <(head -1 "$TEST_DIR/req")
 }
 
+@test "romp billing: a kernel that took the pick but answers late exits 3 and says it may already have acted" {
+    # round 1 of the billing verb's review (2026-09-19; its tests-6): the verb copies the send and end verbs' exit-3 arm
+    # (bin/romp _bl_posted) and the reference states the contract, but no leg reached it; a mutation from 3 to 1 there left
+    # the suite green. The serve token rides the environment (the verb reads it before the POST and refuses an empty one
+    # with exit 1, so without it this leg would assert 3 and get 1); the fake holds its answer past the 1 s cap
+    start_fake_kernel '{"ok": true, "session": "web", "pick": "login", "reconnect": "now", "cut": false, "queued": false}' 200 3
+    ROMP_SERVE_TOKEN=t ROMP_KERNEL_HTTP_TIMEOUT_S=1 run "$ROMP_SCRIPT" billing web login
+    [ "$status" -eq 3 ]
+    [[ "$output" == *"took the request but did not answer within 1s"* ]]
+    [[ "$output" == *"it may already have acted on it"* ]]
+    [[ "$output" == *"do not retry blindly"* ]]
+    [[ "$output" != *"not reachable"* ]]
+    grep -q "^/billing$" <(head -1 "$TEST_DIR/req")
+}
+
+@test "romp billing: a kernel nobody is listening on is 'not reachable', exit 1, and no pick was made" {
+    # the second arm of the same contract (tests-6): the request never left, so the exit is a refusal's and the curl code is named
+    export ROMP_KERNEL_PORT=1
+    ROMP_SERVE_TOKEN=t run "$ROMP_SCRIPT" billing web login
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"kernel not reachable"* ]]
+    [[ "$output" == *"[curl exit"* ]]
+}
+
 @test "romp send: a kernel nobody is listening on is 'not reachable', exit 1, and nothing was sent" {
     # a port with no listener: the request never left, so the old message and code stand, and the curl code is named
     export ROMP_KERNEL_PORT=1

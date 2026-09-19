@@ -2232,13 +2232,16 @@ if [[ "${1:-}" == "billing" ]]; then
             echo "  again): the same change the dashboard's Billing menu makes; the session reconnects to apply it"
             echo "  at its next quiet moment, at once when it is quiet, and the output says when. --now cuts the"
             echo "  turn in flight and reconnects at once; while the session compacts or moves, --now is refused"
-            echo "  (exit 1): run it without --now to queue the pick behind the compaction or the move. A pick"
-            echo "  queued earlier for the session is dropped by --now and by default, and the output says so. Live"
+            echo "  (exit 1): run it without --now to queue the pick behind the compaction or the move (default"
+            echo "  never queues: during a compaction it applies at once and the session reconnects when the"
+            echo "  compaction ends; during a move it is refused). A pick queued earlier for the session is"
+            echo "  dropped by --now and by default, and the output says so. Live"
             echo "  subagents and background tasks still hold the pick until they finish, and the output says so."
             echo "  --all-following <pick> writes the pick on every running session that follows the machine"
             echo "  default (they stop following it) and prints the names moved, which of them reconnect (each"
             echo "  relaunch waits its turn on the machine's spawn budget, the CLI serving until then), the names"
-            echo "  skipped for a pick of their own, any whose record would not read, and any whose step failed."
+            echo "  skipped for a pick of their own, any whose record would not read, any whose step failed, and"
+            echo "  any parked behind a move in flight (the pick applies when the move finishes)."
             echo "  An unknown session name exits 1 with the kernel's reason."
             exit 0 ;;
     esac
@@ -2296,6 +2299,8 @@ def words(p):
 moved, skipped = r.get("sessions") or [], r.get("skippedSessions") or []
 unwritten = r.get("unwrittenSessions") or []   # absent from an older kernel's answer: nothing to say
 failed = r.get("failedSessions") or []         # the walk's per-session try (2026-09-18): a step that raised, the session left a follower
+parked = r.get("parkedSessions") or []         # a follower whose queue a move holds (round 1 of the review, 2026-09-19): the pick is
+#                                                parked behind the move, in the plain road's words (parkedReconnect)
 outlooks = r.get("outlooks")                   # per moved name, the kernel's reconnect word; absent from an older kernel's answer
 n = len(moved)
 def one(c):
@@ -2309,9 +2314,11 @@ if moved:
     head = "%d session%s following the default now carr%s %s own pick, %s (%s)" % (
         n, "" if one(n) else "s", "ies" if one(n) else "y", "its" if one(n) else "their", words(r.get("pick") or ""), ", ".join(moved))
     if isinstance(outlooks, dict):
-        # one clause per bucket, in this order; every word the kernel answers falls in one (kernel.py's _BILLING_WORDS: the
-        # four named here, else a reconnect that arms now or at the next quiet moment). Each clause is a function of its
-        # subject (the pronoun when one bucket holds every moved session, else the names) and whether it is plural
+        # one clause per bucket, in this order; every word the kernel answers falls in one (kernel.py's _BILLING_WORDS): the
+        # words named in `buckets` take their own clause, and every other word, the ones that arm at once or at the settle
+        # of the open turn, falls through to the reconnecting clause (no count kept here: a hand-kept count drifted once,
+        # round 1 of the review, 2026-09-19). Each clause is a function of its subject (the pronoun when one bucket holds
+        # every moved session, else the names) and whether it is plural
         def reconnecting(s, p): return "%s reconnect%s at %s next quiet moment" % (s, "" if p else "s", "their" if p else "its")
         def already(s, p): return "%s already bill%s it, no reconnect" % (s, "" if p else "s")
         def next_launch(s, p): return "%s appl%s it at %s next launch" % (s, "y" if p else "ies", "their" if p else "its")
@@ -2333,8 +2340,9 @@ if moved:
             plural = len(names) > 1
             subject = (", ".join(names)) if len(groups) > 1 else ("they" if plural else "it")
             head += "; " + say(subject, plural)
-elif unwritten:
-    # followers were reached and none was written (round 2 of the review): the tail says why, and the head must not deny them
+elif unwritten or parked:
+    # followers were reached and none was written (round 2 of the review; a follower parked behind its move, round 1 of the
+    # review, 2026-09-19): the tail says why, and the head must not deny them
     head = "no follower moved to %s" % words(r.get("pick") or "")
 else:
     head = "no running session follows the machine default, so none moved to %s" % words(r.get("pick") or "")
@@ -2356,6 +2364,11 @@ if failed:
     # default with no change and no ask, and the kernel's Log names the fault
     tail += "; %d failed (%s): %s the default unchanged, the kernel's Log names the fault" % (
         len(failed), ", ".join(failed), "it keeps following" if len(failed) == 1 else "they keep following")
+if parked:
+    # a follower whose drive queue a move in flight holds (round 1 of the review, 2026-09-19): the walk wrote nothing for it
+    # and the kernel parked the pick behind the move, so it applies when the move finishes, in the plain road's words
+    tail += "; %d parked (%s): %s mid-move, so the pick applies %s" % (
+        len(parked), ", ".join(parked), "it is" if len(parked) == 1 else "they are", r.get("parkedReconnect") or "after the move finishes")
 print("romp billing: %s; %s" % (head, tail))
 PY
         exit 0

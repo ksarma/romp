@@ -76,9 +76,15 @@ class _FakeBackend:
     """A backend that records the calls the routes make, in order, and answers what the test tells it to."""
 
     def __init__(self, busy=False, why="", outlook="now", view=None, default="key", explicit=False, default_login="",
-                 labels=None, inflight=None, unwritten=None, explicit_pick=None, outlooks=None, failed=None, staggered=False):
+                 labels=None, inflight=None, unwritten=None, explicit_pick=None, outlooks=None, failed=None, staggered=False,
+                 reads=True, follow_ok=True, set_ok=None):
         self.calls = []
         self._busy = busy
+        self.reads = reads                     # record_reads: the record reads as an object (round 1 of the review, 2026-09-19)
+        self.follow_ok = follow_ok             # follow_default_auth's verdict once the record read
+        self.set_ok = set_ok                   # set_auth's verdict when not None (else: refused only for a `why`)
+        self.parked = []                       # the sids the walk's park hook took (a move in flight)
+        self.dropped = []                      # the sids the walk's after_write hook ran for, in order
         self.failed = list(failed or [])       # the walk's followers whose step raised (the per-session try, 2026-09-18)
         self.staggered = staggered             # whether an asked relaunch waits for its spawn slot (auth_relaunch_staggered)
         # a turn in flight is NOT the same as busy: busy is also true for a queued or an untaken text with no turn open
@@ -117,7 +123,10 @@ class _FakeBackend:
 
     def set_auth(self, sid, value, chip=True):
         self.calls.append(("set_auth", sid, value, chip))
-        return not self.why
+        return (not self.why) if self.set_ok is None else self.set_ok
+
+    def record_reads(self, sid):
+        return self.reads                      # a bare read, as auth_unavailable_why is: not a recorded call
 
     def interrupt(self, sid):
         self.calls.append(("interrupt", sid))
@@ -140,14 +149,29 @@ class _FakeBackend:
 
     def follow_default_auth(self, sid):
         self.calls.append(("follow_default_auth", sid))
-        return True
+        return self.follow_ok
 
-    def set_auth_followers(self, value):
+    def set_auth_followers(self, value, park=None, after_write=None):
+        """The walk's shape with the kernel's two hooks (round 1 of the review, 2026-09-19): `park` is asked per follower
+        and a True answer files the follower as parked with nothing written; `after_write` runs right after each moved
+        follower's write and its count rides the answer as `superseded`."""
         self.calls.append(("set_auth_followers", value))
         if self.why:
             return None
-        return {"moved": ["web", "tests"], "skipped": ["api"], "unwritten": list(self.unwritten), "failed": list(self.failed),
-                "movedSids": [SID, FAR_SID], "outlook": dict(self.outlooks)}
+        moved, sids, superseded = [], [], 0
+        for name, sid in (("web", SID), ("tests", FAR_SID)):
+            if park is not None and park(sid):
+                self.parked.append(sid)
+                continue
+            moved.append(name)
+            sids.append(sid)
+            if after_write is not None:
+                self.dropped.append(sid)
+                superseded += int(after_write(sid) or 0)
+        parked = [n for n, s in (("web", SID), ("tests", FAR_SID)) if s in self.parked]
+        return {"moved": moved, "skipped": ["api"], "unwritten": list(self.unwritten), "failed": list(self.failed),
+                "parked": parked, "movedSids": sids, "outlook": {n: w for n, w in self.outlooks.items() if n in moved},
+                "superseded": superseded}
 
     def billing_view(self, sid):
         self.calls.append(("billing_view", sid))
@@ -388,6 +412,13 @@ class PerSessionPick(_RouteServer):
             self.assertIs(resp["ok"], False)
             self.assertIn("moving", resp["error"], body)
             self.assertEqual(fake.calls, [], (body, "nothing reaches the backend mid-move"))
+            # the sentence follows the PICK (round 1 of the review, 2026-09-19; its correctness-5): `default --now` was answered
+            # with the --now sentence, whose advice (run it again without --now) the very next branch refuses, a circle
+            if body["pick"] == "default":
+                self.assertIn("`default` never queues, so run it again after the move finishes", resp["error"], body)
+                self.assertNotIn("without --now", resp["error"], body)
+            else:
+                self.assertIn("run it again without --now to queue the pick behind the move", resp["error"], body)
         # the plain road still parks behind the move, as before, and names it
         fake = _FakeBackend(outlook="now")
         a, b = self._local(fake, _gate_or_park=lambda sid, op: True)
@@ -525,6 +556,82 @@ class PerSessionPick(_RouteServer):
         self.assertIn("compacting", resp["error"])
         self.assertEqual(fake.calls, [], "a compaction is never cut for a billing pick; without --now the pick queues behind it")
 
+    def test_now_during_a_compaction_tells_a_default_pick_it_never_queues(self):
+        # round 1 of the review (correctness-4, narrowed by both refuters to the words; the compaction half of tests-1 refuted):
+        # `default` never parks, and mid-compaction it applies at once with its reconnect deferred by request_reconnect's own
+        # quiet test to the compaction turn's settle, so the refusal's advice to re-run it "to queue the pick behind the
+        # compaction" promised a wait the re-run does not take; the plain pick's re-run does park, and keeps its sentence.
+        # The gate itself is unchanged: `default` without --now is not refused during a compaction (the refuted half)
+        fake = _FakeBackend(busy=True, outlook="deferred")
+        a, b = self._local(fake, _compacting_now=lambda sid, **kw: True)
+        with a, b:
+            code, resp = self._post({"target": "web", "pick": "default", "now": True})
+        self.assertEqual(code, 409, resp)
+        self.assertEqual(resp["error"], "web is compacting, and a compaction is not cut for a billing change; run it again without "
+                                        "--now: `default` never queues, it applies at once and the session reconnects when the "
+                                        "compaction ends")
+        self.assertEqual(fake.calls, [])
+        a, b = self._local(fake, _compacting_now=lambda sid, **kw: True)
+        with a, b:
+            code, resp = self._post({"target": "web", "pick": "login", "now": True})
+        self.assertEqual(code, 409, resp)
+        self.assertIn("run it again without --now to queue the pick behind the compaction, or wait for it to end", resp["error"])
+        a, b = self._local(fake, _compacting_now=lambda sid, **kw: True)
+        with a, b:
+            code, resp = self._post({"target": "web", "pick": "default"})
+        self.assertEqual((code, resp["reconnect"]), (200, "at the end of the open turn"), "no behaviour change: applied now, deferred")
+        self.assertEqual(fake.calls, [("follow_default_auth", SID)])
+
+    def test_a_pick_this_box_cannot_bill_is_refused_before_the_park_on_the_plain_road(self):
+        # round 1 of the review (kernel-1 with correctness-3): the plain road parked a pick the box already knew it could not
+        # bill and answered ok with a moment, so the refusal came at the drain, visible only as a chat frame and kernel
+        # stderr, while the --now road and the walk asked auth_unavailable_why first. Asked before the park now, in --now's
+        # order: the queue is untouched. The read is live, so a transient unavailability (a login signing in) can refuse a
+        # pick that would have applied at the drain: the cheaper error, visible at once and one keystroke to retry, against
+        # a doomed parked op that answers ok and fails where nobody looks; the drain's refusal-reporting arm stays for the
+        # state that changes between the check and the fire (ParkedPickRefusedAtTheDrain)
+        fake = _FakeBackend(busy=True, why="that login's record is missing")
+        parked = []
+        a, b = self._local(fake, _gate_or_park=lambda sid, op: parked.append(op) or True)
+        with a, b:
+            code, resp = self._post({"target": "web", "pick": "login:" + LID})
+        self.assertEqual(code, 409, resp)
+        self.assertEqual(resp["error"], "that login's record is missing")
+        self.assertEqual(parked, [], "nothing parked: the refusal came before the queue")
+        self.assertEqual(fake.calls, [], "the box's reason, asked once, before the helper")
+
+    def test_default_and_now_probe_the_record_before_dropping_the_parked_picks(self):
+        # round 1 of the review (regression-2 with kernel-2, extra7-1 and extra8-1): both gate-off roads dropped the sid's
+        # parked auth picks and THEN met the backend's second refusal reason, a record that would not read, and answered
+        # "nothing was changed" over an emptied queue. Both refuters rejected the fix as filed (drop only after a successful
+        # write: the drain can fire a stale parked pick between the write and the drop, the race round 2 closed) and took
+        # a read-only probe ahead of the drop, through a backend predicate (record_reads, the read the two writes make),
+        # keeping drop-before-write on the success path
+        for body, call in (({"target": "web", "pick": "default"}, "follow_default_auth"),
+                           ({"target": "web", "pick": "login:" + LID, "now": True}, "set_auth")):
+            fake = _FakeBackend(reads=False)
+            self._parked(("send", "a message parked ahead", "", "q1"), ("auth", "login"))
+            a, b = self._local(fake)
+            with a, b:
+                code, resp = self._post(body)
+            self.assertEqual(code, 409, (body, resp))
+            self.assertEqual(resp["error"], "web's record would not read, so nothing was changed", body)
+            self.assertEqual([op[0] for op in km._pending_ops.get(SID) or []], ["send", "auth"], (body, "the queue is untouched"))
+            self.assertNotIn("superseded", resp, body)
+            self.assertEqual([c[0] for c in fake.calls], [], (body, "%s is not reached: the probe came first" % call))
+        # the residual window (the record goes unreadable between the probe and the write) is said, never "nothing was changed"
+        for body, fake in (({"target": "web", "pick": "default"}, _FakeBackend(follow_ok=False)),
+                           ({"target": "web", "pick": "login:" + LID, "now": True}, _FakeBackend(set_ok=False))):
+            self._parked(("auth", "login"))
+            a, b = self._local(fake)
+            with a, b:
+                code, resp = self._post(body)
+            self.assertEqual(code, 409, (body, resp))
+            self.assertEqual(resp["error"], "web's record would not read, so the pick was not applied; 1 earlier queued pick was "
+                                            "dropped before the refusal", body)
+            self.assertEqual(resp["superseded"], 1, body)
+            self.assertNotIn(SID, km._pending_ops, body)
+
     def test_a_refused_side_answers_409_with_the_backends_reason(self):
         fake = _FakeBackend(why=sb._cred.WHY_NO_LOGIN)
         a, b = self._local(fake)
@@ -645,10 +752,12 @@ class AllFollowing(_RouteServer):
         with mock.patch.object(km, "_sdk", lambda: fake):
             code, resp = self._post({"pick": "key", "allFollowing": True})
         self.assertEqual(code, 200, resp)
-        self.assertEqual(resp, {"ok": True, "pick": "key", "moved": 2, "skipped": 1, "unwritten": 0, "failed": 0,
+        self.assertEqual(resp, {"ok": True, "pick": "key", "moved": 2, "skipped": 1, "unwritten": 0, "failed": 0, "parked": 0,
                                 "sessions": ["web", "tests"], "skippedSessions": ["api"], "unwrittenSessions": [], "failedSessions": [],
+                                "parkedSessions": [], "parkedReconnect": "after the move finishes",
                                 "outlooks": {"web": "now", "tests": "none needed"}, "superseded": 0},
-                         "each moved session's outlook rides the answer in the reconnect words (round 2 of the review)")
+                         "each moved session's outlook rides the answer in the reconnect words (round 2 of the review); the "
+                         "parked bucket and its word since round 1 of the review, 2026-09-19")
         self.assertEqual(fake.calls, [("set_auth_followers", "key")])
 
     def test_a_follower_whose_step_failed_is_answered_apart(self):
@@ -712,9 +821,43 @@ class AllFollowing(_RouteServer):
         with mock.patch.object(km, "_sdk", lambda: fake):
             code, resp = self._post({"pick": "key", "allFollowing": True})
         self.assertEqual(code, 200, resp)
-        self.assertEqual(resp["superseded"], 2)
+        self.assertEqual(resp["superseded"], 2, "the count rides the walk's answer, summed by the walk from its hook")
         self.assertNotIn(SID, km._pending_ops)
         self.assertEqual([op[0] for op in km._pending_ops[FAR_SID]], ["send"], "the parked send keeps its place")
+        # PER FOLLOWER, through the walk's after_write hook (round 1 of the review, 2026-09-19; its correctness-2): dropped
+        # after the whole walk, a drain cycle inside the walk fired an earlier follower's parked pick over the walk's write
+        # while the answer said none was superseded. The route hands the drop to the walk, which runs it right after each
+        # follower's write (set_auth_followers pins the interleaving on the real backend)
+        self.assertEqual(fake.dropped, [SID, FAR_SID], "the kernel's drop ran through the hook, once per moved follower")
+
+    def test_a_follower_mid_move_has_the_pick_parked_behind_its_move_and_is_not_written(self):
+        # round 1 of the review (tests-1's move half with extra8-2, both refuters): the walk was the third road to bypass the
+        # FIFO and the only one with no move guard, so a follower whose queue `_moving` holds (be.move() waiting on its
+        # set_cwd answer, a quiet session) was written and asked, and the arm tore its client down under the move. Both
+        # refuters took PARK over skip: the plain road's park in its own words (_BILLING_PARK_WORDS["move"]), applied by
+        # the drain when the move ends, where a skipped follower stays on the default with nothing to retry. The walk's
+        # `park` hook is the kernel's: it parks the pick in the follower's FIFO and the follower is filed apart, never in
+        # movedSids, so its own parked picks are not dropped. The compaction half was refuted (a compacting session is
+        # never quiet, so the walk's request defers to the compaction's settle on its own) and has no gate
+        fake = _FakeBackend(outlooks={"web": "now", "tests": "now"})
+        km._pending_ops.pop(SID, None)
+        km._pending_ops.pop(FAR_SID, None)
+        km._park_op(SID, ("auth", "login"))                      # the moving follower's earlier parked pick: kept, the walk's queues behind it
+        self.addCleanup(lambda: (km._pending_ops.pop(SID, None), km._pending_ops.pop(FAR_SID, None), km._save_pending_ops()))
+        km._moving.add(SID)
+        try:
+            with mock.patch.object(km, "_sdk", lambda: fake):
+                code, resp = self._post({"pick": "key", "allFollowing": True})
+        finally:
+            km._moving.discard(SID)
+        self.assertEqual(code, 200, resp)
+        self.assertEqual((resp["parked"], resp["parkedSessions"], resp["parkedReconnect"]), (1, ["web"], "after the move finishes"))
+        self.assertEqual((resp["moved"], resp["sessions"], resp["outlooks"]), (1, ["tests"], {"tests": "now"}))
+        self.assertEqual(km._pending_ops[SID], [("auth", "login"), ("auth", "key")],
+                         "parked behind the move, after the pick already queued: the FIFO's press order, the last wins")
+        self.assertEqual(fake.parked, [SID], "the hook answered True for the moving follower alone")
+        self.assertEqual(fake.dropped, [FAR_SID], "the drop ran for the moved follower alone: a parked follower keeps its queue")
+        self.assertEqual(resp["superseded"], 0)
 
 
 class Read(_RouteServer):
@@ -954,7 +1097,7 @@ class BackendHelpers(unittest.TestCase):
         out = self.be.set_auth_followers("key")
         self.assertEqual(out, {"moved": ["api2", "docs", "tests", "web"], "skipped": ["api"], "unwritten": [],
                                "movedSids": [mid.sid, docs.sid, tests.sid, web.sid],
-                               "failed": [],
+                               "failed": [], "parked": [], "superseded": 0,   # the kernel's two hooks, None here (round 1 of the review)
                                # each moved session's outlook (round 2 of the review): web's request stands and its bounded
                                # relaunch waits for a spawn slot with the CLI serving (staggered, since the reviewer's round 1
                                # drew the slot at the arm), tests already runs the side (none), docs has no loop (next-launch),
@@ -981,8 +1124,8 @@ class BackendHelpers(unittest.TestCase):
         docs = self._sess("docs", launched="login")
         sb._reg_path(Path(self.d), docs.sid).write_text("{not a record")
         out = self.be.set_auth_followers("key")
-        self.assertEqual(out, {"moved": ["web"], "skipped": [], "unwritten": ["docs"], "failed": [], "movedSids": [web.sid],
-                               "outlook": {"web": "next-launch"}})
+        self.assertEqual(out, {"moved": ["web"], "skipped": [], "unwritten": ["docs"], "failed": [], "parked": [], "movedSids": [web.sid],
+                               "outlook": {"web": "next-launch"}, "superseded": 0})
         self.assertIs(docs._relaunch_bounded, False, "nothing written, nothing asked, no slot")
         self.assertTrue(any("1 record would not read (docs)" in m for m in self.logs), self.logs[-2:])
         self.assertFalse(any("skipped with a pick of their own (docs)" in m for m in self.logs), self.logs[-2:])
@@ -1062,6 +1205,11 @@ class BackendHelpers(unittest.TestCase):
         self.assertEqual(len(aq), 1, "the landing found no arm standing for the pick and made the request")
         self.assertIs(api._relaunch_bounded, True, "the walk's pick: its relaunch draws a slot, from the memo")
         self.assertTrue(any("left to this landing, so it is asked now" in m for m in self.logs), self.logs[-2:])
+        # the road's word (round 1 of the review, 2026-09-19; its tests-5): the attach leg says "attached to this session's
+        # surviving CLI"; the launch leg below says "launched this session's new CLI". Collapsing the two to "attach" left
+        # every module green; only the launch leg's assertion discriminates that mutation, this one pins the reverse
+        self.assertTrue(any("auth (api): attached to this session's surviving CLI, which runs on the login while its pick is the key"
+                            in m for m in self.logs), self.logs[-2:])
         # the dashboard's pick through the same shape: the landing's request draws no slot
         docs, dq = self._never_landed_follower("docs", reports="login", composed="key")
         self.assertTrue(self.be.set_auth(docs.sid, "key"))
@@ -1077,6 +1225,8 @@ class BackendHelpers(unittest.TestCase):
         tests.auth_live = ""                                   # _stamp_launch_login at the handshake
         tests._connect_landed()
         self.assertEqual((tests._launched_auth, tests._auth_pending, len(tq)), ("key", "login", 1))
+        self.assertTrue(any("auth (tests): launched this session's new CLI, which runs on the key while its pick is the login"
+                            in m for m in self.logs), self.logs[-2:])   # the launch leg's word (tests-5, the discriminating half)
         # a pick made during the spawn of the OTHER side on a LANDED session keeps its own request's arm (the base's rule):
         # the landing asks nothing more for it
         notes = self._sess("notes", launched="key")
@@ -1717,7 +1867,9 @@ class BackendHelpers(unittest.TestCase):
         self.be._note_auth_source(web, "ANTHROPIC_API_KEY")   # the CLI's first init: it bills the key, the pick is the login
         self.assertEqual((web._launched_auth, len(wq), web._relaunch_bounded, web._landing_ask_bounded), ("key", 1, True, False),
                          "the report is the stamp; the pick differs, so it is asked now, with the walk's slot")
-        line = [m for m in self.logs if "left to this report, so it is asked now" in m]
+        # the ask's line is 787's since the rebase folded the verb's closer into _recover_picked_pending_at_init (one method,
+        # one line), so the pin reads 787's wording, not the verb's old one
+        line = [m for m in self.logs if "left to this report and nothing was armed for it, so it is asked now" in m]
         self.assertEqual(len(line), 1, self.logs)
         self.assertTrue(line[0].endswith(self.STAGGER), line[0])
         # the served twin, through the dashboard's own pick: the report names the pick, so nothing relaunches
@@ -1836,7 +1988,9 @@ class BackendHelpers(unittest.TestCase):
             self.assertEqual((s.auth, s._auth_pending, self._reg(s.sid)["auth"]), ("key", "key", "key"), s.name)
         self.assertEqual((api.auth, api.auth_login, api._auth_pending, api._auth_pending_login, api._relaunch_bounded, api._landing_ask_bounded),
                          ("", "", "", "", False, False), "the failed follower is a follower again, with no ask")
-        self.assertEqual((self._reg(api.sid).get("auth", ""), self._reg(api.sid).get("authPending", False)), ("", False), "the mirror retried")
+        self.assertEqual((self._reg(api.sid).get("auth", ""), self._reg(api.sid).get("authPending", False)), ("", False),
+                         "the reg names no pick and no ask (the fault here is the mirror itself; the retry's own pin is "
+                         "test_a_walk_step_that_raises_after_its_mirror_has_the_reg_rolled_back_with_the_pair)")
         rows = [p["text"] for p in self.be.problems(10) if "step failed" in p["text"]]
         self.assertEqual(len(rows), 1, self.be.problems(10))
         self.assertIn("auth (api): the pick key was asked of this session, but its step failed (PermissionError", rows[0])
@@ -1869,7 +2023,9 @@ class BackendHelpers(unittest.TestCase):
         self.assertEqual((api.auth, api.auth_login, api._auth_pending, api._auth_pending_login, api._relaunch_bounded, api._landing_ask_bounded),
                          ("", "", "login", "", False, False), "as the step found it: a follower, its standing ask kept, no slot memo")
         reg = self._reg(api.sid)
-        self.assertEqual((reg.get("auth", ""), reg.get("authPending")), ("", True), "the retry mirrored the pair and the standing ask")
+        self.assertEqual((reg.get("auth", ""), reg.get("authPending")), ("", True),
+                         "the reg names no pick and the standing ask (the fault here is the mirror itself, so this case cannot see "
+                         "the retry; its pin is the after-the-mirror test beside it)")
         self.assertFalse(api._reconnect or api._reconnect_when_idle, "no request: the ask waits for its landing as it did")
         rows = [p["text"] for p in self.be.problems(10) if "step failed" in p["text"]]
         self.assertEqual(len(rows), 1, self.be.problems(10))
@@ -1973,6 +2129,369 @@ class BackendHelpers(unittest.TestCase):
         line = [m for m in self.logs if "auth (tests)" in m and "left to this landing, so it is asked now" in m]
         self.assertEqual(len(line), 1, self.logs[-2:])
         self.assertFalse(line[0].endswith(self.STAGGER), line[0])
+
+
+    # ---- round 1 of the billing verb's review (2026-09-19): the high, the gap cases, the reachable injectors, the walk's
+    # hooks, the memo's life and the quiet tail. Each test was red on 1100d3f0f (the body's round-1 section names the reds)
+    # except the two labelled characterisation pins
+
+    def _composed(self, s):
+        """The compose's stamps as _options writes them (_decide_auth, then _stamp_compose: the shape, _launching,
+        _connecting, the fast ask, _launched_keyed, _options_login and _launched_unkeyed_pick), so a test's window is the
+        REAL compose's and the unkeyed-pick flag is derived from it, never hand-set (round 1 of the review, 2026-09-19;
+        its regression-1, both refuters: a flag set beside a shape the compose cannot produce pins a state the code cannot
+        reach). Returns (side, shape)."""
+        fell, side, lid = self.be._decide_auth(s)
+        shape, _ = self.be._stamp_compose(s, side, lid)
+        return side, shape
+
+    def _unkeyed_key_survivor(self, name, cls, report=""):
+        """The high's class (round 1 of the review, 2026-09-19; regression-1): a session PICKED onto the key on a box whose
+        Claude Code settings cannot be read (key_state "unknown": the compose cannot bill the key as the key, _launch_shape
+        names the login for it, and the compose flags the pick unkeyed), its CLI a survivor of a kernel restart under a
+        live host lease, the boot re-attach composed and not landed. `cls` "lease": no report on record, the cannot-tell
+        attach; "report": the CLI's report restored from the reg (`report`, the side it bills), an attach that can tell.
+        The compose's own derivation is asserted, so a fixture that stopped producing the flag would say so here."""
+        self.be.key_state = lambda: "unknown"
+        s = self._sess(name, auth="key")
+        if cls == "report":
+            self.be._update_reg(s.sid, apiKeyAuth=(report == "key"))
+            s.auth_live = report
+        leased = self.__dict__.setdefault("_leased", set())
+        leased.add(s.sid)
+        self.be._host_lease_live = lambda sess: sess.sid in leased
+        q = self._queue_loop(s)
+        side, shape = self._composed(s)
+        self.assertEqual((side, shape["auth"], s._launched_unkeyed_pick, s._launched_keyed), ("key", "login", True, False),
+                         "reachability: the compose itself flags an explicit key pick this box cannot bill as the key")
+        s._host_is_attach = True
+        return s, q
+
+    def test_a_pick_parked_across_a_cannot_tell_attach_of_an_unkeyed_key_compose_stands_for_the_clis_first_init(self):
+        # THE HIGH (round 1 of the review, 2026-09-19; regression-1, both refuters): the never-landed park (this PR) writes a
+        # pick on the object with no request, and _connect_landed's picked branch served a pending on `_launched_unkeyed_pick`
+        # with no attach guard, so on a cannot-tell attach the parked pick was cleared as SERVED, the closer found no
+        # pending at the CLI's first init, and the session kept billing the old account with no reconnect, no dots and no
+        # problem row (the per-init mismatch check is silenced by the same flag). At 787's head the plain login pick
+        # ended in the same silence through the already-applying branch, while a stored-login pick was relaunched by the
+        # request branch, so the regression is the stored-login pick on this road (the body says which). The flag is
+        # the compose's own here (_unkeyed_key_survivor); both clauses now end in `and not attach`, the pending stands
+        # across the attach, and the CLI's first init decides it: served when the CLI bills the pick, asked when it does not
+        rec = self._stored_login()
+        cases = (("web", "login", "apiKeyHelper", "asked"), ("api", "login:" + rec["id"], "apiKeyHelper", "asked"),
+                 ("tests", "key", "none", "asked"), ("docs", "key", "apiKeyHelper", "served"))
+        for name, pick, init, expect in cases:
+            s, q = self._unkeyed_key_survivor(name, "lease")
+            self.assertTrue(self.be.set_auth(s.sid, pick, chip=False))
+            want = sb._logins.parse_pick(pick)
+            self.assertEqual((s._auth_pending_target(), len(q)), (want, 0), "%s: parked for the landing, no request" % name)
+            del self.logs[:]
+            s._connect_landed()                                   # the cannot-tell attach lands
+            self.assertIsNone(s._launched_auth, name)
+            self.assertEqual((s._auth_pending_target(), self._reg(s.sid)["authPending"], len(q)), (want, True, 0),
+                             "%s: the pending stands across the attach; the unkeyed flag serves nothing on the attach road" % name)
+            self.assertTrue(any("auth (%s): attached to this session's surviving CLI, which has not reported which side it bills"
+                                % name in m and "the CLI's first init decides it" in m for m in self.logs), (name, self.logs))
+            del self.logs[:]
+            self.be._note_auth_source(s, init)                    # the CLI's first init, the closing event
+            self.assertEqual(s._launched_auth, "key" if init == "apiKeyHelper" else "login", name)
+            if expect == "asked":
+                self.assertEqual((s._auth_pending_target(), len(q), self._reg(s.sid)["authPending"]), (want, 1, True),
+                                 "%s: asked at the init, the relaunch composes the pick" % name)
+                self.assertTrue(any("left to this report and nothing was armed for it, so it is asked now" in m for m in self.logs),
+                                (name, self.logs))
+            else:
+                self.assertEqual((s._auth_pending, len(q), self._reg(s.sid)["authPending"]), ("", 0, False),
+                                 "%s: served by the report, no relaunch" % name)
+                self.assertTrue(any("the pick is served, no reconnect" in m for m in self.logs), (name, self.logs))
+        # the silence that made this the worst outcome available: a login pick on a survivor billing the key rings no
+        # mismatch row (the compose meant the key, and the CLI reports the key), so nothing but the closer could say
+        self.assertEqual([p["text"] for p in self.be.problems(20) if "auth (web)" in p["text"]], [])
+
+    def test_a_pick_parked_across_an_attach_that_can_tell_with_an_unkeyed_key_compose_is_asked_at_the_landing(self):
+        # the worse of the two roads (round 1 of the review, 2026-09-19; regression-1, both refuters): with the CLI's report
+        # on record the attach stamps it and CAN tell, so _note_auth_source's init step never runs (its gate is a stamp of
+        # None) and the landing is the only closing event there is. The unkeyed clause cleared the parked pick as served
+        # at that landing while the survivor billed the other account, and nothing could ever ask it. Guarded, the landing
+        # finds the pending unserved and asks it (_ask_parked_pick's attach road), once; the init asks nothing more
+        rec = self._stored_login()
+        for name, report, pick in (("web", "login", "key"), ("api", "key", "login:" + rec["id"]), ("tests", "key", "login")):
+            s, q = self._unkeyed_key_survivor(name, "report", report)
+            self.assertTrue(self.be.set_auth(s.sid, pick, chip=False))
+            want = sb._logins.parse_pick(pick)
+            self.assertEqual((s._auth_pending_target(), len(q)), (want, 0), "%s: parked for the landing (the report is on record)" % name)
+            del self.logs[:]
+            s._connect_landed()                                   # the attach stamps the report: it can tell
+            self.assertEqual(s._launched_auth, report, name)
+            self.assertEqual((s._auth_pending_target(), len(q), self._reg(s.sid)["authPending"]), (want, 1, True),
+                             "%s: unserved and asked at the landing" % name)
+            runs = ("the %s login" % self.be.login_display(rec["id"])) if False else "the %s" % report
+            self.assertTrue(any("auth (%s): attached to this session's surviving CLI, which runs on %s while its pick is" % (name, runs) in m
+                                and "left to this landing, so it is asked now" in m for m in self.logs), (name, self.logs))
+            with mock.patch.object(s, "_recover_picked_pending_at_init", wraps=s._recover_picked_pending_at_init) as closer:
+                self.be._note_auth_source(s, "apiKeyHelper" if report == "key" else "none")
+            self.assertEqual((closer.call_count, len(q)), (0, 1), "%s: the init step is not entered with a stamp on record; no second ask" % name)
+
+    def test_a_launch_that_lands_in_the_gap_of_the_never_landed_branch_is_read_afresh(self):
+        # round 1 of the review (tests-2, both refuters; the refuters' own probe, moved into this class): the landed-in-the-gap
+        # half of set_auth's never-landed branch (the re-check under the hold, the fresh read_picks after it) had no test,
+        # and either mutation left every module green. A follower with no report and a LIVE host lease, a launch in flight
+        # composed from the key; the pick is the login. The launch LANDS between the picks read and the never-landed hold
+        # (the lease read is the file I/O in that gap), stamping the key. Read afresh, the guards see a landed object on
+        # the key with a login pick and REQUEST the reconnect; read from the stale snapshot, the pick is written for a
+        # landing that has passed. And the refuter's addition: deleting the branch outright DROPS the pick (nothing
+        # written, nothing pending), worse than leaving it pending, so the reg's pick is pinned too
+        s = self._sess("web")
+        s._launching = dict(self.be._launch_shape(s), auth="key", login="")
+        s._connecting = True
+        s._host_is_attach = False
+        q = self._queue_loop(s)
+        fired = []
+
+        def lease_lands(sess):
+            if not fired:
+                fired.append(1)
+                sess._connect_landed()
+                self.assertEqual(sess._launched_auth, "key")
+            return True
+        self.be._host_lease_live = lease_lands
+        self.assertTrue(self.be.set_auth(s.sid, "login", chip=False))
+        self.assertEqual(fired, [1], "the seam ran")
+        self.assertEqual((s.auth, s._auth_pending, self._reg(s.sid)["auth"]), ("login", "login", "login"), "the pick is written, not dropped")
+        self.assertEqual(len(q), 1, "the landing has passed: the pick must make its own request, not wait for a landing")
+        self.assertEqual(self.be.auth_apply_outlook(s.sid), "now")
+
+    def test_a_landing_in_the_gap_that_matches_the_pick_is_not_already_applying(self):
+        # tests-2's second case (the refuters' probe): the same gap, with the connect in flight composing the SIDE THE PICK
+        # NAMES. Read afresh the landed stamp equals the pick and nothing is owed; read from the stale snapshot (launched
+        # None, launching == the pick) the already-applying guard writes a pending for a landing that has passed, and the
+        # dots never clear
+        s = self._sess("api", auth="login")
+        s._launching = dict(self.be._launch_shape(s), auth="login", login="")
+        s._connecting = True
+        s._host_is_attach = False
+        q = self._queue_loop(s)
+        fired = []
+
+        def lease_lands(sess):
+            if not fired:
+                fired.append(1)
+                sess._connect_landed()
+                self.assertEqual(sess._launched_auth, "login")
+            return True
+        self.be._host_lease_live = lease_lands
+        self.assertTrue(self.be.set_auth(s.sid, "login", chip=False))
+        self.assertEqual(fired, [1], "the seam ran")
+        self.assertEqual((s.auth, s._auth_pending, self._reg(s.sid)["auth"]), ("login", "", "login"),
+                         "the landed process already runs the pick: nothing pending, the pick kept")
+        self.assertEqual(len(q), 0, self.logs[-2:])
+        self.assertIs(bool(self._reg(s.sid).get("authPending")), False)
+
+    def test_a_walk_step_that_raises_after_its_mirror_has_the_reg_rolled_back_with_the_pair(self):
+        # round 1 of the review (tests-3, both refuters): the guard's step road retries the mirror of the PAIR (_mirror_auth),
+        # not the flag alone (_mirror_auth_pending), and nothing pinned it: the two tests above inject their fault AT the
+        # reg write that would have put the pick there, so a retry that mirrored the flag alone, or no retry at all, left
+        # them green. The fault here lands AFTER set_auth's mirror, at a point the code reaches in production: set_auth's
+        # tail line ("set to ...; reconnecting to apply") is the first line the step files after its mirror and its
+        # request, and _log runs the kernel's callback bare, so a stderr closed under a service restart raises exactly
+        # there (_log_quietly's documented case; the other two raises the finding named cannot happen: request_reconnect
+        # goes through _call_on_loop, which never raises, and _poke swallows). The callback raises once, on that line
+        # alone: a callback that kept raising would take the guard's own row down too (a bare _log in its handler,
+        # 787's, not this round's)
+        web, api = self._sess("web", launched="login"), self._sess("api", launched="login")
+        for s in (web, api):
+            self._queue_loop(s)
+        real_cb = self.be._log_cb
+        raised = []
+
+        def closed_stderr(m):
+            if str(m).startswith("auth (api): set to key;") and not raised:
+                raised.append(str(m))
+                raise OSError(9, "Bad file descriptor")
+            return real_cb(m)
+        self.be._log_cb = closed_stderr
+        out = self.be.set_auth_followers("key")
+        self.be._log_cb = real_cb
+        self.assertEqual(len(raised), 1, "the fault fired on the step's own tail line, after the mirror")
+        self.assertEqual((out["moved"], out["failed"]), (["web"], ["api"]))
+        self.assertEqual((api.auth, api.auth_login, api._auth_pending, api._relaunch_bounded, api._landing_ask_bounded),
+                         ("", "", "", False, False), "the object is a follower again, as the step found it")
+        reg = self._reg(api.sid)
+        self.assertEqual((reg.get("auth", ""), reg.get("authPending", False)), ("", False),
+                         "the retry mirrored the PAIR: the reg names no pick and no ask, so a restart does not launch the key "
+                         "the row said was rolled back")
+        rows = [p["text"] for p in self.be.problems(10) if "step failed" in p["text"]]
+        self.assertEqual(len(rows), 1, self.be.problems(10))
+        self.assertIn("auth (api): the pick key was asked of this session, but its step failed (OSError", rows[0])
+
+    def test_the_walk_drops_each_followers_parked_picks_right_after_its_own_write_and_parks_a_mover(self):
+        # round 1 of the review (correctness-2, both refuters): the kernel dropped every moved follower's parked picks after
+        # the WHOLE walk, so a drain cycle inside the walk fired an earlier follower's parked pick over the walk's write
+        # while the answer said none was superseded; a drop before the write (the finding's other option) loses a
+        # still-parked pick for a follower the walk skips or fails. Per follower, after its successful write, through the
+        # kernel's hook, with the count riding the callback's returns: the mutation that must fail is moving the drop back
+        # after the loop, which this spy sees as the other follower's pick already written at the first drop
+        web, api = self._sess("web", launched="login"), self._sess("api", launched="login")
+        for s in (web, api):
+            self._queue_loop(s)
+        seen = []
+
+        def after_write(sid):
+            other = api if sid == web.sid else web
+            seen.append((self.be.sessions[sid].name, other.auth))   # what the OTHER follower's pick reads at this drop
+            return 1 if sid == web.sid else 2
+        out = self.be.set_auth_followers("key", after_write=after_write)
+        self.assertEqual(out["moved"], ["api", "web"])
+        self.assertEqual(seen, [("web", ""), ("api", "key")],
+                         "web's drop ran before api's write and api's after it: per follower, in the roster's order")
+        self.assertEqual(out["superseded"], 3, "the count rides through the callback, never summed afterwards")
+        # the park hook (tests-1's move half with extra8-2): a follower the kernel parks is written nothing and asked nothing,
+        # filed apart, and never in movedSids, so its own parked picks are not dropped
+        docs, tests = self._sess("docs", launched="login"), self._sess("tests", launched="login")
+        dq, tq = self._queue_loop(docs), self._queue_loop(tests)
+        dropped = []
+        out = self.be.set_auth_followers("key", park=lambda sid: sid == docs.sid, after_write=lambda sid: dropped.append(sid) or 0)
+        self.assertEqual((out["moved"], out["parked"], out["movedSids"], out["skipped"]), (["tests"], ["docs"], [tests.sid], ["api", "web"]))
+        self.assertEqual((docs.auth, docs._auth_pending, len(dq), docs._relaunch_bounded, docs._landing_ask_bounded), ("", "", 0, False, False),
+                         "parked by the kernel: nothing written or asked for it")
+        self.assertNotIn("auth", self._reg(docs.sid))
+        self.assertEqual((tests.auth, len(tq), dropped), ("key", 1, [tests.sid]))
+        self.assertTrue(any("1 parked behind a move in flight (docs), the pick applies when the move finishes" in m for m in self.logs), self.logs[-1:])
+
+    def test_the_walks_slot_memo_dies_with_the_pick_it_belongs_to(self):
+        # round 1 of the review (correctness-6 with kernel-3; extra5-2 and extra6-3 the same family): the walk's slot memo
+        # (_landing_ask_bounded) was spent only where the parked pick was ASKED (_ask_parked_pick), so a pick SERVED at the
+        # CLI's first init, or withdrawn, or reverted, left it standing, and the next landing that asked an ordinary pick
+        # drew the walk's spawn-stagger slot from it and told the user so. The refuters corrected the proposed fix (clear it
+        # at the ask's stand-down: that spends it while its ask still stands and loses a correct stagger on a re-ask) to the
+        # invariant: the memo goes with the pick it belongs to, cleared at every disposal of the pending and written with
+        # every pending set_auth's request branch writes. Every disposal site is driven here; the last case drives the
+        # consequence on the one road that reaches _ask_parked_pick again inside one kernel life
+        self.be.key_state = lambda: "unknown"    # the consequence's road needs a key pick and a login pick to compose alike
+        # (1) SERVED at the CLI's first init (extra6-3's walk-driven served twin)
+        web, wq = self._leased_unreported_follower("web", composed="login")
+        self.assertEqual(self.be.set_auth_followers("login")["moved"], ["web"])
+        self.assertIs(web._landing_ask_bounded, True, "the walk's memo, written with the parked pick")
+        web._connect_landed()
+        self.be._note_auth_source(web, "none")                    # the CLI bills the login the pick names: served
+        self.assertEqual((web._auth_pending, web._relaunch_bounded, web._landing_ask_bounded, len(wq)), ("", False, False, 0), "served: the memo is gone")
+        # (2) the served check's withdrawal (_served_by_connect, the running process already runs it)
+        api, aq = self._leased_unreported_follower("api", composed="login")
+        self.assertEqual(self.be.set_auth_followers("login")["moved"], ["api"])
+        api._connect_landed()
+        self.be._note_auth_source(api, "none")
+        self.assertIs(api._landing_ask_bounded, False)
+        api._auth_pending, api._auth_pending_login, api._landing_ask_bounded = "login", "", True   # a walk's pending the running process serves
+        self.assertTrue(api._served_by_connect("request", pick="auth"))
+        self.assertEqual((api._auth_pending, api._landing_ask_bounded), ("", False), "withdrawn as served: the memo with it")
+        # (3) set_auth's revert branch (a re-pick of the side the CLI runs withdraws the pending)
+        docs, dq = self._leased_unreported_follower("docs", composed="key")
+        self.assertEqual(self.be.set_auth_followers("login")["moved"], ["docs"])
+        self.assertIs(docs._landing_ask_bounded, True)
+        docs._connect_landed()
+        self.be._note_auth_source(docs, "apiKeyHelper")            # the CLI bills the key: the login pick is asked (the memo spent)
+        self.assertEqual((docs._auth_pending, docs._landing_ask_bounded, len(dq)), ("login", False, 1))
+        tests, tq = self._leased_unreported_follower("tests", composed="key")
+        self.assertEqual(self.be.set_auth_followers("login")["moved"], ["tests"])
+        tests._connect_landed()
+        tests._launched_auth = "key"                                # the landing that could tell (the report on record) would stamp this
+        self.assertTrue(self.be.set_auth(tests.sid, "key", chip=False))   # the revert: the side the CLI runs, the pending withdrawn
+        self.assertEqual((tests._auth_pending, tests._relaunch_bounded, tests._landing_ask_bounded), ("", False, False), "reverted: the memo with it")
+        # (4) the unchanged branch's clear, (5) the follower step's withdrawal, (6) the unlanded step's clear of a moot pending
+        one = self._sess("one", launched="key")
+        self._queue_loop(one)
+        one._auth_pending, one._landing_ask_bounded = "key", True    # a stale pending of the side the CLI runs, the memo left from a walk
+        self.assertTrue(self.be.set_auth(one.sid, "key", chip=False))
+        self.assertEqual((one._auth_pending, one._landing_ask_bounded), ("", False), "the unchanged branch's clear")
+        two = self._sess("two", auth="login", launched="login")
+        two.auth_live = "login"
+        two._auth_pending, two._landing_ask_bounded = "login", True
+        self._queue_loop(two)
+        self.assertTrue(self.be.follow_default_auth(two.sid))      # the default is the login here (no helper readable): already runs it
+        self.assertEqual((two._auth_pending, two._landing_ask_bounded), ("", False), "the follower step's withdrawal")
+        three = self._sess("three", auth="login")
+        three._auth_pending, three._landing_ask_bounded = "login", True
+        three._launching = dict(self.be._launch_shape(three), auth="login", login="")   # the connect in flight launches the default
+        self._queue_loop(three)
+        self.assertTrue(self.be.follow_default_auth(three.sid))
+        self.assertEqual((three._auth_pending, three._landing_ask_bounded), ("", False), "the unlanded step's clear of a moot pending")
+        # (7) the request branch writes the memo with the pending, from the same `bounded` as its slot flag
+        four = self._sess("four", launched="login")
+        self._queue_loop(four)
+        four._landing_ask_bounded = True                              # a stale memo, were one ever left
+        self.assertTrue(self.be.set_auth(four.sid, "key", chip=False))
+        self.assertEqual((four._relaunch_bounded, four._landing_ask_bounded), (False, False), "a plain pick's pending inherits no memo")
+        # THE CONSEQUENCE, on the one road that asks a landed session's pick again inside one kernel life: a key pick whose
+        # own request the connect in progress served (on this box a key pick and a login pick compose the same shape) and
+        # whose landing then finds it unserved asks it through _ask_parked_pick, which draws the memo. Served at (1), web's
+        # memo is gone, so the ask draws no slot and the line carries no stagger clause; leaked, it drew the walk's slot for
+        # a pick the user made alone
+        self.assertEqual((web.auth, web._launched_auth), ("login", "login"))
+        side, shape = self._composed(web)                          # a reconnect in progress composed from the login pick
+        self.assertEqual((side, shape["auth"]), ("login", "login"))
+        self.assertTrue(self.be.set_auth(web.sid, "key", chip=False))   # the key pick: its request is made...
+        self.assertEqual(len(wq), 1)
+        for cb, a in wq:                                              # ...and run by the loop: served by the connect in progress
+            cb(*a)
+        self.assertTrue(any("the connect in progress launches what the pending auth pick asks for" in m for m in self.logs), self.logs[-3:])
+        web._host_is_attach = False
+        del self.logs[:]
+        web._connect_landed()                                         # the launch lands the login: the key pick is unserved, asked
+        line = [m for m in self.logs if "auth (web): launched this session's new CLI" in m and "so it is asked now" in m]
+        self.assertEqual(len(line), 1, self.logs)
+        self.assertFalse(line[0].endswith(self.STAGGER), "no memo: a pick the user made alone draws no spawn-stagger slot")
+        self.assertIs(web._relaunch_bounded, False)
+
+    def test_the_asks_tail_and_the_served_line_are_filed_quietly_so_a_raising_log_callback_cannot_undo_a_decision(self):
+        # round 1 of the review (regression-5, narrowed by its refuter): request_reconnect cannot raise (_call_on_loop) and
+        # _poke swallows, so the one raise reachable after the closer's decision is the kernel's log callback (a closed
+        # stderr under a service restart, _log_quietly's case). Filed bare, the ask's tail line raised into the guard,
+        # which restored the slot flag and the memo as found (a made ask, its flag spent) and filed a "step failed" row
+        # for an ask that stood; the served branch's line put a served pick's pending back. Both lines go through
+        # _log_quietly now, and the comment says both branches end in a log line
+        web, wq = self._leased_unreported_follower("web", composed="key")
+        self.assertEqual(self.be.set_auth_followers("login")["moved"], ["web"])
+        web._connect_landed()
+        real_cb = self.be._log_cb
+
+        def closed_on(needle):
+            def cb(m):
+                if needle in str(m):
+                    raise OSError(9, "Bad file descriptor")
+                return real_cb(m)
+            return cb
+        self.be._log_cb = closed_on("so it is asked now")
+        self.be._note_auth_source(web, "ANTHROPIC_API_KEY")      # the CLI bills the key, the pick is the login: asked
+        self.be._log_cb = real_cb
+        self.assertEqual((len(wq), web._relaunch_bounded, web._landing_ask_bounded, web._auth_pending), (1, True, False, "login"),
+                         "the ask stands as made: the flag set, the memo spent")
+        self.assertEqual([p["text"] for p in self.be.problems(10) if "step failed" in p["text"]], [], "no guard row for a line")
+        api, aq = self._leased_unreported_follower("api", composed="login")
+        self.assertTrue(self.be.set_auth(api.sid, "key"))
+        api._connect_landed()
+        self.be._log_cb = closed_on("the pick is served, no reconnect")
+        self.be._note_auth_source(api, "ANTHROPIC_API_KEY")      # the CLI bills the key it picked: served
+        self.be._log_cb = real_cb
+        self.assertEqual((api._auth_pending, self._reg(api.sid)["authPending"], len(aq)), ("", False, 0), "served stays served")
+        self.assertEqual([p["text"] for p in self.be.problems(10) if "step failed" in p["text"]], [])
+
+    def test_billing_view_names_the_stored_login_the_running_cli_launched_on(self):
+        # CHARACTERISATION PIN (round 1 of the review, 2026-09-19; tests-4): `launchedLogin` and `launchedLabel` were only ever
+        # exercised empty, so the one line that says WHICH stored login the running CLI launched on was untested end to end;
+        # green on 1100d3f0f, red under the mutation that blanks the id
+        rec = self._stored_login()
+        s = self._sess("web", auth="login", launched="login")
+        s.auth_login = rec["id"]
+        s._launched_login = rec["id"]
+        s.auth_live = "login"
+        s.client = object()
+        view = self.be.billing_view(s.sid)
+        self.assertEqual((view["launched"], view["launchedLogin"], view["launchedLabel"]), ("login", rec["id"], "Work"))
+        t = self._sess("api", auth="key", launched="key")
+        t._launched_login = rec["id"]                             # a stale launch-login stamp beside a key launch: not this launch's
+        t.client = object()
+        view = self.be.billing_view(t.sid)
+        self.assertEqual((view["launched"], view["launchedLogin"], view["launchedLabel"]), ("key", "", ""), "the key branch names no login")
 
 
 class ParkedPickRefusedAtTheDrain(unittest.TestCase):
@@ -2319,6 +2838,51 @@ class VerbWords(unittest.TestCase):
                                              "the session is reconnecting to apply it; 2 earlier queued picks were dropped")
 
 
+    def test_the_walk_says_the_followers_parked_behind_a_move(self):
+        # round 1 of the review (tests-1's move half): a follower whose queue a move holds is parked behind the move by the
+        # kernel and filed apart; the verb says so in the plain road's words (parkedReconnect, kernel.py's
+        # _BILLING_PARK_WORDS["move"]), and a walk that parked its only follower does not deny that any follows
+        reply = {"ok": True, "pick": "key", "moved": 1, "skipped": 0, "unwritten": 0, "failed": 0, "parked": 1, "skippedSessions": [],
+                 "unwrittenSessions": [], "failedSessions": [], "parkedSessions": ["docs"], "parkedReconnect": "after the move finishes",
+                 "sessions": ["web"], "outlooks": {"web": "now"}}
+        out = self._romp("--all-following", "key", reply=(200, reply))
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(out.stdout.strip(),
+                         "romp billing: 1 session following the default now carries its own pick, the API key (web); "
+                         "it reconnects at its next quiet moment; 0 skipped; "
+                         "1 parked (docs): it is mid-move, so the pick applies after the move finishes")
+        reply.update(sessions=[], moved=0, outlooks={}, parkedSessions=["api", "docs"], parked=2)
+        out = self._romp("--all-following", "key", reply=(200, reply))
+        self.assertEqual(out.stdout.strip(),
+                         "romp billing: no follower moved to the API key; 0 skipped; "
+                         "2 parked (api, docs): they are mid-move, so the pick applies after the move finishes")
+
+    def test_the_read_names_the_stored_login_the_cli_launched_on(self):
+        # CHARACTERISATION PIN (round 1 of the review, 2026-09-19; tests-4): the launched line with a stored login's id, with
+        # the kernel's label and without one (a record deleted since the launch: the id stands in). Green on 1100d3f0f
+        view = {"ok": True, "session": "web", "launched": "login", "launchedLogin": LID, "launchedLabel": "Work", "live": "login",
+                "pick": {"auth": "login", "login": LID, "label": "Work", "explicit": True}, "pending": False, "held": False,
+                "default": {"auth": "key", "login": "", "explicit": False, "label": ""}}
+        out = self._romp("web", reply=(200, view))
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(out.stdout.splitlines()[0], 'launched: login "Work"; the CLI reports: login')
+        view["launchedLabel"] = ""
+        self.assertEqual(self._romp("web", reply=(200, view)).stdout.splitlines()[0], 'launched: login "%s"; the CLI reports: login' % LID)
+
+    def test_the_help_and_the_reference_say_default_never_queues_behind_a_compaction(self):
+        # round 1 of the review (correctness-4): the verb's --help and docs/reference.md told the user to re-run without --now
+        # "to queue the pick behind the compaction", which `default` never does (it applies at once and the session
+        # reconnects when the compaction ends); the refusal sentence is pinned on the route (PerSessionPick)
+        out = self._romp("--help")
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertIn("(default never queues: during a compaction it applies at once and the session reconnects when the compaction "
+                      "ends; during a move it is refused)", " ".join(l.strip() for l in out.stdout.splitlines()))
+        doc = " ".join(Path(os.path.dirname(HERE), "docs", "reference.md").read_text().split())   # the section is hard-wrapped
+        self.assertEqual(doc.count("`default` never queues: during a compaction it applies at once and the session reconnects when the "
+                                   "compaction ends"), 2, "the command table's row and the per-session billing section")
+        self.assertNotIn("(`default` never queues, so it is refused during a move too)", doc)
+
+
 class RouteServerLeavesTheSharedRegistryClean(unittest.TestCase):
     """_register writes the placeholder sid's names line and SDK reg into the state root of the SHARED judge module
     (kernel.py loads judge.py under the one name romp_judge, so every test module's kernel in a process reads the same
@@ -2342,6 +2906,211 @@ class RouteServerLeavesTheSharedRegistryClean(unittest.TestCase):
         with mock.patch.object(km, "_sdk", lambda: None), mock.patch.object(km, "_codex", lambda: None):
             self.assertEqual(km._session_backend(SID, {"state": "idle"}), "",
                              "a names-only session reads '' once the class is done, the label ViewBuilder pins on the lane")
+
+
+class OneAskPerInit(unittest.TestCase):
+    """THE CONVERGENCE GATE (romp-manager, 2026-09-19: round 6 of the auth-default fix, fork PR #787, and round 1 of this
+    PR). Three mechanisms once decided a picked session's pending across a cannot-tell attach: fork PR #787's closer with its
+    ask leg (_recover_picked_pending_at_init), this PR's landing roads (_connect_landed's picked branch through
+    _ask_parked_pick's attach and launch branches) and the never-landed park's later init; the rebase folded them into one
+    closer and one ask. That they never double, and never all stand down, is shown BY EXECUTION here, not by reading:
+    every interleaving of the cannot-tell attach is enumerated as the product of the variables below, each state is
+    driven through the real compose (_decide_auth, then _stamp_compose: the stamps _options writes, so the unkeyed-pick
+    flag is the compose's own and never hand-set), the real landing and the real init, and the asks are counted per
+    phase: the auth ask (request_reconnect with pick "auth", the one form every writer of a billing ask takes: set_auth,
+    _ask_parked_pick, _follow_default and _follow_default_unlanded), the bare request the wrong-landing branch makes,
+    and the ARMS (a transition of _reconnect from False to True, one relaunch each).
+
+    The variables, each an independent fact of the session's state or of the CLI's word:
+      * existing: the session's own pick when the kernel restarted ("" a follower; "login" the machine's own; "loginA" a
+        stored login, which its CLI's launch carried; "key");
+      * gesture: the pick made in the window ("login", "loginA", "key", or "default", the verb's clear);
+      * box: "keyed" (an apiKeyHelper is configured, key_state ok) or "unkeyed" (Claude Code's settings cannot be read,
+        key_state unknown: the compose flags an explicit key pick as unkeyed, the high's class);
+      * timing: the gesture "before" the compose (the object built, the loop up, no connect composed: the window closed)
+        or "after" it (the boot re-attach composed and not landed: the window open);
+      * cls: what the object has when the connect lands: "lease" (a live host lease, no report on record: the cannot-tell
+        attach), "report" (the CLI's report restored from the reg: an attach that can tell), "launch" (neither: the connect
+        is a launch, the report retired at the handshake);
+      * arm: another pick's reconnect standing at the init: "none"; "immediate" (a reconnect armed, fork PR #787's fixture for a
+        relaunch already scheduled); "deferred" (an effort pick behind an open turn); "held" (an effort pick held for a
+        background task);
+      * report: what the CLI's first init says: "none" (the login: the machine's own, or the stored login the launch
+        carried) or "key".
+    Two facts are DERIVED, not varied, because varying them alone would build states the compose cannot produce: the
+    unkeyed-pick flag (the compose's, from existing and box) and the stored login a login report names (the launch the
+    CLI came from). No combination is pruned: each is reachable by construction (a wrong landing is the CLI's word, a
+    stored login's refusal its record's).
+
+    The gate: in every state the init asks at most once and at most one relaunch is armed over the whole sequence; for an
+    explicit pick the sequence never ends WRONG-SILENT (the pending gone, nothing asked or armed, the CLI billing another
+    account than the pick, and no problem row), except the residual named below, which is pinned as a set so it cannot
+    grow unnoticed. Two request calls do occur, and are counted as such: a pick's own request the connect in progress
+    served and the landing's re-ask, both withdrawn by the served check with no arm (a key pick on the unkeyed box, which
+    composes as the login), and the follower road's re-ask at a launch landing (787's design: "asked again", the same
+    arm). ROMP_ASK_TABLE=<path> writes one line per state, the record the review reads."""
+
+    EXISTING = ("", "login", "loginA", "key")
+    GESTURE = ("login", "loginA", "key", "default")
+    BOX = ("keyed", "unkeyed")
+    TIMING = ("before", "after")
+    CLS = ("lease", "report", "launch")
+    ARM = ("none", "immediate", "deferred", "held")
+    REPORT = ("none", "key")
+    # THE RESIDUAL, pre-existing at fork PR #787's head 934aa3cbf (the same enumeration there: 12 states, these four among them),
+    # named in that PR's body as the unapplied-pick family and queued: a login pick made inside the window of a LAUNCH
+    # composed for an explicit key pick this box cannot bill as the key (the compose's shape names the login for both
+    # picks, so the already-applying branch rides the connect), the launch goes plain with the helper unsuppressed, the
+    # CLI bills the key, the landing serves the login pending on the shape word, and the per-init check is silenced by the
+    # compose's unkeyed-pick flag. Not this PR's to fix (its guard is the attach road's), pinned so the set cannot grow
+    RESIDUAL = frozenset(("key", "login", "unkeyed", "after", "launch", arm, "key") for arm in ARM)
+
+    class _Now:
+        """A loop double: request_reconnect's call_soon_threadsafe runs the callback at once, here (tests/test_sdk_backend.py's
+        DefaultBillingMovesItsFollowers idiom), so the served check and the arm run as the loop would run them."""
+        def call_soon_threadsafe(self, cb, *a):
+            cb(*a)
+
+    def _backend(self, box):
+        d = tempfile.mkdtemp()
+        Path(d, "session-hosts").write_text("off")
+        logs = []
+        be = sb.SdkBackend(d, "/bin/true", lambda *a, **k: None, log=logs.append)
+        be.login_ok = lambda: True
+        be.key_state = (lambda: "ok") if box == "keyed" else (lambda: "unknown")
+        leased = set()
+        be._host_lease_live = lambda sess: sess.sid in leased
+        return be, logs, leased
+
+    def _drive(self, be, logs, leased, n, existing, gesture, box, timing, cls, arm, report):
+        rec = {"id": sb._logins.mint_id(), "label": "Work%d" % n, "tokenCmd": "token-read 'romp login Work%d'" % n,
+               "addedAt": int(time.time()) - 86400}
+        sb._logins.write_record(be.state_dir, rec)               # a fresh stored login per state: a wrong landing marks it refused
+        A = rec["id"]
+        sid = "11111111-2222-3333-4444-%012d" % n
+        reg = {"sid": sid, "name": "s%d" % n, "cwd": str(be.state_dir), "alive": True, "lastSid": sid}
+        if existing == "key":
+            reg["auth"] = "key"
+        elif existing == "login":
+            reg["auth"] = "login"
+        elif existing == "loginA":
+            reg.update(auth="login", authLogin=A, launchedLogin=A)
+        if cls == "report":
+            reg["apiKeyAuth"] = report == "key"
+            if report == "none" and existing == "loginA":
+                reg["authLoginLive"] = A
+        sb.write_reg(Path(be.state_dir), sid, reg)
+        s = sb.SdkSession(be, dict(reg))
+        s._launched_auth = None
+        s.inflight = 0
+        s.loop = self._Now()
+        be.sessions[sid] = s
+        if cls == "lease":
+            leased.add(sid)
+        asks = {"pick": 0, "landing": 0, "init": 0}
+        bare = {"pick": 0, "landing": 0, "init": 0}
+        arms = {"pick": 0, "landing": 0, "init": 0}
+        phase = ["pick"]
+        real_rr, real_arm = s.request_reconnect, s._arm_reconnect
+
+        def rr(*a, **k):
+            (asks if k.get("pick") == "auth" else bare)[phase[0]] += 1
+            return real_rr(*a, **k)
+
+        def arm_wrap(*a, **k):
+            was = s._reconnect
+            out = real_arm(*a, **k)
+            if not was and s._reconnect:
+                arms[phase[0]] += 1
+            return out
+        s.request_reconnect, s._arm_reconnect = rr, arm_wrap
+        value = {"login": "login", "loginA": "login:" + A, "key": "key"}.get(gesture)
+
+        def gesture_now():
+            if gesture == "default":
+                be.follow_default_auth(sid)
+            else:
+                be.set_auth(sid, value, chip=False)
+        if timing == "before":
+            gesture_now()
+        fell, side, lid = be._decide_auth(s)
+        be._stamp_compose(s, side, lid)                         # the real compose's stamps: the flag is derived here
+        s._host_is_attach = cls != "launch"
+        flag = bool(s._launched_unkeyed_pick)
+        if arm == "immediate":
+            s._reconnect = True
+        elif arm == "deferred":
+            s.inflight = 1
+            be.set_effort(sid, "max" if s.effort != "max" else "high")
+        elif arm == "held":
+            s._on_task_event("task_started", {"task_id": "t-%d" % n, "task_type": "local_bash", "description": "a sweep"})
+            be.set_effort(sid, "max" if s.effort != "max" else "high")
+        if timing == "after":
+            gesture_now()
+        phase[0] = "landing"
+        if cls == "launch":
+            be._stamp_launch_login(s)                            # the handshake's stamp on the launch road
+        s._connect_landed()
+        phase[0] = "init"
+        seq0 = be._problem_seq
+        be._note_auth_source(s, "apiKeyHelper" if report == "key" else "none")
+        rows = [p["text"] for p in be._problems if p["seq"] > seq0 and ("(%s)" % s.name) in p["text"]]
+        with s._hold_lock:
+            armed = bool(s._reconnect or (s._reconnect_when_idle and "auth" in s._reconnect_surfaces) or "auth" in s._pending_names())
+        total = sum(asks.values())
+        want = None if gesture == "default" else sb._logins.parse_pick(value)
+        launched_login = getattr(s, "_launched_login", "") or ""
+        bills = ("key" if report == "key" else "login", A if (report == "none" and launched_login == A) else "")
+        pending = s._auth_pending_target() if s._auth_pending else None
+        if want is None:
+            outcome = "follower"
+        elif total or armed:
+            outcome = "asked" if total else "armed"
+        elif pending:
+            outcome = "standing-no-arm"
+        elif bills == want:
+            outcome = "served"
+        elif rows:
+            outcome = "wrong-with-row"
+        else:
+            outcome = "WRONG-SILENT"
+        return {"asks": asks, "bare": bare, "arms": arms, "total": total, "armed": armed, "pending": pending, "flag": flag,
+                "launched": s._launched_auth, "bills": bills, "rows": len(rows), "outcome": outcome}
+
+    def test_exactly_one_ask_per_init_over_every_interleaving_of_the_cannot_tell_attach(self):
+        import itertools
+        bes = {box: self._backend(box) for box in self.BOX}
+        lines, silent, n = [], set(), 0
+        init_hist, arm_hist = {}, {}
+        for state in itertools.product(self.EXISTING, self.GESTURE, self.BOX, self.TIMING, self.CLS, self.ARM, self.REPORT):
+            existing, gesture, box, timing, cls, arm, report = state
+            n += 1
+            be, logs, leased = bes[box]
+            r = self._drive(be, logs, leased, n, *state)
+            a, ar = r["asks"], sum(r["arms"].values())
+            key = "%s/%s/%s/%s/%s/%s/%s" % (existing or "follower", gesture, box, timing, cls, arm, report)
+            lines.append("%-56s flag=%d asks pick=%d landing=%d init=%d bare-init=%d total=%d arms=%d armed=%d pending=%s launched=%s "
+                         "bills=%s rows=%d %s" % (key, r["flag"], a["pick"], a["landing"], a["init"], r["bare"]["init"], r["total"],
+                                                  ar, r["armed"], r["pending"], r["launched"], r["bills"], r["rows"], r["outcome"]))
+            init_hist[a["init"]] = init_hist.get(a["init"], 0) + 1
+            arm_hist[ar] = arm_hist.get(ar, 0) + 1
+            with self.subTest(state=key):
+                self.assertLessEqual(a["init"], 1, "the init asked twice: %s" % lines[-1])
+                self.assertLessEqual(ar, 1, "two relaunches armed: %s" % lines[-1])
+                if gesture != "default":
+                    self.assertLessEqual(r["total"], 2, lines[-1])
+                    if r["total"] == 2:
+                        self.assertEqual(ar, 0, "two requests are two only when both were served with no arm: %s" % lines[-1])
+                if r["outcome"] == "WRONG-SILENT":
+                    silent.add(state)
+        table = os.environ.get("ROMP_ASK_TABLE")
+        if table:
+            Path(table).write_text("\n".join(lines) + "\nINIT-ASKS %r\nARMS %r\n" % (sorted(init_hist.items()), sorted(arm_hist.items())))
+        self.assertEqual(n, 1536, "the product: 4 existing x 4 gestures x 2 boxes x 2 timings x 3 classes x 4 arms x 2 reports")
+        self.assertEqual(silent, set(self.RESIDUAL),
+                         "the wrong-silent set is exactly the pre-existing residual: %r" % sorted(silent ^ set(self.RESIDUAL)))
+        self.assertEqual(max(init_hist), 1)
+        self.assertEqual(max(arm_hist), 1)
 
 
 if __name__ == "__main__":

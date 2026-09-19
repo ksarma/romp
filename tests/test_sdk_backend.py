@@ -610,10 +610,15 @@ class LiveTail(unittest.TestCase):
         # fast_opt after _options returned, and a set_fast landing in between made a flagless connect read as
         # flagged); the loop stamps nothing of its own
         import inspect
+        # the one read and the stamp live in _stamp_compose since round 1 of the billing verb's review (2026-09-19: the
+        # compose's stamps were extracted from _options so a test can drive them with no CLI); _options composes the flag
+        # file from the value that read returned, by name
         src = inspect.getsource(sb.SdkBackend._options)
-        self.assertIn("fast_opt = sess.fast_opt", src)
+        stamps = inspect.getsource(sb.SdkBackend._stamp_compose)
+        self.assertIn("fast_opt = sess.fast_opt", stamps)
+        self.assertIn("shape, fast_opt = self._stamp_compose(sess, side, login_id)", src)
         self.assertIn("fast=fast_opt,", src)
-        self.assertIn("sess._fast_unlocked = fast_opt", src)
+        self.assertIn("sess._fast_unlocked = fast_opt", stamps)
         self.assertNotIn("self._fast_unlocked = self.fast_opt", inspect.getsource(sb.SdkSession._amain))
 
     def test_set_fast_refuses_bad_values_and_unknown_sids(self):

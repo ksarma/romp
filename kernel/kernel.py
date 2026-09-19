@@ -41159,11 +41159,16 @@ def _billing_request(b):
         own road, request_reconnect's arm rule, never the FIFO, whose replay could not apply the value (set_auth
         refuses it) and would drop it in silence. Never parked, it is refused during a move too.
     Both roads DROP the sid's parked auth picks before the backend call (round 2 of the review; _drop_parked_auth): the
-    FIFO would have fired an earlier pick over the one just applied. The `now` road asks the backend's refusal first
-    (auth_unavailable_why, the reason set_auth refuses with), so a refused --now pick leaves the user's valid parked
-    pick in the queue. The answer carries the count (`superseded`).
+    FIFO would have fired an earlier pick over the one just applied. Every road asks the box's reason first
+    (auth_unavailable_why, the reason set_auth refuses with; the plain road since round 1 of the review, 2026-09-19,
+    which had parked a doomed pick and answered ok), and the two gate-off roads ask the backend whether the record
+    reads (record_reads) before they drop, so a refused --now pick or `default` leaves the user's valid parked pick in
+    the queue; a refusal that lands after the drop all the same (the record went unreadable in between) names what was
+    dropped. The answer carries the count (`superseded`).
     The walk (`allFollowing`) takes the SDK backend directly: it has no target, and only that backend keeps a machine
-    default with followers; each follower it moves has its parked auth picks dropped the same way, and its outlook
+    default with followers; each follower it moves has its parked auth picks dropped right after its own write (the
+    walk's `after_write` hook), a follower whose queue a move holds has the pick parked behind the move instead (its
+    `park` hook; `parkedSessions`, with `parkedReconnect` for the verb's words), and each moved session's outlook
     (auth_apply_outlook, in the reconnect words) rides the answer per name (`outlooks`), so the verb says which
     sessions reconnect and which already bill the pick (round 2 of the review: the head said every one reconnects)."""
     pick = str(b.get("pick") or "")
@@ -41179,21 +41184,37 @@ def _billing_request(b):
         if be is None or walk is None:
             return {"ok": False, "error": "no Claude Code backend runs on this kernel, so no session follows a default here",
                     "_status": 409}
-        out = walk(pick)
+        # A FOLLOWER MID-MOVE IS PARKED, NOT WRITTEN (round 1 of the billing verb's review, 2026-09-19; its tests-1 and
+        # extra8-2): `_moving` holds a session's drive queue while be.move() waits on its set_cwd answer, and the walk's
+        # request on that quiet follower armed the client's teardown under the move, the state the --now and `default`
+        # roads refuse. The walk's hook parks the pick in that follower's own FIFO instead (the plain road's park, in its
+        # words: _BILLING_PARK_WORDS["move"], the drain applies it when the move ends), and files the name apart; a parked
+        # follower is not moved, so its own parked picks are not dropped. The machine default's own walk (the dashboard's
+        # setAuth scope=machine arm, _reconnect_default_followers) runs the same ungated step at the base and is not gated
+        # here. A follower's parked dashboard pick would fire over the walk's write at the next quiet cycle (round 2 of the
+        # review): dropped PER FOLLOWER, right after that follower's write and before the next one's (the walk's second
+        # hook, that round's correctness-2: dropped after the whole walk, a drain cycle inside the walk fired a parked pick
+        # over an earlier follower's write while the answer said none was superseded), with the count riding the answer
+        def _park_moving(sid):
+            if str(sid) not in _moving:
+                return False
+            _park_op(sid, ("auth", pick))
+            return True
+        out = walk(pick, park=_park_moving, after_write=lambda sid: _drop_parked_auth(sid, "the --all-following pick"))
         if out is None:
             why = str(be.auth_unavailable_why(*lg.parse_pick(pick)) or "")
             return {"ok": False, "error": why or "the pick was refused", "_status": 409}
-        # a follower's parked dashboard pick would fire over the walk's write at the next quiet cycle (round 2 of the
-        # review): dropped per moved sid, as the `now` and `default` roads drop theirs
-        superseded = sum(_drop_parked_auth(s, "the --all-following pick") for s in (out.get("movedSids") or []))
+        superseded = int(out.get("superseded") or 0)
         _push_soon()
         unwritten = out.get("unwritten") or []    # the followers whose record would not read: nothing written, said apart
         failed = out.get("failed") or []          # the followers whose step raised: left following the default, no ask (the
         #                                           walk's per-session try, the rebase follow-up of 2026-09-18); the Log names the fault
+        parked = out.get("parked") or []          # the followers whose queue a move holds: the pick parked behind the move
         outlooks = {n: _BILLING_WORDS.get(w, w) for n, w in (out.get("outlook") or {}).items()}
         return {"ok": True, "pick": pick, "moved": len(out["moved"]), "skipped": len(out["skipped"]), "unwritten": len(unwritten),
-                "failed": len(failed), "sessions": out["moved"], "skippedSessions": out["skipped"], "unwrittenSessions": unwritten,
-                "failedSessions": failed, "outlooks": outlooks, "superseded": superseded}
+                "failed": len(failed), "parked": len(parked), "sessions": out["moved"], "skippedSessions": out["skipped"],
+                "unwrittenSessions": unwritten, "failedSessions": failed, "parkedSessions": parked,
+                "parkedReconnect": _BILLING_PARK_WORDS["move"], "outlooks": outlooks, "superseded": superseded}
     who = str(b.get("target") or "")
     if not who or not pick:
         return {"ok": False, "error": "target and pick required", "_status": 400}
@@ -41211,6 +41232,15 @@ def _billing_request(b):
     if getattr(be, "auth_apply_outlook", None) is None:
         return {"ok": False, "error": _BILLING_NOT_SDK % who, "_status": 409}
     if now and _compacting_now(sid):
+        # the advice follows the pick (round 1 of the billing verb's review, 2026-09-19; its correctness-4, narrowed by both
+        # refuters to the words): a plain pick re-run without --now parks behind the compaction; `default` never parks, it
+        # applies at once and its reconnect waits for the compaction's settle on its own (request_reconnect's quiet test,
+        # never met while the compaction's turn is open), so telling the user to re-run it "to queue" promised a wait the
+        # re-run does not take
+        if pick == "default":
+            return {"ok": False, "error": "%s is compacting, and a compaction is not cut for a billing change; run it again "
+                                          "without --now: `default` never queues, it applies at once and the session reconnects "
+                                          "when the compaction ends" % who, "_status": 409}
         return {"ok": False, "error": "%s is compacting, and a compaction is not cut for a billing change; run it again "
                                       "without --now to queue the pick behind the compaction, or wait for it to end" % who,
                 "_status": 409}
@@ -41222,31 +41252,53 @@ def _billing_request(b):
     # race left is the one the compaction check accepts. str(sid), as _park_reason compares it; _moving is held across
     # the whole move() call, so this covers a dormant session's revive window too
     if str(sid) in _moving and (now or pick == "default"):
-        if now:
-            return {"ok": False, "error": "%s is moving, and a move is not cut for a billing change; run it again without "
-                                          "--now to queue the pick behind the move, or wait for it to end" % who,
-                    "_status": 409}
-        return {"ok": False, "error": "%s is moving, and a move is not cut for a billing change; `default` never queues, "
-                                      "so run it again after the move finishes" % who, "_status": 409}
+        # by the PICK, not the flag (round 1 of the billing verb's review, 2026-09-19; its correctness-5): `default --now`
+        # took the --now sentence and sent the user to a re-run without --now that this same gate refuses
+        if pick == "default":
+            return {"ok": False, "error": "%s is moving, and a move is not cut for a billing change; `default` never queues, "
+                                          "so run it again after the move finishes" % who, "_status": 409}
+        return {"ok": False, "error": "%s is moving, and a move is not cut for a billing change; run it again without "
+                                      "--now to queue the pick behind the move, or wait for it to end" % who,
+                "_status": 409}
+    if pick != "default":
+        # THE BOX'S REASON, BEFORE THE QUEUE, ON EVERY ROAD (round 1 of the billing verb's review, 2026-09-19; its
+        # kernel-1 and correctness-3): the plain road parked a pick this box cannot bill and answered ok with a moment,
+        # so the refusal came at the drain, visible only as a chat frame and kernel stderr, while the --now road and the
+        # walk asked first. Asked here, once, in --now's order: the queue is not touched by a refused pick. The read is
+        # live and can flip inside the park window (a login signing in), so the drain's refusal-reporting arm stays:
+        # a false refusal for a transient unavailability is visible at once and costs one retry, where a doomed
+        # parked op answers ok and fails where nobody looks (prefer the defect the user can see)
+        why = str(be.auth_unavailable_why(*lg.parse_pick(pick)) or "")
+        if why:
+            return {"ok": False, "error": why, "_status": 409}
     queued = False
     superseded = 0
     out = {"ok": True, "session": _name_of(sid) or sid[:8], "sid": sid, "pick": pick}
     if pick == "default":
-        # the clear never parks, so a parked pick would fire over it at the next quiet cycle: dropped first (round 2)
+        # THE RECORD MUST READ BEFORE THE DROP (round 1 of the billing verb's review, 2026-09-19; its regression-2 with
+        # kernel-2, extra7-1 and extra8-1): the clear never parks, so a parked pick would fire over it at the next quiet
+        # cycle and is dropped first (round 2); but dropped first and then refused for a record that would not read, the
+        # answer said nothing was changed over an emptied queue. The backend's own read-only predicate (record_reads, the
+        # read follow_default_auth makes) goes ahead of the drop, and the drop stays ahead of the write: a drop after the
+        # write reopens the drain race round 2 closed (a parked pick firing between the clear and the drop). The window
+        # between the probe and the write is the check-then-act the compaction gate accepts; a refusal inside it says
+        # what was dropped (_billing_refusal's `dropped`)
+        if not be.record_reads(sid):
+            return {"ok": False, "error": "%s's record would not read, so nothing was changed" % who, "_status": 409}
         superseded = _drop_parked_auth(sid, "the default pick")
         if not be.follow_default_auth(sid):
-            return {"ok": False, "error": "%s's record would not read, so nothing was changed" % who, "_status": 409}
+            return _billing_refusal(be, who, pick, dropped=superseded)
         out["default"] = _billing_default(be)["value"]   # what it follows now, for the caller's line
     elif now:
-        # the refusal FIRST, with the queue untouched (round 2 of the review): a --now pick this box cannot bill (a
-        # stored login gone) must not also discard the user's valid parked pick; set_auth refuses with this same reason
-        why = str(be.auth_unavailable_why(*lg.parse_pick(pick)) or "")
-        if why:
-            return {"ok": False, "error": why, "_status": 409}
+        # the box's reason came first, above, with the queue untouched (round 2 of the review): a --now pick this box
+        # cannot bill (a stored login gone) must not also discard the user's valid parked pick; and the second refusal
+        # reason, a record that would not read, is probed ahead of the drop the same way (the `default` road's comment)
+        if not be.record_reads(sid):
+            return _billing_refusal(be, who, pick)
         superseded = _drop_parked_auth(sid, "the --now pick")
         # the one door every explicit pick takes, with the FIFO gate off (the helper's docstring, 2026-09-18)
         if _set_auth_or_park_verdict(be, sid, pick, park=False) == "refused":
-            return _billing_refusal(be, who, pick)
+            return _billing_refusal(be, who, pick, dropped=superseded)
     else:
         verdict = _set_auth_or_park_verdict(be, sid, pick)
         if verdict == "refused":
@@ -41317,9 +41369,20 @@ def _auth_refusal(be, who, pick):
     return why or ("%s's record would not read, so nothing was changed" % who)
 
 
-def _billing_refusal(be, who, pick):
-    """The 409 for a pick the backend refused, in _auth_refusal's words."""
-    return {"ok": False, "error": _auth_refusal(be, who, pick), "_status": 409}
+def _billing_refusal(be, who, pick, dropped=0):
+    """The 409 for a pick the backend refused, in _auth_refusal's words. `dropped` (round 1 of the billing verb's review,
+    2026-09-19; its regression-2 and kernel-2): how many parked picks the `default` or `--now` road dropped before the
+    backend refused, the residual window between the record's readability probe and the write. "Nothing was changed" is
+    false then, so the sentence says what went and the count rides the body as `superseded`; the verb prints the
+    kernel's sentence, so it needs no arm of its own."""
+    err = _auth_refusal(be, who, pick)
+    if dropped:
+        err = err.replace("so nothing was changed", "so the pick was not applied")   # _auth_refusal's one record-unreadable sentence
+        err += "; %d earlier queued pick%s dropped before the refusal" % (dropped, " was" if dropped == 1 else "s were")
+    out = {"ok": False, "error": err, "_status": 409}
+    if dropped:
+        out["superseded"] = dropped
+    return out
 
 
 def _billing_far_answer(r, st, res, text, coda):
