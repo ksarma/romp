@@ -1021,8 +1021,13 @@ class ByteIdenticalFrames(unittest.TestCase):
                 mock.patch.object(km, "_user_todo_fp", todo_fp), mock.patch.object(km, "_launch_error", launch), \
                 mock.patch.object(km._live_scope, "names", {}, create=True):   # a names snapshot: _names_parts reads no file
             before = km._chat_sig_stats_report()
+            tl = km._CHAT_SIG_TL
+            tl_reads = (getattr(tl, "namesReads", 0), getattr(tl, "switchReads", 0))
             km._sdk_transcript_path(self.SID); km._user_todos_on(); sb.read_reg(km.jd.STATE, self.SID); km._chat_ident(path)
             self.assertEqual(km._chat_sig_stats_report(), before, "outside a signature the readers count nothing")
+            self.assertEqual((getattr(tl, "namesReads", 0), getattr(tl, "switchReads", 0)), tl_reads,
+                             "...and the thread-local itself did not move: _chat_sig_count is gated on the open scope (2026-09-19 review, "
+                             "the two-direction lens: the table alone could not tell, since the next scope zeroes the thread-local)")
             del reg_calls[:]
             with _StatInterceptor(km._CHAT_SIG_TL) as ic:
                 sig = km._chat_build_sig(sess, None, self.NOW, live_map={})
@@ -1455,6 +1460,48 @@ class ChatSigHelpers(unittest.TestCase):
     def _reg_reader(self):
         self.assertTrue(km._sdk(), "premise: the SDK backend module loads (its read_reg is the counted reader)")
         return sys.modules["romp_sdk_backend"]
+
+    def test_the_door_and_its_twins_count_one_direntry_stat_each_inside_a_scope_none_outside_and_a_raising_one_as_attempted(self):
+        """The doors by execution (2026-09-19 review, the two-direction lens: no signature in the suite reached judge.py's or
+        event_model.py's twin, so a twin counting nothing, or two per call, was green; the source pin holds the shape, not
+        the count). One real scandir entry, inside km._chat_sig_scope() under the outside interception: km._entry_stat and
+        its twins in judge.py, event_model.py and sdk_backend.py each fold exactly one stat, and the interception agrees;
+        outside a scope each moves the thread-local not at all. And a door's stat that RAISES (the file unlinked between
+        the scandir and the stat) counts as attempted, like a missing file's os.stat: one counted, one intercepted, the
+        FileNotFoundError re-raised. Counting after the call (success only) reads 0 there."""
+        sb = self._reg_reader()
+        td = tempfile.TemporaryDirectory(); self.addCleanup(td.cleanup)
+        p = os.path.join(td.name, "f")
+        with open(p, "w") as f:
+            f.write("x")
+
+        def entry():
+            with os.scandir(td.name) as it:
+                return next(it)                          # a fresh DirEntry each time: a DirEntry caches its stat answer
+        for name, door in (("kernel", km._entry_stat), ("judge", km.jd._entry_stat), ("event_model", km.em._entry_stat),
+                           ("sdk_backend", sb._entry_stat)):
+            with self.subTest(door=name):
+                with _StatInterceptor(km._CHAT_SIG_TL) as ic:
+                    e = entry()
+                    before = km._chat_sig_stats_report()["stats"]
+                    with km._chat_sig_scope():
+                        st = door(e)
+                    self.assertEqual(st.st_size, 1, "the entry's own stat answered")
+                    self.assertEqual((km._chat_sig_stats_report()["stats"] - before, ic.dirent, ic.total), (1, 1, 1),
+                                     "one DirEntry stat: folded once, intercepted once, and nothing else")
+                    e2 = entry()
+                    tl_stats = km._CHAT_SIG_TL.stats
+                    door(e2)
+                    self.assertEqual(km._CHAT_SIG_TL.stats, tl_stats, "outside a scope the door moves the thread-local not at all")
+                    self.assertEqual(ic.dirent, 1, "...and the interception, gated the same way, saw nothing new")
+        with _StatInterceptor(km._CHAT_SIG_TL) as ic:      # the entry is taken under the interception, whose scandir counts its stats
+            e = entry()
+            os.unlink(p)
+            before = km._chat_sig_stats_report()["stats"]
+            with km._chat_sig_scope():
+                with self.assertRaises(FileNotFoundError):
+                    km._entry_stat(e)
+        self.assertEqual((km._chat_sig_stats_report()["stats"] - before, ic.dirent), (1, 1), "the syscall was made: counted as attempted")
 
     def test_the_per_thread_accumulators_count_only_the_owning_threads_reads(self):
         """Both per-thread accumulators (the kernel's _CHAT_SIG_TL and sdk_backend's _REG_READ_TL) are thread-locals: a scope
