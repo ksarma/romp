@@ -523,7 +523,13 @@ def restore_env(name, prior):
 #     with no remedy addressed to that test; every later test that inherits the same object is quiet.
 #     The report is computed at the setup and raised after the test's own teardown, beside its own verdict
 #     if it has one, so the test runs and its own transition is still judged (the first form failed the
-#     setup, and one test per worker lost its run whenever a leak escaped every window).
+#     setup, and one test per worker lost its run whenever a leak escaped every window). The same report,
+#     at the worker's FIRST test window only, covers a real backend over a directory that stands but is not
+#     jd.STATE: pytest collects every module before the first test runs, so at that window only import-time
+#     code has run, and a singleton over another root there is import-time code's build over a root that is
+#     not the run's, or its move of jd.STATE after the build, left in place (the wording names both). Later
+#     windows do not apply that test: a legitimate first build followed by a STATE move the judge fixture
+#     names leaves the same picture, and a test window or a boundary made it, where it was judged.
 # Every object a verdict names (own, boundary, inherited) goes on a module-level list of STRONG
 # references (_SDK_NAMED; identity membership, strong so an id is never reused by a later object), which
 # is what makes "once" and the boundary's quiet-on-a-named-object rule work; under xdist that is once per
@@ -628,6 +634,7 @@ _SdkWindow = collections.namedtuple("_SdkWindow", "seq before after ref")
 _SDK_LAST = _SdkRead(None, None, None, None, None)     # the last read anywhere in this worker (the boundary's L)
 _SDK_READS = 0                                         # reads so far in this worker; a scope keeps the count at its start read
 _SDK_WINDOWS = []                                      # the test windows that changed the slot since the module started
+_SDK_FIRST_WINDOW = True                               # no test window has run yet in this worker: only import-time code has
 _SDK_NAMED = []                                        # strong references to every object a verdict named
 _SDK_REAL = ("romp_sdk_backend", "SdkBackend")
 _SDK_GONE = ", whose state_dir is no longer a directory"
@@ -695,9 +702,10 @@ _SDK_INHERITED_TAIL = ("This test did not make it: %s, outside every window the 
                        "transition is judged too), and the tests after it that inherit the same object are not accused.")
 
 
-def _sdk_inherited(before):
+def _sdk_inherited(before, first):
     """The once-per-worker report on a singleton state no window made, or None: a real backend over a directory that is
-    gone."""
+    gone, at any test; or, at the worker's FIRST test window (`first`), a real backend over a directory other than
+    jd.STATE, which only import-time code could have made (every module is collected before the first test runs)."""
     be = before.be
     if not _sdk_is_real(be) or _sdk_named(be):
         return None
@@ -705,6 +713,12 @@ def _sdk_inherited(before):
         return ("starts under the kernel's backend singleton (km._sdk_backend) over a directory that no longer exists: %s. %s"
                 % (_sdk_singleton_text(be),
                    _SDK_INHERITED_TAIL % "an earlier test, a class or module setup or teardown, or import-time code did"))
+    if first and before.sd != before.jd_state:
+        return ("starts under the kernel's backend singleton (km._sdk_backend) over a directory that is not jd.STATE, before "
+                "any test in this worker has run: %s, jd.STATE %s. %s"
+                % (_sdk_singleton_text(be), before.jd_state,
+                   _SDK_INHERITED_TAIL % "import-time code did, building the singleton over a root that is not the run's, or "
+                   "moving jd.STATE after the build and leaving it there"))
     return None
 
 
@@ -791,8 +805,10 @@ def _sdk_judge_scope(start, last, end, windows):
 
 @pytest.fixture(autouse=True)
 def _sdk_singleton_restored(request):
+    global _SDK_FIRST_WINDOW
     before = _sdk_read()
-    inherited = _sdk_inherited(before)
+    inherited = _sdk_inherited(before, _SDK_FIRST_WINDOW)
+    _SDK_FIRST_WINDOW = False
     if inherited is not None:
         _sdk_name(before.be)               # named now, so the tests after this one that inherit the object are quiet
     yield

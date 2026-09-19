@@ -154,6 +154,8 @@ GONE = "whose state_dir is no longer a directory"
 REEXEC = ("re-executed the kernel (or loaded it for the first time) and left the kernel's backend singleton "
           "(km._sdk_backend)")
 INHERITED = "starts under the kernel's backend singleton (km._sdk_backend) over a directory that no longer exists"
+INHERITED_KEPT = ("starts under the kernel's backend singleton (km._sdk_backend) over a directory that is not jd.STATE, before any "
+                  "test in this worker has run")
 BOUNDARY = "'s class or module boundary (tearDownClass, tearDownModule or a class- or module-scoped fixture)"
 SHARED_STATE = "left shared state changed"     # the judge fixture's text: quiet in every case here, so the ratchet's is the only red
 
@@ -526,6 +528,25 @@ SCRATCH_N2 = textwrap.dedent("""\
             km._sdk_backend = None
 """)
 
+SCRATCH_S6 = SCRATCH_HEAD + textwrap.dedent("""\
+
+    _root = sandbox()                                 # import-time code: a build over a sandbox that STANDS, jd.STATE restored
+    _saved = jd.STATE
+    jd.STATE = _root
+    km._sdk()
+    jd.STATE = _saved
+
+    class Cases(unittest.TestCase):
+        def test_a_is_the_first_to_meet_the_state_and_leaks_on_its_own(self):
+            assert km._sdk_backend.state_dir == _root and _root.is_dir() and jd.STATE != _root
+            saved = jd.STATE
+            build_over(sandbox())                     # a kept-sandbox leak of its own, judged in the same teardown
+            jd.STATE = saved
+
+        def test_b_does_nothing(self):
+            pass
+""")
+
 
 def nested_run(text, follower=None):
     """pytest in a child over one scratch module written to a fresh directory, under this checkout's conftest
@@ -580,10 +601,10 @@ def verdict(out, cls, method):
     return _split(m) if m else None
 
 
-def inherited(out, cls, method):
+def inherited(out, cls, method, head=INHERITED):
     """The text of the inherited report on `cls.method` (the object named, and the sentence saying this test did not
-    make it), or None."""
-    m = re.search(r"::%s::%s %s: ([^\n]*)" % (re.escape(cls), re.escape(method), re.escape(INHERITED)), out)
+    make it), or None; `head` picks the gone wording (the default) or the kept-root one (INHERITED_KEPT)."""
+    m = re.search(r"::%s::%s %s: ([^\n]*)" % (re.escape(cls), re.escape(method), re.escape(head)), out)
     return m.group(1) if m else None
 
 
@@ -630,12 +651,12 @@ class _NestedRun:
         self.assertNotIn(REMEDY_A, fix, fix)
         return clause
 
-    def assertInherited(self, cls, method, own=False):
+    def assertInherited(self, cls, method, head=INHERITED, own=False):
         """The inherited report lands on `cls.method` after its teardown, the body having run (PASSED, then ERROR); with
         `own`, the test's own verdict is expected beside it, else none."""
         self.assertEqual(outcomes(self.out).get("%s.%s" % (cls, method)), {"PASSED", "ERROR"},
                          "the body runs, and the report is the teardown's: %s" % self.out)
-        text = inherited(self.out, cls, method)
+        text = inherited(self.out, cls, method, head)
         self.assertIsNotNone(text, self.out)
         if own:
             self.assertIsNotNone(verdict(self.out, cls, method), "the test's own verdict is judged too: %s" % self.out)
@@ -954,6 +975,24 @@ class BoundaryYieldsToTheTestsOwnWindows(_NestedRun, unittest.TestCase):
         self.assertIsNone(boundary(self.out, "", module="test_scratch2.py"), self.out)
         self.assertNotIn(BOUNDARY, self.out, "no boundary text anywhere in the run: %s" % self.out)
         self.assertNotIn("sub-exceptions", self.out, "no verdict folds into another's teardown report: %s" % self.out)
+
+class ImportTimeLeakOverAKeptSandboxIsInheritedOnce(_NestedRun, unittest.TestCase):
+    SCRATCH = SCRATCH_S6
+    ERRORS = 1
+
+    def test_the_first_window_reports_the_kept_root_as_inherited_beside_the_tests_own_verdict(self):
+        text = self.assertInherited("Cases", "test_a_is_the_first_to_meet_the_state_and_leaks_on_its_own", head=INHERITED_KEPT, own=True)
+        self.assertTrue(text.startswith("SdkBackend over "), text)
+        self.assertIn(", jd.STATE ", text)
+        self.assertIn("import-time code did", text)
+        own = self.assertRatchetFailed("Cases", "test_a_is_the_first_to_meet_the_state_and_leaks_on_its_own")
+        self.assertTrue(own.startswith("changed after its teardown: before SdkBackend over "), own)
+        self.assertNotIn(GONE, own)
+
+    def test_the_next_test_under_the_tests_own_object_is_quiet_and_the_ends_are_quiet(self):
+        self.assertRatchetPassed("Cases", "test_b_does_nothing")
+        self.assertIsNone(boundary(self.out, "::Cases"), self.out)
+        self.assertIsNone(boundary(self.out, ""), self.out)
 
 if __name__ == "__main__":
     unittest.main()
