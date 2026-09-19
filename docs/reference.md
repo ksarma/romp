@@ -2681,7 +2681,7 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   The kernel raises the third threshold once at boot to
   `ROMP_GC_GEN2_THRESHOLD` (default 1,000; 0 keeps CPython's own thresholds;
   a value that is not a non-negative integer up to 2,147,483,647, the C int
-  the collector takes, is said once on stderr and the default applied),
+  the collector takes, is said once on stderr and read as the default),
   leaving the first two as CPython set them. A full collection needs the
   generation-2 count over that threshold AND the objects promoted since the
   last full collection over a quarter of the long-lived total; at CPython's

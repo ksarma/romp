@@ -513,9 +513,10 @@ _GC_HOOK_SAID = [False]   # whether a failure inside the gc.callbacks hook has b
 # collectedLast per pass. Thresholds 0
 # and 1 stay as CPython sets them (700, 10 through 3.12; 2000, 10 from 3.13). The knob: unset or empty applies the
 # default; 0 leaves CPython's own thresholds (the off switch, silent); an integer from 1 to 2**31 - 1 (the C int
-# gc.set_threshold takes) applies that value; anything else is said once on stderr and the default applied. The reason
-# lines are keyed in _GC_THRESHOLD_SAID so each is said exactly once per process and two different reasons (a malformed
-# knob and a declining interpreter) both get their line.
+# gc.set_threshold takes) applies that value; anything else is said once on stderr and read as the default (the line
+# states the parse result, not an action: on a declining interpreter nothing is applied and the next line says so). The
+# reason lines are keyed in _GC_THRESHOLD_SAID so each is said exactly once per process and two different reasons (a
+# malformed knob and a declining interpreter) both get their line.
 GC_GEN2_THRESHOLD_KNOB = "ROMP_GC_GEN2_THRESHOLD"
 GC_GEN2_THRESHOLD_DEFAULT = 1000
 _GC_THRESHOLD_SAID = set()   # the reason keys _gc_threshold_say has written: "knob", "interpreter", "readback", "error"
@@ -573,7 +574,8 @@ def _gc_gen2_threshold_knob():
     departures the knob needs): unset or empty is GC_GEN2_THRESHOLD_DEFAULT; an integer from 0 to 2**31 - 1 (the C int
     gc.set_threshold takes) is itself, 0 meaning leave CPython's own thresholds; a negative or larger integer, or anything
     int() rejects, is said once on stderr naming the knob and the raw value, and the default returned (the neighbours
-    fall to their default silently; this one says so)."""
+    fall to their default silently; this one says so). The line reports what the value was READ AS, not what was
+    applied: the step that calls this may still decline on the interpreter, and its own line then says so."""
     raw = os.environ.get(GC_GEN2_THRESHOLD_KNOB, "")
     if not raw:
         return GC_GEN2_THRESHOLD_DEFAULT
@@ -583,7 +585,7 @@ def _gc_gen2_threshold_knob():
         n = -1
     if 0 <= n <= 0x7FFFFFFF:
         return n
-    _gc_threshold_say("knob", "%s=%r is not a non-negative integer the collector can hold; using %d"
+    _gc_threshold_say("knob", "%s=%r is not a non-negative integer the collector can hold; read as the default %d"
                       % (GC_GEN2_THRESHOLD_KNOB, raw, GC_GEN2_THRESHOLD_DEFAULT))
     return GC_GEN2_THRESHOLD_DEFAULT
 
