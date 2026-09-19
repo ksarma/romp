@@ -22,10 +22,12 @@ inner function, the same mechanism) is the walk's, a call from `_nudge_placement
 during a pass fails the test, named by function, file and line. The writer door has its own assertion on every pass: the
 writer recorder's list must be empty after the tick, each entry named by function, file and line, kept apart from the
 shared door's assertion (one filter over both lists would accept a writer-door load whose caller is the walk); a call
-through `load_goals_or_fault` is named for its kernel caller, never for the judge's `_or_fault`. The claim has two limits.
-The door: a third loader that
-reaches the store through the judge's loaders during the pass is caught and named; a reader below those loaders (the
-judge's own file reader and parser) is outside the recorders and outside the claim. The window: each pass, the
+through `load_goals_or_fault` is named for its kernel caller, never for the judge's `_or_fault`. The claim has three
+limits. The door: a third loader that reaches the store through the judge's loaders during the pass is caught and named;
+a reader below those loaders (the judge's own file reader and parser) is outside the recorders and outside the claim. The
+road: the execution witness covers every caller the fixture actually executes; the helpers in REPLACED_KM and REPLACED_JD
+and Sessions.backend_for run as stubs, so a loader inside their real bodies is outside the recorders and is caught by the
+source census in TheCountersOneSite instead, one level deep (the helper's own source). The window: each pass, the
 `_auto_nudge_tick` call (the records are cleared before it and read after it), so a load elsewhere in the process (a
 builder, a handler, the perf snapshot the test reads after its last pass) is outside the window and is not this test's
 claim. By the store's own counters, a witness keyed on the store rather than on a list of doors: every call that reaches
@@ -73,7 +75,12 @@ case one filter over both doors would have taken for the walk's (3 failed, 3 pas
 `_put_walk_gate`'s write-on-change no-op branch, reached only on the state-gate case's second and third passes, is named
 `_put_walk_gate` there (1 failed, 5 passed). The fallback edge: with the writer recorder's code-identity skip removed,
 the sweep's no-store case reds on the writer assertion naming `load_goals_shared` in the judge's file, the
-misattribution the skip prevents (1 failed, 5 passed). The store's counters: a reference to the
+misattribution the skip prevents (1 failed, 5 passed). The road: `jd.load_goals_shared_or_fault` as the first statement
+of the real `_session_awaiting` or the real `_closer_settled` leaves every execution case green (the stub runs) and reds
+the source census naming the helper (1 failed, 6 passed each); the same plant in `_nudge_look_check`, which the fixture
+does not replace, reds by execution naming `_nudge_look_check` (4 failed, 3 passed); with `_session_working` real, a
+bare shared load at the top of its body reds by execution naming `_session_working`, where the stub hid it before (3
+failed, 4 passed). The store's counters: a reference to the
 real door bound at kernel import (`_REAL_LGS = jd.load_goals_shared`) and called per session in the pass loop is
 invisible to the recorders and reds the reconciliation on every pass whose looks run, the counters two calls over the
 recorded ones (4 failed, 2 passed); a phantom walk record appended by the recorder without a call through reds it the
@@ -118,6 +125,18 @@ SWEEP = ("_awaiting_wake_outcomes",)      # the wake sweep after the per-session
 # poisoned are not calls; entries, bytes and off are gauges.
 SHARED_CALL_KEYS = ("hit", "miss", "compare_miss", "absent", "fallback")
 KERNEL_FILE = os.path.basename(os.path.realpath(km.__file__))   # the kernel's real file: it is loaded from bin/romp-kernel, a symlink
+# The callables the fixture replaces, other than the two recorded doors: the kernel names (the look's gates and the pass's
+# helpers; _pending_ops and _PREV_ALIVE are data, not callables), the judge names, and Sessions.backend_for (replaced by
+# setUp beside them). Their real bodies never run under the fixture, so the source census in TheCountersOneSite is the only
+# witness for a loader inside them. _session_working is not in the list: its real body runs (the event model reads the
+# fixture turns, both ended, as not working, the answer the stub gave), and the state-gate case replaces it for its own world.
+REPLACED_KM = ("_alive_sessions", "_wait_for_graph", "_session_flag", "_compacting_now", "_api_error",
+               "_interrupt_suppresses_nudge", "_backend_rewind_pending", "_last_state",
+               "_session_awaiting", "_turn_romp_injected", "_closer_settled", "_revivers_pending",
+               "_pending_ops", "_log_nudge_event", "_push_all", "_mark_views_dirty", "_path_of",
+               "_debt_backstop_tick", "_PREV_ALIVE")
+REPLACED_DATA = ("_pending_ops", "_PREV_ALIVE")
+REPLACED_JD = ("parsed_session", "_segs", "plan_units")
 JUDGE_FILE = os.path.basename(os.path.realpath(jd.__file__))
 
 
@@ -152,14 +171,8 @@ class _WalkHarness(unittest.TestCase):
         self.td = tempfile.TemporaryDirectory()
         self.addCleanup(self.td.cleanup)                  # cleanups run last in, first out: the seams go back, then the dir
         td = Path(self.td.name)
-        self.saved = {k: getattr(km, k) for k in (
-            "_alive_sessions", "_wait_for_graph", "_session_flag", "_compacting_now", "_api_error",
-            "_session_working", "_interrupt_suppresses_nudge", "_backend_rewind_pending", "_last_state",
-            "_session_awaiting", "_turn_romp_injected", "_closer_settled", "_revivers_pending",
-            "_pending_ops", "_log_nudge_event", "_push_all", "_mark_views_dirty", "_path_of",
-            "_debt_backstop_tick", "_PREV_ALIVE")}
-        self.saved_jd = {k: getattr(jd, k) for k in ("parsed_session", "_segs", "plan_units", "load_goals",
-                                                     "load_goals_shared")}
+        self.saved = {k: getattr(km, k) for k in REPLACED_KM + ("_session_working",)}   # saved too: the state-gate case stubs it
+        self.saved_jd = {k: getattr(jd, k) for k in REPLACED_JD + ("load_goals", "load_goals_shared")}
         self.saved_state = jd.STATE
         self.saved_backend = km.Sessions.backend_for
         self.shared_off_before = jd._SHARED_OFF[0]
@@ -186,13 +199,17 @@ class _WalkHarness(unittest.TestCase):
         km._session_flag = lambda sid, flag: False
         km._compacting_now = lambda sid: False
         km._api_error = lambda path: None
-        km._session_working = lambda turns: False
+        # _session_working runs REAL: over the fixture turns (both ended, the last with no idle tail) the event model answers not
+        # working, as the stub did, so the gate costs the fixture nothing and a loader planted in its body is caught by execution
         km._interrupt_suppresses_nudge = lambda turns, sid="", **k: False
         km._backend_rewind_pending = lambda sid: False
         km._last_state = lambda sid: ("", 0)
         km._session_awaiting = lambda *a, **k: None
         km._turn_romp_injected = lambda tn: False
-        km._closer_settled = lambda *a: True
+        km._closer_settled = lambda *a: True              # kept stubbed: the fixture store carries no closedTurns, so the real gate ends
+        #                                                   both looks at closer-unsettled before the placement gate (walk 1 and 1, gate 0
+        #                                                   and 0, memo (0, 0)); seeding closer state is a larger fixture change than the
+        #                                                   disclosure, and the source census below scans the real body instead
         km._revivers_pending = lambda *a, **k: ""
         km._pending_ops = {}
         km._log_nudge_event = lambda *a, **k: None
@@ -518,6 +535,22 @@ class TheCountersOneSite(unittest.TestCase):
         gated = inspect.getsource(km._nudge_look_gated)
         self.assertNotIn("load_goals", gated, "the gate around the look reads no store: a skipped look loads through neither mechanism")
         self.assertIn("loads", km._NUDGE_WALK_STATS, "the counter is a key of the served block")
+
+    def test_the_replaced_helpers_sources_load_no_store(self):
+        """The road limit as a check: the fixture replaces the callables in REPLACED_KM (less the two data names), REPLACED_JD
+        and Sessions.backend_for, so a loader planted in any of their real bodies never runs under the harness and the
+        execution witness cannot see it; this scan of each real source for either door's name (over non-comment lines) is the
+        only witness for those bodies. One level deep, the helper's own source: _session_awaiting reaches two bare-door
+        readers (_owned_yield_why and _session_stamp_read) only under stamp=True, which the walk's call does not pass, so
+        the walk's road does not reach them; a helper the fixture does not replace is covered by execution instead."""
+        targets = ([(k, getattr(km, k)) for k in REPLACED_KM if k not in REPLACED_DATA]
+                   + [("jd." + k, getattr(jd, k)) for k in REPLACED_JD]
+                   + [("Sessions.backend_for", km.Sessions.backend_for)])
+        self.assertEqual(len(targets), 21, "the census covers every replaced callable")
+        for label, obj in targets:
+            hits = [ln.strip() for ln in inspect.getsource(obj).splitlines() if "load_goals" in ln and not ln.strip().startswith("#")]
+            self.assertEqual(hits, [], "%s: a loader planted in a replaced helper never runs under the fixture, so this scan is the only "
+                                       "witness for its body: %s" % (label, "; ".join(hits)))
 
 
 class Docs(unittest.TestCase):
