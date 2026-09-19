@@ -2817,8 +2817,11 @@ class Disclosed(unittest.TestCase):
         and Collector's shape pin, malloc must read where _MALLINFO2 resolved, is what catches that. The clause checks run twice: over
         the live collector, and with km._MALLINFO2 patched to None (the value simulation the closing re-run accepted for the
         branch the kernel attributes to those libcs, asserted to have taken: the snapshot's malloc is None and the fold keeps
-        the null), so the allowance's branch is exercised on every platform. Fails on: a gauge added
-        to the kernel and not to its block's clause, naming the block and the gauge (a reused name included); a route added to the register and not to
+        the null), so the allowance's branch is exercised on every platform. THE MATCH IS PER BLOCK, NOT PER PARENT: a name
+        REUSED inside one block for a second sub-block passes (heap/bytes at the top level would pass on the `hydrated`
+        block's `bytes`; the walk keys on block and name, not on the parent), while a name crossing blocks reds (process/bytes
+        did, the case the paragraph-wide match let through); the per-parent span is the queued road. Fails on: a gauge added
+        to the kernel and not to its block's clause, naming the block and the gauge; a route added to the register and not to
         the usage clause; a block added to the kernel and not to the paragraph; a name kept in a clause after its gauge went;
         the macOS clause removed; the malloc allowance keyed on the platform (the patched run reds on Linux); the fold
         replaced by the raw snapshot (pid would then be demanded of a paragraph
