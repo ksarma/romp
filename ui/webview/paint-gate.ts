@@ -39,14 +39,17 @@ export function firstPaintHeld(hasContent: boolean, phone: boolean | undefined, 
 
 // A REVEAL into the board (a bell-row tap, a notification tap; feed.ts's revealCard handler), decided after the handler's
 // release attempt. The card's element found: jump to it. Not found while a paint is still owed (the hold above re-held, so
-// the board is applied but unpainted) and the model holds the card: park the jump for the paint that lands; never the
-// card-gone fallback for a card that exists (review round 1, 2026-09-19: the lookup over the empty DOM took the fallback
-// and posted openSession for an existing card). Otherwise the card is gone: open its session when one is named, else
-// nothing. Pure, so the test's world and feed.ts decide by the same function.
+// the board is applied but unpainted) and the paint WILL stamp the card under the reveal's key (`willPaint`: the render's
+// own plan, feed.ts paintedKeyOf, not membership in the model; review round 2, 2026-09-19): park the jump for the paint
+// that lands; never the card-gone fallback for it (review round 1: the lookup over the empty DOM took the fallback and
+// posted openSession for an existing card). Otherwise the card is gone from the board, or will never be painted under
+// that key (a delegation satellite, a card the session filter, the search box or the tag lens hides, a turn-group member):
+// open its session when one is named, else nothing, the base's road at the base's moment, the tap. Pure, so the test's
+// world and feed.ts decide by the same function.
 export type RevealDecision = "jump" | "park" | "open" | "none";
-export function revealDecision(targetFound: boolean, paintDirty: boolean, inModel: boolean, hasSid: boolean): RevealDecision {
+export function revealDecision(targetFound: boolean, paintDirty: boolean, willPaint: boolean, hasSid: boolean): RevealDecision {
   if (targetFound) return "jump";
-  if (paintDirty && inModel) return "park";
+  if (paintDirty && willPaint) return "park";
   return hasSid ? "open" : "none";
 }
 

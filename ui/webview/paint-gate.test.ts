@@ -112,13 +112,13 @@ test("the zero-viewport probe off a window: a framed pane at 0 by 0 has been hid
   assert.equal(viewportHiddenSinceLoad(top(0, 0)), false, "a top-level page is its own parent: the probe never applies");
 });
 
-test("a reveal's decision (review round 1 F2, executed since round 2): a found card is jumped to; a card the model holds under an owed paint is parked, never opened; a gone card opens its session when one is named", () => {
+test("a reveal's decision (review round 1 F2, executed since round 2): a found card is jumped to; a card the paint will stamp under an owed paint is parked, never opened; a card it will not stamp, or a gone one, opens its session when one is named", () => {
   assert.equal(revealDecision(true, false, true, true), "jump", "the painted board has the card");
   assert.equal(revealDecision(true, true, true, true), "jump", "found wins whatever else is true");
-  assert.equal(revealDecision(false, true, true, true), "park", "the phone's first-paint hold: unpainted, in the model");
+  assert.equal(revealDecision(false, true, true, true), "park", "the phone's first-paint hold: unpainted, and the paint will stamp it");
   assert.equal(revealDecision(false, true, true, false), "park", "…with or without a session named");
-  assert.equal(revealDecision(false, true, false, true), "open", "unpainted but absent from the model: gone, open its session");
-  assert.equal(revealDecision(false, false, true, true), "open", "painted, not found, though the model lists it (a folded group): the base's fallback");
+  assert.equal(revealDecision(false, true, false, true), "open", "unpainted and the paint will NOT stamp it under this key (review round 2, 2026-09-19: a satellite, a filtered or lens-hidden card, a turn-group member, a gone card): open its session at the tap, the base's road");
+  assert.equal(revealDecision(false, false, true, true), "open", "painted, not found, though the plan would stamp it (unfolded a beat late): the base's fallback");
   assert.equal(revealDecision(false, false, false, true), "open", "gone from a painted board");
   assert.equal(revealDecision(false, false, false, false), "none", "gone and no session named: nothing");
   assert.equal(revealDecision(false, true, false, false), "none");

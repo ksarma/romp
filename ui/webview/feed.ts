@@ -5564,6 +5564,30 @@ function viewFiltered(list: AskItem[]): AskItem[] {
   return viewBase(list);
 }
 
+// THE PAINT PLAN (review round 2, 2026-09-19): what render() will stamp for a card list, derived ONCE and read by renderBody
+// and by the reveal's decision. The display view (viewFiltered: the session filter, the search box, the tag lens), the
+// typed-turn groups it forms (turnGroups, the rule the jump-unfold reads too) and the itemIds those groups fold, so a
+// group member paints as g:<turnId> and every other shown ask as a:<itemId>. One derivation: renderBody consumes this object
+// and paintedKeyOf answers from it, so what the board paints and what a reveal expects painted can never disagree.
+function paintPlan(list: AskItem[]): { shown: AskItem[]; byTurn: Map<string, AskItem[]>; grouped: Set<string> } {
+  const shown = viewFiltered(list);
+  const byTurn = turnGroups(shown);
+  const grouped = new Set<string>();   // itemIds folded into a group -> excluded from single ask cards
+  for (const members of byTurn.values()) members.forEach((m) => grouped.add(m.itemId));
+  return { shown, byTurn, grouped };
+}
+// The key render() stamps for one card of the CURRENT model, or null when it paints none: a:<itemId> for a shown ask outside
+// every group, g:<turnId> for a member of a typed-turn group, null for a card the view hides (a delegation satellite off its
+// session's filter, a session the footer filter or the search box excludes, a lens-hidden session outside needs-you). The
+// revealCard handler asks this at the tap (review round 2: the model-membership question parked a reveal the paint could
+// never land, so a bell-row tap on such a card did nothing where the base opened the session).
+function paintedKeyOf(itemId: string): string | null {
+  const plan = paintPlan(asks);
+  const a = plan.shown.find((x) => x.itemId === itemId);
+  if (!a) return null;
+  return plan.grouped.has(itemId) ? "g:" + a.turnId : "a:" + itemId;
+}
+
 // The per-host loading strip (the user 2026-08-25): while an attached host's cards are pending,
 // one quiet line per host — the romp loader family scoped to a strip, never a board takeover; the
 // cards already present stay fully live. Retires per host on the exact event of its first merged
@@ -5709,14 +5733,13 @@ function renderBody(list: HTMLElement) {
   const cols = ensureCols(list);
   const buckets: Record<Column, Entry[]> = { asks: [], needsInput: [], completed: [] };
   // The display-side view filters (session filter + search), shared with the hover-freeze badge
-  // painter so the deferred-churn hint counts exactly what the user would see move (viewFiltered).
-  let shown = viewFiltered(asks);
-  // Derive sibling GROUPS at render time, keyed by the shared typed turn (turnId) — turnGroups, the rule the
-  // jump-unfold reads too, so what renders as a group and what unfolds as one can never disagree (T263e).
-  const byTurn = turnGroups(shown);
-  const grouped = new Set<string>();   // itemIds folded into a group → excluded from single ask cards
+  // painter so the deferred-churn hint counts exactly what the user would see move (viewFiltered), and the sibling
+  // GROUPS keyed by the shared typed turn (turnId) — turnGroups, the rule the jump-unfold reads too, so what renders as
+  // a group and what unfolds as one can never disagree (T263e). Both come from paintPlan, the one derivation the
+  // reveal's decision reads as well (review round 2, 2026-09-19).
+  const plan = paintPlan(asks);
+  const shown = plan.shown, byTurn = plan.byTurn, grouped = plan.grouped;
   for (const [tid, members] of byTurn) {
-    members.forEach((m) => grouped.add(m.itemId));
     const g = buildGroup(tid, members);
     buckets[g.column].push({ kind: "group", t: g.t, group: g });
   }
@@ -5868,7 +5891,7 @@ function renderBody(list: HTMLElement) {
     lmore.onclick = () => { setFeedLens({ all: true }); render(); };
     list.appendChild(lmore);
   }
-  const lensShownN = viewFiltered(asks).length;
+  const lensShownN = shown.length;   // the plan's view (paintPlan), not a second viewFiltered pass (review round 2)
   lmore.classList.toggle("prominent", lensOutN > lensShownN);
   lmore.style.display = lensOutN ? "" : "none";
   if (lensOutN) {
@@ -6579,10 +6602,12 @@ listenForFrames(perfFrameHandler("feed", (m) => vscodeApi?.postMessage(m), (e: M
     unfoldThreadsFor(new Set([key]));
     const target = cardByKey(key);   // the structural match (cardByKey): a crafted key never reaches querySelector's parser
     // the decision is paint-gate.ts's (revealDecision, pure, executed by the tests): jump to a found card; under the phone's
-    // first-paint hold (the release above re-held, so the board is applied but unpainted) park a card the model holds for the
-    // paint that lands (the pane's show word, the panes handler above), never the card-gone fallback for it; else the fallback.
-    // The shell's own tab switch, or none, is unchanged: this pane decides only what it says about the card.
-    const decision = revealDecision(!!target, paintDirty, asks.some((a) => a.itemId === String(m.itemId || "")), !!m.sid);
+    // first-paint hold (the release above re-held, so the board is applied but unpainted) park a card the paint WILL stamp
+    // under this key (paintedKeyOf: the render's own plan, so a satellite, a filtered or lens-hidden card and a turn-group
+    // member, none of which the paint lands as a:<itemId>, take the base's open road at the tap; review round 2, 2026-09-19)
+    // for the paint that lands (the pane's show word, the panes handler above), never the card-gone fallback for it; else
+    // the fallback. The shell's own tab switch, or none, is unchanged: this pane decides only what it says about the card.
+    const decision = revealDecision(!!target, paintDirty, paintedKeyOf(String(m.itemId || "")) === key, !!m.sid);
     if (decision === "jump" && target) {
       jumpToCard(target);
     } else if (decision === "park") {
