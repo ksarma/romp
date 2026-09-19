@@ -2794,30 +2794,46 @@ class Docs(unittest.TestCase):
         # the ruling of 2026-09-19 restating the two outcomes as three: the two-outcome wording is gone from both passages
         self.assertFalse("present exactly when the count is absent" in text, "the two-outcome wording is back in the reference")
 
-    def test_the_guide_names_both_kinds_of_traffic_in_one_sentence_and_makes_no_only_claim_it_then_contradicts(self):
-        """The second closing check (2026-09-19) found the PR's own edit to docs/guide.md manufacturing a contradiction: the
-        kernel paragraph kept "the only traffic that leaves your machine is `claude` itself" and, one sentence later, named a
-        second thing that leaves, the upload; an edit that improves one sentence and leaves its neighbour disagreeing is worse
-        for a reader than either state alone. The paragraph now names both kinds of traffic in ONE sentence, the agents' and
-        the judge pipeline's model calls and, only when the user runs and confirms it, the upload, with what it sends (the
-        public export, naming no session, path, host or user) and that no receiver ships; the word "only" is spent on the
-        confirmation and no longer on a claim the next clause contradicts. No test read this paragraph before (the receiver
-        needle in Cli reads two spans of it; nothing read the traffic claim), so the pin is new. Pinned flattened, so a rewrap
-        survives, by boolean, so a failure names the words and never dumps the page. Fails on: the only-traffic claim back in
-        the guide; the two-sentence shape back (the judge pipeline sentence closing and the upload opening a sentence of its
-        own); the one sentence reworded by a word."""
+    def test_the_guide_states_the_traffic_rule_and_points_at_the_census_making_no_exhaustive_claim(self):
+        """The second closing check found the PR's own edit to docs/guide.md manufacturing a contradiction: the kernel
+        paragraph kept "the only traffic that leaves your machine is `claude` itself" and, one sentence later, named a
+        second thing that leaves, the upload. The one-sentence rewrite that answered it was EXHAUSTIVE in its turn
+        ("the traffic that leaves your machine is `claude` itself ... and ... `romp perf upload`") and false the same
+        way, since kernel/kernel.py fetches the Models API and a model-price table and posts web push notifications,
+        none of them named (the reviewer's re-check at the rewrite's head, 2026-09-19). A longer list would go stale the
+        same way, so the paragraph now states a RULE in two parts and points at a derivation: the counters leave by one
+        road, the upload, only when the user runs and confirms it, with what it sends (the public export, naming no
+        session, path, host or user) and that no receiver ships; other parts of Romp make requests of their own, the
+        model calls through `claude` and the kernel's own fetches and posts, and the list of those is derived by
+        tests/test_outbound_requests_census.py (which fails on a request site it does not name) and written out in the
+        reference's "Requests Romp makes on its own" (which that census holds equal to its allowlist). Both sentences
+        are pinned flattened, so a rewrap survives, by boolean, so a failure names the words and never dumps the page;
+        the receiver needle in Cli reads two spans of the first one. Fails on: the only-traffic claim back in the guide;
+        the two-sentence shape back (the judge pipeline sentence closing and the upload opening a sentence of its own);
+        the exhaustive head back ("The traffic that leaves your machine is `claude` itself"); either sentence reworded
+        by a word."""
         text = self._flat("docs", "guide.md")
-        one = ("Everything Romp stores stays local. The traffic that leaves your machine is `claude` itself, both the agents' own "
-               "model calls and the LLM calls in Romp's judge pipeline, and, only when you run it and confirm it, `romp perf upload`, "
-               "which sends a paste-safe copy of the kernel's performance counters (the file `romp perf export --public` writes, "
-               "naming no session, path, host or user) to a receiver you configure yourself (none ships, so nothing can be sent "
-               "until you set one); see [Kernel performance counters](reference.md#kernel-performance-counters).")
-        # the absences first, so a restored claim is named as such rather than as the one sentence missing
+        one = ("Everything Romp stores stays local, and the performance counters leave your machine by one road: only when "
+               "you run it and confirm it, `romp perf upload` sends a paste-safe copy of them (the file "
+               "`romp perf export --public` writes, naming no session, path, host or user) to a receiver you configure "
+               "yourself (none ships, so nothing can be sent until you set one); see "
+               "[Kernel performance counters](reference.md#kernel-performance-counters).")
+        rule = ("Other parts of Romp make requests of their own: the agents' and the judge pipeline's model calls go through "
+                "`claude`, and the kernel fetches and posts for some of its features. That list is derived from the code, not "
+                "kept by hand: `tests/test_outbound_requests_census.py` enumerates every request site under `kernel/`, `cli/`, "
+                "`bin/` and `postal/` and fails on one it does not name, and "
+                "[Requests Romp makes on its own](reference.md#requests-romp-makes-on-its-own) in the reference lists what it "
+                "finds today.")
+        # the absences first, so a restored claim is named as such rather than as the sentence missing
         self.assertFalse("the only traffic that leaves your machine is `claude` itself" in text,
                          "the only-traffic claim is back in the guide, a sentence before the upload is named as leaving too")
         self.assertFalse("the LLM calls in Romp's judge pipeline. `romp perf upload`" in text,
                          "the two-sentence shape is back: the upload named in a sentence of its own after the only-traffic claim")
-        self.assertTrue(one in text, "the guide's kernel paragraph no longer carries the one sentence naming both kinds of traffic")
+        self.assertFalse("The traffic that leaves your machine is `claude` itself" in text,
+                         "the exhaustive head is back: a closed list of what leaves, which the kernel's own fetches falsify")
+        self.assertTrue(one in text, "the guide's kernel paragraph no longer carries the sentence naming the upload's one road")
+        self.assertTrue(rule in text, "the guide's kernel paragraph no longer carries the rule sentences pointing at the census")
+        self.assertLess(text.index(one), text.index(rule), "the road sentence precedes the rule")
 
     def test_the_readme_rows_name_every_importer_of_the_public_shape_counted_from_the_code(self):
         """This PR added a fourth importer of cli/perf_public.py and left both README enumerations of who shares the public
