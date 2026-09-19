@@ -173,6 +173,12 @@ Design: **the browser sits beneath the viewer and the close contract becomes own
   up one directory, Escape closes. (The completer's `-1`-in-the-cycle trick is for a menu
   attached to an input; a plain roving selection is right here.)
 
+Since 2026-09-19 the viewer keeps a trail of its own beneath this stack: the files reached
+through the links inside a shown file, with Back and Forward glyphs at the left of its bar
+(plans/markdown-viewer.md, "Follow-on: Link navigation", L1 and L2). The two do not meet: a
+file picked from the listing starts the trail over, the "‹ Files" link keeps closing the viewer
+to the listing, and closing the viewer ends the trail.
+
 ### Waiting, staleness, click-safety
 
 - **Loader first** (`ui/CLAUDE.md`): the romp swirl + wordmark + dots over the listing body

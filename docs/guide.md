@@ -528,7 +528,12 @@ addresses and paths found in the text wear a dotted underline that
 turns solid under the pointer; a Markdown link that names a file keeps the
 ordinary link look. Selecting text across a link, and commenting on a line that
 holds one, work as before, and a drag that starts or ends on a link selects
-rather than opens.
+rather than opens. The viewer keeps a trail of the files you reach through the links inside
+a file: the two arrow buttons at the left of its title bar go back to the file you followed
+the link from and forward again (Alt+Left and Alt+Right do the same, and Cmd+[ and Cmd+] on a
+Mac, while no text box holds the keyboard), and a file you go back to opens at the place and
+in the view you left it. A file opened from the chat, from a listing or from the **Recent**
+list starts the trail over, and closing the viewer ends it.
 
 **Text size and width.** The **A−** and **A+** buttons in the viewer's title bar make
 the text of any text file smaller or larger in fixed steps from 70% to 200%: a markdown

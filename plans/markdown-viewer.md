@@ -7724,3 +7724,73 @@ test family re-verifies. Where the code as built departs from the text above, wh
 Text size, fluid width, table reflow, whole-word cells (fork PR #348); path and http links in files,
 the `:line` suffix (fork PR #347); the PDF viewer; emoji shortcodes; another parser; editing the rendered
 view in place; the two audit items its refuters overturned.
+
+## Follow-on: Link navigation (2026-09-19)
+
+Navigate a link from a file and come back (the user's ask, 2026-09-19). Branch `filereview-linknav`, cut from
+34142c262, the fork's main at the time. This section records L1, L2, L5 and L6 (the trail, Back and Forward, browser
+history, the boundary); L3 and L4 (a figure opened in detail, and the picture view reached from a report) are recorded
+here when they are built. Each rule below names the test that holds it: `ui/webview/file-trail.test.ts` (the pure
+functions, the chord table, and the wiring pinned at source) and `ui/webview/file-trail-browser.test.ts` (Chromium over
+the real Files page and the chat modal: the contract's cases 1 to 5 and 7); the bar's width leg is
+`file-view-text-size.test.ts`'s real-module case at 380, 420, 480 and 600 px, which measures the two glyphs with the
+actions (case 8).
+
+L1. **A trail.** `ui/webview/file-trail.ts` holds the trail as a plain state, `{ back, current, forward }` of entries
+`{ path, sid, view }`, pure functions over it (`trailRoot`, `trailPush`, `trailBack`, `trailForward`, `trailSetView`,
+`trailEnd`, `trailBackTarget`, `trailForwardTarget`) and the one live instance (`liveTrail`, `setTrail`), beside the
+viewer's other page-life memory (file-view.ts `rememberedPlaces`). How openFileView tells an open from INSIDE the viewer
+from one from OUTSIDE, with no flag every caller must remember: the viewer's own opens go through one door,
+`openFromViewer` in file-view.ts, which sets a module-level tag (`trailNext`: push, back, forward or reload) and calls
+`openLinkedFile` as the body's delegate always has (the host's opener, files.ts `openHere`, or the default open; both
+reach `openFileView` in the same call, which reads and clears the tag at its top, before its close guard, and the door
+clears it again in a `finally`). No other caller sets the tag, so an untagged open is from outside by construction: the
+Files pane's rows and its Recent list, the file browser's rows, a chat path pill (render.ts openPath), a Waiting pane
+link (waiting.ts), the shell's relay. The tag decides the move (`moveTrail`, run right after `runLeave` in the replace
+path): a push puts the shown file behind the opened one and clears the list ahead; an untagged open roots a new trail
+at the file; the conflict bar's Reload file tags itself reload and moves nothing. The body delegate's path links are the
+pushes: a Markdown link to a file, a bare path in the text, a `:line` or `#section` target to another file, a wikilink
+(md-config.ts renders `[[Note]]` as an anchor to `Note.md` beside the note, which linkMarkdownAnchors marks as a path
+link). A target
+inside the shown file (`report.md:40` followed from report.md) replaces the card and pushes nothing: the trail's
+entries are files, and a jump inside one is no step between files. A section link of the same document scrolls and
+pushes nothing (the delegate's fragment arm opens no file). A web address opens a tab and pushes nothing (its anchor
+arm). The entry's `view` is the view the reader left the file in, read at the move off the RememberedPlace `runLeave`
+has just written, by the file's key (`placeKey`); a picture or a PDF writes no place and records none. Closing the
+viewer ENDS the trail (closeFileView, once its guard has passed): the person left the review, and a reopen of the same
+file from Recent starts a new one. The alternative, keeping the trail for the page's life so that such a reopen finds
+its Back again, was not taken: a Back reaching into a review the reader had closed would move the card on nothing they
+did since. A URL document replacing the viewer (openUrlView) ends the trail the same way, its entries being files.
+Held by file-trail.test.ts (the pure cases and the three wiring pins) and file-trail-browser.test.ts (the Files page: a
+link followed, a Recent row and the relay rooting the trail, the section link, the web address, the same-file target,
+the close; the chat modal: the default opener).
+
+L2. **Back and Forward.** Two glyph buttons in the icon family (icons.ts `ICON_BACK`, `ICON_FORWARD`: an arrow left and
+an arrow right), the bar's first group (`.fileview-group.fileview-nav`), before the pane's "‹ Files" link, which keeps
+its meaning, closing the viewer to the listing beneath it (file-view.test.ts pins it unchanged). The title and the
+aria-label name the target ("Back to report.md", `navTitle`); with nothing that way the word stands alone and the button
+wears `aria-disabled`, the text-size ends' precedent (never `disabled`, so a focused button keeps the keyboard; the
+sheets' one disabled dress applies, no new rule). Built once per open from the trail as the open left it and never
+rebuilt: every step is an open that builds a new bar. A press re-opens the entry through `openFromViewer` with NO target
+(`at` null), so the remembered place re-seats the file where it was left (pendingPlace), and the entry's recorded view
+is the view for that open (this open's `fmt.md` copy, unsaved, as a line target's Raw is); the replace in the same tick
+is the acknowledgement. The chords: Alt+Left and Alt+Right, and on a Mac Cmd+[ and Cmd+] as well (`navChord`, pure over
+the event's fields), through ONE document keydown listener in the capture phase, installed per open and removed through
+the viewer's close hooks by both exits; it stands down when the key was already prevented, when a text field or the
+editor holds the keyboard, and when no viewer is up, and otherwise takes the browser's default (its history step, which
+would leave the page under an open viewer) whether or not the trail has a step that way. The Recent list keeps its
+meaning: a Back or Forward open in the Files pane records the file as any open there does (openHere), moving its row up.
+Held by file-trail.test.ts (the titles, the chord table, the bar and listener pins) and file-trail-browser.test.ts (Back
+at the block, the scrollTop and the view; Forward; the chords with and without a text field and under a prevented key;
+the default taken with and without a target).
+
+L5. **Browser history: not integrated.** The trail is the viewer's own: no pushState, no hashchange. A pushState per
+step would put entries on the joint session history that outlive the viewer, so the browser's Back after the viewer
+closes would step through closed files or leave the page, and the Files pane runs in an iframe whose history is the
+shell page's; popping the entries at the close, and telling the pane's steps from the shell's, is a design of its own.
+Recorded as a follow-on for the owner with that trade-off; meanwhile the chords take the browser's step while the
+viewer is up (L2).
+
+L6. **Nothing leaves the machine that did not before.** No kernel change and no new route: a Back or Forward open
+fetches the file through the same `/file` route the link's open used, and the trail lives in the page. `git diff --stat
+34142c262 HEAD -- kernel/` is empty at the commits recording L1, L2, L5 and L6.
