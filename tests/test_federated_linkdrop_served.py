@@ -1246,6 +1246,9 @@ class LinkDropOldLocal(_LinkDrop):
         self.assertGreaterEqual(len(ua), 1, "the old Outline filed a delta-unapplied row for the remote feed patches in phase A; rows by kind: %r" % (self._rows_by_kind(A),))
         self.assertTrue(all((d or {}).get("slot") == "feed" for d in ua), "…each naming the feed slot: %r" % (ua,))
         self.assertTrue(self._sends("fleet", "local", "needSlot"), "…and posted its needSlot to the LOCAL kernel")
+        # the remote served that page through the slot path (the corners lab's pin on its old-local class); the counter
+        # counts slot-path sends, deduped no-ops included, so its value is one drive's and only its sign is pinned
+        self.assertGreater(self.remote_wire.get("feed_slot_split") or 0, 0, "the remote re-encoded the feed through the slot path for the old page: %r" % (self.remote_wire,))
 
     def test_the_storm_resumes_after_each_redial_and_is_gated_on_the_link(self):
         """The experiment's verdict: the delta-unapplied storm is one row per remote feed patch, pinned as the rows' rev
