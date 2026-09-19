@@ -2021,13 +2021,17 @@ deleted), serves one Unix socket (`hosts/<sid8>.sock`, mode 0600 from the
 moment the path exists: the host binds a temp name of its own beside it, its
 pid and random digits, tightens that, and renames it into place; a published
 path longer than the socket path budget, 107 bytes on Linux, is refused
-before anything is bound and the host exits; `hosts/` itself is made 0700
-when the kernel writes a host's spawn specification and when a host binds its
-socket, and each `hosts/<sid>/` when the specification is written and when
-the host opens its journal; a loose one is tightened on those same roads, and
-one that is a symlink, that belongs to another user, or that stays loose
-after the tightening is refused on every one of them: the spawn fails with a
-launch error naming the directory. A `hosts/` symlinked onto another volume
+before anything is bound and the host exits, having started no CLI and
+written no lease, since that check, the directory checks below and the sweep
+of a dead host's leftovers all run before the host spawns the CLI, and after
+the lease only the bind, the tightening and the rename run; `hosts/` itself
+is made 0700 when the kernel writes a host's spawn specification and when a
+host starts, before it spawns its CLI or binds its socket, and each
+`hosts/<sid>/` when the specification is written and when the host opens
+its journal; a loose one is tightened on those same roads, and one that
+is a symlink, that belongs to another user, or that stays loose after the
+tightening is refused on every one of them: the spawn fails with a launch
+error naming the directory. A `hosts/` symlinked onto another volume
 worked before this check and now stops every session on the machine until
 the link is replaced by a directory; to keep the state elsewhere, point the
 state root there, `ROMP_STATE_DIR` or `XDG_STATE_HOME`), and holds the

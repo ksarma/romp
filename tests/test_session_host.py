@@ -697,8 +697,12 @@ class SocketMode(unittest.TestCase):
     serves nothing and keeps nothing (2026-09-18, split out of PR 789's round 1, finding fresh-5, as its own fix; the
     budget, umask, sweep and refusal cases from its own round 1, 2026-09-19, the creation-moment, sweep-arm, bind-leg
     and close-on-failure cases from that round's mutation pass, and the byte-measure, kept-lease and session-directory
-    cases from round 2, the same day, and the bind-moment, step-order, no-identity and journal-close cases from that
-    round's mutation pass). asyncio.start_unix_server binds AND
+    cases from round 2, the same day, the bind-moment, step-order, no-identity and journal-close cases from that
+    round's mutation pass, and round 3's reorder cases: the reviewer's ruling of 2026-09-19 moved the socket road's
+    prelude, `hosts/` made ours, the budget check, the dead socket's unlink and the stale-temp sweep, out of
+    _serve_socket and ahead of the CLI's spawn (sh.SessionHost._prepare_socket), so after the lease only the bind, the
+    chmod and the rename run, and a prelude refusal starts no CLI and writes no lease; the ordering pins, the two
+    refusal classes and the re-pointed post-spawn cases below are that round's). asyncio.start_unix_server binds AND
     listens at the umask's mode, and the old code's chmod one line later left the published path at that mode for the
     gap: the last member of the create-then-tighten class PR 789 closed for the kernel's credential files. A stat once
     the host is up passes on that code, so the mode cases capture the mode at CREATION: the mode the temp carries as
@@ -720,6 +724,7 @@ class SocketMode(unittest.TestCase):
         # _NoCli stand-in's close() marks the CLI gone, as the real transport's close returns only once the CLI is dead,
         # unless the case sets cli_outlives_close (the kept-lease case): a close that RETURNED with the CLI alive
         self.cli_start_now, self.cli_outlives_close = "1", False
+        self.spawn_calls = 0                            # how many times run() reached the spawn stub (a prelude refusal: none)
         self.lease_api = {"write_lease": lambda sd, lease: (self.lease_calls.append("write"), self.leases.__setitem__(lease["sid"], dict(lease))),
                           "remove_lease": lambda sd, sid: (self.lease_calls.append("remove"), self.leases.pop(sid, None)) and True,
                           "proc_start": lambda pid: self.cli_start_now if pid == CLI_PID else "1"}
@@ -770,19 +775,51 @@ class SocketMode(unittest.TestCase):
             if self.case is not None and not self.case.cli_outlives_close:
                 self.case.cli_start_now = None
 
+    class _Limit(int):
+        """SOCK_PATH_MAX's stand-in for the ordering pins: an int that reports each comparison the budget check makes.
+        `n > SOCK_PATH_MAX` in _prepare_socket reaches this type's __lt__ first, since Python gives the reflected method
+        of an int SUBCLASS on the right priority over int's own on the left, so the moment the budget is read is
+        observable without a seam in the module; the value compares, prints and serialises as the int it wraps (a row's
+        `limit` field is unchanged)."""
+
+        def __new__(cls, value, on_compare):
+            self = super().__new__(cls, value)
+            self.on_compare = on_compare
+            return self
+
+        def __lt__(self, other):
+            self.on_compare()
+            return int(self) < other
+
+        def __gt__(self, other):
+            self.on_compare()
+            return int(self) > other
+
+    def _lease_on_disk(self):
+        """Wire the recording lease stubs to the real lease FILE too (sb.write_lease and sb.remove_lease under the state
+        root the host was given), so a pin can read the lease path, the thing the kernel's lease readers stat, and not
+        only the stubs' record. Returns a callable giving that path for a sid (the root moves with _reroot)."""
+        write, remove = self.lease_api["write_lease"], self.lease_api["remove_lease"]
+        self.lease_api["write_lease"] = lambda sd, lease: (write(sd, lease), sb.write_lease(sd, lease))
+        self.lease_api["remove_lease"] = lambda sd, sid: (remove(sd, sid), sb.remove_lease(sd, sid))
+        return lambda sid=SID: sb.lease_path(self.root, sid)
+
     def _run_host(self, ready=None, cli_start="1"):
         """The real run() until `ready()` (default: the published path exists) or run() ends, then the stop. Returns
         (the published path's mode at that moment, or None when it did not exist; run()'s exit code, or the OSError run()
         raised on the bind road). The host stays on self.host for the checks after; the spawn stub writes the lease the
-        real _spawn writes at its end, so the lease-before-bind order run() has is the order under test. `cli_start` is
-        the identity the stub records for the stand-in CLI (None: proc_start read nothing, so no lease is written)."""
+        real _spawn writes at its end, so the order run() has, the prelude (_prepare_socket) before the spawn and its
+        lease, and the lease before the bind, is the order under test. `cli_start` is the identity the stub records for
+        the stand-in CLI (None: proc_start read nothing, so no lease is written)."""
         ready = ready or self.pub.exists
         host = self.host = sh.SessionHost(str(self.sdir / "spawn.json"), lease_api=self.lease_api)
 
         async def _spawn():
+            self.spawn_calls += 1
             host.transport = self._NoCli(self)
             host.cli_pid, host.cli_start, host.cli_spawned_at = CLI_PID, cli_start, int(host.now())
-            host._write_lease()
+            host.log("cli-spawned", transport="stand-in", cliPid=host.cli_pid)      # the row the real _spawn writes, so the
+            host._write_lease()                                                      # rows' order is the real host's
         host._spawn = _spawn
 
         async def go():
@@ -1067,11 +1104,22 @@ class SocketMode(unittest.TestCase):
         self.assertEqual(stat.S_IMODE(os.stat(hosts).st_mode), 0o700, "and stays so after the host's exit")
         self.assertEqual(stat.S_IMODE(os.stat(self.sdir).st_mode), 0o700, "hosts/<sid>/ untouched at 0700")
 
+    PRELUDE_STEPS = ("hosts-dir", "budget", "prelude")     # _prepare_socket's steps, run before the CLI is spawned
+    SERVE_STEPS = ("bind", "chmod", "rename")               # _serve_socket's, run after the spawn and its lease
+
     def _assert_refused(self, rc, step, error, errno_=None, at="session_host.py:"):
-        """The loud road, whole: the row names the step, nothing is bound or published, the lease the spawn wrote is
-        gone, the CLI stand-in was closed, and no temp is left in hosts/. `at` is the file the row's frame names: the
-        raiser's (_where reads the innermost frame), so session_host.py for the checks of our own, asyncio's
-        unix_events.py for the bind's, and this file's for a failure a test's stand-in raised."""
+        """The loud road, whole: the row names the step, nothing is bound or published, no temp is left in hosts/, no
+        lease is kept and the journal is closed. TWO REFUSAL CLASSES since round 3 (the reviewer's reorder ruling,
+        2026-09-19), told apart by the step the row names, so a case cannot claim one class and be satisfied by the
+        other's bookkeeping: a PRELUDE refusal (hosts-dir, budget, prelude: _prepare_socket, which run() calls before
+        the CLI is spawned) has started nothing, so no lease was ever written (lease_calls []), there is no transport
+        and no cli-spawned row; a refusal AFTER the spawn (bind, chmod, rename: _serve_socket) ran with the spawn's lease
+        on disk, so that lease is removed once the stand-in CLI's close marks it gone (lease_calls ["write", "remove"])
+        and the CLI stand-in was closed. Through round 2 every refusal was of the second class, since the whole road ran
+        after the spawn; the seven prelude cases re-pointed here read [] where they used to read ["write", "remove"].
+        `at` is the file the row's frame names: the raiser's (_where reads the innermost frame), so session_host.py for
+        the checks of our own, asyncio's unix_events.py for the bind's, and this file's for a failure a test's stand-in
+        raised."""
         self.assertIsInstance(rc, OSError, (rc, self.host_log[-3:]))
         self.assertIn("socket-bind-failed", self.rows, self.host_log)
         row = self.rows["socket-bind-failed"]
@@ -1082,10 +1130,27 @@ class SocketMode(unittest.TestCase):
         self.assertNotIn("socket-ready", self.rows)
         self.assertFalse(self.pub.exists() and not self.pub.is_dir(), "no socket at the published path")
         self.assertEqual(self._temps(), [], "no temp left in hosts/")
-        self.assertEqual(self.lease_calls, ["write", "remove"], "the lease written at the spawn is removed on the failure")
+        self.assertIn(step, self.PRELUDE_STEPS + self.SERVE_STEPS, "every step of the road belongs to one half of it")
+        if step in self.PRELUDE_STEPS:
+            self.assertEqual(self.lease_calls, [], "a prelude refusal precedes the spawn: no lease was ever written")
+            self.assertIsNone(self.host.transport, "and no CLI was started: there is no transport")
+            self.assertIsNone(self.host.cli_pid, "no CLI identity was recorded")
+            self.assertNotIn("cli-spawned", self.rows, "and no cli-spawned row was written")
+        else:
+            self.assertEqual(self.lease_calls, ["write", "remove"], "the lease written at the spawn is removed on the failure")
+            self.assertTrue(self.host.transport.closed.is_set(), "the CLI was ended with the host")
         self.assertEqual(self.leases, {}, "no lease is kept")
-        self.assertTrue(self.host.transport.closed.is_set(), "the CLI was ended with the host")
-        self.assertIsNone(self.host.journal._fh, "and the journal is closed with it (run()'s failure arm)")
+        self.assertIsNone(self.host.journal._fh, "and the journal is closed with it (run()'s failure arm for this half of the road)")
+
+    def _bind_refused_root(self):
+        """A root where the BIND refuses, for real, after the spawn and its lease: the published path at exactly the
+        budget with a three-character sid, so sock_names gives a temp (13 bytes) longer than the published name
+        (`web.sock`, 8) and over the budget; the prelude passes (the published path fits), the spawn runs, and
+        start_unix_server raises CPython's "AF_UNIX path too long" at the temp (the shape
+        test_a_temp_over_the_budget_fails_the_bind_and_the_row_names_that_step pins). The post-spawn failure cases moved
+        here in round 3 from the budget refusal they used, which precedes the spawn now. Returns the sid."""
+        self._reroot(sh.SOCK_PATH_MAX, sid="web")
+        return "web"
 
     def test_a_published_path_one_byte_over_the_budget_is_refused_before_anything_is_bound(self):
         """The high of round 1 (2026-09-19): binding a temp moved the bind's sun_path check onto the temp's name, so at a
@@ -1195,13 +1260,18 @@ class SocketMode(unittest.TestCase):
         transport has no returncode attribute, so the module's _cli_alive reads a live SDK CLI as gone). The lease is what
         the kernel's orphan road waits on, so it goes only once the CLI is confirmed gone by pid and start-time identity
         (proc_start, the lease's own reader). Three stand-ins for the CLI after close() returned: still there (the same
-        start), gone (no start), and a pid the kernel reused (a different start)."""
+        start), gone (no start), and a pid the kernel reused (a different start). The trigger is a BIND refusal
+        (_bind_refused_root) since round 3: through round 2 this case reached the failure arm through the budget
+        refusal, and the budget check precedes the spawn now, so a budget refusal has no CLI and no lease to decide
+        about; the lease-kept logic this case protects is unchanged and applies to the bind, the chmod and the rename,
+        the steps that still run after the lease (the reviewer's reorder ruling, 2026-09-19)."""
         self.cli_outlives_close = True                  # close() returns; proc_start still reports the spawn's start for CLI_PID
-        self._reroot(sh.SOCK_PATH_MAX + 1)
+        sid = self._bind_refused_root()
         mode, rc = self._run_host()
         self.assertIsInstance(rc, OSError)
+        self.assertEqual(self.rows["socket-bind-failed"]["step"], "bind", "the bind refused, after the spawn and its lease")
         self.assertEqual(self.lease_calls, ["write"], "written at the spawn and NOT removed: the CLI is unconfirmed")
-        self.assertEqual(self.leases[SID]["pid"], CLI_PID, "the lease still names the CLI the kernel's orphan road will wait on")
+        self.assertEqual(self.leases[sid]["pid"], CLI_PID, "the lease still names the CLI the kernel's orphan road will wait on")
         kept = self.rows["lease-kept"]
         self.assertEqual(sorted(k for k in kept if k not in ("t", "kind")), ["cliPid"], "the kind and the CLI's pid, nothing else: no path")
         self.assertEqual(kept["cliPid"], CLI_PID)
@@ -1209,19 +1279,20 @@ class SocketMode(unittest.TestCase):
         self.assertNotIn("socket-ready", self.rows)
         self.assertEqual(self._temps(), [], "the loud road otherwise ran whole: no temp left")
         kinds = [r["kind"] for r in self.host_log]
+        self.assertLess(kinds.index("cli-spawned"), kinds.index("socket-bind-failed"), "the CLI was spawned before the refusal")
         self.assertLess(kinds.index("socket-bind-failed"), kinds.index("lease-kept"))
         # a pid the kernel reused: proc_start answers a different start for CLI_PID, so the CLI is gone even though a process answers
         self.setUp()
         self.cli_outlives_close, self.cli_start_now = True, "2"
-        self._reroot(sh.SOCK_PATH_MAX + 1)
+        self._bind_refused_root()
         mode, rc = self._run_host()
-        self._assert_refused(rc, "budget", "OSError", errno.ENAMETOOLONG)
+        self._assert_refused(rc, "bind", "OSError", None, at="unix_events.py:")
         self.assertNotIn("lease-kept", self.rows)
-        # gone for real: the default stand-in, whose close() leaves no process behind (the six refusal cases run this leg)
+        # gone for real: the default stand-in, whose close() leaves no process behind (the post-spawn refusal cases run this leg)
         self.setUp()
-        self._reroot(sh.SOCK_PATH_MAX + 1)
+        self._bind_refused_root()
         mode, rc = self._run_host()
-        self._assert_refused(rc, "budget", "OSError", errno.ENAMETOOLONG)
+        self._assert_refused(rc, "bind", "OSError", None, at="unix_events.py:")
         self.assertIsNone(self.cli_start_now, "the stand-in's close marked the CLI gone before the lease decision")
         self.assertNotIn("lease-kept", self.rows)
 
@@ -1437,8 +1508,10 @@ class SocketMode(unittest.TestCase):
         identity at the spawn, so an arm answering False for a missing one was never reached). With no CLI pid, or a pid
         whose start time proc_start could not read, _write_lease wrote no lease, so there is nothing for the kernel's
         orphan road to wait on and nothing to keep: the CLI reads as gone. Direct, over each shape of the missing identity
-        and the three recorded ones; then through run()'s failure arm with a spawn stub whose proc_start read nothing and
-        a stand-in CLI that outlives its close: no lease was written, none is reported kept, no lease-kept row."""
+        and the three recorded ones; then through run()'s post-spawn failure arm (a bind refusal, _bind_refused_root: the
+        budget refusal this leg used through round 2 precedes the spawn since round 3, so it never records an identity
+        at all) with a spawn stub whose proc_start read nothing and a stand-in CLI that outlives its close: no lease was
+        written, none is reported kept, no lease-kept row."""
         host = sh.SessionHost(str(self.sdir / "spawn.json"), lease_api=self.lease_api)
         self.addCleanup(host.journal.close)
         for pid, start in ((None, None), (None, "1"), (CLI_PID, None), (CLI_PID, "")):
@@ -1455,10 +1528,11 @@ class SocketMode(unittest.TestCase):
         self.cli_start_now = None
         self.assertTrue(host._cli_gone(), "no process at the pid: gone")
         self.cli_start_now, self.cli_outlives_close = "1", True
-        self._reroot(sh.SOCK_PATH_MAX + 1)
+        self._bind_refused_root()
         mode, rc = self._run_host(cli_start=None)
         self.assertIsInstance(rc, OSError)
-        self.assertEqual(self.rows["socket-bind-failed"]["step"], "budget")
+        self.assertEqual(self.rows["socket-bind-failed"]["step"], "bind", "a refusal after the spawn: the arm that reads the identity")
+        self.assertIn("cli-spawned", self.rows, "the CLI was spawned before the refusal")
         self.assertNotIn("write", self.lease_calls, "no identity at the spawn, so no lease was written")
         self.assertNotIn("lease-kept", self.rows, "and none is reported kept: there is nothing for the orphan road to wait on")
         self.assertEqual(self.leases, {})
@@ -1466,28 +1540,214 @@ class SocketMode(unittest.TestCase):
         self.assertEqual(self._temps(), [])
 
     def test_the_failure_arm_closes_the_journal_before_the_error_leaves_run(self):
-        """run()'s failure arm closes the journal the constructor opened (the mutation pass of round 2, 2026-09-19: with
+        """run()'s failure arms close the journal the constructor opened (the mutation pass of round 2, 2026-09-19: with
         that close removed every refusal case stayed green, an open segment descriptor being invisible to the rows, the
         temps, the lease and the CLI). After the refusal the journal holds no descriptor, the descriptor it held is closed,
         and no descriptor of this process names the segment file (read from /proc where there is one): a host that could
         not publish leaves no open file behind. Every refusal case reads the same fact through _assert_refused since this
-        pin."""
-        self._reroot(sh.SOCK_PATH_MAX + 1)
-        held = []
-        mode, rc = self._run_host(ready=lambda: held.append(self.host.journal._fh) and False)
-        self._assert_refused(rc, "budget", "OSError", errno.ENAMETOOLONG)
-        self.assertTrue(held and held[0] is not None, "the journal held an open segment while run() ran")
-        self.assertTrue(held[0].closed, "and that descriptor is closed")
-        self.assertIsNone(self.host.journal._fh)
-        if os.path.isdir("/proc/self/fd"):
-            seg = os.path.realpath(self.sdir / "journal-0.jsonl")
-            named = []
-            for fd in os.listdir("/proc/self/fd"):
-                try:
-                    named.append(os.readlink(os.path.join("/proc/self/fd", fd)))
-                except OSError:
-                    pass
-            self.assertNotIn(seg, named, "no descriptor of this process names the segment")
+        pin. Two legs since round 3, one per failure arm: the prelude's (a budget refusal, before the CLI) and the
+        post-spawn one (a bind refusal, _bind_refused_root), since the reorder gave run() two arms and a close dropped
+        from either would leave the descriptor open on that half of the road."""
+        for arm, plant, step, error, errno_, at in (("prelude", lambda: self._reroot(sh.SOCK_PATH_MAX + 1), "budget", "OSError", errno.ENAMETOOLONG, "session_host.py:"),
+                                                   ("post-spawn", self._bind_refused_root, "bind", "OSError", None, "unix_events.py:")):
+            with self.subTest(arm=arm):
+                if arm != "prelude":
+                    self.setUp()
+                plant()
+                held = []
+                mode, rc = self._run_host(ready=lambda: held.append(self.host.journal._fh) and False)
+                self._assert_refused(rc, step, error, errno_, at=at)
+                self.assertTrue(held and held[0] is not None, "the journal held an open segment while run() ran")
+                self.assertTrue(held[0].closed, "and that descriptor is closed")
+                self.assertIsNone(self.host.journal._fh)
+                if os.path.isdir("/proc/self/fd"):
+                    seg = os.path.realpath(self.sdir / "journal-0.jsonl")
+                    named = []
+                    for fd in os.listdir("/proc/self/fd"):
+                        try:
+                            named.append(os.readlink(os.path.join("/proc/self/fd", fd)))
+                        except OSError:
+                            pass
+                    self.assertNotIn(seg, named, "no descriptor of this process names the segment")
+
+    def test_no_lease_exists_at_any_prelude_step_and_the_prelude_runs_before_the_spawn(self):
+        """The reorder's first half, pinned at the moments (round 3, the reviewer's ruling of 2026-09-19): at the instant
+        each prelude step runs, hosts_dir, the budget compare, the dead socket's unlink and the stale-temp sweep, no lease
+        exists anywhere (the stubs' record empty, the lease FILE absent, read_lease None) and no CLI has been started (no
+        transport, no pid), and the four run in that order before the lease write, which precedes the bind; at the bind
+        the lease is on disk and a CLI stands behind it (the CLI-before-socket order, kept). Through round 2 the same four
+        steps ran with the spawn's lease on disk, inside _serve_socket. Interposed, not read: sh.hosts_dir and
+        _sweep_stale_temps are wrapped, the published path's unlink is caught at os.unlink, and the budget compare is
+        caught by an int subclass standing in for SOCK_PATH_MAX (_Limit). Red under the mutation that calls
+        _prepare_socket after _spawn (round 2's order): every prelude snapshot then shows the lease and the CLI."""
+        lease_file = self._lease_on_disk()
+        seen = []
+
+        def snap(step):
+            seen.append((step, list(self.lease_calls), dict(self.leases), lease_file().exists(),
+                         sb.read_lease(self.root, SID), self.host.transport, self.host.cli_pid))
+        real_hosts_dir, real_sweep, real_unlink, real_start = sh.hosts_dir, sh.SessionHost._sweep_stale_temps, os.unlink, asyncio.start_unix_server
+
+        def hosts_dir(state_dir):
+            snap("hosts-dir")
+            return real_hosts_dir(state_dir)
+
+        def sweep(host):
+            snap("sweep")
+            return real_sweep(host)
+
+        def unlink(path, *a, **k):
+            if Path(path) == self.pub:
+                snap("unlink-published")
+            return real_unlink(path, *a, **k)
+
+        async def start(*a, **k):
+            snap("bind")
+            return await real_start(*a, **k)
+        write = self.lease_api["write_lease"]
+        self.lease_api["write_lease"] = lambda sd, lease: (write(sd, lease), snap("lease-write"))
+        with mock.patch.object(sh, "hosts_dir", hosts_dir), mock.patch.object(sh.SessionHost, "_sweep_stale_temps", sweep), \
+                mock.patch.object(os, "unlink", unlink), mock.patch.object(asyncio, "start_unix_server", start), \
+                mock.patch.object(sh, "SOCK_PATH_MAX", self._Limit(sh.SOCK_PATH_MAX, lambda: snap("budget"))):
+            mode, rc = self._run_host()
+        self.assertEqual(rc, 0, self.host_log[-3:])
+        self.assertEqual(mode, 0o600)
+        steps = [x[0] for x in seen]
+        self.assertEqual(steps[:6], ["hosts-dir", "budget", "unlink-published", "sweep", "lease-write", "bind"],
+                         "the four prelude steps, then the lease, then the bind: %r" % steps)
+        for step, calls, leases, on_disk, read, transport, pid in seen[:4]:
+            self.assertEqual((calls, leases, on_disk, read), ([], {}, False, None), "no lease anywhere at the %s step" % step)
+            self.assertIsNone(transport, "and no CLI started at the %s step" % step)
+            self.assertIsNone(pid)
+        step, calls, leases, on_disk, read, transport, pid = seen[5]
+        self.assertEqual((step, calls, on_disk, pid), ("bind", ["write"], True, CLI_PID), "at the bind the lease is on disk")
+        self.assertEqual(read["pid"], CLI_PID, "and names the CLI")
+        self.assertIsNotNone(transport, "which stands behind the socket the bind is about to serve")
+        self.assertEqual(self.lease_calls, ["write", "remove"], "the success road's lease life is as before")
+
+    def test_after_the_lease_write_only_the_bind_the_chmod_and_the_rename_run_and_hosts_is_listed_once(self):
+        """The reorder's second half, the interval itself (round 3, the reviewer's ruling of 2026-09-19): between the lease
+        write and the rename that publishes the socket, the interval the kernel's lease-keyed attach roads race, exactly
+        two things happen, the bind of the temp and its chmod to 0600; in particular NO directory listing (os.scandir,
+        os.listdir, Path.glob, Path.iterdir, of any directory), no prelude step (hosts_dir, the sweep, the published
+        path's unlink) and no other chmod runs there. And hosts/ is listed exactly ONCE per launch overall, by the
+        sweep's glob, before the lease. Through round 2 the glob sat inside that interval, which is what made the
+        interval proportional to the entries in hosts/. Path.glob is wrapped to materialise its listing inside the
+        wrapped call, so the os-level reads it makes (one os.scandir on a Python whose pathlib looks scandir up at call
+        time; none visible where pathlib bound it at import) are attributed to it and counted as one listing. Red under
+        the mutation that puts a second sweep at the top of _serve_socket (a listing in the interval, two listings
+        overall) and under the one that calls _prepare_socket after _spawn (the prelude in the interval)."""
+        events, depth, hosts = [], [0], self.pub.parent
+        real = dict(glob=Path.glob, iterdir=Path.iterdir, scandir=os.scandir, listdir=os.listdir, chmod=os.chmod, rename=os.rename,
+                    unlink=os.unlink, hosts_dir=sh.hosts_dir, sweep=sh.SessionHost._sweep_stale_temps, start=asyncio.start_unix_server)
+
+        def glob(path, pattern, *a, **k):
+            depth[0] += 1
+            try:
+                items = list(real["glob"](path, pattern, *a, **k))
+            finally:
+                depth[0] -= 1
+            events.append(("list", "glob", Path(path)))
+            return items
+
+        def iterdir(path):
+            events.append(("list", "iterdir", Path(path)))
+            return real["iterdir"](path)
+
+        def scandir(path=".", *a, **k):
+            if depth[0] == 0:
+                events.append(("list", "scandir", Path(path)))
+            return real["scandir"](path, *a, **k)
+
+        def listdir(path=".", *a, **k):
+            if depth[0] == 0:
+                events.append(("list", "listdir", Path(path)))
+            return real["listdir"](path, *a, **k)
+
+        def hosts_dir(state_dir):
+            events.append(("prelude", "hosts-dir", None))
+            return real["hosts_dir"](state_dir)
+
+        def sweep(host):
+            events.append(("prelude", "sweep", None))
+            return real["sweep"](host)
+
+        def unlink(path, *a, **k):
+            events.append(("unlink", "unlink", Path(path)))
+            return real["unlink"](path, *a, **k)
+
+        async def start(*a, **k):
+            events.append(("serve", "bind", Path(k.get("path"))))
+            return await real["start"](*a, **k)
+
+        def chmod(path, mode, *a, **k):
+            temp = Path(path).parent == hosts and Path(path).name.endswith(".tmp")
+            events.append(("serve" if temp else "chmod", "chmod", Path(path)))
+            return real["chmod"](path, mode, *a, **k)
+
+        def rename(src, dst, *a, **k):
+            events.append(("serve", "rename", Path(dst)))
+            return real["rename"](src, dst, *a, **k)
+        write = self.lease_api["write_lease"]
+        self.lease_api["write_lease"] = lambda sd, lease: (write(sd, lease), events.append(("lease", "write", None)))
+        with mock.patch.object(Path, "glob", glob), mock.patch.object(Path, "iterdir", iterdir), \
+                mock.patch.object(os, "scandir", scandir), mock.patch.object(os, "listdir", listdir), \
+                mock.patch.object(os, "chmod", chmod), mock.patch.object(os, "rename", rename), mock.patch.object(os, "unlink", unlink), \
+                mock.patch.object(sh, "hosts_dir", hosts_dir), mock.patch.object(sh.SessionHost, "_sweep_stale_temps", sweep), \
+                mock.patch.object(asyncio, "start_unix_server", start):
+            mode, rc = self._run_host()
+        self.assertEqual(rc, 0, self.host_log[-3:])
+        self.assertEqual(mode, 0o600)
+        write_i = events.index(("lease", "write", None))
+        rename_i = next(i for i, e in enumerate(events) if e[:2] == ("serve", "rename") and e[2] == self.pub)
+        self.assertLess(write_i, rename_i, "the lease precedes the publish")
+        between = events[write_i + 1:rename_i]
+        self.assertEqual([(k, w) for k, w, _ in between], [("serve", "bind"), ("serve", "chmod")],
+                         "between the lease write and the publish: the bind and the temp's chmod, nothing else: %r" % (between,))
+        self.assertEqual(len([e for e in between if e[0] in ("list", "prelude")]), 0, "no listing and no prelude step in the interval")
+        listings = [e for e in events if e[0] == "list" and e[2] == hosts]
+        self.assertEqual(len(listings), 1, "hosts/ is listed exactly once per launch: %r" % (listings,))
+        self.assertEqual(listings[0][1], "glob", "by the sweep's glob")
+        self.assertLess(events.index(listings[0]), write_i, "and before the lease")
+        prelude = [i for i, e in enumerate(events) if e[0] == "prelude"]
+        self.assertEqual([events[i][1] for i in prelude], ["hosts-dir", "sweep"], "the prelude's two wrapped steps, once each")
+        self.assertTrue(all(i < write_i for i in prelude), "both before the lease write")
+        self.assertTrue(any(e[0] == "unlink" and e[2] == self.pub for e in events[:write_i]), "the dead socket's unlink too")
+
+    def test_a_prelude_refusal_starts_no_cli_and_writes_no_lease(self):
+        """What a refusal before the CLI leaves behind (round 3, the reviewer's ruling of 2026-09-19): over the budget and
+        at a symlinked hosts/, run() raises out of _prepare_socket with the socket-bind-failed row naming the step, the
+        spawn never ran (the stub was never called: no transport, no CLI identity, no cli-spawned row), no lease was ever
+        written (the stubs' record empty and the lease FILE absent, so the kernel's orphan road finds nothing to wait on
+        and nothing to recover), nothing is bound, no temp is left and the journal is closed. Through round 2 the same
+        refusals came after the spawn: they ended a CLI and removed a lease that need never have existed. The kernel's
+        spawn wait reading the exit this raise becomes is pinned over the real host process by PreludeRefusalRead. Red
+        under the mutation that calls _prepare_socket after _spawn."""
+        for shape in ("budget", "hosts-dir"):
+            with self.subTest(shape=shape):
+                if shape != "budget":
+                    self.setUp()
+                lease_file = self._lease_on_disk()
+                if shape == "budget":
+                    self._reroot(sh.SOCK_PATH_MAX + 1)
+                else:
+                    hosts, target = self.pub.parent, Path(self.root) / "elsewhere"
+                    os.rename(hosts, target)
+                    hosts.symlink_to(target)
+                mode, rc = self._run_host()
+                self.assertIsNone(mode, "nothing was published")
+                if shape == "budget":
+                    self._assert_refused(rc, "budget", "OSError", errno.ENAMETOOLONG)
+                else:
+                    self._assert_refused(rc, "hosts-dir", "OSError")
+                self.assertEqual(self.spawn_calls, 0, "the spawn was never reached")
+                self.assertIsNone(self.host.transport)
+                self.assertEqual((self.host.cli_pid, self.host.cli_start, self.host.cli_spawned_at), (None, None, None), "no CLI identity")
+                self.assertEqual(self.lease_calls, [], "no lease was ever written")
+                self.assertFalse(lease_file().exists(), "and none is on disk")
+                self.assertIsNone(sb.read_lease(self.root, SID))
+                self.assertEqual([r["kind"] for r in self.host_log], ["host-started", "socket-bind-failed"],
+                                 "the rows: started, refused, nothing about a CLI or a lease")
 
 
 class SocketBudget(unittest.TestCase):
@@ -1868,6 +2128,67 @@ class KeptLease(unittest.TestCase):
         self.assertIsNone(self.spawns[0][1], "while the first CLI was still running: the second CLI on the same transcript")
 
 
+class PreludeRefusalRead(unittest.TestCase):
+    """The kernel's side of a prelude refusal (round 3, the reviewer's ruling of 2026-09-19): the real backend's spawn
+    road (_host_transport_for: write the spec, start the host, poll for the published path while the host lives) over a
+    state root padded so the published path is one byte over the budget, with _spawn_host replaced by a launcher of the
+    REAL bin/romp-session-host (KeptLease's harness with a real host in place of its recorder). The host refuses at the
+    budget before it spawns a CLI and exits 1; the wait reads that exit and raises naming the code; afterwards the root
+    holds no lease, no socket and no temp, and host.log reads host-started, socket-bind-failed, host-crashed and nothing
+    else: no cli-spawned row, so no CLI was ever started for the kernel to reap and no lease for its orphan road to wait
+    on. The CLI the spec names is a marker script that records its start, so "no CLI ever ran" is read from the
+    marker's absence and not from the host's rows alone. Through round 2 the same launch spawned a CLI and wrote a lease
+    first, then ended the CLI and removed the lease. The hosts setting is left on (no file), which the road needs to
+    spawn."""
+
+    def setUp(self):
+        self.state = padded_root(self, sh.SOCK_PATH_MAX + 1, os.path.join("hosts", SID[:8] + ".sock"))
+        self.scratch = tempfile.mkdtemp()               # the marker CLI, its mark and the host's stderr: not under the padded root
+        self.addCleanup(shutil.rmtree, self.scratch, True)
+        self.marker = os.path.join(self.scratch, "cli-started")
+        self.cli = os.path.join(self.scratch, "marker_cli.py")
+        Path(self.cli).write_text("#!%s\nimport sys\nopen(%r, 'w').close()\nsys.stdin.read()\n" % (sys.executable, self.marker))   # marks its start, lives to EOF
+        os.chmod(self.cli, 0o700)
+        self.logs, self.hosts = [], []
+        self.be = sb.SdkBackend(self.state, "/bin/true", lambda *a, **k: None, log=self.logs.append)
+        self.be._spawn_host = self._spawn_host
+        self.sess = types.SimpleNamespace(sid=SID, name="web", _host_intent=True, _host=None, _host_is_attach=False,
+                                          _seed_for_dead_cli=lambda cli: None, _options_login="", _host_end_grace=None,
+                                          _on_cli_stderr=lambda line: None)
+        self.opts = types.SimpleNamespace(cli_path=self.cli, cwd=self.scratch, permission_prompt_tool_name="stdio",
+                                          permission_mode="default", max_buffer_size=1024 * 1024, env={})
+
+    def _spawn_host(self, sess, spec_path, secret_env=None):
+        env = dict(os.environ, PYTHONUNBUFFERED="1", ROMP_SDK_SITE=os.path.join(self.scratch, "no-sdk-here"))
+        for name in sb.AUTH_ENV_NAMES:
+            env.pop(name, None)
+        proc = subprocess.Popen([sys.executable, os.path.join(BIN, "romp-session-host"), spec_path],
+                                stdout=subprocess.DEVNULL, stderr=open(os.path.join(self.scratch, "host.stderr"), "w"), env=env,
+                                start_new_session=True)
+        self.addCleanup(HostProcess._kill_group, proc)
+        self.hosts.append(proc)
+        return proc
+
+    def test_the_spawn_wait_reads_the_exit_of_a_host_refused_before_its_cli_and_finds_no_lease_and_no_cli(self):
+        with self.assertRaises(Exception) as cm:
+            asyncio.run(asyncio.wait_for(self.be._host_transport_for(self.sess, self.opts, (None, None, None)), 60))
+        self.assertIn("exited before serving its socket (code 1)", str(cm.exception), "the spawn wait read the host's exit")
+        self.assertEqual(len(self.hosts), 1, "one host was started")
+        self.assertEqual(self.hosts[0].wait(10), 1, open(os.path.join(self.scratch, "host.stderr")).read()[-800:])
+        rows = [json.loads(l) for l in (Path(self.state) / "hosts" / SID / "host.log").read_text().splitlines()]
+        self.assertEqual([r["kind"] for r in rows], ["host-started", "socket-bind-failed", "host-crashed"], rows)
+        row = rows[1]
+        self.assertEqual((row["step"], row["error"], row["errno"], row["pathLen"], row["limit"]),
+                         ("budget", "OSError", errno.ENAMETOOLONG, sh.SOCK_PATH_MAX + 1, sh.SOCK_PATH_MAX), row)
+        self.assertNotIn(self.state, json.dumps(rows), "no row carries the state root")
+        self.assertFalse(os.path.exists(self.marker), "the CLI never started: its marker is absent")
+        self.assertIsNone(sb.read_lease(self.state, SID), "no lease was ever written")
+        self.assertFalse(sb.lease_path(self.state, SID).exists())
+        hosts = Path(self.state) / "hosts"
+        self.assertFalse((hosts / (SID[:8] + ".sock")).exists(), "nothing published")
+        self.assertEqual(sorted(p.name for p in hosts.glob("*.tmp")), [], "no temp left")
+
+
 class SocketFchmod(unittest.TestCase):
     def test_fchmod_on_a_bound_socket_descriptor_leaves_the_path_mode_alone(self):
         """Why _serve_socket tightens the temp by PATH: on Linux the listening descriptor is the socket, not the file
@@ -2073,12 +2394,20 @@ class HostProcess(unittest.TestCase):
         """The high of round 1 (2026-09-19) as the kernel would meet it: the real bin/romp-session-host under a state root
         padded so hosts/<sid8>.sock is SOCK_PATH_MAX + 1 bytes (108 on Linux). The first cut bound its shorter temp,
         renamed it onto the over-budget path, logged socket-ready and kept its lease and its CLI while every kernel
-        connect raised; the code before failed the bind loudly and exited 1. Now: exit 1, the socket-bind-failed row
-        (step budget, ENAMETOOLONG, the length and the limit) then host-crashed, no path in any row, no socket, no temp,
-        no lease on disk, and the CLI the host spawned is gone."""
+        connect raised; the code before failed the bind loudly and exited 1. Now: exit 1, and host.log reads
+        host-started, the socket-bind-failed row (step budget, ENAMETOOLONG, the length and the limit) and host-crashed
+        and NOTHING ELSE: no cli-spawned row, because since round 3 (the reviewer's reorder ruling, 2026-09-19) the
+        budget is read before the CLI is spawned, so no CLI was ever started and no lease ever written. Through round 2
+        this case read a cli-spawned row and asserted that CLI gone and the lease removed; a refusal that starts nothing
+        is the stronger property. The CLI the spec names is a marker script that records its start, so the claim is read
+        from the marker's absence as well as the rows. No path in any row, no socket, no temp, no lease on disk."""
         budget = sh.SOCK_PATH_MAX
+        marker = os.path.join(self.state, "cli-started")
+        cli = os.path.join(self.state, "marker_cli.py")
+        Path(cli).write_text("#!%s\nimport sys\nopen(%r, 'w').close()\nsys.stdin.read()\n" % (sys.executable, marker))   # marks its start, lives to EOF
+        os.chmod(cli, 0o700)
         self._pad_state_to(budget + 1)
-        spec_path, spec = self._spec()
+        spec_path, spec = self._spec(cli_path=cli)
         env = dict(os.environ, PYTHONUNBUFFERED="1", ROMP_SDK_SITE=os.path.join(self.state, "no-sdk-here"))
         for name in sb.AUTH_ENV_NAMES:
             env.pop(name, None)
@@ -2090,8 +2419,9 @@ class HostProcess(unittest.TestCase):
         self.assertEqual(rc, 1, open(os.path.join(self.state, "host.stderr")).read()[-800:])
         rows = self._hostlog()
         kinds = [r["kind"] for r in rows]
-        self.assertIn("cli-spawned", kinds, kinds)
-        self.assertNotIn("socket-ready", kinds, kinds)
+        self.assertEqual(kinds, ["host-started", "socket-bind-failed", "host-crashed"],
+                         "started, refused before the CLI, crashed: no cli-spawned, no socket-ready, no lease-kept")
+        self.assertFalse(os.path.exists(marker), "the CLI never started: its marker is absent")
         by = {r["kind"]: r for r in rows}
         row = by["socket-bind-failed"]
         self.assertEqual((row["step"], row["error"], row["errno"], row["pathLen"], row["limit"]),
@@ -2105,10 +2435,8 @@ class HostProcess(unittest.TestCase):
         self.assertEqual(len(str(sock)), budget + 1)
         self.assertFalse(sock.exists(), "nothing published")
         self.assertEqual(sorted(p.name for p in (Path(self.state) / "hosts").glob("*.tmp")), [], "no temp left")
-        self.assertIsNone(self._lease(), "no lease is kept on disk")
-        cli_pid = by["cli-spawned"]["cliPid"]
-        with self.assertRaises(ProcessLookupError, msg="the CLI the host spawned is gone with it"):
-            os.kill(cli_pid, 0)
+        self.assertIsNone(self._lease(), "no lease was ever written")
+        self.assertFalse(sb.lease_path(self.state, SID).exists())
 
     def test_a_real_host_leaves_hosts_owner_only(self):
         """The real bin/romp-session-host, spawned under a 000 umask over a state root whose `hosts/` _spec left at that

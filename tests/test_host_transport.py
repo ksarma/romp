@@ -284,7 +284,11 @@ class SpawnSpec(unittest.TestCase):
         para = flat(doc[i:doc.index("\n\n", i)])
         self.assertIn("mode 0600 from the moment the path exists", para)
         self.assertIn("a published path longer than the socket path budget, 107 bytes on Linux, is refused before anything is bound and the host exits", para)
-        self.assertIn("`hosts/` itself is made 0700 when the kernel writes a host's spawn specification and when a host binds its socket", para)
+        self.assertIn("`hosts/` itself is made 0700 when the kernel writes a host's spawn specification and when a host starts, "
+                      "before it spawns its CLI or binds its socket", para,
+                      "the host's road runs at its start, ahead of the CLI, since round 3 of the fix (the reorder ruling, 2026-09-19)")
+        self.assertIn("the host exits, having started no CLI and written no lease", para, "and a refusal there starts nothing")
+        self.assertIn("after the lease only the bind, the tightening and the rename run", para, "the interval the lease readers race, stated")
         self.assertIn("each `hosts/<sid>/` when the specification is written and when the host opens its journal", para,
                       "the sibling directory is named with its two creators")
         self.assertIn("one that is a symlink, that belongs to another user, or that stays loose after the tightening is refused on every one of them: "
