@@ -116,10 +116,12 @@ rule), their override journals cleaned in the teardown; the state root rebound t
 into its session-hosts."""
 import ast
 import inspect
+import io
 import json
 import os
 import tempfile
 import textwrap
+import tokenize
 import unittest
 from romp_load import load_source
 from pathlib import Path
@@ -180,6 +182,28 @@ def _pass_through_lines(fn, callee):
     tree = ast.parse(textwrap.dedent("".join(src)))
     return frozenset(start - 1 + node.lineno for node in ast.walk(tree)
                      if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == callee)
+
+
+def _code_lines(obj):
+    """`obj`'s source with every comment and string literal (docstrings included) blanked, as (index, text) pairs indexed as
+    inspect.getsource(obj).splitlines() is: the one rule the three source censuses share. A census reads a loader's NAME in
+    code, and a mention in a comment or a docstring is not a call site (review round 2: the look's census and the replaced
+    helpers' skipped comment lines, while the gate wrapper's scan read its whole source, docstring included, so a docstring
+    mention of the loader there would have red the pin with no load). Tokenised, so a string spanning lines is blanked whole
+    and an f-string's literal parts go with it; a string's own text is blanked, never a line's code around it."""
+    src = textwrap.dedent(inspect.getsource(obj))
+    rows = [list(ln) for ln in src.splitlines(keepends=True)]
+    blank = {tokenize.COMMENT, tokenize.STRING} | {getattr(tokenize, n) for n in
+             ("FSTRING_START", "FSTRING_MIDDLE", "FSTRING_END", "TSTRING_START", "TSTRING_MIDDLE", "TSTRING_END") if hasattr(tokenize, n)}
+    for tok in tokenize.generate_tokens(io.StringIO(src).readline):
+        if tok.type in blank:
+            (r0, c0), (r1, c1) = tok.start, tok.end
+            for r in range(r0, r1 + 1):
+                row = rows[r - 1]
+                for c in range(c0 if r == r0 else 0, c1 if r == r1 else len(row)):
+                    if row[c] not in "\r\n":
+                        row[c] = " "
+    return [(i, "".join(row)) for i, row in enumerate(rows)]
 
 
 def _caller(frame, boundary):
@@ -607,24 +631,25 @@ class TheSweepIsItsOwnBoundedReader(_WalkHarness):
 class TheCountersOneSite(unittest.TestCase):
     def test_the_walk_has_one_shared_load_site_and_the_counter_is_bumped_beside_it(self):
         """A census over the look's own source (the gate decorator unwraps): one shared load by either spelling of the shared
-        door (`jd.load_goals_shared` is a prefix of both), counted over non-comment lines, the counter bumped on the line
-        after it so the two cannot drift, and the gate around the look reads no store (a skipped look needs no data)."""
-        lines = inspect.getsource(km._auto_nudge_session).splitlines()
-        at = [i for i, ln in enumerate(lines) if "jd.load_goals_shared" in ln and not ln.strip().startswith("#")]
+        door (`jd.load_goals_shared` is a prefix of both), counted over code lines (_code_lines: comments and strings blanked,
+        so a mention in a comment or a docstring is not a site), the counter bumped on the line after it so the two cannot
+        drift, and the gate around the look reads no store (a skipped look needs no data), scanned by the same rule."""
+        at = [i for i, ln in _code_lines(km._auto_nudge_session) if "jd.load_goals_shared" in ln]
         self.assertEqual(len(at), 1, "one shared load in the walk's look, by either spelling of the shared door: a second call site is "
                                      "a second load per look (condition 7, the walk's bound)")
+        lines = inspect.getsource(km._auto_nudge_session).splitlines()
         bump = [i for i, ln in enumerate(lines) if '_NUDGE_WALK_STATS["loads"] += 1' in ln]
         self.assertEqual(len(bump), 1, "the counter is bumped once")
         self.assertEqual(bump[0], at[0] + 1, "on the line after the load")
-        gated = inspect.getsource(km._nudge_look_gated)
-        self.assertNotIn("load_goals", gated, "the gate around the look reads no store: a skipped look loads through neither mechanism")
+        gated = [ln.strip() for _i, ln in _code_lines(km._nudge_look_gated) if "load_goals" in ln]
+        self.assertEqual(gated, [], "the gate around the look reads no store: a skipped look loads through neither mechanism: %s" % "; ".join(gated))
         self.assertIn("loads", km._NUDGE_WALK_STATS, "the counter is a key of the served block")
 
     def test_the_replaced_helpers_sources_load_no_store(self):
         """The road limit as a check: the fixture replaces the callables in REPLACED_KM (less the two data names), REPLACED_JD
         and Sessions.backend_for, so a loader planted in any of their real bodies never runs under the harness and the
-        execution witness cannot see it; this scan of each real source for either door's name (over non-comment lines) is the
-        only witness for those bodies. One level deep, the helper's own source: _session_awaiting reaches two bare-door
+        execution witness cannot see it; this scan of each real source for either door's name (over code lines, _code_lines)
+        is the only witness for those bodies. One level deep, the helper's own source: _session_awaiting reaches two bare-door
         readers (_owned_yield_why and _session_stamp_read) only under stamp=True, which the walk's call does not pass, so
         the walk's road does not reach them; a helper the fixture does not replace is covered by execution instead."""
         targets = ([(k, getattr(km, k)) for k in REPLACED_KM if k not in REPLACED_DATA]
@@ -632,7 +657,7 @@ class TheCountersOneSite(unittest.TestCase):
                    + [("Sessions.backend_for", km.Sessions.backend_for)])
         self.assertEqual(len(targets), 21, "the census covers every replaced callable")
         for label, obj in targets:
-            hits = [ln.strip() for ln in inspect.getsource(obj).splitlines() if "load_goals" in ln and not ln.strip().startswith("#")]
+            hits = [ln.strip() for _i, ln in _code_lines(obj) if "load_goals" in ln]
             self.assertEqual(hits, [], "%s: a loader planted in a replaced helper never runs under the fixture, so this scan is the only "
                                        "witness for its body: %s" % (label, "; ".join(hits)))
 
