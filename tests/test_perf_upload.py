@@ -6,7 +6,7 @@ What is pinned here, each by execution against the verb's own file run as a chil
 a pinned hostname) or, for the request itself, through bin/romp: the receiver address comes from --receiver,
 else ROMP_PERF_RECEIVER, else ~/.config/romp/perf-receiver (a regular file: a fifo there is refused at once as an
 address the grammar refuses, where an open of it once hung the verb, and so is a path that is there but cannot be opened,
-a socket or an unreadable file, never reported as no receiver set; only an absent file is), and with none set the verb
+a socket or an unreadable file, never reported as no receiver set; only an absent or blank file is), and with none set the verb
 refuses naming all three; the address must be https with a host and no userinfo, query or fragment (http for 127.0.0.1 and
 localhost alone), and a refused address is never echoed; the file must exist, be at most 1 MiB, parse as strict
 JSON (no NaN or Infinity, no repeated key at any depth; a RecursionError out of the parser is the strict-JSON refusal,
@@ -546,7 +546,7 @@ class ReceiverSetting(unittest.TestCase):
             child("a block device")
             os.unlink(setting)
         os.symlink(os.path.join(self.home, "nowhere"), setting)
-        self.assertEqual(unit(), (None, None), "a dangling link is absent: the one road that is no receiver")
+        self.assertEqual(unit(), (None, None), "a dangling link is absent: no receiver, like a blank file, and never the refusal")
 
 
 class ReceiverAddress(unittest.TestCase):
@@ -732,6 +732,44 @@ class Cli(unittest.TestCase):
         self.assertIn("pp.open_regular", [ast.unparse(n.func) for n in ast.walk(fn) if isinstance(n, ast.Call)], "the FILE road goes through open_regular")
         self.assertFalse({n.attr for n in ast.walk(fn) if isinstance(n, ast.Attribute)} & {"stat", "read_bytes", "read_text", "open"},
                          "and never through a stat followed by an open")
+
+    def test_the_file_is_read_to_the_bound_plus_one_byte_and_never_whole(self):
+        """The read bound on the FILE argument, pinned where it is decided, the way the third round pinned the setting file's
+        and the private list's (tests-2): read_export promises MAX_BYTES + 1 bytes read as the belt for a file that grew after
+        the fstat, and replacing read(MAX_BYTES + 1) with read() left every case green, since every case reads a file whose
+        size the fstat had already judged (the fourth round's verifier). pp.open_regular is replaced by a recording file whose
+        fileno is a real two-byte file's, so the fstat reports a size inside the bound, and whose payload is far past it; the
+        one read asked for is MAX_BYTES + 1 bytes, and the outcome is the over-the-bound refusal naming the bytes read,
+        MAX_BYTES + 1, never the payload's length. The mutant reads the whole payload, records -1 and names its full length."""
+        asked = []
+        small = os.path.join(self.xdg, "small.json")
+        with open(small, "wb") as fh:
+            fh.write(b"{}")
+        real = open(small, "rb")
+        self.addCleanup(real.close)
+
+        class Recording:
+            payload = b"{" + b" " * (pu.MAX_BYTES * 3) + b"}"
+
+            def fileno(self):
+                return real.fileno()
+
+            def read(self, n=-1):
+                asked.append(n)
+                return self.payload if n is None or n < 0 else self.payload[:n]
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+        with mock.patch.object(pu.pp, "open_regular", return_value=Recording()):
+            with self.assertRaises(pu.Refusal) as cm:
+                pu.read_export(self.file, pu.pe.Path(self.state))
+        self.assertEqual(asked, [pu.MAX_BYTES + 1], "one bounded read, never an unbounded one")
+        self.assertEqual(str(cm.exception), "refused: %s is %d bytes and the receiver takes at most %d (1 MiB); nothing sent"
+                         % (self.file, pu.MAX_BYTES + 1, pu.MAX_BYTES), "the belt's refusal names the bytes read, the bound plus one")
+        self.assertEqual(cm.exception.code, 1)
 
     def test_the_file_must_be_strict_json_with_the_schema_line(self):
         base = ["--yes", "--receiver", self.fake.url]

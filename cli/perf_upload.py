@@ -13,7 +13,7 @@ naming the three settings, exit 2, so an installation nobody configured sends no
 https URL in printable ASCII with a host and no userinfo, query or fragment (http is allowed for 127.0.0.1 and
 localhost alone, for tests); it may carry a path, the base the route is appended to; anything else, a setting
 file that is not UTF-8 text or that is there but cannot be read among it, is refused without echoing the value, exit 2
-(only an ABSENT file is no receiver). The receiver is
+(only an ABSENT file, or one holding no non-empty line, is no receiver). The receiver is
 unauthenticated: no credential exists for it, and the verb reads no token from anywhere and sends none.
 
 The file must exist, be a regular file of at most 1 MiB, parse as strict JSON (no NaN or Infinity literals, no
@@ -176,7 +176,8 @@ class Refusal(Exception):
 def receiver_setting(flag, env=None):
     """(text, source): the address as configured and which setting supplied it, in order --receiver, the
     environment variable, the file's first non-empty line; (None, None) when none is set: no flag, the variable unset
-    or empty, and the file ABSENT (FileNotFoundError: no such path, or a dangling link). The file is read under HOME,
+    or empty, and the file ABSENT (FileNotFoundError: no such path, or a dangling link) or there and holding no
+    non-empty line (a blank file is unset). The file is read under HOME,
     the way `romp default-dir` reads its own. It must be a REGULAR file (pp.open_regular: opened O_NONBLOCK and
     fstat'ed before any read, since a plain open of a fifo blocks until a writer arrives, before any read a bound could
     cover, and a fifo at this path hung the verb indefinitely, the upload's second review round, 2026-09-18), and it is
