@@ -548,6 +548,36 @@ class BackendHostRules(unittest.TestCase):
         be._write_host_ack(s, force=True)
         self.assertNotIn("hostAck", sb.read_reg(Path(d), SID) or {}, "no ack written for a host that reported its exit")
 
+    # The mutation pass after round 3 of the SDK pin review (2026-09-19): _record_refused_launch_position's docstring
+    # says every road that clears the host's directory drops hostLogPos with it, and the orphan road's drop has its
+    # case below (the setting-off replay); _host_ended's had none, so with hostLogPos left out of its drop the suite
+    # stayed green and a refused launch's line count outlived the file it counted. The three causes that clear the
+    # directory (end, end-forced, eof-grace) drop both keys; a death keeps the directory and the position for the
+    # orphan road to read.
+    def test_an_end_that_clears_the_hosts_directory_drops_host_log_pos_with_host_ack(self):
+        d, be = self._be()
+        hd = ht.host_dir(d, SID)
+
+        def seed():
+            hd.mkdir(parents=True, exist_ok=True)
+            (hd / "host.log").write_text(json.dumps({"t": 1, "kind": "host-started"}) + "\n")
+            sb.write_reg(Path(d), SID, {"sid": SID, "name": "web", "alive": True,
+                                         "hostAck": {"host": "7:h", "cli": "8:c", "offset": 3},
+                                         "hostLogPos": {"host": sb.HOST_LOG_POS_REFUSED, "pos": 1}})
+            t = types.SimpleNamespace(hello={"host": {"pid": 7, "start": "h"}, "cli": {"pid": 8, "start": "c"}}, ack_offset=3, exit_info=None)
+            return types.SimpleNamespace(sid=SID, name="web", _host=t, _host_ack_t=0.0)
+        for cause in ("end", "end-forced", "eof-grace"):
+            be._host_ended(seed(), {"t": "exit", "code": 0, "cause": cause})
+            reg = sb.read_reg(Path(d), SID) or {}
+            self.assertFalse(hd.exists(), cause)
+            self.assertNotIn("hostAck", reg, cause)
+            self.assertNotIn("hostLogPos", reg, cause)
+        be._host_ended(seed(), {"t": "exit", "code": 1, "cause": "died"})
+        reg = sb.read_reg(Path(d), SID) or {}
+        self.assertTrue(hd.exists(), "a death keeps the directory for the orphan road")
+        self.assertIn("hostAck", reg)
+        self.assertEqual(reg.get("hostLogPos"), {"host": sb.HOST_LOG_POS_REFUSED, "pos": 1}, "and the position with it")
+
     def test_with_the_setting_off_an_orphan_lease_is_recovered_and_no_host_is_spawned(self):
         d, be = self._be()
         Path(d, "session-hosts").write_text("off")

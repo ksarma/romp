@@ -41,6 +41,13 @@ failing row (tests-1, correctness-2) and for one that wrote nothing over a previ
 kernel-1); the once-per-kernel-life memo across two sessions (tests-3, extra8-2); the non-object JSON lines the row
 reader skips (tests-4); a refused launch's rows not filed again by the next host that serves (regression-1); and the
 machine venv read the way the host reads it (extra7-3, extra8-1; the installer's own leg is in the bats file).
+
+The mutation pass after round 3 (2026-09-19) pinned the claims that had survived a code mutation with the suite green,
+each proved the same way (red under the mutation, green restored): the reason composer's guard on a failing row's
+error field, its early return for a host-crashed row after an untested row, its `rows[:i]` bound on the fact it
+states, the `_process` guard's close before its raise, and host_transport.py's ImportError-only fallback. The exit
+road's drop of hostLogPos is pinned in tests/test_host_transport.py, and the installer's refusal of a version-less
+SDK in the bats file.
 """
 import asyncio
 import contextlib
@@ -148,13 +155,16 @@ def _plant(case, with_name: bool, with_leaf: bool = True):
 
 class _RaisingLeaf(importlib.abc.MetaPathFinder, importlib.abc.Loader):
     """A finder for the SDK's private leaf module whose import RAISES `exc` from inside the module body: what a
-    broken dependency chain looks like from sdk_internals (the leaf exists, its own `import anyio` does not)."""
+    broken dependency chain looks like from sdk_internals (the leaf exists, its own `import anyio` does not).
+    `name` is the module it answers for: the leaf by default, the package itself for an SDK whose own import
+    raises (the mutation pass after round 3, 2026-09-19)."""
 
-    def __init__(self, exc):
+    def __init__(self, exc, name=None):
         self.exc = exc
+        self.name = name or LEAF
 
     def find_spec(self, fullname, path=None, target=None):
-        return ModuleSpec(fullname, self) if fullname == LEAF else None
+        return ModuleSpec(fullname, self) if fullname == self.name else None
 
     def create_module(self, spec):
         return None
@@ -486,6 +496,28 @@ class HostProcess(unittest.TestCase):
         (hd / "host.log").write_text(json.dumps({"t": 1, "kind": "cli-spawn-failed", "error": "OSError"}) + "\nnull\n")
         self.assertEqual(ht.host_exit_reason(d, SID), "OSError", "a non-object LAST line is stepped over too")
 
+    # The mutation pass after round 3 (2026-09-19): the composer's guard on the error field (`or not row.get("error")`)
+    # was held by no case, so with it dropped the suite stayed green. A failing-kind row that carries no error, an
+    # empty one or a null one says nothing: it is stepped over, the scan goes on to an earlier row that does say, and
+    # a log with no row that says is "". Without the guard a row with no field is a KeyError out of the launch road,
+    # a null one reads "None", and an empty cli-spawn-failed row after an untested row composes the version fact
+    # around no failure at all.
+    def test_a_failing_row_with_no_error_an_empty_one_or_a_null_one_says_nothing_and_is_stepped_over(self):
+        d = tempfile.mkdtemp(); self.addCleanup(shutil.rmtree, d, True)
+        hd = ht.host_dir(d, SID); hd.mkdir(parents=True)
+        started = {"t": 1, "kind": "host-started"}
+        untested = {"t": 2, "kind": "sdk-version-untested", "installed": OTHER, "tested": sh.SDK_TESTED_VERSION, "relation": "newer"}
+
+        def reason(rows):
+            (hd / "host.log").write_text("".join(json.dumps(r) + "\n" for r in rows))
+            return ht.host_exit_reason(d, SID)
+        for kind in ("host-crashed", "cli-spawn-failed"):
+            for silent in ({"t": 3, "kind": kind}, {"t": 3, "kind": kind, "error": ""}, {"t": 3, "kind": kind, "error": None}):
+                self.assertEqual(reason([started, silent]), "", silent)
+                self.assertEqual(reason([started, untested, silent]), "", ("no failure to state the fact beside", silent))
+                self.assertEqual(reason([started, {"t": 2, "kind": kind, "error": "FileNotFoundError"}, silent]), "FileNotFoundError",
+                                 ("stepped over, to the row that says", silent))
+
     def test_an_untested_but_working_sdk_is_filed_as_a_problem_row_naming_the_versions_and_the_remedy(self):
         d = tempfile.mkdtemp(); self.addCleanup(shutil.rmtree, d, True); logs = []
         be = sb.SdkBackend(d, "/bin/true", lambda *a, **k: None, log=logs.append)
@@ -608,6 +640,28 @@ class HostProcess(unittest.TestCase):
         with open(hd / "host.log", "a") as f:
             f.write(json.dumps({"t": 4, "kind": "host-started"}) + "\n" + json.dumps({"t": 5, "kind": "cli-spawn-failed", "error": "FileNotFoundError"}) + "\n")
         self.assertEqual(ht.host_exit_reason(d, SID, since=mark), "FileNotFoundError")
+
+    # The mutation pass after round 3 (2026-09-19): the composer's `rows[:i]` was held by no case; with the fact read
+    # from every row in the window, an untested row AFTER the failing row counted too, and the suite stayed green. The
+    # fact stated beside a failure is one this host wrote before it: in a run the untested row precedes the spawn, so
+    # a row after the failing row belongs to a later host (a caller reading the whole file over two runs, the first
+    # run's failure and the second run's untested row from a host still running) and is not that failure's version.
+    def test_an_untested_row_written_after_the_failing_row_is_not_that_failures_fact(self):
+        d = tempfile.mkdtemp(); self.addCleanup(shutil.rmtree, d, True)
+        hd = ht.host_dir(d, SID); hd.mkdir(parents=True)
+        failed = {"t": 2, "kind": "cli-spawn-failed", "error": "FileNotFoundError"}
+        untested = {"t": 4, "kind": "sdk-version-untested", "installed": OTHER, "tested": sh.SDK_TESTED_VERSION, "relation": "newer"}
+
+        def reason(rows):
+            (hd / "host.log").write_text("".join(json.dumps(r) + "\n" for r in rows))
+            return ht.host_exit_reason(d, SID)
+        self.assertEqual(reason([{"t": 1, "kind": "host-started"}, failed, {"t": 3, "kind": "host-started"}, untested]), "FileNotFoundError",
+                         "the second run's fact, read over the whole file, is not the first run's")
+        self.assertEqual(reason([{"t": 1, "kind": "host-started"}, failed, untested]), "FileNotFoundError",
+                         "a row after the failure with no marker between is still after it")
+        self.assertEqual(reason([{"t": 1, "kind": "host-started"}, dict(untested, t=1), failed]),
+                         "FileNotFoundError (this host ran %s %s, newer than the %s the session host is written against)"
+                         % (sh.SDK_DIST, OTHER, sh.SDK_TESTED_VERSION), "the order the host writes: a fact before the failure counts")
 
     # tests-2 (round 2 of the review, finished at the closing check, 2026-09-18): the relation guard in this composer
     # ("newer than", "older than", else "other than") had no test that reddened it (the round-2 case asserted only
@@ -841,6 +895,49 @@ class HostProcess(unittest.TestCase):
         self.assertNotIn("this version has no", crash)
         self.assertEqual(crash, sh.sdk_broken_install_text(sh.SDK_TESTED_VERSION, LEAF + "." + NAME + "._process"))
         self.assertIn(crash, stderr)
+
+    # The mutation pass after round 3 (2026-09-19): the early return that carries a host-crashed row WHOLE was held by
+    # no case, so with it dropped a crash row after an untested row had the version fact composed onto the host's own
+    # prose and the suite stayed green. The composed fact is for a cli-spawn-failed row, whose error is a bare type
+    # name; a host-crashed row is the host's own text (the mismatch verdict names both versions itself, a traceback's
+    # last line names its error) and gets nothing appended. The real road for the pair is the `_process` guard at
+    # another version, whose host writes its untested row and then its crash record in one run.
+    def test_a_crash_row_after_an_untested_row_is_carried_whole_with_no_version_fact_composed_onto_it(self):
+        d = tempfile.mkdtemp(); self.addCleanup(shutil.rmtree, d, True)
+        hd = ht.host_dir(d, SID); hd.mkdir(parents=True)
+        for text in ("OSError: AF_UNIX path too long", sh.sdk_mismatch_text(OTHER, LEAF + "." + NAME + "._process")):
+            rows = [{"t": 1, "kind": "host-started"},
+                    {"t": 2, "kind": "sdk-version-untested", "installed": OTHER, "tested": sh.SDK_TESTED_VERSION, "relation": "newer"},
+                    {"t": 3, "kind": "host-crashed", "error": text}]
+            (hd / "host.log").write_text("".join(json.dumps(r) + "\n" for r in rows))
+            got = ht.host_exit_reason(d, SID)
+            self.assertEqual(got, text)
+            self.assertNotIn("this host ran", got)
+        code, _ = self._run_host(_fake_site(self.state, OTHER, with_name=True, body=self._NO_PROCESS))
+        self.assertEqual(code, 1)
+        rows = self._hostlog()
+        kinds = [r["kind"] for r in rows]
+        self.assertLess(kinds.index("sdk-version-untested"), kinds.index("host-crashed"), "the pair, in the order the host writes it: %r" % kinds)
+        crash = [r for r in rows if r["kind"] == "host-crashed"][0]["error"]
+        self.assertEqual(ht.host_exit_reason(self.state, SID), crash, "the kernel's launch error carries the verdict whole")
+
+    # The mutation pass after round 3 (2026-09-19): the guard's close() before its raise (tests-2, round 1) was held by
+    # no case; with it removed the suite stayed green. A transport that connected and exposes no `_process` may have
+    # started a CLI under another name all the same; the host closes it before it refuses, so a refused launch leaves
+    # no CLI of its own running. The fake transport records its close in a file the case names, at both versions.
+    def test_the_process_guard_closes_the_transport_it_refuses_before_it_raises(self):
+        for version, root in ((OTHER, Path(self.state)), (sh.SDK_TESTED_VERSION, Path(self.state, "tested"))):
+            root.mkdir(exist_ok=True)
+            mark = root / "closed.mark"
+            body = ("class %s:\n    def __init__(self, **kw):\n        pass\n\n    async def connect(self):\n        pass\n\n"
+                    "    async def close(self):\n        open(%r, 'w').write('closed')\n" % (NAME, str(mark)))
+            code, _ = self._run_host(_fake_site(root, version, with_name=True, body=body))
+            self.assertEqual(code, 1, version)
+            kinds = [r["kind"] for r in self._hostlog()]
+            self.assertIn("host-crashed", kinds, version)
+            self.assertNotIn("cli-spawned", kinds, version)
+            self.assertTrue(mark.exists(), "close() ran before the refusal at %s: %r" % (version, kinds))
+            (self.hostdir / "host.log").unlink()
 
     # fresh-3 (round 1 of the review, 2026-09-18): the benign case (an untested version whose internals resolve) got a
     # durable ledger row, host.sdk-untested, while the fatal one filed nothing: no road files rows for a host that never
@@ -1342,6 +1439,26 @@ class HostTransportNames(unittest.TestCase):
         self.assertTrue(issubclass(m.HostTransport, m._Base))
         t = m.HostTransport("/nonexistent/host.sock", kernel={"pid": 1})
         self.assertFalse(t.is_ready())
+
+    # The mutation pass after round 3 (2026-09-19): round 1's narrowing of the fallback's catch from a bare Exception
+    # to ImportError (fresh-2) was held by no case, so widened back the suite stayed green. The fallback is for a
+    # machine with no SDK, and absence is an ImportError; an SDK that is present and fails to import for any other
+    # reason (a module body that raises at import, a half-written install) is the loud failure the pin exists for,
+    # not a silent duck-typed stand-in that the first host launch would then contradict.
+    def test_an_sdk_that_is_present_and_fails_to_import_for_another_reason_raises_out_of_the_load(self):
+        self._restore_modules()
+        for n in self._NAMES:
+            sys.modules.pop(n, None)
+        finder = _RaisingLeaf(RuntimeError("the package's import-time check failed"), name="claude_agent_sdk")
+        sys.meta_path.insert(0, finder)
+        self.addCleanup(lambda: sys.meta_path.remove(finder) if finder in sys.meta_path else None)
+        with self.assertRaises(RuntimeError):
+            self._load("romp_host_transport_mutation_raising_sdk")
+        self.assertNotIn("romp_host_transport_mutation_raising_sdk", sys.modules, "a load that raised bound nothing")
+        sys.meta_path.remove(finder)
+        sys.modules["claude_agent_sdk"] = None                                # the control: absence, the ImportError the fallback is for
+        m = self._load("romp_host_transport_mutation_absent_sdk")
+        self.assertTrue(issubclass(m.HostTransport, m._Base))
 
 
 class MachineVenv(unittest.TestCase):

@@ -1016,6 +1016,29 @@ PY
     [ "$output" = "$pin" ]                                              # both readers: the pin
 }
 
+# The mutation pass after round 3 (2026-09-19): the verify step's refusal of an SDK that imports but says no version
+# (installed_sdk_version() None: no __version__ on the module, no dist-info) was held by no case; with it disabled the
+# script still exited 1, through the plain wrong-version branch, saying the venv "holds claude-agent-sdk None", and
+# the suite stayed green. The refusal names the condition and its consequence (the host would run an unknown version
+# and file a problem row at every launch), and the host's own reader returns None over the same venv.
+@test "romp-sdk-setup: an SDK that imports but says no version (no __version__, no metadata) is refused as such, never as a venv holding None" {
+    mkdir -p "$TEST_DIR/site/claude_agent_sdk"                          # a package with neither a __version__ nor a dist-info
+    printf 'class ClaudeAgentOptions:\n    pass\n' > "$TEST_DIR/site/claude_agent_sdk/__init__.py"
+    _verifying_venv_python "$STUB/python3.12"
+
+    PATH="$(bare_path)" ROMP_PYTHON="$STUB/python3.12" FAKE_SDK_SITE="$TEST_DIR/site" run "$ROMP_DIR/bin/romp-sdk-setup"
+
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"claude-agent-sdk imports from $TEST_DIR/site/claude_agent_sdk/__init__.py but says no version (no __version__ on the module, no package metadata)"* ]]
+    [[ "$output" == *"would run it as an unknown version and file a problem row at every launch"* ]]
+    [[ "$output" != *"holds claude-agent-sdk None"* ]]                  # not the wrong-version branch's text, false on every word here
+    [[ "$output" != *" ready ("* ]]
+    [[ "$output" != *"romp-sdk-setup: done"* ]]
+    FAKE_SDK_SITE="$TEST_DIR/site" run _host_reads
+    [ "$status" -eq 0 ]
+    [ "$output" = "None" ]                                              # the host's own read over the same venv: no version either
+}
+
 @test "romp-sdk-setup: installs cryptography beside the SDK (same pip, same venv) and verifies it too" {
     _logging_venv_python "$STUB/python3.12"
 
