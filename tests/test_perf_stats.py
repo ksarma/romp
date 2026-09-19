@@ -1643,15 +1643,22 @@ class RoutingStatements(unittest.TestCase):
         super().setUpClass()
         # A plant exists only while its owner holds the exclusive lock, so whatever the glob finds under that lock is a
         # dead run's leftover (pytest-timeout's os._exit, which CI's --timeout-method=thread uses, a SIGKILL, a scope
-        # stop: none of them reaches the plant test's finally), and the glob matches no tracked file (git grep
-        # routing-sweep-plant finds only this module). Safe ONLY because the lock is one file per checkout: under a
-        # per-process lock this could delete a sibling's live plant.
+        # stop: none of them reaches the plant test's finally); a match git tracks is skipped. Safe ONLY because the
+        # lock is one file per checkout: under a per-process lock this could delete a sibling's live plant.
         with cls._tree_lock(exclusive=True) as root:
             cls._remove_stale_plants(root)
 
     @classmethod
-    def _remove_stale_plants(cls, root):
+    def _remove_stale_plants(cls, root, env=None):
+        """Unlink every UNTRACKED REGULAR FILE in plans/ named like a plant, and nothing else; `env` is the environment
+        for the git call (a scratch repo's scrubbed one; None for the live tree). A match git tracks is content,
+        whoever wrote it. A directory or a symlink is not this test's plant (the plant test writes a regular file), and
+        unlinking a directory raised IsADirectoryError out of setUpClass and errored the class on every run until a
+        human deleted it, the shape the healer exists to end (round 2's Cluster B)."""
+        tracked = {entry for entry in _git_bytes(root, "ls-files", "-z", "--cached", "--", "plans", env=env).split(b"\0") if entry}
         for old in (root / "plans").glob("routing-sweep-plant-*.md"):
+            if os.fsencode(str(old.relative_to(root))) in tracked or old.is_symlink() or not old.is_file():
+                continue
             old.unlink(missing_ok=True)
 
     @classmethod
@@ -2040,19 +2047,36 @@ class RoutingStatements(unittest.TestCase):
             RoutingStatements.setUpClass()
         self.assertEqual(seen, [["WRITE"]], "setUpClass calls the healer while this process holds the exclusive lock")
 
-    def test_the_healer_leaves_a_file_that_is_not_a_plant(self):
-        """The glob's other edge: a plans/ file off the plant shape survives the healer. Narrowing the glob reds the
-        stale-plant test; widening it to every *.md left every test here green while setUpClass deleted 35 tracked plans
-        from the working tree (round 2's two-direction sweep), and a destructive operation whose scope can widen silently
-        needs a guard on that side."""
-        with self._tree_lock(exclusive=True) as root:
-            control = root / "plans" / ("routing-sweep-control-%d.md" % os.getpid())   # names no block
-            try:
-                control.write_text("a control note\n")
-                self._remove_stale_plants(root)
-                self.assertTrue(control.exists(), "the healer removes plants alone")
-            finally:
-                control.unlink(missing_ok=True)
+    def test_the_healer_removes_only_an_untracked_regular_plant(self):
+        """The glob's other edges, in a scratch repo rather than by a file written into the checkout (round 2's extra4-1:
+        the first version wrote a control file into the live plans/ and removed it only in a finally, round 1's defect 2
+        in the healer's own test). Narrowing the glob reds the stale-plant test; widening it to every *.md left every
+        test here green while setUpClass deleted every tracked file in plans/ from the working tree (round 2's
+        two-direction sweep), and a destructive operation whose scope can widen silently needs a guard on that side. Of
+        five plans/ entries the healer removes exactly one, the untracked regular plant: a plant git tracks (the index
+        is enough, no commit and no identity) is content whoever wrote it; a directory and a symlink named like a plant
+        are not this test's plant, and unlinking the directory raised out of setUpClass and errored the class on every
+        run; a file off the glob, the prefix shared and the shape not, is not touched."""
+        d, env = _scratch_repo(self)
+        plans = d / "plans"
+        plans.mkdir()
+        tracked = plans / "routing-sweep-plant-1-tracked00.md"
+        tracked.write_text("a tracked plan named like a plant\n")
+        _git_bytes(d, "add", "--", "plans/routing-sweep-plant-1-tracked00.md", env=env)
+        stale = plans / "routing-sweep-plant-1-stale0000.md"
+        stale.write_text("a dead run's leftover\n")
+        directory = plans / "routing-sweep-plant-1-dir00000.md"
+        directory.mkdir()
+        other = plans / "routing-sweep-other-1.md"
+        other.write_text("a plans/ note off the glob\n")
+        link = plans / "routing-sweep-plant-1-link0000.md"
+        link.symlink_to(other.name)
+        RoutingStatements._remove_stale_plants(d, env=env)                                       # must not raise
+        self.assertFalse(stale.exists(), "the untracked regular plant is removed")
+        self.assertTrue(tracked.exists(), "a plant git tracks survives")
+        self.assertTrue(directory.is_dir(), "a directory named like a plant survives")
+        self.assertTrue(link.is_symlink(), "a symlink named like a plant survives")
+        self.assertTrue(other.exists(), "a plans/ file off the glob survives")
 
     def test_a_scratch_repos_git_runs_with_its_scrubbed_environment_not_the_callers(self):
         """Every git call over a scratch repo runs with the environment _scratch_repo scrubbed for its init (round 2; the
