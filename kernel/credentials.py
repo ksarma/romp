@@ -163,9 +163,11 @@ def credential_env_names(environ) -> list:
     per-session env doors over a pick (sdk_backend.env_request_error and the kernel's _env_error mirror,
     2026-09-18: the kernel cannot import the SDK backend at its door, and a second spelling of the list there
     would drift). An empty or whitespace value holds no secret and is not named. Every value must be a str or
-    None: a value of another type raises here, and a caller whose values may be of other types coerces them
-    first, as the writer does (sdk_backend._overlay_text; review round 1 of the env-pick door, 2026-09-18, which
-    found the precondition stated nowhere). No name is excluded here: until that round the control token was, for
+    None: a truthy value of another type raises here (the strip is str's; a falsy one, 0 or an empty list, reads
+    as empty and is not named, the mutation pass of review round 3, 2026-09-19, having found this line claim the
+    raise for every type), and a caller whose values may be of other types coerces them first, as the writer does
+    (sdk_backend._overlay_text; review round 1 of the env-pick door, 2026-09-18, which found the precondition
+    stated nowhere). No name is excluded here: until that round the control token was, for
     the boot line's sake, so the doors accepted the one credential-shaped name a pick could still write to two
     files while the reference's lister reported it; the exclusion is the boot notice's now."""
     return sorted(n for n in environ if (environ.get(n) or "").strip() and is_credential_env_name(n))

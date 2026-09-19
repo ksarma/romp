@@ -158,6 +158,23 @@ class PureNames(unittest.TestCase):
         self.assertEqual(out, ["OPENAI_API_KEY"])
         self.assertNotIn("plain-oai-must-not-appear", " ".join(out))
 
+    def test_a_non_string_value_raises_in_the_predicate_and_the_writer_coerces_first(self):
+        """credential_env_names takes str or None values; a value of another type that is truthy raises there (the
+        strip is str's), and a falsy one (0, False, an empty list) reads as an empty value and is not named. The
+        callers whose values may be of other types coerce first, for the NAME decision only (_overlay_text under
+        spawn_env_secret_names), so a token-shaped name over an integer still moves out of the file. A coercion
+        inside the predicate would hide a caller handing it what it does not take (the mutation pass of review round
+        3, 2026-09-19: the docstring's precondition had no pin)."""
+        for bad in (5, 1.5, True, ["x"], {"k": "v"}):
+            with self.assertRaises(AttributeError, msg=repr(bad)):
+                sb._cred.credential_env_names({"NOTES_API_TOKEN": bad})
+        self.assertEqual(sb._cred.credential_env_names({"NOTES_API_TOKEN": None, "HF_TOKEN": "v"}), ["HF_TOKEN"],
+                         "None is the unset it means")
+        self.assertEqual(sb._cred.credential_env_names({"NOTES_API_TOKEN": 0, "OTHER_TOKEN": []}), [],
+                         "a falsy value of another type reads as empty, as the strip's guard makes it")
+        self.assertEqual(sb.spawn_env_secret_names({"NOTES_API_TOKEN": 5, "OTHER_TOKEN": 0}), ["NOTES_API_TOKEN", "OTHER_TOKEN"],
+                         "the writer's coerced view names the same key without raising, the falsy one included")
+
 
 class ReferenceLister(unittest.TestCase):
     """docs/reference.md's names-only lister is a fourth spelling of the shape rule (review round 1 of the env-pick
@@ -266,6 +283,35 @@ class ReferenceLister(unittest.TestCase):
         r = subprocess.run(["/bin/sh", "-c", snippet], env=env, capture_output=True, text=True, timeout=60)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(r.stdout.splitlines(), ["%s HF_TOKEN" % p])
+
+
+class ReferenceEnvPassage(unittest.TestCase):
+    """docs/reference.md's `--env` passage states what a re-declaration does to a stored value as a FACT and promises
+    no removal (review round 3 of the env-pick door, 2026-09-19: the redaction road, a re-declaration that removes a
+    stored value from every file, left this change for a design note, and every promise of it was reworded; the
+    round's mutation pass found the reworded sentence pinned by nothing). The passage runs from the `--env` sentence
+    to the lister's fenced block; its one "removes" is the fact's, and "clears" is `--no-env`'s set semantics."""
+
+    FACT = "Nothing in this change removes a value already stored; that is a separate decision."
+    AFTER = "Until it is made, a re-declaration (`romp new --env` with the rest of the set, or `--no-env`) does what it did before the door"
+
+    @classmethod
+    def _passage(cls):
+        text = (ROOT / "docs" / "reference.md").read_text(encoding="utf-8")
+        start = text.index("`--env` gives one session its own environment")
+        return " ".join(text[start:text.index("```bash", start)].split())
+
+    def test_the_passage_states_the_fact_and_the_sentence_after_it_says_what_a_redeclaration_does(self):
+        flat = self._passage()
+        self.assertIn(self.FACT, flat, "the fact, word for word")
+        self.assertIn(self.FACT + " " + self.AFTER, flat, "and the next sentence states the base's behaviour, not a remedy")
+        self.assertIn("a file nothing rewrites stays as it was", flat)
+
+    def test_no_promise_of_removal_remains_outside_the_fact(self):
+        rest = self._passage().replace(self.FACT, "").lower()
+        for word in ("remov", "redact", "delet", "scrub", "wipe", "purge", "erase", "clears the file", "clears the flag",
+                     "from both files", "from every file"):
+            self.assertNotIn(word, rest, "a promise of removal is back in the passage: %r" % (word,))
 
 
 class BootNoticeMethod(unittest.TestCase):

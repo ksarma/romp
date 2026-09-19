@@ -16,7 +16,10 @@ The mechanics under test:
     touched, as before the door). It refuses a sid that is not a bare file name and a path that
     is a symbolic link (review round 2 of the env-pick door, 2026-09-19), and writes on write_reg's
     temp-and-rename pattern, to a fresh inode and never through the existing one (review round 3,
-    2026-09-19). Every row it logs has a ring text whose length is a function of its format.
+    2026-09-19). Every row it logs has a ring text whose length is a function of its format. The
+    link check and the write run under _flag_settings_lock, so two connects for one sid write in
+    turn, and a no-keys call leaves a file an earlier connect left as it was (both pinned after the
+    mutation pass of round 3, 2026-09-19, which found neither read by a test).
   * _options threads the session's env into that file at EVERY connect — the file is rewritten on
     each use, so reconnects re-assert the reg's env by construction (pinned by tampering the file
     between two _options calls). Its stored-offender row states a fact and promises no remedy
@@ -43,6 +46,7 @@ import json
 import os
 import re
 import tempfile
+import threading
 import unittest
 import uuid
 from pathlib import Path
@@ -60,6 +64,7 @@ sb = load_source("romp_sdk_backend_env", os.path.join(BIN, "romp_sdk_backend.py"
 
 PARENT = "11111111-2222-3333-4444-555555555555"
 CHILD = "66666666-7777-8888-9999-aaaaaaaaaaaa"
+CHILD2 = "77777777-8888-9999-aaaa-bbbbbbbbbbbb"
 ENV = {"FEATURE_FLAG": "1", "UI_THEME": "dark"}
 PLAIN = {"NOTES_ENDPOINT": "http://notes.test"}   # a plain name beside a credential-shaped one in the door tests
 
@@ -198,6 +203,20 @@ class FlagSettingsEnv(unittest.TestCase):
         self.assertEqual(sb.flag_settings_path(self.d, PARENT, env=None), "")
         self.assertEqual(sb.flag_settings_path(self.d, PARENT, env={}), "",
                          "an empty env adds no key — the no-keys contract is the common case")
+
+    def test_no_keys_leaves_a_file_an_earlier_connect_left_as_it_was(self):
+        """With no key riding the writer returns "" and touches nothing, the base's behaviour: a file an earlier
+        connect left stays, byte for byte and inode for inode, and no temp is minted. Review round 1 of the env-pick
+        door had the no-keys call unlink such a file, and review round 3 (2026-09-19) sent that away with the
+        redaction road, so the contract is pinned against the file too, not the return alone (the mutation pass of
+        that round found no test reading the file after a no-keys call)."""
+        p = sb.flag_settings_path(self.d, PARENT, env=ENV)
+        before, ino = Path(p).read_bytes(), os.stat(p).st_ino
+        for kw in ({}, {"env": None}, {"env": {}}):
+            self.assertEqual(sb.flag_settings_path(self.d, PARENT, **kw), "", kw)
+            self.assertEqual(Path(p).read_bytes(), before, "the file an earlier connect left stays as it was: %r" % (kw,))
+            self.assertEqual(os.stat(p).st_ino, ino, "and is not rewritten either: %r" % (kw,))
+        self.assertEqual(_temps(self.d), [], "no temp for a write that never happens")
 
     def test_an_unwritable_dir_degrades_loudly(self):
         # a plain FILE where the flag-settings dir goes forces the OSError (os.makedirs raises)
@@ -347,6 +366,86 @@ class FlagSettingsWriter(unittest.TestCase):
         self.assertEqual(kw["ring_text"], sb.FLAG_UNWRITABLE_RING % (PARENT, "OSError", "env, fastMode"))
         self.assertNotIn(self.root, kw["ring_text"], "no path in the short form: a path's length is the state root's")
 
+    def test_the_link_check_and_the_write_run_under_the_flag_settings_lock(self):
+        """regression-6 (review round 3 of the env-pick door, 2026-09-19): the module's two statements of its lock
+        order say the link check and the write run under _flag_settings_lock, and the round's mutation pass found no
+        test reading the lock (the `with` replaced by nothing stayed green). Probed, not named: a stand-in that counts
+        its depth replaces the module's lock for the test, and the writer's two moments, the islink check and the
+        rename, record the depth they run at; a `with` that is not there, or one around the write alone, reads zero."""
+        seen = {}
+
+        class _Probe:
+            depth = 0
+
+            def __enter__(self):
+                _Probe.depth += 1
+
+            def __exit__(self, *exc):
+                _Probe.depth -= 1
+
+        class _Path:
+            def __init__(self, real):
+                self._real = real
+
+            def __getattr__(self, name):
+                return getattr(self._real, name)
+
+            def islink(self, p):
+                seen["islink"] = _Probe.depth
+                return self._real.islink(p)
+
+        class _Os(_OsProxy):
+            @property
+            def path(self):
+                return _Path(self._real.path)
+
+        def _replace(real_os, src, dst):
+            seen["replace"] = _Probe.depth
+            return real_os.replace(src, dst)
+
+        self.addCleanup(setattr, sb, "_flag_settings_lock", sb._flag_settings_lock)
+        sb._flag_settings_lock = _Probe()
+        self.addCleanup(setattr, sb, "os", sb.os)
+        sb.os = _Os(sb.os, replace=_replace)
+        p = sb.flag_settings_path(self.d, PARENT, env=ENV)
+        self.assertTrue(p)
+        self.assertEqual(seen, {"islink": 1, "replace": 1}, "both moments run inside the lock")
+        self.assertEqual(_Probe.depth, 0, "and the lock is released on the way out")
+        self.assertEqual(json.loads(Path(p).read_text())["env"], ENV)
+
+    def test_two_connects_for_one_sid_write_in_turn(self):
+        """The lock's stated job: a second writer for the same sid waits for the first. A stand-in signals when a
+        writer asks for the lock, so the test waits on that signal and never on time; while the first holds it the
+        second is alive and has written nothing, and once it is released the second writes."""
+        asked = threading.Event()
+        inner = threading.RLock()
+
+        class _Gate:
+            def __enter__(self):
+                asked.set()
+                inner.acquire()
+
+            def __exit__(self, *exc):
+                inner.release()
+
+        self.addCleanup(setattr, sb, "_flag_settings_lock", sb._flag_settings_lock)
+        sb._flag_settings_lock = _Gate()
+        path = os.path.join(self.d, sb.FLAG_SETTINGS_DIR, "%s.json" % PARENT)
+        out = []
+        t = threading.Thread(target=lambda: out.append(sb.flag_settings_path(self.d, PARENT, env=ENV)), daemon=True)
+        with inner:                                    # the first connect holds the lock through its write
+            t.start()
+            while not asked.is_set() and t.is_alive():
+                t.join(0.01)
+            self.assertTrue(asked.is_set(), "the second writer asks for the module's lock; one that never asked "
+                                            "wrote without it: %r" % (out,))
+            self.assertTrue(t.is_alive(), "and waits while the first holds it")
+            self.assertFalse(os.path.exists(path), "nothing is written while another writer holds the lock")
+        t.join(30)
+        self.assertFalse(t.is_alive(), "released, the second writer runs")
+        self.assertEqual(out, [path])
+        self.assertEqual(json.loads(Path(path).read_text())["env"], ENV)
+
     def test_every_writer_rows_worst_case_is_computed_from_its_format_and_fits_the_cap(self):
         """correctness-3 / kernel-2 (review round 3, 2026-09-19): the class, not the instance. Each row's worst case,
         the longest fixed text (the longest sid reason), the sid budget spent (a repr past it is cut with the marker),
@@ -463,6 +562,21 @@ class OptionsThreadsEnv(_OptionsBackend):
         self.assertEqual(json.loads(Path(p2).read_text())["env"], ENV,
                          "the file is rewritten from the session on EVERY use — a reconnect "
                          "re-asserts the env by construction, never trusts what's on disk")
+
+    def test_a_connect_with_no_keys_leaves_the_file_an_earlier_connect_left(self):
+        """The seam's face of the no-keys contract: a session whose pick was cleared (`romp new --no-env`) connects
+        with no key riding, so no settings file is handed to the CLI and the file the earlier connect wrote stays as
+        it was (docs/reference.md: the registry follows a re-declaration at once, the file only at a connect that
+        writes it, and a file nothing rewrites stays). A fact stated, not a promise kept, and pinned so the redaction
+        road's removal of that file stays out of this change (review round 3 of the env-pick door, 2026-09-19)."""
+        sid = self.be.spawn("web", "/tmp", env=ENV)
+        p = self._options_kw(self._sess(sid))["settings"]
+        before = Path(p).read_bytes()
+        self.assertTrue(self.be.set_env(sid, {}), "the clear is accepted: the registry follows at once")
+        self.assertEqual(self._reg(sid).get("env") or {}, {})
+        kw = self._options_kw(self._sess(sid))
+        self.assertNotIn("settings", kw, "no key rides: the no-keys contract")
+        self.assertEqual(Path(p).read_bytes(), before, "the file the earlier connect left stays as it was")
 
     def test_a_failed_flag_write_degrades_loudly_through_options(self):
         # the connect-time seam: /new already echoed the env as applied, so a write failure here
@@ -1105,6 +1219,73 @@ class CredentialShapedNamesEndToEnd(_OptionsBackend):
             self.assertFalse(any(val in m for m, _p, _k in self.logged), "no log line carries the value")
             self.assertFalse(any(kw2.get("key") == ("env-stored-credential", CHILD) for _m, _p, kw2 in self.logged),
                              "the child's own connect has no stored offender to report")
+        finally:
+            os.environ.pop("CLAUDE_CONFIG_DIR", None)
+
+    def test_a_stored_login_name_takes_the_reserved_row_and_never_the_stored_offender_row(self):
+        """The stored-offender row excludes the legacy names, the identity names and the three login names: those are
+        stripped from the launch and have a row of their own (the reserved skip, LegacyReservedEnv), where a
+        credential-shaped name of another spelling launches and is named as a fact. The exclusion holds by the
+        launch shape (the row judges the stripped env) and is pinned on the rows themselves (the mutation pass of
+        review round 3, 2026-09-19: a stored-offender row naming a login name had no test to fail)."""
+        sid = self.be.spawn("web", "/tmp", env=ENV)
+        val = _secret_value("login-token")
+        self.be._update_reg(sid, env={**ENV, "ANTHROPIC_AUTH_TOKEN": val, "ROMP_SID": PARENT})
+        kw = self.be._options(self._sess(sid), dict)
+        self.assertEqual(json.loads(Path(kw["settings"]).read_text())["env"], ENV, "the legacy names are stripped from the launch")
+        reserved = [m for m, problem, _kw in self.logged if problem and "ignoring reserved" in m]
+        self.assertEqual(len(reserved), 1, "the reserved skip's own row: %r" % (self.logged,))
+        self.assertIn("ANTHROPIC_AUTH_TOKEN", reserved[0])
+        self.assertIn("ROMP_SID", reserved[0])
+        self.assertEqual([m for m, _p, kw2 in self.logged if kw2.get("key") == ("env-stored-credential", sid)], [],
+                         "no stored-offender row: the legacy names have their own")
+        self.assertFalse(any("credential-shaped" in m for m, _p, _k in self.logged), self.logged)
+        # beside a name of another spelling, the stored row names that name alone
+        val2 = _secret_value("notes-token")
+        self.be._update_reg(sid, env={**ENV, "ANTHROPIC_AUTH_TOKEN": val, "NOTES_API_TOKEN": val2})
+        del self.logged[:]
+        self.be._options(self._sess(sid), dict)
+        rows = [(m, kw2) for m, problem, kw2 in self.logged if problem and kw2.get("key") == ("env-stored-credential", sid)]
+        self.assertEqual(len(rows), 1, self.logged)
+        self.assertIn("NOTES_API_TOKEN", rows[0][0])
+        self.assertNotIn("ANTHROPIC_AUTH_TOKEN", rows[0][0], "the login name is the reserved row's, never this one's")
+        self.assertEqual(rows[0][1]["ring_text"], sb.stored_offender_ring_text("web", ["NOTES_API_TOKEN"]))
+        self.assertFalse(any(val in m or val2 in m for m, _p, _k in self.logged), "no log line carries a value")
+
+    def test_a_forks_two_drops_each_name_their_own_and_a_reserved_name_never_takes_the_fork_row(self):
+        """The fork's shaped list excludes the reserved names: the identity and login names take the reserved drop's
+        line, with its own words, so the fork row names a credential-shaped name of another spelling alone and its
+        ring text counts none of the reserved; a parent whose stored env carries reserved names only gets the reserved
+        line and no fork row (the mutation pass of review round 3, 2026-09-19: a fork row naming a login name had no
+        test to fail)."""
+        os.environ["CLAUDE_CONFIG_DIR"] = tempfile.mkdtemp()   # transcript_path resolves through this
+        try:
+            self.be.spawn("parent", self.d, sid=PARENT, env=ENV)
+            val = _secret_value("login-token")
+            self.be._update_reg(PARENT, env={**ENV, "ANTHROPIC_API_KEY": val, "ROMP_SID": PARENT, "NOTES_API_TOKEN": val})
+            self.be.fork("child", PARENT, "a1", sid=CHILD)
+            self.assertEqual(self._reg(CHILD).get("env"), ENV, "neither kind of name crosses the copy")
+            reserved = [m for m, problem, _kw in self.logged if problem and "dropping reserved" in m]
+            shaped = [(m, kw2) for m, problem, kw2 in self.logged if problem and "not copying credential-shaped" in m]
+            self.assertEqual(len(reserved), 1, self.logged)
+            self.assertIn("ANTHROPIC_API_KEY", reserved[0])
+            self.assertIn("ROMP_SID", reserved[0])
+            self.assertNotIn("NOTES_API_TOKEN", reserved[0], "the other spelling is not the reserved drop's")
+            self.assertEqual(len(shaped), 1, self.logged)
+            self.assertIn("NOTES_API_TOKEN", shaped[0][0])
+            for name in ("ANTHROPIC_API_KEY", "ROMP_SID"):
+                self.assertNotIn(name, shaped[0][0], "a reserved name takes the reserved drop's line, never this one")
+            self.assertEqual(shaped[0][1]["ring_text"], sb.FORK_DROP_RING % ("child", "NOTES_API_TOKEN"), "one name, none counted")
+            # reserved names alone: the reserved line, and no fork row at all
+            self.be._update_reg(PARENT, env={**ENV, "CLAUDE_CODE_OAUTH_TOKEN": val})
+            del self.logged[:]
+            self.be.fork("child2", PARENT, "a2", sid=CHILD2)
+            self.assertEqual(self._reg(CHILD2).get("env"), ENV)
+            self.assertTrue(any(problem and "dropping reserved" in m and "CLAUDE_CODE_OAUTH_TOKEN" in m
+                                for m, problem, _k in self.logged), self.logged)
+            self.assertFalse(any("not copying credential-shaped" in m for m, _p, _k in self.logged),
+                             "no fork row for a reserved name: %r" % (self.logged,))
+            self.assertFalse(any(val in m for m, _p, _k in self.logged), "no log line carries the value")
         finally:
             os.environ.pop("CLAUDE_CONFIG_DIR", None)
 

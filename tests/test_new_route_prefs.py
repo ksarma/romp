@@ -9,6 +9,7 @@ UUIDs, temp dirs, no session state touched (the setters are recorded, never exec
 import io
 import json
 import os
+import re
 import tempfile
 import threading
 import unittest
@@ -341,6 +342,19 @@ class NewRouteEnv(unittest.TestCase):
         self.assertIn("env (cleared) for %s refused" % SID, lines[0])
         self.assertIn("env NOTES_ENDPOINT for %s refused" % SID, lines[1], "names only")
         self.assertNotIn(val, err.getvalue(), "no value on stderr")
+
+    def test_the_bats_fixtures_copy_of_the_refusal_sentence_is_the_kernels(self):
+        """tests/romp.bats stands a fake kernel up whose reply carries the envRefused sentence and pins `romp new`'s
+        stderr line to it word for word; that copy is hand-kept, and no test held it to _env_refusal() (the mutation
+        pass of review round 3, 2026-09-19: the kernel's sentence changed and both suites stayed green, the bats one
+        because its fixture and its expectation moved together). Held here: one copy in the fixture, equal to the
+        kernel's, and the line the bats test expects is the CLI's prefix plus that sentence."""
+        text = open(os.path.join(HERE, "romp.bats"), encoding="utf-8").read()
+        copies = re.findall(r'"envRefused": "([^"]*)"', text)
+        self.assertEqual(len(copies), 1, "one fake-kernel reply carries the sentence: %r" % (copies,))
+        self.assertEqual(copies[0], km._env_refusal(), "the fixture's copy is the kernel's sentence")
+        self.assertIn('[ "$_refused_line" = "romp new: %s" ]' % km._env_refusal(), text,
+                      "and the stderr line the bats test pins is the CLI's prefix plus the kernel's sentence")
 
     def test_an_explicit_empty_env_on_a_fresh_spawn_is_vacuous_but_echoed(self):
         code, body = self._post({"name": "opt", "dir": self.dir, "env": {}})
