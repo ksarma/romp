@@ -113,6 +113,9 @@ alphabetically, and each case's `before` is what the previous case left):
     line carries a warnings segment between passed and errors ("1 passed, 1 warning, 1 error in" today): the outer
     tests read the error count past that segment (summary_mismatch, which tolerates any other count between passed
     and errors and refuses a wrong count by name) and pin the segment's presence and position, not its count.
+    C is run a third time from a parent that exports PY_COLORS=1 and FORCE_COLOR=1 for the child's start (the colour
+    is switched off at the nested_run boundary): every read of C runs again over that output, and one more test reads
+    that no escape sequence is in it.
   D, a class teardown that removes the directory under the singleton its tests left:
     One.a builds over a kept sandbox stored on the class and fails as its own; One.b does nothing and passes at
     its own window; tearDownClass removes the sandbox and writes a regular FILE at the path, and the class
@@ -192,7 +195,13 @@ occurrences read 1 on a box and 2 on CI for one verdict (the CI red at the round
 CI=true alone and under a CI-like install through uv, green at this head both ways). The PROTECTION is the structured reads above: none of them counts occurrences,
 so the summary's shape cannot change what they read. The child also runs -vv, which is NOT a protection: it only makes a box
 run print what CI prints so a reader comparing the two by eye sees one shape; pytest may change what -vv prints and the
-readers would still hold, while a structured read removed as redundant with -vv would put the count back.
+readers would still hold, while a structured read removed as redundant with -vv would put the count back. Two of the
+readers parse plain text, outcomes over the per-phase lines and SUMMARY_LINE over the final line, so the child's colour
+is switched off at the nested_run boundary (its colour-forcing variables popped and --color=no passed; the pin is C's run
+from a parent that exports PY_COLORS=1 and FORCE_COLOR=1): under an inherited PY_COLORS=1 the child printed ANSI markup
+into both and 74 of the 100 tests at the round-3 head went red. The independence is of the short summary's shape, never
+of the summary line's own format: two readers parse that line (summary_mismatch over SUMMARY_LINE, and the warned run's
+segment read) and fail loudly, the line quoted, when it changes.
 
 Mutations of the fixture run against this module, each landed and reverted (2026-09-19; the runner compile-checks the
 mutated conftest and counts a NameError in the outer output as a crash, never as a weakening), listed by what the
@@ -249,6 +258,7 @@ import sys
 import tempfile
 import textwrap
 import unittest
+from unittest import mock
 from romp_load import load_source  # noqa: F401  a direct run's floor lands with this import (tests/romp_load.py)
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -850,6 +860,17 @@ def nested_run(text, follower=None, sdk_stub=False):
     outputs compare by eye, and it is coupled to pytest's current behaviour; the structured reads hold whatever the
     summary prints, and none of them is redundant with -vv.
 
+    The child's colour is switched off at this boundary, on both sides: PY_COLORS, FORCE_COLOR and CLICOLOR_FORCE are
+    popped from its environment beside the pytest variables, and --color=no is on its argv. pytest 9.1.1's
+    should_do_markup reads PY_COLORS and FORCE_COLOR (and NO_COLOR, left alone here: it only disables) before any
+    isatty check, so a child under a parent that exported either printed ANSI markup into its rule and PASSED lines,
+    and 74 of this module's 100 tests at the round-3 head went red with messages naming nothing about colour
+    (2026-09-19); CLICOLOR_FORCE is popped as the third forcing convention although pytest 9.1.1 does not read it.
+    --color=no outranks every one of them (create_terminal_writer sets hasmarkup False after should_do_markup), so the
+    pop and the flag are belt for each other and the pin (AChildStartedUnderAColourForcingEnvironment) reds only when
+    both go. Two readers parse plain text, outcomes over the per-phase lines and SUMMARY_LINE through summary_mismatch,
+    and this is their protection; the body-text readers were never coloured, since pytest marks up no message text.
+
     `sdk_stub` puts a stub claude_agent_sdk package, one docstring-only __init__.py written under the fresh directory,
     on the child's PYTHONPATH and names its directory in ROMP_RATCHET_SDK_STUB, so the child alone imports it: the
     importable road for SdkBackend's construction probe (Q). Every other run's head forces the missing road."""
@@ -871,10 +892,11 @@ def nested_run(text, follower=None, sdk_stub=False):
         env["PYTHONPATH"] = stub + ((os.pathsep + env["PYTHONPATH"]) if env.get("PYTHONPATH") else "")
         env["ROMP_RATCHET_SDK_STUB"] = stub
     for var in ("PYTEST_ADDOPTS", "PYTEST_PLUGINS", "PYTEST_DISABLE_PLUGIN_AUTOLOAD", "PYTEST_CURRENT_TEST",
-                "PYTEST_XDIST_WORKER", "PYTEST_XDIST_WORKER_COUNT", "ROMP_TESTS_SYSTEM_TMPDIR"):
+                "PYTEST_XDIST_WORKER", "PYTEST_XDIST_WORKER_COUNT", "ROMP_TESTS_SYSTEM_TMPDIR",
+                "PY_COLORS", "FORCE_COLOR", "CLICOLOR_FORCE"):     # the colour-forcing variables: two readers parse plain text
         env.pop(var, None)
     r = subprocess.run([sys.executable, "-m", "pytest", "-p", "tests.conftest", "-p", "no:cacheprovider",
-                        "-vv", "-rA", "--tb=short", case],
+                        "-vv", "-rA", "--tb=short", "--color=no", case],
                        cwd=ROOT, env=env, capture_output=True, text=True, timeout=300)
     return r.returncode, r.stdout + r.stderr
 
@@ -1167,6 +1189,24 @@ class ASummaryWithAWarningSegment(FirstBuildOverAKeptSandbox):
         self.assertGreaterEqual(int(seg.group(1)), 1, "the warning is counted on the line: %s" % m.group(1))
         self.assertIsNone(summary_mismatch(self.out, 1), self.out)
         self.assertIn("DeprecationWarning", self.out, "the warnings summary names it: %s" % self.out)
+
+
+class AChildStartedUnderAColourForcingEnvironment(FirstBuildOverAKeptSandbox):
+    """C's run with the parent exporting PY_COLORS=1 and FORCE_COLOR=1 for the child's start (mock.patch.dict over
+    os.environ around nested_run, restored after): every test of C runs again here over that child's output, each a
+    positive structured read (outcomes, the verdict, the summary line through summary_mismatch) that misread ANSI
+    markup before nested_run popped the colour variables and passed --color=no (74 of the module's 100 tests red at
+    the round-3 head with PY_COLORS=1 exported), and the absence read below is the belt. The pin reds only when both
+    the pop and --color=no go: each alone keeps the child plain (--color=no outranks the variables, and the pop
+    starves --color=no's case)."""
+
+    @classmethod
+    def setUpClass(cls):
+        with mock.patch.dict(os.environ, {"PY_COLORS": "1", "FORCE_COLOR": "1"}):
+            cls.rc, cls.out = nested_run(cls.SCRATCH, cls.FOLLOWER, sdk_stub=cls.SDK_STUB)
+
+    def test_the_childs_output_carries_no_escape_sequence(self):
+        self.assertNotIn("\x1b[", self.out, "the child prints plain text under a colour-forcing parent: %s" % self.out)
 
 
 class LazyFirstBuildOnTheImportableRoad(_NestedRun, unittest.TestCase):
