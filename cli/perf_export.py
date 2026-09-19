@@ -347,8 +347,12 @@ def document_text(doc) -> str:
     checks passed (cli/perf_upload.py, read_export), never a file's own bytes, so what travels is what was checked
     (the upload's fourth review round, 2026-09-19), and a file as this verb wrote it re-serialises to itself byte for
     byte (json.dumps round-trips its own output: a float's repr is the shortest spelling that reads back to it, and the
-    keys are sorted both times), pinned in tests/test_perf_upload.py. A change here changes what both verbs put on disk
-    and on the wire."""
+    keys are sorted both times), pinned in tests/test_perf_upload.py. The sorted keys are what keep a file's own key
+    order off the wire: no check reads key order (strict_loads' repeated-key rule, the three walks, the top-level belt
+    and the fold belt are all order-blind), so a reordered export passes them all, and sort_keys is what makes it
+    re-serialise to the canonical bytes, pinned by the key-reversed case in tests/test_perf_upload.py (the closing
+    check, 2026-09-19, removed sort_keys and every test then in the repo passed). A change here changes what both
+    verbs put on disk and on the wire."""
     return json.dumps(doc, indent=1, sort_keys=True) + "\n"
 
 

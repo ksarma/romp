@@ -50,7 +50,10 @@ literal's spelling (digits past a float's precision, a digit run the denylist wa
 exponent, a listed private string that is a digit run respelled inside a numeric leaf), inter-token whitespace, key
 order; the repeated-key refusal closed one instance of that divergence and left the class open. The re-serialisation
 closes the class by construction: the artifact the checks bind is the document they read, and the bytes on the wire
-are a function of that document alone. A file as the export wrote it re-serialises to itself byte for byte (the
+are a function of that document alone, pinned by the key-reversed upload in tests/test_perf_upload.py (the closing check
+of 2026-09-19 found sort_keys=True in perf_export.document_text was the one thing keeping a file's key order off the
+wire, since no check reads key order, and nothing then pinned it: with it removed every test in the repo passed while
+the body was the input file byte for byte). A file as the export wrote it re-serialises to itself byte for byte (the
 same function wrote it; pinned), so an unedited export goes out as the file. And the checks read the spelling that goes
 out: the identifier scan (perf_public.identifier_hits) searches every number by its wire spelling, json.dumps, the same
 spelling document_text writes, and, when that spelling carries an exponent, by its plain decimal expansion as well

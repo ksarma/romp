@@ -1192,12 +1192,43 @@ class Cli(unittest.TestCase):
         leaf by its plain decimal expansion too, so the int 12345670000000000, the float 1.234567e+16, its negative, and
         1.5e-05 in three spellings are each refused naming the entry's line, and the refusal is the only stderr line (every
         entry is at or above the floor). Fails before the fix: 1.234567e+16, -1.234567e+16, 1.5e-05, 0.000015 and 15e-6
-        were sent, rc 0, the exponent spelling on the wire."""
+        were sent, rc 0, the exponent spelling on the wire. AND KEY ORDER IS A CHANNEL NO CHECK READS (the closing check,
+        2026-09-19): strict_loads' repeated-key rule, the three walks, TOP_LEVEL and the fold belt are all order-blind
+        (dict equality ignores order), so a fresh export rewritten with every object's keys reversed passes every check;
+        sort_keys=True in perf_export.document_text is what keeps the file's own order off the wire, and this case is the
+        only pin that reds without it: the reordered file, uploaded with no list, goes out as the export's own canonical
+        bytes, not the file's, with the top level in sorted order. The closing check removed sort_keys and 268 tests
+        passed; a consistent indent change (indent=2) is not this pin's claim, since it is a writer-and-reader agreement
+        and the body still equals the export the same writer wrote."""
         base = ["--yes", "--receiver", self.fake.url]
         text = self.data.decode("utf-8")
         anchor = '"uptime_s": 60'
         self.assertEqual(text.count(anchor), 1, "the fresh export's one uptime line is where the leaf is planted")
         self.assertEqual(_wire(pu.strict_loads(self.data)), self.data, "a fresh export re-serialises to itself: the writer is the same function")
+
+        def _reversed(node):
+            """`node` with every object rebuilt in reversed key order, lists recursed, scalars as they are: the same
+            document under another layout."""
+            if isinstance(node, dict):
+                return {k: _reversed(node[k]) for k in reversed(list(node))}
+            if isinstance(node, list):
+                return [_reversed(v) for v in node]
+            return node
+        reordered = os.path.join(self.xdg, "reordered.json")
+        with open(reordered, "w", encoding="utf-8") as fh:
+            fh.write(json.dumps(_reversed(pu.strict_loads(self.data)), indent=1) + "\n")    # the writer's indent, NO sort_keys
+        with open(reordered, "rb") as fh:
+            raw = fh.read()
+        self.assertNotEqual(raw, self.data, "the reordered file differs from the export in layout")
+        self.assertEqual(json.loads(raw), json.loads(self.data), "and is the same document")
+        self.fake.reset()
+        r = _run([reordered] + base, self.state)                                             # the synthetic HOME has no list
+        self.assertEqual(r.returncode, 0, r.stderr + " (key order is read by no check)")
+        self.assertEqual(len(self.fake.requests), 1)
+        body = self.fake.requests[0][2]
+        self.assertEqual(body, self.data, "the body is the canonical bytes: the file's own key order is not on the wire (sort_keys)")
+        self.assertNotEqual(body, raw, "and not the reordered file's bytes")
+        self.assertEqual(list(json.loads(body)), ["exported_at", "perf", "schema"], "the top level in sorted order")
         os.makedirs(os.path.join(self.home, ".config", "romp"))
         entries = {1: "4242424242",                # a bare digit run
                    2: "1234.5678",                 # float-shaped: eight digits across the entry, a longest run of four (the base's entry)
