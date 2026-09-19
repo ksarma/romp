@@ -3,7 +3,7 @@ title: The tracked-changes bash guard refuses non-literal write targets in a tra
 status: candidate
 where: hooks/romp-track-bash-guard.mjs; docs/install.md; docs/guide.md (the Files section); hooks/README.md; plans/file-review.md (decision 47); vendor/track-changents/README.md, vendor/track-changents/patches/0009-skill-non-literal-target-refused.patch and vendor/track-changents/skill/SKILL.md; tools/romp-track-bash-guard.test.mjs and tools/romp-track-bash-guard-corpus.json, tools/romp-track-bash-guard-shapes.test.mjs, tools/file-review-plan-bash-guard.test.mjs, tools/file-review-plan-bash-guard-review.test.mjs, tools/vendor-patches.test.mjs and tools/vendor-drift.test.mjs; tests/test_guide_files_bash_guard.py
 added: 2026-09-18
-pr:
+pr: 780
 tier: fix
 offered:
 closed:

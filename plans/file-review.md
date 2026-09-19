@@ -3729,6 +3729,42 @@ document stands on its own, each with the reasoning it was given.
     each pinned with its remedy. The contract paragraph is identical on the four surfaces, its allow-by-default
     sentence and its refused-class sentence included, and its writer list names the out-of-model roads the passes
     found (a sourced or eval'd script, a wrapper outside the set, shuf -o, a cd through CDPATH).
+    The fifth commit (2026-09-19) closed the fourth pass's misses as rules on visible constructs, on the reviewer's
+    ruling, and settled two boundary questions. M6, first: 576 of the dollar matrix's refusals put a shell-live `$`
+    inside the double quotes of the remedy's `--file "..."`, so the pasted line named another file in bash and a third
+    in zsh; `trackEditLine` single-quotes the argument (`shellQuote`, a quote inside the path as `'\''`), pinned by
+    running the pasted line through real bash and real zsh against a stub that prints its argv. M1: a name operand that
+    carries an expansion, a substitution or is itself a quoted expansion on an assignment, declaration, nameref, export,
+    typeset, local, readonly, read, mapfile, getopts, unset or `printf -v`, or an expansion in lvalue position of a
+    `let` or `(( ))`, marks every expanded name unreadable for the whole command and a bare `cd` unknown
+    (`assembledNameOperand`, `homeUnreadableWhy`), since `export ${h}${m}=<dir>` reassigned HOME with no literal token;
+    a literal name other than HOME and a read-only twin change nothing. M2: the lexer consumes zsh's clobber-override
+    `!` and `|` after `>`, `>>`, `>&`, `>>&`, `&>` and `&>>` (`clobberSuffix`), records the operator as spelled, and
+    records bash's reading beside zsh's (a file named `!`, or `!word` when glued), so a command refuses when either
+    shell would write the tracked file. M3: `extract` returns the command's class-H links and `evaluate` follows them
+    while it places the targets it could not read, so a numeric target's literal directory part is folded through a link
+    the same command makes before it; a numeric or opaque word under a prefix an earlier command mutated is refused with
+    the family-3 reason (`mutatedUnderLiteralPart`). M4: a `$` inside a plain interpreter string is text, so a literal
+    path is kept and judged by name (the `[{}$]` filter and the node classes' `$` exclusion are gone), and a template or
+    format string (an f-string, `.format(`, `%`, a template literal with `${`) is returned as unreadable
+    (`scriptTemplateTargets`, the `templatePath` refusal) while a computed path stays out of model. M5, THE CRITERION:
+    an option earns a place on an inert list only if it changes neither how a word is expanded, matched or split, nor
+    where a relative path resolves, nor which grammar is in force; every entry carries its one-line reason
+    (`INERT_OPTIONS`, exported for the data-driven test), verified against the option descriptions of bash 5.2.21, zsh
+    5.9 and dash 0.5.12 on this box and by execution where a description left a doubt; the eleven the fourth pass found
+    came off with twenty-six more `set -o` names, twelve shopt names and six letters, and bash's `set -k`, measured
+    writing a tracked file through a `cp` the guard read as writing nothing, is read both ways (`setsKeywordMode`). B1
+    (ruled yes): a record that aliases a source (a hard `ln`, `cp -l`, `cp -s`, `link`, a symbolic link whose source the
+    guard cannot read) carries the source, and the in-play question for a write through it is asked of where the write
+    LANDS, the source, from any cwd (`aliasSourceInPlay`): a source in a tracked project puts that project in play, a
+    source the guard cannot read refuses from any cwd, a source outside every project is allowed. The cost, measured
+    against the corpus (196 entries, run at the head before the commit and at this one over one world): none of the 164
+    ordinary commands newly refuses; the five entries added are a `~/` write beside a `printf -v "$name"`, a relative
+    write after `set -f` and after `shopt -s nocasematch`, an f-string path from a tracked cwd, and a write through a
+    link whose source is a substitution from a cwd in no project. The contract paragraph on the four surfaces names the
+    variable name the shell fills in, the template path and the alias among what is refused, and the interpreter's
+    computed forms, the unbounded class of command-running wrappers and a link made by an unmodelled writer among what
+    still reaches a tracked file.
     Without ROMP_SID it exits 0 before reading stdin (decision 24). Cost: about 60 ms
     per Bash call when no target needs the link closure (a read, a literal target outside any project, an explicit
     hit on the project's tracked list, an empty list); a write to a file inside a tracking project that the list

@@ -17,7 +17,11 @@ import { spawn, spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
-import { evaluate, extractWriteTargets, scriptWriteTargets, lex } from '../hooks/romp-track-bash-guard.mjs';
+import * as guard from '../hooks/romp-track-bash-guard.mjs';
+
+// a namespace import, so a run of this file against an older hook (the red-on-base check) reports each test on its own
+// rather than failing the whole file on a missing export
+const { evaluate, extractWriteTargets, scriptWriteTargets, scriptTemplateTargets, lex, INERT_OPTIONS } = guard;
 
 const HOOK = fileURLToPath(new URL('../hooks/romp-track-bash-guard.mjs', import.meta.url));
 const ROMP_SID = '11111111-2222-3333-4444-555555555555';
@@ -56,7 +60,7 @@ test('cp over a tracked file is refused, naming the file and track-edit; cat of 
   assert.ok(reason, 'a cp onto a tracked file is refused');
   assert.ok(reason.includes(report), 'the refusal names the resolved file');
   assert.ok(reason.includes('track-edit'), 'the refusal names the remedy');
-  assert.match(reason, /--file "[^"]+docs\/report\.md"/, 'the remedy is the track-edit command line on that file');
+  assert.match(reason, /--file '[^']+docs\/report\.md'/, 'the remedy is the track-edit command line on that file, its path single-quoted (the fifth commit: a paste survives a `$` in the path)');
   assert.equal(evaluate(payload('cat docs/report.md')), null, 'a read of the tracked file is not a write');
 });
 
@@ -964,7 +968,7 @@ test('review round 3: a path is judged as the kernel opens it: a `..` after a li
     for (const cwd of [proj, out]) {
       const reason = evaluate(payload(`mkdir -p ${out}/run-$$ && echo x > ${out}/run-$$/../linkfile`, cwd));
       assert.ok(reason && reason.startsWith(`Track-changes is ON for ${path.join(out, 'linkfile')}`), `the fold lands on the link to the tracked file: ${reason}`);
-      assert.ok(reason.includes('track-edit') && reason.includes(`--file "${path.join(out, 'linkfile')}"`), 'with the literal remedy');
+      assert.ok(reason.includes('track-edit') && reason.includes(`--file '${path.join(out, 'linkfile')}'`), 'with the literal remedy');
       assert.ok(evaluate(payload(`cp base/report.md ${out}/ld/../notes/n-$$.md`, cwd)), 'a numeric name after a link and ..: the folder is the tracked notes/');
       assert.equal(evaluate(payload(`echo x > ${out}/run-$$/../plain.log`, cwd)), null, 'the fold to a plain path outside stays allowed');
     }
@@ -2360,17 +2364,20 @@ test('rule (d) shell options, an allowlist: an option not known to be inert for 
       assert.ok(!/\u2014/.test(reason) && !ROMP_NOUNS.test(reason.split(B).join('<b>')), 'no em dash, no romp noun');
     }
     // any option NOT on the inert list, whether it touches paths or the guard just does not know it, leaves the directory unknown
-    for (const pre of ['shopt -s globstar', 'shopt -s nullglob', 'shopt -s dotglob', 'shopt -s extglob', 'shopt -s autocd', 'shopt -s cdable_vars', 'shopt -s expand_aliases', 'shopt -s lastpipe', 'shopt -s nocaseglob', 'set -o posix', 'set -B', 'set -o frobnicate', 'set -Z', 'setopt extendedglob', 'setopt nullglob', 'setopt autocd', 'setopt magicequalsubst', 'setopt rcquotes', 'setopt banghist', 'setopt frobnicate', 'set -o "$OPT"', 'setopt $OPTS']) {
+    for (const pre of ['shopt -s globstar', 'shopt -s nullglob', 'shopt -s dotglob', 'shopt -s extglob', 'shopt -s autocd', 'shopt -s cdable_vars', 'shopt -s expand_aliases', 'shopt -s lastpipe', 'shopt -s nocaseglob', 'set -o posix', 'set -B', 'set -o frobnicate', 'set -Z', 'setopt extendedglob', 'setopt nullglob', 'setopt autocd', 'setopt magicequalsubst', 'setopt rcquotes', 'setopt banghist', 'setopt frobnicate', 'set -o "$OPT"', 'setopt $OPTS',
+      // the fifth commit (2026-09-19): the eleven the fourth pass found on the lists against the rule, and what the criterion took off with them
+      'set -f', 'set -o noglob', 'setopt noglob', 'setopt nomatch', 'setopt NO_NOMATCH', 'setopt nonomatch', 'setopt badpattern', 'setopt numericglobsort', 'setopt markdirs', 'setopt cdsilent', 'setopt pushdsilent', 'setopt pushdignoredups', 'setopt pushdminus', 'shopt -s extquote',
+      'set -k', 'set -o keyword', 'set -E', 'set -H', 'set -o histexpand', 'set -F', 'set -y', 'setopt shwordsplit', 'setopt ksharrays', 'setopt histsubstpattern', 'setopt correctall', 'setopt shortloops', 'shopt -s nocasematch', 'shopt -s patsub_replacement', 'shopt -s compat31', 'shopt -s assoc_expand_once', 'shopt -s noexpand_translation']) {
       const reason = evaluate(payload(`${pre}; cp base/report.md docs/other.md`));
       assert.ok(reason && UNKNOWN.test(reason) && OPTION.test(reason), `an option off the inert list refuses the later relative write: ${pre}: ${reason}`);
     }
     // the inert list: each passes, the later untracked relative write allowed and the tracked one refused by name
     const inert = [
-      'set -e', 'set -u', 'set -x', 'set -v', 'set -n', 'set -C', 'set -f', 'set -a', 'set -m', 'set -b', 'set -k', 'set -h', 'set -t', 'set -E', 'set -H', 'set -F', 'set -y',
-      'set +e', 'set -ex', 'set -eu', 'set -euo pipefail', 'set -o pipefail', 'set -o errexit', 'set -o nounset', 'set -o xtrace', 'set -o verbose', 'set -o noclobber', 'set -o noglob',
+      'set -e', 'set -u', 'set -x', 'set -v', 'set -n', 'set -C', 'set -a', 'set -m', 'set -b', 'set -h', 'set -t',
+      'set +e', 'set -ex', 'set -eu', 'set -euo pipefail', 'set -o pipefail', 'set -o errexit', 'set -o nounset', 'set -o xtrace', 'set -o verbose', 'set -o noclobber',
       'set -o errexit -o nounset', 'set +o xtrace', 'set -o pipe_fail', 'set -o', 'set -- a b', 'set -e -- x y', 'set x y', 'set -',
-      'shopt -s histappend', 'shopt -s nocasematch', 'shopt -s checkwinsize', 'shopt -u xpg_echo', 'shopt -s inherit_errexit', 'shopt -so pipefail', 'shopt -q globstar', 'shopt -p', 'shopt', 'shopt globstar',
-      'setopt errexit', 'setopt ERR_EXIT', 'setopt pipefail', 'setopt NO_NOMATCH', 'setopt nonomatch', 'setopt noclobber', 'setopt -e', 'unsetopt xtrace', 'unsetopt beep', 'setopt histignorespace', 'setopt promptsubst', 'setopt',
+      'shopt -s histappend', 'shopt -s checkwinsize', 'shopt -u xpg_echo', 'shopt -s inherit_errexit', 'shopt -so pipefail', 'shopt -q globstar', 'shopt -p', 'shopt', 'shopt globstar',
+      'setopt errexit', 'setopt ERR_EXIT', 'setopt pipefail', 'setopt noclobber', 'setopt -e', 'unsetopt xtrace', 'unsetopt beep', 'setopt histignorespace', 'setopt promptsubst', 'setopt',
     ];
     for (const pre of inert) {
       assert.equal(evaluate(payload(`${pre}; cp base/report.md docs/other.md`)), null, `an inert option passes and the untracked relative write is allowed: ${pre}`);
@@ -2482,6 +2489,360 @@ test('the third pass also closed chdir (a cd the guard cannot know) and link (a 
   assert.equal(runHook('link docs/report.md hardL.md && cp base/report.md hardL.md').status, 2);
 });
 
+
+// ── the fifth commit (2026-09-19): the fourth pass's misses closed as rules on visible constructs ──
+//
+// The fourth pass (three attackers and the literal-dollar matrix, run as a process at 50e85deec) found six misses and
+// two boundary questions the reviewer ruled on. Each is pinned here in both directions with a real shell run: M6 (the
+// remedy line survives a paste), M1 (a variable name the shell fills in), M2 (zsh's clobber-override redirections), M3
+// (a link made before a numeric segment), M4 (an interpreter's literal path holding a dollar; a template path refuses),
+// M5 (the inert lists carry their criterion) and B1 (an alias puts the project its source lies in in play).
+
+// A word for the guard's lexer and the shells alike: single-quoted, a single quote inside it closed, escaped and reopened.
+const sq = (s) => `'${s.replace(/'/g, `'\\''`)}'`;
+
+test('M6 the remedy line survives a paste: the --file argument is single-quoted, so a path holding a dollar, a brace, a backtick or a quote reaches track-edit byte for byte through real bash and real zsh', () => {
+  const stubDir = outsideDir();
+  const home = outsideDir();
+  try {
+    // a stub `node` that prints its argv NUL-separated, first on PATH: the pasted line runs it in place of the CLI
+    fs.writeFileSync(path.join(stubDir, 'node'), '#!/bin/sh\nfor a in "$@"; do printf "%s\\0" "$a"; done\n', { mode: 0o755 });
+    const names = ['a$b.md', 'a$abc.md', 'a${x}.md', 'a`b.md', 'a"b.md', "a'b.md", "p$'q.md", 'a b$$.md'];
+    for (const n of names) {
+      const file = path.join(proj, 'notes', n);
+      fs.writeFileSync(file, 'x\n');
+      const reason = evaluate(payload(`cp base/report.md ${sq(path.join('notes', n))}`));
+      assert.ok(reason && reason.startsWith(`Track-changes is ON for ${file},`), `refused by name: ${n}: ${reason}`);
+      const line = reason.split('\n').find((l) => /track-edit\.mjs --file /.test(l));
+      assert.ok(line && !line.includes('--file "'), `the --file argument is not double-quoted: ${line}`);
+      for (const [shell, argv] of [['bash', ['--norc', '--noprofile', '-c', line]], ['zsh', ['-f', '-c', line]]]) {
+        const r = spawnSync(shell, argv, { encoding: 'utf8', env: { PATH: `${stubDir}:${process.env.PATH}`, HOME: home } });
+        assert.equal(r.status, 0, `${shell} ran the pasted line: ${r.stderr}`);
+        const args = r.stdout.split('\0');
+        assert.equal(args[0], path.join(home, '.claude', 'hooks', 'track-edit.mjs'), `${shell}: the CLI path, ~ expanded`);
+        assert.equal(args[1], '--file');
+        assert.equal(args[2], file, `${shell} hands track-edit the intended path byte for byte: ${n}`);
+        assert.deepEqual(args.slice(3, 7), ['--old', '<exact unique text>', '--new', '<replacement>'], `${shell}: the placeholders survive too`);
+      }
+    }
+    // the generic remedy's placeholder is single-quoted too, so every refusal reads the same way
+    const generic = evaluate(payload('cp base/report.md "$DST"'));
+    assert.ok(generic.includes("--file '<the file>' --old '<exact unique text>' --new '<replacement>'"), generic);
+  } finally { fs.rmSync(stubDir, { recursive: true, force: true }); fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+test('M1 a variable name the shell fills in: an assignment, declaration, nameref, export, typeset, local, readonly, read, mapfile, getopts, unset, printf -v, let or (( )) whose NAME operand carries an expansion makes $HOME and ~ unreadable and a bare cd unknown; a literal name or a read-only twin passes; real bash and zsh overwrite through it', () => {
+  const n1 = path.join(proj, 'notes', 'n1.md');
+  fs.writeFileSync(n1, 'a tracked note\n');
+  const ASSEMBLED = /takes a variable name the shell fills in when it runs/;
+  const forms = [
+    `h=HO; m=ME; export \${h}\${m}=${proj}/notes; printf poison > "$HOME/n1.md"`,           // the fourth pass's five (attack 1, NEW-1)
+    `h=HO; m=ME; declare -n r=\${h}\${m}; r=${proj}/notes; printf poison > "$HOME/n1.md"`,
+    `h=HO; m=ME; printf -v "\${h}\${m}" %s ${proj}/notes; printf poison > "$HOME/n1.md"`,
+    `h=HO; m=ME; typeset \${h}\${m}=${proj}/notes; printf poison > "$HOME/n1.md"`,
+    `h=HO; m=ME; read \${h}\${m} <<< ${proj}/notes; printf poison > "$HOME/n1.md"`,
+    `export "$(printf 'HOME=${proj}/notes')"; printf poison > $HOME/n1.md`,                  // the matrix's three (rows 2842 to 2844)
+    `declare "$(printf 'HOME=${proj}/notes')"; printf poison > ~/n1.md`,
+    `read -r "$(printf HOME)" <<< ${proj}/notes; printf poison > $HOME/n1.md`,
+    `h=HO; m=ME; local \${h}\${m}=${proj}/notes; printf poison > ~/n1.md`,                  // the rest of the construct's family
+    `h=HO; m=ME; readonly \${h}\${m}=${proj}/notes; printf poison > ~/n1.md`,
+    `h=HO; m=ME; unset \${h}\${m}; printf poison > "$HOME/n1.md"`,
+    `h=HO; m=ME; (( \${h}\${m} = 5 )); printf poison > ~/n1.md`,
+    `h=HO; m=ME; let "\${h}\${m}=5"; printf poison > ~/n1.md`,
+    `h=HO; m=ME; mapfile -t \${h}\${m} <<< ${proj}/notes; printf poison > ~/n1.md`,
+    `h=HO; m=ME; getopts a \${h}\${m}; printf poison > ~/n1.md`,
+    `h=HO; m=ME; read -a \${h}\${m} <<< ${proj}/notes; printf poison > ~/n1.md`,
+    `h=HO; m=ME; command export \${h}\${m}=${proj}/notes; printf poison > ~/n1.md`,
+    `h=HO; m=ME; printf -v\${h}\${m} %s ${proj}/notes; printf poison > ~/n1.md`,
+    `export "$X"; printf poison > $HOME/n1.md`,                                                 // the matrix's adverse row 2845: a word the environment fills in
+  ];
+  for (const cmd of forms) {
+    const reason = evaluate(payload(cmd));
+    assert.ok(reason && ASSEMBLED.test(reason) && reason.includes(proj) && reason.includes('may be HOME'), `a name the shell fills in refuses the home write: ${cmd}: ${reason}`);
+    assert.ok(reason.includes('Spell the path out'), 'the remedy');
+    assert.ok(!/\u2014/.test(reason) && !ROMP_NOUNS.test(reason.split(proj).join('<p>')), 'no em dash, no romp noun');
+  }
+  // a bare `cd` or a `cd ~` after such a construct leaves the directory unknown, so a later relative write refuses
+  for (const cmd of [`h=HO; m=ME; export \${h}\${m}=${proj}/notes; cd; printf poison > n1.md`, `h=HO; m=ME; typeset \${h}\${m}=${proj}/notes; cd ~; printf poison > n1.md`]) {
+    const reason = evaluate(payload(cmd));
+    assert.ok(reason && /the directory it is relative to is not known/.test(reason) && ASSEMBLED.test(reason), `a cd through HOME after the construct: ${cmd}: ${reason}`);
+  }
+  // the twins: a literal name other than HOME, and a read-only use of the assembled text, keep the home the guard read
+  const home = process.env.HOME;
+  const out = outsideDir();
+  process.env.HOME = out;
+  try {
+    for (const cmd of ['h=HO; m=ME; echo ${h}${m}; printf x > ~/seed.md', 'printf "%s" "$HOME"; printf x > "$HOME/seed.md"', 'export FOO="$BAR"; printf x > ~/seed.md', 'h=HO; m=ME; export FOO="${h}${m}"; printf x > ~/seed.md',
+      'declare -n r=foo; r=1; printf x > ~/seed.md', 'read -p "$msg" ans <<< y; printf x > ~/seed.md', 'printf -v var "$x"; printf x > ~/seed.md', 'mapfile -d "$d" arr < /dev/null; printf x > ~/seed.md',
+      '(( n = $n + 1 )); printf x > ~/seed.md', 'let "i = $i + 1"; printf x > ~/seed.md', '(( $x == 1 )); printf x > ~/seed.md', 'unset FOO; printf x > ~/seed.md', 'getopts "$OPTS" opt "$@"; printf x > ~/seed.md', 'local -n r=other; printf x > ~/seed.md']) {
+      assert.equal(evaluate(payload(cmd)), null, `a literal name or a read-only twin keeps the home the guard read: ${cmd}`);
+    }
+  } finally { process.env.HOME = home; fs.rmSync(out, { recursive: true, force: true }); }
+  assert.equal(evaluate(payload('h=HO; m=ME; export ${h}${m}=/x; printf x > docs/other.md')), null, 'the construct with no home write changes nothing');
+  // real shells: the assembled name reassigns HOME and the write lands on the tracked note; the hook refuses each
+  const bashForms = [forms[0], forms[1], forms[2], forms[3], forms[4], forms[5], forms[7]];
+  for (const cmd of bashForms) {
+    const ov = overwrites(cmd, n1);
+    assert.equal(ov.changed, true, `overwrites the tracked note in real bash: ${cmd}`);
+    assert.equal(runHook(cmd).status, 2, `and the hook refuses it: ${cmd}`);
+  }
+  for (const cmd of [forms[0], forms[2], forms[3], forms[4]]) {
+    const ov = overwrites(cmd, n1, proj, 'zsh');
+    assert.equal(ov.changed, true, `overwrites the tracked note in real zsh: ${cmd}`);
+  }
+  assert.equal(fs.readFileSync(n1, 'utf8'), 'a tracked note\n');
+});
+
+test("M2 zsh's clobber-override redirections: >! >>! &>! &>>! >&! >>&! and their | twins, spaced or glued, and >>& are write redirections under their own operator, judged in both shells' readings; real zsh overwrites, real bash writes a file named ! or refuses the syntax, and the hook refuses each", () => {
+  fs.writeFileSync(path.join(proj, 'notes', 'n1.md'), 'a tracked note\n');
+  const ops = ['>!', '>>!', '&>!', '&>>!', '>&!', '>>&', '>>&!', '>>|', '&>|', '&>>|', '>&|', '>>&|'];
+  for (const op of ops) {
+    const { segments } = lex(`echo poison ${op} docs/report.md`);
+    const reds = segments[0].redirects;
+    assert.ok(reds.some((r) => r.op === op && r.target.text === 'docs/report.md' && r.target.literal), `${op}: the file after the operator is a literal redirection target under ${op}: ${JSON.stringify(reds.map((r) => [r.op, r.target.text]))}`);
+    if (op.endsWith('!')) assert.ok(reds.some((r) => r.op === op && r.target.text === '!'), `${op} spaced: bash's reading, a file named !, is recorded too`);
+    assert.deepEqual(segments[0].words.map((w) => w.text), ['echo', 'poison'], `${op}: the file is not an argument`);
+    const reason = evaluate(payload(`echo poison ${op} docs/report.md`));
+    assert.ok(reason && reason.includes(report) && reason.includes(`its ${op} redirection would write the file`), `${op} onto the tracked file is refused naming the operator: ${reason}`);
+    assert.equal(evaluate(payload(`echo poison ${op} docs/other.md`)), null, `${op} onto an untracked file passes`);
+    assert.ok(evaluate(payload(`echo poison ${op} notes/n1.md`)).includes(path.join(proj, 'notes', 'n1.md')), `${op} onto a note tracked by folder`);
+  }
+  // glued: zsh writes docs/report.md and bash a file named !docs/report.md; both are recorded and the tracked one refuses
+  assert.deepEqual(lex('echo poison >!docs/report.md').segments[0].redirects.map((r) => [r.op, r.target.text]).sort(), [['>!', '!docs/report.md'], ['>!', 'docs/report.md']]);
+  assert.ok(evaluate(payload('echo poison >!docs/report.md')).includes(report), 'the glued form onto the tracked file');
+  assert.ok(evaluate(payload('echo poison >>!docs/report.md')).includes(report));
+  assert.ok(evaluate(payload('echo poison {fd}>! docs/report.md')).includes(report), 'the named-descriptor form');
+  assert.equal(evaluate(payload('echo poison >!docs/other.md')), null, 'glued onto an untracked file passes');
+  // bash's reading is judged as well: a project that tracks a file named `!` refuses `>! <untracked>` (bash writes `!`)
+  fs.writeFileSync(path.join(proj, '!'), 'bang\n');
+  fs.writeFileSync(path.join(proj, '.trackchanges', 'config.json'), JSON.stringify({ v: 2, tracked: ['docs/report.md', 'notes/', 'figs/plot.png', '!'] }));
+  const bang = evaluate(payload('echo poison >! docs/other.md'));
+  assert.ok(bang && bang.includes(path.join(proj, '!')), `bash's reading, a file named !, is judged: ${bang}`);
+  assert.equal(overwrites('echo poison >! docs/other.md', path.join(proj, '!')).changed, true, 'real bash writes the file named !');
+  fs.writeFileSync(path.join(proj, '.trackchanges', 'config.json'), JSON.stringify({ v: 2, tracked: ['docs/report.md', 'notes/', 'figs/plot.png'] }));
+  fs.rmSync(path.join(proj, '!'), { force: true });
+  // real zsh: each form writes (or appends to) the tracked file; real bash does not touch it; the hook refuses each
+  for (const cmd of ['echo poison >! docs/report.md', 'echo poison >!docs/report.md', 'echo poison >>! docs/report.md', 'echo poison &>! docs/report.md', 'echo poison >&! docs/report.md', 'echo poison >>| docs/report.md', 'echo poison >&| docs/report.md', 'echo poison &>| docs/report.md', 'echo poison >>& docs/report.md', 'echo poison {fd}>! docs/report.md']) {
+    const z = overwrites(cmd, report, proj, 'zsh');
+    assert.equal(z.changed, true, `real zsh writes the tracked file: ${cmd}`);
+    const b = overwrites(cmd, report, proj, 'bash');
+    assert.equal(b.changed, false, `real bash does not write the tracked file (a file named !, or a syntax error): ${cmd}`);
+    fs.rmSync(path.join(proj, '!'), { force: true });
+    assert.equal(runHook(cmd).status, 2, `the hook refuses: ${cmd}`);
+  }
+  // the twin the fourth pass named: `>|`, the POSIX spelling, keeps its verdict, and a bare word `!` after a spaced `>` is not a redirection
+  assert.ok(evaluate(payload('echo poison >| docs/report.md')).includes(report));
+  assert.deepEqual(lex('echo poison > ! docs/report.md').segments[0].redirects.map((r) => r.target.text), ['!'], 'a spaced bare ! is the target word, as both shells read it');
+  assert.equal(fs.readFileSync(report, 'utf8'), 'The api session cut tail latency by 40%.\n');
+});
+
+test("M3 a link made before a numeric segment: the command's own links are followed into a numeric target's literal directory part, so `ln -s <proj>/notes <out>/d && echo x > <out>/d/x-$$.md` refuses from a cwd in no project and from the tracked cwd; a link pointing outside every project is allowed; a link whose source is not literal refuses with the family-3 reason; real bash lands the write in the tracked folder", () => {
+  const out = outsideDir();
+  try {
+    fs.writeFileSync(path.join(proj, 'notes', 'n1.md'), 'a tracked note\n');
+    fs.mkdirSync(path.join(out, 'plain'));
+    const cmd = `ln -s ${proj}/notes ${out}/d && echo x > ${out}/d/x-$$.md`;
+    for (const [cwd, where] of [[out, 'a cwd in no project'], [proj, 'the tracked cwd']]) {
+      const reason = evaluate(payload(cmd, cwd));
+      assert.ok(reason && reason.includes(proj) && /is not a literal path/.test(reason), `refused from ${where}, naming the project the link leads into: ${reason}`);
+      assert.ok(!/\u2014/.test(reason) && !ROMP_NOUNS.test(reason.split(proj).join('<p>').split(out).join('<o>')), 'no em dash, no romp noun');
+    }
+    assert.match(evaluate(payload(`ln -s ${proj}/notes ${out}/d && echo x > ${out}/d/x-1.md`, out)), /^Track-changes is ON for /, 'the literal twin, class H, is refused by name');
+    assert.match(evaluate(payload(`ln -s ${proj}/notes ${out}/d && echo x > ${out}/d/sub-$$/y.md`, out)), /is a name the shell fills in with a number/, 'a numeric folder under the link too, with the unknown-folder reason');
+    for (const cwd of [out, proj]) assert.equal(evaluate(payload(`ln -s ${out}/plain ${out}/d && echo x > ${out}/d/x-$$.md`, cwd)), null, 'a link pointing outside every project: allowed');
+    assert.equal(evaluate(payload(`echo x > ${out}/plain/x-$$.md`, out)), null, 'the numeric write with no link: allowed');
+    const opaque = evaluate(payload(`ln -s "$SRC" ${out}/d && echo x > ${out}/d/x-$$.md`, out));
+    assert.ok(opaque && /an earlier `ln -s` in the same command linked/.test(opaque) && /a source I cannot read/.test(opaque), `a link whose source is not literal refuses with the family-3 reason from a cwd in no project: ${opaque}`);
+    assert.ok(opaque.includes('Run the `ln -s` in a command of its own'), 'the remedy');
+    // real bash: the link is made and the numeric name lands in the tracked folder, unrecorded; the hook refuses
+    const r = spawnSync('bash', ['-c', cmd], { cwd: out, encoding: 'utf8', env: { PATH: process.env.PATH } });
+    assert.equal(r.status, 0, r.stderr);
+    const landed = fs.readdirSync(path.join(proj, 'notes')).filter((n) => /^x-\d+\.md$/.test(n));
+    assert.equal(landed.length, 1, 'the write landed in the tracked folder in real bash');
+    fs.rmSync(path.join(out, 'd'), { force: true });
+    assert.equal(runHook(cmd, out).status, 2, 'and the hook refuses it');
+    assert.equal(runHook(cmd, proj).status, 2);
+  } finally { fs.rmSync(out, { recursive: true, force: true }); }
+});
+
+test("M4 an interpreter's literal path is judged by its name whatever it holds (a dollar is text), in the eight matrix forms, tracked refused and the untracked twin allowed; a template or format string path refuses as unreadable; a computed path stays out of model; real bash and zsh write the tracked folder through the literal forms and the hook refuses", () => {
+  // a project tracking a folder whose name holds a dollar (the matrix's sub-on), beside an untracked twin folder
+  for (const d of ['p$abc', 'q$abc']) { fs.mkdirSync(path.join(proj, d)); fs.writeFileSync(path.join(proj, d, 'seed.md'), 'seed\n'); }
+  fs.writeFileSync(path.join(proj, '.trackchanges', 'config.json'), JSON.stringify({ v: 2, tracked: ['docs/report.md', 'notes/', 'figs/plot.png', 'p$abc/'] }));
+  const forms = (d) => [
+    `python3 -c "open('${d}/rep.md','w').write('poison')"`,
+    `python3 -c 'open("${d}/rep.md","w").write("poison")'`,
+    `python3 -c "from pathlib import Path; Path('${d}/rep.md').write_text('poison')"`,
+    `python3 -c "import shutil; shutil.copy('base/report.md','${d}/rep.md')"`,
+    `node -e "require('fs').writeFileSync('${d}/rep.md','poison')"`,
+    `node -e 'require("fs").writeFileSync("${d}/rep.md","poison")'`,
+    `python3 - <<'EOF'\nopen('${d}/rep.md','w').write('poison')\nEOF`,
+    `node - <<'EOF'\nrequire('fs').writeFileSync('${d}/rep.md','poison')\nEOF`,
+  ];
+  const tracked = forms('p\\$abc').map((c, i) => (c.startsWith('python3 -c \'') || c.startsWith('node -e \'') || c.includes('<<') ? forms('p$abc')[i] : c));   // inside double quotes the dollar is escaped for the shell; inside single quotes and a quoted heredoc it is text as spelled
+  const untracked = forms('q\\$abc').map((c, i) => (c.startsWith('python3 -c \'') || c.startsWith('node -e \'') || c.includes('<<') ? forms('q$abc')[i] : c));
+  assert.equal(tracked.length, 8);
+  for (const cmd of tracked) {
+    const reason = evaluate(payload(cmd));
+    assert.ok(reason && reason.startsWith(`Track-changes is ON for ${path.join(proj, 'p$abc', 'rep.md')},`), `the literal dollar path is refused by name: ${cmd}: ${reason}`);
+  }
+  for (const cmd of untracked) assert.equal(evaluate(payload(cmd)), null, `the untracked twin is allowed: ${cmd}`);
+  // the grammar: the path is kept whatever it holds
+  assert.deepEqual(scriptWriteTargets('python', "open('p$abc/rep.md','w')"), ['p$abc/rep.md']);
+  assert.deepEqual(scriptWriteTargets('node', "fs.writeFileSync('p$abc/{x}.md', 'y')"), ['p$abc/{x}.md'], 'a brace in a plain string is text too');
+  // a template or format string is a path the interpreter fills in: unreadable, refused while the project is in play
+  const TEMPLATE = /a path built from a template or format string/;
+  for (const cmd of [`python3 -c "d='p\\$abc'; open(f'{d}/rep.md','w').write('poison')"`, `python3 -c "open('{}/rep.md'.format('p\\$abc'),'w')"`, `python3 -c "open('%s/rep.md' % 'p\\$abc','w')"`, `python3 -c "from pathlib import Path; Path(f'{d}/rep.md').write_text('x')"`,
+    `node -e 'const d="p$abc"; require("fs").writeFileSync(\`\${d}/rep.md\`,"poison")'`, `node - <<'EOF'\nconst d='p$abc';\nrequire('fs').writeFileSync(\`\${d}/rep.md\`,'poison')\nEOF`, `python3 - <<'EOF'\nd='p$abc'\nopen(f'{d}/rep.md','w').write('poison')\nEOF`]) {
+    const reason = evaluate(payload(cmd));
+    assert.ok(reason && TEMPLATE.test(reason) && reason.includes(proj), `a template path refuses as unreadable: ${cmd}: ${reason}`);
+    assert.ok(reason.includes('Spell the path as a plain string'), 'the remedy');
+    assert.ok(!/\u2014/.test(reason) && !ROMP_NOUNS.test(reason.split(proj).join('<p>')), 'no em dash, no romp noun');
+  }
+  assert.deepEqual(scriptTemplateTargets('python', "open(f'{d}/rep.md','w')"), ["f'{d}/rep.md'"]);
+  assert.deepEqual(scriptTemplateTargets('node', 'fs.writeFileSync(`${d}/rep.md`, x)'), ['`${d}/rep.md`']);
+  assert.deepEqual(scriptTemplateTargets('node', 'fs.writeFileSync(`plain.md`, x)'), [], 'a template literal with no expression is a plain string');
+  assert.deepEqual(scriptWriteTargets('node', 'fs.writeFileSync(`plain.md`, x)'), ['plain.md']);
+  // the computed forms stay out of model, by the contract (a name, os.environ, sys.argv, a concatenation)
+  const out = outsideDir();
+  try {
+    for (const cmd of [`python3 -c "p='p\\$abc/rep.md'; open(p,'w').write('poison')"`, `python3 -c "import os; open(os.environ['T'],'w')"`, `node -e "require('fs').writeFileSync(process.env.T,'x')"`, `node -e "require('fs').writeFileSync('p\\$abc/' + 'rep.md','x')"`]) {
+      assert.equal(evaluate(payload(cmd)), null, `a computed path is allowed, the contract's boundary: ${cmd}`);
+    }
+    assert.equal(evaluate(payload(`python3 -c "d='x'; open(f'{d}/rep.md','w')"`, out)), null, 'a template path from a cwd in no project is dropped, as every unreadable word is');
+  } finally { fs.rmSync(out, { recursive: true, force: true }); }
+  // real shells: the literal forms write the tracked folder (a new file under p$abc/); the hook refuses each
+  const rep = path.join(proj, 'p$abc', 'rep.md');
+  for (const [i, cmd] of tracked.entries()) {
+    for (const shell of i < 2 ? ['bash', 'zsh'] : ['bash']) {
+      const r = spawnSync(shell, ['-c', cmd], { cwd: proj, encoding: 'utf8', env: { PATH: process.env.PATH } });
+      assert.equal(r.status, 0, `${shell}: ${cmd}: ${r.stderr}`);
+      assert.equal(fs.existsSync(rep) && fs.readFileSync(rep, 'utf8').includes('poison') || fs.readFileSync(rep, 'utf8') === 'an older copy\n', true, `${shell} wrote the tracked folder: ${cmd}`);
+      fs.rmSync(rep, { force: true });
+    }
+    assert.equal(runHook(cmd).status, 2, `and the hook refuses it: ${cmd}`);
+  }
+  // and the untracked twin runs, writing beside it
+  const q = spawnSync('bash', ['-c', untracked[0]], { cwd: proj, encoding: 'utf8', env: { PATH: process.env.PATH } });
+  assert.equal(q.status, 0, q.stderr);
+  assert.equal(fs.readFileSync(path.join(proj, 'q$abc', 'rep.md'), 'utf8'), 'poison');
+  assert.equal(runHook(untracked[0]).status, 0, 'the hook allows the untracked twin');
+});
+
+test("M5 the inert lists carry their criterion: every entry is a real option of a shell on this box with a one-line reason, every letter flips only an option the table holds in bash and in zsh, the options the criterion took off refuse the later relative write while the absolute twin keeps its verdict, and bash's keyword mode is read both ways", () => {
+  const norm = (n) => n.toLowerCase().replace(/[_-]/g, '');
+  const env = { PATH: process.env.PATH };
+  const sh = (shell, cmd) => spawnSync(shell, shell === 'zsh' ? ['-f', '-c', cmd] : ['-c', cmd], { encoding: 'utf8', env });
+  const names = (text) => new Map(text.split('\n').map((l) => l.trim().split(/\s+/)).filter((f) => f[0]).map((f) => [norm(f[0]), f[1] || '']));
+  // zsh lists an option that is on by default under its `no` spelling (`noevallineno off`), so membership ignores the prefix both ways
+  const lists = (m, n) => m.has(n) || m.has('no' + n) || (n.startsWith('no') && m.has(n.slice(2)));
+  const bashSetO = names(sh('bash', 'set -o').stdout);
+  const bashShopt = names(sh('bash', 'shopt').stdout);
+  const zshSetO = names(sh('zsh', 'set -o').stdout);
+  const dashSetO = names(sh('dash', 'set -o').stdout);
+  assert.ok(bashSetO.size > 20 && bashShopt.size > 40 && zshSetO.size > 150 && dashSetO.size > 10, 'the shells list their options');
+  // every set -o entry is an option of bash, zsh or dash, every shopt entry one of bash, each with a reason
+  for (const [name, why] of Object.entries(INERT_OPTIONS.set)) {
+    assert.ok(typeof why === 'string' && why.length >= 10 && !/\u2014/.test(why) && !why.includes('\n'), `${name}: a one-line reason`);
+    assert.ok(lists(bashSetO, norm(name)) || lists(zshSetO, norm(name)) || lists(dashSetO, norm(name)), `${name}: an option of bash, zsh or dash on this box`);
+  }
+  for (const [name, why] of Object.entries(INERT_OPTIONS.shopt)) {
+    assert.ok(typeof why === 'string' && why.length >= 10 && !/\u2014/.test(why) && !why.includes('\n'), `${name}: a one-line reason`);
+    assert.ok(bashShopt.has(norm(name)), `${name}: a shopt option of bash on this box`);
+  }
+  // the eleven and the criterion's other removals are off the tables
+  for (const name of ['noglob', 'nomatch', 'badpattern', 'numericglobsort', 'markdirs', 'cdsilent', 'pushdsilent', 'pushdignoredups', 'pushdminus', 'keyword', 'histexpand', 'shwordsplit', 'ksharrays', 'histsubstpattern', 'correct', 'correctall', 'shortloops', 'localpatterns', 'multibyte']) assert.ok(!(name in INERT_OPTIONS.set), `${name} is off the set -o table`);
+  for (const name of ['extquote', 'nocasematch', 'patsubreplacement', 'compat31', 'compat44', 'assocexpandonce', 'noexpandtranslation']) assert.ok(!(name in INERT_OPTIONS.shopt), `${name} is off the shopt table`);
+  // every letter: `set -X; set -o` against the baseline names the option the letter flips in each shell, which must be the
+  // table's option for that shell and itself on the inert table (a letter that stops the shell, -n and -t, or that a shell
+  // rejects, zsh's -b, prints nothing, and the table's word for it is held to the shell's option list)
+  const flipped = (shell, L) => {
+    // `set -X` against `set +X` (not against the default, which may already be on, as bash's hashall is)
+    const on = sh(shell, `set -${L} 2>/dev/null || exit 9; set -o`);
+    const off = sh(shell, `set +${L} 2>/dev/null || exit 9; set -o`);
+    if (on.status === 9 || off.status === 9 || !on.stdout || !off.stdout) return null;
+    const a = names(on.stdout);
+    const b = names(off.stdout);
+    return [...a].filter(([n, state]) => b.get(n) !== state).map(([n]) => n).sort();
+  };
+  for (const [L, spec] of Object.entries(INERT_OPTIONS.letters)) {
+    assert.ok(typeof spec.why === 'string' && spec.why.length >= 10 && !/\u2014/.test(spec.why), `-${L}: a one-line reason`);
+    for (const shell of ['bash', 'zsh']) {
+      const want = spec[shell];
+      const got = flipped(shell, L);
+      if (got == null) { assert.ok(want == null || lists(shell === 'bash' ? bashSetO : zshSetO, norm(want)), `-${L} in ${shell}: the letter stops or is refused by the shell, and the table's option is one the shell lists`); continue; }
+      assert.deepEqual(got, want == null ? [] : [norm(want)], `-${L} in ${shell} flips exactly the table's option`);
+      if (want != null) assert.ok(norm(want) in INERT_OPTIONS.set, `-${L} in ${shell}: ${want} is itself on the inert table`);
+    }
+  }
+  for (const L of 'fkEHFyPTwBJNDGI') assert.ok(!(L in INERT_OPTIONS.letters), `-${L} is off the letter table`);
+  // the options taken off refuse the later relative write (fail closed) and the absolute untracked twin keeps its verdict
+  const UNKNOWN = /the directory it is relative to is not known/;
+  const OPTION = /sets a shell option that may make the shell resolve paths physically/;
+  for (const pre of ['set -f', 'set -o noglob', 'setopt noglob', 'setopt nomatch', 'setopt badpattern', 'setopt numericglobsort', 'setopt markdirs', 'setopt cdsilent', 'setopt pushdsilent', 'setopt pushdignoredups', 'setopt pushdminus', 'shopt -s extquote',
+    'set -k', 'set -o keyword', 'set -E', 'set -H', 'set -F', 'set -y', 'setopt ksharrays', 'setopt histsubstpattern', 'shopt -s nocasematch', 'shopt -s patsub_replacement']) {
+    const reason = evaluate(payload(`${pre}; cp base/report.md docs/other.md`));
+    assert.ok(reason && UNKNOWN.test(reason) && OPTION.test(reason) && reason.includes(pre.split(' ').slice(0, 2).join(' ')), `${pre} refuses the later relative write, naming the construct: ${reason}`);
+    assert.equal(evaluate(payload(`${pre}; cp ${proj}/base/report.md ${proj}/docs/other.md`)), null, `${pre}: the absolute untracked twin keeps its verdict`);
+    assert.match(evaluate(payload(`${pre}; cp ${proj}/base/report.md ${proj}/docs/report.md`)), /^Track-changes is ON for /, `${pre}: the absolute tracked twin is refused by name`);
+  }
+  // bash's keyword mode, measured: `set -k` makes a trailing X=1 an assignment, so cp gets two operands and writes the
+  // tracked file; the guard reads the operands both ways and refuses; the twin onto an untracked absolute path passes
+  const kw = 'set -k; cp base/report.md docs/report.md X=1';
+  assert.equal(overwrites(kw, report).changed, true, 'set -k: real bash writes the tracked file through a cp the guard read as writing nothing');
+  assert.equal(overwrites('cp base/report.md docs/report.md X=1', report).changed, false, 'without -k the third operand makes cp fail');
+  assert.equal(runHook(kw).status, 2, 'the hook refuses it');
+  assert.match(evaluate(payload(`set -k; cp ${proj}/base/report.md ${proj}/docs/report.md X=1`)), /^Track-changes is ON for /, 'the absolute spelling is refused by name under the keyword reading');
+  assert.equal(evaluate(payload(`set -k; cp ${proj}/base/report.md ${proj}/docs/other.md X=1`)), null, 'the untracked absolute twin passes');
+  assert.equal(evaluate(payload(`set -e; cp ${proj}/base/report.md ${proj}/docs/report.md X=1`)), null, 'without keyword mode the third operand is an operand and cp writes nothing');
+});
+
+test('B1 an alias made in the command puts the project its SOURCE lies in in play from any cwd: cp -s, a hard ln, cp -l, link and an ln -s with a substituted source each refuse a write through the alias from a cwd in no project; the twins whose source lies outside every project are allowed; real bash overwrites the tracked note through the alias and the hook refuses', () => {
+  const out = outsideDir();
+  try {
+    const seed = path.join(proj, 'notes', 'seed.md');
+    fs.writeFileSync(seed, 'a tracked note\n');
+    fs.writeFileSync(path.join(out, 'plain.md'), 'plain\n');
+    const rows = [
+      [`cp -s ${seed} ${out}/s-alias && printf poison > ${out}/s-alias`, /an earlier `cp -l` in the same command linked/],        // the matrix's rows 2807, 2810, 2811, 2813, 2882, 2910
+      [`ln ${seed} ${out}/h3 && printf poison > ${out}/h3`, /an earlier `ln` in the same command linked/],
+      [`cp -l ${seed} ${out}/h4 && printf poison > ${out}/h4`, /an earlier `cp -l` in the same command linked/],
+      [`cp -s ${seed} ${out}/s-alias; printf poison > ${out}/s-alias`, /an earlier `cp -l` in the same command linked/],
+      [`ln -s "$(printf '${proj}/notes')" ${out}/lnk4 && printf poison > ${out}/lnk4/rep.md`, /an earlier `ln -s` in the same command linked .* to a source I cannot read/],
+      [`link ${seed} ${out}/h7 && printf poison > ${out}/h7`, /an earlier `link` in the same command linked/],
+      [`ln -t ${out} ${seed} && printf poison > ${out}/seed.md`, /an earlier `ln` in the same command linked/],
+      [`cp -l ${seed} ${out}/ && cat base/report.md > ${out}/seed.md`, /an earlier `cp -l` in the same command linked/],
+    ];
+    for (const [cmd, why] of rows) {
+      const reason = evaluate(payload(cmd, out));
+      assert.ok(reason && why.test(reason), `refused from a cwd in no project: ${cmd}: ${reason}`);
+      if (!/cannot read/.test(reason)) assert.ok(reason.includes(proj), `names the project the source lies in: ${reason}`);
+      assert.ok(!/\u2014/.test(reason) && !ROMP_NOUNS.test(reason.split(proj).join('<p>').split(out).join('<o>')), 'no em dash, no romp noun');
+    }
+    // the twins: the source outside every project, the alias outside every project
+    for (const cmd of [`cp -s ${out}/plain.md ${out}/s2 && printf poison > ${out}/s2`, `ln ${out}/plain.md ${out}/h5 && printf poison > ${out}/h5`, `cp -l ${out}/plain.md ${out}/h6 && printf poison > ${out}/h6`, `link ${out}/plain.md ${out}/h8 && printf poison > ${out}/h8`, `ln -s ${out} ${out}/lnk5 && printf poison > ${out}/lnk5/rep.md`, `ln -t ${out} ${out}/plain.md && printf poison > ${out}/plain.md`]) {
+      assert.equal(evaluate(payload(cmd, out)), null, `a source outside every project: allowed: ${cmd}`);
+    }
+    assert.equal(evaluate(payload(`cp -s ${seed} ${out}/s-alias && printf poison > ${out}/other.md`, out)), null, 'a write NOT through the alias is judged as ever');
+    // the grammar: the record carries the alias and its source
+    const u = extractWriteTargets(`cp -s ${seed} ${out}/s-alias && printf poison > ${out}/s-alias`, out).unresolved;
+    assert.deepEqual(u.map((x) => [x.why.kind, x.why.alias, x.why.source]), [['mutated', true, seed]]);
+    assert.equal(extractWriteTargets(`ln -s "$SRC" ${out}/l && printf poison > ${out}/l/x.md`, out).unresolved[0].why.source, null, 'a source the guard cannot read is recorded as none');
+    assert.equal(extractWriteTargets(`rm -f ${out}/x.md && printf poison > ${out}/x.md`, out).unresolved[0].why.alias, false, 'a remove aliases nothing');
+    // real bash: the alias carries the write onto the tracked note; the hook refuses
+    for (const cmd of [rows[0][0], rows[1][0], rows[2][0], rows[5][0]]) {
+      const ov = overwrites(cmd, seed, out);
+      assert.equal(ov.changed, true, `overwrites the tracked note in real bash from a cwd in no project: ${cmd}`);
+      for (const a of ['s-alias', 'h3', 'h4', 'h7']) fs.rmSync(path.join(out, a), { force: true });
+      assert.equal(runHook(cmd, out).status, 2, `and the hook refuses it: ${cmd}`);
+    }
+    const ovz = overwrites(rows[0][0], seed, out, 'zsh');
+    assert.equal(ovz.changed, true, 'and in real zsh');
+    fs.rmSync(path.join(out, 's-alias'), { force: true });
+    assert.equal(fs.readFileSync(seed, 'utf8'), 'a tracked note\n');
+  } finally { fs.rmSync(out, { recursive: true, force: true }); }
+});
+
 // ── the false-refusal corpus: ordinary developer commands and the known false refusals, pinned both ways ──
 //
 // tools/romp-track-bash-guard-corpus.json lists more than 80 ordinary developer commands (git, tests, builds, reads, cd
@@ -2530,7 +2891,7 @@ test('the corpus (tools/romp-track-bash-guard-corpus.json): more than 80 ordinar
       if (reason) assert.ok(!/\u2014/.test(reason) && !ROMP_NOUNS.test(reason.split(proj).join('<p>').split(B).join('<b>')), `no em dash, no romp noun: ${e.command}`);
     }
     assert.deepEqual(got, want);
-    const since = CORPUS.filter((e) => e.since === 'third pass');
-    assert.ok(since.every((e) => e.verdict === 'refuse' && e.remedy), 'each entry the third pass added to the cost is refused and names its remedy');
+    const since = CORPUS.filter((e) => e.since);
+    assert.ok(since.length >= 5 && since.every((e) => e.kind === 'cost' && e.verdict === 'refuse' && e.remedy), 'each entry a pass added to the cost is refused and names its remedy');
   } finally { process.env.HOME = savedHome; fs.rmSync(B, { recursive: true, force: true }); }
 });

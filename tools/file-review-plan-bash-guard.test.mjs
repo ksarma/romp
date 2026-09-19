@@ -61,7 +61,8 @@ test('decision 47 names the hook, and the hook reads every verb, redirection and
     assert.ok(d47.includes(`\`${op}\``), `decision 47 names the ${op} redirection`);
     assert.ok(hook.includes(`'${op}'`), `WRITE_REDIRECTS holds ${op}`);
   }
-  assert.ok(/const WRITE_REDIRECTS = new Set\(\['>', '>>', '>\|', '&>', '&>>', '>&', '<>'\]\)/.test(hook));
+  // the fifth commit (2026-09-19, M2): zsh's clobber-override suffixes and `>>&` are write redirections under their own operator
+  assert.ok(/const WRITE_REDIRECTS = new Set\(\['>', '>>', '>\|', '&>', '&>>', '>&', '<>', '>!', '>>!', '>>\|', '>&!', '>&\|', '>>&', '>>&!', '>>&\|', '&>!', '&>\|', '&>>!', '&>>\|'\]\)/.test(hook));
   assert.ok(d47.includes('descriptor-prefixed redirection'));
   assert.ok(/\/\^\[0-9\]\+\$\/\.test\(buf\)/.test(hook), 'the lexer drops a digits-only word glued to < or > as the descriptor');
   assert.ok(d47.includes('a literal path a python or node inline script opens with a write mode'));
@@ -246,9 +247,11 @@ test('the best-effort contract and its unmodelled-writer list are stated identic
   const norm = (s) => s.replace(/\/\//g, ' ').replace(/\s+/g, ' ').toLowerCase();
   // the whole paragraph, since the third pass (2026-09-19): the contract sentence, the allow-by-default sentence, the
   // sentence that says what IS refused, and the writer list (which gained the unlisted wrappers, shuf -o, the scripts the
-  // shell reads from elsewhere and a cd through CDPATH the three passes found)
-  const CONTRACT_PARAGRAPH = 'this guard is best-effort against known write forms: it refuses the shell writes it models and, by design, allows anything it does not recognise, so it never blocks ordinary work it cannot read; it is a backstop, not a complete boundary. the allow-by-default for an unmodelled writer is deliberately not flipped, since flipping it would refuse almost all normal work. what it does refuse, while a tracked project is in play, is a write it reads but cannot place: a target it cannot read, a path it cannot check (a stat error other than not-found), an option on a modelled writer or wrapper it does not parse in full, an env -s string, a shell option it does not know to be inert for paths, a link whose source it cannot read, and a `~` or `$home` write beside a mention of home. ';
-  const LIST = 'these write forms are not modelled and still reach a tracked file: rsync; awk with a redirect inside its program; ed; ex; make; find with -delete or -exec; a git subcommand that writes the working tree (checkout, stash, apply, reset, rm, clean, mv); a computed path inside an interpreter (python3 -c, node -e); a script the shell reads from elsewhere (eval, xargs, a sourced file, trap, a command whose name is an expansion, a script held in a variable); a wrapper outside the guard\'s set (unshare, nsenter, script, setarch, setpriv); shuf -o; a cd through cdpath; and a leading opaque expansion from a cwd outside every project.';
+  // shell reads from elsewhere and a cd through CDPATH the three passes found; the fifth commit added the variable name
+  // the shell fills in, the template path and the alias to the refused sentence, and the interpreter's computed forms,
+  // the unbounded wrapper class and a link made by an unmodelled writer to the list)
+  const CONTRACT_PARAGRAPH = 'this guard is best-effort against known write forms: it refuses the shell writes it models and, by design, allows anything it does not recognise, so it never blocks ordinary work it cannot read; it is a backstop, not a complete boundary. the allow-by-default for an unmodelled writer is deliberately not flipped, since flipping it would refuse almost all normal work. what it does refuse, while a tracked project is in play, is a write it reads but cannot place: a target it cannot read, a path it cannot check (a stat error other than not-found), an option on a modelled writer or wrapper it does not parse in full, an env -s string, a shell option it does not know to be inert for paths, a link whose source it cannot read, a `~` or `$home` write beside a mention of home or beside a variable name the shell fills in, a template or format string as an interpreter\'s write path, and, from any working directory, a write through an alias the command makes (a hard link, `cp -l`, `cp -s`, `link`, a link whose source it cannot read) whose source lies in a tracked project or is one it cannot read. ';
+  const LIST = 'these write forms are not modelled and still reach a tracked file: rsync; awk with a redirect inside its program; ed; ex; make; find with -delete or -exec; a git subcommand that writes the working tree (checkout, stash, apply, reset, rm, clean, mv); a computed path inside an interpreter (a name, sys.argv, os.environ or process.env in python3 -c or node -e); a script the shell reads from elsewhere (eval, xargs, a sourced file, trap, a command whose name is an expansion, a script held in a variable); a command that runs another command and is outside the guard\'s wrapper set (unshare, nsenter, script, setarch, setpriv, strace, coproc and their kin); a link made by a writer outside the model (python, tar, rsync) that a later modelled write follows; shuf -o; a cd through cdpath; and a leading opaque expansion from a cwd outside every project.';
   const CONTRACT = 'best-effort against known write forms';
   const surfaces = {
     'hook header': read('hooks', 'romp-track-bash-guard.mjs'),
@@ -291,6 +294,20 @@ test('decision 47 records the walk-around lens second pass, each family tied to 
   assert.ok(!/\u2014/.test(d47), 'no em dash in decision 47');
 });
 
+// The fifth commit (2026-09-19): decision 47 records the fourth pass's misses closed as rules on visible constructs, each
+// tied to the hook function that implements it, so a rule dropped from the code fails here by name.
+test('decision 47 records the fifth commit, each item tied to its hook function', () => {
+  assert.ok(d47.includes('The fifth commit (2026-09-19)'));
+  assert.ok(d47.includes('`trackEditLine`') && hook.includes('const shellQuote = (s) =>') && hook.includes('const trackEditLine = (file) =>'), 'M6: the remedy line is single-quoted');
+  assert.ok(d47.includes('`assembledNameOperand`') && hook.includes('function assembledNameOperand(segments)') && hook.includes('function homeUnreadableWhy(segments)'), 'M1: a variable name the shell fills in');
+  assert.ok(d47.includes('`clobberSuffix`') && hook.includes('const clobberSuffix = (op) =>'), "M2: zsh's clobber-override suffixes");
+  assert.ok(d47.includes('`aliasSourceInPlay`') && hook.includes('function aliasSourceInPlay(why, memo)') && hook.includes('return { targets, opaque: opaque || sawOpaqueCommand, unresolved, links };'), 'M3 and B1: the links returned, the alias source asked');
+  assert.ok(d47.includes('`scriptTemplateTargets`') && hook.includes('export function scriptTemplateTargets(kind, text)') && hook.includes("kind: 'templatePath'"), 'M4: a template path is unreadable');
+  assert.ok(!hook.includes("!/[{}$]/.test(p)"), 'M4: the literal-path filter is gone');
+  assert.ok(d47.includes('THE CRITERION') && hook.includes('export const INERT_OPTIONS = ') && hook.includes('const INERT_SET_LETTERS_WHY = {') && hook.includes('function setsKeywordMode(name, args)'), 'M5: the inert tables carry their criterion');
+  assert.ok(!/\u2014/.test(d47), 'no em dash in decision 47');
+});
+
 // The walk-around lens third pass (2026-09-19): decision 47 records the six rules re-keyed on what the guard can see,
 // each tied to the hook function or table that implements it, and the hook header carries the audit of the lists that
 // remain with the side each list's gap falls on; a rule dropped from the code, or a list added without its gap stated,
@@ -306,7 +323,7 @@ test('decision 47 records the walk-around lens third pass, each rule tied to its
   assert.ok(hook.includes('for (const c of cmd.chdirs) {'), 'a nested chdir composes');
   assert.ok(!hook.includes('PREFIX_OPERANDS') && !hook.includes('PREFIX_LEAD_OPERANDS'), 'the operand lists are gone with the tables');
   // (c) the non-literal link source
-  assert.ok(d47.includes('NON-LITERAL LINK SOURCE') && hook.includes("markMutated(dstAbs, 'ln -s')"));
+  assert.ok(d47.includes('NON-LITERAL LINK SOURCE') && hook.includes("markMutated(dstAbs, 'ln -s', { alias: true })"), 'a non-literal link source marks the name, and since the fifth commit records that it aliases a source the guard cannot read (B1)');
   // (d) the shell-option allowlist
   assert.ok(d47.includes('SHELL OPTIONS, AN ALLOWLIST') && hook.includes('function shellOptionChange(name, args)') && hook.includes('const INERT_SET_LETTERS = ') && hook.includes('const INERT_SET_OPTIONS = new Set([') && hook.includes('const INERT_SHOPT = new Set(['));
   assert.ok(!hook.includes('physicalMode'), 'the physical-option enumeration is gone');

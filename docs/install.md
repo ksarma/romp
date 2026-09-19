@@ -177,11 +177,12 @@ the clone updates it:
   env -C b` enters a then b under a, `env -S` and sudo's `-e`, `-i`, `-s`, `-R` and `-h` are refused
   outright, and `time -o FILE` is a write of FILE; an `ln -s` whose source is not literal makes the
   link name unknown, so a later write through it refuses; a `set`, `shopt`, `setopt` or `unsetopt`
-  option not on the inert allowlist (`set -e`, `-u`, `-x`, `-v`, `-f`, `-n`, `-C`, `-o errexit`,
-  `nounset`, `pipefail`, `xtrace`, `verbose`, `noclobber`, `noglob`, and the options about history,
-  completion, prompts and job control pass; anything about cd, physical paths, links, globbing, brace
-  expansion, aliases, quoting or POSIX mode, `set -P`, `set -o chaselinks`, `shopt -s globstar`, does
-  not) leaves the directory unknown, so a later relative write refuses (spell the target absolutely);
+  option not on the inert allowlist (`set -e`, `-u`, `-x`, `-v`, `-n`, `-C`, `-o errexit`, `nounset`,
+  `pipefail`, `xtrace`, `verbose`, `noclobber`, and the options about history recording, completion,
+  prompts and job control pass; anything that changes how a word is expanded, matched or split, where a
+  relative path resolves, or which grammar is in force, `set -f`, `noglob`, `set -P`, `set -o
+  chaselinks`, `shopt -s globstar`, `set -k`, does not) leaves the directory unknown, so a later
+  relative write refuses (spell the target absolutely);
   the parent-prefix rule finds a tracked project at any depth under the literal head, so
   `../../$x/docs/report.md` refuses when `$x` could spell the way down to one; an option a writer's
   table does not know (`cp --targ`) refuses wherever the writer is reached, its operands judged by
@@ -190,21 +191,44 @@ the clone updates it:
   `tools/romp-track-bash-guard-corpus.json` (164 ordinary developer commands stay allowed; the
   refusals added are a `~/` write beside a mention of HOME, an `env -S` line, a relative write after
   `shopt -s globstar`, a write through a link whose source is a variable, and a variable-named file in
-  a folder with a tracked project anywhere beneath it). This guard is best-effort against known write
-  forms: it refuses the shell writes it models and, by design, allows anything it does not recognise,
-  so it never blocks ordinary work it cannot read; it is a backstop, not a complete boundary. The
-  allow-by-default for an unmodelled writer is deliberately not flipped, since flipping it would
-  refuse almost all normal work. What it does refuse, while a tracked project is in play, is a write
-  it reads but cannot place: a target it cannot read, a path it cannot check (a stat error other than
-  not-found), an option on a modelled writer or wrapper it does not parse in full, an env -S string,
-  a shell option it does not know to be inert for paths, a link whose source it cannot read, and a
-  `~` or `$HOME` write beside a mention of HOME. These write forms are not modelled and still reach a
-  tracked file: rsync; awk with a redirect inside its program; ed; ex; make; find with -delete or
-  -exec; a git subcommand that writes the working tree (checkout, stash, apply, reset, rm, clean,
-  mv); a computed path inside an interpreter (python3 -c, node -e); a script the shell reads from
-  elsewhere (eval, xargs, a sourced file, trap, a command whose name is an expansion, a script held
-  in a variable); a wrapper outside the guard's set (unshare, nsenter, script, setarch, setpriv);
-  shuf -o; a cd through CDPATH; and a leading opaque expansion from a cwd outside every project. If
+  a folder with a tracked project anywhere beneath it). The fifth commit (2026-09-19) closed what a
+  fourth attack found, each keyed on a visible construct: a variable name the shell fills in on an
+  assignment, declaration, nameref, export, typeset, local, readonly, read, mapfile, getopts, unset,
+  `printf -v`, `let` or `(( ))` (`export ${h}${m}=...`, `declare -n r=${h}${m}`, `read -r "$(printf
+  HOME)"`) makes `~` and `$HOME` unreadable, since a name the guard cannot read may be HOME; zsh's
+  clobber-override redirections (`>!`, `>>!`, `&>!`, `>>|` and their kin, spaced or glued) are
+  writes, judged in both shells' readings; a link the command makes is followed into a numeric
+  name's folder too, and one whose source is not literal refuses a numeric write through it; a
+  python or node path that is a plain string is judged by its text whatever it holds (a `$` is
+  text), while one built from an f-string, `.format(`, `%` or a template literal with `${}` is
+  refused as unreadable; a hard link, `cp -l`, `cp -s`, `link` or a link whose source is not literal
+  puts the project its SOURCE lies in in play from any working directory, and one whose source the
+  guard cannot read refuses from any; the inert shell-option lists carry their criterion (an option
+  is inert only if it changes neither how a word is expanded, matched or split, nor where a relative
+  path resolves, nor which grammar is in force; `set -f`, `noglob`, `nomatch`, `markdirs`,
+  `cdsilent`, `pushdminus`, `extquote`, `set -k` and their kin are off them, and bash's `set -k` is
+  read both ways); and the remedy line quotes its `--file` path in single quotes, so a path holding
+  a `$` pastes back unchanged. This guard is best-effort against known write forms: it refuses the
+  shell writes it models and, by design, allows anything it does not recognise, so it never blocks
+  ordinary work it cannot read; it is a backstop, not a complete boundary. The allow-by-default for
+  an unmodelled writer is deliberately not flipped, since flipping it would refuse almost all normal
+  work. What it does refuse, while a tracked project is in play, is a write it reads but cannot
+  place: a target it cannot read, a path it cannot check (a stat error other than not-found), an
+  option on a modelled writer or wrapper it does not parse in full, an env -S string, a shell option
+  it does not know to be inert for paths, a link whose source it cannot read, a `~` or `$HOME` write
+  beside a mention of HOME or beside a variable name the shell fills in, a template or format string
+  as an interpreter's write path, and, from any working directory, a write through an alias the
+  command makes (a hard link, `cp -l`, `cp -s`, `link`, a link whose source it cannot read) whose
+  source lies in a tracked project or is one it cannot read. These write forms are not modelled and
+  still reach a tracked file: rsync; awk with a redirect inside its program; ed; ex; make; find with
+  -delete or -exec; a git subcommand that writes the working tree (checkout, stash, apply, reset,
+  rm, clean, mv); a computed path inside an interpreter (a name, sys.argv, os.environ or process.env
+  in python3 -c or node -e); a script the shell reads from elsewhere (eval, xargs, a sourced file,
+  trap, a command whose name is an expansion, a script held in a variable); a command that runs
+  another command and is outside the guard's wrapper set (unshare, nsenter, script, setarch,
+  setpriv, strace, coproc and their kin); a link made by a writer outside the model (python, tar,
+  rsync) that a later modelled write follows; shuf -o; a cd through CDPATH; and a leading opaque
+  expansion from a cwd outside every project. If
   you had installed track-changents yourself, the installer re-points
   those links at the bundled copy, which carries fixes the checkout lacks, and says so.
 

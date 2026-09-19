@@ -25,8 +25,10 @@
 // a tracked file does not carry a write past it. A read-only command (cat, grep, diff, git) names no
 // write target and passes. A command the extraction cannot see through (eval, xargs, a script held
 // in a variable) passes too: never a silent block of ordinary work. So does a python or node
-// one-liner whose write path is computed (a name, an f-string, `sys.argv`, `os.environ`,
-// `process.env`): the interpreter scan reads a literal path only, and a scan that flagged a computed
+// one-liner whose write path is computed (a name, `sys.argv`, `os.environ`, `process.env`): the
+// interpreter scan reads a literal path (by its text, whatever characters it holds, since the fifth
+// commit) and, since that commit, refuses a template or format string (an f-string, `.format(`, `%`,
+// a template literal with `${`) as a path it can see is filled in; a scan that flagged a computed
 // one would refuse ordinary scripting and still miss the common forms (review round 1, 2026-09-18,
 // by execution); the vendored skill tells the session not to write a tracked file that way. A write
 // whose TARGET it cannot read is refused, though, while a tracked project is in play (2026-09-18; a
@@ -88,9 +90,10 @@
 // expansion cancelled by a `..` (`<out>/$$/../x.md`) is not narrowed, since such a segment could be
 // empty at run time were the set ever widened, and the shell would climb one level higher than the
 // fold. Two things this rule does not see, stated: a link the same command creates under or after the
-// numeric segment (the pid-candidate scan reads only entries that exist when the hook runs; the class-H
-// rewrite that DOES follow a same-command `ln -s` with literal operands and an untouched name, below,
-// runs for a literal target, not for the numeric candidate scan), and an entry named by the process id in a folder OUTSIDE every project
+// numeric segment (the pid-candidate scan reads only entries that exist when the hook runs; a same-command
+// `ln -s` with literal operands and an untouched name BEFORE the numeric segment, in the literal directory
+// part, IS followed since the fifth commit, M3, evaluate holding the command's links while it places the
+// target), and an entry named by the process id in a folder OUTSIDE every project
 // that holds more than 2000 entries, which is not listed (a fail-closed cap there would refuse every
 // temp log in a large `/tmp` from a tracked cwd, round 1's false refusal; this box's `/tmp` held 2767
 // entries when measured on 2026-09-19). A variable of unknown content, a substitution and a bare
@@ -195,10 +198,12 @@
 // (c) NON-LITERAL LINK SOURCE: a symbolic link whose source the guard cannot read or place marks the link NAME as mutated,
 // so a later write through it refuses (recordSymlink); class H keeps only a literal source it can place. (d) SHELL
 // OPTIONS, AN ALLOWLIST: an option on `set`, `shopt`, `setopt` or `unsetopt` that is not on the inert lists
-// (INERT_SET_LETTERS, INERT_SET_OPTIONS, INERT_SHOPT: exit status, tracing, history, completion, prompts, job control
-// and syntax choices that move no path, built from the shells' own option lists) leaves the directory unknown from that
-// point (shellOptionChange); every option about cd, pushd, physical paths, links, globbing, brace expansion, aliases,
-// quoting, restricted or POSIX mode is off the lists. (e) ANY DEPTH: the parent-prefix rule finds every tracked root
+// (INERT_SET_LETTERS, INERT_SET_OPTIONS, INERT_SHOPT: exit status, tracing, history recording, completion, prompts, job
+// control and syntax choices that move no path, built from the shells' own option lists) leaves the directory unknown from
+// that point (shellOptionChange); since the fifth commit every entry is decided by THE CRITERION stated at the tables
+// (nothing that changes how a word is expanded, matched or split, where a relative path resolves, or which grammar is in
+// force), which took `-f`, `noglob`, `nomatch`, `markdirs`, `cdsilent`, `pushdminus`, `extquote`, `set -k` and their kin
+// off. (e) ANY DEPTH: the parent-prefix rule finds every tracked root
 // under the literal head at any depth (parentTrackedRoots, breadth-first, PARENT_SCAN_BUDGET). (f) UNKNOWN OPTION REFUSES
 // EVERYWHERE: an option a writer's table does not know refuses on every path the writer is reached through, each
 // candidate operand judged by its own project from any cwd (optionCandidates), and the mutation and symlink recorders
@@ -208,6 +213,41 @@
 // relative write after `shopt -s globstar`, a write through a link whose source is a variable, and a variable-named
 // file in a folder that holds a tracked project at any depth beneath it, each from a cwd in play (the last from any).
 //
+// THE FIFTH COMMIT (2026-09-19, the reviewer's ruling on the fourth pass, whose three attackers and literal-dollar
+// matrix ran against the head with the six rules) closed six misses and settled a boundary question, each keyed on a
+// visible construct and never on a spelling. M6, first: 576 of the matrix's refusals put a shell-live `$` inside the
+// double quotes of the remedy's `--file "..."`, so the pasted line named another file in bash and a third in zsh; the
+// argument is single-quoted (shellQuote, trackEditLine), pinned by a paste through real bash and real zsh. M1: rule (a)
+// keyed on the literal identifier, and a variable NAME assembled from expansions or spelled by a substitution (`export
+// ${h}${m}=...`, `declare -n r=${h}${m}`, `printf -v "${h}${m}"`, `typeset ${h}${m}=`, `read ${h}${m}`, `export
+// "$(printf 'HOME=...')"`, `read -r "$(printf HOME)"`) reassigned HOME with no literal token; now a name operand that is
+// not a literal identifier on any assignment, declaration, nameref, export, typeset, local, readonly, read, mapfile,
+// getopts, unset or `printf -v`, or an expansion in lvalue position of a `let` or `(( ))`, marks every expanded name
+// unreadable for the whole command and a bare `cd` or `cd ~` unknown (assembledNameOperand, homeUnreadableWhy); a
+// literal name other than an expanded one and a read-only twin change nothing. M2: the redirection lexer did not consume
+// zsh's clobber-override `!` after `>`, `>>`, `&>` and `&>>`, so the tracked file became a plain argument and zsh
+// clobbered it; the lexer now consumes `!` and `|` after `>`, `>>`, `>&`, `>>&`, `&>` and `&>>` (clobberSuffix,
+// WRITE_REDIRECTS), records the operator as spelled, and records bash's reading beside zsh's where they differ. M3: a
+// class-H link with literal operands made BEFORE a numeric segment, in the literal directory part of a numeric target,
+// was neither followed nor refused (applyInCommandLinks ran on the literal fold, and the numeric view resolved the
+// directory through a filesystem where the link did not yet exist); extract now returns the command's links and evaluate
+// follows them while it places the targets it could not read, and a numeric or opaque word under a prefix an earlier
+// command mutated is refused with the family-3 reason (mutatedUnderLiteralPart). M4: the interpreter scan dropped every
+// literal path matching `[{}$]` and the node classes excluded `$`, so a literal path in a tracked folder holding a
+// dollar was never judged; a `$` in a plain string is text, so the path is kept and judged by name, and a template or
+// format string (an f-string, `.format(`, `%`, a template literal with `${`) is unreadable and refuses while a project
+// is in play (scanScript, scriptTemplateTargets), while a computed path stays out of model by the contract. M5: eleven
+// options sat on the inert lists against the rule; the lists now carry THE CRITERION (at INERT_SET_LETTERS_WHY) and
+// every entry its reason, the eleven and what the criterion took off with them are gone, and bash's `set -k`, measured
+// writing a tracked file through a `cp` the guard read as writing nothing, is read both ways (setsKeywordMode). B1
+// (ruled yes): a recorded alias (a hard link, `cp -l`, `cp -s`, `link`, a symbolic link whose source the guard cannot
+// read) carries its source, and the in-play question for a write through it is asked of where the write LANDS, from any
+// cwd (aliasSourceInPlay): a source in a tracked project puts that project in play, a source the guard cannot read
+// refuses from any cwd, a source outside every project is allowed. The costs, measured against
+// tools/romp-track-bash-guard-corpus.json (none of the 164 ordinary commands newly refuses): a `~/` write beside a
+// `printf -v "$name"`, a relative write after `set -f` or `shopt -s nocasematch`, an f-string path from a tracked cwd,
+// and a write through a link whose source is a substitution from a cwd in no project.
+//
 // THE LISTS THAT REMAIN, each with the side its GAP falls on (a missing entry causes a false refusal, or a write):
 //   PREFIXES (the wrapper set): gap = a WRITE (an unlisted wrapper is read as its own command, an unmodelled writer by
 //     the contract), so the set is stated on the four surfaces and the unlisted wrappers the passes found (unshare,
@@ -215,7 +255,7 @@
 //   WRAPPER_OPT (each wrapper's option table): gap = a false refusal (an option not in the table refuses).
 //   COPY_OPT (cp/mv/install/ln): gap = a false refusal (an option not in the table refuses, on every path).
 //   INERT_SET_LETTERS, INERT_SET_OPTIONS, INERT_SHOPT: gap = a false refusal (an option not listed makes the directory
-//     unknown).
+//     unknown); since the fifth commit each entry is decided by THE CRITERION stated at the tables and carries its reason.
 //   EXPANDED_NAMES: gap = a WRITE only if expansionAt ever substitutes a name not listed here; today it substitutes HOME
 //     alone, and the two are one edit apart (the comment at each names the other).
 //   NUMERIC_EXPANSIONS: gap = a false refusal (an expansion not listed is unreadable).
@@ -231,18 +271,23 @@
 //
 // THE CONTRACT. This guard is best-effort against known write forms: it refuses the shell writes it models and, by
 // design, allows anything it does not recognise, so it never blocks ordinary work it cannot read; it is a backstop, not
-// a complete boundary. The allow-by-default for an unmodelled writer is deliberately not flipped, since flipping it would
-// refuse almost all normal work. What it does refuse, while a tracked project is in play, is a write it reads but cannot
-// place: a target it cannot read, a path it cannot check (a stat error other than not-found), an option on a modelled
-// writer or wrapper it does not parse in full, an env -S string, a shell option it does not know to be inert for paths,
-// a link whose source it cannot read, and a `~` or `$HOME` write beside a mention of HOME. These write forms are not
-// modelled and still reach a tracked file: rsync; awk with a redirect inside its program; ed; ex; make; find with -delete
-// or -exec; a git subcommand that writes the working tree (checkout, stash, apply, reset, rm, clean, mv); a computed path
-// inside an interpreter (python3 -c, node -e); a script the shell reads from elsewhere (eval, xargs, a sourced file, trap,
-// a command whose name is an expansion, a script held in a variable); a wrapper outside the guard's set (unshare,
-// nsenter, script, setarch, setpriv); shuf -o; a cd through CDPATH; and a leading opaque expansion from a cwd outside every
-// project. The same paragraph, and this writer list, are on the vendored SKILL.md, hooks/README.md and docs/install.md,
-// pinned identical by a test.
+// a complete boundary. The allow-by-default for an unmodelled writer is deliberately not flipped, since flipping it
+// would refuse almost all normal work. What it does refuse, while a tracked project is in play, is a write it reads but
+// cannot place: a target it cannot read, a path it cannot check (a stat error other than not-found), an option on a
+// modelled writer or wrapper it does not parse in full, an env -S string, a shell option it does not know to be inert
+// for paths, a link whose source it cannot read, a `~` or `$HOME` write beside a mention of HOME or beside a variable
+// name the shell fills in, a template or format string as an interpreter's write path, and, from any working directory,
+// a write through an alias the command makes (a hard link, `cp -l`, `cp -s`, `link`, a link whose source it cannot read)
+// whose source lies in a tracked project or is one it cannot read. These write forms are not modelled and still reach a
+// tracked file: rsync; awk with a redirect inside its program; ed; ex; make; find with -delete or -exec; a git
+// subcommand that writes the working tree (checkout, stash, apply, reset, rm, clean, mv); a computed path inside an
+// interpreter (a name, sys.argv, os.environ or process.env in python3 -c or node -e); a script the shell reads from
+// elsewhere (eval, xargs, a sourced file, trap, a command whose name is an expansion, a script held in a variable); a
+// command that runs another command and is outside the guard's wrapper set (unshare, nsenter, script, setarch, setpriv,
+// strace, coproc and their kin); a link made by a writer outside the model (python, tar, rsync) that a later modelled
+// write follows; shuf -o; a cd through CDPATH; and a leading opaque expansion from a cwd outside every project. The same
+// paragraph, and this writer list, are on the vendored SKILL.md, hooks/README.md and docs/install.md, pinned identical
+// by a test.
 
 import fs from 'node:fs';
 import os from 'node:os';
@@ -283,7 +328,14 @@ import engine from '../vendor/track-changents/engine.js';
 // when the command is more than the lexer can follow: an unterminated quote, or eval, xargs or a
 // shell -c with a script it cannot read.
 
-const WRITE_REDIRECTS = new Set(['>', '>>', '>|', '&>', '&>>', '>&', '<>']);
+// The write redirections, with zsh's clobber-override suffixes (the fifth commit, 2026-09-19, M2): zsh reads a `!` or a
+// `|` after `>`, `>>`, `>&`, `>>&`, `&>` and `&>>` as "write even under NO_CLOBBER" (`>! f`, `>>! f`, `&>! f`, `>>| f`,
+// `>&| f`, `>>&` appends both streams), and the fourth attack wrote a tracked file through `>! docs/report.md` while the
+// lexer read the `!` as the target word and the file as an argument. The lexer consumes the suffix as it consumed `>|`,
+// and records BOTH shells' readings where they differ (bash reads `>! f` as a redirection onto a file named `!` with `f`
+// an argument, and `>!f` as a redirection onto `!f`; `>>&`, `>>|`, `>&|`, `&>|` are syntax errors in bash and write
+// nothing), so a command refuses when either shell would write the tracked file.
+const WRITE_REDIRECTS = new Set(['>', '>>', '>|', '&>', '&>>', '>&', '<>', '>!', '>>!', '>>|', '>&!', '>&|', '>>&', '>>&!', '>>&|', '&>!', '&>|', '&>>!', '&>>|']);
 const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh']);
 // Command wrappers the hook peels to reach the write inside: it reads them so a write behind one is judged as if
 // spelled without it. `setsid`, `flock`, `taskset`, `chrt` and `numactl` were added in review round 4 (2026-09-19),
@@ -503,6 +555,10 @@ export function lex(command, shell = null) {
         const alts = braceExpand(buf, marks);
         if (alts) for (const [t, m] of alts) seg.redirects.push({ op: expect.op, target: mk(t, m) });
         else seg.redirects.push({ op: expect.op, target: word(buf, false, raw, { marks }) });
+        // M2: bash reads the `!` zsh consumed as the first character of the target word, so a glued `>!docs/report.md`
+        // is a write of `!docs/report.md` there (the spaced form's bash target, a file named `!`, was recorded at the
+        // operator); both readings are judged, and the refusal names the one that lands on a tracked file
+        if (expect.bang === 'glued') seg.redirects.push({ op: expect.op, target: mk('!' + buf, 'u' + marks) });
       } else if (expect.kind === 'heredoc') pendingHeredocs.push({ delim: buf, stripTabs: expect.stripTabs, owner: seg });
       else if (expect.kind === 'herestring') seg.heredocs.push(buf);
       expect = null;
@@ -718,16 +774,32 @@ export function lex(command, shell = null) {
       if (inWord && /^[0-9]+$/.test(buf) && (c === '<' || c === '>')) { buf = ''; raw = ''; marks = ''; inWord = false; }
       else endWord();
       if (c === '(' && src[i + 1] === '(') { i += 2; skipArithmetic(); continue; }   // (( ... )) compares or counts
-      if (c === '>') {
-        if (src[i + 1] === '>') { i += 2; expect = { kind: 'target', op: '>>' }; continue; }
-        if (src[i + 1] === '|') { i += 2; expect = { kind: 'target', op: '>|' }; continue; }
-        if (src[i + 1] === '&') {
-          i += 2;
-          if (/[0-9-]/.test(src[i] || '')) { while (i < src.length && /[0-9-]/.test(src[i])) i++; continue; }   // dup: 2>&1, >&-
-          expect = { kind: 'target', op: '>&' };
-          continue;
+      // A write redirection's operator, then zsh's optional clobber-override suffix (M2, the fifth commit): `!` or `|`
+      // after `>`, `>>`, `>&`, `>>&`, `&>` or `&>>`. The recorded op is the operator as spelled, so the refusal names it;
+      // with a `!` the bash reading is recorded too (a file named `!` when a space follows, `!word` when glued, see
+      // endWord), since bash does not know the suffix and the guard does not know which shell runs the line.
+      const clobberSuffix = (op) => {
+        if (src[i] === '|') { i++; return { kind: 'target', op: op + '|' }; }
+        if (src[i] === '!') {
+          i++;
+          const glued = i < src.length && !/[\s;&|()<>]/.test(src[i]);
+          if (!glued) seg.redirects.push({ op: op + '!', target: word('!', true, '!', { marks: 'u' }) });   // bash: the target is a file named `!`
+          return { kind: 'target', op: op + '!', bang: glued ? 'glued' : 'spaced' };
         }
-        i++; expect = { kind: 'target', op: '>' }; continue;
+        return { kind: 'target', op };
+      };
+      if (c === '>') {
+        let op = '>';
+        i++;
+        if (src[i] === '>') { op = '>>'; i++; }
+        if (src[i] === '&') {
+          i++;
+          // a dup (2>&1, >&-) is no write; `>& word` writes word, and zsh's `>>& word` appends both streams to it
+          if (/[0-9-]/.test(src[i] || '')) { while (i < src.length && /[0-9-]/.test(src[i])) i++; continue; }
+          op += '&';
+        }
+        expect = clobberSuffix(op);
+        continue;
       }
       if (c === '<') {
         if (src[i + 1] === '<' && src[i + 2] === '<') { i += 3; expect = { kind: 'herestring' }; continue; }
@@ -737,7 +809,7 @@ export function lex(command, shell = null) {
         i++; expect = { kind: 'data' }; continue;
       }
       if (c === '&') {
-        if (src[i + 1] === '>') { const app = src[i + 2] === '>'; i += app ? 3 : 2; expect = { kind: 'target', op: app ? '&>>' : '&>' }; continue; }
+        if (src[i + 1] === '>') { const app = src[i + 2] === '>'; i += app ? 3 : 2; expect = clobberSuffix(app ? '&>>' : '&>'); continue; }
         if (src[i + 1] === '&') { i += 2; endSegment('&&'); continue; }
         i++; endSegment('&'); continue;
       }
@@ -1297,58 +1369,143 @@ function optionCandidates(args) {
 // the guard models none of that, so an option on `set`, `shopt`, `setopt` or `unsetopt` that is not on the inert list
 // leaves the directory UNKNOWN from that point, and a later literal relative target refuses with the construct named.
 // The second pass listed `set -P`, `set -o physical` and `setopt chase_links`, and zsh's `set -o chaselinks` and
-// `set -o chasedots` walked around the list. The inert lists are built from the shells' own option lists (`set -o`
-// and `shopt` in bash 5.2, `set -o` in zsh 5.9, `set -o` in dash) and hold the options about exit status, tracing,
-// history, completion, prompts, job control, quoting-free syntax choices and the like; every option about cd, pushd,
-// physical paths, links, globbing, brace expansion, aliases, quoting, restricted or privileged mode, POSIX mode or the
-// input source is OFF the lists, so its mention makes the directory unknown. A single letter is inert only when it is
-// inert in BOTH bash and zsh (the Bash tool runs one of the two and the guard does not know which): `-e -u -x -v -n
-// -C -f -a -m -b -k -h -t -E -H` and zsh's `-F -y`; `-P` (bash physical), `-T` (zsh cdablevars), `-w` (zsh chaselinks),
-// `-B` (bash braceexpand), `-J`, `-N`, `-D`, `-G`, `-I` and the rest are not. Names are compared as zsh compares
-// them (case and underscores ignored, a `no` prefix negating), so `set -o pipe_fail`, `setopt NO_NOMATCH` and
-// `shopt -s histappend` read the same as their plain spellings. A gap here (an inert option not listed) is a false
-// refusal, recoverable in one step (drop the option, or spell the target absolutely), never a write that passes.
-const INERT_SET_LETTERS = 'euxvnCfambkhtEHFy';
-const INERT_SET_OPTIONS = new Set([
-  // bash `set -o`, all but braceexpand, physical, posix and privileged
-  'allexport', 'emacs', 'errexit', 'errtrace', 'functrace', 'hashall', 'histexpand', 'history', 'ignoreeof', 'interactivecomments',
-  'keyword', 'monitor', 'noclobber', 'noexec', 'noglob', 'nolog', 'notify', 'nounset', 'onecmd', 'pipefail', 'verbose', 'vi', 'xtrace',
-  // dash `set -o`: the rest of its list is above; `stdin` and `debug` are not inert (the input source, the debug hooks)
-  // zsh `set -o` / setopt: the error, tracing and scoping options
-  'errreturn', 'evallineno', 'localoptions', 'localtraps', 'localloops', 'localpatterns', 'warncreateglobal', 'warnnestedvar', 'typesetsilent',
-  'typesettounset', 'printexitvalue', 'printeightbit', 'continueonerror', 'debugbeforecmd', 'sourcetrace', 'trapsasync', 'singlecommand',
-  // zsh: clobbering, which the guard reads as a write either way
-  'clobber', 'clobberempty', 'appendcreate', 'histallowclobber', 'multios',
-  // zsh: history (banghist is not: history expansion rewrites later words)
-  'appendhistory', 'extendedhistory', 'histexpiredupsfirst', 'histfcntllock', 'histfindnodups', 'histignorealldups', 'histignoredups',
-  'histignorespace', 'histlexwords', 'histnofunctions', 'histnostore', 'histreduceblanks', 'histsavebycopy', 'histsavenodups',
-  'histsubstpattern', 'histverify', 'histbeep', 'incappendhistory', 'incappendhistorytime', 'sharehistory', 'cshjunkiehistory',
+// `set -o chasedots` walked around the list.
+//
+// THE CRITERION (the fifth commit, 2026-09-19; the reviewer's ruling after the fourth pass found eleven options on the
+// lists against the rule as stated: `-f`, `noglob`, `nomatch`, `badpattern`, `numericglobsort`, `markdirs`, `cdsilent`,
+// `pushdsilent`, `pushdignoredups`, `pushdminus`, `extquote`). An option earns a place on an inert list only if it
+// changes NEITHER how a word is expanded, matched or split (globbing, brace expansion, quoting, aliases, history
+// expansion, parameter and pattern substitution, field splitting, spelling correction), NOR where a relative path
+// resolves (cd, pushd, physical paths, links, CDPATH), NOR which grammar is in force (posix, restricted, sh emulation,
+// keyword assignments, short loop forms, comments). Everything else, exit status, tracing, history RECORDING, completion,
+// prompts, job control, line editing, arithmetic output, startup files, is inert. Every entry below carries the one-line
+// reason it meets the criterion, verified by reading the option's description in bash 5.2.21 (`help set`; the shopt
+// section of bash(1)), zsh 5.9 (zshoptions(1)) and dash 0.5.12 (dash(1)) on this box on 2026-09-19, and by execution
+// where the description left a doubt (`set -k` let `cp base/report.md docs/report.md X=1` write the tracked file, since
+// with keyword assignments the trailing word is an assignment, not a third operand; `histsubstpattern` changed what
+// `${v:s/?x?/report/}` expanded to; `ksharrays` changed what `$a` expanded to; `nocasematch` and `patsub_replacement`
+// changed a pattern substitution's result). An option whose description left a doubt the box could not settle is OFF
+// the list (`multibyte`, `combiningchars`, the bash `compatNN` options, `assoc_expand_once`): unverified defaults to the
+// refuse side. Applying the criterion took the eleven off and, by the same rule, twenty-six more from the `set -o` list
+// (`histexpand`, `keyword`, `localpatterns`, `histsubstpattern`, `cshjunkiehistory`, `correct`, `correctall`,
+// `sunkeyboardhack`, `combiningchars`, `multibyte`, `ksharrays`, `kshzerosubscript`, `kshtypeset`, `shortloops`,
+// `shortrepeat`, `cshjunkieloops`, `shwordsplit` and the nine of the eleven that are `set -o` names), twelve from the
+// shopt list (`assoc_expand_once`, `compat31` to `compat44`, `extquote`, `nocasematch`, `noexpand_translation`,
+// `patsub_replacement`) and six letters (`-f` bash noglob, `-k` bash keyword, `-E` zsh pushdsilent, `-H` bash histexpand,
+// `-F` zsh noglob, `-y` zsh shwordsplit). A single letter is inert only when it is inert in BOTH bash and zsh (the Bash
+// tool runs one of the two and the guard does not know which), each letter's option in each shell read off `set -X;
+// set -o` on this box. Names are compared as zsh compares them (case and underscores ignored, a `no` prefix negating),
+// so `set -o pipe_fail`, `setopt NO_NOMATCH` and `shopt -s histappend` read as their plain spellings. A gap here (an
+// inert option not listed) is a false refusal, recoverable in one step (drop the option, or spell the target
+// absolutely), never a write that passes. INERT_OPTIONS is exported for the data-driven test that holds every entry to a
+// real option of a shell on this box, a reason, and, for a letter, an inert option in both shells.
+const INERT_SET_LETTERS_WHY = {
+  e: { bash: 'errexit', zsh: 'errexit', why: 'exit on a failing command; no word or path changes' },
+  u: { bash: 'nounset', zsh: 'nounset', why: 'an unset variable is an error that stops the command; the guard reads no variable value' },
+  x: { bash: 'xtrace', zsh: 'xtrace', why: 'traces commands to stderr' },
+  v: { bash: 'verbose', zsh: 'verbose', why: 'echoes input lines to stderr' },
+  n: { bash: 'noexec', zsh: 'noexec', why: 'reads commands without running them; nothing writes' },
+  C: { bash: 'noclobber', zsh: 'noclobber', why: 'a `>` refuses to overwrite an existing file; the guard reads the redirection as a write either way' },
+  a: { bash: 'allexport', zsh: 'allexport', why: 'marks assigned variables for export; no expansion or path change' },
+  m: { bash: 'monitor', zsh: 'monitor', why: 'job control' },
+  b: { bash: 'notify', zsh: null, why: 'job-status notices in bash; zsh refuses `set -b` as an unknown option, and nothing after it changes' },
+  h: { bash: 'hashall', zsh: 'histignoredups', why: 'command-location caching in bash; history recording in zsh' },
+  t: { bash: 'onecmd', zsh: 'singlecommand', why: 'the shell exits after one command; what follows never runs' },
+};
+const INERT_SET_OPTIONS_WHY = {
+  // bash `set -o` and dash `set -o`
+  allexport: 'marks assigned variables for export', emacs: 'the line editor mode', errexit: 'exit on a failing command',
+  errtrace: 'the ERR trap is inherited by functions', functrace: 'the DEBUG and RETURN traps are inherited by functions',
+  hashall: 'command-location caching', history: 'command history is recorded', ignoreeof: 'end-of-file does not exit the shell',
+  interactivecomments: 'comments in an interactive shell; the Bash tool runs a non-interactive one, where a `#` word is a comment whichever way this is set (measured on this box)',
+  monitor: 'job control', noclobber: 'a `>` refuses to overwrite; the guard reads the redirection as a write either way',
+  noexec: 'reads commands without running them', nolog: 'accepted and ignored by bash', notify: 'job-status notices',
+  nounset: 'an unset variable is an error that stops the command', onecmd: 'the shell exits after one command',
+  pipefail: 'a pipeline\'s exit status', verbose: 'echoes input lines', vi: 'the line editor mode', xtrace: 'traces commands',
+  // zsh: errors, tracing, scoping
+  errreturn: 'return from a function on a failing command', evallineno: 'line numbers inside eval', localoptions: 'options set in a function are restored at its return',
+  localtraps: 'traps set in a function are restored at its return', localloops: 'break and continue stop at a function boundary',
+  warncreateglobal: 'a warning when a function creates a global', warnnestedvar: 'a warning when a function sets an outer variable',
+  typesetsilent: 'typeset prints nothing for an existing parameter', typesettounset: 'a declared parameter stays unset until assigned; the guard reads no declared value',
+  printexitvalue: 'prints a non-zero exit status', printeightbit: 'eight-bit characters in completion listings', continueonerror: 'a script goes on after a fatal error',
+  debugbeforecmd: 'when the DEBUG trap runs', sourcetrace: 'announces each file the shell loads', trapsasync: 'when traps run while waiting for a child',
+  singlecommand: 'the shell exits after one command',
+  // zsh: clobbering, which the guard reads as a write either way, and multiple redirections, each of which it names
+  clobber: 'whether `>` may overwrite; the redirection is read as a write either way', clobberempty: 'whether `>` may overwrite an empty file; read as a write either way',
+  appendcreate: 'whether `>>` may create under NO_CLOBBER; read as a write either way', histallowclobber: 'adds `|` to redirections in the history record',
+  multios: 'several redirections tee or cat; the guard names every target either way',
+  // zsh: history recording (banghist, history EXPANSION, is off the list: it rewrites later words)
+  appendhistory: 'the history file is appended', extendedhistory: 'timestamps in the history file', histexpiredupsfirst: 'which history entries are trimmed first',
+  histfcntllock: 'how the history file is locked', histfindnodups: 'duplicates in a history search', histignorealldups: 'duplicates dropped from the history list',
+  histignoredups: 'consecutive duplicates dropped from the history list', histignorespace: 'a line starting with a space is not recorded',
+  histlexwords: 'how a history file is split into words when READ back', histnofunctions: 'function definitions are not recorded', histnostore: 'the history command is not recorded',
+  histreduceblanks: 'blanks trimmed in the history record', histsavebycopy: 'how the history file is rewritten', histsavenodups: 'duplicates dropped when the history file is written',
+  histverify: 'a history expansion is shown before it runs', histbeep: 'a beep on a missing history entry', incappendhistory: 'history lines are appended as entered',
+  incappendhistorytime: 'history lines are appended after each command', sharehistory: 'the history file is shared between shells',
   // zsh: prompts, completion, listing and the line editor (interactive machinery)
-  'promptbang', 'promptcr', 'promptpercent', 'promptsp', 'promptsubst', 'transientrprompt', 'alwayslastprompt', 'alwaystoend', 'autolist',
-  'automenu', 'autoparamkeys', 'autoparamslash', 'autoremoveslash', 'bashautolist', 'completealiases', 'completeinword', 'listambiguous',
-  'listbeep', 'listpacked', 'listrowsfirst', 'listtypes', 'menucomplete', 'recexact', 'correct', 'correctall', 'dvorak', 'singlelinezle',
-  'zle', 'overstrike', 'sunkeyboardhack', 'flowcontrol', 'beep', 'combiningchars', 'multibyte',
+  promptbang: '`!` in prompts', promptcr: 'a carriage return before the prompt', promptpercent: '`%` in prompts', promptsp: 'a partial line before the prompt is preserved',
+  promptsubst: 'expansions in prompts', transientrprompt: 'the right prompt is removed after a line', alwayslastprompt: 'completion listings return to the prompt',
+  alwaystoend: 'the cursor after a completion', autolist: 'ambiguous completions are listed', automenu: 'menu completion after repeated tabs',
+  autoparamkeys: 'the character inserted after a completed parameter', autoparamslash: 'a slash after a completed directory parameter',
+  autoremoveslash: 'a completed slash removed before a delimiter', bashautolist: 'listing on the second completion request', completealiases: 'aliases are distinct for completion',
+  completeinword: 'completion from inside a word', listambiguous: 'when a completion list is shown', listbeep: 'a beep on an ambiguous completion',
+  listpacked: 'completion list layout', listrowsfirst: 'completion list layout', listtypes: 'file-type marks in completion listings',
+  menucomplete: 'menu completion', recexact: 'an exact completion match is accepted', dvorak: 'the keyboard layout spelling correction assumes; correction itself is off this list',
+  singlelinezle: 'single-line command editing', zle: 'the line editor is used', overstrike: 'the line editor starts in overstrike mode',
+  flowcontrol: 'start/stop characters in the line editor', beep: 'a beep on a line-editor error',
   // zsh: command hashing and job control
-  'hashcmds', 'hashdirs', 'hashexecutablesonly', 'hashlistall', 'pathdirs', 'pathscript', 'autocontinue', 'autoresume', 'bgnice',
-  'checkjobs', 'checkrunningjobs', 'hup', 'longlistjobs', 'mailwarning', 'posixjobs', 'posixtraps', 'posixargzero',
-  // zsh: syntax choices that move no path
-  'bsdecho', 'bashrematch', 'rematchpcre', 'casematch', 'cbases', 'octalzeroes', 'forcefloat', 'cprecedences', 'ksharrays',
-  'kshzerosubscript', 'kshoptionprint', 'kshtypeset', 'kshautoload', 'functionargzero', 'shortloops', 'shortrepeat', 'cshjunkieloops',
-  'cshnullcmd', 'shnullcmd', 'nomatch', 'badpattern', 'numericglobsort', 'markdirs', 'rcs', 'globalrcs', 'login', 'globalexport',
-  'shwordsplit', 'rmstarsilent', 'rmstarwait', 'cdsilent', 'pushdsilent', 'pushdignoredups', 'pushdminus',
-]);
-const INERT_SHOPT = new Set([
-  'assocexpandonce', 'checkhash', 'checkjobs', 'checkwinsize', 'cmdhist', 'compat31', 'compat32', 'compat40', 'compat41', 'compat42',
-  'compat43', 'compat44', 'completefullquote', 'execfail', 'extdebug', 'extquote', 'forcefignore', 'gnuerrfmt', 'histappend', 'histreedit',
-  'histverify', 'hostcomplete', 'huponexit', 'inheriterrexit', 'interactivecomments', 'lithist', 'localvarinherit', 'localvarunset',
-  'loginshell', 'mailwarn', 'noemptycmdcompletion', 'nocasematch', 'noexpandtranslation', 'patsubreplacement', 'progcomp', 'progcompalias',
-  'promptvars', 'shiftverbose', 'varredirclose', 'xpgecho',
-]);
+  hashcmds: 'command locations are cached', hashdirs: 'command directories are cached', hashexecutablesonly: 'only executables are cached',
+  hashlistall: 'the whole command path is hashed before completion', pathdirs: 'a command name with a slash is searched on PATH too; which binary runs, not what it writes',
+  pathscript: 'a script file named at invocation is searched on PATH', autocontinue: 'disowned stopped jobs are continued', autoresume: 'a one-word command resumes a job of that name',
+  bgnice: 'background jobs run at a lower priority', checkjobs: 'jobs are reported before exit', checkrunningjobs: 'running jobs are reported before exit',
+  hup: 'jobs get SIGHUP at exit', longlistjobs: 'the long job-notice format', mailwarning: 'a warning about a read mail file', posixjobs: 'job control in subshells',
+  posixtraps: 'EXIT traps in functions', posixargzero: '$0 keeps the invocation name',
+  // zsh: syntax choices that move no path and change no expansion
+  bsdecho: 'the echo builtin\'s escape handling', bashrematch: 'which variables a `=~` match sets', rematchpcre: 'the regex dialect of `=~`', casematch: 'case sensitivity of `=~`',
+  cbases: 'the output format of hexadecimal arithmetic', octalzeroes: 'a leading zero reads as octal in arithmetic', forcefloat: 'arithmetic is floating point',
+  cprecedences: 'arithmetic operator precedence', kshoptionprint: 'how option settings are printed', kshautoload: 'how an autoloaded function file is read',
+  functionargzero: '$0 inside a function', cshnullcmd: 'a bare redirection fails instead of running NULLCMD; the redirection is read as a write either way',
+  shnullcmd: 'a bare redirection runs `:`; the redirection is read as a write either way', rcs: 'startup files after /etc/zsh/zshenv', globalrcs: 'the global startup files',
+  login: 'a login shell', globalexport: 'typeset -x also sets -g', rmstarsilent: 'no prompt before `rm *`', rmstarwait: 'a wait before the `rm *` prompt',
+};
+const INERT_SHOPT_WHY = {
+  checkhash: 'a hashed command is checked to exist before it runs', checkjobs: 'jobs are listed before exit', checkwinsize: 'LINES and COLUMNS are updated',
+  cmdhist: 'a multi-line command is one history entry', completefullquote: 'quoting of metacharacters in completed names', execfail: 'a failed exec does not exit the shell',
+  extdebug: 'debugger behaviour', forcefignore: 'FIGNORE suffixes in completion', gnuerrfmt: 'the error message format', histappend: 'the history file is appended',
+  histreedit: 'a failed history substitution can be re-edited', histverify: 'a history substitution is shown before it runs', hostcomplete: 'hostname completion',
+  huponexit: 'jobs get SIGHUP when a login shell exits', inheriterrexit: 'command substitution inherits errexit',
+  interactivecomments: 'comments in an interactive shell; the Bash tool runs a non-interactive one, where a `#` word is a comment whichever way this is set (measured on this box)',
+  lithist: 'newlines are kept in multi-line history entries', localvarinherit: 'a local variable inherits the outer value; the guard reads no declared value',
+  localvarunset: 'unsetting a local variable in an outer scope', loginshell: 'set by the shell for a login shell, read-only', mailwarn: 'a warning about a read mail file',
+  noemptycmdcompletion: 'completion on an empty line', progcomp: 'programmable completion', progcompalias: 'alias expansion for programmable completion',
+  promptvars: 'expansions in prompts', shiftverbose: 'an error message from shift', varredirclose: 'a `{var}>file` descriptor is closed after the command; the file is written either way',
+  xpgecho: 'the echo builtin\'s escape handling',
+};
+const INERT_SET_LETTERS = Object.keys(INERT_SET_LETTERS_WHY).join('');
+const INERT_SET_OPTIONS = new Set([...Object.keys(INERT_SET_OPTIONS_WHY)]);
+const INERT_SHOPT = new Set([...Object.keys(INERT_SHOPT_WHY)]);
+export const INERT_OPTIONS = { letters: INERT_SET_LETTERS_WHY, set: INERT_SET_OPTIONS_WHY, shopt: INERT_SHOPT_WHY };
 const normalizeOption = (name) => name.toLowerCase().replace(/[_-]/g, '');
 function inertOption(name, table) {
   const n = normalizeOption(name);
   return table.has(n) || (n.startsWith('no') && table.has(n.slice(2)));
 }
+// Whether a `set` or `shopt` turns on bash's keyword mode (`set -k`, `set -o keyword`, `shopt -so keyword`), under which an
+// assignment-shaped word ANYWHERE in a simple command is an assignment and not an operand (M5's criterion took `-k` off
+// the inert list as a grammar change, and execution showed why: `set -k; cp base/report.md docs/report.md X=1` wrote the
+// tracked file in bash while the guard read three operands and a destination that is no directory, so no write at all).
+// zsh has no such mode (`-k` is interactivecomments there), so extract reads a later writer's operands BOTH ways.
+function setsKeywordMode(name, args) {
+  if (name !== 'set' && name !== 'shopt') return false;
+  for (let k = 0; k < args.length; k++) {
+    const t = args[k].text;
+    if (!args[k].literal) continue;
+    if (name === 'set' && /^-[A-Za-z]*k/.test(t)) return true;
+    if (/^-[A-Za-z]*o/.test(t) && args[k + 1] && args[k + 1].literal && normalizeOption(args[k + 1].text) === 'keyword') return true;
+  }
+  return false;
+}
+const isAssignmentWord = (w) => /^[A-Za-z_][A-Za-z0-9_]*\+?=/.test(w.raw);
 // The reason a `set`/`shopt`/`setopt`/`unsetopt` leaves the directory unknown, or null when every option it names is
 // inert (or it only prints or queries). Positional parameters after `set` are not options (`set -- a b`, `set x y`).
 function shellOptionChange(name, args) {
@@ -1566,31 +1723,42 @@ function perlTargets(args) {
   return scriptGiven ? operands : operands.slice(1);
 }
 
-// Paths a python or node script opens for writing, read off its text. Only a literal path with a
-// write mode counts: open('x', 'w'), open('x', mode='a'), open('x', encoding='utf8', mode='w'),
+// Paths a python or node script opens for writing, read off its text. A literal path with a write
+// mode counts: open('x', 'w'), open('x', mode='a'), open('x', encoding='utf8', mode='w'),
 // open(mode='w', file='x'), Path('x').open('w'), Path('x').write_text(...), shutil.copy(src, 'x');
 // fs.writeFileSync('x', ...), appendFile, createWriteStream, openSync('x', 'w'), copyFile(src, 'x'),
 // rename(src, 'x'). A call's arguments may span lines, as a formatter wraps them in a heredoc
-// script. A path that is a template or an f-string with an expression is not literal and is
-// skipped, as is a call whose arguments the scan cannot read (a nested call).
-const PY_OPEN = /\b(?:io\.)?open\(([^()]*)\)/g;
-const PY_PATH_OPEN = /\bPath\(\s*(['"])([^'"\n]+)\1\s*\)\s*\.open\(([^()]*)\)/g;
-const PY_PATH_WRITE = /\bPath\(\s*(['"])([^'"\n]+)\1\s*\)\s*\.write_(?:text|bytes)\(/g;
-const PY_SHUTIL = /\bshutil\.(?:copy|copyfile|copy2|move)\(\s*[^,()\n]+,\s*(['"])([^'"\n]+)\1/g;
-const NODE_WRITE = /\b(?:writeFile|writeFileSync|appendFile|appendFileSync|createWriteStream|truncate|truncateSync)\(\s*(['"`])([^'"`\n$]+)\1/g;
-const NODE_OPEN = /\b(?:open|openSync)\(\s*(['"`])([^'"`\n$]+)\1\s*,\s*(['"`])([rwaxs+]*)\3/g;
-const NODE_COPY = /\b(?:copyFile|copyFileSync|rename|renameSync|cp|cpSync)\(\s*(['"`])[^'"`\n]*\1\s*,\s*(['"`])([^'"`\n$]+)\2/g;
+// script. M4 (the fifth commit, 2026-09-19): a `$` inside a plain string is TEXT, so a literal path is kept
+// whatever characters it holds and judged by its name (the fourth pass's matrix wrote a tracked
+// `p$abc/rep.md` through eight interpreter forms while the scan dropped every path matching `[{}$]`,
+// and the node classes excluded `$`); a TEMPLATE or FORMAT string (a python f-string, a string with
+// `.format(` or `%` applied to it, a JS template literal holding `${`) is a path the interpreter fills
+// in, which the hook can see and cannot read, so it is returned as unreadable (scriptTemplateTargets)
+// and refused while a project is in play; a computed path (a name, `sys.argv`, `os.environ`,
+// `process.env`, a call, a concatenation) stays out of model, by the contract.
+const PY_ARG = '((?:[^()]|\\([^()]*\\))*)';   // an argument list with one level of nested parentheses (a `.format(...)`, a join)
+const PY_OPEN = new RegExp(`\\b(?:io\\.)?open\\(${PY_ARG}\\)`, 'g');
+const PY_PATH_OPEN = new RegExp(`\\bPath\\(${PY_ARG}\\)\\s*\\.open\\(${PY_ARG}\\)`, 'g');
+const PY_PATH_WRITE = new RegExp(`\\bPath\\(${PY_ARG}\\)\\s*\\.write_(?:text|bytes)\\(`, 'g');
+const PY_SHUTIL = new RegExp(`\\bshutil\\.(?:copy|copyfile|copy2|move)\\(${PY_ARG}\\)`, 'g');
+const NODE_STR = '(["\'`])([^"\'`\\n]*)\\1';   // one string literal: its quote and its body (a `${` inside a backtick body is a template)
+const NODE_WRITE = new RegExp(`\\b(?:writeFile|writeFileSync|appendFile|appendFileSync|createWriteStream|truncate|truncateSync)\\(\\s*${NODE_STR}\\s*[,)]`, 'g');
+const NODE_OPEN = new RegExp(`\\b(?:open|openSync)\\(\\s*${NODE_STR}\\s*,\\s*(["\'\`])([rwaxs+]*)\\3`, 'g');
+const NODE_COPY = new RegExp(`\\b(?:copyFile|copyFileSync|rename|renameSync|cp|cpSync)\\(\\s*(["\'\`])[^"\'\`\\n]*\\1\\s*,\\s*${NODE_STR}\\s*[,)]`, 'g');
 
 // A python call's argument list, as { positional: [...], keyword: { name: text } }, each value
-// the source text; commas inside quotes do not split.
+// the source text; commas inside quotes or nested parentheses do not split.
 function pyArgs(list) {
   const parts = [];
   let cur = '';
   let q = null;
+  let depth = 0;
   for (const ch of list) {
     if (q) { cur += ch; if (ch === q) q = null; continue; }
     if (ch === "'" || ch === '"') { q = ch; cur += ch; continue; }
-    if (ch === ',') { parts.push(cur); cur = ''; continue; }
+    if (ch === '(' || ch === '[') depth++;
+    else if (ch === ')' || ch === ']') depth--;
+    if (ch === ',' && depth <= 0) { parts.push(cur); cur = ''; continue; }
     cur += ch;
   }
   if (cur.trim()) parts.push(cur);
@@ -1605,35 +1773,56 @@ function pyArgs(list) {
 }
 // The text of a plain string literal ('x' or "x"), or null for anything else (an f-string, a name).
 function pyString(text) {
-  const m = String(text == null ? '' : text).match(/^\s*(['"])([^'"\n]*)\1\s*$/);
-  return m ? m[2] : null;
+  const r = pyStringArg(text);
+  return r && r.literal != null ? r.literal : null;
 }
+// How a python string argument reads (M4): { literal } for a plain string whatever it holds (a `$`, a `{` in a non-f
+// string are text; a raw or bytes prefix keeps the text as written), { template } for an f-string or a string with
+// `.format(` or `%` applied to it (the interpreter fills the path in), and null for anything else (a name, a call, a
+// concatenation: the computed path the contract leaves out of model).
+function pyStringArg(text) {
+  const s = String(text == null ? '' : text).trim();
+  const m = s.match(/^([A-Za-z]{0,3})(['"])([^'"\n]*)\2([\s\S]*)$/);
+  if (!m) return null;
+  const rest = m[4].trim();
+  if (/f/i.test(m[1])) return { template: s };
+  if (/^\.format\(/.test(rest) || /^%/.test(rest)) return { template: s };
+  if (rest !== '') return null;
+  return { literal: m[3] };
+}
+const nodeStringArg = (quote, body) => (quote === '`' && body.includes('${') ? { template: quote + body + quote } : { literal: body });
 const PY_WRITE_MODE = /[wax+]/;
 
-export function scriptWriteTargets(kind, text) {
-  const out = [];
+// Every write path a script names: `literal` paths (judged by name) and `template` strings (unreadable, refused while a
+// project is in play).
+function scanScript(kind, text) {
+  const out = { literal: [], template: [] };
+  const take = (r) => { if (!r) return; if (r.literal != null) out.literal.push(r.literal); else if (r.template) out.template.push(r.template); };
   const t = String(text);
   if (kind === 'python') {
     for (const m of t.matchAll(PY_OPEN)) {
       const { positional, keyword } = pyArgs(m[1]);
-      const file = pyString(keyword.file != null ? keyword.file : positional[0]);
+      const file = pyStringArg(keyword.file != null ? keyword.file : positional[0]);
       const mode = pyString(keyword.mode != null ? keyword.mode : (keyword.file != null ? positional[0] : positional[1]));
-      if (file && mode != null && PY_WRITE_MODE.test(mode)) out.push(file);
+      if (file && mode != null && PY_WRITE_MODE.test(mode)) take(file);
     }
     for (const m of t.matchAll(PY_PATH_OPEN)) {
-      const { positional, keyword } = pyArgs(m[3]);
+      const { positional, keyword } = pyArgs(m[2]);
       const mode = pyString(keyword.mode != null ? keyword.mode : positional[0]);
-      if (mode != null && PY_WRITE_MODE.test(mode)) out.push(m[2]);
+      if (mode != null && PY_WRITE_MODE.test(mode)) take(pyStringArg(pyArgs(m[1]).positional[0]));
     }
-    for (const m of t.matchAll(PY_PATH_WRITE)) out.push(m[2]);
-    for (const m of t.matchAll(PY_SHUTIL)) out.push(m[2]);
+    for (const m of t.matchAll(PY_PATH_WRITE)) take(pyStringArg(pyArgs(m[1]).positional[0]));
+    for (const m of t.matchAll(PY_SHUTIL)) { const { positional, keyword } = pyArgs(m[1]); take(pyStringArg(keyword.dst != null ? keyword.dst : positional[1])); }
   } else if (kind === 'node') {
-    for (const m of t.matchAll(NODE_WRITE)) out.push(m[2]);
-    for (const m of t.matchAll(NODE_OPEN)) if (/[wa+]/.test(m[4])) out.push(m[2]);
-    for (const m of t.matchAll(NODE_COPY)) out.push(m[3]);
+    for (const m of t.matchAll(NODE_WRITE)) take(nodeStringArg(m[1], m[2]));
+    for (const m of t.matchAll(NODE_OPEN)) if (/[wa+]/.test(m[4])) take(nodeStringArg(m[1], m[2]));
+    for (const m of t.matchAll(NODE_COPY)) take(nodeStringArg(m[2], m[3]));
   }
-  return out.filter((p) => !/[{}$]/.test(p));
+  return out;
 }
+// The literal write paths of a script (the grammar the tests pin); its template paths are scriptTemplateTargets.
+export function scriptWriteTargets(kind, text) { return scanScript(kind, text).literal; }
+export function scriptTemplateTargets(kind, text) { return scanScript(kind, text).template; }
 
 // Interpreter options that take the next word as their operand; anything else starting with - is
 // an option on its own, and the first other word is the script file.
@@ -1708,7 +1897,9 @@ const RECURSION_CAP = 64;
 // quoted or not, or in an arithmetic body) makes that variable's expansion unreadable for the WHOLE command. The
 // cost is a false refusal of a command that only mentions the name (`echo HOME=x; > ~/log`, `grep HOME rc > ~/out`,
 // a path holding the text HOME) beside a `~/` or `$HOME/` write from a tracked cwd, recoverable by spelling the path;
-// the gap is none: there is no form of assignment that does not spell the name.
+// the gap the fourth pass found (2026-09-19): a NAME the shell fills in (`export ${h}${m}=…`, `declare -n r=${h}${m}`,
+// `printf -v "${h}${m}"`, `typeset ${h}${m}=`, `read ${h}${m}`, `export "$(printf 'HOME=…')"`, `read -r "$(printf HOME)"`)
+// reassigns HOME with no literal token anywhere, so assembledNameOperand (below) closes it on the visible construct.
 const EXPANDED_NAMES = ['HOME'];
 function bareExpandedNames(segments) {
   const found = new Set();
@@ -1729,6 +1920,102 @@ function bareExpandedNames(segments) {
   }
   return found;
 }
+// M1 (the fifth commit, 2026-09-19): a variable NAME the shell fills in. The fourth attack reassigned HOME with no literal
+// HOME token by assembling the name (`h=HO; m=ME; export ${h}${m}=<dir>`, `declare -n r=${h}${m}; r=<dir>`, `printf -v
+// "${h}${m}"`, `typeset ${h}${m}=`, `read ${h}${m}`) or by spelling it inside a substitution (`export "$(printf
+// 'HOME=…')"`, `declare "$(…)"`, `read -r "$(printf HOME)"`), and the write through `$HOME` landed on the tracked file. The
+// rule is keyed on the construct the guard can SEE without evaluating anything: a name operand that is not a literal
+// identifier (it carries an expansion, a substitution, or is itself a quoted expansion) on an assignment, declaration,
+// nameref, export, typeset, local, readonly, read, mapfile, getopts, unset or `printf -v`, a `let` or `(( ))` whose lvalue
+// carries an expansion, marks EVERY expanded name (EXPANDED_NAMES) unreadable for the whole command, and a bare `cd` or
+// a `cd ~` after it leaves the directory unknown, as rule (a) does; a name operand that is a literal identifier other than
+// an expanded name (`export FOO="$BAR"`, `declare -n r=foo`, `read -p "$msg" ans`, `printf -v var "$x"`) changes nothing,
+// and a read-only twin (`echo ${h}${m}`, `printf '%s' "$HOME"`) is not a name operand at all. The cost is a `~/` or
+// `$HOME/` write beside such a construct from a tracked cwd, recoverable by spelling the path.
+const NAME_OPERAND_COMMANDS = new Set(['export', 'declare', 'typeset', 'local', 'readonly', 'read', 'printf', 'mapfile', 'readarray', 'getopts', 'unset', 'let']);
+// An expansion in lvalue position of an arithmetic body or a `let` word: `${h}${m} = 5`, `$x+=1`, `${n}++` (a comparison,
+// `$x == 1`, `$x <= 1`, `$x != 1`, is not one).
+const ARITH_ASSIGNED_EXPANSION = /(?:\$\{[^}]*\}|\$[A-Za-z_][A-Za-z0-9_]*|\$\([^)]*\))[A-Za-z0-9_${}]*\s*(?:\+\+|--|(?:[-+*/%&|^]|<<|>>)?=(?!=))/;
+function assembledNameOperand(segments) {
+  // whether the slice [from, to) of a word's text came from an expansion (an 'x' mark, or the NUL a `$(...)` stands as)
+  const carries = (w, from = 0, to = undefined) => {
+    if (!w) return false;
+    if (!w.marks) return w.text.slice(from, to).includes('\0');
+    return /x/.test(w.marks.slice(from, to)) || w.text.slice(from, to).includes('\0');
+  };
+  // the NAME part of a NAME[=VALUE] or NAME[+=VALUE] operand (up to the first unquoted `=`), and where its value starts
+  const nameOf = (w) => {
+    for (let i = 0; i < w.text.length; i++) {
+      if (w.text[i] === '=' && (!w.marks || w.marks[i] === 'u')) return { name: [0, w.text[i - 1] === '+' ? i - 1 : i], value: i + 1 };
+    }
+    return { name: [0, w.text.length], value: null };
+  };
+  for (const s of segments) {
+    for (const a of s.arith) if (ARITH_ASSIGNED_EXPANSION.test(a)) return { verb: '(( ))', raw: a.trim() };
+    const cmd = commandOf(s.words);
+    if (!cmd || cmd.unknown || cmd.opaque || 'script' in cmd || !NAME_OPERAND_COMMANDS.has(cmd.name)) continue;
+    const { name, args } = cmd;
+    const hit = (w) => ({ verb: name, raw: w.raw });
+    if (name === 'let') { for (const w of args) if (!w.literal && ARITH_ASSIGNED_EXPANSION.test(w.raw)) return hit(w); continue; }
+    if (name === 'printf') {   // `-v NAME`, glued or the next word, is printf's one name operand
+      for (let k = 0; k < args.length; k++) {
+        const t = args[k].text;
+        if (t === '--' || !t.startsWith('-') || t.length < 2) break;
+        if (!args[k].literal) return hit(args[k]);
+        const v = t.indexOf('v');
+        if (v > 0) { const nm = v < t.length - 1 ? sliceWord(args[k], v + 1) : args[k + 1]; if (carries(nm)) return hit(nm); break; }
+      }
+      continue;
+    }
+    if (name === 'read' || name === 'mapfile' || name === 'readarray') {
+      const valued = name === 'read' ? 'dinNptu' : 'dnOsuCc';   // options whose value is not a name (bash's read and mapfile)
+      for (let k = 0; k < args.length; k++) {
+        const w = args[k];
+        const t = w.text;
+        if (t === '--') { for (const n of args.slice(k + 1)) if (carries(n)) return hit(n); break; }
+        if (t.startsWith('-') && t.length > 1) {
+          if (!w.literal) return hit(w);   // an option the shell fills in may be a name
+          for (let j = 1; j < t.length; j++) {
+            const ch = t[j];
+            if (name === 'read' && (ch === 'a' || ch === 'A')) { const nm = j < t.length - 1 ? sliceWord(w, j + 1) : args[++k]; if (carries(nm)) return hit(nm); break; }   // the array NAME
+            if (valued.includes(ch)) { if (j === t.length - 1) k++; break; }
+            if (name === 'read' && ch === 'k' && j === t.length - 1 && args[k + 1] && /^\d+$/.test(args[k + 1].text)) { k++; break; }   // zsh's -k [num]
+          }
+          continue;
+        }
+        if (carries(w)) return hit(w);
+      }
+      continue;
+    }
+    if (name === 'getopts') {   // getopts OPTSTRING NAME [ARGS...]: the second operand is the name
+      const ops = args.filter((w) => !(w.text.startsWith('-') && w.text.length > 1));
+      if (ops[1] && carries(ops[1])) return hit(ops[1]);
+      continue;
+    }
+    // export, declare, typeset, local, readonly, unset: NAME[=VALUE] operands after the options; with a nameref option
+    // (`declare -n`, `typeset -n`, `local -n`) the VALUE is a name too
+    const nameref = name !== 'export' && name !== 'readonly' && name !== 'unset' && args.some((w) => w.literal && /^-[A-Za-z]*n/.test(w.text));
+    for (const w of args) {
+      const t = w.text;
+      if (t === '--') continue;
+      if (/^[-+]/.test(t) && t.length > 1) { if (!w.literal) return hit(w); continue; }
+      const { name: [a, b], value } = nameOf(w);
+      if (carries(w, a, b)) return hit(w);
+      if (nameref && value != null && carries(w, value)) return hit(w);
+    }
+  }
+  return null;
+}
+// Why `~` and `$HOME` are unreadable in this command, or null: rule (a)'s bare identifier, or M1's assembled name. The text
+// is the reason clause the refusal and the unknown-directory message carry.
+function homeUnreadableWhy(segments) {
+  if (bareExpandedNames(segments).has('HOME')) {
+    return { kind: 'bare', text: 'the command names HOME outside an expansion (an assignment, a declaration, a nameref, a read or an argument that could reassign it)' };
+  }
+  const a = assembledNameOperand(segments);
+  if (a) return { kind: 'assembled', text: `the command's \`${a.verb}\` takes a variable name the shell fills in when it runs (${a.raw}), and a name I cannot read may be HOME` };
+  return null;
+}
 export function extractWriteTargets(command, cwd, shell = null) {
   return extract(command, { dir: cwd || null, unknownDir: !cwd, unknownWhy: cwd ? null : 'no working directory is known for it', shell, depth: 0 });
 }
@@ -1741,6 +2028,7 @@ function extract(command, ctx) {
   let dir = ctx.dir;
   let unknownDir = ctx.unknownDir;
   let unknownWhy = ctx.unknownWhy;   // for the refusal: which construct made the directory unknown (round 3)
+  let keywordMode = !!ctx.keywordMode;   // bash's `set -k` is on from an earlier segment (setsKeywordMode)
   const setUnknown = (why) => { unknownDir = true; if (!unknownWhy) unknownWhy = why; };
   const setKnown = (d) => { dir = d; unknownDir = false; unknownWhy = null; };
   // Class D (2026-09-19): a leading `~/`, `$HOME/` or `${HOME}/` expands through os.homedir(), but a
@@ -1750,9 +2038,10 @@ function extract(command, ctx) {
   // not a list of assignment forms; when it appears, the home the guard read may not be the one the shell
   // uses, so a word that expanded it (marked 'h') is a target the hook cannot read, and a `cd` to such a
   // word, or a bare `cd`, leaves the directory unknown, for the whole command.
-  const homeAssigned = ctx.homeAssigned || bareExpandedNames(segments).has('HOME');
+  const homeWhy = ctx.homeWhy || homeUnreadableWhy(segments);
+  const homeAssigned = ctx.homeAssigned || !!homeWhy;
   const homeWord = (w) => !!(homeAssigned && w && w.marks && w.marks.includes('h'));
-  const HOME_UNKNOWN = 'the command names HOME outside an expansion, so it may reassign HOME before this runs and `~` and `$HOME` name a directory I cannot read';
+  const HOME_UNKNOWN = `${homeWhy ? homeWhy.text : 'the command names HOME outside an expansion'}, so it may reassign HOME before this runs and \`~\` and \`$HOME\` name a directory I cannot read`;
   // Class H (2026-09-19): a symlink an `ln -s` with literal operands and an untouched name makes before a later word,
   // resolved as the kernel will resolve it once it exists. `links` maps an absolute link path to the absolute path it
   // points at; foldSegments (in resolveLiteral) follows it as it folds a later literal target, so a `..` after the link
@@ -1768,8 +2057,27 @@ function extract(command, ctx) {
   // cp -l and cp -s create a link/alias. mkdir and a plain new directory are NOT recorded: a fresh empty directory
   // hides no tracked file, and marking it would refuse the common `mkdir out && write out/x`.
   const mutated = ctx.mutated || [];
-  const markMutated = (abs, verb) => { if (abs) mutated.push({ prefix: abs.replace(/\/+$/, ''), verb }); };
+  // B1 (the fifth commit, 2026-09-19): a record that ALIASES a source (a hard `ln`, `cp -l`, `cp -s`, coreutils `link`, or
+  // a symbolic link whose source the guard could not read or place, rule (c)) carries `alias` and the literal absolute
+  // `source` it aliases (null when the guard cannot read it), so evaluate can ask the in-play question of where the write
+  // LANDS, the source, from any cwd (aliasSourceInPlay); a remove or a rename carries neither.
+  const markMutated = (abs, verb, extra = null) => { if (abs) mutated.push({ prefix: abs.replace(/\/+$/, ''), verb, alias: !!(extra && extra.alias), source: extra && extra.source ? extra.source : null }); };
   const underMutated = (abs) => mutated.find((m) => abs === m.prefix || abs.startsWith(m.prefix + '/')) || null;
+  // The mutated record under a word's LITERAL directory part (the text before its first expansion, up to the last slash),
+  // for a word the hook cannot read (M3, the fifth commit): a numeric or opaque target under a link the same command made
+  // with a source it could not read is refused with the family-3 reason, where before the non-literal branch returned
+  // first and the numeric view resolved the link's name through a filesystem where the link did not yet exist.
+  const mutatedUnderLiteralPart = (w) => {
+    if (!mutated.length || !w.marks) return null;
+    const exp = w.marks.indexOf('x');
+    const prefix = exp < 0 ? w.text : w.text.slice(0, exp);
+    const cut = prefix.lastIndexOf('/');
+    if (cut < 0) return null;
+    const dirText = prefix.slice(0, cut) || '/';
+    if (!path.isAbsolute(dirText) && unknownDir) return null;
+    return underMutated(path.normalize(path.isAbsolute(dirText) ? dirText : dir + '/' + dirText));
+  };
+  const mutatedWhy = (m) => ({ kind: 'mutated', verb: m.verb, prefix: m.prefix, alias: m.alias, source: m.source });
   // Record the paths a remove, rename or link command touches, resolved against the current dir (the walk-around lens second pass, family 3).
   // Rule (f) (the third pass, 2026-09-19): an option the writer's table does not know leaves the operands unplaced (which
   // is the source, which the destination, which an option's value), so every literal candidate word is marked as a
@@ -1785,7 +2093,7 @@ function extract(command, ctx) {
     }
     if (name === 'link') {   // coreutils link(1): a hard link at the second operand, the sibling of a hard `ln` (the third pass)
       const ops = args.filter((a) => !(a.text.startsWith('-') && a.text.length > 1));
-      if (ops.length >= 2) markMutated(abs(ops[1]), 'link');
+      if (ops.length >= 2) markMutated(abs(ops[1]), 'link', { alias: true, source: abs(ops[0]) });
       return;
     }
     if (name === 'mv') {
@@ -1807,10 +2115,10 @@ function extract(command, ctx) {
       if (parsed.installDir) return;
       const symbolic = args.some((a) => a.literal && (a.text === '--symbolic' || (/^-[^-]/.test(a.text) && a.text.includes('s'))));
       if (symbolic) return;
-      if (parsed.targetDir && parsed.targetDir.literal) { for (const s of parsed.operands) markMutated(literalPath(path.join(parsed.targetDir.text, path.basename(s.text)), cwd), 'ln'); return; }
+      if (parsed.targetDir && parsed.targetDir.literal) { for (const s of parsed.operands) markMutated(literalPath(path.join(parsed.targetDir.text, path.basename(s.text)), cwd), 'ln', { alias: true, source: abs(s) }); return; }
       const ops = parsed.operands;
-      if (ops.length >= 2) markMutated(abs(ops[ops.length - 1]), 'ln');
-      else if (ops.length === 1) markMutated(literalPath(path.join(cwd, path.basename(ops[0].text)), cwd), 'ln');   // ln src -> ./basename
+      if (ops.length >= 2) markMutated(abs(ops[ops.length - 1]), 'ln', { alias: true, source: ops.length === 2 ? abs(ops[0]) : null });   // several sources into a directory: which one an entry aliases is not read
+      else if (ops.length === 1) markMutated(literalPath(path.join(cwd, path.basename(ops[0].text)), cwd), 'ln', { alias: true, source: abs(ops[0]) });   // ln src -> ./basename
       return;
     }
     if (name === 'cp') {
@@ -1818,9 +2126,9 @@ function extract(command, ctx) {
       if (parsed.unknown) { markAllCandidates('cp'); return; }
       const linky = args.some((a) => a.literal && ((/^-[^-]/.test(a.text) && (a.text.includes('l') || a.text.includes('s'))) || a.text === '--link' || a.text === '--symbolic-link'));
       if (!linky || parsed.installDir) return;
-      if (parsed.targetDir && parsed.targetDir.literal) { for (const s of parsed.operands) markMutated(literalPath(path.join(parsed.targetDir.text, path.basename(s.text)), cwd), 'cp -l'); return; }
+      if (parsed.targetDir && parsed.targetDir.literal) { for (const s of parsed.operands) markMutated(literalPath(path.join(parsed.targetDir.text, path.basename(s.text)), cwd), 'cp -l', { alias: true, source: abs(s) }); return; }
       const ops = parsed.operands;
-      if (ops.length >= 2) markMutated(abs(ops[ops.length - 1]), 'cp -l');
+      if (ops.length >= 2) markMutated(abs(ops[ops.length - 1]), 'cp -l', { alias: true, source: ops.length === 2 ? abs(ops[0]) : null });
     }
   };
   // Record the symlinks an `ln -s` makes when the hook can place both the link NAME and a LITERAL source, so a later
@@ -1841,7 +2149,7 @@ function extract(command, ctx) {
     const record = (src, dstAbs) => {
       if (!dstAbs) return;
       const srcAbs = src.literal ? (path.isAbsolute(src.text) ? src.text : literalPath(src.text, path.dirname(dstAbs))) : null;
-      if (!srcAbs || underMutated(dstAbs) || underMutated(srcAbs)) { markMutated(dstAbs, 'ln -s'); return; }   // rule (c): the name is unknown
+      if (!srcAbs || underMutated(dstAbs) || underMutated(srcAbs)) { markMutated(dstAbs, 'ln -s', { alias: true }); return; }   // rule (c): the name is unknown, and what it aliases is not read (B1)
       links.set(dstAbs, srcAbs);
     };
     if (parsed.targetDir) {
@@ -1849,7 +2157,7 @@ function extract(command, ctx) {
       const dirAbs = literalPath(parsed.targetDir.text, cwd);
       for (const s of parsed.operands) {
         if (s.literal) record(s, literalPath(path.join(parsed.targetDir.text, path.basename(s.text)), cwd));
-        else markMutated(dirAbs, 'ln -s');   // the link's name is the source's basename, which the hook cannot read: the folder is unknown
+        else markMutated(dirAbs, 'ln -s', { alias: true });   // the link's name is the source's basename, which the hook cannot read: the folder is unknown
       }
       return;
     }
@@ -1862,12 +2170,12 @@ function extract(command, ctx) {
     if (dstIsDir) {
       for (const s of parsed.operands.slice(0, -1)) {
         if (s.literal) record(s, literalPath(path.join(dst.text, path.basename(s.text)), cwd));
-        else markMutated(dstAbs, 'ln -s');
+        else markMutated(dstAbs, 'ln -s', { alias: true });
       }
       return;
     }
     if (parsed.operands.length === 2) record(parsed.operands[0], dstAbs);
-    else markMutated(dstAbs, 'ln -s');   // several sources into a name that is not a directory: ln fails or the name is unknown
+    else markMutated(dstAbs, 'ln -s', { alias: true });   // several sources into a name that is not a directory: ln fails or the name is unknown
   };
   // A write target the hook cannot read (the header). A process substitution (`>(cmd)`) is a pipe and
   // never a file, so it is dropped, not recorded.
@@ -1887,7 +2195,7 @@ function extract(command, ctx) {
     if (!w) return;   // a word that is only an expansion (`"$(mktemp)"`) has no text after quote removal, and is still a target
     // class D: the command reassigned HOME, so a word that expanded it (marked 'h') is unreadable. Recorded by its
     // raw spelling with no marks, so the own-project step does not read the guard's home value and the cwd rule decides.
-    if (homeAssigned && w.marks && w.marks.includes('h')) { cannotRead(word(w.raw, false, w.raw), how, { kind: 'homeAssigned' }); return; }
+    if (homeAssigned && w.marks && w.marks.includes('h')) { cannotRead(word(w.raw, false, w.raw), how, { kind: 'homeAssigned', text: homeWhy ? homeWhy.text : 'the command names HOME outside an expansion' }); return; }
     if (w.glob) {
       // every match, as the shell names each (a redirection onto several: zsh's multios writes each, bash
       // writes none and says so, so the over-count costs a command bash refuses anyway); no match, the cwd
@@ -1897,7 +2205,14 @@ function extract(command, ctx) {
       else cannotRead(w, how);
       return;
     }
-    if (!w.literal) { cannotRead(w, how); return; }
+    if (!w.literal) {
+      // M3 / B1 (the fifth commit): a word the hook cannot read whose literal directory part sits under a prefix an earlier
+      // command removed, renamed or linked is unreadable for THAT reason, so the family-3 refusal and the alias's source
+      // decide, from any cwd; before, it was recorded with no reason and judged against a tree where the link did not exist
+      const m = mutatedUnderLiteralPart(w);
+      cannotRead(w, how, m ? mutatedWhy(m) : null);
+      return;
+    }
     if (!w.text) return;
     // a literal relative target whose directory is not known is refused, not dropped (round 3): the same word
     // spelled absolute is judged, and one `cd` the hook could not follow turned a refused write into an allowed one
@@ -1907,7 +2222,7 @@ function extract(command, ctx) {
     if (mutated.length && !unknownDir) {
       const abs = path.isAbsolute(w.text) ? w.text : dir + '/' + w.text;
       const m = underMutated(path.normalize(abs));
-      if (m) { cannotRead(w, how, { kind: 'mutated', verb: m.verb, prefix: m.prefix }); return; }
+      if (m) { cannotRead(w, how, mutatedWhy(m)); return; }
     }
     // class H: foldSegments (in resolveLiteral) follows a symlink the command made earlier in the same line as it
     // folds, so `mydocs/report.md` reads through `mydocs -> docs` and a `..` after the link climbs from its target
@@ -1922,7 +2237,7 @@ function extract(command, ctx) {
   // `$(...)` in this command runs in this command's shell, so it inherits `shell`, and the directory state.
   const recurse = (text, sh = shell) => {
     if (depth >= RECURSION_CAP) { sawOpaqueCommand = true; return; }
-    const sub = extract(text, { dir, unknownDir, unknownWhy, shell: sh, depth: depth + 1, homeAssigned, links, cdFunctions, mutated });
+    const sub = extract(text, { dir, unknownDir, unknownWhy, shell: sh, depth: depth + 1, homeAssigned, homeWhy, links, cdFunctions, mutated, keywordMode });
     targets.push(...sub.targets);
     unresolved.push(...sub.unresolved);
     if (sub.opaque) sawOpaqueCommand = true;
@@ -2037,15 +2352,20 @@ function extract(command, ctx) {
       else if (cmd.script) sawOpaqueCommand = true;
       continue;
     }
-    const { args } = cmd;
+    const asSpelled = cmd.args;
     let { name } = cmd;
     if (/^(python[0-9.]*|pypy[0-9]*)$/.test(name)) name = 'python';
     else if (name === 'nodejs') name = 'node';
     // rule (d) (the third pass): a shell option not on the inert allowlist leaves the directory unknown from here
     if (name === 'set' || name === 'shopt' || name === 'setopt' || name === 'unsetopt') {
-      const why = shellOptionChange(name, args);
+      const why = shellOptionChange(name, asSpelled);
       if (why) { setUnknown(why); movedHere(); }
+      if (setsKeywordMode(name, asSpelled)) keywordMode = true;
     }
+    // bash's keyword mode (setsKeywordMode): a later writer's operands are read as spelled and with every assignment-shaped
+    // word dropped, and a write under either reading is judged; zsh reads the words as spelled
+    const variants = keywordMode && asSpelled.some(isAssignmentWord) ? [asSpelled, asSpelled.filter((w) => !isAssignmentWord(w))] : [asSpelled];
+    for (const args of variants) {
     // the walk-around lens second pass (family 6): a call to a function whose body moved the shell moves the cwd, which the guard does not
     // follow into the call, so the directory is unknown from here (the body was modelled as not moving the shell)
     if (cdFunctions.has(name)) setUnknown(`an earlier call of the function \`${name}\` may change the directory, which I do not follow`);
@@ -2199,11 +2519,18 @@ function extract(command, ctx) {
           stdin = false;   // a script file: its contents are not in the command
           break;
         }
+        // a literal path is judged by its name whatever it holds; a template or format string is a target the hook can
+        // see and cannot read, refused while a project is in play (M4); a computed path stays out of model (the contract)
+        const scan = (text) => {
+          const r = scanScript(kind, text);
+          for (const p of r.literal) add(word(p, true, p), `${kind} script`);
+          for (const tpl of r.template) cannotRead(word(tpl, false, tpl, { marks: 'x'.repeat(tpl.length) }), `${kind} script`, { kind: 'templatePath' });
+        };
         if (inline) {
-          if (inline.literal) for (const p of scriptWriteTargets(kind, inline.text)) add(word(p, true, p), `${kind} script`);
+          if (inline.literal) scan(inline.text);
           else sawOpaqueCommand = true;
         } else if (stdin) {
-          for (const body of stdinBodies(idx)) for (const p of scriptWriteTargets(kind, body)) add(word(p, true, p), `${kind} script`);
+          for (const body of stdinBodies(idx)) scan(body);
         }
         break;
       }
@@ -2225,9 +2552,14 @@ function extract(command, ctx) {
     // the walk-around lens second pass (family 3): record a remove/rename/link this segment made AFTER judging its own targets, so it changes
     // the reading of LATER segments only, never this command's own write
     recordMutations(name, args, unknownDir ? null : dir);
+    }
   }
   activeLinks = prevLinks;
-  return { targets, opaque: opaque || sawOpaqueCommand, unresolved };
+  // `links` (class H) are returned so evaluate can follow them while it places the targets the hook could not read (M3):
+  // a numeric target's literal directory part is folded through a link the same command makes before it, as the kernel
+  // will follow it once it exists (`ln -s <proj>/notes <out>/d && echo x > <out>/d/x-$$.md` landed in the tracked folder
+  // while the numeric view resolved `<out>/d` through a filesystem where the link did not yet exist).
+  return { targets, opaque: opaque || sawOpaqueCommand, unresolved, links };
 }
 
 // ── the verdict ─────────────────────────────────────────────────────
@@ -2789,7 +3121,14 @@ function inPlayFor(u, cwd, memo) {
   return hits[0];
 }
 
-const TRACK_EDIT = '  node ~/.claude/hooks/track-edit.mjs --file "<the file>" --old "<exact unique text>" --new "<replacement>"';
+// The remedy line is read by a person and PASTED into bash or zsh (the fifth commit, 2026-09-19, M6): the fourth pass's
+// matrix found 576 refusals whose `--file "<path>"` held a shell-live `$` inside the double quotes (a project at `p$42`),
+// so the pasted line named another file in bash (`p2`) and a third in zsh (`p`). The argument is single-quoted, where
+// nothing expands; a single quote inside the path closes the quote, escapes itself and reopens (`'\''`), the spelling
+// the kernel's file-comments messages use. Pinned by a test that runs the pasted line through real bash and real zsh.
+const shellQuote = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
+const trackEditLine = (file) => `  node ~/.claude/hooks/track-edit.mjs --file ${shellQuote(file)} --old '<exact unique text>' --new '<replacement>'`;
+const TRACK_EDIT = trackEditLine('<the file>');
 
 // The walk-around lens second pass (2026-09-19): a filesystem error other than ENOENT on a path the hook judges
 // (an lstat, realpath, readdir or config read that fails with EACCES, ELOOP, ENOTDIR, EINVAL and the rest) is an
@@ -2830,7 +3169,8 @@ export function evaluate(raw) {
   const cwd = typeof payload.cwd === 'string' && payload.cwd ? payload.cwd : process.cwd();
   let targets;
   let unresolved;
-  try { ({ targets, unresolved } = extractWriteTargets(command, cwd)); }
+  let links;
+  try { ({ targets, unresolved, links } = extractWriteTargets(command, cwd)); }
   catch (e) { return isUnknownPath(e) ? statErrorRefusal(e.why && e.why.how ? e.why.how : 'write', e.why && e.why.raw ? e.why.raw : 'the path', e) : null; }
   const seen = new Set();
   const closures = new Map();
@@ -2843,8 +3183,7 @@ export function evaluate(raw) {
     if (!guarded) continue;
     return `Track-changes is ON for ${t.path}, so this command is blocked here `
       + `(its ${t.how} would write the file silently, with no change for me to accept or reject). `
-      + `Make the change with track-edit instead, which records it for me to accept or reject:\n`
-      + `  node ~/.claude/hooks/track-edit.mjs --file "${t.path}" --old "<exact unique text>" --new "<replacement>"`;
+      + `Make the change with track-edit instead, which records it for me to accept or reject:\n${trackEditLine(t.path)}`;
   }
   // A target the hook could not read, while a tracked project is in play (the header): refused, since
   // the same path spelled out would be judged and this one cannot be (2026-09-18). After the literal
@@ -2855,9 +3194,17 @@ export function evaluate(raw) {
   // (review round 2 and 3: a generic line with the wrong reason, or a remedy that asks for a value nobody
   // can know before the command runs, reads as a broken tool).
   const memo = { closures, roots: new Map(), refusable: new Map() };
+  const prevLinks = activeLinks;
+  activeLinks = links || null;   // M3: the command's own links are followed while the unreadable targets are placed
+  try {
   for (const u of unresolved) {
     let hit = null;
-    try { hit = inPlayFor(u, cwd, memo); }
+    try {
+      hit = inPlayFor(u, cwd, memo);
+      // B1: a write through an alias the command made lands where the alias's SOURCE is, so that source's project is in
+      // play from any cwd, and an alias whose source the hook could not read is refused from any cwd
+      if (!hit && u.why && u.why.kind === 'mutated' && u.why.alias) hit = aliasSourceInPlay(u.why, memo);
+    }
     catch (e) { if (isUnknownPath(e)) return statErrorRefusal(u.how, u.raw, e); hit = null; }
     if (!hit) continue;
     if (hit.literal) {
@@ -2866,10 +3213,17 @@ export function evaluate(raw) {
       return `Track-changes is ON for ${hit.literal}, so this command is blocked here: its ${u.how} names ${u.raw}, and that lands `
         + `on ${hit.literal} (a \`..\` in it climbs from a link, or the shell's number could spell an entry that exists there), so the `
         + `${u.how} would write the file silently, with no change for me to accept or reject. Make the change with track-edit instead, `
-        + `which records it for me to accept or reject:\n`
-        + `  node ~/.claude/hooks/track-edit.mjs --file "${hit.literal}" --old "<exact unique text>" --new "<replacement>"`;
+        + `which records it for me to accept or reject:\n${trackEditLine(hit.literal)}`;
     }
     const where = hit.fromEnv ? 'the project TRACKCHANGES_ROOT names' : hit.root;
+    if (hit.unknownSource) {
+      // B1: the alias's source is a word the hook could not read, so the write may land on a tracked file of any project
+      return `This command is blocked here: its ${u.how} names ${u.raw}, and an earlier \`${u.why.verb}\` in the same command `
+        + `linked ${u.why.prefix} to a source I cannot read, so the write may land on whatever file that source names, a tracked `
+        + `file of any project included, and a tracked file written with no change for me to accept or reject is what this guard `
+        + `prevents. Run the \`${u.why.verb}\` in a command of its own with the source spelled out, or write the real path: a `
+        + `tracked file then takes its change through track-edit:\n${TRACK_EDIT}`;
+    }
     if (u.why && u.why.kind === 'mutated') {
       // family 3 (the walk-around lens second pass): an earlier rm/mv/ln/cp -l/cp -s in the same command touched a path prefix this write uses,
       // so what it resolves to at run time is not what the hook sees; refuse, naming the verb and the path.
@@ -2909,12 +3263,19 @@ export function evaluate(raw) {
       // class D (round 4), rule (a) since the third pass: the command names HOME outside an expansion, so it may reassign HOME
       // before the write and `$HOME` and `~` name a directory I cannot read (I read only my own home, and never a variable the
       // command sets). The remedy is to spell the path out.
-      return `This command is blocked here: its ${u.how} names ${u.raw}, but the command names HOME outside an expansion (an `
-        + `assignment, a declaration, a nameref, a read or an argument that could reassign it), so it may reassign HOME before this `
+      return `This command is blocked here: its ${u.how} names ${u.raw}, but ${u.why.text}, so it may reassign HOME before this `
         + `runs and \`$HOME\` and \`~\` no longer name a directory I can read (I read my own home, never a variable the command sets). `
         + `I cannot tell which file the write lands in, and ${where} tracks files whose changes are recorded for me to accept `
         + `or reject. Spell the path out: outside that project the command then runs as usual, and a tracked file takes its `
         + `change through track-edit instead:\n${TRACK_EDIT}`;
+    }
+    if (u.why && u.why.kind === 'templatePath') {
+      // M4 (the fifth commit): the script's write path is a template or format string the interpreter fills in
+      return `This command is blocked here: its ${u.how} opens ${u.raw} for writing, a path built from a template or format string `
+        + `(an f-string, a \`.format(\` or \`%\` applied to the string, or a template literal holding \`\${...}\`), which the `
+        + `interpreter fills in when it runs, so I cannot tell which file it writes, and ${where} tracks files whose changes are `
+        + `recorded for me to accept or reject. Spell the path as a plain string: outside that project the command then runs as `
+        + `usual, and a tracked file takes its change through track-edit instead:\n${TRACK_EDIT}`;
     }
     if (hit.parentOf) {
       // class E (round 4; any depth since the third pass): the literal head of the target sits above tracked projects, and
@@ -2966,7 +3327,23 @@ export function evaluate(raw) {
       + `reject. Spell the path out: outside that project the command then runs as usual, and a tracked file `
       + `takes its change through track-edit instead:\n${TRACK_EDIT}`;
   }
+  } finally { activeLinks = prevLinks; }
   return null;
+}
+
+// B1 (the fifth commit, 2026-09-19): the project in play for a write through an alias the same command made (a hard `ln`,
+// `cp -l`, `cp -s`, `link`, or a symbolic link whose source the guard could not read, `why.alias`), asked of where the
+// write LANDS, the alias's source, not of where the shell is: a literal source in a project that tracks something
+// refusable puts that project in play from any cwd (the fourth pass's matrix: `cp -s <proj>/notes/seed.md <out>/alias &&
+// printf poison > <out>/alias` from a cwd in no project overwrote the tracked note, since the in-play gate read the cwd
+// alone; its twin with a source outside every project stays allowed), and a source the guard could not read is refused
+// from any cwd (`unknownSource`), since it may name a tracked file of any project. Returns a hit, or null.
+function aliasSourceInPlay(why, memo) {
+  if (why.source == null) return { root: null, dir: null, fromEnv: false, unknownSource: true };
+  const st = lstatOrNull(why.source);
+  const dir = st && st.isDirectory() ? why.source : path.dirname(why.source);
+  const hit = trackingRootAt(dir, memo);
+  return hit ? { ...hit, viaSource: why.source } : null;
 }
 
 const invokedDirectly = (() => {
