@@ -114,12 +114,15 @@ def drive_pair(tc, frames, slot):
     _stamp_field drops a gen the client would refuse (view-deltas.ts genOf: a number, an empty string, a '.' or ','), so
     held_pair alone reads a kernel stamping an unreadable gen exactly as one stamping none. None only when NO recorded frame
     carried the key (a kernel before the stamp: the leg's skip-and-branch case); a frame carried the key but no pair parsed
-    is a failure on `tc`: the kernel stamped a gen the client reads as none, or a stamped full was followed by a gen-less
-    one (the rollback shape), neither of which a leg may pass green as "undeclared"."""
+    is a failure on `tc`: the kernel stamped a gen the client reads as none, a stamped full was followed by a gen-less one
+    (the rollback shape), or the key rode a frame this rule reads no pair from (a delta while no full carried one, or a
+    frame of another type) while the full carried none, none of which a leg may pass green as "undeclared"."""
     pair = held_pair(frames, slot)
     if pair is None and any(f.get("genKey") for f in frames):
         tc.fail("a frame carried a gen key but no pair parsed for %r: the kernel stamped a gen the client reads as none "
-                "(view-deltas.ts genOf), or a stamped full was followed by a gen-less one: %r" % (slot, frames))
+                "(view-deltas.ts genOf), a stamped full was followed by a gen-less one, or the key rode a frame this rule reads "
+                "no pair from (a delta while no full carried one, or a frame of another type) while the full carried none: %r"
+                % (slot, frames))
     return pair
 
 
@@ -435,6 +438,12 @@ class HeldPairRule(unittest.TestCase):
             drive_pair(self, [{"t": "feed", "genKey": True}], "feed")   # the same frame as a hook records it: the value dropped, the key noted
         with self.assertRaises(AssertionError):
             drive_pair(self, [{"t": "feed", "gen": GEN, "genKey": True}, {"t": "feed"}], "feed")   # a stamped full then a gen-less one
+        # the third failing shape (peer read, 2026-09-19): the key rode a frame the rule reads no pair from while the full carried
+        # none, a stamped delta onto no held pair or a frame of another type; the verdict is the same fail, never "undeclared"
+        with self.assertRaises(AssertionError):
+            drive_pair(self, [{"t": "feed"}, {"t": "feedDelta", "gen": GEN, "base": 0, "rev": 1, "through": 1, "genKey": True}], "feed")
+        with self.assertRaises(AssertionError):
+            drive_pair(self, [{"t": "feed"}, {"t": "caps", "genKey": True}], "feed")
 
     def test_composed_frames_are_the_deltas_carrying_newGen(self):
         # a per-cycle K2 delta carries through and no newGen, so through never tells a composed frame; a newGen the client reads as

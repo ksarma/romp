@@ -3494,9 +3494,11 @@ def _client_diag_append(fp, line):
 # identifier, since federation.ts times a frame as `fed:` plus its classified type), each with a 14-bucket histogram,
 # 16.5 KB at six-digit counts; MAX_TOP long-frame keys at the string cut, the free sample, the slow counts and the
 # envelope add about 1.4 KB (17.9 KB share off); the shared fields (MAX_RES named resources and the fold, nav, marks,
-# env, vis, wsBytes, wsBytesByHost at its widest (no cap on positions: the worst-case row test states eight at nine digits
-# each, 155 bytes, about 17 bytes more per further host) and rafGap) add about 3.5 KB (21.5 KB share on). 24 KiB holds both with margin (today's minute rows run to 2.5 KB);
-# above it the shed and the marker are the backstops for a row no collector builds. The table lists the
+# env, vis, wsBytes, wsBytesByHost at its widest and rafGap) add about 3.5 KB (21.5 KB share on); the widest map has
+# no cap on positions: the worst-case row test states eight at nine digits each, 155 bytes, about 17 bytes more per
+# further host, and reads the count, the bytes and the share-on figure back from this comment against the row it
+# builds. 24 KiB holds both with margin (today's minute rows run to 2.5 KB); above it the shed and the marker are the
+# backstops for a row no collector builds. The table lists the
 # keys as the posters build them: perf-telemetry.ts (minute, slowframe), the pane shim (staleDiag, the return rows,
 # wsclose, wsconnfail, page-load), the reload core's held row, the shell scripts, federation.ts, render.ts and
 # scroll-write.ts, strip.ts, feed.ts, fleet.ts, waiting.ts. The kernel's own rows (surface kernel: _note_ws_open and
@@ -3516,7 +3518,8 @@ CLIENT_DIAG_KEYS = {
                        "type", "ms",                                                # slowframe (app, dom, loaf as above)
                        "nav", "res", "marks", "env", "vis", "wsBytes", "rafGap",     # the shared fields, on when the gear says so
                        "wsBytesByHost")),   # the shared field the user approved on 2026-09-19 (the bytes each attached host sent, one number per host, no
-                                            # content): {h1: int, h2: int, ...}, one key per attached host and no cap, the text-frame characters each REMOTE host's sockets delivered in the
+                                            # content): {h1: int, h2: int, ...}, one key per attached host and no cap,
+                                            # the text-frame characters each REMOTE host's sockets delivered in the
                                             # minute (wsBytes's unit; the two are disjoint), keyed by the host's attach ORDINAL on the page: h1 the first
                                             # remote host the page attached, assigned when the host first attaches, kept for the page's life and never
                                             # shifting on a detach (a re-attached host keeps its ordinal), so h2 names

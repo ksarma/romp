@@ -473,6 +473,22 @@ class ClientDiagAllowlistTest(unittest.TestCase):
         off, on = len(json.dumps(dict(env, data=minute))), len(json.dumps(dict(env, data=dict(minute, **shared))))
         self.assertGreater(off, 16 * 1024, "the share-off worst case is over 16 KiB, so the old 8 KiB bound shed its frames")
         self.assertLess(on, km.CLIENT_DIAG_ROW_MAX, "the share-on worst case fits under the bound (%d of %d bytes)" % (on, km.CLIENT_DIAG_ROW_MAX))
+        # The row bound's derivation comment in kernel.py states this map's count, the bytes it adds to the row and the share-on
+        # figure. Until the peer read of 2026-09-19 those were hand-kept copies of HOSTS with nothing tying them to the row built
+        # here: a raised HOSTS left the comment claiming a margin this test no longer measured, and nothing went red. Read back
+        # from the comment and compared to the row, so a change to HOSTS, or to any figure the row is made of, re-derives the
+        # comment too. Derived reads: a comment the pattern no longer finds fails here rather than passing on nothing.
+        ksrc = open(os.path.join(os.path.dirname(HERE), "kernel", "kernel.py"), encoding="utf-8").read()
+        stated = re.search(r"the worst-case row test states (\w+) at nine digits each, (\d+) bytes", ksrc)
+        self.assertIsNotNone(stated, "kernel.py's CLIENT_DIAG_ROW_MAX derivation no longer states the widest wsBytesByHost map: re-aim this read")
+        words = ("zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve")
+        self.assertLess(HOSTS, len(words), "state HOSTS as a count word this read knows, or extend the tuple")
+        self.assertEqual(stated.group(1), words[HOSTS], "the derivation's count word is the HOSTS this test states")
+        without = len(json.dumps(dict(env, data=dict(minute, **{k: v for k, v in shared.items() if k != "wsBytesByHost"}))))
+        self.assertEqual(int(stated.group(2)), on - without, "the derivation's byte figure is what the map adds to the row, its key and separator included")
+        share_on = re.findall(r"\((\d+\.\d) KB(?: share on\)|; the derivation above\))", ksrc)
+        self.assertEqual(len(share_on), 2, "the derivation and CLIENT_DIAG_ROW_MAX's own comment each state the share-on figure once")
+        self.assertEqual(set(share_on), {"%.1f" % (on / 1000)}, "both share-on figures are this row's size in KB (%d bytes)" % on)
         for data in (minute, dict(minute, **shared)):
             self.assertEqual(self.post("perf", "minute", data), "", "nothing shed, nothing said")
             row = self.rows()[-1]
