@@ -629,15 +629,19 @@ class Cli(unittest.TestCase):
         against nothing else: its receiver sentence is pinned present, and since the closing check at the re-run's head the
         ranking phrases the second round's sentence carried, "the one exception" to the guide's local-only clause and "the
         only other traffic", are pinned ABSENT from the guide and from the reference's upload section, since a rewrite that
-        restored them stayed green before). The
+        restored them stayed green before). Since the second closing check (2026-09-19) the guide names the upload and the
+        agents' traffic in one sentence, with the confirmation at the front of the upload's clause (only when you run it and
+        confirm it) and the receiver parenthetical closing at the reference link; the needles here read those two spans, by
+        boolean, so a failure names the words and never dumps the page (the Docs case pins the whole sentence). The
         sentence is pinned flattened, so a rewrap survives, and cross-checked against the code by execution and by text:
         with no flag, no variable and an empty HOME the setting resolves to nothing (the verb then refuses naming the three
         settings, the case above), and no string constant in the module, docstrings included, spells a URL, so no default
         address can be hiding in the text."""
         with open(os.path.join(ROOT, "docs", "guide.md"), encoding="utf-8") as fh:
             guide = " ".join(fh.read().split())
-        self.assertIn("to a receiver you configure yourself (none ships, so nothing can be sent until you set one), "
-                      "and only after you confirm it", guide)
+        for words in ("only when you run it and confirm it, `romp perf upload`",
+                      "to a receiver you configure yourself (none ships, so nothing can be sent until you set one); see"):
+            self.assertTrue(words in guide, "the guide's receiver sentence lost its words: %r" % words)
         with open(os.path.join(ROOT, "docs", "reference.md"), encoding="utf-8") as fh:
             reference = " ".join(fh.read().split())
         section = reference[reference.index("`romp perf upload <file>` sends one such export"):
@@ -2789,6 +2793,31 @@ class Docs(unittest.TestCase):
             self.assertFalse(clause in text, "the falsified alphabet clause is back in the reference: " + clause)
         # the ruling of 2026-09-19 restating the two outcomes as three: the two-outcome wording is gone from both passages
         self.assertFalse("present exactly when the count is absent" in text, "the two-outcome wording is back in the reference")
+
+    def test_the_guide_names_both_kinds_of_traffic_in_one_sentence_and_makes_no_only_claim_it_then_contradicts(self):
+        """The second closing check (2026-09-19) found the PR's own edit to docs/guide.md manufacturing a contradiction: the
+        kernel paragraph kept "the only traffic that leaves your machine is `claude` itself" and, one sentence later, named a
+        second thing that leaves, the upload; an edit that improves one sentence and leaves its neighbour disagreeing is worse
+        for a reader than either state alone. The paragraph now names both kinds of traffic in ONE sentence, the agents' and
+        the judge pipeline's model calls and, only when the user runs and confirms it, the upload, with what it sends (the
+        public export, naming no session, path, host or user) and that no receiver ships; the word "only" is spent on the
+        confirmation and no longer on a claim the next clause contradicts. No test read this paragraph before (the receiver
+        needle in Cli reads two spans of it; nothing read the traffic claim), so the pin is new. Pinned flattened, so a rewrap
+        survives, by boolean, so a failure names the words and never dumps the page. Fails on: the only-traffic claim back in
+        the guide; the two-sentence shape back (the judge pipeline sentence closing and the upload opening a sentence of its
+        own); the one sentence reworded by a word."""
+        text = self._flat("docs", "guide.md")
+        one = ("Everything Romp stores stays local. The traffic that leaves your machine is `claude` itself, both the agents' own "
+               "model calls and the LLM calls in Romp's judge pipeline, and, only when you run it and confirm it, `romp perf upload`, "
+               "which sends a paste-safe copy of the kernel's performance counters (the file `romp perf export --public` writes, "
+               "naming no session, path, host or user) to a receiver you configure yourself (none ships, so nothing can be sent "
+               "until you set one); see [Kernel performance counters](reference.md#kernel-performance-counters).")
+        # the absences first, so a restored claim is named as such rather than as the one sentence missing
+        self.assertFalse("the only traffic that leaves your machine is `claude` itself" in text,
+                         "the only-traffic claim is back in the guide, a sentence before the upload is named as leaving too")
+        self.assertFalse("the LLM calls in Romp's judge pipeline. `romp perf upload`" in text,
+                         "the two-sentence shape is back: the upload named in a sentence of its own after the only-traffic claim")
+        self.assertTrue(one in text, "the guide's kernel paragraph no longer carries the one sentence naming both kinds of traffic")
 
     def test_the_readme_rows_name_every_importer_of_the_public_shape_counted_from_the_code(self):
         """This PR added a fourth importer of cli/perf_public.py and left both README enumerations of who shares the public
