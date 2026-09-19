@@ -5035,6 +5035,18 @@ class Disclosed(unittest.TestCase):
     # collapsed to one row each, while _perf_http_key collapses the host alone and keeps the route, one row per remote operation.
     DROPPED_WORDINGS = ("the user's own actions", "one count per pane opened", "only when `--usage` was given, every leaf under `usage`",
                         "remote families collapsed to one row each")
+    # The clause grammar (the second closing check, 2026-09-19: nothing held the list complete tomorrow; the population had been
+    # derived twice by hand, masking the paragraph with the listed clauses and a census of marker hits, and that derivation is
+    # now the mechanism). A clause of the paragraph is CONDITIONAL when it carries a conditioning word, one of these; per is
+    # the word alone, never the hyphenated per- of per-process and per-machine. The test named for the grammar holds both
+    # directions over the flattened paragraph: every hit lies inside a listed entry's words or inside one of the four
+    # name-group heads, the name pins' own clauses (_check), the only exemption; and every entry's words carry a hit, so the
+    # list cannot hold a clause the grammar would not find. A literal tuple of regex strings, so a reader can compare it
+    # word for word with the grammar as the PR body states it.
+    CLAUSE_MARKERS = (r"\bonly\b", r"\bper\b(?!-)", r"\bwhere\b", r"\bwhen\b", r"\bwhatever\b", r"\bwhoever\b", r"\beach\b",
+                      r"\bevery\b", r"\balone\b", r"\bwith or without\b", r"\bcollapsed\b", r"\bcoarsened\b", r"\brounded\b",
+                      r"\bnull\b", r"\bin place of\b", r"\bexactly one of\b", r"\badds no number\b", r"\bfor a snapshot\b")
+    NAME_GROUP_HEADS = tuple("every leaf under `%s`" % b for b in BLOCKS)   # the four name pins' clauses, held by _check's name walk
 
     @classmethod
     def _check_exists(cls, check):
@@ -5611,6 +5623,48 @@ class Disclosed(unittest.TestCase):
         self.assertFalse(self._check_exists("Disclosed.test_no_such_pin"), "the resolver reds on a name that is not there")
         self.assertFalse(self._check_exists("test_perf_export:NoSuchClass"))
         self.assertFalse(self._check_exists("test_perf_export:UptimeRounding.test_no_such_case"))
+
+    def test_every_conditional_clause_the_grammar_finds_in_the_paragraph_has_an_entry_and_every_entry_carries_the_grammar(self):
+        """The list is complete tomorrow, not by hand (the second closing check, 2026-09-19: the clause population had been
+        derived twice by hand, masking the paragraph with the listed clauses and a census of marker hits, both once, and a
+        hand-kept list is the shape this PR had already been corrected on). The grammar (CLAUSE_MARKERS): a clause of the
+        disclosure paragraph is conditional when it carries a conditioning word, only, per (the word alone, never the
+        hyphenated per- of per-process and per-machine, which the lookahead excludes), where, when, whatever, whoever, each,
+        every, alone, with or without, collapsed, coarsened, rounded, null, in place of, exactly one of, adds no number, for a
+        snapshot. Two directions over the flattened paragraph. FORWARD: every occurrence of a conditioning word lies inside the
+        words of one CONDITIONAL_CLAIMS entry, each located exactly once, or inside one of the four name-group heads, "every
+        leaf under `<block>`", the name pins' own clauses, whose populations _check holds both ways; those four are the only
+        exemption. REVERSE: every entry's words carry at least one conditioning word, so the list cannot hold a clause the
+        grammar would not find, and no two entries' spans overlap, so a hit is covered by one clause. Fails on: a clause
+        added to the paragraph with a conditioning word and no entry (red naming the word and forty characters either side
+        of it); an entry removed while its words stay (the same red at its words); an entry whose words carry no conditioning
+        word (the reverse direction names it); a listed entry's words misspelled (the count is not one). A clause added
+        without any conditioning word is outside this grammar, by construction: the grammar is the words listed, and a new
+        conditioning word is added to CLAUSE_MARKERS, and the body's copy of the list, when the paragraph gains one."""
+        para = self._paragraph()
+        spans = []
+        for words, _, _ in self.CONDITIONAL_CLAIMS:
+            self.assertEqual(para.count(words), 1, "a listed clause is not in the paragraph exactly once: %r" % words)
+            spans.append((para.index(words), para.index(words) + len(words)))
+        heads = []
+        for head in self.NAME_GROUP_HEADS:
+            self.assertEqual(para.count(head), 1, "a name-group head is not in the paragraph exactly once: %r" % head)
+            heads.append((para.index(head), para.index(head) + len(head)))
+        for i, (a, b) in enumerate(spans):
+            for c, d in spans[i + 1:]:
+                self.assertFalse(a < d and c < b, "two listed clauses overlap: %r and %r" % (para[a:b], para[c:d]))
+        hits = 0
+        for pattern in self.CLAUSE_MARKERS:
+            for m in re.finditer(pattern, para):
+                hits += 1
+                self.assertTrue(any(a <= m.start() < b for a, b in spans + heads),
+                                "a conditioning clause with no entry: %r at ...%s..." % (m.group(0), para[max(0, m.start() - 40):m.start() + 60]))
+        self.assertGreaterEqual(hits, len(self.CONDITIONAL_CLAIMS), "fewer hits than entries: the reverse direction below cannot hold")
+        for words, _, _ in self.CONDITIONAL_CLAIMS:
+            self.assertTrue(any(re.search(pattern, words) for pattern in self.CLAUSE_MARKERS),
+                            "a listed clause the grammar does not find: %r" % words)
+        self.assertTrue(re.search(self.CLAUSE_MARKERS[1], "one per route"), "per, the word alone, is a marker")
+        self.assertFalse(re.search(self.CLAUSE_MARKERS[1], "per-process and per-machine"), "the hyphenated per- is not")
 
 if __name__ == "__main__":
     unittest.main()
