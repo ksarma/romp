@@ -6,6 +6,7 @@ feed's blocked card. peer_update carries the per-host trust the gate reads.
 
 Synthetic only — hermetic temp state dir, placeholder mids, invented notes-domain sessions, no real data.
 """
+import contextlib
 import errno
 import json
 import os
@@ -15,6 +16,7 @@ import threading
 import unittest
 from romp_load import load_source
 from pathlib import Path
+from unittest import mock
 
 from tests.conftest import restore_env
 
@@ -29,6 +31,34 @@ Path(_SESS).write_text(json.dumps([{"id": "sess-web", "name": "web", "dir": "/tm
                                     "state": "waiting", "working": ""}]))
 os.environ["ROMP_SESSIONS_FILE"] = _SESS
 ps = load_source("romp_postal_quar", os.path.join(BIN, "romp-postal-service"))
+
+DEPTH = 100000                                     # past every Python's recursion limit; the free-threaded 3.14 parser takes it
+DEEP = "[" * DEPTH + "]" * DEPTH
+
+
+def _deep_list(depth=DEPTH):
+    """The value the free-threaded 3.14 parser returns for DEEP, built iteratively: nothing here parses or formats it."""
+    v = []
+    for _ in range(depth):
+        v = [v]
+    return v
+
+
+@contextlib.contextmanager
+def _parser_returning(values):
+    """json.loads as the free-threaded Python 3.14 answers a document nested past its predecessors' limit, on every
+    Python: a text that starts with one of `values`' keys returns that value, and every other text goes to the real
+    parser (the good hold beside it, the route's own reply). The bus calls json.loads through the module, so the patch
+    on the module's attribute is what its readers see, on the handler thread too."""
+    real = json.loads
+
+    def loads(text, *a, **kw):
+        for prefix, value in values.items():
+            if text.startswith(prefix):
+                return value
+        return real(text, *a, **kw)
+    with mock.patch.object(json, "loads", loads):
+        yield
 
 
 def _relay(mid, body="ship it", frm="api", origin=None):
@@ -597,7 +627,14 @@ class HeldMailRecordsThatCannotBeParsed(unittest.TestCase):
     AttributeError from quarantine_list's sort, the type-wrong `at` case with TypeError from the same sort, the nested case
     with RecursionError out of quarantine_list, the decide case with AttributeError from quarantine_decide's approve arm
     (there a bare deny dropped the file unread and approve raised), and the two skip-and-say cases at their said-once
-    assertion (0 lines); HeldMailStoreUnlistable's widened pin fails there on the absent walk."""
+    assertion (0 lines); HeldMailStoreUnlistable's widened pin fails there on the absent walk.
+
+    The free-threaded Python 3.14 (2026-09-19) parses the 100000-deep document every earlier Python refused: the nested
+    case's real parse now ends in the not-an-object arm there, so its pin takes either reason, and a sibling case makes
+    the 3.14 outcome deterministic on every Python by patching json.loads to return the deep value. A record whose
+    `body` is that value is skipped by its type: _hold_rows' gist was str() of the body, its repr. Over a git archive of
+    c6f427d0b that case fails at its first assertion (the record is listed as a hold), and _hold_rows past it raises
+    RecursionError while getting the repr of the body."""
 
     HOLD = {"mid": "11111111-2222-3333-4444-555555550301", "to": "web", "toId": "sess-web", "frm": "api",
             "frmId": "id-api", "body": "invented held text", "kind": "coordinate", "origin": "TESTHOST",
@@ -723,16 +760,46 @@ class HeldMailRecordsThatCannotBeParsed(unittest.TestCase):
         self.assertTrue(torn.is_file() and raw.is_file() and link.is_symlink(), "left in place")
         self.assertEqual([p for p, _ in self.told], [])
 
+    def _assert_said_deep(self, line, f, reasons):
+        """The said line names the file and one of `reasons`, and never the value: a repr of the document would run to
+        200000 characters, so a bound on the line is the pin."""
+        self.assertIn(f.name, line)
+        self.assertTrue(any(r in line for r in reasons), line)
+        self.assertLess(len(line), 400, "the file and the type are named, never the value")
+        self.assertNotIn("[[", line)
+
     def test_json_nested_past_the_parsers_depth_skips_instead_of_raising(self):
-        deep = self._write(self.M2, "[" * 100000 + "]" * 100000)
+        """The real parser on the running Python: through 3.13 json.loads raises RecursionError at the depth, the
+        free-threaded 3.14 returns the list, which is not an object. Either way: skipped, said once, the hold listed."""
+        deep = self._write(self.M2, DEEP)
         self.assertEqual([h["mid"] for h in ps.quarantine_list()], [self.HOLD["mid"]])
         self.assertEqual([r["mid"] for r in ps._hold_rows()], [self.HOLD["mid"]])
         code, body = self._get(self._serve())
         self.assertEqual((code, [h["mid"] for h in body["held"]]), (200, [self.HOLD["mid"]]))
         said = self._said()
         self.assertEqual(len(said), 1, self.logged)
-        self.assertIn(deep.name, said[0])
-        self.assertIn("not JSON (RecursionError)", said[0])
+        self._assert_said_deep(said[0], deep, ("not JSON (RecursionError)", "not a JSON object (list)"))
+
+    def test_a_deep_document_the_parser_returns_is_skipped_by_its_type_and_never_formatted(self):
+        """json.loads as the free-threaded Python 3.14 answers the deep document, made deterministic here: the parser
+        returns the 100000-deep value. As a bare list it is not an object; as a record's body it is not text. Both are
+        skipped and said by type alone, on the list, the gossip summary and the route, and the files stay for the
+        kernel's reader to move aside."""
+        deep_list = self._write(self.M2, DEEP)
+        deep_body = self._write(self.M3, json.dumps(dict(self.HOLD, mid=self.M3, body="DEEP")).replace('"DEEP"', DEEP))
+        value = _deep_list()
+        with _parser_returning({"[": value, '{"mid": "%s"' % self.M3: dict(self.HOLD, mid=self.M3, body=value)}):
+            self.assertEqual([h["mid"] for h in ps.quarantine_list()], [self.HOLD["mid"]])
+            self.assertEqual([r["mid"] for r in ps._hold_rows()], [self.HOLD["mid"]], "the gossip summary skips it: its gist is str() of the body")
+            self.assertEqual(len(ps.holds_payload("TESTHOST")), 1, "the exchange payload still builds")
+            code, body = self._get(self._serve())
+        self.assertEqual((code, [h["mid"] for h in body["held"]]), (200, [self.HOLD["mid"]]))
+        said = self._said()
+        self.assertEqual(len(said), 2, self.logged)
+        self._assert_said_deep(next(l for l in said if deep_list.name in l), deep_list, ("not a JSON object (list)",))
+        self._assert_said_deep(next(l for l in said if deep_body.name in l), deep_body, ("a record whose `body` is a list, not text",))
+        self.assertTrue(deep_list.is_file() and deep_body.is_file(), "left in place: the kernel's reader moves aside")
+        self.assertEqual([p for p, _ in self.told], [], "no bell row from the bus")
 
     def test_a_record_that_cannot_be_read_is_said_once_with_its_errno_and_the_episode_ends_when_it_reads(self):
         if hasattr(os, "geteuid") and os.geteuid() == 0:

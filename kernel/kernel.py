@@ -50251,6 +50251,20 @@ def _hold_bell_text(head, mid, tail, reason):
     return "%s (%s\u2026)" % (base, reason[:room - 1]) if room >= 12 else base
 
 
+def _hold_text(v, default=""):
+    """A held record's field as the text the card shows: the string it is, `default` for an absent or empty one, a number
+    spelled out, and a container (a list, an object) named by its TYPE alone, never formatted. str() of a container is its
+    repr, and a record's value can be nested past what the repr survives: the free-threaded Python 3.14 parses a
+    100000-deep document its predecessors refused with RecursionError, and str() of that document as a hold's `body`
+    overflowed the stack out of every feed build (2026-09-19). The reader moves a record whose `body` is not text aside
+    before a card is built (_held_records); this is the belt for the fields the card coerces rather than refuses."""
+    if not v:
+        return default
+    if isinstance(v, (str, int, float)):
+        return str(v)
+    return type(v).__name__
+
+
 def _corrupt_aside_name(f):
     """`<name>.corrupt-<utc stamp>[-n]` beside `f`: the naming every store romp moves a bad file aside in wears (the state
     files' _state_quarantine, the goal store, the ledgers, the postal bus's _list_json_records), so one convention reads
@@ -50327,7 +50341,11 @@ def _held_records(qdir, now):
     the card's Clear refuses a hold, so it stood forever); a document nested past the interpreter's limit
     (RecursionError out of json's C scanner, a RuntimeError the ValueError arm never caught) is moved aside with the
     others; a `.json` symlink whose target is gone (a FileNotFoundError from the stat that read as `decided meanwhile`,
-    so it was listed on every build and never said) is moved aside by its own name.
+    so it was listed on every build and never said) is moved aside by its own name. A record whose `body` is present and
+    not text is moved aside the same way, named by its type (2026-09-19): the free-threaded Python 3.14 parses a
+    100000-deep document where every earlier Python raised RecursionError, so the deep hold that used to land in the
+    parser's arm came back as a record whose body no repr survives, and the card's gist, str() of it, overflowed the
+    stack out of the build; the check runs before any reader formats the value, on every Python.
     Before this the reader's try wrapped json.loads alone: a non-object raised AttributeError and a non-integer `at`
     ValueError out of every feed build, a torn file or a record with no mid was skipped silently forever with the file
     left in place, and the directory fault returned a clean board."""
@@ -50360,6 +50378,9 @@ def _held_records(qdir, now):
                 at = int(at)
             except (TypeError, ValueError, OverflowError):   # OverflowError: int() of a float infinity (json's 1e400, Infinity); review round 1
                 raise ValueError("`at` is a %s, not an integer" % type(at).__name__) from None
+            body = rec.get("body")
+            if body is not None and not isinstance(body, str):   # the type alone, never the value: a body can be nested past what
+                raise ValueError("`body` is a %s, not text" % type(body).__name__)   # any repr survives (_hold_text, 2026-09-19)
         except FileNotFoundError:
             if not f.is_symlink():
                 continue                             # decided between the listing and the read: the bus removed it
@@ -50416,13 +50437,15 @@ def _quarantine_cards(now):
     older ledger holds stay inert here. The directory is
     read through _held_records (2026-09-19), the bus's own listing shape: a record it cannot read is
     moved aside and said, a directory it cannot list is said, and the build keeps the board either
-    way. The other fields are coerced to text here so a hand-edited value of another type cannot
-    raise out of the build either. [] when nothing is held or nothing could be read."""
+    way. The other fields are coerced to text here (_hold_text: a container by its type alone, never
+    its repr) so a hand-edited value of another type cannot raise out of the build either. [] when
+    nothing is held or nothing could be read."""
     out = []
     for mid, t, rec in _held_records(jd.STATE / "postal" / "quarantine", now):
         item_id = "quarantine:" + mid
-        to_id = str(rec.get("toId") or "")
-        frm, to, origin = str(rec.get("frm") or "?"), str(rec.get("to") or "?"), str(rec.get("origin") or "?")
+        to_id = _hold_text(rec.get("toId"))
+        frm, to, origin = _hold_text(rec.get("frm"), "?"), _hold_text(rec.get("to"), "?"), _hold_text(rec.get("origin"), "?")
+        body = _hold_text(rec.get("body"))           # text by _held_records' check; the helper is the belt should a reader let another type through
         # COMPACT card (the user 2026-07-26): what you're approving is a delivery to THIS session, so
         # the card reads as one line under the recipient's name — "New message" + a dim sender/gist
         # line — and the full body lives in the click-through decision modal. The gist is the same
@@ -50438,8 +50461,8 @@ def _quarantine_cards(now):
             "summary": None, "blockSummary": None, "background": None, "summaryAnchorUuid": None, "warns": None,
             "nudged": None,
             "blocked": {"state": "quarantine", "mid": mid, "frm": frm, "to": to, "origin": origin,
-                        "body": rec.get("body") or "",
-                        "gist": " ".join(str(rec.get("body") or "").split())[:90],
+                        "body": body,
+                        "gist": " ".join(body.split())[:90],
                         "what": "an incoming postal message from %s (held because peer %s is DIRECTED) is "
                                 "waiting on you — approve to deliver it to %s, or deny to drop it. Nothing "
                                 "reaches %s until you approve." % (frm, origin, to, to)},

@@ -8,7 +8,8 @@ The cases: a notice line that is not UTF-8 skips and is said once instead of rai
 feed build, and a file saved with a UTF-8 BOM keeps its first row; the rows split on every line boundary main split on,
 so a file with CR endings reads whole (the closing pass); a notices directory or file the kernel cannot list,
 stat or read is said once per episode on the bell instead of drawing a clean board; a hold nested past the interpreter's
-limit (RecursionError), a hold whose record names another message id than its file, and a dangling .json symlink are
+limit (RecursionError, or on the free-threaded Python 3.14, whose parser takes the depth, a record whose body no repr
+survives), a hold whose record names another message id than its file, and a dangling .json symlink are
 moved aside and said like the other unreadable records; the said-once registry's prune reads a snapshot, so two
 overlapping builds cannot raise RuntimeError out of one another, and a removed directory ends the episodes under it;
 Undo and the two ledger counts pass over an older ledger's hold rows; and the type-wrong row's log line names the key
@@ -24,12 +25,41 @@ import os
 import shutil
 import sys
 import threading
+from unittest import mock
 
 from tests.test_held_mail_reader_guards import (_Case, _asks, _client, _good, _refused, _skip_as_root, km, NOTICE_ID,   # noqa: E402
                                                 SID)
 
 SID2 = "11111111-2222-3333-4444-bbbbbbbb0920"      # a second PRIVATE synthetic sid: the file beside the good one
 UTF8_BOM = b"\xef\xbb\xbf"
+DEPTH = 100000                                     # past every Python's recursion limit; the free-threaded 3.14 parser takes it
+DEEP = "[" * DEPTH + "]" * DEPTH                   # the document, as a bare list
+DEEP_BODY_DOC = '{"mid": "%s", "to": "web", "at": 1000, "body": ' + DEEP + "}"   # the document as a record's body
+
+
+def _deep_list(depth=DEPTH):
+    """The value the free-threaded 3.14 parser returns for DEEP, built iteratively: nothing here parses or formats it."""
+    v = []
+    for _ in range(depth):
+        v = [v]
+    return v
+
+
+@contextlib.contextmanager
+def _parser_returning(values):
+    """json.loads as the free-threaded Python 3.14 answers a document nested past its predecessors' limit, on every
+    Python: a text that starts with one of `values`' keys returns that value, and every other text goes to the real
+    parser (the good hold beside it). The kernel calls json.loads through the module, so the patch on the module's
+    attribute is what its reader sees; every other caller in the block is delegated to the real parser unchanged."""
+    real = json.loads
+
+    def loads(text, *a, **kw):
+        for prefix, value in values.items():
+            if text.startswith(prefix):
+                return value
+        return real(text, *a, **kw)
+    with mock.patch.object(json, "loads", loads):
+        yield
 
 
 class _R2Case(_Case):
@@ -256,18 +286,56 @@ class HeldRecordFaultsWidened(_R2Case):
     gone raised FileNotFoundError from the stat, which read as `decided meanwhile`, so it was listed on every build and
     never said. Each is moved aside and said now like any record the reader cannot take."""
 
+    def _assert_said_deep(self, log, name, reasons):
+        """Exactly one stderr line names `name`.json, with one of `reasons` where the reader says why, and no line carries
+        the value: a repr of the document would run to 200000 characters, so a bound on the line is the pin."""
+        lines = [l for l in log.splitlines() if name + ".json" in l]
+        self.assertEqual(len(lines), 1, log)
+        self.assertIn("%s.json could not be parsed (" % name, lines[0])
+        self.assertTrue(any(r in lines[0] for r in reasons), lines[0])
+        self.assertLess(len(lines[0]), 400, "the file and the type are named, never the value")
+        self.assertNotIn("[[", lines[0])
+
     def test_a_document_nested_past_the_limit_moves_aside(self):
+        """The real parser on the running Python. Through 3.13 json.loads raises RecursionError at the depth and the
+        record lands in the parser's arm; the free-threaded 3.14 parses it and hands back a record whose body is the
+        deep list, which the reader refuses by its type before anything formats it (the sibling case below pins that
+        outcome on every Python). Either way: moved aside, said once, the readable hold on the board."""
         self.r.write_hold("qc-good")
-        depth = 100000
-        (self.r.qdir / "qc-deep.json").write_text('{"mid": "qc-deep", "to": "web", "at": 1000, "body": %s}' % ("[" * depth + "]" * depth))
+        (self.r.qdir / "qc-deep.json").write_text(DEEP_BODY_DOC % "qc-deep")
         cards, log = self._cards()
         self.assertEqual(cards, ["quarantine:qc-good"], "the readable hold stands")
         self.assertEqual(len(self._asides("qc-deep")), 1, "moved aside like any record that cannot be parsed")
-        self.assertIn("qc-deep.json could not be parsed (maximum recursion depth exceeded", log)
+        self._assert_said_deep(log, "qc-deep", ("maximum recursion depth exceeded", "`body` is a list, not text"))
         self.assertEqual(len(_refused()), 1)
         feed, log = self._feed()
         self.assertEqual(([c["itemId"] for c in _asks(feed, "quarantine:")], log), (["quarantine:qc-good"], ""),
                          "the build survives it, and the next meets no such file")
+
+    def test_a_deep_document_the_parser_returns_is_moved_aside_by_its_type_and_never_formatted(self):
+        """json.loads as the free-threaded Python 3.14 answers the deep document, made deterministic here: the parser
+        returns the 100000-deep value instead of raising. As a bare list it is not an object; as a record's body it is
+        not text. Both are moved aside and said by type alone. Before the fix the record with the deep body was taken,
+        and the card's gist, str() of the body, overflowed the stack out of every feed build (the 3.14t CI job:
+        `Stack overflow ... while getting the repr of an object`); over a git archive of that head this case raises
+        RecursionError out of _cards() on this Python too."""
+        self.r.write_hold("qc-good")
+        (self.r.qdir / "qc-list.json").write_text(DEEP)
+        (self.r.qdir / "qc-body.json").write_text(DEEP_BODY_DOC % "qc-body")
+        deep = _deep_list()
+        with _parser_returning({"[": deep, '{"mid": "qc-body"': {"mid": "qc-body", "to": "web", "at": 1000, "body": deep}}):
+            cards, log = self._cards()
+        self.assertEqual(cards, ["quarantine:qc-good"], "the readable hold stands")
+        self.assertEqual((len(self._asides("qc-list")), len(self._asides("qc-body"))), (1, 1), "both moved aside")
+        self._assert_said_deep(log, "qc-list", ("not a JSON object",))
+        self._assert_said_deep(log, "qc-body", ("`body` is a list, not text",))
+        self.assertEqual(log.count("romp-kernel:"), 2, log)
+        rows = _refused()
+        self.assertEqual(len(rows), 2)
+        self.assertTrue(all(len(r) < 400 and "[[" not in r for r in rows), rows)
+        feed, log = self._feed()
+        self.assertEqual(([c["itemId"] for c in _asks(feed, "quarantine:")], log), (["quarantine:qc-good"], ""),
+                         "the next build meets neither file")
 
     def test_a_record_that_names_another_message_id_moves_aside(self):
         self.r.write_hold("qc-good")

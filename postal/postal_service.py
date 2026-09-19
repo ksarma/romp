@@ -4612,21 +4612,26 @@ class QuarantineUnreadable(Exception):
 
 
 def _held_records_bus():
-    """Every hold under QUARANTINE that reads as a JSON object, in file-name order: the one per-file walk behind
-    quarantine_list and _hold_rows. A directory that exists and cannot be listed is said once per episode in the log
-    (_say_unlistable_once, no bell row: the kernel's own reader of the directory files that one) and the listing's
-    OSError is raised to the caller, which answers it its own way; an absent directory is nothing held.
+    """Every hold under QUARANTINE that reads as a JSON object whose `body`, when present, is text, in file-name order:
+    the one per-file walk behind quarantine_list and _hold_rows. A directory that exists and cannot be listed is said
+    once per episode in the log (_say_unlistable_once, no bell row: the kernel's own reader of the directory files that
+    one) and the listing's OSError is raised to the caller, which answers it its own way; an absent directory is
+    nothing held.
 
     A record the walk cannot read (EACCES, EIO), cannot parse (not JSON, not UTF-8, nested past the parser's depth),
-    that is not an object, or that is a link with nothing behind it is SKIPPED and said once per (file, reason) per
-    episode (_say_hold_skipped_once), the file left in place: the kernel's reader of this directory (_held_records)
-    moves such a file aside and files the bell row, and two movers of one file would leave the bus to say a fault the
-    kernel never saw. A file gone between the listing and the read was decided meanwhile (the bus removes it on
+    that is not an object, whose `body` is not text, or that is a link with nothing behind it is SKIPPED and said once
+    per (file, reason) per episode (_say_hold_skipped_once), the file left in place: the kernel's reader of this
+    directory (_held_records) moves such a file aside and files the bell row, and two movers of one file would leave
+    the bus to say a fault the kernel never saw. A file gone between the listing and the read was decided meanwhile (the bus removes it on
     Approve or Deny): the ordinary race, skipped in silence. Before review round 2 (2026-09-19) quarantine_list's try
     wrapped json.loads alone with `except (OSError, ValueError)`: a hold holding a JSON list or null raised
     AttributeError out of its sort and out of GET /quarantine (and out of _hold_rows, whose .get ran after its own
     except, so out of every exchange payload the summary rides in), deeply nested JSON raised RecursionError the same
-    way, and every other skip was silent on every pass with the file left in place."""
+    way, and every other skip was silent on every pass with the file left in place. The body check came with the
+    free-threaded Python 3.14 (2026-09-19), whose parser returns a 100000-deep document every earlier Python refused
+    with RecursionError: a hold whose `body` is that document is an object, and _hold_rows' gist, str() of the body,
+    is its repr, which overflowed the stack out of the exchange payload. The skip names the body's type alone; no
+    reader of the walk formats a value it did not vet, on any Python."""
     try:
         files = _json_files(QUARANTINE)
     except OSError as e:
@@ -4646,10 +4651,13 @@ def _held_records_bus():
         except (ValueError, RecursionError) as e:    # UnicodeDecodeError and JSONDecodeError are ValueErrors; RecursionError
             why = "not JSON (%s)" % type(e).__name__  # is nesting past the parser's depth, and is not one
         else:
-            if isinstance(rec, dict):
+            if not isinstance(rec, dict):
+                why = "not a JSON object (%s)" % type(rec).__name__
+            elif rec.get("body") is None or isinstance(rec.get("body"), str):
                 out.append(rec)
                 continue
-            why = "not a JSON object (%s)" % type(rec).__name__
+            else:                                    # the type alone, never the value (the docstring's body check)
+                why = "a record whose `body` is a %s, not text" % type(rec.get("body")).__name__
         skipped.add(str(f))
         _say_hold_skipped_once(f, why, "held mail")
     # the episode end: a file under this directory the listing did not have to skip (it read, was moved aside, or is
