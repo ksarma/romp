@@ -114,11 +114,14 @@ def _number_word(n):
 # open cycle (ownership outlives the cycle: kernel-1, round two); a bare _push in a test always has a cycle open before it
 # (false of 21 modules: extra6-1, round two); a push stage from a thread that is not the pusher and not a connect push (a
 # thread identity, not ownership: round one's wording); the pass jobs' rows keep their values because the housekeeping was
-# the jobs thread's alone from the start (false of the part rows: round one).
+# the jobs thread's alone from the start (false of the part rows: round one); a bare _push is foreign because no cycle
+# is open when it runs (openness, where the rule is the thread's registration as an owner, which cycle() leaves standing,
+# so the pusher's own thread between two cycles writes the flat rows: PR 797's closing check).
 RETIRED_WORDINGS = {"push-inside-cycle": "inside its " + "cycle",
                     "bare-push-opens-cycle": "_push in a test " + "opens a cycle first",
                     "pusher-identity": "neither the pusher " + "nor a connect push",
-                    "housekeeping-already-alone": "already ran on the " + "jobs thread alone"}
+                    "housekeeping-already-alone": "already ran on the " + "jobs thread alone",
+                    "bare-push-no-open-cycle": "_push with no " + "cycle open"}
 
 
 def _burn_cpu(seconds):
@@ -2903,8 +2906,9 @@ class PushStages(unittest.TestCase):
     the first push and as cached on the second (same transcript, background tab), and the timeline
     client's bars go out in the send stage. setUp opens the pusher's cycle on the module collector
     first (2026-09-18): stage() credits a push stage to the thread that owns the pusher's cycle, and
-    the "push" mark _push carries is no owner, so a bare _push with no cycle open counts under
-    stagesForeign and the flat rows read zero. Before that line the real-push test was green only
+    the "push" mark _push carries is no owner, so a bare _push from a thread that opened no cycle,
+    and so was never registered as an owner, counts under stagesForeign and the flat rows read zero.
+    Before that line the real-push test was green only
     through a leak: PusherRecords drove the real _pusher_cycle, whose cycle_begin registered this
     thread as the pusher's owner, and never restored the owner map, so the registration reached
     every class after it (red with this class run alone). That leak is closed at its source, a
