@@ -4272,12 +4272,12 @@ The file lands as `perf-exports/perf-export-<YYYYMMDDTHHMM>.json` under the
 state directory, readable by the owner alone, or at `--out` (a write that
 fails partway removes the file rather than leave a truncated one); the path
 and the byte size are printed. `--from SNAPSHOT.json` folds a snapshot saved
-earlier with `romp perf --json` (an older kernel's raw http paths are
-collapsed to their families the way the kernel does now). Without `--public`
-the verb refuses with one line and exit 2: there is no raw mode, so a raw
-snapshot is never written by habit. Nothing leaves the machine: the export
-reads `GET /perf` on `127.0.0.1` and writes a file, and posting it is the
-user's own act. Read the file before you paste it. The counters are
+earlier with `romp perf --json` (an older kernel's raw http paths are folded
+the way the kernel folds them now, as the `http` bullet above describes).
+Without `--public` the verb refuses with one line and exit 2: there is no raw
+mode, so a raw snapshot is never written by habit. Nothing leaves the machine:
+the export reads `GET /perf` on `127.0.0.1` and writes a file, and posting it
+is the user's own act. Read the file before you paste it. The counters are
 lifetime totals, so a bug report is best served by an export taken after the
 kernel has been up for a while, with the `romp perf` text output (the rates
 over a live window, which the export does not carry) pasted beside it.
