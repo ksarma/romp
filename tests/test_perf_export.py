@@ -1441,9 +1441,9 @@ class Cli(unittest.TestCase):
         merely rounds near it), nor are a bool or null under a probe that spells them, nor any number under the machine's
         word and path probes (a hostname, a login, a home directory, a session id, a working directory spell letters,
         slashes or dashes a number never carries). Fails before: every numeric leaf was skipped."""
-        listed = [(pp.PRIVATE_KIND, "4242424242"), (pp.PRIVATE_KIND, "1234.5678")]
+        listed = [(pp.PRIVATE_KIND, "4242424242"), (pp.PRIVATE_KIND, "1234567.8")]      # a float-shaped entry carries a seven-digit run: at the floor
         for value, where in ((4242424242, "a/n"), (4242424242.0, "a/n"), (4242424242.5, "a/n"), (-4242424242, "a/n"), (14242424242, "a/n"),
-                             (0.4242424242, "a/n"), (4.242424242e9, "a/n"), (1234.5678, "a/n"), (12345678e-4, "a/n"), ([1, 4242424242], "a/n/1")):
+                             (0.4242424242, "a/n"), (4.242424242e9, "a/n"), (1234567.8, "a/n"), (12345678e-1, "a/n"), ([1, 4242424242], "a/n/1")):
             self.assertEqual(_hits({"a": {"n": value}}, listed), [(pp.PRIVATE_KIND, "the value at %s" % where)], repr(value))
             self.assertIn(json.dumps(value if not isinstance(value, list) else value[1]).strip("-"), pe.document_text({"a": {"n": value}}),
                           "the spelling scanned is the spelling the writer puts in the file")
@@ -1514,11 +1514,11 @@ class Cli(unittest.TestCase):
             # the loud line: an entry that did not become a probe (the reader returns no blank, so a blank stands in for a filter
             # a later change adds) is counted and said once on stderr; nothing is said when every entry became one
             err = io.StringIO()
-            with mock.patch.object(pp, "private_strings", return_value=["zzcoinedzz", "   "]), contextlib.redirect_stderr(err):
+            with mock.patch.object(pp, "private_entries", return_value=[(1, "zzcoinedzz"), (2, "   ")]), contextlib.redirect_stderr(err):
                 self.assertEqual([s for k, s in pp.machine_probes(None, env=env) if k == "private string"], ["zzcoinedzz"])
             self.assertEqual(err.getvalue(), "romp: 1 of 2 private-strings entries did not become probes and are not checked; the list is not fully in force\n")
             err = io.StringIO()
-            with mock.patch.object(pp, "private_strings", return_value=["zzcoinedzz", "abc", "ABC"]), contextlib.redirect_stderr(err):
+            with mock.patch.object(pp, "private_entries", return_value=[(1, "zzcoinedzz"), (2, "abc"), (3, "ABC")]), contextlib.redirect_stderr(err):
                 self.assertEqual([s for k, s in pp.machine_probes(None, env=env) if k == "private string"], ["zzcoinedzz", "abc"])
             self.assertEqual(err.getvalue(), "", "a repeated entry became the one probe it spells: nothing dropped, nothing said")
             # the path, the way the hook resolves it: the variable first, then XDG_CONFIG_HOME, then HOME/.config

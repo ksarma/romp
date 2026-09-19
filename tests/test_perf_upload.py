@@ -1181,9 +1181,9 @@ class Cli(unittest.TestCase):
         self.assertEqual(_wire(pu.strict_loads(self.data)), self.data, "a fresh export re-serialises to itself: the writer is the same function")
         os.makedirs(os.path.join(self.home, ".config", "romp"))
         with open(os.path.join(self.home, ".config", "romp", "private-strings.txt"), "w", encoding="utf-8") as fh:
-            fh.write("4242424242\n1234.5678\n")
+            fh.write("4242424242\n1234567.8\n")                                          # the float-shaped entry carries a seven-digit run: at the floor
         self.assertNotIn(b"4242424242", self.data)
-        self.assertNotIn(b"1234.5678", self.data)
+        self.assertNotIn(b"1234567.8", self.data)
         edited = os.path.join(self.xdg, "edited.json")
         for literal, canonical, digits in (("0.30000000000000004441", "0.30000000000000004", b"4441"),
                                            ("1700000000e-9", "1.7", b"1700000000"),
@@ -1214,13 +1214,13 @@ class Cli(unittest.TestCase):
         self.assertEqual(self.fake.requests, [])
         refusal = "refused: a string this machine knows (private string) survives as the value at %s; nothing sent"
         for literal in ("4242424242", "4242424242.0", "4242424242.5", "-4242424242", "14242424242", "0.4242424242",
-                        "4.242424242e9", "4242424242e0", "1234.5678", "12345678e-4"):      # as a NUMBER: the scan reads the wire spelling
+                        "4.242424242e9", "4242424242e0", "1234567.8", "12345678e-1"):      # as a NUMBER: the scan reads the wire spelling
             with open(edited, "w", encoding="utf-8") as fh:
                 fh.write(text.replace(anchor, anchor + ', "zzratio": ' + literal))
-            self.assertTrue(any(run in json.dumps(json.loads(literal)) for run in ("4242424242", "1234.5678")),
+            self.assertTrue(any(run in json.dumps(json.loads(literal)) for run in ("4242424242", "1234567.8")),
                             "the canonical spelling of %s carries a listed run" % literal)
             r = self._refused(_run([edited] + base, self.state, home=self.home), 1, refusal % "perf/zzratio")
-            for run in ("4242424242", "1234.5678", "12345678"):
+            for run in ("4242424242", "1234567.8", "12345678"):
                 self.assertNotIn(run, r.stdout + r.stderr, literal)
             self.assertEqual(r.stdout, "", literal)
         with open(edited, "w", encoding="utf-8") as fh:

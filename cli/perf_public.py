@@ -101,7 +101,11 @@ ROMP_PRIVATE_STRINGS naming a file that is not there, is said on stderr at the m
 the path and the reason, since a check that turns itself off must say so) are searched for in every key, string value and NUMBER of
 the finished document, case-insensitively (a number by its wire spelling, json.dumps, the spelling the export's writer
 puts in the file and the upload puts on the wire, so a listed digit run inside a numeric leaf is found however the file
-spelled it, the fourth review round, 2026-09-19; a bool and null are not scanned), and a hit refuses the write naming
+spelled it, the fourth review round, 2026-09-19; a bool and null are not scanned; a listed string is applied to a
+NUMBER only when it carries a digit run of at least NUMERIC_PROBE_MIN_DIGITS digits, seven, the floor the comment at that
+constant derives from measured collision chances, since 2026-09-19, and a listed entry whose digit runs are all shorter
+is checked in every key and string value and in no number, which machine_probes says once on stderr,
+LIST_UNDER_NUMERIC_FLOOR), and a hit refuses the write naming
 the key path and the kind of string, never the value. A hostname or a login is a WORD and is matched as a run of whole tokens
 (a key or value split on everything outside letters and digits): romp's own vocabulary contains common ones as
 substrings (a user named mark and `intrMarks`, a machine named work or arch and `cpu_ms_workers`, `archive`),
@@ -724,6 +728,31 @@ PROBE_MIN = 4   # a shorter machine string matches romp's own vocabulary too oft
 WORD_KINDS = frozenset({"hostname", "username"})   # probes that are words: matched as runs of whole tokens alone (probe_in)
 PRIVATE_KIND = "private string"                    # a listed string: matched as a substring OR a run of whole tokens (probe_in)
 TOKEN = re.compile(r"[a-z0-9]+")
+DIGIT_RUN = re.compile(r"[0-9]+")
+# THE NUMERIC FLOOR (2026-09-19). identifier_hits scans a number by its wire spelling (json.dumps) and applies a probe to it
+# only when the probe carries a digit run of at least NUMERIC_PROBE_MIN_DIGITS digits (longest_digit_run); a listed private
+# string whose digit runs are all shorter is checked in every key and string value as before and in no number, and
+# machine_probes says so once on stderr (LIST_UNDER_NUMERIC_FLOOR). The floor is where a match becomes EVIDENCE, not a
+# tolerated rate of false refusals. Measured on a real export of 2026-09-19 (3,770 numbers, 2,684 of them integers, none
+# negative or exponent-spelled): a listed run of k digits collides by substring with some number of that one export with
+# probability about 0.26 at k=4 (2,558 distinct 4-digit windows over the 10,000 possible), 0.023 at k=5, 0.0019 at k=6,
+# 0.00015 at k=7, 0.000012 at k=8 and under one in a million at k=9; over the day's nine real exports together, 0.81, 0.13,
+# 0.011, 0.00095 and 0.000076 for k=4 to 8. At four digits a match is a coin toss on coincidence alone, so a refusal there
+# says nothing about whether the private value is present, and a check that refuses at random trains its reader to clear the
+# refusal without looking; at seven the coincidence is about 0.015 percent per export, so a match is overwhelmingly the
+# listed value itself. That is why an entry under the floor is not checked in numbers at all rather than checked with a
+# known error rate: below the floor the check carries no information. The list this was measured beside holds eleven
+# entries, none a digit run, the longest digit run three, none drawn from the number alphabet, so the floor changes nothing
+# for it today; it is a guard for a list that later holds a long digit run.
+# What the floor leaves as it was. A hostname or a login (WORD_KINDS) is matched as a run of whole tokens, so over a number
+# it matches a whole digit group only (an all-digit hostname or login of PROBE_MIN or more characters; rare, the cost
+# identifier_hits' docstring names), and it stays applied to numbers at any length. Every other probe is a substring match
+# and takes the floor, which changes nothing for the machine's own strings: a home directory and a working directory carry a
+# slash, which no number spells; a whole session id carries dashes inside it, which a number spells only in front; and its
+# eight-character prefix, the shortest id probe, is an eight-digit run when it is all digits, above the floor, and with a
+# hex letter in it matches no number spelling (json spells `e` only after one digit or a pointed mantissa and before a
+# signed exponent, and never a, b, c, d or f). So the floor's one effect is on the private list.
+NUMERIC_PROBE_MIN_DIGITS = 7
 # The machine-local list of strings that must never be published: the file the repository's pre-push hook reads
 # (.githooks/pre-push, scan_identifiers), one string per line, a `#` starting a comment, surrounding whitespace
 # dropped, blanks skipped, resolved as the hook resolves it (private_strings_path). Plainly absent on a clone that never
@@ -755,6 +784,8 @@ PRIVATE_STRINGS_FILE = os.path.join("romp", "private-strings.txt")
 PRIVATE_STRINGS_MAX = 64 * 1024
 LIST_OVER_BOUND = "romp: the private-strings list is over %d bytes; entries past the bound are not checked" % PRIVATE_STRINGS_MAX
 LIST_NOT_IN_FORCE = "romp: %d of %d private-strings entries did not become probes and are not checked; the list is not fully in force"
+LIST_UNDER_NUMERIC_FLOOR = ("romp: %d of %d private-strings entries are checked in keys and string values but not in numbers (their digit "
+                            "runs are shorter than %d); a value that must be found in a number needs %d or more of its digits listed")
 LIST_UNREADABLE = "romp: no private-strings list was read from %s (%s); no listed string is checked"   # the path and the reason
 LIST_NOT_UTF8 = "romp: %d line(s) of the private-strings list at %s are not UTF-8 and are not checked"
 
@@ -807,8 +838,10 @@ def _file_kind(path):
     return None
 
 
-def private_strings(env):
-    """[str]: the private list's entries, a `#` comment and surrounding whitespace stripped from each line and blanks
+def private_entries(env):
+    """[(line, str)]: the private list's entries with the ONE-BASED LINE of the file each is on (comment and blank lines
+    count, so the number is the one an editor shows; a refusal names it in place of the entry's text), a `#` comment and
+    surrounding whitespace stripped from each line and blanks
     dropped, read line by line as UTF-8 from a REGULAR file (open_regular) of at most PRIVATE_STRINGS_MAX bytes:
     PRIVATE_STRINGS_MAX + 1 are read, and a file over the bound is cut back to the last complete line inside it, so no
     fragment of an entry becomes a probe, with LIST_OVER_BOUND said once on stderr, since the entries from the cut on
@@ -851,7 +884,7 @@ def private_strings(env):
         raw = raw[:raw.rfind(b"\n") + 1]        # back to the last complete line; empty when the bound cut the first one
         sys.stderr.write(LIST_OVER_BOUND + "\n")
     out, undecodable = [], 0
-    for line in raw.split(b"\n"):
+    for number, line in enumerate(raw.split(b"\n"), 1):
         try:
             text = line.decode("utf-8")
         except UnicodeDecodeError:
@@ -859,33 +892,65 @@ def private_strings(env):
             continue
         text = text.split("#", 1)[0].strip()
         if text:
-            out.append(text)
+            out.append((number, text))
     if undecodable:
         sys.stderr.write(LIST_NOT_UTF8 % (undecodable, path) + "\n")
     return out
 
 
+def private_strings(env):
+    """[str]: the texts of private_entries, in file order, without the line numbers: the reader's view for a caller that
+    names no line (the pre-push hook reads the same texts). Every road to no list, and every loud line, is
+    private_entries'."""
+    return [text for _, text in private_entries(env)]
+
+
+def longest_digit_run(s):
+    """The length of the longest run of decimal digits in `s`, 0 when it carries none: what NUMERIC_PROBE_MIN_DIGITS is
+    measured against (`abc` is 0, `zz424242zz` is 6, `1234.5678` is 4, `4242424` is 7)."""
+    return max((len(run) for run in DIGIT_RUN.findall(s)), default=0)
+
+
+class Probe(collections.namedtuple("Probe", "kind text")):
+    """A probe as machine_probes builds it: the (kind, text) pair probe_in and identifier_hits read, and BESIDE the pair,
+    never in it, `line`, the one-based line of the private list a listed entry is on (None for a machine string), which
+    identifier_hits carries into the Hit so that a refusal can name the line and never the text. A plain (kind, text)
+    tuple is a probe too, with no line (the tests build them); it compares equal to a Probe of the same kind and text, so a
+    repeated entry is one probe, the first line's."""
+
+    def __new__(cls, kind, text, line=None):
+        self = super().__new__(cls, kind, text)
+        self.line = line
+        return self
+
+
 def machine_probes(state_dir=None, env=None):
     """[(kind, string)]: what only this machine knows. The hostname and its first label, the login name and
     the home directory (with its last component, which is usually the login name), every string on the
-    machine-local private list (private_strings, kind PRIVATE_KIND, `private string`: the maintainer's own list of
+    machine-local private list (private_entries, kind PRIVATE_KIND, `private string`: the maintainer's own list of
     what must never be published, absent on a clone that never set one up, matched as a substring or a token run,
-    probe_in), and, when `state_dir` holds an sdk registry, every session id (whole and its first eight characters,
+    probe_in, each probe carrying the LINE of the list its entry is on, Probe, for the refusal to name), and, when
+    `state_dir` holds an sdk registry, every session id (whole and its first eight characters,
     the spelling the scope units and the ledgers use), every conversation id and every working directory.
     Lower-cased; strings shorter than PROBE_MIN are left out, EXCEPT a listed private string: the list is the
     maintainer's explicit choice and not the heuristic the floor exists for, and the floor dropped a three-character
     entry silently while a document carrying it was sent (the upload's second review round, 2026-09-18); an empty
     entry is never a probe (an empty substring is in every string). When a listed entry did not become a probe (the
     reader returns no blank today, so only a filter a later change adds could drop one), LIST_NOT_IN_FORCE says how
-    many of how many on stderr: a list silently not in force is the wrong signal. See the module docstring for why
+    many of how many on stderr: a list silently not in force is the wrong signal. When at least one listed entry
+    carries digits only in runs shorter than NUMERIC_PROBE_MIN_DIGITS, LIST_UNDER_NUMERIC_FLOOR says once how many of
+    how many are checked in keys and string values and not in numbers (the comment at the floor: below it a match in a
+    number is coincidence, so identifier_hits does not apply such an entry to a number), so that a reader whose private
+    value is a short digit run knows the numeric arm does not protect it and can list more of its digits or accept
+    that; an entry with no digit at all is not counted, since no number spells it. See the module docstring for why
     session names are not probes, and why a listed string that is also romp vocabulary refuses on purpose."""
     env = os.environ if env is None else env
     out = []
 
-    def add(kind, s):
+    def add(kind, s, line=None):
         s = str(s or "").strip().lower()
         if s and (kind == PRIVATE_KIND or len(s) >= PROBE_MIN) and (kind, s) not in out:
-            out.append((kind, s))
+            out.append(Probe(kind, s, line))
     try:
         host = socket.gethostname()
     except OSError:
@@ -897,12 +962,15 @@ def machine_probes(state_dir=None, env=None):
     home = env.get("HOME") or ""
     add("home directory", home)
     add("username", os.path.basename(home.rstrip("/")))
-    listed = private_strings(env)
-    for s in listed:
-        add(PRIVATE_KIND, s)
-    dropped = sum(1 for s in listed if (PRIVATE_KIND, str(s).strip().lower()) not in out)
+    listed = private_entries(env)
+    for line, s in listed:
+        add(PRIVATE_KIND, s, line)
+    dropped = sum(1 for _, s in listed if (PRIVATE_KIND, str(s).strip().lower()) not in out)
     if dropped:
         sys.stderr.write(LIST_NOT_IN_FORCE % (dropped, len(listed)) + "\n")
+    under = sum(1 for _, s in listed if 0 < longest_digit_run(str(s)) < NUMERIC_PROBE_MIN_DIGITS)
+    if under:
+        sys.stderr.write(LIST_UNDER_NUMERIC_FLOOR % (under, len(listed), NUMERIC_PROBE_MIN_DIGITS, NUMERIC_PROBE_MIN_DIGITS) + "\n")
     if state_dir:
         for p in sorted(glob.glob(os.path.join(str(state_dir), "sdk", "*.json"))):
             try:
@@ -954,11 +1022,18 @@ def identifier_hits(doc, probes, skip=()):
     bool and null are not scanned (they spell no probe). What this costs: a number spells no path, no uuid, no
     hostname and no login (a hex id's eight-character prefix can be all digits, rarely, and a login can be, and then
     a counter carrying it is refused naming the kind and the path, like a listed word that is romp vocabulary), so
-    the scan over numbers finds a probe that is a digit run alone, which is what the private list is for."""
+    the scan over numbers finds a probe that is a digit run alone, which is what the private list is for. THE NUMERIC
+    FLOOR (2026-09-19, the comment at NUMERIC_PROBE_MIN_DIGITS): a substring probe is applied to a number only when it
+    carries a digit run of at least NUMERIC_PROBE_MIN_DIGITS digits, since a shorter listed run collides with some
+    number of an export by coincidence too often for a match to say anything (measured: about one export in four at
+    four digits, about one in 7,000 at seven); a listed entry under the floor is checked in every key and string value
+    and in no number, and a word probe (WORD_KINDS, a token-run match) is applied to numbers as before. The numbers
+    themselves are all scanned; the floor selects the probes."""
     hits = []
+    numeric = [p for p in probes if p[0] in WORD_KINDS or longest_digit_run(p[1]) >= NUMERIC_PROBE_MIN_DIGITS]
 
-    def scan(s, where, key):
-        for kind, probe in probes:
+    def scan(s, where, key, applicable=probes):
+        for kind, probe in applicable:
             if probe_in(kind, probe, s):
                 hits.append(Hit(kind, key, "/".join(str(p) for p in where), len(where)))
                 return
@@ -977,7 +1052,7 @@ def identifier_hits(doc, probes, skip=()):
         elif isinstance(node, str):
             scan(node, where, False)
         elif isinstance(node, (int, float)) and not isinstance(node, bool):
-            scan(json.dumps(node), where, False)      # the number as the export writes it and the upload sends it
+            scan(json.dumps(node), where, False, numeric)      # the number as the export writes it and the upload sends it; the floor's probes
 
     walk(doc, ())
     return hits
