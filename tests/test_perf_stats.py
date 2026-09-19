@@ -1523,7 +1523,15 @@ class RoutingStatements(unittest.TestCase):
     its compiled files are read when it exists; no ui/webview source names a block today, so no copy there can, and a
     source that starts to would red this pin on a machine holding the build output before it did in CI. The scan
     takes a shared file lock and the plant test below an exclusive one: pytest-xdist can run the three tests on
-    different workers at once, and a sibling's scan during the plant would read the plant and red."""
+    different workers at once, and a sibling's scan during the plant would read the plant and red.
+
+    What PLACES counts, since PR 797's closing check asked for the derivation: one entry per text file in the tree
+    above whose text matches BLOCKS at least once, however many times it matches, so the count the sweep holds is the
+    size of PLACES, a set of files, and `git ls-files -z --cached --others --exclude-standard | xargs -0 grep -I -l -E
+    '<the BLOCKS pattern>'` at the repo root lists the same files plus the bin/romp-kernel symlink the scan skips. No
+    count of statements is held anywhere: a statement has no unit a regex fixes (a line matching BLOCKS, an occurrence
+    of it and a sentence give three different numbers over the same files), and the sweep needs the files to read, not
+    a tally."""
 
     BLOCKS = re.compile(r"stagesForeign|cycleJobsMs|connectPush\.stagesMs|stages_foreign|cycle_jobs_ms|connect_stages_ms")
     # the places a routing sentence lives today; a file added here has been read against the measured cells
