@@ -1565,8 +1565,9 @@ class DepthBound(unittest.TestCase):
     without recursion, so it measures a document the walks could not; the bound is 32, about four times the depth of a
     fresh export, which this module's export from the planted snapshot stays under with the same margin; and the
     RecursionError belt behind the bound refuses in one line naming the error's class, since no file reaches it by nesting
-    alone. Two more: a RecursionError out of the PARSER is the strict-JSON refusal (strict_loads turns it into a ValueError
-    with a fixed text), and the bound refuses BEFORE any check walks the document (check_document stubbed, never called)."""
+    alone, out of the checks and out of the writer alike. Two more: a RecursionError out of the PARSER is the strict-JSON
+    refusal (strict_loads turns it into a ValueError with a fixed text), and the bound refuses BEFORE any check walks the
+    document (check_document stubbed, never called)."""
 
     def test_nesting_depth_counts_containers_around_the_deepest_value_without_recursion(self):
         for doc, depth in (({}, 1), ([], 1), (1, 0), ("s", 0), ({"a": []}, 2), ({"a": [{"b": 1}]}, 3), ({"a": {"b": {}}, "c": 1}, 3),
@@ -1593,6 +1594,22 @@ class DepthBound(unittest.TestCase):
         self.addCleanup(shutil.rmtree, xdg, True)
         file = _export(xdg, state)
         with mock.patch.object(pu.pe, "check_document", side_effect=RecursionError("planted")):
+            with self.assertRaises(pu.Refusal) as cm:
+                pu.read_export(file, pu.pe.Path(state))
+        self.assertEqual(str(cm.exception), "refused: %s could not be checked (RecursionError); nothing sent" % file)
+        self.assertEqual(cm.exception.code, 1)
+        self.assertNotIn("planted", str(cm.exception))
+
+    def test_a_recursion_error_out_of_the_writer_is_the_same_one_line_belt(self):
+        """The writer (pe.document_text, json's encoder) recurses one frame per level like the walks and the fold, and it ran
+        after the belt's try, so with the depth bound lifted a list chain near the walks' reach overflowed in the encoder and
+        the RecursionError escaped read_export as a traceback (the fourth review round's verifier, 2026-09-19); the bound keeps
+        every file far from it, and the belt's own comment promises one line whatever the stack looks like, so the writer runs
+        inside the belt. Pinned by making the writer raise. Fails before: RecursionError out of read_export."""
+        xdg, state = _state_root()
+        self.addCleanup(shutil.rmtree, xdg, True)
+        file = _export(xdg, state)
+        with mock.patch.object(pu.pe, "document_text", side_effect=RecursionError("planted")):
             with self.assertRaises(pu.Refusal) as cm:
                 pu.read_export(file, pu.pe.Path(state))
         self.assertEqual(str(cm.exception), "refused: %s could not be checked (RecursionError); nothing sent" % file)

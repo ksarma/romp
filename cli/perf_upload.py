@@ -324,9 +324,9 @@ def read_export(path, state):
     is this verb's own: the checks and the fold recurse one frame per level, the parser admits documents far deeper than
     their frames reach on some builds, and this is the one road that hands them a file a person named, so a document
     nested deeper than MAX_DEPTH is refused in one line naming the bound and the file's depth (the receiver's depth rule,
-    about eight levels, is the receiver's and is not enforced here). A RecursionError out of the checks is caught behind
-    the bound as a belt, the same one-line refusal naming the error's class, never a traceback; with the bound in front
-    no file reaches it."""
+    about eight levels, is the receiver's and is not enforced here). A RecursionError out of the checks, the fold or the
+    writer is caught behind the bound as a belt, the same one-line refusal naming the error's class, never a traceback;
+    with the bound in front no file reaches it."""
     try:
         fh = pp.open_regular(path)
     except FileNotFoundError:
@@ -380,12 +380,15 @@ def read_export(path, state):
                 raise Refusal("refused: %s is not the export's own shape (the %s block is not what the export writes); nothing sent" % (path, k), 1)
             if k in doc and pp.fold(doc[k]) != doc[k]:
                 raise Refusal("refused: %s is not the export's own public form (the %s block differs from its fold); nothing sent" % (path, k), 1)
+        text = pe.document_text(doc)      # the document the checks read, spelled as the export spells it
     except RecursionError:
-        # the belt behind the depth bound: the walks and the fold recurse one frame per level, and MAX_DEPTH keeps every
-        # file this verb reads far inside any build's stack, so nothing reaches this line by nesting alone; it stands so
-        # that whatever the interpreter's stack looks like, the verb answers with one line and never a traceback
+        # the belt behind the depth bound: the walks, the fold and the writer recurse one frame per level, and MAX_DEPTH
+        # keeps every file this verb reads far inside any build's stack, so nothing reaches this line by nesting alone; it
+        # stands so that whatever the interpreter's stack looks like, the verb answers with one line and never a traceback.
+        # The writer is inside it on purpose: json's encoder recurses one frame per level too, and with the bound lifted
+        # it was the first to overflow past a belt that ended at the fold (the fourth review round, 2026-09-19)
         raise Refusal("refused: %s could not be checked (RecursionError); nothing sent" % path, 1)
-    return pe.document_text(doc).encode("utf-8")      # the document the checks read, spelled as the export spells it
+    return text.encode("utf-8")
 
 
 # ── the confirmation ─────────────────────────────────────────────────────────────────────────────────────
