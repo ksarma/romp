@@ -23,16 +23,18 @@ traceback: the checks recurse one frame per level, and this is the one road that
 and pass the export's own check again as the file stands, since the user may have edited it: the scan for the
 strings only this machine knows, the paste-safety walk and the denylist walk of cli/perf_public.py, through
 perf_export.check_document, so a problem is reported by its kind and key path and never by the key or the value; then,
-as a belt under the three, every top-level block outside the envelope (schema, exported_at, kernel_commit) must equal
-its own fold, perf_public.fold, and one that does not is refused naming the block alone (a name the checks just passed).
-Any of these refuses with exit 1. The rule the re-check holds the file to is the export's (its third review round,
-2026-09-18): the public form is PASTE-SAFE, not unlinkable. It removes identifiers, paths, free text, machine
-strings and every absolute clock stamp and coarsens the uptime and the memory-fraction bounds; durations, counts and
-per-process measurements stay, so two exports from one kernel remain linkable through them by design. The re-check
-refuses what the export would have dropped, folded or coarsened (a `t` put back on a split row, a string value the
-export would have folded to `other`, a key it would have replaced, one ending in a newline among them, an uptime typed
-to the second, a bound typed to the byte, a float inside a clock stamp's epoch window, 1.5e9 to 2.0e9 seconds or 1.5e12
-to 2.0e12 milliseconds, under any key but a duration key) and passes what it keeps (an integer is a byte total or a count,
+as a belt under the three, the document's top level must be exactly what the export writes (TOP_LEVEL: schema,
+exported_at and perf, with kernel_commit and usage optional, no other key, exported_at and kernel_commit in the shapes
+the export spells) and each folded block, perf and usage, must equal its own fold, perf_public.fold, at the block root;
+a document that is not is refused naming the top-level key alone (a name the checks just passed). Any of these refuses
+with exit 1. The rule the re-check holds the file to is the export's (its third review round, 2026-09-18): the public
+form is PASTE-SAFE, not unlinkable. The export removes identifiers, paths, free text, machine strings and every absolute
+clock stamp and coarsens the uptime and the memory-fraction bounds; durations, counts and per-process measurements stay,
+so two exports from one kernel remain linkable through them by design. The re-check refuses what the export would have
+dropped, folded or coarsened, and of clock stamps it judges a FLOAT-VALUED one (a `t` put back on a split row, a string
+value the export would have folded to `other`, a key it would have replaced, one ending in a newline among them, an uptime
+typed to the second, a bound typed to the byte, a float inside a clock stamp's epoch window, 1.5e9 to 2.0e9 seconds or
+1.5e12 to 2.0e12 milliseconds, under any key but a duration key) and passes what it keeps (an integer is a byte total or a count,
 which a long-lived kernel's totals carry into the window within hours; a float outside both windows is a measurement,
 the allocator's arena on a long-lived kernel among them; a float inside a window under a duration key, a name carrying
 the token `ms` such as `cycle_cpu_ms_sum` or `wallMs`, is a millisecond total, which the kernel's sums carry through
@@ -101,6 +103,19 @@ MAX_BYTES = 1 << 20                  # the receiver's cap on Content-Length and 
 # bounded by construction (the export folds a snapshot the kernel built; restart-metrics reads its own state), and safe
 # here only because of this bound: a future road that reads untrusted input owes a bound of its own.
 MAX_DEPTH = 32                       # the deepest nesting read_export admits, by nesting_depth's count (the comment above)
+# The document's TOP LEVEL, exactly what perf_export.export_document writes (the upload's third review round, 2026-09-18):
+# the envelope, schema (checked first, by value), exported_at (the export's strftime("%Y-%m-%dT%H:%MZ")) and an optional
+# kernel_commit (perf_export.kernel_commit: the first twelve characters, lower-cased, of a 7-to-64 hex sha, so 7 to 12
+# lowercase hex), and the folded blocks, perf and an optional usage, each a dict equal to its own fold at the block root.
+# Any other key is refused naming it. Before this allowlist a block nobody thought about at the root passed the three
+# checks and the fold belt and was sent: a `judge` block whose denied path is anchored under perf and so not denied at
+# the root, a `now` integer, kernel_commit as a dict carrying a token, each folded to itself because fold's rules are
+# anchored at the block root and a foreign block has none there. The whole root is NOT folded as one dict for the same
+# reason: moving the fold up moves the anchors, and a real export fails it.
+TOP_LEVEL = {"schema": True, "exported_at": True, "perf": True, "kernel_commit": False, "usage": False}   # key: required
+FOLDED = ("perf", "usage")                                       # the blocks, each held to its own fold at the block root
+EXPORTED_AT = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}Z$")     # the export's UTC minute
+KERNEL_COMMIT = re.compile(r"^[0-9a-f]{7,12}$")                   # kernel_commit()'s abbreviation of a sha
 TIMEOUT_S = 30                       # a deadline over the whole exchange (_Deadline), not a per-operation timeout
 USER_AGENT = "romp-perf-upload/1"
 ANSWER_MAX = 64 * 1024               # a receipt is under 200 bytes; a longer 201 body is not the shape
@@ -128,12 +143,15 @@ class Refusal(Exception):
 def receiver_setting(flag, env=None):
     """(text, source): the address as configured and which setting supplied it, in order --receiver, the
     environment variable, the file's first non-empty line; (None, None) when none is set. An empty variable
-    is unset. The file is read under HOME, the way `romp default-dir` reads its own, and read with a bound: at most
-    RECEIVER_FILE_MAX + 1 bytes are taken, so a file that is not a setting (a device node, a fifo, a large file put
-    there by mistake) costs that much memory and no more, and one over the bound is not truncated to its first line
-    but returned as the empty string with the file as its source, the same road a file that is not UTF-8 text takes:
-    an address the grammar refuses, so the caller's refusal names the file and nothing of its bytes. A size check
-    would not do (stat reports 0 for a device node or a fifo), so the bound is on the read itself."""
+    is unset. The file is read under HOME, the way `romp default-dir` reads its own. It must be a REGULAR file
+    (pp.open_regular: opened O_NONBLOCK and fstat'ed before any read, since a plain open of a fifo blocks until a
+    writer arrives, before any read a bound could cover, and a fifo at this path hung the verb indefinitely, the
+    upload's second review round, 2026-09-18), and it is read with a bound: at most RECEIVER_FILE_MAX + 1 bytes are
+    taken, so a large file put there by mistake costs that much memory and no more. A file that is not regular (a
+    fifo, a device node), one over the bound (not truncated to its first line, which would send to whatever address
+    that line spelled) and one that is not UTF-8 text all return the empty string with the file as its source: an
+    address the grammar refuses, so the caller's refusal names the file and nothing of its bytes. A size check alone
+    would not do (stat reports 0 for a device node or a fifo), so the bound is on the read and the kind on the fstat."""
     if flag is not None:
         return flag, "--receiver"
     env = os.environ if env is None else env
@@ -141,7 +159,10 @@ def receiver_setting(flag, env=None):
     if value:
         return value, RECEIVER_VAR
     try:
-        with open(os.path.expanduser(RECEIVER_FILE), "rb") as fh:
+        fh = pp.open_regular(os.path.expanduser(RECEIVER_FILE))
+        if fh is None:
+            return "", RECEIVER_FILE
+        with fh:
             raw = fh.read(RECEIVER_FILE_MAX + 1)
     except OSError:
         return None, None
@@ -242,12 +263,15 @@ def read_export(path, state):
     levels (nesting_depth), and it passes
     perf_export.check_document (the machine-string scan, the paste-safety walk and the denylist walk, which holds
     the file to the export's own rule, paste-safe, not unlinkable: what the export dropped, folded or coarsened is
-    refused and the measurements it keeps pass; the shallowest finding named) as it stands, and then every top-level
-    block outside the envelope (pe.ENVELOPE_KEYS) equals its own fold (pp.fold), the belt under the three checks: the
-    checks name a finding by its kind and key path, and the fold comparison catches whatever shape a later fold rule
-    would fold that no check yet names, at the price of naming the block alone. A Refusal
+    refused and the measurements it keeps pass; the shallowest finding named) as it stands, and then the belt under the
+    three checks: the top level is exactly what the export writes (TOP_LEVEL: no key the export does not write, none it
+    always writes missing, exported_at and kernel_commit in the export's own spellings) and each folded block, perf and
+    usage (FOLDED), is a dict equal to its own fold (pp.fold) at the block root. The checks name a finding by its kind
+    and key path; the allowlist turns a top-level key nobody thought about from accepted into refused, and the fold
+    comparison catches whatever shape a later fold rule would fold that no check yet names, both at the price of naming
+    the top-level key alone. A Refusal
     otherwise, naming the file path the user passed and, for a walk or scan finding, the kind and the key path,
-    never the value; for the belt, the block's name, which the checks passed. The depth rule runs before the checks and
+    never the value; for the belt, the top-level key, which the checks passed. The depth rule runs before the checks and
     is this verb's own: the checks and the fold recurse one frame per level, the parser admits documents far deeper than
     their frames reach on some builds, and this is the one road that hands them a file a person named, so a document
     nested deeper than MAX_DEPTH is refused in one line naming the bound and the file's depth (the receiver's depth rule,
@@ -286,12 +310,25 @@ def read_export(path, state):
         reason = pe.check_document(doc, state, tail="nothing sent")
         if reason:
             raise Refusal("refused: " + reason, 1)
+        # the belt, after the checks so that a top-level key is safe to print (they passed over it: it fits the identifier
+        # grammar whole and spells no machine string). First the allowlist (TOP_LEVEL): a key the export does not write, a
+        # key it always writes missing, an envelope line not in the export's own spelling. Then the fold: a fold is a fixed
+        # point of its own output (pinned over every fixture and a served export; fold is idempotent even on the summed-floats
+        # case pp._merge names, which the denylist walk above refuses first), so a block that differs from its fold was
+        # changed after the export in a way the checks above do not name
         for k in doc:
-            # the belt: a fold is a fixed point of its own output (pinned over every fixture and a served export; fold is
-            # idempotent even on the summed-floats case pp._merge names, which the denylist walk above refuses first), so a
-            # block that differs from its fold was changed after the export in a way the checks above do not name; the
-            # block's name is safe to print because they passed over it
-            if k not in pe.ENVELOPE_KEYS and pp.fold(doc[k]) != doc[k]:
+            if k not in TOP_LEVEL:
+                raise Refusal("refused: %s is not the export's own shape (a top-level %s block the export does not write); nothing sent" % (path, k), 1)
+        for k, required in TOP_LEVEL.items():
+            if required and k not in doc:
+                raise Refusal("refused: %s is not the export's own shape (no top-level %s); nothing sent" % (path, k), 1)
+        for k, shape in (("exported_at", EXPORTED_AT), ("kernel_commit", KERNEL_COMMIT)):
+            if k in doc and not (isinstance(doc[k], str) and shape.match(doc[k])):
+                raise Refusal("refused: %s is not the export's own shape (the %s line is not what the export writes); nothing sent" % (path, k), 1)
+        for k in FOLDED:
+            if k in doc and not isinstance(doc[k], dict):
+                raise Refusal("refused: %s is not the export's own shape (the %s block is not what the export writes); nothing sent" % (path, k), 1)
+            if k in doc and pp.fold(doc[k]) != doc[k]:
                 raise Refusal("refused: %s is not the export's own public form (the %s block differs from its fold); nothing sent" % (path, k), 1)
     except RecursionError:
         # the belt behind the depth bound: the walks and the fold recurse one frame per level, and MAX_DEPTH keeps every
@@ -502,7 +539,7 @@ def main(argv=None, stdin=None) -> int:
     ap.add_argument("file", metavar="FILE",
                     help="an export written by `romp perf export --public`, checked again as it stands: the public form is "
                          "paste-safe, not unlinkable, so what the export dropped or coarsened (an identifier, a path, free text, "
-                         "a clock stamp, a bound to the byte) is refused and the measurements it keeps pass")
+                         "a float-valued clock stamp, a bound to the byte) is refused and the measurements it keeps pass")
     ap.add_argument("--yes", action="store_true",
                     help="send without the prompt: the form an agent uses; off a terminal the verb refuses without it, "
                          "and no setting or variable stands in for it")

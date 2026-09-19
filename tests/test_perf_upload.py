@@ -4,25 +4,36 @@ export's companion, which sends one paste-safe export to the receiver the operat
 
 What is pinned here, each by execution against the verb's own file run as a child (bin/romp-perf-upload under
 a pinned hostname) or, for the request itself, through bin/romp: the receiver address comes from --receiver,
-else ROMP_PERF_RECEIVER, else ~/.config/romp/perf-receiver, and with none set the verb refuses naming all
+else ROMP_PERF_RECEIVER, else ~/.config/romp/perf-receiver (a regular file: a fifo there is refused at once as an
+address the grammar refuses, where an open of it once hung the verb), and with none set the verb refuses naming all
 three; the address must be https with a host and no userinfo, query or fragment (http for 127.0.0.1 and
 localhost alone), and a refused address is never echoed; the file must exist, be at most 1 MiB, parse as strict
-JSON (no NaN or Infinity, no repeated key at any depth) nested at most MAX_DEPTH levels (32, about four times a fresh
-export's 7; a deeper file is refused in one line naming the bound before any check walks it) to an object with the schema
+JSON (no NaN or Infinity, no repeated key at any depth; a RecursionError out of the parser is the strict-JSON refusal,
+pinned by mocking json.loads) nested at most MAX_DEPTH levels (32, about four times a fresh export's 7; a deeper file is
+refused in one line naming the bound before any check walks it, check_document stubbed and never called; a 100,000-level
+file meets whichever of the parser and the bound its build reaches first, and that case asserts the properties owed, exit
+1, one of the two fixed lines, no traceback, nothing printed, nothing sent, never which line, since that is the
+interpreter's stack and not the verb's) to an object with the schema
 line and pass the export's own scan, walk and denylist walk as it stands (what the export dropped, folded or coarsened is
 refused: a key it drops, a string value or a key the fold would have written as `other`, a key ending in a newline among
 them, an uptime off whole minutes, a bound off a power of two, a float inside a clock stamp's epoch window, seconds or
 milliseconds, under any key but a duration key; an integer, a float outside both windows and a float under a duration key
-are measurements and pass, so an export from a long-lived kernel is sent whole; and, as a belt under the three, every
-top-level block outside the envelope must equal its own fold, FoldBelt), an
+are measurements and pass, so an export from a long-lived kernel is sent whole; and, as a belt under the three, the top
+level must be exactly what the export writes, schema, exported_at and perf with kernel_commit and usage optional and no
+other key, each envelope line in the export's own spelling, and the perf and usage blocks must equal their own folds,
+FoldBelt), an
 edited file refused by kind and key path and never by value; the line before the prompt names the URL the verb will dial, a path in the address included; the send needs a yes on a terminal or --yes, off a terminal
 without the flag it refuses before dialling, and no environment variable stands in for the flag (an AST census
-of the module's environment reads, plus an executed check with tempting names set); the one answer accepted is
+of the module's environment reads, plus an executed check with tempting names set); TLS is urllib's default verified
+context, pinned by an AST census over the module (no ssl import, no context keyword, no loosening attribute) and by
+execution (the connection the handshake used is recorded and its context's verify_mode and check_hostname read); the one
+answer accepted is
 201 with exactly {receipt: uuid4, retention_days: int, av: ok|skipped} in a body of at most 64 KiB, every other status
 (a redirect among them, never followed, its Location never parsed), body or error refused with a fixed line carrying
 the status code or the error class and nothing of the body or of any exception's message; the thirty seconds are a
 deadline over the whole exchange, so a receiver answering in pieces each under the limit is cut at the total (a
-raw-socket drip receiver pins it); and an enumeration of the request a recording receiver saw: the request line, every header
+raw-socket drip receiver pins it) and the connection's own timeout is cut to the time the deadline has left (a unit pin);
+and an enumeration of the request a recording receiver saw: the request line, every header
 and the body bytes, which equal the file's.
 
 Nothing here reads a live kernel, a real state directory or a real setting: the child's HOME is synthetic or a
@@ -38,6 +49,7 @@ import os
 import re
 import shutil
 import socket
+import ssl
 import subprocess
 import sys
 import tempfile
@@ -141,14 +153,18 @@ def _state_root():
     return xdg, state
 
 
-def _export(xdg, state):
+def _export(xdg, state, usage=False, commit=None):
     """An export the export verb wrote from the planted snapshot, under the same synthetic machine strings the
-    upload child will scan with; returns its path."""
+    upload child will scan with; returns its path. `usage` passes --usage; `commit` puts a kernel_sha on the snapshot,
+    which the export lifts into the envelope as kernel_commit."""
     src = os.path.join(xdg, "snap.json")
     out = os.path.join(xdg, "export.json")
+    snap = planted_snapshot()
+    if commit:
+        snap["kernel_sha"] = commit
     with open(src, "w") as fh:
-        json.dump(planted_snapshot(), fh)
-    r = subprocess.run([sys.executable, "-c", CHILD, EXPORT, "--public", "--from", src, "--out", out],
+        json.dump(snap, fh)
+    r = subprocess.run([sys.executable, "-c", CHILD, EXPORT, "--public", "--from", src, "--out", out] + (["--usage"] if usage else []),
                        capture_output=True, text=True, timeout=60, env=_env(state))
     assert r.returncode == 0, r.stderr
     return out
@@ -156,10 +172,12 @@ def _export(xdg, state):
 
 def _nested(depth):
     """An export-shaped document text whose nesting is exactly `depth` by the verb's count (nesting_depth: the root is 1,
-    `perf` 2, and each `{"a": ` one more): the schema line, an uptime on the grain, and a chain of single-key objects
-    under perf/x ending in the number 1, so every check passes and the depth alone decides the outcome."""
+    `perf` 2, and each `{"a": ` one more): the envelope the belt requires (the schema line and an exported_at minute), an
+    uptime on the grain, and a chain of single-key objects under perf/x ending in the number 1, so every check passes and
+    the depth alone decides the outcome."""
     n = depth - 2
-    return '{"schema": "romp-perf-export/1", "perf": {"uptime_s": 60, "x": ' + '{"a": ' * n + "1" + "}" * n + "}}"
+    return ('{"schema": "romp-perf-export/1", "exported_at": "2026-09-18T12:00Z", "perf": {"uptime_s": 60, "x": '
+            + '{"a": ' * n + "1" + "}" * n + "}}")
 
 
 def _keys_named(doc, name):
@@ -396,6 +414,33 @@ class ReceiverSetting(unittest.TestCase):
         with mock.patch.dict(os.environ, {"HOME": self.home}):
             self.assertEqual(pu.receiver_setting(None, env={}), ("https://r.example", "~/.config/romp/perf-receiver"))
 
+    def test_a_fifo_at_the_setting_path_is_refused_at_once_naming_the_file_and_nothing_of_it_is_read(self):
+        """The setting file must be a REGULAR file (pp.open_regular: opened O_NONBLOCK, fstat'ed, S_ISREG required). A fifo at
+        ~/.config/romp/perf-receiver hung the verb indefinitely: a plain open of a fifo blocks until a writer arrives, before
+        any read the bound on the read could cover, so the bound the comment credited for the case never ran (the upload's
+        second review round, 2026-09-18). Now the fifo is an address the grammar refuses with the file as its source, the
+        refusal names the file, and the child exits 2 at once. THE CHILD IS RUN UNDER A TIMEOUT AND HARD-KILLED WHEN IT
+        EXPIRES, AND IT RUNS BEFORE THE UNIT CALL: the defect is a hang, so a plain wait, or the unit call first, would take
+        the runner with it; subprocess.run kills the child on TimeoutExpired and the case fails instead. Do not simplify
+        this back into _run's sixty-second wait or move the unit call above the child."""
+        d = os.path.join(self.home, ".config", "romp")
+        os.makedirs(d, exist_ok=True)
+        os.mkfifo(os.path.join(d, "perf-receiver"))
+        xdg, state = _state_root()
+        self.addCleanup(shutil.rmtree, xdg, True)
+        try:
+            r = subprocess.run([sys.executable, "-c", CHILD, UPLOAD, os.path.join(xdg, "no-such.json"), "--yes"], capture_output=True,
+                               text=True, timeout=8, env=_env(state, self.home), stdin=subprocess.DEVNULL)
+        except subprocess.TimeoutExpired:
+            self.fail("the upload child hung on the fifo at the setting path (killed after 8 s)")
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertEqual(r.stderr, "romp perf upload: refused: the receiver address from ~/.config/romp/perf-receiver is not an https URL with a "
+                                   "host and no userinfo, query or fragment (http is allowed for 127.0.0.1 and localhost only); nothing sent\n")
+        self.assertEqual(r.stdout, "")
+        with mock.patch.dict(os.environ, {"HOME": self.home}):           # the unit, after the child proved the open returns
+            self.assertEqual(pu.receiver_setting(None, env={}), ("", "~/.config/romp/perf-receiver"),
+                             "a fifo is refused as an address, the file named as its source, and nothing of it is read")
+
 
 class ReceiverAddress(unittest.TestCase):
     """receiver_url and upload_url: the address grammar and the route appended to it."""
@@ -460,8 +505,9 @@ class Cli(unittest.TestCase):
         self.assertEqual(self.fake.requests, [])
 
     def test_the_guide_says_no_receiver_ships_and_the_code_carries_none(self):
-        """docs/guide.md names the upload as the one user-initiated exception to the local-only promise and says the receiver
-        is one the user configures, none shipping, so nothing can be sent until one is set (fresh-2, 2026-09-18). The
+        """docs/guide.md says the upload is something the user runs, what it sends, and that the receiver is one the user
+        configures, none shipping, so nothing can be sent until one is set (fresh-2, 2026-09-18; the guide ranks the upload
+        against nothing else, and only its receiver sentence is pinned here). The
         sentence is pinned flattened, so a rewrap survives, and cross-checked against the code by execution and by text:
         with no flag, no variable and an empty HOME the setting resolves to nothing (the verb then refuses naming the three
         settings, the case above), and no string constant in the module, docstrings included, spells a URL, so no default
@@ -589,22 +635,29 @@ class Cli(unittest.TestCase):
         (7 of 9 such tokens on the box that found it). The machine-local list the repository's pre-push hook reads
         (~/.config/romp/private-strings.txt) is exactly the list of those strings, so it feeds the scan (perf_public
         machine_probes, kind `private string`), resolved under the child's HOME; the refusal names the kind and the
-        path and never the string. This widens the shared check, not only the upload. Fails before: exit 0, one request."""
+        path and never the string. This widens the shared check, not only the upload. Fails before: exit 0, one request.
+        A listed string is matched as a substring OR a whole-token run (the union, the third review round, 2026-09-18):
+        the hook matches each entry as a plain substring, so the token glued to letters, as a key (zzcoinedzzChat) or a
+        value (chatZzcoinedzz), is a hit here too, refused by the kind and the path, the token in no output, nothing sent.
+        Fails before: a whole-token match passed both glued forms and the child POSTed them."""
         base = ["--yes", "--receiver", self.fake.url]
         token = "zzcoinedzz"
         self.assertTrue(pp.IDENT.fullmatch(token), "the token fits the grammar: only the list knows it")
         os.makedirs(os.path.join(self.home, ".config", "romp"))
         with open(os.path.join(self.home, ".config", "romp", "private-strings.txt"), "w", encoding="utf-8") as fh:
             fh.write("# strings that must never be published\n%s\n" % token)
-        doc = json.loads(self.data)
-        doc["perf"]["leak"] = token
         edited = os.path.join(self.xdg, "edited.json")
-        with open(edited, "w") as fh:
-            json.dump(doc, fh)
-        r = self._refused(_run([edited] + base, self.state, home=self.home), 1,
-                          "refused: a string this machine knows (private string) survives as the value at perf/leak; nothing sent")
-        self.assertNotIn(token, r.stdout + r.stderr)
-        self.assertEqual(r.stdout, "", "refused before the summary line")
+        for plant, line in (({"leak": token}, "the value at perf/leak"),
+                            ({token + "Chat": 1}, "a key under perf"),                    # the token glued to letters, as a key
+                            ({"leak": "chat" + token.capitalize()}, "the value at perf/leak")):    # and as a value, in another case
+            doc = json.loads(self.data)
+            doc["perf"].update(plant)
+            with open(edited, "w") as fh:
+                json.dump(doc, fh)
+            r = self._refused(_run([edited] + base, self.state, home=self.home), 1,
+                              "refused: a string this machine knows (private string) survives as %s; nothing sent" % line)
+            self.assertNotIn(token, (r.stdout + r.stderr).lower(), line)
+            self.assertEqual(r.stdout, "", "refused before the summary line")
         self.assertEqual(self.fake.requests, [], "nothing was sent")
         r = _run([edited] + base, self.state)             # the synthetic HOME has no list: the token is a grammar-fitting word and passes
         self.assertEqual(r.returncode, 0, r.stderr + " (without the list, no probe knows the token)")
@@ -891,12 +944,69 @@ class Cli(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(len(self.fake.requests), 2)
 
+    def test_a_top_level_key_the_export_does_not_write_is_refused_naming_the_key_and_never_sent(self):
+        """The re-check holds the file's TOP LEVEL to exactly what the export writes (pu.TOP_LEVEL: schema, exported_at and
+        perf, kernel_commit and usage optional, no other key, each envelope line in the export's spelling), the upload's
+        third review round, 2026-09-18. Before the allowlist a block nobody thought about at the root passed the three
+        checks and the fold belt and was POSTed: fold's rules are anchored at the block root, so a `judge` block at the root
+        is not the denied perf/judge/child/failures/first, a `now` integer at the root is not the denied perf/now, and a
+        kernel_commit spelled as a dict folds to itself. Each is refused, exit 1, one stderr line naming the top-level key
+        (printable: the three checks passed over it) and never the value, the token in no output, nothing sent; the same
+        judge value under perf is the denylist's finding as before; a missing exported_at or perf is refused naming the
+        missing line; a fresh export passes with and without kernel_commit and with and without usage."""
+        base = ["--yes", "--receiver", self.fake.url]
+        token = "zz-ident-token-the-root-knew"
+        self.assertTrue(pp.IDENT.fullmatch(token), "the token fits the grammar: no check names it")
+        edited = os.path.join(self.xdg, "edited.json")
+        for plant, line in ((("judge", {"child": {"failures": {"first": token}}}), "a top-level judge block the export does not write"),
+                            (("now", 1700000000), "a top-level now block the export does not write"),
+                            (("kernel_commit", {"sha": token}), "the kernel_commit line is not what the export writes"),
+                            (("kernel_commit", "ABCDEF0123"), "the kernel_commit line is not what the export writes"),
+                            (("exported_at", "2026-09-18T12:00:00Z"), "the exported_at line is not what the export writes"),
+                            (("usage", [token]), "the usage block is not what the export writes")):
+            doc = json.loads(self.data)
+            doc[plant[0]] = plant[1]
+            with open(edited, "w") as fh:
+                json.dump(doc, fh)
+            r = self._refused(_run([edited] + base, self.state), 1, "refused: %s is not the export's own shape (%s); nothing sent" % (edited, line))
+            self.assertNotIn(token, r.stdout + r.stderr, line)
+            self.assertNotIn("1700000000", r.stdout + r.stderr, line)
+            self.assertNotIn("ABCDEF", r.stdout + r.stderr, line)
+            self.assertEqual(r.stdout, "", "refused before the summary line")
+        for missing in ("exported_at", "perf"):
+            doc = json.loads(self.data)
+            del doc[missing]
+            with open(edited, "w") as fh:
+                json.dump(doc, fh)
+            self._refused(_run([edited] + base, self.state), 1, "refused: %s is not the export's own shape (no top-level %s); nothing sent" % (edited, missing))
+        doc = json.loads(self.data)
+        doc["perf"]["judge"] = {"child": {"failures": {"first": token}}}      # the same value under perf: the denylist's finding, as before
+        with open(edited, "w") as fh:
+            json.dump(doc, fh)
+        r = self._refused(_run([edited] + base, self.state), 1,
+                          "refused: the public form still fails the denylist (a key the denylist drops, a key under perf/judge/child/failures); nothing sent")
+        self.assertNotIn(token, r.stdout + r.stderr)
+        self.assertEqual(self.fake.requests, [], "none of the edited files was sent")
+        for usage in (False, True):
+            for commit in (None, "0123456789abcdef0123456789abcdef01234567"):
+                xdg, state = _state_root()
+                self.addCleanup(shutil.rmtree, xdg, True)
+                fresh = _export(xdg, state, usage=usage, commit=commit)
+                with open(fresh, "rb") as fh:
+                    doc = json.loads(fh.read())
+                self.assertEqual(sorted(doc), sorted(["schema", "exported_at", "perf"] + (["usage"] if usage else []) + (["kernel_commit"] if commit else [])))
+                r = _run([fresh] + base, state)
+                self.assertEqual(r.returncode, 0, r.stderr + " (a fresh export, usage=%r, commit=%r, is the export's own shape)" % (usage, bool(commit)))
+        self.assertEqual(len(self.fake.requests), 4)
+
     def test_a_hundred_thousand_level_file_is_refused_by_the_parser_or_the_depth_bound_and_one_within_the_bound_takes_the_ordinary_path(self):
         """Which refusal the 100000-level document meets depends on whether the build's parser admits it: a parser that
         gives up on it refuses it as not strict JSON; one that admits it (CI's free-threaded 3.14t cell does) hands it to
-        the depth bound, which refuses it as nested 100001 levels deep. Both are refusals by kind, so the case accepts
-        either fixed line and holds the rest in common: exit 1, one stderr line, no traceback word, nothing printed,
-        nothing sent."""
+        the depth bound, which refuses it as nested 100001 levels deep. Which of the two fires is a property of the
+        interpreter's stack, not of the verb (the case once pinned the strict-JSON line alone and was red on that cell
+        while green on every other), so the case asserts the properties the verb owes and nothing about which line: exit
+        1, stderr equal to one of the two fixed lines, no Recursion and no Traceback in it, empty stdout, no request sent.
+        The strict-JSON road itself is pinned as a unit in DepthBound by making the parser raise."""
         base = ["--yes", "--receiver", self.fake.url]
         deep = os.path.join(self.xdg, "deep.json")
         with open(deep, "w") as fh:
@@ -907,6 +1017,7 @@ class Cli(unittest.TestCase):
                       r.stderr)
         self.assertEqual(r.stdout, "")
         self.assertNotIn("Recursion", r.stderr)
+        self.assertNotIn("Traceback", r.stderr)
         self.assertEqual(self.fake.requests, [])
         with open(deep, "w") as fh:
             fh.write(_nested(20))
@@ -1058,12 +1169,18 @@ class Cli(unittest.TestCase):
         self.assertEqual(self.fake.requests, [], "no cleartext request reached the receiver: an https address is never retried as http")
 
     def test_the_module_uses_urllibs_default_tls_context_and_nothing_weakens_it(self):
-        """The census over the transport module's text, load-bearing beside the https case above: disabling certificate
-        verification needs a context object from somewhere, and the module has none. No import of ssl, no `context=`
-        keyword at any call (the default HTTPSHandler and HTTPSConnection build the verified context themselves when
-        none is passed, so the deadline handlers pass none), no attribute that would loosen one, no bare name ssl. The
+        """Two pins on the same property, beside the https case above. The CENSUS over the transport module's text: disabling
+        certificate verification needs a context object from somewhere, and the module has none. No import of ssl, no
+        `context=` keyword at any call (the default HTTPSHandler and HTTPSConnection build the verified context themselves
+        when none is passed, so the deadline handlers pass none), no attribute that would loosen one, no bare name ssl. The
         consent census (test_no_environment_variable_stands_in_for_yes) already collects every environ subscript, a
-        PYTHONHTTPSVERIFY write among them."""
+        PYTHONHTTPSVERIFY write among them. Then the EXECUTED pin (the upload's third review round, 2026-09-18): a census
+        cannot catch a weakening spelled in a way it does not enumerate, and three mutants, a context built through a
+        computed attribute name, a sibling module's helper passing a loosened context through **kwargs, and a setattr on
+        the connection's own context with no context keyword anywhere, each left the whole suite green while accepting a
+        self-signed and a plaintext receiver. So the connection the handshake actually uses is recorded, and its context
+        is read: verification required and the hostname checked. The plaintext receiver suffices, since the context is
+        built when the connection is, before any peer is spoken to."""
         with open(os.path.join(ROOT, "cli", "perf_upload.py"), encoding="utf-8") as fh:
             tree = ast.parse(fh.read())
         imported = [a.name for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names]
@@ -1074,6 +1191,23 @@ class Cli(unittest.TestCase):
         self.assertEqual(attrs & {"check_hostname", "verify_mode", "_create_unverified_context", "_create_default_https_context",
                                   "load_verify_locations", "wrap_socket", "SSLContext", "set_ciphers", "minimum_version"}, set())
         self.assertEqual({n.id for n in ast.walk(tree) if isinstance(n, ast.Name) and n.id == "ssl"}, set())
+        # the executed pin: record the HTTPS connection at handshake time and read the context it verifies with
+        recorded = []
+        original = pu._DeadlineHTTPSConnection.connect
+
+        def record(conn):
+            recorded.append(conn)
+            return original(conn)
+        with mock.patch.object(pu._DeadlineHTTPSConnection, "connect", record):
+            with self.assertRaises(pu.Refusal):                 # the plaintext receiver: the handshake fails by its SSL error class
+                pu.post("https://127.0.0.1:%d/v1/upload" % self.fake.port, b"{}")
+        self.assertEqual(len(recorded), 1, "one https connection was made")
+        # _context is a PRIVATE http.client attribute (HTTPSConnection.__init__ stores the context it will wrap the socket
+        # with, the library's default verified one when none was passed), confirmed stable across 3.10 to 3.14; it is read
+        # here because the executed property is worth more than the guarantee of a public name
+        self.assertEqual(recorded[0]._context.verify_mode, ssl.CERT_REQUIRED, "certificate verification is required")
+        self.assertIs(recorded[0]._context.check_hostname, True, "and the hostname is checked")
+        self.assertEqual(self.fake.requests, [], "nothing reached the receiver in the clear")
 
     def test_a_refused_run_a_failed_send_and_a_successful_send_leave_no_file_behind_and_change_none(self):
         """The verb keeps no state: it writes nothing under the state root or HOME and touches no file beside the export,
@@ -1133,7 +1267,8 @@ class DepthBound(unittest.TestCase):
     without recursion, so it measures a document the walks could not; the bound is 32, about four times the depth of a
     fresh export, which this module's export from the planted snapshot stays under with the same margin; and the
     RecursionError belt behind the bound refuses in one line naming the error's class, since no file reaches it by nesting
-    alone."""
+    alone. Two more: a RecursionError out of the PARSER is the strict-JSON refusal (strict_loads turns it into a ValueError
+    with a fixed text), and the bound refuses BEFORE any check walks the document (check_document stubbed, never called)."""
 
     def test_nesting_depth_counts_containers_around_the_deepest_value_without_recursion(self):
         for doc, depth in (({}, 1), ([], 1), (1, 0), ("s", 0), ({"a": []}, 2), ({"a": [{"b": 1}]}, 3), ({"a": {"b": {}}, "c": 1}, 3),
@@ -1166,37 +1301,135 @@ class DepthBound(unittest.TestCase):
         self.assertEqual(cm.exception.code, 1)
         self.assertNotIn("planted", str(cm.exception))
 
-
-class FoldBelt(unittest.TestCase):
-    """read_export's last step, as a unit: with the three checks stubbed to pass, a top-level block that differs from its
-    own fold is refused naming the block alone, and an export as written passes."""
-
-    def test_the_fold_belt_refuses_a_block_the_checks_passed(self):
+    def test_a_recursion_error_out_of_the_parser_is_not_strict_json_and_never_a_traceback(self):
+        """json raises RecursionError on a document nested past the parser's reach, on the builds where the C scanner gives up
+        before the depth bound sees the document; strict_loads turns it into a ValueError with a fixed text, and read_export
+        into the strict-JSON refusal, so the verb answers with one line and never a traceback whatever the build. Pinned by
+        making json.loads raise: sys.setrecursionlimit is NOT the mechanism, because on 3.12 and later the C JSON scanner's
+        reach is bounded by the thread's stack size and not by the recursion limit, so lowering the limit does not make the
+        parser give up on any document (both refuters of the third review round, 2026-09-18)."""
         xdg, state = _state_root()
         self.addCleanup(shutil.rmtree, xdg, True)
         file = _export(xdg, state)
-        with open(file, "rb") as fh:
-            data = fh.read()
-        token = "zz-planted-token-past-thirty-two-chars-zz"
-        doc = json.loads(data)
-        doc["extra"] = {"note": token, "count": 1}
-        edited = os.path.join(xdg, "edited.json")
-        with open(edited, "w") as fh:
+        with mock.patch.object(pu.json, "loads", side_effect=RecursionError("planted")):
+            with self.assertRaises(ValueError) as cm:
+                pu.strict_loads(b"{}")
+            self.assertEqual(str(cm.exception), "not strict JSON: nested past the parser")
+            self.assertNotIn("planted", str(cm.exception))
+            self.assertNotIsInstance(cm.exception, RecursionError)
+            with self.assertRaises(pu.Refusal) as cm:
+                pu.read_export(file, pu.pe.Path(state))
+        self.assertEqual(str(cm.exception), "refused: %s is not strict JSON; nothing sent" % file)
+        self.assertEqual(cm.exception.code, 1)
+        self.assertNotIn("planted", str(cm.exception))
+        self.assertNotIn("Recursion", str(cm.exception))
+
+    def test_the_depth_bound_refuses_before_any_check_walks_the_document(self):
+        """The bound's whole point is ordering: the checks recurse one frame per level, so a document past the bound must be
+        refused before any of them runs. Pinned by stubbing check_document, which every check runs through, and asserting
+        it was never called for a 33-level file; the refusal names the file's depth and the bound. A pin on the refusal text
+        alone would stay green if the gate moved below the checks (every existing case did, refuter-confirmed)."""
+        xdg, state = _state_root()
+        self.addCleanup(shutil.rmtree, xdg, True)
+        deep = os.path.join(xdg, "deep.json")
+        with open(deep, "w") as fh:
+            fh.write(_nested(33))
+        with mock.patch.object(pu.pe, "check_document", return_value=None) as stub, mock.patch.object(pu.pp, "fold") as fold:
+            with self.assertRaises(pu.Refusal) as cm:
+                pu.read_export(deep, pu.pe.Path(state))
+        self.assertEqual(stub.call_count, 0, "no check walked the document: the bound refused first")
+        self.assertEqual(fold.call_count, 0, "and the fold belt did not run either")
+        self.assertEqual(str(cm.exception), "refused: %s is nested 33 levels deep and this verb takes at most 32; nothing sent" % deep)
+        self.assertEqual(cm.exception.code, 1)
+
+
+class FoldBelt(unittest.TestCase):
+    """read_export's last step, as a unit: with the three checks stubbed to pass, the top level must be exactly what the
+    export writes (TOP_LEVEL: an unlisted top-level block is refused naming it, a required key missing naming it, an envelope
+    line off the export's spelling naming it, a block that is not a dict naming it) and the perf and usage blocks must equal
+    their own folds (a block that differs is refused naming it); an export as written passes, with and without kernel_commit
+    and usage. The value is never in the refusal."""
+
+    def setUp(self):
+        self.xdg, self.state = _state_root()
+        self.addCleanup(shutil.rmtree, self.xdg, True)
+        self.file = _export(self.xdg, self.state, usage=True, commit="0123456789abcdef0123456789abcdef01234567")
+        with open(self.file, "rb") as fh:
+            self.data = fh.read()
+        self.edited = os.path.join(self.xdg, "edited.json")
+        self.token = "zz-planted-token-past-thirty-two-chars-zz"
+
+    def _write(self, doc):
+        with open(self.edited, "w") as fh:
             json.dump(doc, fh)
+        return self.edited
+
+    def _refused(self, doc, line):
         with mock.patch.object(pu.pe, "check_document", return_value=None) as stub:
             with self.assertRaises(pu.Refusal) as cm:
-                pu.read_export(edited, pu.pe.Path(state))
-            self.assertEqual(stub.call_count, 1, "the checks ran first and passed (stubbed); the belt is what refused")
-            self.assertEqual(str(cm.exception), "refused: %s is not the export's own public form (the extra block differs from its fold); nothing sent" % edited)
-            self.assertEqual(cm.exception.code, 1)
-            self.assertNotIn(token, str(cm.exception))
-            self.assertEqual(pu.read_export(file, pu.pe.Path(state)), data, "the export as written is its own fold")
-            doc = json.loads(data)
-            doc["extra"] = {"note": "fits-the-grammar", "count": 1}      # a block the fold leaves as it is passes the belt
-            with open(edited, "w") as fh:
-                json.dump(doc, fh)
-            self.assertEqual(json.loads(pu.read_export(edited, pu.pe.Path(state)))["extra"], doc["extra"])
+                pu.read_export(self._write(doc), pu.pe.Path(self.state))
+        self.assertEqual(stub.call_count, 1, "the checks ran first and passed (stubbed); the belt is what refused")
+        self.assertEqual(str(cm.exception), "refused: %s %s; nothing sent" % (self.edited, line))
+        self.assertEqual(cm.exception.code, 1)
+        self.assertNotIn(self.token, str(cm.exception))
+        return cm.exception
+
+    def test_the_fold_belt_refuses_a_block_the_checks_passed(self):
+        doc = json.loads(self.data)
+        doc["usage"]["note"] = self.token                                   # a listed block that is not its own fold
+        self._refused(doc, "is not the export's own public form (the usage block differs from its fold)")
+        doc = json.loads(self.data)
+        doc["perf"]["heap"]["note"] = self.token
+        self._refused(doc, "is not the export's own public form (the perf block differs from its fold)")
+        with mock.patch.object(pu.pe, "check_document", return_value=None):
+            self.assertEqual(pu.read_export(self.file, pu.pe.Path(self.state)), self.data, "the export as written is its own fold")
+            doc = json.loads(self.data)
+            doc["usage"]["note"] = "fits-the-grammar"                        # a block the fold leaves as it is passes the belt
+            self.assertEqual(json.loads(pu.read_export(self._write(doc), pu.pe.Path(self.state)))["usage"], doc["usage"])
+
+    def test_the_top_level_is_exactly_what_the_export_writes(self):
+        """The allowlist (the upload's third review round, 2026-09-18). Before it, a top-level block the export does not write
+        passed the belt whenever it was its own fold, which a foreign block at the root is (fold's rules are anchored at
+        the block root): the clause that said a block the fold leaves as it is passes now says an unlisted block is refused
+        naming it. The export's envelope pin in tests/test_perf_export.py is unchanged by this."""
+        self.assertEqual(pu.TOP_LEVEL, {"schema": True, "exported_at": True, "perf": True, "kernel_commit": False, "usage": False})
+        self.assertEqual(pu.FOLDED, ("perf", "usage"))
         self.assertEqual(pu.pe.ENVELOPE_KEYS, ("schema", "exported_at", "kernel_commit"))
+        doc = json.loads(self.data)
+        self.assertEqual(sorted(doc), ["exported_at", "kernel_commit", "perf", "schema", "usage"], "a fresh export with every optional key")
+        doc["extra"] = {"note": "fits-the-grammar", "count": 1}              # its own fold, and refused all the same
+        self.assertEqual(pu.pp.fold(doc["extra"]), doc["extra"])
+        self._refused(doc, "is not the export's own shape (a top-level extra block the export does not write)")
+        doc = json.loads(self.data)
+        doc["judge"] = {"child": {"failures": {"first": self.token}}}         # denied under perf, not at the root: a fold of itself
+        self._refused(doc, "is not the export's own shape (a top-level judge block the export does not write)")
+        for missing in ("exported_at", "perf"):
+            doc = json.loads(self.data)
+            del doc[missing]
+            self._refused(doc, "is not the export's own shape (no top-level %s)" % missing)
+        for value in ("2026-09-18T12:00:00Z", "2026-09-18 12:00Z", "2026-09-18T12:00", 1700000000, None, ["2026-09-18T12:00Z"]):
+            doc = json.loads(self.data)
+            doc["exported_at"] = value
+            self._refused(doc, "is not the export's own shape (the exported_at line is not what the export writes)")
+        for value in ("ABCDEF0123", "abcdef", "0123456789abc", "0123456789abcdef0123456789abcdef01234567", {"sha": "0123456789ab"}, 1234567, ""):
+            doc = json.loads(self.data)
+            doc["kernel_commit"] = value
+            self._refused(doc, "is not the export's own shape (the kernel_commit line is not what the export writes)")
+        for block, value in (("perf", [1]), ("perf", "perf"), ("usage", [self.token]), ("usage", 1)):
+            doc = json.loads(self.data)
+            doc[block] = value
+            self._refused(doc, "is not the export's own shape (the %s block is not what the export writes)" % block)
+        with mock.patch.object(pu.pe, "check_document", return_value=None):
+            for value in ("0123456", "0123456789ab", "abcdef0"):            # 7 to 12 lowercase hex: what kernel_commit() writes
+                doc = json.loads(self.data)
+                doc["kernel_commit"] = value
+                self.assertEqual(json.loads(pu.read_export(self._write(doc), pu.pe.Path(self.state)))["kernel_commit"], value)
+            for drop in ((), ("kernel_commit",), ("usage",), ("kernel_commit", "usage")):
+                doc = json.loads(self.data)
+                for k in drop:
+                    del doc[k]
+                self.assertEqual(sorted(json.loads(pu.read_export(self._write(doc), pu.pe.Path(self.state)))), sorted(doc),
+                                 "the optional keys are optional: %r" % (drop,))
 
 
 class Answers(unittest.TestCase):
@@ -1427,6 +1660,25 @@ class Answers(unittest.TestCase):
         with mock.patch.object(pu, "TIMEOUT_S", 1.0):
             self.assertEqual(pu.post(fake.url + "/v1/upload", b"{}"), (201, ok), "a slow but timely receiver is accepted, the body whole")
         self.assertEqual(pu.receipt(201, ok), (RECEIPT, 180, "ok"))
+
+    def test_the_connections_own_timeout_is_cut_to_the_time_the_deadline_has_left(self):
+        """_DeadlineConnection.connect cuts the connection's timeout, which bounds the connect and the handshake, the phases
+        before a socket exists to arm the deadline on, to the time the deadline has left; a unit pin, since an `if False:`
+        over the two cut lines left every other case green (the upload's third review round, 2026-09-18). A listening
+        loopback socket, a 30 s connection timeout and a deadline half a second away: after connect() the timeout is the
+        remaining half second at most, and above zero (a zero would make the socket non-blocking)."""
+        srv = socket.socket()
+        srv.bind(("127.0.0.1", 0))
+        srv.listen(1)
+        self.addCleanup(srv.close)
+        deadline = pu._Deadline(0.5)
+        self.addCleanup(deadline.cancel)                    # nothing fires after the assertions
+        conn = pu._DeadlineHTTPConnection("127.0.0.1", srv.getsockname()[1], timeout=30, deadline=deadline)
+        self.addCleanup(conn.close)
+        conn.connect()
+        self.assertGreater(conn.timeout, 0)
+        self.assertLessEqual(conn.timeout, 0.5, "the connection's own timeout is the time the deadline has left, not the 30 s it was given")
+        self.assertIsNotNone(deadline._timer, "and the deadline is armed on the socket once the connection is up")
 
     def test_a_timeout_is_refused_by_its_class_alone_after_the_fixed_wait(self):
         self.fake.delay = 1.5

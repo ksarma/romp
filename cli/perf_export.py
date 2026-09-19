@@ -64,7 +64,8 @@ import perf_public as pp  # noqa: E402
 PROG = "romp perf export"
 SCHEMA = "romp-perf-export/1"
 # The envelope export_document writes around the folded blocks: the one part of the document that is not a fold's output
-# (the schema line carries a slash by design). `romp perf upload` holds every OTHER top-level block to its own fold.
+# (the schema line carries a slash by design). `romp perf upload` holds a file's top level to exactly these keys and the
+# two folded blocks, perf and usage (its TOP_LEVEL), and each block to its own fold.
 ENVELOPE_KEYS = ("schema", "exported_at", "kernel_commit")
 TIMEOUT_S = 10          # `romp perf`'s curl -m
 DEFAULT_PORT = 29855
