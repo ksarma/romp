@@ -529,7 +529,8 @@ def restore_env(name, prior):
 # between two reads, never the after value on its own: an absolute read of the after value (the first form
 # of this fixture) failed every test that merely INHERITED a singleton over a removed directory, each with
 # a false accusation and a remedy it could not act on, and buried the one cause under the tests that
-# followed it in the worker (one cause and 193 inheritors on the first full run). Three windows:
+# followed it in the worker: one cause and 193 inheritors on the first full run, a full run here and so on the
+# SDK-importable road, THE ROAD EACH FIGURE WAS TAKEN ON above. Three windows:
 #   * the test: a function-scoped autouse fixture reads before the test and after its own teardown
 #     (unittest's tearDown runs inside the call phase, and the test's requested fixtures tear down before
 #     this one, so their restores are seen) and fails the test whose own transition made the bad state;
@@ -601,13 +602,16 @@ def restore_env(name, prior):
 # tests/test_kernel_msgcaption.py and tests/test_model_catalog.py), the first file's _FeedHarness leaves its
 # backend over a removed TemporaryDirectory, and two of the three read the dangling object, the machine-cut
 # file's own later tests and the caption file's timeline builds (build_timeline's fork_children, the reader
-# the incident above names); measured 2026-09-19 over the three files in one run, 90 of 108 teardowns end
-# with that one object over a removed root (33, 5 and 52 by file) and the catalog file reads it zero times;
+# the incident above names); measured 2026-09-19 over the three files in one run, on the missing road (none of
+# the three is tests/test_host_transport.py), 90 of 108 teardowns end with that one object over a removed root
+# (33, 5 and 52 by file) and the catalog file reads it zero times;
 # eight private names are shared by two or three files each. The blocker, and the order: the same rule
 # looped over every sys.modules name starting with romp_kernel (round 1's proposed fix) is the arm that would
 # cover it, and the loop cannot land here because the private-kernel harnesses carry 90 or more pre-existing
-# teardown leaks (the 90 above are one name's; the round-1 refuters counted 574 would-fail outcomes over the
-# 18 files that share a private name), so their save-and-restore product code lands first, then the
+# teardown leaks (the 90 above are one name's, on the missing road; the round-1 refuters counted 574 would-fail
+# outcomes over the 18 files that share a private name, their count, its road not recorded: a teardown's leaving a
+# dangling backend does not depend on the road, since SdkBackend constructs on both), so their save-and-restore
+# product code lands first, then the
 # ratchet's private-kernel arm.
 #
 # THE JUDGMENT (_sdk_judge), same marker: the same object is a pass, unless its state_dir text differs

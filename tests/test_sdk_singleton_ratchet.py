@@ -31,7 +31,9 @@ stated limit; unprotected is a private-name kernel's dangling backend over a rem
 reads and gets the silent empty-registry answer this fixture exists to stop, live today on romp_kernel_mc, which
 tests/test_kernel_interrupt_machine_cut.py leaves dangling and two of the three files that load it read, that one and
 tests/test_kernel_msgcaption.py; the loop cannot land here because the private-kernel harnesses carry 90 or more
-pre-existing teardown leaks, so their save-and-restore product code lands first, then the ratchet's private-kernel
+pre-existing teardown leaks (the 90 measured over the three romp_kernel_mc files in one run, on the missing road; the
+round-1 refuters' 574 over the 18 files, their count, its road not recorded, and a teardown count does not depend on the
+road, since SdkBackend constructs on both), so their save-and-restore product code lands first, then the ratchet's private-kernel
 arm; Y pins the limit as behaviour, a private-name leak over a removed root with the ratchet silent and the run green,
 red the day that arm lands), and the 316 the first sweep ran, module alone on the missing road; 364 modules in all. The
 first sweep, over its 316 at the base, module alone on the missing road, found the 4 red on these leaks and 1 red for an
