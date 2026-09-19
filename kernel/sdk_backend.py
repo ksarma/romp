@@ -12653,8 +12653,14 @@ class SdkBackend:
                     # command there; a spawn failure its exception type, with the version it ran beside it when the
                     # host wrote that fact), so the card says why, not just where to look
                     reason = ht.host_exit_reason(self.state_dir, sess.sid, since=mark)
-                    said = "exited before serving its socket (code %s); see hosts/%s/host.log%s" % (
-                        proc.returncode, sess.sid, (": " + reason) if reason else "")
+                    # the file a refused host leaves is named per class (review round 3 of the socket-mode fix, 2026-09-19): a
+                    # host refused in its constructor (a hosts/ or hosts/<sid>/ that is a symlink, another uid's or stubbornly
+                    # loose) exits before writing any row, so its traceback is on host.stderr beside the specification and no
+                    # host.log exists for it; host.log stays the tail so the reason, when a row says one, follows it
+                    said = ("exited before serving its socket (code %s); its reason is in host.stderr beside the specification when it "
+                            "exited before writing a row (a hosts/ or hosts/<sid>/ it refused: review round 3 of the socket-mode fix, "
+                            "2026-09-19), else see hosts/%s/host.log%s"
+                            % (proc.returncode, sess.sid, (": " + reason) if reason else ""))
                     # The drift fact first, on its own row (fresh-1 as the closing check ruled it, 2026-09-18): a
                     # host that imported an untested SDK wrote so before it failed, and that fact is filed whatever
                     # the failure was, with the remedy, once per kernel life per version pair. The failure's row below

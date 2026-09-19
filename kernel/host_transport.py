@@ -267,6 +267,18 @@ def write_spawn_spec(state_dir, sid: str, spec: dict) -> Path:
     the overlay today and a legitimate TOKEN_BUDGET or PRIVATE_KEY_PATH would be moved out of the file for
     nothing. A credential never lives in a file, the fork's rule, and the box admin's hazard review of the
     pull-in, 2026-09-16, found the first cut moving the three login names alone.
+    `hosts/` itself is made 0700 first (sh.hosts_dir: this is the road that creates it on
+    a fresh state root, and until 2026-09-19 the mkdir with parents=True left it at the umask's mode; the
+    host's control socket is bound in that directory, so its mode is the one guard on the socket's temp name).
+    Then `hosts/<sid>/` through the same helper (sh.owner_only_dir, the shape hosts_dir is): born 0700 by its
+    mkdir's own mode, lstat'd, refused as a symlink or another uid's, a loose one tightened and read back. Until
+    the fix's round 2 (2026-09-19) this line was a bare mkdir and a chmod never read back, so a symlink planted
+    at `hosts/<sid>/` was followed and the spec written through it while `hosts/` one line above was checked.
+    Either helper raises (OSError) for a directory that is a symlink, belongs to another uid, or stays loose
+    after its chmod, and this spawn then fails before a spec is written: the failure surfaces as the launch
+    error, naming the directory, never as a host started over a directory we do not own (the review of the
+    socket-mode fix, 2026-09-19). The residual the helper's docstring states (a re-point between its read-back
+    and the open below) holds here too: the open takes a path.
     The file's mode is set on the descriptor BEFORE the write (os.fchmod): a
     pre-existing file keeps its old mode through O_CREAT|O_TRUNC, and the trailing chmod this had until
     2026-09-18 tightened it only after the overlay was already in it (PR 789, review round 1, the same
@@ -276,9 +288,8 @@ def write_spawn_spec(state_dir, sid: str, spec: dict) -> Path:
     overlay through it. The 0700 directory above, and the 0700 state root above that, close that road today (review
     round 2, 2026-09-19). A raising fchmod closes the descriptor before the error propagates (round 2 too: os.fdopen
     was the only close)."""
-    d = host_dir(state_dir, sid)
-    d.mkdir(parents=True, exist_ok=True)
-    os.chmod(d, 0o700)
+    sh.hosts_dir(state_dir)
+    d = sh.owner_only_dir(host_dir(state_dir, sid), "host directory")
     p = d / "spawn.json"
     fd = os.open(str(p), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     try:
