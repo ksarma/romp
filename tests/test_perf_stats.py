@@ -106,11 +106,12 @@ def _doc_row(doc, name):
 # included: `.25 us`), comma-decimal, scientific or a fraction glyph; the separator may be spaces, a hyphen or the named
 # `&nbsp;` entity, the only entity read (a numeric entity for the micro sign, `&#181;s`, is not); after a digit the unit is
 # read case-insensitively and must not run on into a word (`5 sessions` is no figure), while after a number word an
-# abbreviation is read lower-case only (`a US-based host` is prose), takes no `of` (`one of us`, `a few of us` are prose)
-# and, spelled out or abbreviated, must not run on into a hyphen compound (`microsecond-resolution`, `nanosecond-scale`
-# are none). An article or number word before a unit used as a noun modifier (`a nanosecond timestamp`, `three
-# nanosecond fields`) reads as a figure, because the predicate cannot tell it from `about a nanosecond per stat`; the pin
-# refuses it by design and its message names the reword (`three st_*_ns fields`, a field name rather than a duration).
+# abbreviation is read lower-case only (`a US company`, `one US dollar` are prose), takes no `of` (`one of us`, `a few
+# of us` are prose) and, spelled out or abbreviated, must not run on into a hyphen compound (`microsecond-resolution`,
+# `nanosecond-scale`, `a US-based host` are none). An article or number word before a unit used as a noun modifier (`a
+# nanosecond timestamp`, `three nanosecond fields`) reads as a figure, because the predicate cannot tell it from `about a
+# nanosecond per stat`; the pin refuses it by design and its message names the reword (`three st_*_ns fields`, a field
+# name rather than a duration).
 _TIME_UNITS = (                # (the unit's spellings, the value below which a figure in that unit is a microsecond figure)
     (r"microseconds?|microsecs?|[uµμ]secs?|[uµμ]s", float("inf")),
     (r"nanoseconds?|nanosecs?|nsecs?|ns", float("inf")),
@@ -122,7 +123,7 @@ _TIME_FIGURE = re.compile(r"(?<![\w.])(\d+(?:[.,]\d+)?(?:e[-+]?\d+)?|[.,]\d+|[¼
 _TIME_WORDS = re.compile(r"\b(?:an?|one|two|three|four|five|six|seven|eight|nine|ten|half|quarter|third|tenth|hundredth|"
                          r"thousandth|few|several|couple|dozen)\b"
                          r"(?:(?:\s+of)?(?:\s+an?)?\s+(?:micro|nano)seconds?"      # spelled out: `of` and an article may sit between
-                         r"|(?:\s+an?)?\s+(?-i:[uµμ]s|ns|[uµμ]secs?|nsecs?))"     # abbreviated: no `of` (`one of us`), lower-case only (`a US-based host`)
+                         r"|(?:\s+an?)?\s+(?-i:[uµμ]s|ns|[uµμ]secs?|nsecs?))"     # abbreviated: no `of` (`one of us`), lower-case only (`a US company`)
                          r"(?![\w-])", re.I)                                      # not `\b`: `microsecond-resolution` is a compound, not a figure
 _FRACTION_GLYPHS = {"¼": 0.25, "½": 0.5, "¾": 0.75, "⅓": 1 / 3, "⅔": 2 / 3, "⅛": 0.125}
 
@@ -3623,7 +3624,7 @@ class GoalIoCounters(unittest.TestCase):
                       "over 300 sub-millisecond spins", "2.9 to 7.1 percent", "since the 1970s", "5 sessions", "12 GB resident",
                       "a 5-second grace", "A microsecond-resolution mtime is what the coarse fallback loses",
                       "Two microsecond-scale counters would disagree", "a nanosecond-resolution clock", "one of us",
-                      "a few of us", "two of us agree", "a US-based host")
+                      "a few of us", "two of us agree", "a US-based host", "a US company", "one US dollar")
         for legit in legitimate_sample:
             with self.subTest(legitimate=legit):
                 self.assertEqual(_microsecond_figures(legit), [], "a legitimate figure read as a microsecond one: %r" % legit)
