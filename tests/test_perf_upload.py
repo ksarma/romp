@@ -2049,6 +2049,29 @@ class Docs(unittest.TestCase):
                       "so two uploads from one kernel remain linkable by design"):
             self.assertTrue(words in text, "not in the reference: " + words)
 
+    def test_the_readme_rows_name_every_importer_of_the_public_shape_counted_from_the_code(self):
+        """This PR added a fourth importer of cli/perf_public.py and left both README enumerations of who shares the public
+        shape at three (regression-2, the third review round). The importers are counted from the code, not from the finding:
+        every module under cli/ that imports perf_public (the three verbs), plus the served-snapshot invariant test, which
+        loads it by path; four surfaces, and the bin README's perf_public parenthetical (by bin entry) and the cli README's
+        perf_public row (by command) must name every one. Fails before: both rows named three."""
+        cli_dir = os.path.join(ROOT, "cli")
+        importers = []
+        for name in sorted(os.listdir(cli_dir)):
+            if name.endswith(".py") and name != "perf_public.py":
+                with open(os.path.join(cli_dir, name), encoding="utf-8") as fh:
+                    if re.search(r"^import perf_public\b", fh.read(), re.M):
+                        importers.append(name)
+        self.assertEqual(importers, ["perf_export.py", "perf_upload.py", "restart_metrics.py"], "the verbs that import the shape")
+        with open(os.path.join(ROOT, "tests", "test_perf_stats.py"), encoding="utf-8") as fh:
+            self.assertIn('"perf_public.py"', fh.read(), "the invariant test loads the shape by path: the fourth surface")
+        self.assertEqual(len(importers) + 1, 4)
+        bin_row = "imported by this, by `romp-perf-upload`, by `romp-restart-metrics --public` and by the served-snapshot invariant test"
+        cli_row = ("The public shape shared by `romp perf export --public`, `romp perf upload`, `romp restart-metrics --json --public` "
+                   "and the served-snapshot invariant test")
+        self.assertTrue(bin_row in self._flat("bin", "README.md"), "bin/README.md's perf_public parenthetical does not name the four surfaces")
+        self.assertTrue(cli_row in self._flat("cli", "README.md"), "cli/README.md's perf_public row does not name the four surfaces")
+
 
 if __name__ == "__main__":
     unittest.main()
