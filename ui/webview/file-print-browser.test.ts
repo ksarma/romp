@@ -23,12 +23,16 @@
 // with nothing said). (5) the
 // URL kind: a document from a link with a picture on another host arms the same way. (6) the body not in (P7): a file
 // whose answer is parked (the page's fetch stub wrapped to hold the report's GET until the test releases it) shows the
-// loader, and Print is disabled over it: a forced click, a programmatic click and the chord print nothing, the chord still
-// prevented (the browser's raw print would print the loader page); the answer released and the text seated, the button is
-// live and the next press prints. FAILS BEFORE: the first assertion of case 1, at the unchanged viewer (no button, no
-// listener): the chord is not prevented while a placeholder stands and an <img> is incomplete, so the browser's raw print
-// is what runs; and case 6 at the first build, whose button was live from the bar's build (the disabled assertion). Skips
-// loudly without a browser. Synthetic values only.
+// loader, and Print is disabled over it, by aria-disabled and the sheets' disabled dress and never the `disabled` property
+// (the bar's own rule, file-view.ts textSizeControl: a button that disables under keyboard focus drops it on the document's
+// body; the third review, 2026-09-19), so the button keeps the keyboard and the tab order while disabled: focused, a forced
+// click, a programmatic click and the chord print nothing and leave the keyboard on the button, the chord still prevented
+// (the browser's raw print would print the loader page); the answer released and the text seated, the button is live and
+// the next press prints. FAILS BEFORE: the first assertion of case 1, at the unchanged viewer (no button, no listener): the
+// chord is not prevented while a placeholder stands and an <img> is incomplete, so the browser's raw print is what runs;
+// case 6 at the first build, whose button was live from the bar's build (the aria-disabled assertion), and at the second,
+// whose button took the `disabled` property (the property and the keyboard assertions). Skips loudly without a browser.
+// Synthetic values only.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import { inBrowser, openViewer, frames, REPORT, ROOT, ORIGIN, type Mode } from "./real-viewer-leg";
@@ -45,7 +49,7 @@ const URL_NOTE = "# Linked\n\nA remote picture ![](" + REMOTE + ") alone.\n";
 
 type Print = { t: number; gates: number; incomplete: number; line: boolean; remoteReady: boolean | null };
 type Key = { key: string; ctrl: boolean; prevented: boolean; open: boolean; gates: number; incomplete: number };
-type Bar = { present: boolean; label: string | null; title: string | null; glyph: boolean; disabled: boolean; ariaDisabled: string | null; on: boolean; busy: boolean; expanded: string | null; phase: string | null; line: string | null; buttons: string[]; cardUp: boolean };
+type Bar = { present: boolean; label: string | null; title: string | null; glyph: boolean; disabled: boolean; ariaDisabled: string | null; on: boolean; busy: boolean; expanded: string | null; phase: string | null; line: string | null; buttons: string[]; cardUp: boolean; active: string };
 
 /** The page's record of the print stub's calls, the window's keydowns, and the bar as it stands. */
 const PAGE_PROBES = () => {
@@ -58,11 +62,12 @@ const PAGE_PROBES = () => {
     w.__prints.push({ t: performance.now(), gates: gates(), incomplete: imgs().filter((i) => !i.complete).length, line: !!document.getElementById("fileview-print-line"), remoteReady: remote ? remote.complete && remote.naturalWidth > 0 : null });
   };
   window.addEventListener("keydown", (e) => { w.__keys.push({ key: e.key, ctrl: e.ctrlKey || e.metaKey, prevented: e.defaultPrevented, open: document.body.classList.contains("fileview-open"), gates: gates(), incomplete: imgs().filter((i) => !i.complete).length }); });
+  const describe = (a: Element | null): string => (a ? a.tagName + (a.className ? "." + String(a.className).split(" ").filter((c) => c && c !== "romp-acted").join(".") : "") : "null");   // the keyboard's holder: the tag and its classes (the click's press pulse aside)
   w.__bar = (): Bar => {
     const b = document.querySelector("#romp-fileview .fileview-bar .fileview-print") as HTMLButtonElement | null;
     const line = document.getElementById("fileview-print-line");
     return { present: !!b, label: b ? b.getAttribute("aria-label") : null, title: b ? b.title : null, glyph: !!b && !!b.querySelector("svg") && (b.textContent || "").trim() === "", disabled: !!b && b.disabled, ariaDisabled: b ? b.getAttribute("aria-disabled") : null, on: !!b && b.classList.contains("on"), busy: !!b && b.classList.contains("fileview-busy"), expanded: b ? b.getAttribute("aria-expanded") : null, phase: b ? (b.dataset.print || null) : null,
-      line: line ? (line.firstChild && line.firstChild.nodeType === 3 ? (line.firstChild.textContent || "") : line.textContent) : null, buttons: line ? Array.from(line.querySelectorAll("button")).map((x) => x.textContent || "") : [], cardUp: !!document.getElementById("romp-fileview") };
+      line: line ? (line.firstChild && line.firstChild.nodeType === 3 ? (line.firstChild.textContent || "") : line.textContent) : null, buttons: line ? Array.from(line.querySelectorAll("button")).map((x) => x.textContent || "") : [], cardUp: !!document.getElementById("romp-fileview"), active: describe(document.activeElement) };
   };
 };
 const bar = (page: any): Promise<Bar> => page.evaluate(() => (window as any).__bar());
@@ -406,7 +411,8 @@ test("case 5: the URL kind. A document from a link with a picture on another hos
 });
 
 const PARKED_NOTE = "# Parked\n\nText alone, no picture.\n\nLast line.\n";
-test("case 6: the body not in. A file whose answer is parked: Print is disabled over the loader, and a forced click, a programmatic click and the chord print nothing, the chord still prevented; the answer released, the button enables and the next press prints", { timeout: 120000 }, async (t) => {
+const PRINT_ACTIVE = "BUTTON.fileview-btn.fileview-icon.fileview-print";
+test("case 6: the body not in. A file whose answer is parked: Print is disabled over the loader by aria-disabled alone (never the property, so the button keeps the keyboard and the tab order), and with the keyboard on it a forced click, a programmatic click and the chord print nothing and leave the keyboard on the button, the chord still prevented; the answer released, the button enables and the next press prints", { timeout: 120000 }, async (t) => {
   await inBrowser(t, async (browser) => {
     // the file's own answer goes through the page's fetch stub (real-viewer-leg.ts pageHtml), so the park wraps the stub: the
     // report's GET waits on a promise the test resolves through window.__release; a HEAD (the changed-on-disk probe) does not
@@ -428,11 +434,15 @@ test("case 6: the body not in. A file whose answer is parked: Print is disabled 
     });
     let b = await bar(page);
     assert.equal(b.present, true, "the button is in the bar from the build");
-    assert.equal(b.disabled, true, "disabled while the loader holds the body");
-    assert.equal(b.ariaDisabled, "true"); assert.equal(b.phase, "disabled");
+    assert.equal(b.ariaDisabled, "true", "FAILS BEFORE the first build's fix: aria-disabled while the loader holds the body");
+    assert.equal(b.disabled, false, "FAILS BEFORE: the `disabled` property is never set (the bar's rule: a disabled button drops the keyboard and leaves the tab order)");
+    assert.equal(b.phase, "disabled");
     assert.equal(await page.evaluate(() => !!document.querySelector("#romp-fileview .fileview-body .fileview-load")), true, "the loader holds the body");
-    await page.click("#romp-fileview .fileview-print", { force: true });   // forced: Playwright would otherwise wait for an enabled button; the browser swallows a click on a disabled one
-    await page.evaluate(() => { (document.querySelector("#romp-fileview .fileview-print") as HTMLButtonElement).click(); });   // click() on a disabled button dispatches nothing either
+    // the keyboard on the disabled button: it stays there through every press that changes nothing
+    await page.focus("#romp-fileview .fileview-print");
+    assert.equal((await bar(page)).active, PRINT_ACTIVE, "FAILS BEFORE: the disabled button takes the keyboard (a button with the property refuses it)");
+    await page.click("#romp-fileview .fileview-print", { force: true });   // forced: the click reaches the driver, whose disabled phase ignores the press
+    await page.evaluate(() => { (document.querySelector("#romp-fileview .fileview-print") as HTMLButtonElement).click(); });   // a programmatic click reaches it too
     await page.keyboard.press("Control+p");
     await frames(page, 1);
     const k = await chords(page);
@@ -440,12 +450,14 @@ test("case 6: the body not in. A file whose answer is parked: Print is disabled 
     assert.equal(k[0].prevented, true, "the chord is prevented over the loader: the browser's raw print would print the loader page");
     assert.equal((await prints(page)).length, 0, "nothing printed: the clicks and the chord over the loader change nothing");
     b = await bar(page);
-    assert.equal(b.disabled, true, "still disabled"); assert.equal(b.line, null, "no line"); assert.equal(b.phase, "disabled");
+    assert.equal(b.ariaDisabled, "true", "still disabled"); assert.equal(b.disabled, false); assert.equal(b.line, null, "no line"); assert.equal(b.phase, "disabled");
+    assert.equal(b.active, PRINT_ACTIVE, "the keyboard is still on the button, never dropped on the document's body");
     await page.evaluate(() => { (window as any).__release(); });
     await page.waitForFunction(() => !!document.querySelector("#romp-fileview .fileview-md > p"), null, { timeout: 10000 });
     await frames(page, 1);
     b = await bar(page);
-    assert.equal(b.disabled, false, "the text seated: the button is live"); assert.equal(b.ariaDisabled, null); assert.equal(b.phase, null);
+    assert.equal(b.ariaDisabled, null, "the text seated: the button is live"); assert.equal(b.disabled, false); assert.equal(b.phase, null);
+    assert.notEqual(b.active, "BODY", "the keyboard did not land on the document's body at the seating: " + b.active);
     const printed = await page.evaluate(() => {   // the click and the read in one task
       (document.querySelector("#romp-fileview .fileview-print") as HTMLButtonElement).click();
       return (window as any).__prints.length;

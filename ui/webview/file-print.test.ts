@@ -5,8 +5,8 @@
 // the line and window.print run over the real viewer in file-print-browser.test.ts. Synthetic values only.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
-import { step, RESTING, DISABLED, armedWords, preparingWords, stalledWords, isPrintChord, settlePictures, collectPictures, PRINT_SETTLE_MS, setPrintSettleMs, printSettleMs,
-  WITH_WORDS, WITHOUT_WORDS, ANYWAY_WORDS, KEEP_WORDS, TAB_WORDS, NO_TAB_WORDS, pdfFrameWindow, type PrintState, type Picture, type Timers } from "./file-print";
+import { step, RESTING, DISABLED, armedWords, preparingWords, stalledWords, isPrintChord, settlePictures, collectPictures, bodyReady, PRINT_SETTLE_MS, setPrintSettleMs, printSettleMs,
+  WITH_WORDS, WITHOUT_WORDS, ANYWAY_WORDS, KEEP_WORDS, TAB_WORDS, NO_TAB_WORDS, pdfFrameWindow, type PrintState, type Picture, type Timers, type BodyLike } from "./file-print";
 
 // ── the machine ─────────────────────────────────────────────────────────────────────────────────────
 
@@ -51,23 +51,23 @@ test("no gated placeholder: one press begins the wait when pictures are loading 
   assert.equal(now.state.phase, "printing");
 });
 
-test("ready during the wait prints; printed rests; a press, an Escape or a choice during the wait or the print changes nothing", () => {
+test("ready during the wait prints; printed rests; a press, an Escape or a choice during the wait or the print changes nothing", () => {   // the wait's verdict carries why (settled, or the deadline) and the count still loading: the machine reads both (the deadline's ask, below)
   const preparing: PrintState = { phase: "preparing", gated: 0, pending: 2 };
   for (const ev of [{ kind: "press", gated: 0, pending: 0 }, { kind: "escape" }, { kind: "choose", withGated: true }, { kind: "prepare", pending: 1 }, { kind: "printed" }] as const) {
     const r = step(preparing, ev);
     assert.equal(r.act, "none", ev.kind + " during the wait");
     assert.equal(r.state, preparing, ev.kind + " during the wait keeps the state");
   }
-  const printing = step(preparing, { kind: "ready" });
+  const printing = step(preparing, { kind: "ready", why: "settled", pending: 0 });
   assert.equal(printing.act, "print");
   assert.equal(printing.state.phase, "printing");
-  for (const ev of [{ kind: "press", gated: 2, pending: 0 }, { kind: "escape" }, { kind: "ready" }] as const) {
+  for (const ev of [{ kind: "press", gated: 2, pending: 0 }, { kind: "escape" }, { kind: "ready", why: "settled", pending: 0 }] as const) {
     assert.equal(step(printing.state, ev).act, "none", ev.kind + " during the print");
   }
   const rested = step(printing.state, { kind: "printed" });
   assert.equal(rested.act, "rest");
   assert.equal(rested.state.phase, "resting");
-  assert.equal(step(RESTING, { kind: "ready" }).act, "none", "a late ready after a rest changes nothing");
+  assert.equal(step(RESTING, { kind: "ready", why: "settled", pending: 0 }).act, "none", "a late ready after a rest changes nothing");
   assert.equal(step(RESTING, { kind: "printed" }).act, "none");
 });
 
@@ -86,14 +86,18 @@ test("the words: one picture and many, for the armed line, the wait and the ask;
 
 // ── the deadline's ask (the stalled phase) ──────────────────────────────────────────────────────────
 
-test("the deadline with pictures still loading asks instead of printing; Print anyway prints; Keep waiting resumes through the driver's prepare, into an open-ended wait or a print with nothing left; Escape or a second press disarms; a repaint under the ask counts again or prints over none; the deadline with nothing pending prints as ready does", () => {
+test("the wait's verdict carries why and the count still loading: settled prints; the deadline with pictures still loading asks instead of printing; the deadline with nothing pending is a settle in effect and prints; Print anyway prints; Keep waiting resumes through the driver's prepare, into an open-ended wait or a print with nothing left; Escape or a second press disarms; a repaint under the ask counts again or prints over none", () => {
   const preparing: PrintState = { phase: "preparing", gated: 0, pending: 2 };
-  const asked = step(preparing, { kind: "stalled", pending: 2 });
-  assert.equal(asked.act, "stall", "the deadline with two still loading: the ask");
-  assert.deepEqual(asked.state, { phase: "stalled", gated: 0, pending: 2 });
-  const none = step(preparing, { kind: "stalled", pending: 0 });
-  assert.equal(none.act, "print", "the deadline with nothing pending prints, as ready does");
+  const settled = step(preparing, { kind: "ready", why: "settled", pending: 0 });
+  assert.equal(settled.act, "print", "every picture settled: the print");
+  assert.equal(settled.state.phase, "printing");
+  const asked = step(preparing, { kind: "ready", why: "deadline", pending: 2 });
+  assert.equal(asked.act, "stall", "FAILS BEFORE: the deadline with two still loading asks (the first build printed on the one ready event, which said nothing of the deadline)");
+  assert.deepEqual(asked.state, { phase: "stalled", gated: 0, pending: 2 }, "the ask carries the count still loading");
+  const none = step(preparing, { kind: "ready", why: "deadline", pending: 0 });
+  assert.equal(none.act, "print", "the deadline with nothing pending is a settle in effect: it prints, as settled does");
   assert.equal(none.state.phase, "printing");
+  assert.equal(step(preparing, { kind: "stalled", pending: 2 }).act, "none", "the driver's repaint count is the ask's event, not the wait's: during the wait it changes nothing (a repaint under the wait re-aims instead)");
   const anyway = step(asked.state, { kind: "anyway" });
   assert.equal(anyway.act, "print", "Print anyway prints at once");
   assert.equal(anyway.state.phase, "printing");
@@ -114,7 +118,8 @@ test("the deadline with pictures still loading asks instead of printing; Print a
   assert.equal(again.act, "stall", "a repaint under the ask with one still loading: the ask again, the driver rewriting the count");
   assert.deepEqual(again.state, { phase: "stalled", gated: 0, pending: 1 });
   assert.equal(step(asked.state, { kind: "stalled", pending: 0 }).act, "print", "a repaint under the ask with nothing loading prints: the question is moot and the wait's condition is met");
-  for (const ev of [{ kind: "ready" }, { kind: "printed" }, { kind: "choose", withGated: true }, { kind: "recount", gated: 1 }, { kind: "body", in: true }] as const) {
+  assert.equal(step(asked.state, { kind: "ready", why: "deadline", pending: 1 }).act, "none", "no wait runs under the ask, so a wait's verdict there changes nothing");
+  for (const ev of [{ kind: "ready", why: "settled", pending: 0 }, { kind: "printed" }, { kind: "choose", withGated: true }, { kind: "recount", gated: 1 }, { kind: "body", in: true }] as const) {
     const r = step(asked.state, ev);
     assert.equal(r.act, "none", ev.kind + " under the ask changes nothing");
     assert.equal(r.state, asked.state);
@@ -122,7 +127,7 @@ test("the deadline with pictures still loading asks instead of printing; Print a
   const out = step(asked.state, { kind: "body", in: false });
   assert.equal(out.act, "disarm", "the body going out under the ask disarms"); assert.equal(out.state.phase, "disabled", "...and disables");
   assert.equal(step(step(asked.state, { kind: "anyway" }).state, { kind: "printed" }).act, "rest", "the print Print anyway began rests as any print does");
-  for (const ev of [{ kind: "anyway" }, { kind: "keep" }, { kind: "stalled", pending: 1 }] as const) {
+  for (const ev of [{ kind: "anyway" }, { kind: "keep" }, { kind: "stalled", pending: 1 }, { kind: "ready", why: "deadline", pending: 1 }] as const) {
     for (const [s, name] of [[RESTING, "rest"], [step(RESTING, { kind: "press", gated: 1, pending: 0 }).state, "the armed line"], [none.state, "the print"]] as const) {
       assert.equal(step(s, ev).act, "none", ev.kind + " during " + name + " changes nothing");
     }
@@ -141,8 +146,9 @@ test("the open-ended wait: Escape cancels it, where the timed wait's Escape is l
   assert.equal(esc.act, "disarm", "Escape cancels the open-ended wait: no deadline would end it");
   assert.equal(esc.state.phase, "resting");
   assert.equal(step(open, { kind: "press", gated: 0, pending: 0 }).act, "none", "a press during the open-ended wait changes nothing, as during the timed one");
-  assert.equal(step(open, { kind: "ready" }).act, "print", "every picture settled: the print");
-  assert.equal(step(open, { kind: "stalled", pending: 1 }).act, "stall", "a stalled report during the open-ended wait would ask again (none comes from a timer: there is none; a repaint under the wait re-aims instead)");
+  assert.equal(step(open, { kind: "ready", why: "settled", pending: 0 }).act, "print", "every picture settled: the print");
+  assert.equal(step(open, { kind: "ready", why: "deadline", pending: 1 }).act, "stall", "a deadline verdict during the open-ended wait would ask again (none comes: the wait sets no timer)");
+  assert.equal(step(open, { kind: "stalled", pending: 1 }).act, "none", "the repaint count is the ask's event: during the wait it changes nothing (a repaint under the wait re-aims instead)");
   assert.equal(step(open, { kind: "body", in: false }).act, "disarm", "the body going out cancels it, as any wait");
 });
 
@@ -285,12 +291,12 @@ test("the deadline constant is 8 s and the seam moves it for a test and restores
 
 // ── the pictures the wait collects ─────────────────────────────────────────────────────────────────
 
-type FakeEl = Picture & { getAttribute(name: string): string | null };
+type FakeEl = Picture & { getAttribute(name: string): string | null; loading?: string };
 /** A body stand-in: querySelectorAll answers each selector the collector asks with the nodes filed under it. */
 function fakeBody(filed: Record<string, FakeEl[]>): ParentNode {
   return { querySelectorAll: (sel: string) => (filed[sel] || []) as unknown as NodeListOf<Element> } as unknown as ParentNode;
 }
-const elm = (attrs: Record<string, string>, complete = false): FakeEl => ({ complete, getAttribute: (k) => (k in attrs ? attrs[k] : null), addEventListener() {}, removeEventListener() {} });
+const elm = (attrs: Record<string, string>, complete = false, loading?: string): FakeEl => ({ complete, getAttribute: (k) => (k in attrs ? attrs[k] : null), addEventListener() {}, removeEventListener() {}, ...(loading === undefined ? {} : { loading }) });
 
 test("collectPictures: every img as itself; a poster and an svg image through a probe at the resolved URL; a gated poster or href (moved aside) and an unparseable value probe nothing", () => {
   const probed: string[] = [];
@@ -305,6 +311,14 @@ test("collectPictures: every img as itself; a poster and an svg image through a 
   assert.equal(pics.length, 2 + 3, "two imgs and three probes: two posters and one svg image");
   assert.equal(pics[0], img1); assert.equal(pics[1], img2);
   assert.deepEqual(probed, ["http://notes-api.test/clip-poster.png", "https://pics.test/p.png", "http://notes-api.test/diagrams/d.svg"]);
+});
+
+test("collectPictures sets a lazy img eager before the wait listens on it (FAILS BEFORE: a picture the browser had not started fetching fired neither event, and the wait ran to its deadline); an eager or unmarked img is left as it is", () => {
+  const lazy = elm({}, false, "lazy"), eager = elm({}, false, "eager"), plain = elm({});
+  const pics = collectPictures(fakeBody({ img: [lazy, eager, plain] }), "http://notes-api.test/files", () => new FakePic());
+  assert.equal(pics.length, 3, "every img is collected, the lazy one among them");
+  assert.equal(lazy.loading, "eager", "the lazy picture reads eager: its deferred fetch starts, and load or error will come");
+  assert.equal(eager.loading, "eager"); assert.equal(plain.loading, undefined, "no attribute is added where none was");
 });
 
 // ── the PDF kind (P4) ───────────────────────────────────────────────────────────────────────────────
@@ -347,10 +361,30 @@ test("pdfFrameWindow: the frame's window when it holds the PDF and can print; nu
 
 // ── the body not in (P7) ────────────────────────────────────────────────────────────────────────────
 
+/** A body stand-in whose children are `kids`, each "name.class1.class2" (the viewer's own paints, spelled as the DOM would read them). */
+const bodyOf = (...kids: string[]): BodyLike => ({ children: kids.map((k) => { const [localName, ...classes] = k.split("."); return { localName, classList: { contains: (c: string) => classes.includes(c) } }; }) });
+
+test("bodyReady reads the body's children: the loader as content, the plain fallback editor and a failure line alone are not in; a rendered root, code, a picture's box, a PDF frame's column (a loader inside it aside), the pages' host, the CodeMirror mount and a line over content are in; an empty body is not", () => {
+  assert.equal(bodyReady(bodyOf()), false, "an empty body (the URL viewer's before its loader)");
+  assert.equal(bodyReady(bodyOf("div.fileview-load")), false, "the open's loader, the editor's chunk wait");
+  assert.equal(bodyReady(bodyOf("div.fileview-load", "div.fileview-pdfhost")), false, "the Comments panel's PDF pages before page 1 is drawn, with no frame to keep: the loader and the empty host");
+  assert.equal(bodyReady(bodyOf("textarea.fileview-editor")), false, "the plain fallback editor: a print of it is one clipped page");
+  assert.equal(bodyReady(bodyOf("div.fileview-err")), false, "a failure pane alone: the fetch's, imgFailed's, the URL viewer's");
+  assert.equal(bodyReady(bodyOf("div.fileview-md")), true, "a rendered note");
+  assert.equal(bodyReady(bodyOf("pre.fileview-code")), true, "code or text");
+  assert.equal(bodyReady(bodyOf("div.fileview-err", "div.fileview-md")), true, "a line over content: an empty file's, a render that fell (the line above the rows)");
+  assert.equal(bodyReady(bodyOf("div.fileview-imgbox")), true, "a picture opened directly");
+  assert.equal(bodyReady(bodyOf("div.fileview-pdffall")), true, "a PDF frame's column (the pages attempt's loader inside it is not the body's child, and the frame stands)");
+  assert.equal(bodyReady(bodyOf("div.fileview-pdffall", "div.fileview-pdfhost")), true, "the pages attempt over a kept frame: the column and the host");
+  assert.equal(bodyReady(bodyOf("div.fileview-pdfhost")), true, "the panel's pages once page 1 is drawn (the loader gone)");
+  assert.equal(bodyReady(bodyOf("div.fileview-cm")), true, "the CodeMirror mount, which prints the whole file");
+  assert.equal(bodyReady(bodyOf("div.fileview-md", "div.fileview-load")), false, "a loader anywhere among the children is the body loading, whatever else stands");
+});
+
 test("disabled until the body is in: the driver's start, where a press (the button's or the chord's), an Escape, a choice, a prepare, a ready and a printed change nothing; the body arriving rests; the body going out from rest, armed, the wait or the print disarms and disables; the body's arrival elsewhere changes nothing", () => {
   assert.equal(DISABLED.phase, "disabled");
   for (const ev of [{ kind: "press", gated: 0, pending: 0 }, { kind: "press", gated: 2, pending: 1 }, { kind: "press", gated: 0, pending: 0, file: "pdf" }, { kind: "escape" },
-    { kind: "choose", withGated: true }, { kind: "prepare", pending: 1 }, { kind: "ready" }, { kind: "stalled", pending: 1 }, { kind: "anyway" }, { kind: "keep" }, { kind: "printed" }, { kind: "body", in: false }] as const) {
+    { kind: "choose", withGated: true }, { kind: "prepare", pending: 1 }, { kind: "ready", why: "settled", pending: 0 }, { kind: "stalled", pending: 1 }, { kind: "anyway" }, { kind: "keep" }, { kind: "printed" }, { kind: "body", in: false }] as const) {
     const r = step(DISABLED, ev);
     assert.equal(r.act, "none", ev.kind + " while disabled changes nothing");
     assert.equal(r.state, DISABLED, ev.kind + " while disabled keeps the state");

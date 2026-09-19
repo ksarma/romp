@@ -22,7 +22,18 @@
 //     button, the bar still armed; the next Escape disarms; at rest the popover's Escape is untouched;
 // (8) Escape or Enter on the armed line's word buttons hands the keyboard to the Print button, never to the document's body;
 // (9) "Print with them"'s title names the hosts the press grants: one placeholder naming two hosts (a <picture> whose source
-//     and img are on different hosts), and two placeholders on two hosts.
+//     and img are on different hosts), and two placeholders on two hosts;
+// (10) a <video poster> and an svg <image href> whose routes answer 404 (the third review's correctness-1, tests-1 and
+//     extra5-1, one defect): one press asks the host ONCE for each URL and prints at once when both probes have failed,
+//     well inside the deadline. Before the fix the wait's re-aim at every settle minted a fresh probe Image per URL, a
+//     failed URL is never complete on a fresh Image, and the driver looped until the deadline: the press asked the host
+//     hundreds of times for each URL (the review measured 337 in 8 s) and the bar asked at the deadline instead of printing;
+// (11) an <img loading="lazy"> far below the fold (the third review's fresh-2): the browser has not started its fetch, so
+//     nothing would fire load or error; the press sets it eager, the fetch starts, and the print follows its load. Before
+//     the fix the wait ran to its deadline over it and the bar asked, the picture blank.
+// The re-aim's deadline is executed in case (3c): a landing mid-wait whose picture is parked too, and the ask at the
+// PRESS's deadline, not one restarted at the landing (the third review's tests-2: the record's claim was pinned by a
+// source-text census alone, and a re-aim restarting the full deadline left every leg green).
 // Skips loudly without a browser. Synthetic values only: an invented note, /repo/notes-api paths, invented hosts.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
@@ -38,6 +49,7 @@ const SLOW = "slow.svg";                       // a local picture whose route is
 const SLOW2 = "slow2.svg";                     // a second one, brought by a reload
 const POSTER = "clip.svg";                     // a <video poster>, parked
 const IMAGE = "d.svg";                         // an svg <image href>, parked
+const LAZY = "lazy.svg";                       // an <img loading="lazy"> far below the fold, parked
 const REMOTE_HOST = "other.test";              // not in the gear's default list, not the page's origin: a placeholder
 const REMOTE2_HOST = "another.test";
 const REMOTE = "https://" + REMOTE_HOST + "/o.svg";
@@ -49,6 +61,9 @@ const MEDIA_NOTE = "# Media\n\nA clip:\n\n<video poster=\"" + POSTER + "\" contr
 const HEADED_GATED = "# Title\n\n## One\n\nA remote picture ![](" + REMOTE + ").\n\n## Two\n\nMore text.\n\n## Three\n\nLast line.\n";
 const TWO_HOST_NOTE = "# Two hosts\n\n<picture><source srcset=\"https://a.test/p.svg\" type=\"image/svg+xml\"><img src=\"https://b.test/p.svg\" alt=\"\"></picture>\n\nLast line.\n";
 const TWO_GATES_NOTE = "# Two placeholders\n\nOne ![](" + REMOTE + ") and two ![](https://" + REMOTE2_HOST + "/a.svg).\n\nLast line.\n";
+/** Three hundred paragraphs, then a lazy picture: at 900 by 700 the picture stands far past every distance at which the browser
+ *  would start a lazy fetch, so it is not requested until something makes it eager. */
+const LAZY_NOTE = "# Long\n\n" + Array.from({ length: 300 }, (_, i) => "Paragraph " + (i + 1) + ": lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor lorem ipsum dolor sit amet consectetur adipiscing elit.").join("\n\n") + "\n\n<img loading=\"lazy\" src=\"" + LAZY + "\" alt=\"\">\n\nLast line.\n";
 const REMOTE_HOSTS = [REMOTE_HOST, REMOTE2_HOST, "a.test", "b.test"];
 
 type Print = { t: number; gates: number; incomplete: string[]; line: boolean; cardUp: boolean; active: string };
@@ -93,17 +108,25 @@ const PRINT_BTN = "#romp-fileview .fileview-print";
 const WITHOUT_BTN = '#fileview-print-line button:has-text("Print without them")';
 const WITH_BTN = '#fileview-print-line button:has-text("Print with them")';
 
-type Scene = { page: any; errors: string[]; requests: string[]; release: (names?: string[]) => Promise<void>; heldCount: (name?: string) => number };
+type Scene = { page: any; errors: string[]; requests: string[]; release: (names?: string[]) => Promise<void>; heldCount: (name?: string) => number; requestsFor: (name: string) => number };
 /** The viewer over `note`: the quick picture answered from the origin's route, each of `held` parked (its route held until
- *  release()), every remote host answered after a short delay so a print that waited can be told from one that did not, and
- *  the probes installed before the open. `before` runs before the open too, after the probes. */
-async function scene(browser: any, mode: Mode, note: string, opts: { held?: string[]; before?: (pg: any) => Promise<void>; waitFor?: string } = {}): Promise<Scene> {
+ *  release()), each of `missing` answered 404 (a picture the kernel does not have), every remote host answered after a short
+ *  delay so a print that waited can be told from one that did not, and the probes installed before the open. `before` runs
+ *  before the open too, after the probes. `requestsFor(name)` counts the requests the page made for the picture so far. */
+async function scene(browser: any, mode: Mode, note: string, opts: { held?: string[]; missing?: string[]; before?: (pg: any) => Promise<void>; waitFor?: string } = {}): Promise<Scene> {
   const heldNames = opts.held || [];
+  const missing = opts.missing || [];
   const held: Array<{ name: string; route: any }> = [];
   const requests: string[] = [];
   const { page, errors } = await openViewer(browser, mode, 900, 700, {
     docs: { [REPORT]: note }, waitFor: opts.waitFor,
-    serve: (u) => { const p = u.searchParams.get("path") || ""; return u.pathname === "/file" && p.endsWith(QUICK) ? { status: 200, type: "image/svg+xml", body: SVG } : null; },
+    serve: (u) => {
+      const p = u.searchParams.get("path") || "";
+      if (u.pathname !== "/file") return null;
+      if (p.endsWith(QUICK)) return { status: 200, type: "image/svg+xml", body: SVG };
+      if (missing.some((n) => p.endsWith(n))) return { status: 404, type: "text/plain", body: "no such file: " + p };   // the kernel's 404 for a picture it does not have
+      return null;
+    },
     before: async (pg: any) => {
       pg.on("request", (r: any) => { requests.push(r.url()); });
       await pg.route((u: URL) => u.origin === ORIGIN && u.pathname === "/file" && heldNames.some((n) => (u.searchParams.get("path") || "").endsWith(n)), (route: any) => {
@@ -119,6 +142,7 @@ async function scene(browser: any, mode: Mode, note: string, opts: { held?: stri
   return {
     page, errors, requests,
     heldCount: (name?: string) => held.filter((h) => !name || h.name === name).length,
+    requestsFor: (name: string) => requests.filter((u) => u.startsWith(ORIGIN) && decodeURIComponent(u).includes("/docs/" + name)).length,
     release: async (names?: string[]) => {
       const out = held.filter((h) => !names || names.includes(h.name));
       for (const h of out) { held.splice(held.indexOf(h), 1); await h.route.fulfill({ status: 200, contentType: "image/svg+xml", body: SVG }); }
@@ -303,7 +327,7 @@ async function reloadTo(page: any, note: string): Promise<void> {
   await page.click("#fileview-save-err button");
 }
 
-test("(3) a Reload landing during the wait re-aims it: a picture the new body brings is awaited (the old body's picture landing prints nothing), the line's count follows, and the print fires with every picture of the body complete; a landing with nothing loading prints at once", { timeout: 120000 }, async (t) => {
+test("(3) a Reload landing during the wait re-aims it: a picture the new body brings is awaited (the old body's picture landing prints nothing), the line's count follows, and the print fires with every picture of the body complete; a landing with nothing loading prints at once; the re-aim runs under the press's deadline, never a restarted one: with the landing's picture parked too the ask comes at the press's deadline", { timeout: 120000 }, async (t) => {
   await inBrowser(t, async (browser) => {
     // a: the landing brings a new slow picture
     let s = await scene(browser, "pane", SLOW_NOTE, { held: [SLOW, SLOW2] });
@@ -353,6 +377,42 @@ test("(3) a Reload landing during the wait re-aims it: a picture the new body br
     assert.equal(await page.evaluate(() => document.querySelectorAll("#romp-fileview img").length), 1, "the new body's one picture");
     await frames(page, 1);
     assert.equal((await bar(page)).phase, null);
+    assert.deepEqual(s.errors, [], "no script error");
+    await page.close();
+    // c: the landing's picture is parked too, so the re-aimed wait runs to the deadline: the ask comes at the PRESS's deadline
+    // (the seam's 2000 ms from the press), not at one restarted at the landing (which would read about 2000 ms after it)
+    s = await scene(browser, "pane", SLOW_NOTE, { held: [SLOW, SLOW2] });
+    page = s.page;
+    await parked(s, [SLOW]);
+    await page.evaluate(() => { (window as any).FV.setPrintSettleMs(2000); });
+    await page.click(PRINT_BTN);
+    const t0 = await nowOnPage(page);
+    assert.equal((await bar(page)).phase, "preparing");
+    await pause(page, 600);
+    await reloadTo(page, SLOW2_NOTE);
+    await page.waitForFunction((n: string) => (Array.from(document.querySelectorAll("#romp-fileview img")) as HTMLImageElement[]).some((i) => decodeURIComponent(i.src).includes("/docs/" + n)), SLOW2, { timeout: 10000 });
+    for (let i = 0; i < 100 && s.heldCount(SLOW2) === 0; i++) await frames(page, 1);
+    const tLand = await nowOnPage(page);
+    assert.equal(s.heldCount(SLOW2), 1, "the landing's picture is parked");
+    assert.ok(tLand - t0 >= 550 && tLand - t0 < 1500, "the landing came mid-wait (" + Math.round(tLand - t0) + " ms after the press)");
+    b = await bar(page);
+    assert.equal(b.phase, "preparing", "the wait goes on over the landing's picture"); assert.equal(b.line, "Preparing 1 picture…");
+    assert.equal((await prints(page)).length, 0);
+    await page.waitForFunction(() => (document.getElementById("fileview-print-line")?.firstChild?.textContent || "") === "1 picture has not loaded.", null, { timeout: 6000 });
+    const t2 = await nowOnPage(page);
+    assert.ok(t2 - t0 >= 1900 && t2 - t0 < 3000, "the ask came at the press's deadline (" + Math.round(t2 - t0) + " ms after the press)");
+    assert.ok(t2 - tLand < 1600, "…not at a deadline restarted at the landing (" + Math.round(t2 - tLand) + " ms after it; a restart would read about 2000)");
+    t.diagnostic("case 3c: the landing " + Math.round(tLand - t0) + " ms after the press; the ask " + Math.round(t2 - t0) + " ms after the press and " + Math.round(t2 - tLand) + " ms after the landing (seam 2000 ms)");
+    b = await bar(page);
+    assert.equal(b.phase, "stalled"); assert.deepEqual(b.buttons, [ANYWAY_WORDS, KEEP_WORDS]);
+    assert.equal((await prints(page)).length, 0, "nothing printed at the deadline: the bar asked");
+    await page.click('#fileview-print-line button:has-text("' + ANYWAY_WORDS + '")');
+    p = await prints(page);
+    assert.equal(p.length, 1, "Print anyway printed once");
+    assert.equal(p[0].incomplete.length, 1, "the landing's picture is the one still loading at the print");
+    assert.ok(decodeURIComponent(p[0].incomplete[0]).includes("/docs/" + SLOW2));
+    await page.evaluate(() => { (window as any).FV.setPrintSettleMs(null); });
+    assert.equal(await page.evaluate(() => (window as any).FV.printSettleMs()), 8000, "the seam restored");
     assert.deepEqual(s.errors, [], "no script error");
     await page.close();
   });
@@ -612,6 +672,95 @@ test("(9) Print with them's title names the hosts the press grants: both hosts o
     assert.equal(p.length, 1); assert.deepEqual(p[0].incomplete, []);
     const hosts = new Set(s.requests.filter((u) => !u.startsWith(ORIGIN)).map((u) => new URL(u).host));
     assert.deepEqual(Array.from(hosts).sort(), [REMOTE2_HOST, REMOTE_HOST].sort(), "the two hosts were asked, as a click on each placeholder asks");
+    assert.deepEqual(s.errors, [], "no script error");
+    await page.close();
+  });
+});
+
+// ── (10) a poster and an svg image whose routes answer 404: one probe per URL per press ────────────
+
+test("(10) a <video poster> and an svg <image href> whose routes answer 404: one press asks the host for each URL exactly once more and prints at once when both probes have failed, well inside the deadline (FAILS BEFORE: a fresh probe per settle asked hundreds of times per URL over the full 8 s and the bar asked at the deadline); no request to another host", { timeout: 120000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const s = await scene(browser, "pane", MEDIA_NOTE, { missing: [POSTER, IMAGE] });
+    const { page } = s;
+    await page.waitForFunction(() => !!document.querySelector("#romp-fileview video[poster]") && !!document.querySelector("#romp-fileview image"), null, { timeout: 10000 });
+    // the elements' own fetches (the browser asks for a poster and an svg image as it renders them), answered 404
+    for (let i = 0; i < 200 && (s.requestsFor(POSTER) === 0 || s.requestsFor(IMAGE) === 0); i++) await frames(page, 1);
+    await frames(page, 6);
+    const before = { poster: s.requestsFor(POSTER), image: s.requestsFor(IMAGE) };
+    assert.ok(before.poster >= 1 && before.image >= 1, "the elements asked for their pictures before the press: " + JSON.stringify(before));
+    await frames(page, 6);
+    assert.deepEqual({ poster: s.requestsFor(POSTER), image: s.requestsFor(IMAGE) }, before, "…and nothing asks again without a press");
+    assert.equal(await page.evaluate(() => (window as any).FV.printSettleMs()), 8000, "the product's deadline: nothing shortened it here");
+    await page.click(PRINT_BTN);
+    const t0 = await nowOnPage(page);
+    // the print, or (before the fix) the ask at the deadline
+    await page.waitForFunction(() => (window as any).__prints.length >= 1 || /has not loaded|have not loaded/.test(document.getElementById("fileview-print-line")?.firstChild?.textContent || ""), null, { timeout: 20000 });
+    const t1 = await nowOnPage(page);
+    const asked = { poster: s.requestsFor(POSTER) - before.poster, image: s.requestsFor(IMAGE) - before.image };
+    assert.equal(asked.poster, 1, "FAILS BEFORE: the press asked the host for the poster " + asked.poster + " times over " + Math.round(t1 - t0) + " ms (one probe per URL for the life of the press)");
+    assert.equal(asked.image, 1, "FAILS BEFORE: the press asked the host for the svg image " + asked.image + " times over " + Math.round(t1 - t0) + " ms");
+    const p = await prints(page);
+    assert.equal(p.length, 1, "FAILS BEFORE: the bar asked at the deadline instead of printing (line: " + (await bar(page)).line + ")");
+    assert.ok(t1 - t0 < 2000, "the print came " + Math.round(t1 - t0) + " ms after the press, well inside the 8 s deadline");
+    t.diagnostic("case 10: requests after the press: poster " + asked.poster + ", svg image " + asked.image + "; the print " + Math.round(t1 - t0) + " ms after the press");
+    assert.equal(p[0].line, false, "the preparing line went before the print");
+    await frames(page, 6);
+    assert.deepEqual({ poster: s.requestsFor(POSTER) - before.poster, image: s.requestsFor(IMAGE) - before.image }, { poster: 1, image: 1 }, "nothing asked again after the print");
+    assert.equal((await bar(page)).phase, null, "the bar rested");
+    // a second press asks once more per URL: the probes are the press's, and the next press reads the body afresh
+    await page.click(PRINT_BTN);
+    await printsReach(page, 2);
+    await frames(page, 6);
+    assert.deepEqual({ poster: s.requestsFor(POSTER) - before.poster, image: s.requestsFor(IMAGE) - before.image }, { poster: 2, image: 2 }, "the second press probed each URL once more");
+    const foreign = s.requests.filter((u) => !u.startsWith(ORIGIN));
+    assert.deepEqual(foreign, [], "every request went to the page's origin");
+    assert.deepEqual(s.errors, [], "no script error");
+    await page.close();
+  });
+});
+
+// ── (11) a lazy picture far below the fold ─────────────────────────────────────────────────────────
+
+test("(11) an <img loading=\"lazy\"> far below the fold is not requested until the press, which sets it eager: its fetch starts at once, the wait runs over it and the print follows its load (FAILS BEFORE: nothing started the deferred fetch, the wait ran to its deadline and the bar asked); the attribute reads eager after; no request to another host", { timeout: 120000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const s = await scene(browser, "pane", LAZY_NOTE, { held: [LAZY] });
+    const { page } = s;
+    const lazy = (): Promise<{ present: boolean; loading: string | null; complete: boolean; below: number }> => page.evaluate((n: string) => {
+      const img = (Array.from(document.querySelectorAll("#romp-fileview img")) as HTMLImageElement[]).find((i) => decodeURIComponent(i.src).includes("/docs/" + n)) || null;
+      const body = document.querySelector("#romp-fileview .fileview-body")!;
+      return { present: !!img, loading: img ? img.getAttribute("loading") : null, complete: !!img && img.complete, below: img ? Math.round(img.getBoundingClientRect().top - body.getBoundingClientRect().bottom) : -1 };
+    }, LAZY);
+    await page.waitForFunction((n: string) => (Array.from(document.querySelectorAll("#romp-fileview img")) as HTMLImageElement[]).some((i) => decodeURIComponent(i.src).includes("/docs/" + n)), LAZY, { timeout: 10000 });
+    await frames(page, 10);
+    let l = await lazy();
+    assert.equal(l.loading, "lazy", "the sanitizer kept the attribute");
+    assert.ok(l.below > 5000, "the picture stands far below the body's bottom edge (" + l.below + " px)");
+    assert.equal(l.complete, false, "the browser has not started its fetch");
+    assert.equal(s.heldCount(LAZY), 0, "no request for the lazy picture before the press: the browser deferred it");
+    await page.click(PRINT_BTN);
+    const t0 = await nowOnPage(page);
+    let b = await bar(page);
+    assert.equal(b.phase, "preparing", "the press waits on the picture"); assert.equal(b.line, "Preparing 1 picture…");
+    for (let i = 0; i < 120 && s.heldCount(LAZY) === 0; i++) await frames(page, 1);
+    const t1 = await nowOnPage(page);
+    assert.equal(s.heldCount(LAZY), 1, "FAILS BEFORE: the press started the deferred fetch (" + Math.round(t1 - t0) + " ms after it); before, nothing did and the wait ran to its deadline");
+    l = await lazy();
+    assert.equal(l.loading, "eager", "the picture reads eager now");
+    assert.equal((await prints(page)).length, 0, "no print while it loads");
+    await s.release([LAZY]);
+    await printsReach(page, 1);
+    const t2 = await nowOnPage(page);
+    const p = await prints(page);
+    assert.equal(p.length, 1, "one print, at the picture's load");
+    assert.deepEqual(p[0].incomplete, [], "window.print fired with every <img> of the body complete");
+    assert.ok(t2 - t0 < 4000, "the print came " + Math.round(t2 - t0) + " ms after the press, inside the 8 s deadline");
+    t.diagnostic("case 11: the deferred fetch started " + Math.round(t1 - t0) + " ms after the press; the print " + Math.round(t2 - t0) + " ms after it");
+    await frames(page, 1);
+    b = await bar(page);
+    assert.equal(b.phase, null, "the bar rested");
+    assert.equal((await lazy()).loading, "eager", "the attribute stays eager after the print");
+    assert.deepEqual(s.requests.filter((u) => !u.startsWith(ORIGIN)), [], "every request went to the page's origin");
     assert.deepEqual(s.errors, [], "no script error");
     await page.close();
   });

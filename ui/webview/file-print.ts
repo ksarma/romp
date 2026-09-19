@@ -31,8 +31,20 @@
 //      stood as the press left it until a repaint).
 //   2. Then the wait: every <img> in the body reaches complete (its load or its error), and a <video poster> or an svg
 //      <image> is awaited through a probe Image at the same URL (neither element reports completeness; the probe asks the
-//      browser for the URL the element itself fetched, so no other host is reached), bounded by PRINT_SETTLE_MS, 8 s,
-//      after which, with a picture still loading, the bar ASKS instead of printing (the `stalled` phase; the third review,
+//      browser for the URL the element itself fetched, so no other host is reached). The probes are ONE PER URL FOR THE
+//      LIFE OF ONE PRESS'S WAIT (a Map keyed by the resolved URL, cleared when a press or a choice begins its wait, handed to
+//      the collection as its probe factory): a re-aim finds the probe it already made, so a URL whose picture failed settles
+//      for good with that one probe complete. Before this every re-aim minted a fresh Image per URL, a failed URL is never
+//      complete on a fresh Image, and the driver looped, probe, request, error, settle, re-aim, until the deadline: one press
+//      asked the host hundreds of times for one URL (the third review, 2026-09-19, measured 337 requests in 8 s), a request
+//      storm from one keystroke. An <img loading="lazy"> the browser has not started fetching (far below the fold) fires
+//      neither event, so the collection sets it eager first, which starts the deferred fetch at once (the same URL, so no
+//      other host is reached; a gated img has no src and fetches nothing); the attribute stays eager after the print. The
+//      wait is bounded by PRINT_SETTLE_MS, 8 s. Its VERDICT reaches the machine as one event, `ready`, carrying why it ended
+//      (`settled`, or `deadline`) and the count still loading, so the machine, and any reader of its events, can tell a
+//      settle from a deadline: a settle prints, a deadline with a picture still loading ASKS instead of printing (the
+//      `stalled` phase), and a deadline that finds nothing loading is a settle in effect and prints (the third review: the
+//      first build fed one bare `ready` for both ends, and the deadline's print said nothing). The ask (the third review,
 //      2026-09-19): the line reads "N pictures have not loaded." with two word buttons in the armed line's shape, "Print
 //      anyway", which prints at once with the picture as the browser has it (in Chromium an empty box), and "Keep
 //      waiting", which waits on the load and error events alone, with no timer, until every picture settles, then prints;
@@ -48,10 +60,12 @@
 //      prints at once, in the click's own task. The wait is AIMED at the body as it stands, and re-aimed when the
 //      body is repainted under it (the host's `body` report: a reload's landing, a format pick, the editor's exit; the
 //      pictures listened on were the old body's, detached by the swap) and again at the settle (a picture that entered or
-//      was re-aimed since the collection, a heal's retry of a failed figure among them, is awaited too), always under the
-//      deadline the press set, never past it: the print fires with every picture in the body complete, or the deadline
-//      asks. A repaint under the ask counts the new body's pictures still loading the same way: the line's count follows
-//      in place, and none loading prints, as a re-aim that finds nothing loading does.
+//      was re-aimed since the collection, a heal's retry of a failed figure among them, is awaited too; a URL the retry
+//      changed is a new key and is probed once), always under the deadline the press set, never past it (executed:
+//      file-print-driver-browser.test.ts case 3c lands a parked picture mid-wait and reads the ask at the press's deadline):
+//      the print fires with every picture in the body complete, or the deadline asks. A repaint under the ask counts the new
+//      body's pictures still loading the same way: the line's count follows in place, and none loading prints, as a re-aim
+//      that finds nothing loading does.
 //   3. window.print(). On afterprint, or at once when print returns, the bar rests.
 // The machine is `step`, a pure function over PrintState and PrintEvent returning the next state and the act the driver
 // performs; settlePictures takes any objects with `complete` and the two event methods, and timers a test injects
@@ -75,8 +89,9 @@
 // .fileview-btn.fileview-err-act word buttons: the changed-on-disk bar's shape, file-view.ts raiseDiskBar), so it needs no
 // rule of its own and the print block, which hides every `.fileview > .fileview-err`, leaves it off the paper; a word
 // button of the line that holds the keyboard when the line goes hands it back to the Print button (the zoom flyout's and
-// the Outline's Escape do the same for their trigger), never to the document's body. No kernel route, no server-side
-// render (P6).
+// the Outline's Escape do the same for their trigger), or, at a disarm the body going out causes, to the viewer's body
+// through the host's takeKeyboard (the changed-on-disk bar's hand-over, file-view.ts dropDiskBar), since the Print button
+// is not enabled then; never to the document's body. No kernel route, no server-side render (P6).
 // The file's KIND switches the flow at the press (P3 and P4; the host's `kind` reads it then, since the kernel's Content-Type
 // decides it when the bytes land, after the bar is built). A rendered note, code, text and a picture opened directly are
 // the page: the wait and window.print() above, and the print block in the sheets fits `img.fileview-img` to the page (the
@@ -90,14 +105,21 @@
 // (preview.ts openFileTab), and the line reads "Print from the tab that opened." until the next press or the close; a tab
 // the browser did not open is said the same way. The Comments panel's PDF pages (the pdf.js canvases, up while the panel is
 // open, with no frame in the body) are not printed: Print prints the PDF, through the tab then.
-// The button is DISABLED until the body is in (P7): the flow starts in the `disabled` phase, the button wearing the disabled
-// attribute, aria-disabled and the sheets' disabled dress, and the host reports the body through the installer's `bodyIn`:
-// true at every paint that seats the file's content (file-view.ts renderBody's media and text paints, so a reload's landing
-// passes through it; the editor's mount and its plain fallback; openUrlView's paint), false where the loader or a failure
-// pane takes the body (the editor's chunk wait, the fetch's failure pane, a picture that would not decode, the URL viewer's
-// failure; the open's own loader stands from the build, the phase the flow starts in). A press there changes nothing, and
-// the chord is still prevented, so the browser's raw print does not run over the loader either; the body going out while
-// the bar is armed or the wait runs disarms (the line goes, the wait is cancelled) and disables.
+// The button is DISABLED until the body is in (P7): the flow starts in the `disabled` phase, the button wearing aria-disabled
+// and the sheets' disabled dress, and never the `disabled` property (the bar's own rule, file-view.ts textSizeControl: a
+// button that disables under keyboard focus drops it on the document's body and leaves the tab order; the third review,
+// 2026-09-19). Whether the body is in is READ OFF THE BODY (bodyReady, over the body's element children): a MutationObserver
+// on them feeds the machine's `body` event after every paint, and a press reads them again first, so a swap in the press's
+// own task is seen before the observer runs. Not in while the viewer's loader is the body's content (the open's, the
+// editor's chunk wait, the Comments panel's PDF pages before page 1 is drawn), while the plain fallback editor holds it (a
+// textarea, of which a print shows one clipped page) or while a failure pane is all it holds (the fetch's, a picture that
+// would not decode, the URL viewer's); in over everything else: a rendered note, code or text, a picture, a PDF frame (under
+// the pages attempt's loader inside its column too: the frame stands and prints itself or through the tab), the CodeMirror
+// mount (it prints the whole file) and the panel's pages once drawn. Before this each viewer paint reported the body in or out
+// by hand, and the roads nobody wired were wrong: the pages flow's paints reported nothing, so the button was live over its
+// loader and a press opened the tab, and the plain fallback reported in and printed one clipped page. A press over a body not
+// in changes nothing, and the chord is still prevented, so the browser's raw print does not run over the loader either; the
+// body going out while the bar is armed or the wait runs disarms (the line goes, the wait is cancelled) and disables.
 import { GATE_ACT, loadGatedHost } from "./figure-gate";
 import { ICON_PRINT } from "./icons";
 
@@ -127,8 +149,8 @@ export type PrintEvent =
   | { kind: "escape" }
   | { kind: "choose"; withGated: boolean }               // one of the armed line's two buttons
   | { kind: "prepare"; pending: number }                 // the driver, after the choice: the pictures still loading
-  | { kind: "ready" }                                    // every picture settled
-  | { kind: "stalled"; pending: number }                 // the driver: the deadline fell, or the body was repainted under the ask, with this many pictures still loading
+  | { kind: "ready"; why: "settled" | "deadline"; pending: number }   // the wait's verdict: every picture settled (why settled, pending 0), or the deadline fell with `pending` still loading (a deadline with pending 0 is a settle in effect)
+  | { kind: "stalled"; pending: number }                 // the driver, after a repaint under the ask: the new body's pictures still loading
   | { kind: "anyway" }                                   // the ask's "Print anyway"
   | { kind: "keep" }                                     // the ask's "Keep waiting"
   | { kind: "printed" }                                  // afterprint, or print returned
@@ -146,7 +168,7 @@ export type PrintAct = "none" | "arm" | "disarm" | "activate" | "skip" | "wait" 
 const begin = (pending: number, untimed = false): { state: PrintState; act: PrintAct } =>
   pending > 0 ? { state: untimed ? { phase: "preparing", gated: 0, pending, untimed: true } : { phase: "preparing", gated: 0, pending }, act: "wait" } : { state: { phase: "printing", gated: 0, pending: 0 }, act: "print" };
 /** The deadline fell, or the body was repainted under the ask, with `pending` pictures still loading: over any the bar asks
- *  (`stall`), over none the print runs, as `ready` does. */
+ *  (`stall`), over none the print runs, as a settle does. */
 const ask = (pending: number): { state: PrintState; act: PrintAct } =>
   pending > 0 ? { state: { phase: "stalled", gated: 0, pending }, act: "stall" } : { state: { phase: "printing", gated: 0, pending: 0 }, act: "print" };
 
@@ -159,13 +181,15 @@ const ask = (pending: number): { state: PrintState; act: PrintAct } =>
  *  and otherwise begins the wait (or prints at once with nothing pending); while armed a press or Escape disarms, a
  *  choice activates or skips, the driver's `prepare` then beginning the wait, and a `recount` arms again over the new count
  *  (`arm`: the driver rewrites the line and the title in place) or disarms over none (the placeholders the line asked about
- *  are gone, so the question is moot; the next press prints); while preparing `ready` prints, `stalled` asks over a count
- *  still loading and prints over none, and Escape cancels Keep waiting's open-ended wait (`untimed`) and nothing else; while
+ *  are gone, so the question is moot; the next press prints); while preparing the wait's verdict `ready` prints when it
+ *  settled, asks when the deadline fell with a count still loading, and prints when the deadline found none loading (a
+ *  settle in effect), and Escape cancels Keep waiting's open-ended wait (`untimed`) and nothing else; while
  *  stalled a press or Escape disarms, `anyway` prints, `keep` resumes (the driver aims the open-ended wait and its `prepare`
  *  begins it, or prints with nothing left loading), and a `stalled` from a repaint asks again over the new count or prints
  *  over none; `printed` rests. Every other pairing changes nothing: a press during the wait or the print, an Escape during
  *  the timed wait or the print, an Escape at rest, a late `ready` after a rest, a `printed` after the body went out (the
- *  button stays disabled), a `recount` in any phase but armed, a `ready` or a choice under the ask. */
+ *  button stays disabled), a `recount` in any phase but armed, a `stalled` in any phase but the ask (no timer feeds it: the
+ *  deadline is the verdict's), a `ready` or a choice under the ask. */
 export function step(s: PrintState, ev: PrintEvent): { state: PrintState; act: PrintAct } {
   if (ev.kind === "body") {
     if (!ev.in) return s.phase === "disabled" ? { state: s, act: "none" } : { state: DISABLED, act: "disarm" };
@@ -185,8 +209,7 @@ export function step(s: PrintState, ev: PrintEvent): { state: PrintState; act: P
       if (ev.kind === "recount") return ev.gated > 0 ? { state: { phase: "armed", gated: ev.gated, pending: 0 }, act: "arm" } : { state: RESTING, act: "disarm" };
       break;
     case "preparing":
-      if (ev.kind === "ready") return { state: { phase: "printing", gated: 0, pending: 0 }, act: "print" };
-      if (ev.kind === "stalled") return ask(ev.pending);
+      if (ev.kind === "ready") return ev.why === "deadline" && ev.pending > 0 ? ask(ev.pending) : { state: { phase: "printing", gated: 0, pending: 0 }, act: "print" };
       if (ev.kind === "escape" && s.untimed === true) return { state: RESTING, act: "disarm" };
       break;
     case "stalled":
@@ -304,13 +327,17 @@ function resolved(value: string | null, base: string): string | null {
   if (!value) return null;
   try { return new URL(value, base).href; } catch { return null; }
 }
-/** Every picture under `body` the print waits on: each <img> as itself, and a probe (`probe(url)`: a new Image aimed at
- *  the URL, in the driver) for each <video poster> and each svg <image href>, whose elements report no completeness. A
- *  gated element has its poster or href moved aside (figure-gate.ts) and is not probed; a gated img has no src, and an img
- *  with no src is complete by HTML's definition, so "Print without them" waits on nothing for a placeholder. */
+/** Every picture under `body` the print waits on: each <img> as itself, and a probe (`probe(url)`: the driver's, one Image
+ *  per URL for the life of one press's wait) for each <video poster> and each svg <image href>, whose elements report no
+ *  completeness. An <img loading="lazy"> is set eager first: the browser has deliberately not started fetching one far below
+ *  the fold, so it would fire neither load nor error and the wait would run to its deadline over it; eager starts the
+ *  deferred fetch at once, for the same URL (no other host is reached; a gated img has no src and fetches nothing), and the
+ *  attribute stays eager after the print. A gated element has its poster or href moved aside (figure-gate.ts) and is not
+ *  probed; a gated img has no src, and an img with no src is complete by HTML's definition, so "Print without them" waits on
+ *  nothing for a placeholder. */
 export function collectPictures(body: ParentNode, base: string, probe: (url: string) => Picture): Picture[] {
   const out: Picture[] = [];
-  body.querySelectorAll("img").forEach((img) => { out.push(img as HTMLImageElement); });
+  body.querySelectorAll("img").forEach((el) => { const img = el as HTMLImageElement; if (img.loading === "lazy") img.loading = "eager"; out.push(img); });
   body.querySelectorAll("video[poster]").forEach((v) => { const u = resolved(v.getAttribute("poster"), base); if (u) out.push(probe(u)); });
   body.querySelectorAll("image").forEach((im) => { const u = resolved(im.getAttribute("href"), base); if (u) out.push(probe(u)); });
   return out;
@@ -382,6 +409,30 @@ export function pdfFrameWindow(body: ParentNode): FrameWindow | null {
   } catch { return null; }                     // a cross-origin window withholds its document and its location
 }
 
+// ── the body's readiness (P7) ────────────────────────────────────────────────────────────────────────
+/** What the readiness test reads of the body: its element children, each with its name and its class list (the body, or a
+ *  stand-in in a test). */
+export type BodyLike = { children: ArrayLike<{ localName: string; classList: { contains(name: string): boolean } }> };
+/** The body holds the file's content, read off its element children (P7; the driver reads it through a MutationObserver on
+ *  them and again at each press). Not while the viewer's loader is the body's content (`.fileview-load` as a child: the open's
+ *  loader, the editor's chunk wait, the Comments panel's PDF pages before page 1 is drawn; the pages attempt over a KEPT frame
+ *  puts its loader inside the frame's column, so the frame stays the content and the button stays live), not while the plain
+ *  fallback editor holds it (`textarea.fileview-editor`: a scrollable control, of which the browser prints one clipped page),
+ *  and not while a failure line is all the body holds (`.fileview-err` and nothing else: the fetch's pane, a picture that
+ *  would not decode, the URL viewer's failure). Ready when any other child stands: the rendered root, the code block (a
+ *  `.fileview-err` line above either, an empty file's or a render that fell, is a line over content, not a pane), a picture's
+ *  box, a PDF frame's column (the pages attempt's notice inside it included), the pages' host once the loader has gone, the
+ *  CodeMirror mount (`.fileview-cm`, which prints the whole file). An empty body is not ready. */
+export function bodyReady(body: BodyLike): boolean {
+  let content = false;
+  for (const c of Array.from(body.children)) {
+    if (c.classList.contains("fileview-load")) return false;
+    if (c.localName === "textarea" && c.classList.contains("fileview-editor")) return false;
+    if (!c.classList.contains("fileview-err")) content = true;
+  }
+  return content;
+}
+
 // ── the DOM driver ──────────────────────────────────────────────────────────────────────────────────
 export type PrintHost = {
   /** the card (`.fileview`): the line is a row of it */
@@ -400,15 +451,21 @@ export type PrintHost = {
   /** for a PDF whose frame cannot print: open the kernel's /file URL in a new tab, the modified click's opener (preview.ts
    *  openFileTab); true when a tab opened. Absent: no tab, and the line says the browser did not open one */
   openTab?: () => boolean;
+  /** the viewer's own hand-over of the keyboard to its body (file-view.ts openFileView's takeKeyboard, which yields to a
+   *  holder outside the bar): at a disarm the body going out causes, a word button of the line that held the keyboard hands
+   *  it there, as the changed-on-disk bar's Reload does when its bar goes (dropDiskBar), since the Print button is not
+   *  enabled then. Absent (the URL viewer), the button takes it */
+  takeKeyboard?: () => void;
 };
 export const PRINT_LINE_ID = "fileview-print-line";
 export const PRINT_LINE_CLASS = "fileview-print-line";
 
 /** Build the Print button for a viewer and wire the flow to it and to the document's keydown; the caller puts the button
- *  in its bar and reports the body through `bodyIn` (P7): true at a paint that seats the file's content, false where the
- *  loader or a failure pane takes the body; the button starts disabled. `data-print` on the button carries the phase while
- *  it is not resting (`disabled` included), for the sheets and the tests. */
-export function installFilePrint(host: PrintHost): { button: HTMLButtonElement; bodyIn: (present: boolean) => void } {
+ *  in its bar and paints its body as it does: whether the body is in (P7) is read off the body's children here (bodyReady,
+ *  through a MutationObserver on them and again at each press), so the caller reports nothing. The button starts disabled
+ *  over an empty body or the caller's loader. `data-print` on the button carries the phase while it is not resting
+ *  (`disabled` included), for the sheets and the tests. */
+export function installFilePrint(host: PrintHost): { button: HTMLButtonElement } {
   const doc = document;                        // the hosting document (the shims the node suites install give a fake element no ownerDocument)
   const btn = doc.createElement("button") as HTMLButtonElement;
   btn.type = "button";
@@ -419,7 +476,7 @@ export function installFilePrint(host: PrintHost): { button: HTMLButtonElement; 
   btn.className = "fileview-btn fileview-icon fileview-print";
   btn.dataset.icon = "1";
   btn.title = "Print"; btn.setAttribute("aria-label", "Print");
-  let state: PrintState = DISABLED;            // the loader holds the body from the build: the host's bodyIn(true) at the first paint rests the flow
+  let state: PrintState = DISABLED;            // the machine's start; onBody below reads the body as it stands at the install (the loader, or nothing yet) and at every paint after
   let line: HTMLElement | null = null;
   let withBtn: HTMLButtonElement | null = null;   // the armed line's "Print with them", while the line stands: a re-arm rewrites its title in place
   let asked = false;                           // the line standing is the deadline's ask: a repaint under it rewrites the count in place
@@ -438,15 +495,26 @@ export function installFilePrint(host: PrintHost): { button: HTMLButtonElement; 
     for (const g of gates()) for (const h of (g.getAttribute("data-fv-hosts") || "").split(" ")) if (h) hosts.add(h);
     return Array.from(hosts);
   };
-  const probe = (url: string): Picture => { const im = new Image(); im.src = url; return im; };
+  /** This press's probes by resolved URL, one Image each for the life of one press's wait: a re-aim (at a settle, at a
+   *  repaint) finds the probe it already made instead of minting one, so a URL whose picture failed is asked for once and
+   *  settles for good (a failed Image is complete; a fresh one never was). Cleared when a press or a choice begins its wait
+   *  (beginWait), never per re-aim, so the next press probes the body afresh and a URL a heal retry changed is a new key. */
+  const probes = new Map<string, Picture>();
+  const probe = (url: string): Picture => {
+    let p = probes.get(url);
+    if (!p) { const im = new Image(); im.src = url; p = im; probes.set(url, p); }
+    return p;
+  };
   /** Remove the line. A word button of it holding the keyboard hands it back to the Print button, the trigger (the zoom
-   *  flyout's and the Outline's Escape do the same for theirs); the browser's fixup would drop it on the document's body
-   *  otherwise, where the next key scrolls nothing. Not at the close, where the card goes with the line. */
-  const dropLine = (): void => {
+   *  flyout's and the Outline's Escape do the same for theirs), or, when the disarm is the body going out (`bodyOut`), to
+   *  the viewer's body through the host's takeKeyboard (the changed-on-disk bar's hand-over, dropDiskBar: the button is not
+   *  enabled then), read before the removal and handed after it, as that bar does; the browser's fixup would drop it on the
+   *  document's body otherwise, where the next key scrolls nothing. Not at the close, where the card goes with the line. */
+  const dropLine = (bodyOut = false): void => {
     if (line) {
       const held = !closed && line.contains(doc.activeElement);
       line.remove(); line = null; withBtn = null; asked = false;
-      if (held) btn.focus({ preventScroll: true });
+      if (held) { if (bodyOut && host.takeKeyboard) host.takeKeyboard(); else btn.focus({ preventScroll: true }); }
     }
     notice = false;
   };
@@ -478,7 +546,12 @@ export function installFilePrint(host: PrintHost): { button: HTMLButtonElement; 
     const off = state.phase === "disabled";
     const asks = state.phase === "armed" || state.phase === "stalled";   // the line is a question with word buttons, opened by the button
     const busy = state.phase === "preparing" || state.phase === "printing";
-    btn.disabled = off;                        // the attribute (no click reaches a disabled button) and aria-disabled both; the sheets' disabled dress reads either (.fileview-btn:disabled)
+    // aria-disabled, not `disabled` (the bar's own rule, file-view.ts textSizeControl, copied whole): a button that disables
+    // under keyboard focus drops it (the ring would vanish on the press that reached the end; here, the body going out while
+    // a word button of the line held the keyboard handed it to this button and the property then dropped it on the
+    // document's body in the same tick), while an aria-disabled one keeps the focus, wears the sheet's disabled dress
+    // (.fileview-btn[aria-disabled="true"], the same rule as :disabled in both sheets), and its press is the no-op the
+    // disabled phase already makes of it (the machine ignores a press there, and the chord is prevented before it)
     if (off) btn.setAttribute("aria-disabled", "true"); else btn.removeAttribute("aria-disabled");
     btn.classList.toggle("on", asks);
     btn.classList.toggle("fileview-busy", busy);
@@ -489,10 +562,17 @@ export function installFilePrint(host: PrintHost): { button: HTMLButtonElement; 
   const dropSettle = (): void => { if (settle) { settle.cancel(); settle = null; } };
   /** The running wait's deadline: the time left to the press's, or null for Keep waiting's open-ended wait, which has none. */
   const timeLeft = (): number | null => (state.phase === "preparing" && state.untimed === true ? null : Math.max(0, waitEnds - Date.now()));
+  /** The wait's line reads `n` pictures: rewritten in place when the wait's line stands (its loader marks it), so a re-aim
+   *  moves nothing and restarts no animation; shown afresh otherwise (after the armed line, or the ask's). */
+  const preparingLine = (n: number): void => {
+    if (line && line.querySelector(".fileview-print-load")) { line.firstChild!.textContent = preparingWords(n); return; }
+    showLine(preparingWords(n), true);
+  };
   /** Aim the wait at the body as it stands, under `deadlineMs` (null: no deadline): collect, listen, and at the settle read
    *  the body again (a picture that entered or was re-aimed since the collection is awaited too, under the time left) or feed
-   *  `ready`; the deadline feeds `stalled` with the count still loading, and the bar asks. The count still loading; 0 with
-   *  nothing to wait on (no listener, no timer). */
+   *  the verdict: `ready` settled with nothing loading, or `ready` deadline with the count still loading, on which the bar
+   *  asks (or prints, when the deadline found none). The count still loading; 0 with nothing to wait on (no listener, no
+   *  timer). */
   const aimWait = (deadlineMs: number | null): number => {
     dropSettle();
     const s = settlePictures(collectPictures(host.body, doc.baseURI, probe), deadlineMs);
@@ -503,26 +583,27 @@ export function installFilePrint(host: PrintHost): { button: HTMLButtonElement; 
       if (settle !== s) return;                 // cancelled, or replaced by a later wait
       settle = null;
       if (why === "cancelled" || closed || !host.card.isConnected) return;
-      if (why === "deadline") { feed({ kind: "stalled", pending: s.pending() }); return; }   // pictures still loading at the deadline: the bar asks, and nothing listens under the ask
+      if (why === "deadline") { feed({ kind: "ready", why, pending: s.pending() }); return; }   // the deadline's verdict, with the count still loading: the bar asks over any (nothing listens under the ask), and prints over none
       const left = timeLeft();
       if (left === null || left > 0) {
-        const more = aimWait(left);             // the body as it stands now: something entered or was re-aimed since the collection
-        if (more > 0) { showLine(preparingWords(more), true); return; }
+        const more = aimWait(left);             // the body as it stands now: something entered or was re-aimed since the collection (the probes are this press's, so a URL already asked for is not asked for again)
+        if (more > 0) { preparingLine(more); return; }
       }
-      feed({ kind: "ready" });
+      feed({ kind: "ready", why: "settled", pending: 0 });
     });
     return n;
   };
-  /** Begin the wait, at a press or a choice: the full deadline from now. */
-  const beginWait = (): number => { waitEnds = Date.now() + settleMs; return aimWait(settleMs); };
-  /** The body repainted during the wait (the host's `body` in: a reload's landing, a format pick, the editor's exit): the
-   *  pictures listened on were the old body's, detached by the swap, so the wait is aimed at the new body under the time
-   *  left (none for Keep waiting's wait); with nothing loading there the print runs at once, and the line's count follows.
-   *  The machine holds the phase (its `body` in during the wait is `none`): the re-aim is the driver's, as the collection is. */
+  /** Begin the wait, at a press or a choice: the full deadline from now, and this press's probes afresh. */
+  const beginWait = (): number => { probes.clear(); waitEnds = Date.now() + settleMs; return aimWait(settleMs); };
+  /** The body repainted during the wait (the observer: a reload's landing, a format pick, the editor's exit): the pictures
+   *  listened on were the old body's, detached by the swap, so the wait is aimed at the new body under the time left (none
+   *  for Keep waiting's wait); with nothing loading there the print runs at once, a settle in effect, and the line's count
+   *  follows. The machine holds the phase (its `body` in during the wait is `none`): the re-aim is the driver's, as the
+   *  collection is. */
   const reaim = (): void => {
     const n = aimWait(timeLeft());
-    if (n === 0) { feed({ kind: "ready" }); return; }
-    showLine(preparingWords(n), true);
+    if (n === 0) { feed({ kind: "ready", why: "settled", pending: 0 }); return; }
+    preparingLine(n);
   };
   /** The body repainted under the ask: the new body's pictures still loading are counted through the wait's own collection
    *  and the listeners come off again, since nothing is awaited under the ask; the machine's `stalled` then rewrites the
@@ -564,7 +645,7 @@ export function installFilePrint(host: PrintHost): { button: HTMLButtonElement; 
         }
         break;
       }
-      case "disarm": dropSettle(); dropLine(); break;   // the body going out during the wait: no wait survives a disarm
+      case "disarm": dropSettle(); dropLine(ev.kind === "body"); break;   // the body going out during the wait: no wait survives a disarm; a word button of the line that held the keyboard hands it to the viewer's body then
       case "rest": dropLine(); break;
       case "activate": {
         // every host the armed line's title names, through the gate's own load path: loadGatedHost is what the placeholder's
@@ -605,6 +686,7 @@ export function installFilePrint(host: PrintHost): { button: HTMLButtonElement; 
   };
   const press = (): void => {
     if (notice) dropLine();                    // the last press's notice (a PDF's tab) goes with this press
+    if (ready() !== (state.phase !== "disabled")) onBody();   // the body changed in this same task and the observer has not run yet: read it first, so the press acts on the body as it stands (P7)
     if (state.phase !== "resting") { feed({ kind: "press", gated: 0, pending: 0 }); return; }   // disabled: nothing (the body is not in); armed, or the ask: the second press disarms; busy: nothing
     const file: PrintKind = host.kind ? host.kind() : "document";
     if (file === "pdf") { feed({ kind: "press", gated: 0, pending: 0, file }); return; }   // the PDF prints itself: no placeholder, no picture to wait on
@@ -653,24 +735,31 @@ export function installFilePrint(host: PrintHost): { button: HTMLButtonElement; 
     press();
   };
   doc.addEventListener("keydown", onKey, true);
-  host.onClose(() => {
-    closed = true;
-    doc.removeEventListener("keydown", onKey, true);
-    dropSettle();
-    dropLine();
-  });
-  syncButton();                                // the disabled dress from the build
-  /** The host's word on the body (P7): true at a paint that seats the file's content, false where the loader or a failure
-   *  pane takes it; the machine rests or disables, and a flow under way is disarmed. A paint under the armed line has the
-   *  placeholders counted again (the line's words and the hosts its title grants follow the repainted body, or the line
-   *  goes with the last placeholder); a paint under the wait re-aims it; a paint under the ask counts the new body's pictures
-   *  still loading again. */
-  const bodyIn = (present: boolean): void => {
+  /** The body holds the file's content, as its children stand now (bodyReady, P7). */
+  const ready = (): boolean => bodyReady(host.body);
+  /** The body's children changed (the observer, after every paint of the host's; a press reads it first too): the machine
+   *  rests or disables from what the body holds now, and a flow under way is disarmed when it went out. A paint under the
+   *  armed line has the placeholders counted again (the line's words and the hosts its title grants follow the repainted
+   *  body, or the line goes with the last placeholder); a paint under the wait re-aims it; a paint under the ask counts the
+   *  new body's pictures still loading again. A change that leaves the body in and the phase at rest changes nothing. */
+  const onBody = (): void => {
+    if (closed) return;
+    const present = ready();
     feed({ kind: "body", in: present });
     if (!present) return;
     if (state.phase === "armed") feed({ kind: "recount", gated: gates().length });
     else if (state.phase === "preparing") reaim();
     else if (state.phase === "stalled") recountAsk();
   };
-  return { button: btn, bodyIn };
+  const observer = new MutationObserver(onBody);   // the body's element children: every paint swaps them (replaceChildren, the loader's removal at page 1); the callback runs after the task that painted, before any key or click
+  observer.observe(host.body, { childList: true });
+  host.onClose(() => {
+    closed = true;
+    observer.disconnect();
+    doc.removeEventListener("keydown", onKey, true);
+    dropSettle();
+    dropLine();
+  });
+  onBody();                                    // the body as it stands at the install: the loader, or nothing yet (the disabled dress from the build)
+  return { button: btn };
 }
