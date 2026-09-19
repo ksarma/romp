@@ -59,9 +59,10 @@ witness (the pre-815 half), runs under ROMP_LINKDROP_LAB=1 (about three minutes 
 and the skip reason names what then goes unexecuted and where the mechanisms PR 815 fixed are pinned) with one of two
 hub knobs: ROMP_CORNER_OLD_HUB_ROOT (the corners lab's knob: a checkout of a hub kernel and prebuilt bundle from
 before PR 815) boots the hub from that checkout as it is; ROMP_LINKDROP_OLD_HUB_BUILD=1 makes the class mint its own
-detached worktree of this repository at OLD_HUB_SHA (a main before PR 815) under its scratch directory, build the
-bundle there over this checkout's node_modules, boot the hub from it and remove the worktree at teardown (the mint
-needs that sha in the clone's history and the extension's node deps, so CI's served job skips the class as optional).
+private clone of this repository under its scratch directory, checked out detached at OLD_HUB_SHA (a main before PR
+815; the objects are borrowed and nothing is written under this clone's .git), build the bundle there over this
+checkout's node_modules, boot the hub from it and let the scratch's removal take it at teardown (the mint needs that
+sha in the clone's history and the extension's node deps, so CI's served job skips the class as optional).
 A runner who sets ROMP_LINKDROP_OLD_HUB_BUILD=1 sets ROMP_SERVED_TESTS_REQUIRE=1 too: lab_dist raises SkipTest when
 the minted bundle fails to build (every served lab's stance for an environment that cannot build), and that switch
 turns the skip into a failure carrying the build's own words instead of a green run with the class skipped.
@@ -123,9 +124,9 @@ APPEND_PROMPT = "rebuild %s: did the notes-api index rebuild finish?"
 APPEND_REPLY = "Rebuild %s finished; the stemmer table is cached now."
 NOTICES_PER_PHASE = 3        # cards per phase, a second apart: several patches per socket where a page decodes none
 # A main before PR 815 (the merge of PR 818): its bundle reassembles remote feed slot patches with no per-connection state
-# and dials no caps, so a remote at this checkout serves it slot patches it drops. The old-hub class mints a detached
-# worktree here under ROMP_LINKDROP_OLD_HUB_BUILD=1; ROMP_CORNER_OLD_HUB_ROOT names a built checkout of it (or of any
-# other pre-815 main) instead.
+# and dials no caps, so a remote at this checkout serves it slot patches it drops. The old-hub class mints a private clone
+# checked out detached here under ROMP_LINKDROP_OLD_HUB_BUILD=1; ROMP_CORNER_OLD_HUB_ROOT names a built checkout of it (or
+# of any other pre-815 main) instead.
 OLD_HUB_SHA = "01d4fbe43eed1226a1a3615c74f8d2ece79e5252"
 NOTICE_GAP_S = 1.0
 HUB_DOWN_S = 3.0             # the hub stays down this long before its respawn: past the relay's 2 s onclose retry, so that
@@ -518,8 +519,8 @@ class _LinkDrop(unittest.TestCase):
     maxDiff = None
     hub_root = None            # the hub kernel's checkout (bin/) and, when not None, its PREBUILT vscode-extension/dist
     remote_root = None         # the remote kernel's checkout (bin/)
-    old_hub_build = False      # _boot mints hub_root as a detached worktree at OLD_HUB_SHA under the lab (the old-hub class's second knob)
-    old_hub_wt = None          # that worktree's path while it exists; _remove_old_hub takes it down
+    old_hub_build = False      # _boot mints hub_root as a private clone checked out at OLD_HUB_SHA under the lab (the old-hub class's second knob)
+    old_hub_wt = None          # that checkout's path while it exists: under cls.lab, so the lab's rmtree takes it down
     strip_caps = False
     changes = ("notice", "todo", "append")
     local_drop = True
@@ -567,7 +568,7 @@ class _LinkDrop(unittest.TestCase):
             if root and not os.path.isfile(os.path.join(root, "bin", "romp-kernel")):
                 raise unittest.SkipTest("no bin/romp-kernel under %s" % root)
         if cls.old_hub_wt:
-            # the minted worktree's bundle, built by the harness bound to THAT checkout (its own dist, lock and marker,
+            # the minted checkout's bundle, built by the harness bound to THAT checkout (its own dist, lock and marker,
             # its own config's inputs) and copied serve-ready, as copy_dist does for this checkout's
             lab_dist.DistBuild(ext=os.path.join(cls.old_hub_wt, "vscode-extension"), root=cls.old_hub_wt).copy_to(os.path.join(cls.lab, "dist"))
         elif cls.hub_root:
@@ -609,39 +610,30 @@ class _LinkDrop(unittest.TestCase):
 
     @classmethod
     def _mint_old_hub(cls):
-        """A detached worktree of this repository at OLD_HUB_SHA under the lab's scratch: the old hub's kernel (bin/) and
-        the source of its bundle, for a box with no such checkout at hand. The worktree's vscode-extension/node_modules
-        is a symlink to THIS checkout's (the old config's own inputs are all in its tree; a hand-built checkout for
-        ROMP_CORNER_OLD_HUB_ROOT is built the same way), and _boot builds its bundle through lab_dist bound to the
-        worktree, so the build has the harness's lock and marker inside the worktree's own dist and the lab's copy is
-        serve-ready. The runner asked for the mint by setting the knob, so a sha the clone does not hold is an error
-        with git's words, never a skip. _remove_old_hub takes the worktree down at teardown."""
+        """A private checkout of this repository at OLD_HUB_SHA under the lab's scratch: the old hub's kernel (bin/) and
+        the source of its bundle, for a box with no such checkout at hand. It is a CLONE that borrows this clone's
+        objects (git clone --shared --no-checkout writes an alternates file in the new clone and nothing under this
+        clone's .git), then checks the sha out detached. Never a worktree of this clone, which every session on the box
+        shares: a worktree add registers a record there, an interrupted add leaves that record locked where no remove
+        of ours may reach it, and a repo-wide clearing of stale records at teardown is not a test's to run (round 1).
+        Everything the mint makes lives under cls.lab, so teardown is the lab's rmtree, and no git command of this
+        class names this clone as its -C target (tests/test_federated_linkdrop_mint.py pins that against a scratch
+        repository). The checkout's vscode-extension/node_modules is a symlink to THIS checkout's (the old config's own
+        inputs are all in its tree; a hand-built checkout for ROMP_CORNER_OLD_HUB_ROOT is built the same way), and
+        _boot builds its bundle through lab_dist bound to the checkout, so the build has the harness's lock and marker
+        inside the checkout's own dist and the lab's copy is serve-ready. The runner asked for the mint by setting the
+        knob, so a clone that fails or a sha this clone does not hold is an error with git's words, never a skip."""
         wt = os.path.join(cls.lab, "oldhub")
-        add = subprocess.run(["git", "-C", ROOT, "worktree", "add", "--detach", wt, OLD_HUB_SHA], capture_output=True, text=True, timeout=300)
-        if add.returncode != 0:
-            raise RuntimeError("ROMP_LINKDROP_OLD_HUB_BUILD=1: this clone could not check out %s as a worktree: %s" % (OLD_HUB_SHA, (add.stderr or add.stdout).strip()[-400:]))
+        clone = subprocess.run(["git", "clone", "--quiet", "--shared", "--no-checkout", ROOT, wt], capture_output=True, text=True, timeout=300)
+        if clone.returncode != 0:
+            raise RuntimeError("ROMP_LINKDROP_OLD_HUB_BUILD=1: this clone could not be cloned under the lab for the checkout at %s: %s"
+                               % (OLD_HUB_SHA, (clone.stderr or clone.stdout).strip()[-400:]))
+        co = subprocess.run(["git", "-C", wt, "checkout", "--quiet", "--detach", OLD_HUB_SHA], capture_output=True, text=True, timeout=300)
+        if co.returncode != 0:
+            raise RuntimeError("ROMP_LINKDROP_OLD_HUB_BUILD=1: the private clone could not check out %s: %s" % (OLD_HUB_SHA, (co.stderr or co.stdout).strip()[-400:]))
         cls.old_hub_wt = wt
         os.symlink(os.path.realpath(os.path.join(EXT, "node_modules")), os.path.join(wt, "vscode-extension", "node_modules"))
         return wt
-
-    @classmethod
-    def _remove_old_hub(cls):
-        """The minted worktree, if any, removed and its record pruned; runs before the lab's scratch goes so git sees the
-        tree it registered. Idempotent: tearDownClass runs from setUpClass's failure path too."""
-        wt = getattr(cls, "old_hub_wt", None)
-        if not wt:
-            return
-        cls.old_hub_wt = None
-        try:
-            subprocess.run(["git", "-C", ROOT, "worktree", "remove", "--force", wt], capture_output=True, text=True, timeout=120)
-        except (OSError, subprocess.TimeoutExpired):
-            pass
-        if os.path.isdir(wt):   # a remove that did not take: the tree goes with the lab and the stale record is pruned
-            shutil.rmtree(wt, ignore_errors=True)
-            try:
-                subprocess.run(["git", "-C", ROOT, "worktree", "prune"], capture_output=True, text=True, timeout=120)
-            except (OSError, subprocess.TimeoutExpired):
-                pass
 
     @classmethod
     def _transcript_path(cls):
@@ -817,8 +809,7 @@ class _LinkDrop(unittest.TestCase):
                 p.wait()
             except Exception:
                 pass
-        cls._remove_old_hub()
-        shutil.rmtree(getattr(cls, "lab", ""), ignore_errors=True)
+        shutil.rmtree(getattr(cls, "lab", ""), ignore_errors=True)   # the minted checkout, if any, is under the lab
 
     # ---- the readers ----
     def _driver_ran(self):
@@ -1133,7 +1124,7 @@ class LinkDropBothNew(_LinkDrop):
 
 class LinkDropOldLocal(_LinkDrop):
     """OLD local (a hub kernel and prebuilt bundle from before PR 815: a built checkout named by ROMP_CORNER_OLD_HUB_ROOT,
-    or the detached worktree this class mints at OLD_HUB_SHA under ROMP_LINKDROP_OLD_HUB_BUILD=1), a new remote (this
+    or the private clone this class mints at OLD_HUB_SHA under ROMP_LINKDROP_OLD_HUB_BUILD=1), a new remote (this
     checkout): the storm's own witness, the pre-815 half. The old bundle dials no caps (verified from the dial
     URL, not a grep of the minified dist) and has no per-conn view-delta receiver, so the remote serves the feed as
     {type:delta, slot:feed} patches and the old Outline DROPS each one, filing a delta-unapplied row and posting a
@@ -1179,7 +1170,7 @@ class LinkDropOldLocal(_LinkDrop):
             cls.old_hub_build = True    # _boot mints the checkout under the lab's scratch once that exists
             return
         raise unittest.SkipTest("optional: ROMP_CORNER_OLD_HUB_ROOT and ROMP_LINKDROP_OLD_HUB_BUILD both unset: the old-local half needs a hub "
-                                "from before PR 815, a built checkout named by the first knob or the checkout this class mints at %s under the "
+                                "from before PR 815, a built checkout named by the first knob or the private clone this class mints at %s under the "
                                 "second, so %s" % (OLD_HUB_SHA[:9], cls.UNEXECUTED))
 
     def test_the_link_dropped_and_the_pages_stopped_dialing_while_the_row_was_down(self):
