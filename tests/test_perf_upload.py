@@ -9,7 +9,9 @@ address the grammar refuses, where an open of it once hung the verb, and so is a
 a socket or an unreadable file, never reported as no receiver set; only an absent or blank file is), and with none set the verb
 refuses naming all three; the address must be https with a host and no userinfo, query or fragment (http for 127.0.0.1 and
 localhost alone), and a refused address is never echoed; the file must exist, be at most 1 MiB, parse as strict
-JSON (no NaN or Infinity, no repeated key at any depth; a RecursionError out of the parser is the strict-JSON refusal,
+JSON (no NaN or Infinity, spelled as a literal or reached by a number written past the double's range, 1e999, which the
+parser refuses since the closing re-run of 2026-09-19, where before it the fold belt alone kept the infinity off the wire;
+no repeated key at any depth; a RecursionError out of the parser is the strict-JSON refusal,
 pinned by mocking json.loads) nested at most MAX_DEPTH levels (32, about four times a fresh export's 7; a deeper file is
 refused in one line naming the bound before any check walks it, check_document stubbed and never called; a 100,000-level
 file meets whichever of the parser and the bound its build reaches first, and that case asserts the properties owed, exit
@@ -787,6 +789,14 @@ class Cli(unittest.TestCase):
         for text, phrase in (("not json", "is not strict JSON"), (b"\xff\xfe".decode("latin-1"), "is not strict JSON"),
                              ('{"schema": "romp-perf-export/1", "perf": {"uptime_s": NaN}}', "is not strict JSON"),
                              ('{"schema": "romp-perf-export/1", "perf": {"x": Infinity}}', "is not strict JSON"),
+                             # an overflowing number is the parser's refusal, not the fold belt's ("the perf block differs from its fold", which
+                             # is what this document met before the parser refused it; the envelope line is there so nothing earlier refuses)
+                             ('{"schema": "romp-perf-export/1", "exported_at": "2026-09-18T12:00Z", "perf": {"uptime_s": 60, "x": 1e999}}',
+                              "is not strict JSON (a number is outside the finite range)"),
+                             ('{"schema": "romp-perf-export/1", "exported_at": "2026-09-18T12:00Z", "perf": {"uptime_s": 60, "x": -1e999}}',
+                              "is not strict JSON (a number is outside the finite range)"),
+                             ('{"schema": "romp-perf-export/1", "exported_at": "2026-09-18T12:00Z", "perf": {"uptime_s": 60, "x": 1E400}}',
+                              "is not strict JSON (a number is outside the finite range)"),
                              ('["romp-perf-export/1"]', "is not a romp perf export (no top-level schema romp-perf-export/1)"),
                              ('{"perf": {}}', "is not a romp perf export"),
                              ('{"schema": "romp-perf-export/2", "perf": {}}', "is not a romp perf export"),
@@ -1857,6 +1867,36 @@ class Cli(unittest.TestCase):
         self.assertEqual(self.fake.requests[0][2], self.data, "the body is the file's bytes: a file as the export wrote it re-serialises to itself")
 
 
+class StrictLoads(unittest.TestCase):
+    """strict_loads as a unit (the closing re-run of 2026-09-19, its finding 6): the docstring promised no NaN or Infinity and
+    the parser refused the two LITERALS alone, while a number written past the double's range (1e999) parsed to an infinity
+    that passed the scan, the paste walk and the denylist walk, and only the fold belt in read_export, which nulls a
+    non-finite number and so finds the block differing from its fold, kept it off the wire: a belt load-bearing beyond
+    its stated purpose, which a later relaxation would not have known. The refusal now lives in the parser (parse_float,
+    _finite_float), where the other strict-JSON rules are."""
+
+    def test_a_number_written_past_the_finite_range_is_not_strict_json_and_an_underflow_is_a_measurement(self):
+        """1e999, -1e999 and 1E400 each raise pu.NonFinite, a ValueError, with the fixed text (no traceback out of the
+        parser, nothing of the document in it; the class is what lets read_export name the reason in its refusal, as it does
+        for a repeated key: a hand editor's validator calls 1e999 valid JSON, so the bare line told them nothing to act on);
+        1e-999 parses to 0.0 (an underflow is a value, not an overflow); 1.5 and 1e5 parse as before; the literal NaN and
+        Infinity still raise through parse_constant. Fails without parse_float: 1e999 returns inf; with a plain ValueError
+        raised instead of NonFinite, the road rows get the bare strict-JSON line."""
+        for text in (b'{"a": 1e999}', b'{"a": -1e999}', b'{"a": 1E400}'):
+            with self.assertRaises(ValueError, msg=text) as cm:
+                pu.strict_loads(text)
+            self.assertIsInstance(cm.exception, pu.NonFinite, text)
+            self.assertEqual(str(cm.exception), "not strict JSON: a number outside the finite range", text)
+        self.assertEqual(pu.strict_loads(b'{"a": 1e-999}')["a"], 0.0, "an underflow is a measurement")
+        self.assertEqual(pu.strict_loads(b'{"a": 1.5}'), {"a": 1.5})
+        self.assertEqual(pu.strict_loads(b'{"a": 1e5}'), {"a": 100000.0})
+        self.assertEqual(pu.strict_loads(b'{"a": 12}'), {"a": 12})
+        for text, name in ((b'{"a": NaN}', "NaN"), (b'{"a": Infinity}', "Infinity"), (b'{"a": -Infinity}', "-Infinity")):
+            with self.assertRaises(ValueError, msg=text) as cm:
+                pu.strict_loads(text)
+            self.assertEqual(str(cm.exception), "not strict JSON: " + name)
+
+
 class DepthBound(unittest.TestCase):
     """The depth rule as a unit: nesting_depth's count (the root is 1, a leaf's depth its key path's length, a scalar 0),
     without recursion, so it measures a document the walks could not; the bound is 32, about four times the depth of a
@@ -2205,6 +2245,7 @@ class Answers(unittest.TestCase):
                   json.dumps({**ok, "av": "other"}), json.dumps({**ok, "av": "OK"}), json.dumps({**ok, "av": 1}), json.dumps({**ok, "av": None}),
                   json.dumps({**ok, "av": ["ok"]}),
                   '{"receipt": "%s", "retention_days": NaN, "av": "ok"}' % RECEIPT,
+                  '{"receipt": "%s", "retention_days": 1e999, "av": "ok"}' % RECEIPT,        # an overflow: the parser refuses it before the int check
                   json.dumps(ok) + json.dumps(ok), json.dumps(ok)[:-1], json.dumps({**ok, "note": "x" * (64 * 1024)}),
                   '{"receipt": "%s", "receipt": "%s", "retention_days": 180, "av": "ok"}' % (MARKER, RECEIPT),      # a repeated key
                   '{"receipt": "%s", "retention_days": 1, "retention_days": 180, "av": "ok"}' % RECEIPT]
@@ -2429,7 +2470,10 @@ class Docs(unittest.TestCase):
                       # entry carrying a letter is not counted since no number spells one, and a listed 1e5 is counted (the
                       # exponent's e); the sentence now says which letter a number spells and that the alphabet decides
                       "and an entry outside the number alphabet that carries a letter in a digit group (abc12, zz424242) is not counted; the one "
-                      "letter a number spells is an exponent's e, so an entry in the alphabet such as 1e5 is counted by its spelling"):
+                      "letter a number spells is an exponent's e, so an entry in the alphabet such as 1e5 is counted by its spelling",
+                      # finding 6: the upload section's strict-JSON parenthetical names the overflow spelling the parser refuses
+                      "parses as strict JSON (no `NaN` or `Infinity`, whether spelled as a literal or reached by a number written past the "
+                      "double's range, such as 1e999; no key repeated within an object)"):
             self.assertTrue(words in text, "not in the reference: " + words)
         # the closing re-run's finding 3: the clause saying an entry outside the number alphabet "is a substring of no number"
         # was false by execution ((1234567), _1234567 and 1234567/ each refuse the number 1234567 by its digit groups); deleted.

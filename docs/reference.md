@@ -3928,7 +3928,8 @@ host and no userinfo, query or fragment (`http` only for `127.0.0.1` and
 appended to; a refused address is not echoed. The receiver is unauthenticated,
 so no credential exists for it: the verb reads no token and sends none. The
 file must be a regular file of at most 1 MiB that parses as strict JSON (no
-`NaN` or `Infinity`, no key repeated within an object) with the
+`NaN` or `Infinity`, whether spelled as a literal or reached by a number written
+past the double's range, such as 1e999; no key repeated within an object) with the
 `romp-perf-export/1` schema line, nested at most 32 levels deep (a fresh export
 is about 7; the checks below recurse one level per frame and this is the one
 file romp reads that a person names, so a deeper file is refused in one line

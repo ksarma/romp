@@ -16,7 +16,8 @@ file that is not UTF-8 text or that is there but cannot be read among it, is ref
 (only an ABSENT file, or one holding no non-empty line, is no receiver). The receiver is
 unauthenticated: no credential exists for it, and the verb reads no token from anywhere and sends none.
 
-The file must exist, be a regular file of at most 1 MiB, parse as strict JSON (no NaN or Infinity literals, no
+The file must exist, be a regular file of at most 1 MiB, parse as strict JSON (no NaN or Infinity, as a literal or as
+a number written past the double's range, 1e999; no
 key repeated within one object at any depth: the receiver's contract refuses one, and a reader that kept one copy
 would silently choose which value is checked and sent) with the top-level `schema` line `romp-perf-export/1`, nest at most MAX_DEPTH levels (32; a fresh
 export is about 7 deep; a deeper file is refused in one line that names the bound, before any check walks it and never with a
@@ -105,6 +106,7 @@ code or the error's class name: never the body, never the URL, never an exceptio
 import argparse
 import http.client
 import json
+import math
 import os
 import re
 import socket
@@ -287,8 +289,26 @@ class RepeatedKey(ValueError):
     key itself is not carried: it may be anything."""
 
 
+class NonFinite(ValueError):
+    """A number is written past the double's range (1e999, -1e999, 1E400) and parses to an infinity: valid JSON to
+    every editor and validator (RFC 8259 leaves range to the implementation), so the verb's refusal names the reason,
+    as it does for a repeated key, or an operator whose hand edit produced it is told nothing they can act on (the
+    closing re-run's verification, 2026-09-19). The number itself is not carried."""
+
+
 def _no_constant(name):
     raise ValueError("not strict JSON: " + name)
+
+
+def _finite_float(text):
+    """The float `text` spells, or NonFinite (a ValueError) when it is not finite: json's parser hands every number
+    with a fraction or an exponent here, and a number written past the double's range (1e999, -1e999, 1E400) parses to
+    an infinity that parse_constant never sees, since no literal spelled it. An underflow (1e-999) is 0.0 and a
+    measurement."""
+    v = float(text)
+    if not math.isfinite(v):
+        raise NonFinite("not strict JSON: a number outside the finite range")
+    return v
 
 
 def _no_repeat(pairs):
@@ -298,13 +318,19 @@ def _no_repeat(pairs):
 
 
 def strict_loads(data):
-    """The document `data` (bytes) spells, or a ValueError: UTF-8, no NaN or Infinity, no key repeated within
-    one object at any depth (RepeatedKey, a ValueError), and nesting within the parser's reach (json raises
-    RecursionError past it; here that is a ValueError like any other unparseable input, never a traceback). The
-    parser's reach is not the verb's depth rule: read_export holds the parsed document to MAX_DEPTH, a far smaller
-    number, before any check walks it."""
+    """The document `data` (bytes) spells, or a ValueError: UTF-8, no NaN or Infinity whether spelled as a literal
+    (parse_constant) or reached by an overflowing number (parse_float, _finite_float: 1e999 parses to inf and is
+    refused here as NonFinite, a ValueError, so read_export can name the reason; 1e-999 underflows to 0.0 and is a
+    measurement), no key repeated within one object at any depth
+    (RepeatedKey, a ValueError), and nesting within the parser's reach (json raises RecursionError past it; here that
+    is a ValueError like any other unparseable input, never a traceback). The parser's reach is not the verb's depth
+    rule: read_export holds the parsed document to MAX_DEPTH, a far smaller number, before any check walks it. Before
+    the overflow was refused here, the fold belt (read_export's FOLDED comparison, which nulls a non-finite number and
+    so refuses the document as differing from its fold) was the only thing keeping an infinity off the wire, a purpose
+    it was not written for and did not know it held (the closing re-run of 2026-09-19), so a later relaxation of the
+    belt would have reopened it silently; the refusal now lives with the other strict-JSON rules."""
     try:
-        return json.loads(data.decode("utf-8"), parse_constant=_no_constant, object_pairs_hook=_no_repeat)
+        return json.loads(data.decode("utf-8"), parse_constant=_no_constant, parse_float=_finite_float, object_pairs_hook=_no_repeat)
     except RecursionError:
         raise ValueError("not strict JSON: nested past the parser")
 
@@ -379,6 +405,8 @@ def read_export(path, state):
         doc = strict_loads(data)
     except RepeatedKey:
         raise Refusal("refused: %s is not strict JSON (a key repeats); nothing sent" % path, 1)
+    except NonFinite:            # valid JSON to a hand editor, like the repeated key: the reason is named
+        raise Refusal("refused: %s is not strict JSON (a number is outside the finite range); nothing sent" % path, 1)
     except ValueError:           # UnicodeDecodeError and JSONDecodeError are both ValueErrors
         raise Refusal("refused: %s is not strict JSON; nothing sent" % path, 1)
     if not isinstance(doc, dict) or doc.get("schema") != SCHEMA:
@@ -395,7 +423,8 @@ def read_export(path, state):
         # key it always writes missing, an envelope line not in the export's own spelling. Then the fold: a fold is a fixed
         # point of its own output (pinned over every fixture and a served export; fold is idempotent even on the summed-floats
         # case pp._merge names, which the denylist walk above refuses first), so a block that differs from its fold was
-        # changed after the export in a way the checks above do not name
+        # changed after the export in a way the checks above do not name. The belt no longer holds the non-finite case
+        # alone: strict_loads refuses an overflowing number (1e999) first, so a block carrying one never reaches this line
         for k in doc:
             if k not in TOP_LEVEL:
                 raise Refusal("refused: %s is not the export's own shape (a top-level %s block the export does not write); nothing sent" % (path, k), 1)
@@ -595,8 +624,9 @@ def post(url, data, timeout=None):
 
 def receipt(status, body):
     """(receipt, retention_days, av) of the one answer accepted: status 201 and a body of at most ANSWER_MAX bytes
-    that is one strict JSON object (strict_loads: a repeated key is not the shape either) with exactly the keys
-    receipt (a uuid4 string), retention_days (a non-negative integer, not a bool) and av (ok or skipped).
+    that is one strict JSON object (strict_loads: a repeated key is not the shape either, and a retention_days of
+    1e999 is refused by the parser as an overflow before the integer check below would have refused it) with exactly
+    the keys receipt (a uuid4 string), retention_days (a non-negative integer, not a bool) and av (ok or skipped).
     Anything else is a Refusal whose text carries the status code and nothing of the body."""
     if status != 201:
         raise Refusal("refused: the receiver answered HTTP %d where the 201 receipt was expected; no receipt" % status, 1)
