@@ -360,6 +360,7 @@ class ReturnFromBackground(unittest.TestCase):
                # A leg names its own (active_sid); the boot-tab legs default to web, the held-full leg to web too (the kernel's one full is what is held)
                "activeSid": active_sid if active_sid is not None else (SESSIONS[0][0] if (boot_tab or hold_active_full_ms) else ""),
                "holdActiveFullMs": hold_active_full_ms,   # fresh-2 (review round 3): the driver's proxy holds the boot chat dial's frames naming the active tab for this long
+               "showFilesControl": tap == "files",   # extra9-2 (review round 3): the Files tab exists only with the gear's Files control on (romp:settings.showFilesControl, the literal true); the install seeds it before the shell parses
                "shots": os.path.join(self.lab, "return-harness-" + name) if os.environ.get("RETURN_HARNESS_SHOTS") else ""}
         cfg["resultPath"] = os.path.join(self.lab, "result-%s.json" % name)   # the full result; the RESULT: line is a compact copy
         cfg_path = os.path.join(self.lab, "cfg-%s.json" % name)
@@ -516,6 +517,8 @@ class ReturnFromBackground(unittest.TestCase):
         else:
             self.assertFalse(any(d.get("skeleton") for d in boot_chat), where + "the desktop's chat dials whole, as before: %r" % (boot_chat,))
         if boot_tab and tap == "chat":
+            # carried by paneHidden() (nextPrefetch's `hidden` term), not by the start gate: the chat is display:none here, so this reads 0 with
+            # the gate term removed too (the refuters' converse mutation, review round 1); the gate's own witness is _gate, the held-full leg
             self.assertEqual(r.get("prefetchBeforeTap"), 0, where + "no background full left while the chat pane was display:none behind the %s tab" % boot_tab)
             self.assertGreaterEqual(r.get("prefetchAfterChatTapMs", -1), 0, where + "the Chat tab's show re-armed the idle chain: a prefetch ask left the chat socket (ms after the tap: %r)" % r.get("prefetchAfterChatTapMs"))
 
@@ -548,9 +551,14 @@ class ReturnFromBackground(unittest.TestCase):
             self.assertGreaterEqual(r.get("tapUpMs", -1), 0, where + "the tapped pane's shim said up after the tap (its document loaded on it): %r" % r.get("tapUpMs"))
             self.assertEqual((r.get("srcAfterTap") or {}).get(tap), "/" + tap, where + "the tap set its src: %r" % (r.get("srcAfterTap"),))
             self.assertEqual(m["wsopenBoot"].get(tap), 1, where + "one socket from it, after the tap: %r" % (m["wsopenBoot"],))
+            # the loading state retires on the iframe's load event; the driver waits for the retirement after the socket is up (a pane
+            # with a large bundle, the Waiting and Files panes, loads after its shim dialed) and stamps it: the load event, never the 30 s
+            # backstop, which clears the loader for a slow document too (review round 3, extra9-2)
+            self.assertGreaterEqual(r.get("loadingClearedMs", -1), 0, where + "the tapped pane's loading state retired within the wait: %r" % (r.get("loadingClearedMs"),))
+            self.assertLess(r.get("loadingClearedMs"), 20000, where + "…on the document's load event, not the 30 s backstop: %r ms" % (r.get("loadingClearedMs"),))
             la = r.get("loadingAfterTap") or {}
             self.assertIn("panes", la, where + "the loading state was read after the tap: %r" % (la,))
-            self.assertNotIn(tap + "-pane", la.get("panes") or [], where + "its document had loaded by the time its socket was up, so its .pane no longer carries the loading class: %r" % (la,))
+            self.assertNotIn(tap + "-pane", la.get("panes") or [], where + "its document loaded, so its .pane no longer carries the loading class: %r" % (la,))
             self.assertFalse(la.get("body"), where + "…and the shell's loader is down: %r" % (la,))
             if shell == "phone" and tap in LAZY_PHONE:
                 # ui-2 (review round 1): the shell's loader PAINTS, read by an observer armed before the tap the moment body.pane-loading
@@ -680,6 +688,16 @@ class ReturnFromBackground(unittest.TestCase):
 
     def test_phone_hung_12s_tab_tap(self):
         self._leg("phone", "hung", 12, tap="fleet", abort=True)   # stage 0: a lazy pane tapped before the suspend loads on the tap and parks at the return; its FIRST fetch is aborted (HIGH 2, review round 1): the shell says so and the re-tap loads it
+
+    # extra9-2 (review round 3, 2026-09-19): the two panes whose served markup this change takes lazy (src to data-src) tapped in a real
+    # engine, so the first-tap road is witnessed on them and not on the Outline alone (which carried data-src before): the document loads
+    # once on the tap (srcAfterTap, one wsopen row), the shell's loader paints and retires, the socket comes up, and the pane parks at the
+    # return. The Files leg seeds the gear's Files control on, or the tab is hidden and show('files') falls to the chat.
+    def test_phone_hung_12s_tab_tap_waiting(self):
+        self._leg("phone", "hung", 12, tap="waiting")
+
+    def test_phone_hung_12s_tab_tap_files(self):
+        self._leg("phone", "hung", 12, tap="files")
 
     def test_phone_hung_12s_tab_tap_http_error_body(self):
         self._leg("phone", "hung", 12, tap="fleet", abort=True, error_body=True)   # HIGH 2, review round 2 closeout: the tapped pane's first fetch answers a 502 body (a proxy while the kernel restarts): same-origin at the pane's url, load fires, and the shell must call it failed (the pane's own document carries the shim), re-park it and load it on the re-tap

@@ -199,15 +199,20 @@ const install = (opts) => {
       w.__labWs.push({ app: m.app, state: m.state, t: Date.now() });
       w.__labWsNow[m.app] = m.state;
     });
-    if (opts.perfShare) {
+    if (opts.perfShare || opts.showFilesControl) {
       // the beacon extension's opt-in (PR 762): the browser's timing rows carry vis, wsBytes, free and rafGap; read raw
-      // from the store by the collector, so the literal true is what turns it on
-      try { const st = JSON.parse(localStorage.getItem("romp:settings") || "{}"); if (st.perfShare !== true) { st.perfShare = true; localStorage.setItem("romp:settings", JSON.stringify(st)); } } catch (e) { /* no storage */ }
+      // from the store by the collector, so the literal true is what turns it on. showFilesControl (review round 3, extra9-2):
+      // the gear's Files-control setting, the literal true under that key, so the shell's controller shows the Files tab and the
+      // phone's show('files') does not fall to the chat; written before the shell parses, as an earlier visit would have left it
+      try { const st = JSON.parse(localStorage.getItem("romp:settings") || "{}"); let dirty = false;
+        if (opts.perfShare && st.perfShare !== true) { st.perfShare = true; dirty = true; }
+        if (opts.showFilesControl && st.showFilesControl !== true) { st.showFilesControl = true; dirty = true; }
+        if (dirty) localStorage.setItem("romp:settings", JSON.stringify(st)); } catch (e) { /* no storage */ }
     }
   }
   return true;
 };
-const installOpts = { perfShare: !!cfg.perfShare, bootTab: cfg.bootTab || "", activeSid: cfg.activeSid || "" };
+const installOpts = { perfShare: !!cfg.perfShare, bootTab: cfg.bootTab || "", activeSid: cfg.activeSid || "", showFilesControl: !!cfg.showFilesControl };
 await page.addInitScript(install, installOpts);
 // the frames the init script missed, installed late (before the suspend); recorded so the note knows which engine needed it
 const ensureInstalled = async () => {
@@ -370,6 +375,17 @@ try {
     }
     out.t.tapUp = now();
     out.tapUpMs = tapUp[cfg.tapPane] === "up" ? out.t.tapUp - (out.t.retap || out.t.tap) : -1;   // from the tap that loaded it (the re-tap, under abortPane)
+    // the loading state RETIRES on the iframe's load event, which for a pane whose bundle is large (waiting.js, files.js: about 300 KB
+    // each) comes AFTER its shim's socket is up (the inline shim dials at parse, the load event waits for the bundle): wait for the
+    // retirement, bounded, and stamp it from the tap (review round 3, extra9-2; the Outline's small bundle had always loaded first)
+    const clearDeadline = now() + (cfg.bootTimeoutMs || 30000);
+    let cleared = false;
+    while (now() < clearDeadline) {
+      cleared = await page.evaluate((p) => { const f = document.getElementById("f-" + p), d = f && f.parentElement; return !document.body.classList.contains("pane-loading") && !!d && !d.classList.contains("loading"); }, cfg.tapPane);
+      if (cleared) break;
+      await sleep(50);
+    }
+    out.loadingClearedMs = cleared ? now() - (out.t.retap || out.t.tap) : -1;
     out.loaderSeen = await page.evaluate(() => window.__labLoaderSeen || null);   // what the observer saw the moment the loader went up
     out.srcAfterTap = await page.evaluate(() => Object.fromEntries(Array.from(document.querySelectorAll("iframe[id^=f-]")).map((f) => [f.id.slice(2), f.getAttribute("src")])));
     out.loadingAfterTap = await page.evaluate(() => ({ body: document.body.classList.contains("pane-loading"), failed: document.body.classList.contains("pane-failed"), panes: Array.from(document.querySelectorAll(".pane.loading")).map((d) => d.id), failedPanes: Array.from(document.querySelectorAll(".pane.failed")).map((d) => d.id) }));
