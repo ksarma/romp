@@ -190,6 +190,8 @@ class SpawnSpec(unittest.TestCase):
         with self.assertRaises(OSError) as cm:
             ht.write_spawn_spec(root, SID, spec)
         self.assertIn("not a directory", str(cm.exception))
+        self.assertTrue(str(cm.exception).startswith("hosts directory "), str(cm.exception))   # the launch error names WHICH directory
+        #                                                                                    (the mutation pass of round 2, 2026-09-19)
         self.assertEqual(sorted(p.name for p in target.iterdir()), [], "no spec written through the link")
         self.assertEqual(stat.S_IMODE(os.stat(target).st_mode), 0o755, "the target's mode untouched")
         loose = tempfile.mkdtemp()
@@ -199,6 +201,7 @@ class SpawnSpec(unittest.TestCase):
             with self.assertRaises(OSError) as cm:
                 ht.write_spawn_spec(loose, SID, spec)
         self.assertIn("stays group/world-accessible", str(cm.exception))
+        self.assertTrue(str(cm.exception).startswith("hosts directory "), str(cm.exception))
         self.assertEqual(stat.S_IMODE(os.lstat(Path(loose) / "hosts").st_mode), 0o755)
         self.assertFalse((Path(loose) / "hosts" / SID).exists(), "the spawn stopped at the directory")
 

@@ -9,6 +9,7 @@ here), every process killed by the test, synthetic ids. The host runs on its bui
 the SDK is not importable (CI, the plain test venv); one test runs the SDK transport when the machine has
 the SDK venv, and skips otherwise.
 """
+import ast
 import asyncio
 import errno
 import json
@@ -696,7 +697,8 @@ class SocketMode(unittest.TestCase):
     serves nothing and keeps nothing (2026-09-18, split out of PR 789's round 1, finding fresh-5, as its own fix; the
     budget, umask, sweep and refusal cases from its own round 1, 2026-09-19, the creation-moment, sweep-arm, bind-leg
     and close-on-failure cases from that round's mutation pass, and the byte-measure, kept-lease and session-directory
-    cases from round 2, the same day). asyncio.start_unix_server binds AND
+    cases from round 2, the same day, and the bind-moment, step-order, no-identity and journal-close cases from that
+    round's mutation pass). asyncio.start_unix_server binds AND
     listens at the umask's mode, and the old code's chmod one line later left the published path at that mode for the
     gap: the last member of the create-then-tighten class PR 789 closed for the kernel's credential files. A stat once
     the host is up passes on that code, so the mode cases capture the mode at CREATION: the mode the temp carries as
@@ -768,17 +770,18 @@ class SocketMode(unittest.TestCase):
             if self.case is not None and not self.case.cli_outlives_close:
                 self.case.cli_start_now = None
 
-    def _run_host(self, ready=None):
+    def _run_host(self, ready=None, cli_start="1"):
         """The real run() until `ready()` (default: the published path exists) or run() ends, then the stop. Returns
         (the published path's mode at that moment, or None when it did not exist; run()'s exit code, or the OSError run()
         raised on the bind road). The host stays on self.host for the checks after; the spawn stub writes the lease the
-        real _spawn writes at its end, so the lease-before-bind order run() has is the order under test."""
+        real _spawn writes at its end, so the lease-before-bind order run() has is the order under test. `cli_start` is
+        the identity the stub records for the stand-in CLI (None: proc_start read nothing, so no lease is written)."""
         ready = ready or self.pub.exists
         host = self.host = sh.SessionHost(str(self.sdir / "spawn.json"), lease_api=self.lease_api)
 
         async def _spawn():
             host.transport = self._NoCli(self)
-            host.cli_pid, host.cli_start, host.cli_spawned_at = CLI_PID, "1", int(host.now())
+            host.cli_pid, host.cli_start, host.cli_spawned_at = CLI_PID, cli_start, int(host.now())
             host._write_lease()
         host._spawn = _spawn
 
@@ -1082,6 +1085,7 @@ class SocketMode(unittest.TestCase):
         self.assertEqual(self.lease_calls, ["write", "remove"], "the lease written at the spawn is removed on the failure")
         self.assertEqual(self.leases, {}, "no lease is kept")
         self.assertTrue(self.host.transport.closed.is_set(), "the CLI was ended with the host")
+        self.assertIsNone(self.host.journal._fh, "and the journal is closed with it (run()'s failure arm)")
 
     def test_a_published_path_one_byte_over_the_budget_is_refused_before_anything_is_bound(self):
         """The high of round 1 (2026-09-19): binding a temp moved the bind's sun_path check onto the temp's name, so at a
@@ -1364,6 +1368,127 @@ class SocketMode(unittest.TestCase):
         self.assertEqual(self.leases, {})
         self.assertTrue(stub.closed.is_set(), "the CLI was ended with the host")
 
+    def test_hosts_is_0700_and_ours_at_the_instant_of_the_bind_and_a_refused_hosts_is_never_bound_into(self):
+        """The one guard on the temp during its window is the mode of hosts/, so hosts/ is 0700 and ours BEFORE anything
+        is bound in it (the mutation pass of round 2, 2026-09-19: with hosts_dir moved to after the bind and before the
+        temp's chmod, its step label kept, every case stayed green, the chmod-order pin included, since hosts/ was still
+        tightened ahead of the temp's chmod). Two legs, both at exactly the budget under the system temp dir, so the bind
+        runs wherever the run's root is. At the start_unix_server call, hosts/ (planted 0777, setUp's shape) already
+        reads 0700, a directory, ours. And a hosts/ the guard refuses (a symlink) is never bound into: no
+        start_unix_server call at all, the row's step hosts-dir."""
+        self._reroot(sh.SOCK_PATH_MAX)
+        hosts = self.pub.parent
+        self.assertEqual(stat.S_IMODE(os.lstat(hosts).st_mode), 0o777, "planted loose, the shape an old install's kernel left")
+        at_bind, binds = [], []
+        real = asyncio.start_unix_server
+
+        async def start(*a, **k):
+            st = os.lstat(hosts)
+            at_bind.append((stat.S_IMODE(st.st_mode), stat.S_ISDIR(st.st_mode), st.st_uid == os.geteuid()))
+            binds.append(k.get("path"))
+            return await real(*a, **k)
+        with mock.patch.object(asyncio, "start_unix_server", start):
+            mode, rc = self._run_host()
+        self.assertEqual(rc, 0, self.host_log[-3:])
+        self.assertEqual(len(binds), 1, "the bind ran, at the budget")
+        self.assertEqual(at_bind, [(0o700, True, True)], "hosts/ is 0700, a directory and ours as the bind is called")
+        self.assertEqual(mode, 0o600)
+        self.assertIn("socket-ready", self.rows)
+        # a hosts/ the guard refuses is never bound into (the closure reads the names rebound below)
+        self.setUp()
+        self._reroot(sh.SOCK_PATH_MAX)
+        hosts = self.pub.parent
+        target = Path(self.root) / "elsewhere"
+        os.rename(hosts, target)
+        hosts.symlink_to(target)
+        at_bind, binds = [], []
+        with mock.patch.object(asyncio, "start_unix_server", start):
+            mode, rc = self._run_host()
+        self.assertEqual(binds, [], "nothing was bound: the guard refused before the bind")
+        self._assert_refused(rc, "hosts-dir", "OSError")
+        self.assertEqual(sorted(p.name for p in target.iterdir()), [SID], "nothing reached the link's target but the planted session directory")
+
+    def test_hosts_is_made_ours_before_the_budget_is_read_so_the_directorys_refusal_outranks_the_budgets(self):
+        """The road's step order, hosts-dir then budget (the mutation pass of round 2, 2026-09-19: with hosts_dir moved
+        to after the budget check every case stayed green, the over-budget cases refusing at the budget as before and
+        the hosts/ cases binding within it). The directory is the guard on everything below it, so it is made ours
+        first, and the row names the first fault on the road. Two legs, both one byte over the budget under the system
+        temp dir: a loose hosts/ (0777, setUp's shape) is 0700 once the budget has refused, tightened before the check
+        read the length; and a hosts/ the guard refuses (a symlink) makes the row say hosts-dir, not budget."""
+        self._reroot(sh.SOCK_PATH_MAX + 1)
+        hosts = self.pub.parent
+        self.assertEqual(stat.S_IMODE(os.lstat(hosts).st_mode), 0o777, "planted loose")
+        mode, rc = self._run_host()
+        self._assert_refused(rc, "budget", "OSError", errno.ENAMETOOLONG)
+        self.assertEqual(stat.S_IMODE(os.lstat(hosts).st_mode), 0o700, "tightened before the budget check refused")
+        self.setUp()
+        self._reroot(sh.SOCK_PATH_MAX + 1)
+        hosts = self.pub.parent
+        target = Path(self.root) / "elsewhere"
+        os.rename(hosts, target)
+        hosts.symlink_to(target)
+        mode, rc = self._run_host()
+        self._assert_refused(rc, "hosts-dir", "OSError")
+        self.assertEqual(self.rows["socket-bind-failed"]["pathLen"], sh.SOCK_PATH_MAX + 1,
+                         "over the budget too, and the directory's refusal is the one the row names")
+
+    def test_with_no_cli_identity_recorded_the_cli_reads_as_gone_and_the_failure_arm_keeps_no_lease(self):
+        """_cli_gone's no-identity arm (the mutation pass of round 2, 2026-09-19: every failure case records the stand-in's
+        identity at the spawn, so an arm answering False for a missing one was never reached). With no CLI pid, or a pid
+        whose start time proc_start could not read, _write_lease wrote no lease, so there is nothing for the kernel's
+        orphan road to wait on and nothing to keep: the CLI reads as gone. Direct, over each shape of the missing identity
+        and the three recorded ones; then through run()'s failure arm with a spawn stub whose proc_start read nothing and
+        a stand-in CLI that outlives its close: no lease was written, none is reported kept, no lease-kept row."""
+        host = sh.SessionHost(str(self.sdir / "spawn.json"), lease_api=self.lease_api)
+        self.addCleanup(host.journal.close)
+        for pid, start in ((None, None), (None, "1"), (CLI_PID, None), (CLI_PID, "")):
+            host.cli_pid, host.cli_start = pid, start
+            self.assertTrue(host._cli_gone(), (pid, start))
+        for pid, start in ((None, None), (None, "1"), (CLI_PID, None)):    # proc_start answers a string or None, never ""
+            host.cli_pid, host.cli_start = pid, start
+            host._write_lease()
+        self.assertEqual(self.lease_calls, [], "no identity, no lease: _write_lease writes none")
+        host.cli_pid, host.cli_start = CLI_PID, "1"
+        self.assertFalse(host._cli_gone(), "the recorded start still names the process: alive")
+        self.cli_start_now = "2"
+        self.assertTrue(host._cli_gone(), "a different start: the pid was reused, the CLI is gone")
+        self.cli_start_now = None
+        self.assertTrue(host._cli_gone(), "no process at the pid: gone")
+        self.cli_start_now, self.cli_outlives_close = "1", True
+        self._reroot(sh.SOCK_PATH_MAX + 1)
+        mode, rc = self._run_host(cli_start=None)
+        self.assertIsInstance(rc, OSError)
+        self.assertEqual(self.rows["socket-bind-failed"]["step"], "budget")
+        self.assertNotIn("write", self.lease_calls, "no identity at the spawn, so no lease was written")
+        self.assertNotIn("lease-kept", self.rows, "and none is reported kept: there is nothing for the orphan road to wait on")
+        self.assertEqual(self.leases, {})
+        self.assertTrue(self.host.transport.closed.is_set(), "the CLI was still asked to end")
+        self.assertEqual(self._temps(), [])
+
+    def test_the_failure_arm_closes_the_journal_before_the_error_leaves_run(self):
+        """run()'s failure arm closes the journal the constructor opened (the mutation pass of round 2, 2026-09-19: with
+        that close removed every refusal case stayed green, an open segment descriptor being invisible to the rows, the
+        temps, the lease and the CLI). After the refusal the journal holds no descriptor, the descriptor it held is closed,
+        and no descriptor of this process names the segment file (read from /proc where there is one): a host that could
+        not publish leaves no open file behind. Every refusal case reads the same fact through _assert_refused since this
+        pin."""
+        self._reroot(sh.SOCK_PATH_MAX + 1)
+        held = []
+        mode, rc = self._run_host(ready=lambda: held.append(self.host.journal._fh) and False)
+        self._assert_refused(rc, "budget", "OSError", errno.ENAMETOOLONG)
+        self.assertTrue(held and held[0] is not None, "the journal held an open segment while run() ran")
+        self.assertTrue(held[0].closed, "and that descriptor is closed")
+        self.assertIsNone(self.host.journal._fh)
+        if os.path.isdir("/proc/self/fd"):
+            seg = os.path.realpath(self.sdir / "journal-0.jsonl")
+            named = []
+            for fd in os.listdir("/proc/self/fd"):
+                try:
+                    named.append(os.readlink(os.path.join("/proc/self/fd", fd)))
+                except OSError:
+                    pass
+            self.assertNotIn(seg, named, "no descriptor of this process names the segment")
+
 
 class SocketBudget(unittest.TestCase):
     def test_the_budget_is_derived_by_binding_and_the_connect_side_shares_it(self):
@@ -1400,6 +1525,24 @@ class SocketBudget(unittest.TestCase):
         with self.assertRaises(OSError) as cm:
             c.connect(path_of(sh.SOCK_PATH_MAX + 1))
         self.assertIn("too long", str(cm.exception), "the kernel side's connect refuses the same length")
+
+    def test_the_budget_is_103_on_macos_by_the_expression_the_module_evaluates(self):
+        """The platform arm (the mutation pass of round 2, 2026-09-19: with the darwin branch dropped, SOCK_PATH_MAX 107
+        everywhere, this module stays green on Linux, where 107 is the measured limit, and only the macOS cell's run of
+        the derivation above would say so). The assignment's own expression is taken from the module source and evaluated
+        under each platform name: darwin gives 103 (sun_path is 104 bytes there, less its NUL), linux 107, and under this
+        process's platform it gives the constant the module holds, so the expression read is the one in force."""
+        src = Path(sh.__file__).read_text()
+        node = next(n for n in ast.parse(src).body if isinstance(n, ast.Assign)
+                    and any(isinstance(t, ast.Name) and t.id == "SOCK_PATH_MAX" for t in n.targets))
+        expr = compile(ast.Expression(body=node.value), sh.__file__, "eval")
+
+        def under(platform):
+            with mock.patch.object(sys, "platform", platform):
+                return eval(expr, {"sys": sys})
+        self.assertEqual(under("darwin"), 103, "macOS: sun_path is 104 bytes, 103 usable")
+        self.assertEqual(under("linux"), 107, "Linux: sun_path is 108 bytes, 107 usable")
+        self.assertEqual(under(sys.platform), sh.SOCK_PATH_MAX, "the expression read is the one the module evaluated")
 
 
 class HostsDir(unittest.TestCase):
@@ -1567,6 +1710,60 @@ class HostsDir(unittest.TestCase):
         self.assertIn("stays group/world-accessible", str(cm.exception))
         self.assertEqual(sh.owner_only_dir(loose, "host directory"), loose)
         self.assertEqual(stat.S_IMODE(os.lstat(loose).st_mode), 0o700, "a loose one of ours is tightened and read back")
+
+    def test_a_state_root_not_yet_on_disk_is_made_on_the_way_and_hosts_below_it_is_still_born_0700(self):
+        """hosts_dir passes parents=True, for the state root alone (the mutation pass of round 2, 2026-09-19: every case
+        handed it a root that existed, so parents=False passed them all). Every install has its root (kernel/judge.py
+        makes it 0700 at import), and a caller over one not yet on disk gets hosts/ made, 0700 by its mkdir, with the root
+        made on the way rather than a FileNotFoundError; the helper's own default stays False (the session-directory case
+        above pins a missing parent NOT made), since an intermediate directory mkdir creates takes the umask's mode."""
+        root = Path(self.root) / "state"
+        self.assertFalse(root.exists())
+        self.assertEqual(sh.hosts_dir(root), root / "hosts")
+        self.assertTrue(root.is_dir(), "the root was made on the way")
+        self.assertEqual(stat.S_IMODE(os.lstat(root / "hosts").st_mode), 0o700, "and hosts/ below it is 0700 by its mkdir")
+        with self.assertRaises(FileNotFoundError):
+            sh.owner_only_dir(Path(self.root) / "other" / "hosts", "hosts directory")
+        self.assertFalse((Path(self.root) / "other").exists(), "the helper's default makes no parent")
+
+    def test_every_refusal_names_the_hosts_directory_by_that_noun_and_its_path(self):
+        """The noun in the refusals (the mutation pass of round 2, 2026-09-19: the cases above read the refusal's reason,
+        not a directory, belongs to uid, stays group/world-accessible, and stayed green with the noun changed to the
+        helper's bare default). A launch error or a traceback says WHICH directory it was: each of hosts_dir's three
+        refusals begins `hosts directory <path>`, where owner_only_dir's default begins `directory <path>` and the
+        session directory's `host directory <path>` (pinned above and in tests/test_host_transport.py)."""
+        target = Path(self.root) / "elsewhere"
+        target.mkdir(mode=0o755)
+        self.hosts.symlink_to(target)
+        with self.assertRaises(OSError) as cm:
+            sh.hosts_dir(self.root)
+        self.assertEqual(str(cm.exception), "hosts directory %s is not a directory" % self.hosts)
+        self.hosts.unlink()
+        self.hosts.mkdir(mode=0o755)
+        with mock.patch.object(os, "chmod", lambda *a, **k: None):
+            with self.assertRaises(OSError) as cm:
+                sh.hosts_dir(self.root)
+        self.assertEqual(str(cm.exception), "hosts directory %s stays group/world-accessible" % self.hosts)
+        os.chmod(self.hosts, 0o700)
+        real_lstat = os.lstat
+
+        def lstat(p, *a, **k):
+            st = real_lstat(p, *a, **k)
+            if Path(p) == self.hosts:
+                fields = list(st)
+                fields[4] = st.st_uid + 1               # st_uid: someone else's directory at our path
+                return os.stat_result(fields)
+            return st
+        with mock.patch.object(os, "lstat", lstat):
+            with self.assertRaises(OSError) as cm:
+                sh.hosts_dir(self.root)
+        self.assertEqual(str(cm.exception), "hosts directory %s belongs to uid %d, not to us (uid %d)"
+                         % (self.hosts, os.geteuid() + 1, os.geteuid()))
+        link = Path(self.root) / "link"
+        link.symlink_to(target)
+        with self.assertRaises(OSError) as cm:
+            sh.owner_only_dir(link)
+        self.assertEqual(str(cm.exception), "directory %s is not a directory" % link, "the helper's own default noun, which hosts_dir does not use")
 
 
 class PaddedRoots(unittest.TestCase):
