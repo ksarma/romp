@@ -2162,9 +2162,12 @@ def _judge_env(tier, auth="login", model=None):
     #   for a key-billed ask): a session's skip in this process's environment says nothing about the judge's account.
     #   CLAUDE_CODE_DISABLE_FAST_MODE stays: set in service.env it is the OPERATOR's kill switch, which every judge
     #   child honoured before and every session still does (a review finding on the add-on's first head).
-    for k in list(env):                              # the 1Password CLI's own names never ride a judge child
-        if k in _cred.OP_ENV_NAMES or k.startswith(_cred.OP_ENV_PREFIX):
-            env.pop(k, None)
+    for k in list(env):                              # the 1Password CLI's own names, as 1Password spells them, never ride a
+        if k in _cred.OP_ENV_NAMES or k.startswith(_cred.OP_ENV_PREFIX):   # judge child: the boot check's exact classifier
+            env.pop(k, None)                         # (credentials.is_op_env_name), not the case-folding shape rule the env doors
+            #                                          judge by, which would also strip every *_TOKEN name and with it the
+            #                                          control token the hooks read (review round 2 of the env-pick door,
+            #                                          2026-09-19); a lowercase op_* spelling stays, as it does at boot
     if auth == "login":
         env.update(_login_auth_env())
     elif str(auth or "").startswith("login:"):

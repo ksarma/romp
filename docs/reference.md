@@ -225,41 +225,57 @@ a running session declares its full per-session env: any var you don't name
 again is dropped, and `romp new --no-env <name>` declares the empty set, which
 clears them all. Keep secrets out of it: each value is copied into
 per-session files and the session registry under `~/.local/state/romp/`. A
-credential never goes in `--env`, and never in `service.env` either: a payload
-naming `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` or `CLAUDE_CODE_OAUTH_TOKEN`
-is refused outright, and so is one naming any other credential-shaped variable
-with a non-empty value (a name ending `_API_KEY` or `_TOKEN`, or one of
-1Password's `OP_*` names, in any letter case for both; the same rule the hosted
-launch uses to keep such a name out of its `spawn.json`, and romp's own
-`ROMP_SERVE_TOKEN` is refused like any other). The refusal names the variable,
-never its value, and nothing is saved: a running session's env stays what it
-was. A value of that shape belongs in the process environment, not in a
-per-session pick: the environment romp's service starts with reaches every
+credential never goes in `--env`: a payload naming `ANTHROPIC_API_KEY`,
+`ANTHROPIC_AUTH_TOKEN` or `CLAUDE_CODE_OAUTH_TOKEN` is refused outright, and so
+is one naming any other credential-shaped variable with a non-empty value (a
+name ending `_API_KEY` or `_TOKEN`, or one of 1Password's `OP_*` names, in any
+letter case for both; the same rule the hosted launch uses to keep such a name
+out of its `spawn.json`, and romp's own `ROMP_SERVE_TOKEN` is refused like any
+other). The refusal names the variable, never its value, and nothing is saved:
+a running session's env stays what it was. Where such a value belongs depends
+on which half of the rule it matched. Another provider's `_API_KEY` or
+`_TOKEN` variable goes in the process environment romp's service starts with
+(`service.env`, or the service unit's environment), which reaches every
 session's Claude process (the boot line described under
 [Service environment and credentials](#service-environment-and-credentials)
-names those variables), and a session's own shells can load one from a secret
-manager themselves. A session's credential is Claude Code's own resolution,
-the `apiKeyHelper` in its settings for a key and the login otherwise. An env
-stored before this rule keeps launching as it was and is named once per
-session in the problem ring; re-declare the env without the name (`romp new
---env` with the rest of the set, or `--no-env`) to redact it: the registry and
-the session's `sdk-flag-settings/<sid>.json` drop it at the write (the file
-goes when nothing else rides it), and the next connect launches without it. A
-fork of that session (a cut turn, a comment thread) inherits its parent's env
-less any such name, so a fork's env can differ from its parent's by exactly
-those names; the parent keeps it until re-declared. The problem ring shows the
-most recent problems, so the check is the command below, not the error centre.
-It lists, by name only, the stored offenders in the two launch files it reads,
+names those variables), or a session's own shells load it from a secret
+manager themselves. The three Claude names and the retired provider names
+never go in `service.env` (the boot check refuses them, as that section says),
+and neither do 1Password's `OP_*` names: romp no longer runs `op`, so a helper
+that needs one reads it from a file of its own, or the session's shells load
+it. A session's credential is Claude Code's own resolution, the `apiKeyHelper`
+in its settings for a key and the login otherwise. An env stored before this
+rule keeps launching as it was and is named once per session in the problem
+ring; re-declare the env without the name (`romp new --env` with the rest of
+the set, or `--no-env`) to redact it: the registry and the session's
+`sdk-flag-settings/<sid>.json` drop it at the write (the file goes when
+nothing else rides it), and the next connect launches without it. The write
+reports what it did: a file it cannot rewrite it removes instead, and the next
+connect writes it whole from the registry; a file it can neither rewrite nor
+remove refuses the re-declaration, `romp new` says so, and the registry keeps
+naming the variable, so the problem row keeps firing until a write lands. Two
+re-declarations racing for one session take turns, and the later one wins the
+registry and the file together, as for any pick. The road wants a session that
+is still listed; revive a closed one from the picker's Recent first. A fork of
+that session (a cut turn, a comment thread) inherits its parent's env less any
+such name, so a fork's env can differ from its parent's by exactly those
+names; the parent keeps it until re-declared. The problem ring shows the most
+recent problems, so the check is the command below, not the error centre. It
+lists, by name only, the stored offenders in the two launch files it reads,
 the per-session flag-settings files and the session registries (a pick parked
 in `pending-ops.json` is not read here; the door judges it at replay), and the
-rule it spells is the doors' own, so it names exactly what they refuse:
+rule it spells is the doors' own, so it names exactly what they refuse. A file
+it cannot read, or that is not a settings object, is reported on stderr and
+skipped, never passed over in silence:
 
 ```bash
-python3 -c 'import glob, json, os
+python3 -c 'import glob, json, os, sys
 S = os.environ.get("ROMP_STATE_DIR") or os.path.join(os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state"), "romp")
 for p in sorted(glob.glob(S + "/sdk-flag-settings/*.json") + glob.glob(S + "/sdk/*.json")):
-    try: env = json.load(open(p)).get("env") or {}
-    except (OSError, ValueError): continue
+    try: body = json.load(open(p))
+    except (OSError, ValueError) as e: print(p, "skipped: unreadable (%s)" % e.__class__.__name__, file=sys.stderr); continue
+    if not isinstance(body, dict) or not isinstance(body.get("env") or {}, dict): print(p, "skipped: not a settings object", file=sys.stderr); continue
+    env = body.get("env") or {}
     for n in sorted(env):
         u = n.upper()
         if (env[n] or "").strip() and (u.endswith(("_API_KEY", "_TOKEN")) or u.startswith("OP_SESSION_") or u in ("OP_SERVICE_ACCOUNT_TOKEN", "OP_CONNECT_HOST", "OP_CONNECT_TOKEN", "OP_ACCOUNT")):
@@ -2043,7 +2059,7 @@ spawn specification the kernel writes
 (`hosts/<sid>/spawn.json`, the plain fields of the SDK's options, at mode 0600
 in a 0700 directory, since it carries the environment overlay; a login token
 whatever its value, and any other name of that overlay carrying a value that
-ends `_API_KEY` or `_TOKEN`, in any letter case, or is one of 1Password's, is
+ends `_API_KEY` or `_TOKEN` or is one of 1Password's, in any letter case, is
 left out of the file and rides the host's process environment instead), through the
 SDK's own subprocess transport, so the command line and the environment are
 the SDK's byte for byte. It reads the CLI's stdout without pause and appends

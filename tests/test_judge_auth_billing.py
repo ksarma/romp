@@ -64,7 +64,10 @@ HELPER_OFF = ["--settings", '{"apiKeyHelper": ""}']   # the login-billed call's 
 
 
 def _op_names():
-    """Every 1Password CLI name the judge boundary strips: the fixed names plus one under the prefix."""
+    """The 1Password CLI names the judge boundary strips, as 1Password spells them: the fixed names plus one under
+    the prefix. Exact-case, like the boot check's classifier (credentials.is_op_env_name), not the case-folding
+    shape rule the env doors judge by (review round 2 of the env-pick door, 2026-09-19: a lowercase op_* spelling
+    rides a judge child, as it boots)."""
     return tuple(jd._cred.OP_ENV_NAMES) + (jd._cred.OP_ENV_PREFIX + "acct",)
 
 

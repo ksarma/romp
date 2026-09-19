@@ -118,15 +118,17 @@ def is_op_env_name(name) -> bool:
     runs `op`, so they are refused at boot like the provider variables (a token beside a retired line was
     the documented shape, and a token left in the manager's environment would ride into every session).
     Exact, as 1Password spells them: this is the boot check's classifier (check_boot_environment,
-    retired_in_env_file), which refuses what `op` exports. The credential SHAPE rule (is_credential_env_name)
+    retired_in_env_file), which refuses what `op` exports, and the judge child's scrub (judge.py's _judge_env
+    strips these exact spellings from a judge child's environment; review round 2 of the env-pick door,
+    2026-09-19, which found that inlined copy unnamed here). The credential SHAPE rule (is_credential_env_name)
     hands it the upper-cased name, so there a lowercase spelling counts too."""
     return name in OP_ENV_NAMES or str(name).startswith(OP_ENV_PREFIX)
 
 
-# The two suffixes a credential-shaped variable name ends in, compared on the upper-cased name, beside
-# 1Password's own names: the shape the boot notice names (sdk_backend.env_credential_names), the spawn.json
-# writer moves out of the file (sdk_backend.spawn_env_secret_names) and, since 2026-09-18, the per-session env
-# doors refuse.
+# The two suffixes a credential-shaped variable name ends in, beside 1Password's own names, both halves compared
+# on the upper-cased name (is_credential_env_name): the shape the boot notice names
+# (sdk_backend.env_credential_names), the spawn.json writer moves out of the file
+# (sdk_backend.spawn_env_secret_names) and, since 2026-09-18, the per-session env doors refuse.
 CREDENTIAL_ENV_SUFFIXES = ("_API_KEY", "_TOKEN")
 # romp's own control token: a credential, but not a provider's, and legitimately in the kernel's own
 # environment, so the BOOT NOTICE leaves it unnamed (sdk_backend.env_credential_names; the line would otherwise
@@ -183,23 +185,55 @@ def credential_env_refusal(names) -> str:
     env: ..."). It is kept short enough that the line set_env logs stays whole under the kernel's problem-text
     cap (kernel.SDK_PROBLEM_TEXT_CAP, 400 characters; the first wording ran to 414 with one name and was clipped
     mid-word), and it leads with what matters, so a shorter cut still says the names and that nothing was
-    saved (credential_env_ring_text is the error centre's own short form)."""
+    saved (credential_env_ring_text is the error centre's own short form).
+
+    Where the value belongs is said by HALF (review round 2 of the env-pick door, 2026-09-19): the first wording
+    sent every refused name to the process environment romp's service starts with, and for the 1Password half
+    that road is the one check_boot_environment refuses at startup (romp-manager exits 1 on it), so an operator
+    following the printed advice for an OP_* name took the deployment down. A suffix name's value goes in that
+    environment, or a secret manager in the session's shells; a 1Password name's value goes where the boot
+    check's own message sends it, a file of the helper's own, or the session's shells; a mixed pick hears
+    both, each scoped to its half (_env_roads)."""
     names = sorted(names)
     return ("%s %s credential-shaped (_API_KEY or _TOKEN suffix, or a 1Password OP_* name, any letter case) and a "
-            "per-session env is written to disk: the pick was not saved. Put such a value in the process environment "
-            "romp's service starts with, which every session inherits, or load it from a secret manager in the "
-            "session's shells"
-            % (", ".join(names), "is" if len(names) == 1 else "are"))
+            "per-session env is written to disk: the pick was not saved. %s"
+            % (", ".join(names), "is" if len(names) == 1 else "are", _env_roads(names)))
+
+
+def _env_roads(names) -> str:
+    """Where a refused pick's values belong, scoped to the half of the shape rule each name matched (review round
+    2 of the env-pick door, 2026-09-19): the process-environment road is named for the suffix half only, since
+    check_boot_environment refuses 1Password's names there at startup."""
+    op = any(is_op_env_name(str(n).upper()) for n in names)
+    suffix = any(not is_op_env_name(str(n).upper()) for n in names)
+    if op and suffix:
+        return ("A _API_KEY or _TOKEN value goes in romp's process environment; a 1Password name is refused there at "
+                "boot and a helper reads it from its own file, or a shell loads it")
+    if op:
+        return ("romp refuses a 1Password name in its process environment at boot (it no longer runs op): a helper "
+                "reads the value from its own file, or the session's shells load it from a secret manager")
+    return ("Put such a value in the process environment romp's service starts with, which every session inherits, "
+            "or load it from a secret manager in the session's shells")
 
 
 def credential_env_ring_text(names) -> str:
     """credential_env_refusal's short form for the dashboard's error centre, which shows a problem row's first
     sdk_backend.ERROR_CENTER_TEXT_CAP characters (240; review round 1 of the env-pick door, 2026-09-18): the
     names, that nothing was saved, and where such a value belongs, front-loaded, so the row an admin reads is
-    whole. The full sentence stays in the kernel log."""
+    whole. The full sentence stays in the kernel log. Scoped by half like the sentence (review round 2,
+    2026-09-19): a 1Password name is not sent to the process environment, which refuses it at boot."""
     names = sorted(names)
-    return ("%s %s credential-shaped: the pick was not saved. Such a value belongs in the process environment, "
-            "not in a per-session env" % (", ".join(names), "is" if len(names) == 1 else "are"))
+    op = any(is_op_env_name(str(n).upper()) for n in names)
+    suffix = any(not is_op_env_name(str(n).upper()) for n in names)
+    if op and suffix:
+        road = ("A suffix value belongs in the process environment; a 1Password name is refused there at boot and "
+                "read from a helper's file")
+    elif op:
+        road = ("A 1Password name is refused in the process environment at boot too; a helper reads such a value from "
+                "its own file")
+    else:
+        road = "Such a value belongs in the process environment, not in a per-session env"
+    return "%s %s credential-shaped: the pick was not saved. %s" % (", ".join(names), "is" if len(names) == 1 else "are", road)
 
 
 def retired_in_env_file(path=None) -> list:

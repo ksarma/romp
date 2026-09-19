@@ -175,7 +175,9 @@ class NewRouteEnv(unittest.TestCase):
                        km._push_soon, km._codex)
         km._live_map = lambda: []
         km._live_names = lambda *_: {}
-        km._set_env_or_park = lambda be, sid, v: self.calls.append(("env", sid, v))
+        # the env setter answers (took, parked) like the effort one and the prefs pass reads `took` (review round 2 of
+        # the env-pick door, 2026-09-19: a refused pick is echoed as envRefused, never as env)
+        km._set_env_or_park = lambda be, sid, v: (self.calls.append(("env", sid, v)), (True, False))[1]
         km.Sessions.backend_for = staticmethod(lambda sid: self._SdkBe())
         km._sdk_ready = lambda: True
         km._create_sdk_session = (lambda nm, cwd, auth="", prefs=None, client=None, env=None, **kw:
@@ -311,6 +313,34 @@ class NewRouteEnv(unittest.TestCase):
         self.assertEqual(self.calls, [("env", SID, {})],
                          "an explicit {} must reach set_env, which clears by replacing")
         self.assertEqual(body.get("env"), {}, "the clear ask is echoed like any other env ask")
+
+    def test_a_refused_env_is_not_echoed_as_applied_and_the_echo_carries_the_refusal(self):
+        """Review round 2 of the env-pick door (2026-09-19): the prefs pass discarded set_env's verdict, so a
+        redaction the backend could not complete (a flag-settings file it could neither rewrite nor remove, with the
+        registry kept naming the offender) was echoed back as applied and `romp new` printed "env cleared" while the
+        value stayed on disk. The echo carries the refusal in its own slot (envRefused, the generic sentence the
+        parked-op drain uses, naming nothing of the pick), never the `env` key, and stderr says so once with the
+        NAMES of the pick only (the value is built at run time and must appear nowhere)."""
+        km._live_names = lambda *_: {"opt": SID}
+        km._set_env_or_park = lambda be, sid, v: (self.calls.append(("env", sid, v)), (False, False))[1]
+        val = "synthetic-notes-token-" + uuid.uuid4().hex
+        err = io.StringIO()
+        with redirect_stderr(err):
+            code, body = self._post({"name": "opt", "dir": self.dir, "env": {}})
+            code2, body2 = self._post({"name": "opt", "dir": self.dir, "env": {"NOTES_ENDPOINT": val}})
+        self.assertEqual((code, code2), (200, 200), "the open itself stands: the session runs, one pref was refused")
+        for b in (body, body2):
+            self.assertTrue(b["ok"] and b["existing"])
+            self.assertNotIn("env", b, "a refused pick is never echoed as applied, the clear-all included")
+            self.assertEqual(b.get("envRefused"), km._env_refusal())
+            self.assertIn("per-session env", b["envRefused"])
+            self.assertNotIn(val, json.dumps(b), "the echo carries nothing of the pick")
+        self.assertEqual(self.calls, [("env", SID, {}), ("env", SID, {"NOTES_ENDPOINT": val})], "the setter was asked, and said no")
+        lines = [ln for ln in err.getvalue().splitlines() if "refused" in ln]
+        self.assertEqual(len(lines), 2, "one stderr line per refusal, as the effort leg writes")
+        self.assertIn("env (cleared) for %s refused" % SID, lines[0])
+        self.assertIn("env NOTES_ENDPOINT for %s refused" % SID, lines[1], "names only")
+        self.assertNotIn(val, err.getvalue(), "no value on stderr")
 
     def test_an_explicit_empty_env_on_a_fresh_spawn_is_vacuous_but_echoed(self):
         code, body = self._post({"name": "opt", "dir": self.dir, "env": {}})

@@ -161,10 +161,14 @@ class PureNames(unittest.TestCase):
 
 class ReferenceLister(unittest.TestCase):
     """docs/reference.md's names-only lister is a fourth spelling of the shape rule (review round 1 of the env-pick
-    door, 2026-09-18): pinned by nothing, it carried a ROMP_SERVE_TOKEN exclusion the doors do not, folded case on
-    the suffixes alone, resolved a literal state root, and its markdown indent landed inside the quoted Python, so
-    the command copied from the raw file was an IndentationError. Run here exactly as fenced, over a synthetic
-    state root, and held to credential_env_names file by file and name by name."""
+    door, 2026-09-18): pinned by nothing, it listed ROMP_SERVE_TOKEN while the rule the doors judged by excluded it
+    (the exclusion moved out of the rule and into the boot notice's wrapper that round, so the doors, the writer and
+    this lister agree now), folded case on the suffixes alone, resolved a literal state root, and its markdown
+    indent landed inside the quoted Python, so the command copied from the raw file was an IndentationError. Run
+    here exactly as fenced, over a synthetic state root, and held to credential_env_names file by file and name by
+    name. Since review round 2 (2026-09-19) it skips and REPORTS, on stderr, a file it cannot read or that is not a
+    settings object, rather than aborting the listing at the first odd file (correctness-3), and the fixture plants
+    every 1Password name from the rule's own list plus a lowercase OP_SESSION_ witness (correctness-4, kernel-5)."""
 
     SID_A = "11111111-2222-3333-4444-555555555501"
     SID_B = "11111111-2222-3333-4444-555555555502"
@@ -189,7 +193,15 @@ class ReferenceLister(unittest.TestCase):
         os.makedirs(os.path.join(root, "sdk"))
         val = "synthetic-" + os.urandom(6).hex()
         env_a = {"NOTES_ENDPOINT": "http://notes.test", "notes_api_token": val, "EMPTY_TOKEN": "",
-                 "ROMP_SERVE_TOKEN": "control", "OP_SESSION_testacct": val, "op_account": "acct", "SPACES_TOKEN": "  "}
+                 "ROMP_SERVE_TOKEN": "control", "OP_SESSION_testacct": val, "op_account": "acct", "SPACES_TOKEN": "  ",
+                 # one lowercase witness per clause of the snippet's rule is deliberate (kernel-5, review round 2,
+                 # 2026-09-19): op_account covers the fixed-names clause, this one the OP_SESSION_ prefix clause, and
+                 # notes_api_token the suffix clause, so a clause that stops folding case goes red here
+                 "op_session_testacct": val}
+        # every 1Password name the rule itself lists (correctness-4, review round 2, 2026-09-19: the fixture planted
+        # OP_ACCOUNT alone, so a doc edit narrowing the snippet's tuple left this pin green; OP_CONNECT_HOST, which no
+        # suffix catches, is the one that escaped), and a name added to the rule later is planted by construction
+        env_a.update({n: "synthetic-op-%d" % i for i, n in enumerate(sb._cred.OP_ENV_NAMES)})
         env_b = {"FEATURE_FLAG": "1", "Notes_Api_Key": val, "editor_tokenizer": "x", "options_for_x": "x"}
         pa = os.path.join(root, "sdk-flag-settings", self.SID_A + ".json")
         pb = os.path.join(root, "sdk", self.SID_B + ".json")
@@ -197,6 +209,13 @@ class ReferenceLister(unittest.TestCase):
         Path(pb).write_text(json.dumps({"sid": self.SID_B, "name": "api", "env": env_b}) + "\n")
         Path(root, "sdk", "unreadable.json").write_text("{not json")
         Path(root, "sdk", self.SID_A + ".json").write_text(json.dumps({"sid": self.SID_A, "name": "web"}) + "\n")
+        # two shapes that parse as JSON but are not a settings object (correctness-3, review round 2, 2026-09-19: the
+        # lister ABORTED on either, and an audit that stops at the first odd file under-reports in silence); each
+        # is skipped and reported on stderr, and the listing of the other files is complete
+        odd_null = os.path.join(root, "sdk", "odd-null.json")
+        odd_list = os.path.join(root, "sdk-flag-settings", "odd-env-list.json")
+        Path(odd_null).write_text("null\n")
+        Path(odd_list).write_text(json.dumps({"env": ["NOTES_API_TOKEN=x"]}) + "\n")
         env = {"PATH": os.path.dirname(sys.executable) + os.pathsep + os.environ.get("PATH", ""),
                "ROMP_STATE_DIR": root, "HOME": root}
         for k in ("XDG_STATE_HOME",):
@@ -209,9 +228,19 @@ class ReferenceLister(unittest.TestCase):
         self.assertEqual(got, want, "file by file and name by name, the rule's own verdict")
         self.assertIn("%s ROMP_SERVE_TOKEN" % pa, got, "the control token is listed, as the doors refuse it")
         self.assertIn("%s op_account" % pa, got, "the 1Password half folds case here too")
+        self.assertIn("%s op_session_testacct" % pa, got, "the OP_SESSION_ prefix clause folds case too")
+        self.assertIn("%s OP_CONNECT_HOST" % pa, got, "the one 1Password name no suffix catches is listed")
+        for n in sb._cred.OP_ENV_NAMES:
+            self.assertIn("%s %s" % (pa, n), got, n)
         self.assertIn("%s notes_api_token" % pa, got)
         self.assertNotIn("%s EMPTY_TOKEN" % pa, got)
         self.assertNotIn(val, r.stdout, "names only, never a value")
+        reported = sorted(ln for ln in r.stderr.splitlines() if "skipped" in ln)
+        self.assertEqual(reported, sorted(["%s skipped: not a settings object" % odd_list,
+                                           "%s skipped: not a settings object" % odd_null,
+                                           "%s skipped: unreadable (JSONDecodeError)" % os.path.join(root, "sdk", "unreadable.json")]),
+                         "each odd file is reported on stderr, by path, and the listing goes on: %r" % (r.stderr,))
+        self.assertNotIn(val, r.stderr)
 
     def test_the_snippet_resolves_the_state_root_in_romps_order(self):
         # ROMP_STATE_DIR, else XDG_STATE_HOME/romp, else ~/.local/state/romp: the kernel's own resolution
@@ -250,23 +279,33 @@ class BootNoticeMethod(unittest.TestCase):
         self.assertNotIn("value-hf-synth", rows[0])
         self.assertIs(self.logs[0][1], False, "filed as information explicitly, never left to _log's default")
 
-    def test_the_line_names_a_lowercase_name_and_its_copy_says_the_suffixes_fold_case(self):
+    def test_the_line_names_lowercase_names_of_both_halves_and_its_clause_says_both_fold_case(self):
         """Review round 2 of the spawn-spec fix (2026-09-18): round 1 folded case in env_credential_names, and this
         line's own copy still described the exact-cased suffixes, so a lowercase variable was listed under a shape
-        clause that excluded it. The copy says the fold now, between the suffixes and the 1Password clause (the op
-        names stay case-exact, so the clause must not follow them), and keeps saying that other shapes go
-        unchecked. Red before the one-string change; the docstring's promise that the copy says what shape was
-        checked is what this pins."""
-        with patch.dict(os.environ, {"notes_api_token": "value-lc-synth", "Notes_Api_Key": "value-mc-synth"}, clear=False):
+        clause that excluded it. Review round 2 of the env-pick door (2026-09-19): round 1 of that PR made the
+        1Password half fold too, and the copy still placed the fold on the suffixes alone and spelled the 1Password
+        half OP_*, so a lowercase 1Password name was listed under a clause that read as excluding it, while this
+        test pinned that placement and its docstring called the op names case-exact, certifying the misdescription.
+        The intent now: BOTH halves fold, and the clause must SAY the fold covers both (where the words sit is not
+        what is pinned; a rewording that says the same is fine). A lowercase name of each half is staged and listed."""
+        with patch.dict(os.environ, {"notes_api_token": "value-lc-synth", "Notes_Api_Key": "value-mc-synth",
+                                     "op_session_testacct": "value-op-synth"}, clear=False):
             self.be._note_env_credential_names()
         rows = [m for m, _ in self.logs if "reach every session" in m]
         self.assertEqual(len(rows), 1)
         self.assertIn("notes_api_token", rows[0])
         self.assertIn("Notes_Api_Key", rows[0])
-        self.assertNotIn("value-lc-synth", rows[0])
-        self.assertNotIn("value-mc-synth", rows[0])
-        self.assertIn("(ending _API_KEY or _TOKEN in any letter case, or 1Password's own OP_* names)", rows[0],
-                      "the shape clause names the fold, before the 1Password clause")
+        self.assertIn("op_session_testacct", rows[0], "a lowercase 1Password name is listed")
+        for v in ("value-lc-synth", "value-mc-synth", "value-op-synth"):
+            self.assertNotIn(v, rows[0])
+        clause = re.search(r"\(([^()]*_API_KEY[^()]*1Password[^()]*)\)", rows[0])
+        self.assertTrue(clause, "the line carries one parenthetical shape clause naming both halves: %r" % rows[0])
+        clause = clause.group(1)
+        self.assertTrue(clause.rstrip().endswith("in any letter case"),
+                        "the clause must say the case fold covers BOTH halves, so the fold follows the 1Password half "
+                        "too, not the suffixes alone: %r" % clause)
+        self.assertNotIn("in any letter case, or", clause,
+                         "a fold said before the 1Password clause scopes it to the suffixes and excludes op_session_<account>: %r" % clause)
         self.assertIn("names of another shape are not checked", rows[0], "and keeps its honesty about other shapes")
 
     def test_quiet_when_no_credential_names(self):

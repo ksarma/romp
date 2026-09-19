@@ -333,6 +333,7 @@ class RefusalReachesTheClient(unittest.TestCase):
                          "the chat hears the refusal on the frame the effort and fast arms answer with")
         text = self.frames[0][1]["text"]
         self.assertIn("per-session env", text)
+        self.assertEqual(text, km._env_refusal(), "one sentence for the drain and the /new echo (review round 2, 2026-09-19)")
         self.assertNotIn(val, text, "no value in the frame")
         self.assertNotIn("credential", text, "no door wording: the reason stays generic")
         self.assertIn("pending ops apply: _Backend refused '/env NOTES_API_TOKEN NOTES_ENDPOINT' for %s" % SID[:8], err,
