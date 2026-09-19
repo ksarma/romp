@@ -738,7 +738,11 @@ class OneSharedLoadPerAliveSessionPerPass(_WalkHarness):
                          "the counter moves by the walk's two, no hand-off, two hits (that both reads hit is the gate's line above as well: a "
                          "non-hit gives the walk a new view object, so the gate derives; the two elements restored in review round 4, behind "
                          "_pass's reconciliations and its second-bump bound)")
-        # (b) again
+        # (b) again, by the re-arming: p3's run recorded a fresh memo row for each session under the ledger's moved key (the gate
+        # wrapper records after every look that parsed, a standing row or not) and journaled nothing (these looks end with no
+        # state-gate verdict, so the pass pops no walk gate and writes nothing into the ledger), so every keyed file stands and
+        # this pass skips. A look that recorded only when no row stood, or re-recorded under the standing row's key, would run
+        # here with the three passes above green: this pass's two lines are what pin the re-record (review round 4's replay check).
         p4 = self._pass(NOW + 15)
         self.assertEqual((p4["walk"], p4["gate"]), ({SID_A: 0, SID_B: 0}, {SID_A: 0, SID_B: 0}),
                          "the walk takes no shared load on a skipped look, and the placement gate is never reached (condition 7, both bounds)")
@@ -771,8 +775,10 @@ class OneSharedLoadPerAliveSessionPerPass(_WalkHarness):
         """The walk's exactly-one is for a look that reaches the store. A look a state gate ends earlier (here `working`: the
         session is still working by the event model) runs, parses, records a file-keyed row and loads through neither
         mechanism: the walk never reaches its read and the placement gate is never called; the counter stays. Its verdict
-        is journaled as a walk gate, a write into the ledger that moves every session's key once, so the skip comes on the
-        third pass, with no load on the second either."""
+        is journaled as a walk gate, a write into the ledger that moves every session's key once, so the second pass
+        re-evaluates every look (its line pins that re-arming) and the skip comes on the third pass, which rests on two things
+        the second pass did: its look re-recorded its row under the moved key, and its verdict, unchanged, wrote nothing into
+        the ledger (_put_walk_gate is write-on-change), so the key stands; the third pass's line names both."""
         km._session_working = lambda turns: True
         p1 = self._pass(NOW)
         self.assertEqual((p1["looks"], p1["parses"], p1["skippedParses"]), (2, 2, 0), p1)
@@ -789,10 +795,12 @@ class OneSharedLoadPerAliveSessionPerPass(_WalkHarness):
         self.assertEqual((p2["looks"], p2["parses"], p2["skippedParses"]), (2, 2, 0),
                          "the first pass journaled each verdict as a walk gate (_put_walk_gate, a write-on-change into the ledger, the "
                          "tenth keyed file), so the second pass re-evaluates every session once")
-        self.assertEqual((p2["walk"], p2["gate"], p2["loads"]), ({SID_A: 0, SID_B: 0}, {SID_A: 0, SID_B: 0}, 0), "and loads through neither")
         p3 = self._pass(NOW + 10)
         self.assertEqual((p3["skippedParses"], p3["walk"], p3["gate"], p3["loads"]), (2, {SID_A: 0, SID_B: 0}, {SID_A: 0, SID_B: 0}, 0),
-                         "the gate rows stand: skipped, and still no load through either")
+                         "skipped, and still no load through either: the second pass's look ran over the standing row and re-recorded its row "
+                         "under the ledger's moved key, and its verdict, unchanged, wrote nothing into the ledger (_put_walk_gate is "
+                         "write-on-change), so every key stands and this pass skips; a re-record dropped over a standing row, or made under "
+                         "the standing row's key, or an unchanged gate re-written, runs the looks here")
         # no owned record, so the sweep's bound in _pass holds the sweep to zero on every pass: nothing to assert about it here
 
 
