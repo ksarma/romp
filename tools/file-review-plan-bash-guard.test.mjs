@@ -383,9 +383,34 @@ test('decision 47 and the hook header record the seventh pass: the readability r
   }
   assert.ok(hook.includes("const INERT_DECLARATION_FLAGS = new Set(['g', 'x', 'r']);"), 'the inert declaration flags are the three letters and nothing else');
   assert.ok(!hook.includes('const recordAssignments = '), 'the list-shaped recorder is gone');
-  assert.ok(!hook.includes('an external `${name}` that does not exist, so the shell does not move'), 'the wrapped-cd text no longer says the shell does not move');
+  // the hook's text sits in a template literal, so its backticks are escaped in the source: a needle with bare backticks matched
+  // nothing at any head (the seventh pass's mutation lens found the earlier spelling vacuous); the current text is asserted
+  // present in the same escaping first, which proves the form, then the old text absent
+  assert.ok(hook.includes('an external \\`${name}\\` that moves nothing in this shell'), 'the wrapped-cd text, read in the escaping the source uses');
+  assert.ok(!hook.includes('an external \\`${name}\\` that does not exist, so the shell does not move'), 'the wrapped-cd text no longer says the shell does not move');
   assert.ok(hook.includes("builtin: 'runs the shell\\'s own cd in bash and zsh, which moves the shell") && hook.includes("command: 'runs the shell\\'s own cd in bash and dash, which moves the shell"), 'the wrapped-cd table says which shells move');
+  // 93bb93b68: the bare pushd, one sentence on each surface
+  assert.ok(hook.includes('a bare `pushd` is no such move: bash and dash stay, zsh goes home'), 'the hook header records the bare pushd');
+  assert.ok(d47.includes('a bare `pushd`, which bash and dash fail and zsh takes home, leaves the directory unknown'), 'decision 47 records the bare pushd');
   assert.ok(hook.includes("kind: 'homePrefix'") && hook.includes('function readableHomeWrites(segments)'), 'the prefix form has its own reason and the plain HOME= write its pre-pass');
   assert.ok(!hook.includes('the attacker filed no finding') && !d47.includes('the attacker filed no finding'), 'neither surface repeats the false sentence');
+  assert.ok(!/\u2014/.test(d47), 'no em dash in decision 47');
+});
+
+// The seventh pass's attacker (2026-09-19): decision 47 and the hook header record the two misses and the readonly sibling, each
+// tied to the hook function that closes it, and the wrapper list on the three prose surfaces names zsh's modifiers.
+test("decision 47 and the hook header record the seventh pass's attacker: nesting-aware group frames, zsh's precommand modifiers in the wrapper set and on every prose surface, the readonly value kept, and the shadowed poison gone", () => {
+  assert.ok(d47.includes("The seventh pass's attacker (2026-09-19;") && hook.includes("THE SEVENTH PASS'S ATTACKER (2026-09-19;"), 'both surfaces record the pass');
+  for (const fn of ['openGroup', 'closeGroups', 'pendingClose', 'noteGroupName', 'ZSH_MODIFIERS', 'readonlyNames', 'WRAPPED_CD_WHY']) {
+    assert.ok(d47.includes(`\`${fn}\``), `decision 47 names ${fn}`);
+    assert.ok(new RegExp(`(const|let) ${fn}\\b`).test(hook), `the hook defines ${fn}`);
+  }
+  assert.ok(hook.includes("const ZSH_MODIFIERS = new Set(['noglob', 'nocorrect', '-']);") && hook.includes("'chrt', 'numactl', ...ZSH_MODIFIERS]);"), 'the three modifiers, and they are in PREFIXES');
+  for (const m of ['noglob', 'nocorrect', "'-'"]) assert.ok(new RegExp(`^  ${m}: \\{ argShort: '', flagShort: '', argLong: \\[\\], flagLong: \\[\\] \\},$`, 'm').test(hook), `${m} has an empty option table`);
+  for (const m of ['noglob', 'nocorrect', "'-'"]) assert.ok(hook.includes(`  ${m}: 'is a zsh precommand modifier, so in zsh the shell\\'s own cd runs and moves it, and no command in bash and dash, which stay',`), `${m} has its wrapped-cd text`);
+  const prose = { 'hooks/README.md': hooksReadme, 'docs/install.md': read('docs', 'install.md'), 'the vendored SKILL.md': read('vendor', 'track-changents', 'skill', 'SKILL.md') };
+  for (const [name, text] of Object.entries(prose)) assert.ok(/`exec`, and since the seventh pass zsh's precommand modifiers `noglob`, `nocorrect` and `-`, which hid the writer behind them\)/.test(text.replace(/\s+/g, ' ')), `${name} names the modifiers in the wrapper list`);
+  assert.ok(!hook.includes('carries an option the shell fills in ('), 'the poison M1\'s per-segment detector shadowed is gone');
+  assert.ok(hook.includes("if (readonlyNames.has(name)) return;") && hook.includes("if (readonlyNames.has(name)) continue;"), 'a readonly name keeps its value in both recording paths');
   assert.ok(!/\u2014/.test(d47), 'no em dash in decision 47');
 });

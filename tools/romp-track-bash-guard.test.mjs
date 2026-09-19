@@ -58,9 +58,11 @@ const ROMP_NOUNS = /\b(romp|card|board|column|goal|nudge|dashboard|panel|viewer|
 // (the seventh pass's addendum, item 4, 2026-09-19: CI's shell job has no zsh and failed on unguarded zsh legs at 50e85deec).
 // The refusable case is run by hand with a `zsh` stub that exits 1 first on PATH: the file passes and prints the NOT RUN lines.
 const HAS_SHELL = Object.fromEntries(['bash', 'zsh', 'dash'].map((sh) => [sh, spawnSync(sh, ['-c', 'true'], { encoding: 'utf8' }).status === 0]));
-const shellsFor = (list, what = null) => {
-  for (const sh of list) if (!HAS_SHELL[sh]) console.error(`NOT RUN: real ${sh} is not on this runner, so its evidence leg did not run${what ? `: ${what}` : ''} (${(new Error().stack.split('\n')[2] || '').trim().replace(/^at /, '')})`);
-  return list.filter((sh) => HAS_SHELL[sh]);
+// `present` and `report` are parameters so the line itself is pinned in-process (the seventh pass's close): a runner without a
+// shell gets exactly one line per missing shell per leg, on stderr, and the leg's list without it
+const shellsFor = (list, what = null, present = HAS_SHELL, report = (line) => console.error(line)) => {
+  for (const sh of list) if (!present[sh]) report(`NOT RUN: real ${sh} is not on this runner, so its evidence leg did not run${what ? `: ${what}` : ''} (${(new Error().stack.split('\n')[2] || '').trim().replace(/^at /, '')})`);
+  return list.filter((sh) => present[sh]);
 };
 
 // ── refusals: the contract's cases ─────────────────────────────────
@@ -688,9 +690,9 @@ test('the numeric set is $$ and ${$} in every shell, and nothing else: RANDOM, S
     overwrites('bash', '. ./setenv.sh; cp base/report.md "$OUT/$RANDOM"', 'bash, the unset in a sourced file');
     run('bash', 'RANDOM="$BACK"; echo x > "$OUT/$RANDOM"');
     assert.equal(fs.readFileSync(report, 'utf8'), original, 'the bare assignment alone is the one form bash refuses, the form round 2 measured');
-    if (shellsFor(['zsh'], 'the RANDOM roads in real zsh').length) {
-      overwrites('zsh', 'f(){ typeset -h RANDOM; RANDOM="$BACK"; cp base/report.md "$OUT/$RANDOM"; }; f', 'zsh, typeset -h inside a function');
-      const zr = run('zsh', 'unset RANDOM; RANDOM="$BACK"; echo x > "$OUT/$RANDOM"');
+    for (const z of shellsFor(['zsh'], 'the RANDOM roads in real zsh')) {
+      overwrites(z, 'f(){ typeset -h RANDOM; RANDOM="$BACK"; cp base/report.md "$OUT/$RANDOM"; }; f', 'zsh, typeset -h inside a function');
+      const zr = run(z, 'unset RANDOM; RANDOM="$BACK"; echo x > "$OUT/$RANDOM"');
       assert.notEqual(zr.status, 0, 'zsh refuses the unset-then-assign road, the one round 2 measured');
       assert.equal(fs.readFileSync(report, 'utf8'), original);
     }
@@ -3810,6 +3812,7 @@ test("the attacker's twins keep their verdicts, and the reviewer's four false re
       ['R16-T1', 'f() { x=../docs/report.md; }; x=other.md; f; cp base/report.md scratch/$x', 'refuse'],
       ['R16-w', 'function f() { x=../docs/report.md; }; x=other.md; f; cp base/report.md scratch/$x', 'refuse'],
       ['R7-T1', 'x=(../docs/report.md); cp base/report.md scratch/$x', 'refuse'],
+      ['R7-T2', 'declare -a x=(../docs/report.md); cp base/report.md scratch/$x', 'refuse'],   // the report's C7 twin: the -a flag taints, bash and zsh write through the array's first element
       ['R17-j', 'x=other.md; export x=../docs/report.md y=$x; cp base/report.md scratch/$y', 'allow'],   // the shells expand $x before either declaration word is assigned
       ['R17-k', 'x=other.md; declare x=../docs/report.md y=$x; cp base/report.md scratch/$y', 'allow'],
       ['R11-d', 'x=other.md; y=$x; x=../docs/report.md; cp base/report.md scratch/$y', 'allow'],
@@ -3845,6 +3848,7 @@ test("the attacker's twins keep their verdicts, and the reviewer's four false re
       ['x=other.md; let x=5; cp base/report.md scratch/$x', 'an assignment-shaped word of `let`', ['bash', 'zsh'], path.join(NA, 'scratch', '5')],
       ['x=a; cat </dev/null | x=b; printf x > {OUT}/scratch/$x.log', 'a pipeline, whose members bash and dash run in a subshell', ['bash', 'zsh', 'dash'], null],
       ['x=a; { x=b; } | cat; printf x > {OUT}/scratch/$x.log', 'a `{ }` group that is piped', ['bash', 'zsh', 'dash'], null],
+      ['x=scratch/kept.md; export x; cp base/report.md $x', 'a `export` of the name alone, which may change how it is read', ['bash', 'zsh', 'dash'], path.join(NA, 'scratch', 'kept.md')],   // the shells keep the value (measured: the copy lands on the untracked kept.md): a priced cost of the name-alone rule
     ];
     for (const [raw, construct, shells, lands] of costs) {
       const cmd = w.fill(raw);
@@ -3997,10 +4001,325 @@ test("the addendum, item 2: a cd under `builtin`, `command` or `time` is still r
   } finally { process.env.HOME = savedHome; w.rm(); }
 });
 
-test('the addendum, item 4: every real-shell evidence leg of this file goes through shellsFor or HAS_SHELL, so a runner without zsh prints a NOT RUN line per leg and never passes a leg in silence', () => {
+// The self-check reads this file's lines: a zsh leg is a call whose first or last argument is the literal 'zsh', a spawnSync
+// of it, or a for-of over a literal list holding 'zsh' or over a shell-list identifier, on a line without shellsFor or
+// HAS_SHELL (a comment line does not count). The seventh pass's mutation lens found `for (const zsh of ['zsh'])` escaping
+// the earlier spelling-bound pattern, so the loop variable is any identifier now, and the scan is a function pinned
+// against synthetic lines below.
+const zshLegsOutsideProbe = (lines) => lines.map((l, i) => `${i + 1}: ${l.trim()}`).filter((l) => /spawnSync\(\s*'zsh'|\w+\(\s*'zsh'\s*,|,\s*'zsh'\s*\)|for \(const \w+ of \[[^\]]*'zsh'|for \(const \w+ of (shells|SHELLS|A|B|BZ|BD|Z)\)|has\('zsh'\)/.test(l) && !/HAS_SHELL|shellsFor\(/.test(l) && !/^\d+: \/\//.test(l));
+
+test('the addendum, item 4: every real-shell evidence leg of this file goes through shellsFor or HAS_SHELL, so a runner without zsh prints a NOT RUN line per leg and never passes a leg in silence; the scan catches a loop under any variable name and a call with the literal shell (pinned against synthetic lines); the line itself is pinned in-process through the probe\'s parameters and as a process, this file run with a zsh stub that exits 1 first on PATH, which prints the line per leg and passes', () => {
   const src = fs.readFileSync(fileURLToPath(import.meta.url), 'utf8').split('\n');
-  const offenders = src.map((l, i) => `${i + 1}: ${l.trim()}`).filter((l) => /spawnSync\('zsh'|overwrites\([^;]*'zsh'\)|for \(const (shell|sh) of \[|for \(const shell of shells\)|sh\('zsh'|has\('zsh'\)/.test(l) && !/HAS_SHELL|shellsFor\(/.test(l) && !/^\d+: \/\//.test(l));
-  assert.deepEqual(offenders, [], 'a zsh leg outside the probe');
+  assert.deepEqual(zshLegsOutsideProbe(src), [], 'a zsh leg outside the probe');
   assert.equal(typeof HAS_SHELL.zsh, 'boolean');
   assert.deepEqual(shellsFor(['bash']), ['bash'], 'bash is always here');
+  // the scan against synthetic lines: the seventh pass's escapes (a loop variable not named shell or sh, a w.run with the literal shell) are caught, a guarded line and a comment are not
+  // (the literal shell is spelled Q here and filled in at run time, so the scan of this file does not read these lines as legs)
+  const synthetic = [
+    "for (const zsh of [Q]) go(zsh);",
+    "for (const s of ['bash', Q, 'dash']) go(s);",
+    "for (const shell of LIST) go(shell);",
+    "spawnSync(Q, ['-c', 'true']);",
+    "w.run(cmd, NA, Q);",
+    "overwrites(Q, 'a; b', 'why');",
+    "for (const shell of shellsFor([Q], 'x')) go(shell);",
+    "// spawnSync(Q, ['-c', 'true']) in a comment",
+    "const ok = HAS_SHELL.zsh ? run(Q, x) : null;",
+  ].map((l) => l.replaceAll('Q', `'${['z', 'sh'].join('')}'`).replaceAll('LIST', 'A'));
+  assert.deepEqual(zshLegsOutsideProbe(synthetic).map((l) => Number(l.split(':')[0])), [1, 2, 3, 4, 5, 6], 'six unguarded legs flagged, the guarded line and the comment not');
+  // the line itself, in-process: a missing shell is reported once per leg through the reporter and dropped from the leg's list
+  const lines = [];
+  assert.deepEqual(shellsFor(['bash', 'zsh', 'dash'], 'a synthetic leg', { bash: true, zsh: false, dash: true }, (l) => lines.push(l)), ['bash', 'dash']);
+  assert.equal(lines.length, 1, 'one line for the one missing shell');
+  assert.match(lines[0], /^NOT RUN: real zsh is not on this runner, so its evidence leg did not run: a synthetic leg \(/, 'the loud line names the shell and the leg');
+  assert.deepEqual(shellsFor(['zsh'], 'x', { zsh: true }, () => assert.fail('a present shell is not reported')), ['zsh']);
+  // as a process: this file, run on `the addendum, item 2` alone with a zsh stub first on PATH, prints the line for each of that test's four legs and passes
+  const stub = fs.mkdtempSync(path.join(os.tmpdir(), 'romp-bash-guard-zshstub-'));
+  const stubShell = ['z', 'sh'].join('');   // the stub's file name, spelled apart so this line is no leg to the scan above
+  try {
+    fs.writeFileSync(path.join(stub, stubShell), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+    const env = { ...process.env, PATH: `${stub}:${process.env.PATH}` };
+    delete env.NODE_TEST_CONTEXT;   // the runner marks its children with it, and a marked `node --test` runs no file ("called recursively")
+    const child = spawnSync(process.execPath, ['--test', '--test-name-pattern=the addendum, item 2', fileURLToPath(import.meta.url)], { encoding: 'utf8', env, timeout: 180000 });
+    const out = `${child.stdout}\n${child.stderr}`;
+    const notRun = out.split('\n').filter((l) => /NOT RUN: real zsh is not on this runner, so its evidence leg did not run: (builtin|command|time|env) cd \(/.test(l));
+    assert.equal(notRun.length, 4, `one NOT RUN line per zsh leg of the item-2 test (the runner forwards stderr with a leading #): ${out.slice(0, 2000)}`);
+    assert.equal(child.status, 0, `the file passes without zsh (the legs are not run, not failed): ${out.slice(-1500)}`);
+    assert.match(child.stdout, /^# pass 1$/m, 'the one selected test passed');
+    assert.match(child.stdout, /^# fail 0$/m);
+  } finally { fs.rmSync(stub, { recursive: true, force: true }); }
+});
+
+// ── the seventh pass's attacker (2026-09-19, on 93bb93b68): the rule's own boundary ──
+//
+// Two misses, 0 structural (its report in the sweep notes, `quickfix-track-guard-attack1-pass7.md`, its rows in
+// `quickfix-track-guard-atk7-rows.json`), and a sibling found while closing them. F2: a `{ }` group nested in a piped or
+// backgrounded group (the frame opened for the first `{` and popped on the first `}`, so the piped outer brace was never a
+// subshell boundary). F1: zsh's precommand modifiers `noglob`, `nocorrect` and `-`, read as commands named so, hiding the
+// writer behind them. RO: a name made readonly then written by a declaration, an export or an unset, which bash and dash
+// refuse and continue past with the readonly value while the guard adopted the later one. Every row runs through the hook as
+// a process from the row's cwd and then unguarded in bash, zsh and dash over a fresh world, the tracked subset fingerprinted,
+// and the test asserts EXACTLY which shells write (the shells that abort or fail on the word write nothing).
+
+test("the seventh pass's attacker, F2: a `{ }` group nested in a piped or backgrounded group runs in a subshell at any nesting, so every name assigned inside it (a plain word or a declaration, at any depth) is unreadable and its cd is undone; the report's 7 rows, the `} }` and one-level declaration siblings found with them, and the twins (a plain nested group, a nested group before `&&`, a piped inner group) keep their verdicts; each refused row overwrites the tracked subset in the shells named and each allowed row leaves it", () => {
+  const w = sixthPassWorld();
+  const savedHome = process.env.HOME;
+  process.env.HOME = w.HOME;
+  try {
+    const A = ['bash', 'zsh', 'dash'];
+    const BZ = ['bash', 'zsh'];
+    const PIPED = ['literal', 'a `{ }` group that is piped, which the shells run in a subshell'];
+    const BG = ['literal', 'a `{ }` group that is backgrounded, which the shells run in a subshell'];
+    // [id, command, the shells that write the tracked subset when run unguarded, the verdict]
+    const rows = [
+      ['F2a-1', 'x=docs/report.md; { { x=scratch/keep.md; }; } | cat; cp base/report.md $x', A, PIPED],
+      ['F2a-2', 'x=docs/report.md; { { { x=scratch/keep.md; }; }; } | cat; cp base/report.md $x', A, PIPED],
+      ['F2a-3', 'x=docs/report.md; { { x=scratch/keep.md; }; } & wait; cp base/report.md $x', A, BG],
+      ['F2a-4', 'x=docs/report.md; { echo hi; { x=scratch/keep.md; }; } | cat; cp base/report.md $x', A, PIPED],
+      ['F2a-5', 'x=docs/report.md; { { x=scratch/keep.md; }; } |& cat; cp base/report.md $x', BZ, PIPED],   // dash has no |&: a syntax error, nothing runs
+      ['F2a-6', 'x=docs/report.md; { { x=scratch/keep.md; } } | cat; cp base/report.md $x', A, PIPED],        // `} }` without a `;` between: all three shells accept it
+      ['F2a-7', 'x=docs/report.md; { { x=scratch/keep.md; } } & wait; cp base/report.md $x', A, BG],
+      ['F2a-8', 'x=docs/report.md; { { declare x=scratch/keep.md; }; } | cat; cp base/report.md $x', A, PIPED],   // dash has no declare: x untouched, the copy lands the same
+      ['F2a-9', 'x=docs/report.md; { declare x=scratch/keep.md; } | cat; cp base/report.md $x', A, PIPED],       // ONE level, a declaration: the declaration branch noted no name (found here)
+      ['F2a-10', 'x=docs/report.md; { export x=scratch/keep.md; } | cat; cp base/report.md $x', A, PIPED],
+      ['F2a-11', 'x=docs/report.md; { { x=scratch/keep.md; }; y=1; } | cat; cp base/report.md $x', A, PIPED],
+      ['F2a-12', 'x=docs/report.md; { { x=scratch/keep.md; }; } > /dev/null | cat; cp base/report.md $x', A, PIPED],
+      ['F2b-1', '{ { cd scratch; }; } | cat; cp base/report.md notes/n1.md', A, 'name'],
+      ['F2b-2', '{ { cd scratch; }; } & wait; cp base/report.md notes/n1.md', A, 'name'],
+      ['F2b-3', '{ { cd scratch; } } | cat; cp base/report.md notes/n1.md', A, 'name'],
+      ['F2b-4', '{ { cd docs; }; } | cat; cp base/report.md docs/report.md', A, 'name'],
+      // twins
+      ['F2-T1', 'x=docs/report.md; { x=scratch/keep.md; } | cat; cp base/report.md $x', A, PIPED],
+      ['F2-T2', 'x=docs/report.md; { { x=scratch/keep.md; } | cat; }; cp base/report.md $x', A, PIPED],
+      ['F2-T3', '{ cd scratch; } | cat; cp base/report.md notes/n1.md', A, 'name'],
+      ['F2-T4', 'x=docs/report.md; ( { x=scratch/keep.md; } ) | cat; cp base/report.md $x', A, ['literal', 'an if, loop, case or function body, or a subshell']],
+      ['F2-T5', 'x=docs/report.md; { { x=scratch/keep.md; }; } && cp base/report.md $x', [], 'allow'],   // the group runs in this shell: x is the inner value, the copy lands on the untracked keep.md
+      ['F2-T6', 'x=docs/report.md; { { x=scratch/keep.md; }; }; cp base/report.md $x', [], 'allow'],
+      ['F2-T7', 'x=docs/report.md; { { x=scratch/keep.md; } }; cp base/report.md $x', [], 'allow'],
+      ['F2-T8', '{ { cd docs; }; } | cat; cp ../base/report.md report.md', [], 'allow'],   // the cd was a subshell's: the copy is judged from the cwd (report.md there is untracked) and the shells find no ../base
+      ['F2-T9', '{ { cd docs; }; }; cp ../base/report.md report.md', A, 'name'],          // a plain nested group moves the shell: the copy lands on docs/report.md
+      ['F2-T10', 'x=docs/report.md; { unset x; } | cat; cp base/report.md $x', A, ['literal', '']],   // an unset in a subshell: the guard forgets the name (refused as not literal), the shells keep it
+    ];
+    let n = 0;
+    for (const [id, raw, writers, expect] of rows) {
+      const cmd = w.fill(raw);
+      const h = w.hook(cmd, w.NA);
+      n++;
+      if (expect === 'allow') assert.equal(h.status, 0, `${id}: allowed: ${cmd}: ${h.reason}`);
+      else {
+        assert.equal(h.status, 2, `${id}: refused: ${cmd}: ${h.reason}`);
+        assert.ok(!/\u2014/.test(h.reason) && !ROMP_NOUNS.test(h.reason.split(w.W).join('<w>')), `${id}: no em dash, no romp noun`);
+        if (expect === 'name') assert.match(h.reason, BY_NAME_RE, `${id}: by name (the group's cd did not move this shell): ${h.reason.split('\n')[0]}`);
+        else assert.ok(NOT_LITERAL.test(h.reason) && h.reason.includes(expect[1]), `${id}: refused as not literal, the reason naming the construct (${expect[1]}): ${h.reason.split('\n')[0]}`);
+      }
+      for (const shell of shellsFor(A, id)) {
+        const r = w.run(cmd, w.NA, shell);
+        assert.equal(r.changed, writers.includes(shell), `${id}: run unguarded, ${shell} ${writers.includes(shell) ? 'writes' : 'leaves'} the tracked subset: ${cmd}: ${r.stderr}`);
+      }
+    }
+    assert.equal(n, 26);
+    // the grammar: the nested value is not resolved (the word stays opaque, no target), where before it resolved to scratch/keep.md
+    const ex = extractWriteTargets('x=docs/report.md; { { x=scratch/keep.md; }; } | cat; cp base/report.md $x', w.NA);
+    assert.deepEqual([ex.targets.length, ex.unresolved.map((u) => u.raw)], [0, ['$x']], 'the nested piped group leaves x unreadable');
+    assert.deepEqual(extractWriteTargets('x=docs/report.md; { { x=scratch/keep.md; }; }; cp base/report.md $x', w.NA).targets.map((t) => t.path), [path.join(w.NA, 'scratch', 'keep.md')], 'a plain nested group is this shell\'s own');
+  } finally { process.env.HOME = savedHome; w.rm(); }
+});
+
+test("the seventh pass's attacker, F1: zsh's precommand modifiers `noglob`, `nocorrect` and `-` are wrappers (peeled to the writer behind them, a cd behind one leaves the directory unknown with a text saying zsh moves and bash and dash stay, an assignment-shaped word after one is the wrapper's argument); the report's 7 rows and the siblings found with them (`-`, `builtin`/`time`/`exec noglob`, `noglob cd`) refuse, zsh alone writes when run unguarded (bash and dash fail on the word), and the twins keep their verdicts except `command noglob cp`, now refused where no shell runs it (priced)", () => {
+  const w = sixthPassWorld();
+  const savedHome = process.env.HOME;
+  process.env.HOME = w.HOME;
+  try {
+    const A = ['bash', 'zsh', 'dash'];
+    const Z = ['zsh'];
+    const MOD = (m) => `runs under a wrapper (\`${m}\`), which is a zsh precommand modifier, so in zsh the shell's own cd runs and moves it, and no command in bash and dash, which stay`;
+    // [id, command, the shells that write, the verdict, the shells whose run fails (a non-zero status: the word is no command there)]
+    const rows = [
+      ['F1-1', 'noglob cp base/report.md docs/report.md', Z, 'name', ['bash', 'dash']],
+      ['F1-2', 'noglob mv base/report.md docs/report.md', Z, 'name', ['bash', 'dash']],
+      ['F1-3', 'noglob tee docs/report.md < base/report.md', Z, 'name', ['bash', 'dash']],
+      ['F1-4', 'noglob dd if=base/report.md of=docs/report.md', Z, 'name', ['bash', 'dash']],
+      ['F1-5', 'noglob install base/report.md docs/report.md', Z, 'name', ['bash', 'dash']],
+      ['F1-6', 'nocorrect cp base/report.md docs/report.md', Z, 'name', ['bash', 'dash']],
+      ['F1-7', 'x=docs/report.md; noglob cp base/report.md $x', Z, 'name', ['bash', 'dash']],
+      ['F1-8', ' - cp base/report.md docs/report.md', Z, 'name', ['bash', 'dash']],              // the `-` modifier (a leading space: `zsh -c` reads a string opening with `-` as options)
+      ['F1-9', 'builtin noglob cp base/report.md docs/report.md', Z, 'name', ['bash', 'dash']],   // bash: not a shell builtin; dash: no builtin
+      ['F1-10', 'time noglob cp base/report.md docs/report.md', Z, 'name', ['bash', 'dash']],
+      ['F1-11', 'exec noglob cp base/report.md docs/report.md', Z, 'name', ['bash', 'dash']],
+      ['F1-12', 'noglob cd docs; cp ../base/report.md report.md', Z, ['dir', MOD('noglob')], ['bash', 'dash']],   // bash and dash stay and find no ../base
+      ['F1-13', 'nocorrect cd docs; cp ../base/report.md report.md', Z, ['dir', MOD('nocorrect')], ['bash', 'dash']],
+      ['F1-14', 'x=docs/report.md; noglob x=scratch/keep.md; cp base/report.md $x', A, ['literal', 'an argument of the wrapper `noglob`, which the shell hands to it rather than assigning'], []],   // no shell assigns: zsh runs a command named x=..., bash and dash fail on noglob, and all three copy onto the tracked file
+      ['F1-15', 'noglob cp base/report.md notes/', Z, 'name', ['bash', 'dash']],
+      // twins
+      ['F1-T1', 'x=docs/report.md; noglob printf poison > $x', A, 'name', ['bash', 'dash']],   // the redirection is the shell's, performed before the word is looked up: every shell truncates the file
+      ['F1-T2', 'x=docs/report.md; command noglob cp base/report.md $x', [], 'name', A],   // THE MOVED TWIN: `command` looks noglob up as an external program in every shell, so nothing runs; refused by name now (the modifier peeled), allowed before: a cost, priced in fork PR #780's body
+      ['F1-T4', 'nice noglob cp base/report.md docs/report.md', [], 'name', A],             // the same: an external wrapper runs an external noglob that is not there
+      ['F1-T5', 'noglob nocorrect cp base/report.md docs/report.md', [], 'name', A],        // zsh takes nocorrect as a modifier only first: a command not found, nothing written
+      ['F1-T6', 'noglob cp base/report.md scratch/keep.md', [], 'allow', ['bash', 'dash']],   // the writer behind the modifier lands on an untracked file: allowed
+      ['F1-T7', 'noglob ls docs', [], 'allow', ['bash', 'dash']],
+    ];
+    let n = 0;
+    for (const [id, raw, writers, expect, fails] of rows) {
+      const cmd = w.fill(raw);
+      const h = w.hook(cmd, w.NA);
+      n++;
+      if (expect === 'allow') assert.equal(h.status, 0, `${id}: allowed: ${cmd}: ${h.reason}`);
+      else {
+        assert.equal(h.status, 2, `${id}: refused: ${cmd}: ${h.reason}`);
+        assert.ok(!/\u2014/.test(h.reason) && !ROMP_NOUNS.test(h.reason.split(w.W).join('<w>')), `${id}: no em dash, no romp noun`);
+        if (expect === 'name') assert.match(h.reason, BY_NAME_RE, `${id}: by name, the writer behind the modifier seen: ${h.reason.split('\n')[0]}`);
+        else if (expect[0] === 'dir') assert.ok(/the directory it is relative to is not known/.test(h.reason) && h.reason.includes(expect[1]), `${id}: the cd behind the modifier leaves the directory unknown and the text says what each shell does: ${h.reason.split('\n')[0]}`);
+        else assert.ok(NOT_LITERAL.test(h.reason) && h.reason.includes(expect[1]), `${id}: refused as not literal, the reason naming the construct: ${h.reason.split('\n')[0]}`);
+      }
+      for (const shell of shellsFor(A, id)) {
+        const r = w.run(cmd, w.NA, shell);
+        assert.equal(r.changed, writers.includes(shell), `${id}: run unguarded, ${shell} ${writers.includes(shell) ? 'writes' : 'leaves'} the tracked subset: ${cmd}: ${r.stderr}`);
+        assert.equal(r.status !== 0, fails.includes(shell), `${id}: ${shell} ${fails.includes(shell) ? 'fails (the word is no command of its)' : 'succeeds'}: status ${r.status}: ${r.stderr}`);
+      }
+    }
+    assert.equal(n, 21);
+    for (const shell of shellsFor(['bash', 'dash'], 'the modifier word in bash and dash')) assert.equal(w.run('noglob cp base/report.md docs/report.md', w.NA, shell).status, 127, `${shell} exits 127 on the word noglob`);
+    // the out-of-model residual for contrast (the contract's list: unshare): allowed; what the shells do depends on the runner's namespaces, so it is printed, not asserted
+    const residual = 'unshare -r cp base/report.md docs/report.md';
+    assert.equal(w.hook(residual, w.NA).status, 0, 'unshare is on the contract\'s out-of-model list: allowed');
+    for (const shell of shellsFor(A, 'unshare')) console.log(`# unshare -r cp in ${shell} on this runner: ${w.run(residual, w.NA, shell).changed ? 'wrote the tracked file (the residual, live here)' : 'wrote nothing (no user namespace here)'}`);
+    // the grammar: the modifier is peeled like `command`, its option table empty, and a definition by its name is a function like any other
+    assert.deepEqual(extractWriteTargets('noglob cp base/report.md docs/report.md', w.NA).targets.map((t) => t.path), [path.join(w.NA, 'docs', 'report.md')]);
+    assert.deepEqual(extractWriteTargets(' - cp base/report.md docs/report.md', w.NA).targets.map((t) => t.path), [path.join(w.NA, 'docs', 'report.md')]);
+    assert.equal(w.hook('noglob -x cp base/report.md scratch/keep.md', w.NA).status, 2, 'an option after a modifier refuses like any wrapper option the table does not hold');
+    assert.equal(w.hook('x=scratch/keep.md; noglob() { x=docs/report.md; }; noglob true; cp base/report.md $x', w.NA).status, 2, 'a function named noglob, called by that name, poisons like any wrapper-named function');
+  } finally { process.env.HOME = savedHome; w.rm(); }
+});
+
+test("found beside the attacker's readonly rows: a name made readonly keeps its value, since no shell performs a later write to it (bash, zsh and dash stop the command list on a plain assignment; bash keeps the value and continues past a `declare`, `typeset`, `export` or `unset` of it, and dash where the word is no command of its), so `readonly x=docs/report.md; declare x=scratch/keep.md; cp base/report.md $x` is refused by the readonly value where the guard adopted the later one and bash and dash wrote the tracked file; the attacker's plain-reassign rows abort every shell and are refused by that value too; a readonly name whose value is untracked stays allowed", () => {
+  const w = sixthPassWorld();
+  const savedHome = process.env.HOME;
+  process.env.HOME = w.HOME;
+  try {
+    const A = ['bash', 'zsh', 'dash'];
+    const B = ['bash'];
+    const BD = ['bash', 'dash'];
+    const BZ = ['bash', 'zsh'];
+    // [id, cwd, command, the shells that write, the verdict, the shells whose run fails]
+    const rows = [
+      ['RO-6', 'na', 'readonly x=docs/report.md; declare x=scratch/keep.md; cp base/report.md $x', BD, 'name', ['zsh']],        // zsh stops on the declare; bash continues with the readonly value, dash has no declare
+      ['RO-7', 'na', 'readonly x=docs/report.md; export x=scratch/keep.md; cp base/report.md $x', B, 'name', ['zsh', 'dash']],  // dash's export refuses and stops
+      ['RO-8', 'na', 'readonly x=docs/report.md; unset x; cp base/report.md $x', B, 'name', ['zsh', 'dash']],
+      ['RO-9', 'na', 'declare -r x=docs/report.md; declare x=scratch/keep.md; cp base/report.md $x', B, 'name', ['zsh', 'dash']],   // dash: no declare at all, the copy has no destination
+      ['RO-10', 'na', 'x=docs/report.md; readonly x; declare x=scratch/keep.md; cp base/report.md $x', BD, 'name', ['zsh']],   // `readonly x` alone freezes the value it has
+      ['RO-11', 'na', 'readonly x=docs/report.md; typeset x=scratch/keep.md; cp base/report.md $x', BD, 'name', ['zsh']],
+      ['RO-12', 'na', 'readonly x=docs/report.md; local x=scratch/keep.md; cp base/report.md $x', B, 'name', ['zsh', 'dash']],
+      ['RO-13', 'out', 'readonly x={NA}/docs/report.md; declare x={OUT}/scratch/keep.md; cp {NA}/base/report.md $x', BD, 'name', ['zsh']],   // from a cwd in no project: resolved by the readonly value, so refused by name (a taint would have left it the residual)
+      // the attacker's rows: a plain reassign stops every shell that has the construct (RO-1..4, E1..E3 were allowed and safe by shell semantics; refused by the readonly value now)
+      ['RO-1', 'na', 'readonly x=docs/report.md; x=scratch/keep.md; cp base/report.md $x', [], 'name', A],
+      ['RO-2', 'na', 'declare -r x=docs/report.md; x=scratch/keep.md; cp base/report.md $x', [], 'name', BZ],    // dash has no declare: x is the later value and the copy lands on keep.md
+      ['RO-3', 'na', 'typeset -r x=docs/report.md; x=scratch/keep.md; cp base/report.md $x', [], 'name', BZ],
+      ['RO-4', 'na', 'declare -gr x=docs/report.md; x=scratch/keep.md; cp base/report.md $x', [], 'name', BZ],
+      ['RO-E1', 'na', 'readonly x=docs/report.md; x=scratch/keep.md || true; cp base/report.md $x', [], 'name', A],
+      ['RO-E2', 'na', 'readonly x=docs/report.md; x=scratch/keep.md 2>/dev/null; cp base/report.md $x', [], 'name', A],
+      ['RO-E3', 'na', 'readonly x=docs/report.md; set +e; x=scratch/keep.md; cp base/report.md $x', [], 'name', A],
+      ['RO-E4', 'na', 'readonly x=docs/report.md; (x=scratch/keep.md) 2>/dev/null; cp base/report.md $x', A, 'name', []],
+      ['RO-T1', 'na', 'readonly x=docs/report.md; cp base/report.md $x', A, 'name', []],
+      ['RO-T2', 'na', 'readonly x=scratch/keep.md; cp base/report.md $x', [], 'allow', []],
+      ['RO-T3', 'na', 'declare -r x=scratch/keep.md; cp base/report.md $x', [], 'allow', ['dash']],   // dash: no declare, the copy has no destination
+      ['RO-T4', 'na', 'readonly x=scratch/keep.md; declare x=docs/report.md; cp base/report.md $x', [], 'allow', ['zsh']],   // the readonly value is untracked: allowed, and bash lands the copy there
+      ['RO-T5', 'na', 'x=scratch/keep.md; readonly x; cp base/report.md $x', [], 'allow', []],      // `readonly x` alone keeps a readable value readable (a taint before)
+    ];
+    let n = 0;
+    for (const [id, cwd, raw, writers, expect, fails] of rows) {
+      const cmd = w.fill(raw);
+      const at = w.cwds[cwd];
+      const h = w.hook(cmd, at);
+      n++;
+      if (expect === 'allow') assert.equal(h.status, 0, `${id}: allowed: ${cmd}: ${h.reason}`);
+      else { assert.equal(h.status, 2, `${id}: refused: ${cmd}: ${h.reason}`); assert.match(h.reason, BY_NAME_RE, `${id}: by the readonly value: ${h.reason.split('\n')[0]}`); assert.ok(h.reason.includes(path.join(w.NA, 'docs', 'report.md')), `${id}: the readonly value is the path named`); }
+      for (const shell of shellsFor(A, id)) {
+        const r = w.run(cmd, at, shell);
+        assert.equal(r.changed, writers.includes(shell), `${id}: run unguarded, ${shell} ${writers.includes(shell) ? 'writes' : 'leaves'} the tracked subset: ${cmd}: ${r.stderr}`);
+        assert.equal(r.status !== 0, fails.includes(shell), `${id}: ${shell} ${fails.includes(shell) ? 'stops on the readonly error' : 'runs through'}: status ${r.status}: ${r.stderr}`);
+      }
+    }
+    assert.equal(n, 21);
+    // the grammar: the readonly value is what resolves after the later write, and a `+r` (zsh can drop the attribute) taints as a flag outside the inert set
+    assert.deepEqual(extractWriteTargets('readonly x=docs/report.md; declare x=scratch/keep.md; cp base/report.md $x', w.NA).targets.map((t) => t.path), [path.join(w.NA, 'docs', 'report.md')]);
+    const plus = w.hook('readonly x=scratch/keep.md; typeset +r x; x=docs/report.md; cp base/report.md $x', w.NA);
+    assert.ok(plus.status === 2 && NOT_LITERAL.test(plus.reason) && plus.reason.includes('a `typeset` flag that can change the value or what the name is (+r)'), `+r taints: ${plus.reason.split('\n')[0]}`);
+    for (const shell of shellsFor(['zsh'], 'zsh drops the readonly attribute with +r')) assert.equal(w.run('readonly x=scratch/keep.md; typeset +r x; x=docs/report.md; cp base/report.md $x', w.NA, shell).changed, true, 'zsh writes the tracked file after typeset +r');
+  } finally { process.env.HOME = savedHome; w.rm(); }
+});
+
+test("the seventh pass's mutation lens: the unpinned claims of the readability rule are pinned one by one, each row run through the hook as a process and unguarded in the three shells: a tilde after a colon in a value (all three shells expand it), an option word the shell fills in on a declaration (M1's per-segment detector, the row a plain `declare -$f` with f opaque), a nameref's target not freed by `unset` (the distinguishing row: the freed name is written again), a nameref target the shell fills in, a top-level `local` (zsh performs it, bash continues past it, dash stops), `unset -f`, the two halves of the assembled-name poison alone (a non-declaration command's `$(..)=v` word; `read $h` with h opaque), a wrapper-named function with an inert body (the call poisons) and with a cd (the directory is unknown), `~`, `~+` and `~-` values after an eval (valueOf reads no name once the table is poisoned) and after a PWD mention, `read $h` with h readable (the resolved name), and a glued `printf -vx`", () => {
+  const w = sixthPassWorld();
+  const savedHome = process.env.HOME;
+  process.env.HOME = w.HOME;
+  try {
+    const A = ['bash', 'zsh', 'dash'];
+    const B = ['bash'];
+    const BZ = ['bash', 'zsh'];
+    const Z = ['zsh'];
+    const lit = (t) => ['literal', t];
+    const TILDE = (t) => lit(`a value that begins with \`${t}\`, which I cannot read here`);
+    // [id, command, the shells that write the tracked subset, the verdict]
+    const rows = [
+      ['U1', 'x=scratch:~/k; cp base/report.md $x', [], lit('a value with a tilde after a colon, which bash, zsh and dash expand')],
+      ['U2', 'y=scratch/keep.md; f=$(printf n); declare -$f x=y; x=docs/report.md; cp base/report.md $y', B, lit("the command's `declare` takes a variable name the shell fills in when it runs (-$f), and a name I cannot read may be any name")],   // bash: declare -n x=y, then x=.. writes y
+      ['U2b', 'y=scratch/keep.md; f=$(printf -- -n); declare $f x=y; x=docs/report.md; cp base/report.md $y', B, lit("the command's `declare` takes a variable name the shell fills in when it runs ($f), and a name I cannot read may be any name")],
+      ['U3', 'x=docs/report.md; declare -n r=x; unset x; x=scratch/keep.md; r=docs/report.md; cp base/report.md $x', B, lit('a nameref')],   // bash writes x through r after the unset and the plain write: the freed name would resolve to keep.md
+      ['U4', 'y=scratch/keep.md; h=$(echo y); declare -n r=$h; r=docs/report.md; cp base/report.md $y', B, lit("the command's `declare` takes a variable name the shell fills in when it runs (r=$h), and a name I cannot read may be any name")],
+      ['U4b', 'y=scratch/keep.md; h=$(echo y); export -n r=$h; cp base/report.md $y', [], lit("the command's `export -n` makes `r` a reference to a name the shell fills in (r=$h), which may be any name")],   // the declaration branch's own poison, reached where M1 reads export's -n as no nameref (a cost: bash unexports r, no shell writes)
+      ['U5', 'x=docs/report.md; local x=scratch/keep.md; cp base/report.md $x', B, lit('a `local`, which zsh performs at the top level and bash and dash reject')],
+      ['U6', 'x=scratch/keep.md; unset -f x; cp base/report.md $x', [], lit('an `unset` with -f')],
+      ['U7a', 'y=scratch/keep.md; true $(echo y)=docs/report.md; cp base/report.md $y', [], lit("the command's `true` takes a variable name the shell fills in when it runs ($(echo y)=docs/report.md), and a name I cannot read may be any name")],   // taintWord's name-part poison alone (true is on no name-operand list; a cost)
+      ['U7b', "y=scratch/keep.md; h=$(echo y); printf 'docs/report.md\\n' > scratch/line; read $h < scratch/line; cp base/report.md $y", A, lit("the command's `read` takes a variable name the shell fills in when it runs ($h), and a name I cannot read may be any name")],   // M1's per-segment detector alone (no `=` for taintWord's poison)
+      ['U8', 'x=scratch/keep.md; env() { :; }; env true; cp base/report.md $x', [], lit('an earlier call of `env`, a function the command defines, may assign any name')],   // an inert body: the call alone poisons (a cost)
+      ['U9', 'env() { cd ..; }; env true; cp notes-api/base/report.md notes-api/notes/n1.md', A, ['dir', 'an earlier call of the function `env` may change the directory, which I do not follow']],
+      ['U10a', "e=$(printf 'HO%s' ME=notes); eval \"$e\"; x=~/n1.md; printf poison > $x", A, TILDE('~')],
+      ['U10b', 'eval true; x=~/n1.md; printf poison > $x', [], TILDE('~')],   // the guard reads no HOME after an eval: the write lands in the home (a cost)
+      ['U10c', "eval 'cd docs'; x=~+/report.md; cp ../base/report.md $x", BZ, TILDE('~+')],
+      ['U10d', 'eval true; x=~+/scratch/keep.md; cp base/report.md $x', [], TILDE('~+')],
+      ['U10e', 'cd scratch; cd ..; eval true; x=~-/keep.md; cp base/report.md $x', [], TILDE('~-')],
+      ['U10f', 'cd docs; cd ..; eval true; x=~-/report.md; cp base/report.md $x', BZ, TILDE('~-')],
+      ['U10g', 'x=~+/scratch/keep.md; cp base/report.md $x', [], 'allow'],           // without the eval `~+` resolves through the directory the guard knows
+      ['U10h', 'cd scratch; cd ..; x=~-/keep.md; cp base/report.md $x', [], 'allow'],
+      ['U11', "x=scratch/keep.md; h=x; printf 'docs/report.md\\n' > scratch/line; read $h < scratch/line; cp base/report.md $x", A, lit('a name operand of `read`')],
+      ['U12', 'x=scratch/keep.md; printf -vx docs/report.md; cp base/report.md $x', B, lit('a `printf -v`')],
+      ['U18', 'PWD=/x; x=~+/docs/report.md; cp base/report.md $x', Z, TILDE('~+')],   // zsh reads the real directory for `~+`, bash the PWD it was given, dash expands no `~+`
+    ];
+    let n = 0;
+    for (const [id, raw, writers, expect] of rows) {
+      const cmd = w.fill(raw);
+      const h = w.hook(cmd, w.NA);
+      n++;
+      if (expect === 'allow') assert.equal(h.status, 0, `${id}: allowed: ${cmd}: ${h.reason}`);
+      else {
+        assert.equal(h.status, 2, `${id}: refused: ${cmd}: ${h.reason}`);
+        assert.ok(!/\u2014/.test(h.reason) && !ROMP_NOUNS.test(h.reason.split(w.W).join('<w>')), `${id}: no em dash, no romp noun`);
+        if (expect[0] === 'dir') assert.ok(/the directory it is relative to is not known/.test(h.reason) && h.reason.includes(expect[1]), `${id}: the directory is unknown, the reason naming the call: ${h.reason.split('\n')[0]}`);
+        else assert.ok(NOT_LITERAL.test(h.reason) && h.reason.includes(expect[1]), `${id}: refused as not literal, the reason naming the construct (${expect[1]}): ${h.reason.split('\n')[0]}`);
+      }
+      for (const shell of shellsFor(A, id)) {
+        const r = w.run(cmd, w.NA, shell);
+        assert.equal(r.changed, writers.includes(shell), `${id}: run unguarded, ${shell} ${writers.includes(shell) ? 'writes' : 'leaves'} the tracked subset: ${cmd}: ${r.stderr}`);
+        if (id === 'U10b') assert.ok(fs.existsSync(path.join(w.HOME, 'n1.md')), `${shell} wrote the home's n1.md: the value the guard would have read`);
+      }
+    }
+    assert.equal(n, 23);
+    // the constructs measured on their own, the three shells agreeing where the row's verdict says they do
+    const out = (shell, script) => spawnSync(shell, shell === 'bash' ? ['--norc', '--noprofile', '-c', script] : shell === 'zsh' ? ['-f', '-c', script] : ['-c', script], { cwd: w.NA, encoding: 'utf8', env: w.env, input: '' });
+    for (const shell of shellsFor(A, 'the constructs on their own')) {
+      assert.equal(out(shell, 'x=a:~/b; printf %s "$x"').stdout, `a:${w.HOME}/b`, `${shell} expands a tilde after a colon in an assignment value`);
+      assert.equal(out(shell, 'x=a; unset -f x; printf %s "$x"').stdout, 'a', `${shell}: unset -f leaves the variable`);
+      assert.equal(out(shell, 'env() { printf called; }; env true').stdout, 'called', `${shell} calls the function named env, not the program`);
+      assert.equal(out(shell, 'x=k; true $(echo x)=v; printf %s "$x"').stdout, 'k', `${shell}: an assignment-shaped argument of true assigns nothing (why U7a is a cost)`);
+    }
+    for (const shell of shellsFor(['bash'], 'the glued printf -v and the nameref in bash')) {
+      assert.equal(out(shell, 'printf -vx hello; printf %s "$x"').stdout, 'hello', 'bash reads the glued -vx');
+      assert.equal(out(shell, 'x=k; declare -n r=x; unset x; x=k2; r=v; printf %s "$x"').stdout, 'v', 'bash writes x through r after unset x');
+    }
+    for (const shell of shellsFor(['zsh'], 'zsh performs a top-level local')) assert.equal(out(shell, 'x=a; local x=b; printf %s "$x"').stdout, 'b');
+    for (const shell of shellsFor(['dash'], 'dash stops on a top-level local')) assert.notEqual(out(shell, 'x=a; local x=b; printf %s "$x"').status, 0);
+    // the grammar: after an eval no expanded name is read (valueOf), where before it PWD resolved through the directory
+    assert.deepEqual(extractWriteTargets('x=~+/scratch/keep.md; cp base/report.md $x', w.NA).targets.map((t) => t.path), [path.join(w.NA, 'scratch', 'keep.md')]);
+    assert.deepEqual(extractWriteTargets('eval true; x=~+/scratch/keep.md; cp base/report.md $x', w.NA).targets, []);
+  } finally { process.env.HOME = savedHome; w.rm(); }
 });

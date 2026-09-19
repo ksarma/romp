@@ -3882,6 +3882,26 @@ document stands on its own, each with the reasoning it was given.
     `command`, bash and zsh under `time`; the verdict stays unknown) where it said the shell does not move; the prefix
     form's own text; and the test file's real-zsh evidence legs run through one probe that reports a missing zsh with a
     `NOT RUN` line per leg, never a silent pass.
+    The seventh pass's attacker (2026-09-19; on 93bb93b68, at the rule's own boundary) found two misses, 0 structural, each
+    a construct the lexer already produced that the implementation realised at one level only, and the close found a
+    sibling beside its readonly rows. F2, a `{ }` group nested in a piped or backgrounded group (13 live rows in bash, zsh
+    and dash, a cd face included): one frame opened for the first `{` and popped on the first `}`, so the piped outer brace
+    was never a subshell boundary; the group frames are nesting-aware (`openGroup`, `closeGroups`: a group closing in plain
+    sequence hands its names to the enclosing group, a piped or backgrounded close taints every name and restores the
+    directory, and a trailing `}` closes after its segment, `pendingClose`), and a declaration inside a group notes its
+    name (`noteGroupName`: `{ declare x=..; } | cat` kept x readable at one level). F1, zsh's precommand modifiers
+    `noglob`, `nocorrect` and `-` (`ZSH_MODIFIERS`; 14 live rows in zsh alone, bash and dash failing on the word and
+    writing nothing) were read as commands named so and hid the writer behind them; they are wrappers of the shape of
+    `command` and `builtin`, with an empty option table and a `WRAPPED_CD_WHY` text for a cd behind one, and the wrapper
+    list on hooks/README.md, docs/install.md and the vendored SKILL.md names them. RO: a name made readonly then written by
+    a `declare`, `typeset`, `export` or `unset`, which bash refuses and continues past with the readonly value (dash too
+    where the word is no command of its) while the guard adopted the later one (`readonly x=docs/report.md; declare
+    x=scratch/keep.md; cp base/report.md $x` wrote the tracked file in both); a readonly name keeps its value and every
+    later write is skipped (`readonlyNames`), the one write outside the plain form that resolves at no cost, and a `+r`,
+    which zsh honours, is a flag outside the inert set and taints as before. The one twin that moves: `command noglob cp`,
+    allowed before and refused by name now, a spelling no shell runs. The mutation lens's unpinned claims are pinned row
+    by row in the test file, and its shadowed poison (a declaration's option word the shell fills in, which M1's
+    per-segment detector reads first on the same word) is removed.
     Without ROMP_SID it exits 0 before reading stdin (decision 24). Cost: about 60 ms
     per Bash call when no target needs the link closure (a read, a literal target outside any project, an explicit
     hit on the project's tracked list, an empty list); a write to a file inside a tracking project that the list

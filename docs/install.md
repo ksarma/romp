@@ -171,7 +171,9 @@ the clone updates it:
   nameref, `select HOME in`, a glued `printf -vHOME`, `unset HOME`, a mention in an argument) makes
   `~` and `$HOME` unreadable and a bare `cd` or `cd ~` unknown; every wrapper it peels (`env`,
   `sudo`, `nice`, `nohup`, `time`, `timeout`, `ionice`, `stdbuf`, `setsid`, `flock`, `taskset`,
-  `chrt`, `numactl`, `command`, `builtin`, `exec`) is parsed in full against its own option table or
+  `chrt`, `numactl`, `command`, `builtin`, `exec`, and since the seventh pass zsh's precommand
+  modifiers `noglob`, `nocorrect` and `-`, which hid the writer behind them) is parsed in full
+  against its own option table or
   the command is refused naming the option (an unknown, abbreviated or non-literal one: spell the
   long form the guard knows, or drop the wrapper), a glued `env -Cdocs` is a chdir, a nested `env -C a
   env -C b` enters a then b under a, `env -S` and sudo's `-e`, `-i`, `-s`, `-R` and `-h` are refused

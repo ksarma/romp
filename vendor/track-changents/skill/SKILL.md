@@ -99,7 +99,9 @@ HOME outside an expansion (`declare -n r=HOME`, `select HOME in`, `printf -vHOME
 `unset HOME`, the word in an argument) makes `~` and `$HOME` unreadable and a bare
 `cd` or `cd ~` unknown; a wrapper (`env`, `sudo`, `nice`, `nohup`, `time`,
 `timeout`, `ionice`, `stdbuf`, `setsid`, `flock`, `taskset`, `chrt`, `numactl`,
-`command`, `builtin`, `exec`) carrying an option it does not parse in full (an
+`command`, `builtin`, `exec`, and since the seventh pass zsh's precommand modifiers
+`noglob`, `nocorrect` and `-`, which hid the writer behind them) carrying an option it
+does not parse in full (an
 unknown, abbreviated or non-literal one, `env --chd=docs`) is refused naming the
 option (spell the long form, or drop the wrapper), a glued `env -Cdocs` is a chdir,
 a nested `env -C a env -C b` enters a then b, `env -S` is refused outright and so

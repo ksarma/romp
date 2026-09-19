@@ -357,11 +357,33 @@
 // `command`, bash and zsh under `time`; the verdict stays unknown), where it said the shell does not move; (3) the prefix form's
 // own text, above; (4) the test file runs its real-zsh evidence legs through one probe that reports a missing zsh with a
 // `NOT RUN` line per leg, never a silent pass (CI's shell job has no zsh).
+// THE SEVENTH PASS'S ATTACKER (2026-09-19; on 93bb93b68, at the rule's own boundary): two misses, 0 structural, each a construct
+// the lexer already produced that the implementation realised at one level only, and a sibling found while closing them.
+// F2, a `{ }` group NESTED in a piped or backgrounded group (13 live rows in bash, zsh and dash, a cd face included): one
+// frame opened for the first `{` and popped on the FIRST `}`, so the piped OUTER brace was never a subshell boundary and
+// `x=docs/report.md; { { x=scratch/keep.md; }; } | cat; cp base/report.md $x` resolved x to the inner value; the group
+// frames are nesting-aware (openGroup, closeGroups: a group closing in plain sequence hands its names to the enclosing
+// group, a piped or backgrounded close taints every name and restores the directory, and zsh's trailing `}` of `{ cmd }`
+// closes after the segment, pendingClose), and a declaration inside a group notes its name too (noteGroupName: `{ declare
+// x=..; } | cat` and `{ export x=..; } | cat` kept x readable at ONE level, found here). F1, zsh's precommand modifiers
+// `noglob`, `nocorrect` and `-` (ZSH_MODIFIERS; 14 live rows in zsh alone, `noglob cd` and `builtin noglob cp` included;
+// bash and dash fail on the word with 127 and write nothing): they were read as commands named so and the writer behind them
+// was never seen; they are wrappers of the shape of `command` and `builtin` (a reserved word, no option, one command after
+// it), with an empty WRAPPER_OPT table and a WRAPPED_CD_WHY text for a cd behind one. RO, found beside the attacker's readonly
+// rows: `readonly x=docs/report.md; declare x=scratch/keep.md; cp base/report.md $x` (and `typeset`, `export`, `unset`) wrote
+// the tracked file in bash and dash, which keep the readonly value and continue past the error, while the guard adopted the
+// later value; a readonly name keeps its value and every later write is skipped (readonlyNames), the one write outside the
+// plain form that resolves at no cost (the attacker's plain-reassign rows abort every shell and were safe by shell
+// semantics; they are refused by the readonly value now). The one twin that moves: `command noglob cp ...`, allowed before
+// and refused by name now, a spelling no shell runs (`command` looks `noglob` up as an external program), priced in fork PR
+// #780's body.
 //
 // THE LISTS THAT REMAIN, each with the side its GAP falls on (a missing entry causes a false refusal, or a write):
 //   PREFIXES (the wrapper set): gap = a WRITE (an unlisted wrapper is read as its own command, an unmodelled writer by
 //     the contract), so the set is stated on the four surfaces and the unlisted wrappers the passes found (unshare,
-//     nsenter, script, setarch, setpriv) are on the contract's list.
+//     nsenter, script, setarch, setpriv) are on the contract's list; zsh's precommand modifiers (ZSH_MODIFIERS: noglob,
+//     nocorrect, `-`) are in the set since the seventh pass's attacker, the complete list zshmisc(1) gives beside `builtin`,
+//     `command` and `exec`, which were already in it.
 //   WRAPPER_OPT (each wrapper's option table): gap = a false refusal (an option not in the table refuses).
 //   COPY_OPT (cp/mv/install/ln): gap = a false refusal (an option not in the table refuses, on every path).
 //   INERT_SET_LETTERS, INERT_SET_OPTIONS, INERT_SHOPT: gap = a false refusal (an option not listed makes the directory
@@ -467,7 +489,15 @@ const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh']);
 // (a wrapper not listed, `unshare`, `nsenter`, `script`, `setarch`, `setpriv`, is read as its own command, an
 // unmodelled writer by the contract), so the set is stated on the four surfaces; each wrapper listed here is then
 // parsed in full against WRAPPER_OPT or refused (the walk-around lens third pass, rule (b), 2026-09-19).
-const PREFIXES = new Set(['sudo', 'command', 'builtin', 'exec', 'nice', 'nohup', 'time', 'env', 'timeout', 'ionice', 'stdbuf', 'setsid', 'flock', 'taskset', 'chrt', 'numactl']);
+// zsh's precommand modifiers `noglob`, `nocorrect` and `-` (ZSH_MODIFIERS; the seventh pass's attacker, F1, 2026-09-19) are
+// wrappers of the same shape as `command` and `builtin`: reserved words that take no option and run the command after them
+// (with globbing off, spelling correction off, or a `-` before argv[0]). zsh runs `noglob cp base/report.md docs/report.md`
+// and `- cp ...`; bash and dash have no such word and fail with 127 before the cp. They were read as commands named `noglob`,
+// so the writer behind them was never seen and zsh wrote the tracked file (14 rows, `noglob cd` included); a modifier after
+// an external wrapper or `command` is an external program that is not there (measured: `nice noglob cp`, `command noglob
+// cp` write nothing), and it is peeled all the same, the cost a refusal of a spelling no shell runs.
+const ZSH_MODIFIERS = new Set(['noglob', 'nocorrect', '-']);
+const PREFIXES = new Set(['sudo', 'command', 'builtin', 'exec', 'nice', 'nohup', 'time', 'env', 'timeout', 'ionice', 'stdbuf', 'setsid', 'flock', 'taskset', 'chrt', 'numactl', ...ZSH_MODIFIERS]);
 const RESERVED = new Set(['do', 'then', 'else', 'elif', 'if', 'while', 'until', '!', '{', '}']);
 // The shells verified (round 3, 2026-09-19, by execution) to read `$'...'` as ANSI-C quoting: bash 5.2 and zsh 5.9,
 // the shells the Bash tool runs, so the top-level command (shell null) reads it so too. dash, `/bin/sh` here, reads a
@@ -1284,6 +1314,10 @@ const WRAPPER_OPT = {
   command: { argShort: '', flagShort: 'pvV', argLong: [], flagLong: [] },
   builtin: { argShort: '', flagShort: '', argLong: [], flagLong: [] },
   exec: { argShort: 'a', flagShort: 'cl', argLong: [], flagLong: [] },
+  // zsh's precommand modifiers take no option (zshmisc(1), Precommand Modifiers): an option after one refuses like any other
+  noglob: { argShort: '', flagShort: '', argLong: [], flagLong: [] },
+  nocorrect: { argShort: '', flagShort: '', argLong: [], flagLong: [] },
+  '-': { argShort: '', flagShort: '', argLong: [], flagLong: [] },
 };
 
 // Words of a segment after the command's prefixes (sudo and its options, env with its options and
@@ -2225,11 +2259,19 @@ function unreadableExpandedNames(segments, homeWrites = new Set()) {
 // bash's POSIX mode keep for a special builtin), the bare identifier as a word or a token of a word that is not an option
 // (`read x`, `printf -v x`, `unset x`, `mapfile x`, zsh's `print -v x` and `set -A x`, the target of a nameref), an
 // assignment inside a `${x=..}`, `${x:=..}` or zsh `${x::=..}` expansion, the name in an arithmetic body, a `for` or
-// `select` variable, a `{ }` group whose closing brace is piped or backgrounded (a subshell, so its assignments and cds
-// did not happen here), and, for every name at once, an eval, a source, xargs, a call of a function the command defines
+// `select` variable, a `{ }` group whose closing brace is piped or backgrounded, at any nesting (a subshell, so its
+// assignments and cds, the groups inside it included, did not happen here; the seventh pass's attacker, F2), and, for every
+// name at once, an eval, a source, xargs, a call of a function the command defines
 // (`f() {`, `function f {` and `function f () {` alike, called by any spelling, a wrapper's name included) or a name
 // operand the shell fills in (M1's construct, `export $h=...`: the resolved name is tainted when h is readable, every name
-// when it is not). The predicate is one function, recordAssignments below, and is keyed on the construct, never on a
+// when it is not). ONE write outside the plain form resolves, at no cost: a name made readonly in the command (`readonly
+// x=..`, `readonly x`, `declare -r`, `typeset -r`) keeps its readonly value and every later write to it is skipped
+// (readonlyNames), since no shell performs one (bash, zsh and dash stop the command list on a plain assignment; bash keeps
+// the value and continues past a `declare`, `typeset`, `export` or `unset` of it, and so does dash where the word is no
+// command of its), so the readonly value is the shell's wherever the command reaches a later word (the seventh pass's
+// attacker's RO rows and a sibling found with them: `readonly x=docs/report.md; declare x=scratch/keep.md; cp base/report.md
+// $x` wrote the tracked file in bash and dash while the guard adopted the later value). The predicate is one function,
+// recordAssignments below, and is keyed on the construct, never on a
 // list of commands, so a spelling nobody listed is caught by the shape it must take: a name the command touches
 // anywhere but in the one readable form is a name it may write. The cost, measured against the corpus and the dollar
 // matrix and stated in fork PR #780's body: a `~/` value resolves through HOME at no cost; `declare -i x=5` (and `-a`,
@@ -2314,6 +2356,10 @@ const WRAPPED_CD_WHY = {
   builtin: 'runs the shell\'s own cd in bash and zsh, which moves the shell, and no command in dash, which has no `builtin` and stays',
   command: 'runs the shell\'s own cd in bash and dash, which moves the shell, and an external cd in zsh, which moves nothing',
   time: 'is a reserved word in bash and zsh, so the cd runs in this shell and moves it, and an external command in dash, where the cd moves nothing',
+  // zsh's precommand modifiers (the seventh pass's attacker, F1): `noglob cd docs` moves zsh, bash and dash fail on the word
+  noglob: 'is a zsh precommand modifier, so in zsh the shell\'s own cd runs and moves it, and no command in bash and dash, which stay',
+  nocorrect: 'is a zsh precommand modifier, so in zsh the shell\'s own cd runs and moves it, and no command in bash and dash, which stay',
+  '-': 'is a zsh precommand modifier, so in zsh the shell\'s own cd runs and moves it, and no command in bash and dash, which stay',
 };
 // Whether every expansion left in `text` is the process id (for the numeric flag of a partly resolved word).
 function numericRunsOnly(text, marks) {
@@ -2504,13 +2550,16 @@ function extract(command, ctx) {
     for (const m of v.matchAll(/:~/g)) if (marksV[m.index + 1] === 'u') return { value: null, why: 'a value with a tilde after a colon, which bash, zsh and dash expand' };
     return { value: v, why: null };
   };
+  // the innermost open `{ }` group notes a name written inside it (a plain word or a declaration's operand), so its closing
+  // brace, or an enclosing group's, can taint the name when the group turns out to have run in a subshell (F2: `{ declare
+  // x=scratch/keep.md; } | cat` kept x readable because the declaration branch noted nothing)
+  const noteGroupName = (name) => { const g = frames.length && frames[frames.length - 1].kind === 'group' ? frames[frames.length - 1] : null; if (g) g.names.add(name); };
   // the readable form: a word of a segment holding assignment words alone (commandOf gave null), resolved by the caller
   const recordPlainWord = (w, seg, idx, seq) => {
     const m = w.raw.match(/^([A-Za-z_][A-Za-z0-9_]*)(\+?=)/);
     if (!m) return;   // a reserved word (`{`, `}`, `then`, `!`)
     const name = m[1];
-    const group = frames.length && frames[frames.length - 1].kind === 'group' ? frames[frames.length - 1] : null;
-    if (group) group.names.add(name);   // the closing brace of a piped or backgrounded group taints them (a subshell)
+    noteGroupName(name);   // the closing brace of a piped or backgrounded group taints them (a subshell), at any nesting (F2)
     if (name === 'HOME') {   // read as the pre-pass decided (readableHomeWrites); any other mention made HOME unreadable for the whole command
       if (homeAssigned || !homeWrites.has(idx) || !seq.ok) return;
       const { value } = plainValue(w, m[0].length - 1);
@@ -2518,6 +2567,7 @@ function extract(command, ctx) {
       return;
     }
     if (EXPANDED_NAMES.includes(name)) return;   // PWD and OLDPWD: the mention made them unreadable for the whole command (rule (a)); the directory model is not overridden
+    if (readonlyNames.has(name)) return;   // a readonly name keeps its value: the shells refuse the write (readonlyNames)
     if (m[2] === '+=') { taint(name, wroteThrough(name, '`+=`, an append', w.raw)); return; }
     if (!seq.ok) { taint(name, wroteThrough(name, seq.why, w.raw)); return; }
     const { value, why } = plainValue(w, m[0].length - 1);
@@ -2529,6 +2579,17 @@ function extract(command, ctx) {
   const rawHeadOf = (words) => { const k = rawHeadIndex(words); return k < 0 ? null : words[k].text; };
   // the names a nameref points at: `unset` does not free them (bash writes x through r after `declare -n r=x; unset x`, measured)
   const refTargets = ctx.refTargets || new Set();
+  // The names made readonly in this command (`readonly x=..`, `readonly x`, `declare -r`, `typeset -r`; the seventh pass's
+  // attacker, RO, and a sibling found with it): no shell performs a later write to one, so the name KEEPS its readonly value
+  // and every later write is skipped (the one case where a write the rule does not read resolves, at no cost: the shell's
+  // value is the readonly one wherever the command reaches a later word). Measured 2026-09-19: on a plain `x=..` bash, zsh
+  // and dash stop the command list (nothing after it runs); on a `declare x=..`, `typeset x=..`, `export x=..` or `unset x`
+  // bash prints the error, KEEPS the readonly value and continues, and so does dash where the word is no command of its
+  // (`declare`, `typeset`), so `readonly x=docs/report.md; declare x=scratch/keep.md; cp base/report.md $x` wrote the tracked
+  // file in both while the guard, which adopted the later value, read scratch/keep.md and allowed (from a cwd in no project
+  // too, where a taint would have left the word the ruled residual). A `+r` (zsh can drop the attribute) is a flag outside the
+  // inert set and taints the name as before.
+  const readonlyNames = ctx.readonlyNames || new Set();
   // A word's writes by shape, on the word as resolved (`w`, so `export $h=v` with h readable taints the name h holds) and as
   // spelled (`pre`, so a value's text is not read as a mention): (i) an lvalue shape at any position, the head included
   // (`x[0]=v` is a command to the lexer), with a name the shell fills in before the `=` poisoning every name; (ii) the bare
@@ -2583,10 +2644,12 @@ function extract(command, ctx) {
     const handled = new Set();
     if (cmd && (VAR_ASSIGNERS.has(cmd.name) || cmd.name === 'local')) {
       const flags = cmd.args.filter((w) => /^[-+]/.test(w.text) && w.text.length > 1);
-      const opaqueFlag = flags.find((w) => !w.literal);
-      if (opaqueFlag) poison(`the command's \`${cmd.name}\` carries an option the shell fills in (${opaqueFlag.raw}), which may change what it does to any of its names`);
+      // an option word the shell fills in (`declare $f x=y`, `declare -$f x=y`) poisons every name through M1's per-segment
+      // detector (2b) above, which reads every non-literal option word of a declaration; a second poison here was shadowed
+      // by it on every row and is gone (the seventh pass's close; the sixth pass removed an unreachable poison the same way)
       const bad = flags.filter((w) => w.text !== '--' && (w.text[0] === '+' || w.text.startsWith('--') || ![...w.text.slice(1)].every((c) => INERT_DECLARATION_FLAGS.has(c))));
       const nameref = flags.some((w) => w.literal && /^-[A-Za-z]*n/.test(w.text));
+      const frozen = cmd.name === 'readonly' || flags.some((w) => w.literal && /^-[A-Za-z]*r/.test(w.text));   // the names become readonly (readonlyNames)
       // bash and dash reject `local` outside a function and zsh rejects `local -n` (measured 2026-09-19), so a top-level
       // `local -n r=x` writes nothing through r; r itself is tainted below, as every `local` name is (zsh performs a plain
       // `local x=v` at the top level, bash and dash do not)
@@ -2604,8 +2667,15 @@ function extract(command, ctx) {
           else poison(`the command's \`${cmd.name} -n\` makes \`${name}\` a reference to a name the shell fills in (${w.raw}), which may be any name`);
         }
         if (EXPANDED_NAMES.includes(name)) continue;   // HOME, PWD, OLDPWD: unreadable for the whole command by the mention (rule (a))
+        // a flag outside the inert set taints the name whether or not it is readonly (zsh drops the attribute with `typeset +r x`
+        // and then performs the next write, measured), and so does a nameref declaration
         if (bad.length) { taint(name, wroteThrough(name, `a \`${cmd.name}\` flag that can change the value or what the name is (${bad.map((f) => f.text).join(' ')})`, w.raw)); continue; }
         if (nameref) { taint(name, wroteThrough(name, `a nameref (\`${cmd.name} -n\`)`, w.raw)); continue; }
+        if (readonlyNames.has(name)) continue;   // a readonly name keeps its value: the shells refuse the write (readonlyNames)
+        if (frozen) {
+          readonlyNames.add(name);   // from here every later write to it is one the shells refuse
+          if (m[2] === '' && !(vars.has(name) && vars.get(name) === null)) continue;   // `readonly x` alone: the value it has stays the one it has
+        }
         if (cmd.name === 'local') { taint(name, wroteThrough(name, 'a `local`, which zsh performs at the top level and bash and dash reject', w.raw)); continue; }
         if (m[2] === '[') { taint(name, wroteThrough(name, 'a subscript', w.raw)); continue; }
         if (m[2] === '+=') { taint(name, wroteThrough(name, '`+=`, an append', w.raw)); continue; }
@@ -2615,6 +2685,7 @@ function extract(command, ctx) {
         if (value == null) { taint(name, wroteThrough(name, why, w.raw)); continue; }
         if (vars.has(name) && vars.get(name) === null) continue;
         vars.set(name, value);
+        noteGroupName(name);   // a declaration inside a `{ }` group that turns out piped is a subshell's write too (F2)
       }
     }
     // (3b) a plain `unset NAME` (or `unset -v NAME`) in plain sequence RESETS the name: bash, zsh and dash drop its value and
@@ -2628,6 +2699,7 @@ function extract(command, ctx) {
         if (/^-/.test(w.text) && w.text.length > 1) { handled.add(w); continue; }
         if (!w.literal || !IDENTIFIER.test(w.text) || EXPANDED_NAMES.includes(w.text)) continue;   // an assembled or subscripted name: taintWord reads it
         handled.add(w);
+        if (readonlyNames.has(w.text)) continue;   // a readonly name is not unset: bash keeps the value and continues, zsh and dash stop
         if (plainUnset && !refTargets.has(w.text)) { vars.delete(w.text); unreadableWhy.delete(w.text); }
         else taint(w.text, wroteThrough(w.text, `an \`unset\`${refTargets.has(w.text) ? ' of a name a nameref points at' : ` with ${flags.map((f) => f.text).join(' ')}`}`, w.raw));
       }
@@ -2859,7 +2931,7 @@ function extract(command, ctx) {
     const homeValue = vars.has('HOME') && vars.get('HOME') != null ? [['HOME', vars.get('HOME')]] : [];
     const sub = extract(text, {
       dir, unknownDir, unknownWhy, shell: sh, depth: depth + 1, homeAssigned: homeUnreadableNow(), homeWhy: homeWhyNow(), unreadableNames, links, cdFunctions, mutated, keywordMode,
-      vars: fresh ? new Map(homeValue) : new Map(vars), unreadableWhy: fresh ? new Map() : new Map(unreadableWhy), refTargets: fresh ? new Set() : new Set(refTargets), oldDir, varsPoisoned: fresh ? false : varsPoisoned, poisonWhy: fresh ? null : poisonWhy, definedFunctions,
+      vars: fresh ? new Map(homeValue) : new Map(vars), unreadableWhy: fresh ? new Map() : new Map(unreadableWhy), refTargets: fresh ? new Set() : new Set(refTargets), readonlyNames: fresh ? new Set() : new Set(readonlyNames), oldDir, varsPoisoned: fresh ? false : varsPoisoned, poisonWhy: fresh ? null : poisonWhy, definedFunctions,
     });
     targets.push(...sub.targets);
     unresolved.push(...sub.unresolved);
@@ -2886,6 +2958,24 @@ function extract(command, ctx) {
     }
   };
   const frames = [];
+  // The `{ }` group frames (C5b, nesting-aware since the seventh pass's attacker, F2): a group frame holds the names assigned
+  // inside it and the directory state at its `{`. A group that closes in plain sequence hands its names to the enclosing
+  // group (whose own brace may be piped); one whose closing brace is piped or backgrounded ran in a subshell, so its names are
+  // tainted and its directory restored. A trailing `}` (zsh's `{ cmd }`) closes after the segment is read: pendingClose.
+  let pendingClose = null;
+  const openGroup = () => frames.push({ kind: 'group', names: new Set(), dir, unknownDir, unknownWhy, oldDir });
+  const closeGroups = (n, op) => {
+    for (let i = 0; i < n && frames.length && frames[frames.length - 1].kind === 'group'; i++) {
+      const g = frames.pop();
+      if (i === n - 1 && (op === '|' || op === '&')) {
+        const how = op === '|' ? 'a `{ }` group that is piped, which the shells run in a subshell' : 'a `{ }` group that is backgrounded, which the shells run in a subshell';
+        for (const nm of g.names) taint(nm, wroteThrough(nm, how, '{ ... }'));
+        ({ dir, unknownDir, unknownWhy, oldDir } = g);
+      } else if (frames.length && frames[frames.length - 1].kind === 'group') {
+        for (const nm of g.names) frames[frames.length - 1].names.add(nm);
+      }
+    }
+  };
   const CLOSERS = { fi: ['if'], done: ['while', 'until', 'for'], esac: ['case'] };
   const isScope = (f) => f.kind === 'subshell' || f.kind === 'function';
   const restore = (f) => { ({ dir, unknownDir, unknownWhy } = f); };
@@ -2945,19 +3035,28 @@ function extract(command, ctx) {
       if (!seg.words.length) continue;   // the `{` opens the next segment, which `braces` counts
     }
     braces(seg);
-    // A `{ }` group at the top level (C5b): a frame the readability rule looks through (a plain group runs in this shell) until
-    // its closing brace is piped or backgrounded, when the group ran in a subshell: the names it assigned are tainted and the
-    // directory it moved to restored (`{ cd docs; } | cat; cp base/report.md docs/report.md` was judged from docs/ while bash
-    // wrote the tracked file from the cwd, found with the sixth pass's fix).
-    if (frames.every((f) => f.kind === 'group') && seg.words.length && seg.words[0].text === '{' && seg.words[0].marks && seg.words[0].marks[0] === 'u') {
-      frames.push({ kind: 'group', names: new Set(), dir, unknownDir, unknownWhy, oldDir });
-    } else if (frames.length && frames[frames.length - 1].kind === 'group' && seg.words.length && seg.words[0].text === '}' && seg.words[0].marks && seg.words[0].marks[0] === 'u') {
-      const g = frames.pop();
-      if (seg.op === '|' || seg.op === '&') {
-        const how = seg.op === '|' ? 'a `{ }` group that is piped, which the shells run in a subshell' : 'a `{ }` group that is backgrounded, which the shells run in a subshell';
-        for (const n of g.names) taint(n, wroteThrough(n, how, '{ ... }'));
-        ({ dir, unknownDir, unknownWhy, oldDir } = g);
-      }
+    // A `{ }` group at the top level (C5b), at ANY nesting (the seventh pass's attacker, F2, 2026-09-19): a frame the readability
+    // rule looks through (a plain group runs in this shell) until its closing brace is piped or backgrounded, when the group ran
+    // in a subshell: every name assigned inside it, the groups nested in it included, is tainted and the directory it moved to
+    // restored (`{ cd docs; } | cat; cp base/report.md docs/report.md` was judged from docs/ while bash wrote the tracked file
+    // from the cwd, found with the sixth pass's fix). Before this pass one frame opened for the first `{` and popped on the
+    // FIRST `}`, so in `x=docs/report.md; { { x=scratch/keep.md; }; } | cat; cp base/report.md $x` the piped OUTER brace was
+    // never seen as a subshell boundary, x resolved to the inner value and bash, zsh and dash wrote the tracked file (13 rows,
+    // a cd face and a one-level declaration included). A segment may carry several braces (`{ {`, and `} }`, which all three shells accept without a `;`
+    // between), and zsh accepts `{ cmd }` with the brace after the command (bash and dash need the `;`): the leading braces are
+    // settled here, a trailing `}` after the segment's own words are read (pendingClose), and the segment's operator settles the
+    // LAST brace it closes. openGroups / closeGroups below.
+    if (pendingClose) { closeGroups(pendingClose.n, pendingClose.op); pendingClose = null; }
+    if (frames.every((f) => f.kind === 'group') && seg.words.length) {
+      const brace = (w) => ((w.text === '{' || w.text === '}') && w.marks && w.marks[0] === 'u' ? w.text : null);
+      let k = 0;
+      let closes = 0;
+      while (k < seg.words.length && brace(seg.words[k]) === '}') { closes++; k++; }
+      if (closes) closeGroups(closes, k === seg.words.length ? seg.op : '');
+      while (k < seg.words.length && brace(seg.words[k]) === '{') { openGroup(); k++; }
+      let trailing = 0;
+      for (let j = seg.words.length - 1; j >= k && brace(seg.words[j]) === '}'; j--) trailing++;
+      if (trailing) pendingClose = { n: trailing, op: seg.op };
     }
     // B2: the expansions the guard can read are resolved before the segment's words and targets are judged
     for (const r of seg.redirects) r.target = resolveWord(r.target);

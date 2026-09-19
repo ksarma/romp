@@ -55,11 +55,13 @@
 # unreadable; HOME is read after a plain top-level HOME=<path> of its own, the prefix form excluded; and the refusal for
 # a cd under builtin, command or time says which shells move. The section gains one sentence before the contract
 # paragraph saying so.
+# The seventh pass's attacker (2026-09-19) adds zsh's precommand modifiers (noglob, nocorrect, `-`) to the wrapper list the
+# third-pass sentence names, since they hid the writer behind them; nothing else in the skill moves.
 diff --git a/skill/SKILL.md b/skill/SKILL.md
-index f7d8bc9..687012e 100644
+index f7d8bc9..7fd2338 100644
 --- a/skill/SKILL.md
 +++ b/skill/SKILL.md
-@@ -59,6 +59,171 @@ heredoc included), no `sed -i` or `perl -i`, no python `open(..., 'w')` or node
+@@ -59,6 +59,173 @@ heredoc included), no `sed -i` or `perl -i`, no python `open(..., 'w')` or node
  the write: its status is 0 when tracking is ON, so `track-config ... && cp ...` runs
  the copy on exactly the file it must not touch.
  
@@ -103,7 +105,9 @@ index f7d8bc9..687012e 100644
 +`unset HOME`, the word in an argument) makes `~` and `$HOME` unreadable and a bare
 +`cd` or `cd ~` unknown; a wrapper (`env`, `sudo`, `nice`, `nohup`, `time`,
 +`timeout`, `ionice`, `stdbuf`, `setsid`, `flock`, `taskset`, `chrt`, `numactl`,
-+`command`, `builtin`, `exec`) carrying an option it does not parse in full (an
++`command`, `builtin`, `exec`, and since the seventh pass zsh's precommand modifiers
++`noglob`, `nocorrect` and `-`, which hid the writer behind them) carrying an option it
++does not parse in full (an
 +unknown, abbreviated or non-literal one, `env --chd=docs`) is refused naming the
 +option (spell the long form, or drop the wrapper), a glued `env -Cdocs` is a chdir,
 +a nested `env -C a env -C b` enters a then b, `env -S` is refused outright and so
