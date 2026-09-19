@@ -438,12 +438,13 @@ SHARED_HANDOFF_KEYS = ("absent", "fallback", "corrupt", "unreadable_journal")
 # bound (ruling 1 of the reviewer's rulings on the pre-emption). The bound rests on three premises about the body, each pinned
 # against the door's own source by the roster pin in TheCountersOneSite and by nothing here: the keys the door bumps are the two
 # rosters exactly; every second-key bump sits below every call-key bump; and a call bumps AT MOST ONE second key, since the
-# innermost statement list holding each second-key bump holds no other and ends in a return or a raise (review round 4, tests-2,
-# regression-2 and extra4-1: the pin read the first two, and the third was held by reading the body). The third is pinned by
-# execution as well: a store whose bytes do not parse, read once through the door, bumps miss once, corrupt once and hands off
-# once (TheDoorBumpsAtMostOneSecondKeyPerCall). Two of them, corrupt
-# and unreadable_journal, are hand-off
-# keys that are NOT call keys, so a bump of either beside a goal_io loads bump with no call through the door balanced the shared
+# innermost statement list holding each second-key bump holds no other and ends in a return or a raise, no bump sits under a
+# finally clause, and no second-key list ending in a raise sits under a try statement (review round 4, tests-2, regression-2 and
+# extra4-1: the pin read the first two, and the third was held by reading the body; a verifier of the round-4 fixes: a bump in a
+# finally clause left the list predicate green). The third is pinned by execution as well: a store whose bytes do not parse, read
+# once through the door, bumps miss once, corrupt once and hands off once (TheDoorBumpsAtMostOneSecondKeyPerCall). Two of them,
+# corrupt and unreadable_journal, are hand-off keys that are NOT call keys, so a bump of either beside a goal_io loads bump with no
+# call through the door balanced the shared
 # reconciliation (no call key moved) and the writer one (one hand-off per loads) and red nothing in _pass; the bound is where it
 # reds on a pass with no fill, and the cases' writerLoads elements where one such pair rides beside each fill (the bound admits
 # second == fills). The other two, dup and refuse, are neither call keys nor hand-off keys, so a bump of either moves no
@@ -1144,7 +1145,8 @@ class _WalkHarness(unittest.TestCase):
         only after its miss or compare_miss bump and bumps at most one, and per pass
         unreadable_journal + corrupt + dup + refuse <= miss + compare_miss. The three premises of that reading, the rosters, the
         order and the at-most-one, are pinned against the door's AST by the roster pin in TheCountersOneSite (the third as the
-        innermost statement list holding each second-key bump holding exactly one and ending in a return or a raise), the at-most-one
+        innermost statement list holding each second-key bump holding exactly one and ending in a return or a raise, with no bump
+        under a finally clause and no such list ending in a raise under a try statement), the at-most-one
         by execution as well in TheDoorBumpsAtMostOneSecondKeyPerCall, and the fill keys the right-hand side sums are derived there
         from the same AST and asserted equal to SHARED_FILL_KEYS, which this method sums (review round 4, tests-2, regression-2 and
         extra4-1: the two named by hand here, and the at-most-one held by nothing). The bound is what refuses the forged pair: corrupt and
@@ -1678,9 +1680,17 @@ class TheCountersOneSite(unittest.TestCase):
         bump in the body (the fill road follows the miss or compare_miss bump). The at-most-one: for every second-key bump, the
         innermost statement list holding it (a body, an orelse, a finalbody or a handler's body; a Try's handlers are ExceptHandler
         nodes and not statements, so no region is read twice) holds exactly one second-key bump over the full subtrees of its
-        statements (a bump nested under an If in a later statement counts) and ends in a Return or a Raise, so no path through the
-        door bumps two; the clean door has a cleanup call between a bump and its return, so the predicate is the list's last
-        statement and not the bump's next. From the same lists the fill road's entry keys are derived: the call keys whose list does
+        statements (a bump nested under an If in a later statement counts) and ends in a Return or a Raise; the clean door has a
+        cleanup call between a bump and its return, so the predicate is the list's last statement and not the bump's next. Two
+        constructs let a path leave such a list and bump again with every list reading clean, and each is refused by name: no bump
+        of either roster sits anywhere under a finally clause, since a finalbody runs after its try's body or a handler returned (a
+        verifier of the round-4 fixes planted a second-key bump in a finally beside the corrupt handler, which the execution case
+        alone caught, and beside the unreadable_journal handler, a road no case drives, which nothing caught); and a second-key
+        list that ends in a Raise sits under no try statement of the door, since a handler above could catch the raise and go on
+        to bump (the clean door's second-key lists all end in a Return, and its one finally closes a descriptor). With those two, no
+        path the door's own body shows bumps two second keys. What the clauses do not read: the body of a callee of the door
+        (_shared_forget, _finish_load, _guard_nodes), where a bump would be outside every AST clause here and inside the execution
+        case on the corrupt road alone. From the same lists the fill road's entry keys are derived: the call keys whose list does
         not end in a Return or a Raise fall through into the fill, and they must be SHARED_FILL_KEYS, which _pass sums as the bound's
         right-hand side, so a call key that starts falling through, or one of these that stops, reds here rather than leaving _pass
         summing the wrong keys. Review round 4, tests-2, regression-2 and extra4-1: the pin read the rosters and the order, the
@@ -1746,6 +1756,24 @@ class TheCountersOneSite(unittest.TestCase):
                          "not end in a Return or a Raise), are SHARED_FILL_KEYS, the keys _pass sums as the bound's right-hand side: derived "
                          "%r against %r (a call key that starts falling through, or one of these that stops, changes the bound's derivation "
                          "and the tuple with it)" % (sorted(fill_entries), sorted(SHARED_FILL_KEYS)))
+        # the two constructs that leave a clean list and bump again (a verifier of the round-4 fixes): a finalbody runs after its try's
+        # body or a handler returned, so a bump under one adds to theirs on the same path; a Raise ending a second-key list can be
+        # caught by a handler above, which goes on. A try statement is the one node class with a finalbody field, so the try regions
+        # are the subtrees of those nodes
+        tries = [node for node in _walk(tree) if hasattr(node, "finalbody")]
+        in_finally = sorted((x.lineno, bump_key(x)) for node in tries for st in node.finalbody for x in _walk(st) if bump_key(x) is not None)
+        self.assertEqual(in_finally, [], "no bump of a call key or a second key sits under a finally clause of the door: a finalbody runs after its "
+                                         "try's body or a handler returned, so a bump there adds to the one the returning list made on the same "
+                                         "path with every statement list reading clean on its own (two second keys on one call, or a second call "
+                                         "key, with the at-most-one clause green); the clean door's one finally closes a descriptor and bumps "
+                                         "nothing; bumps under a finalbody by line: %r" % in_finally)
+        under_try = {id(x) for node in tries for x in _walk(node)}
+        raising = sorted((blk[-1].lineno, [k for k in (stmt_key(st) for st in blk) if k in SHARED_SECOND_KEYS]) for blk in blocks
+                         if isinstance(blk[-1], ast.Raise) and any(stmt_key(st) in SHARED_SECOND_KEYS for st in blk) and id(blk[-1]) in under_try)
+        self.assertEqual(raising, [], "a statement list holding a second-key bump and ending in a Raise sits under no try statement of the door: a "
+                                      "handler above could catch the raise and go on to bump again on the same path, with every list reading "
+                                      "clean on its own; the clean door's second-key lists all end in a Return; such lists by the raise's line "
+                                      "and their keys: %r" % raising)
 
     def test_the_replaced_helpers_sources_load_no_store(self):
         """The road limit as a check: the fixture replaces the callables in REPLACED_KM (less the two data names), REPLACED_JD
