@@ -31,7 +31,10 @@ inner function, the same mechanism) is the walk's, a call from `_nudge_placement
 `_awaiting_wake_outcomes` is the wake sweep's (the store's third reader on the pass, bounded below), and any other caller
 during a pass fails the test, named by function, file and line. The writer door has its own assertion on every pass: the
 writer recorder's list must be empty after the tick, each entry named by function, file and line, kept apart from the
-shared door's assertion (one filter over both lists would accept a writer-door load whose caller is the walk); a call
+shared door's assertion (one filter over both lists would accept a writer-door load whose caller is the walk); that
+assertion is _pass's, so the list is empty on every return and the cases read the door's own counter instead, goal_io
+loads as `writerLoads`, against the hand-offs each pass expects (review round 2: seven case-level reads of the list could
+not fail); a call
 through `load_goals_or_fault` is named for its kernel caller, never for the judge's `_or_fault`, and a load written inside
 `_or_fault` or either outer wrapper is named for that wrapper. The claim has three limits. The door: a third loader that reaches the store through the judge's loaders during the pass is caught and named;
 a reader below those loaders (the judge's own file reader and parser) is outside the recorders and outside the claim. The
@@ -383,8 +386,8 @@ class _WalkHarness(unittest.TestCase):
             if inspect.currentframe().f_back.f_code is not shared_body:          # the shared door's own fallback into load_goals (the
                 self.writer.append((sid,) + _caller(inspect.currentframe(), boundary))   # cache off, no store file, an unreadable
             return real_writer(sid)                                              #  journal, corrupt bytes) is one logical read: the shared
-        jd.load_goals_shared = _shared                                           #  recorder recorded its caller, so nothing is recorded here
-        jd.load_goals = _load
+        jd.load_goals_shared = _shared                                           #  recorder recorded its caller, so nothing is recorded here;
+        jd.load_goals = _load                                                    #  the door's own counter counts it as a hand-off (writerLoads)
         # The road limit's list is checked against the fixture, not kept by hand: this setUp rebinds exactly the names REPLACED_KM
         # and REPLACED_JD list plus the two recorded doors, and Sessions.backend_for beside them. A stub added here without a
         # list entry would hide a loader from the execution witness AND from the census that reads the list (review round 2,
@@ -532,17 +535,19 @@ class _WalkHarness(unittest.TestCase):
         d["calls"] = list(self.calls)
         writer = ["%s (%s:%d, sid ..%s)" % (c, f, ln, s[-4:]) for s, c, f, ln in self.writer]
         self.assertEqual(writer, [], "zero plain load_goals from any caller during the pass, the whole tick (condition 7 in ruling A's "
-                                     "wording says the decision path; this window is wider), by function, file and line: %s" % "; ".join(writer))
+                                     "wording says the decision path; this window is wider), by function, file and line; the shared door's "
+                                     "own fallback into load_goals is the shared door's read, skipped by code identity and counted under "
+                                     "goal_io loads as a hand-off, never here: %s" % "; ".join(writer))
         handoffs = sum(s1[k] - s0[k] for k in SHARED_HANDOFF_KEYS)
-        self.assertEqual(g1 - g0, len(self.writer) + handoffs,
+        self.assertEqual(g1 - g0, handoffs,
                          "the writer door's own counter, goal_io loads, moves once per load_goals call (the loader's first line), and the "
-                         "shared door hands a read to load_goals on exactly the absent, fallback, corrupt and unreadable_journal counters, "
-                         "so the delta must equal the recorded writer calls plus those hand-offs; a difference is a writer-door load the "
-                         "recorder did not see, through a reference to the real door taken before it stood or written inside the shared "
-                         "door's own body (the fallback skip takes it for the hand-off): loads %d against writer %d + hand-offs %d"
-                         % (g1 - g0, len(self.writer), handoffs))
-        d["writer"] = len(self.writer)
-        d["writerLoads"] = g1 - g0
+                         "shared door hands a read to load_goals on exactly the absent, fallback, corrupt and unreadable_journal counters; "
+                         "the recorded writer calls are zero here (the assertion above), so the delta must equal those hand-offs alone; a "
+                         "difference is a writer-door load the recorder did not see, through a reference to the real door taken before it "
+                         "stood or written inside the shared door's own body (the fallback skip takes it for the hand-off): loads %d against "
+                         "hand-offs %d" % (g1 - g0, handoffs))
+        d["writerLoads"] = g1 - g0                        # the writer door's own counter; the recorder's list is asserted empty above, so
+        #                                                   it is not returned (a case-level read of it could never fail: review round 2)
         d["parsedSids"] = sorted(self.parsed)
         return d
 
@@ -561,7 +566,9 @@ class OneSharedLoadPerAliveSessionPerPass(_WalkHarness):
         self.assertEqual((p1["gate"], p1["memo"]), ({SID_A: 1, SID_B: 1}, (0, 2)),
                          "the placement gate's currency check loads at most once per derived session; here every gate derived with its parse "
                          "cached, so each checked once (condition 7, the gate's bound)")
-        self.assertEqual(p1["writer"], 0, "zero plain load_goals in the decision path")
+        self.assertEqual(p1["writerLoads"], 0, "no hand-off: every read of this pass hits or fills, so the shared door hands nothing to "
+                                               "load_goals and the writer door's own counter, goal_io loads, stays (the writer list itself is "
+                                               "_pass's assertion, empty on every return)")
         self.assertEqual(p1["shared"], {"hit": 2, "miss": 2}, "the store's counters: each walk read fills (a miss), each gate check hits")
         for sid in SIDS:
             self.assertIsNotNone(self._row(sid), "a wake-mode memo row stands for %s" % sid[-4:])
@@ -572,7 +579,8 @@ class OneSharedLoadPerAliveSessionPerPass(_WalkHarness):
         self.assertEqual(p2["gate"], {SID_A: 0, SID_B: 0},
                          "the placement gate makes no currency check on a skipped look: it is never reached (condition 7, the gate's bound)")
         self.assertEqual((p2["looks"], p2["skippedParses"], p2["parses"]), (2, 2, 0), p2)
-        self.assertEqual((p2["loads"], p2["writer"], p2["shared"]), (0, 0, {}), "and neither the counter nor the store's counters move")
+        self.assertEqual((p2["loads"], p2["writerLoads"], p2["shared"]), (0, 0, {}),
+                         "and neither the counter, the writer door's counter nor the store's counters move")
         # (a) again with the gate SERVED: the ledger is the tenth keyed file, so its move re-evaluates every session once while
         # the parse and the store stand; the walk loads once per session and the gate not at all
         os.utime(jd.STATE / "auto-nudge.json", (NOW + 8, NOW + 8))
@@ -582,7 +590,7 @@ class OneSharedLoadPerAliveSessionPerPass(_WalkHarness):
                          "the walk takes exactly one shared load per alive session when its look reaches the store (condition 7, the walk's bound)")
         self.assertEqual((p3["gate"], p3["memo"]), ({SID_A: 0, SID_B: 0}, (2, 0)),
                          "the placement gate is served and makes no currency check (condition 7, the gate's bound)")
-        self.assertEqual((p3["loads"], p3["writer"], p3["shared"]), (2, 0, {"hit": 2}), "the counter moves by the walk's two, no writer load, two hits")
+        self.assertEqual((p3["loads"], p3["writerLoads"], p3["shared"]), (2, 0, {"hit": 2}), "the counter moves by the walk's two, no hand-off, two hits")
         # (b) again
         p4 = self._pass(NOW + 15)
         self.assertEqual((p4["walk"], p4["gate"]), ({SID_A: 0, SID_B: 0}, {SID_A: 0, SID_B: 0}),
@@ -601,7 +609,7 @@ class OneSharedLoadPerAliveSessionPerPass(_WalkHarness):
         self.assertEqual((p5["gate"], p5["memo"]), ({SID_A: 1, SID_B: 0}, (0, 1)),
                          "the placement gate, per session: the moved parse derives once and checks once, the skipped session not at all "
                          "(condition 7, the gate's bound: at most one check per derive; equal here because the harness caches every parse)")
-        self.assertEqual((p5["loads"], p5["writer"], p5["shared"]), (1, 0, {"hit": 2}), "the walk's one and the gate's one, both hits")
+        self.assertEqual((p5["loads"], p5["writerLoads"], p5["shared"]), (1, 0, {"hit": 2}), "the walk's one and the gate's one, both hits, no hand-off")
         # the walk's and the gate's ceilings, the gate's general bound and its equality are _pass's, on every pass (see there); with
         # no owned record the sweep's bound in _pass holds the sweep to zero on every pass, so this case asserts nothing about it
         self.assertEqual(self.fb.sent, [], "nudges off: nothing injected")
@@ -625,7 +633,7 @@ class OneSharedLoadPerAliveSessionPerPass(_WalkHarness):
                          "the walk takes no load on a look a state gate ends before the store read (condition 7, the walk's bound)")
         self.assertEqual((p1["gate"], p1["memo"]), ({SID_A: 0, SID_B: 0}, (0, 0)),
                          "and the placement gate, never reached, checks nothing (condition 7, the gate's bound)")
-        self.assertEqual((p1["loads"], p1["writer"], p1["shared"]), (0, 0, {}), "no counter and no store counter moves")
+        self.assertEqual((p1["loads"], p1["writerLoads"], p1["shared"]), (0, 0, {}), "no counter, no writer-door counter and no store counter moves")
         for sid in SIDS:
             self.assertEqual(self._row(sid)[-1], "working", "the verdict recorded, file-keyed, for %s" % sid[-4:])
         p2 = self._pass(NOW + 5)
@@ -664,13 +672,18 @@ class TheSweepIsItsOwnBoundedReader(_WalkHarness):
             (jd.GOALDIR / (SID_C + ".json")).write_text(json.dumps(
                 {"rompUuid": SID_C, "seq": 1, "placements": {}, "status": {}, "nodes": {}}))
 
-    def _one_sweep_load(self, p, name):
+    def _one_sweep_load(self, p, name, handoffs):
+        """`handoffs`: the load_goals calls the shared door hands off this pass, read from the door's own counter (goal_io loads,
+        `writerLoads`): 1 with no store file (the absent hand-off), 0 with a store whose nodes lack the goal (the read fills or
+        hits). The writer recorder's list is _pass's assertion and is empty on every return, so the count is the case-level
+        witness that the fallback went through load_goals exactly as the door's own hand-off and the record was inert past it."""
         self.assertEqual(p["sweep"], {SID_C: 1},
                          "%s: the sweep takes exactly one shared load for the one record it owns, and none for the walk's sids" % name)
         self.assertEqual([(c, f) for _s, c, f, _ln in p["calls"] if c in SWEEP], [("_awaiting_wake_outcomes", KERNEL_FILE)],
                          "%s: the sweep's read is recorded as _awaiting_wake_outcomes's, in the kernel's real file" % name)
-        self.assertEqual(p["writer"], 0, "%s: no writer load: the record is inert past the read, and the shared door's fallback into "
-                                         "load_goals is the shared door's own read" % name)
+        self.assertEqual(p["writerLoads"], handoffs,
+                         "%s: the shared door's fallback into load_goals is the shared door's own read, counted once under goal_io loads as a "
+                         "hand-off and never as a writer call; %d hand-off(s) expected this pass, and the record is inert past the read" % (name, handoffs))
 
     def test_a_store_whose_nodes_lack_the_goal(self):
         self._seed_wake_record(store_file=True)
@@ -679,22 +692,22 @@ class TheSweepIsItsOwnBoundedReader(_WalkHarness):
                          "the walk and the gate as on any first pass: the record is SID_C's, a sid neither look is about, and the "
                          "counter counts the walk alone (the gate's rule is at most one check per derive; equal here because the harness "
                          "caches every parse)")
-        self._one_sweep_load(p1, "p1")
+        self._one_sweep_load(p1, "p1", handoffs=0)        # the read fills: nothing handed to load_goals
         self.assertEqual(p1["shared"], {"hit": 2, "miss": 3}, "the walk's two fills and the sweep's one, the gate's two hits")
         p2 = self._pass(NOW + 5)
         self.assertEqual((p2["walk"], p2["gate"], p2["loads"]), ({SID_A: 0, SID_B: 0}, {SID_A: 0, SID_B: 0}, 0),
                          "the looks skip: nothing of theirs moved")
-        self._one_sweep_load(p2, "p2")                    # the sweep keeps no memo: one read per owned record per pass
+        self._one_sweep_load(p2, "p2", handoffs=0)        # the sweep keeps no memo: one read per owned record per pass
         self.assertEqual(p2["shared"], {"hit": 1}, "the sweep's read alone, a hit on the store it filled last pass")
         self.assertEqual(self.fb.sent, [], "nothing sent: the node is gone, so the record is inert and the sweep continues past it")
 
     def test_no_store_file(self):
         self._seed_wake_record(store_file=False)
         p1 = self._pass(NOW)
-        self._one_sweep_load(p1, "p1")
+        self._one_sweep_load(p1, "p1", handoffs=1)        # no store file: the door hands the read to load_goals, once
         self.assertEqual(p1["shared"], {"hit": 2, "miss": 2, "absent": 1}, "the sweep's read is the absent case: one call, one counter")
         p2 = self._pass(NOW + 5)
-        self._one_sweep_load(p2, "p2")
+        self._one_sweep_load(p2, "p2", handoffs=1)
         self.assertEqual(p2["shared"], {"absent": 1})
         self.assertEqual(self.fb.sent, [], "nothing sent: the fresh store has no node for the record")
 
@@ -729,7 +742,8 @@ class TheSweepIsItsOwnBoundedReader(_WalkHarness):
                                                        "the walk visited, and none for SID_B, which owns no record" % name)
             self.assertEqual([(c, f) for _s, c, f, _ln in p["calls"] if c in SWEEP], [("_awaiting_wake_outcomes", KERNEL_FILE)],
                              "%s: the sweep's read is recorded as _awaiting_wake_outcomes's, in the kernel's real file" % name)
-            self.assertEqual((p["writer"], p["writerLoads"]), (0, 0), "%s: the stamp is a recorder here, so no writer load" % name)
+            self.assertEqual(p["writerLoads"], 0, "%s: the stamp is a recorder here and the sweep's read fills or hits, so the writer door's "
+                                                  "counter stays: no writer load, no hand-off" % name)
             self.assertEqual(p["parsedSids"], [SID_A], "%s: the sweep parses the record's session once past its read" % name)
         self.assertEqual(p1["shared"], {"miss": 1}, "p1: the sweep's read fills SID_A's store, which no look read")
         self.assertEqual(p2["shared"], {"hit": 1}, "p2: the sweep keeps no memo, so it reads again: a hit on its own fill")
