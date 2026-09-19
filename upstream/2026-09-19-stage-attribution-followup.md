@@ -3,7 +3,7 @@ title: Tests: the routing sweep in tests/test_perf_stats.py reads every text fil
 status: candidate
 where: tests/test_perf_stats.py (RoutingStatements, PushStages' docstring, RETIRED_WORDINGS; from git diff --name-only against PR 797's head)
 added: 2026-09-19
-pr:
+pr: 831
 tier: docs
 offered:
 closed:
