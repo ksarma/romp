@@ -5,7 +5,11 @@
 // keeps as they are with one exception: an element in its FORBID_CONTENTS set (script always, style since
 // md-sanitize.ts forbade the tag) goes with its text, so a paragraph carrying one mid-line maps here and is
 // refused in the viewer as a rendered-text mismatch; md-sanitize-anchor-map-browser.test.ts pins that shape
-// over the real sanitizer. Fixtures are synthetic (a notes-api world) and live in anchor-map-fixtures/.
+// over the real sanitizer. Fixtures are synthetic (a notes-api world) and live in anchor-map-fixtures/. The Rendered
+// shape's HTML follows mdBlock's parse step by step (viewerHtml, below): marked's lexer, the literal-tags rule of
+// md-literal-tags.ts (an inline start tag with no end tag in its block is literal text, decision 52 of plans/file-review.md),
+// its parser; the fixtures hold no such tag, so the HTML is marked.parse's for them, and a note that holds one renders here
+// as the viewer renders it.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { inspect } from "node:util";
@@ -19,6 +23,7 @@ import cssLang from "highlight.js/lib/languages/css";
 import markdown from "highlight.js/lib/languages/markdown";
 import { marked } from "marked";
 import { applyMdConfig } from "./md-config";   // the one markdown configuration, applied here as the viewer applies it
+import { viewerHtml } from "./file-view";   // the viewer's parse (mdBlock's recipe: marked's lexer, the literal-tags rule of md-literal-tags.ts, the per-call walk, its parser), the stand-in's too
 import {
   mapRawSelection, mapRenderedSelection, makeAnchor, locateComment, paintRaw, paintRendered,
   rawOffsetToLine, rawRowForOffset, type SelLike, type MapResult, type SourceRange,
@@ -202,7 +207,7 @@ function buildRendered(text: string): MdDom {
   const body = doc.createElement("div");
   const before = doc.createElement("div"); before.appendChild(doc.createTextNode("Rendered · Raw"));
   const box = doc.createElement("div"); box.setAttribute("class", "fileview-md");
-  for (const n of parseHTML(doc, marked.parse(text) as string)) box.appendChild(n);
+  for (const n of parseHTML(doc, viewerHtml(text))) box.appendChild(n);
   body.appendChild(before); body.appendChild(box);
   return { body, box, before };
 }
@@ -302,10 +307,14 @@ test("pins: the viewer's Raw rows, marked configuration, and lexer identity", ()
   // marked's own, so the shapes replicated here are unchanged; only a link token's href is rewritten before the render, and only
   // for the file kind (the 2026-09-07 fold: a URL document takes marked's defaults). The walkTokens itself runs for every kind
   // since the Slice 3 review, collecting the code tokens for the fence pass's Copy (fence-source.ts); it reads them, never
-  // rewrites them, so the lexer's shapes stand
-  assert.match(VIEW, /const dirty = marked\.parse\(text, \{ walkTokens: \(t\) => \{\n\s*if \(t\.type === "code"\) \{ const c = t as Tokens\.Code; fences\.push\(\{ text: c\.text, indented: c\.codeBlockStyle === "indented" \}\); \}\n\s*if \(doc && doc\.kind === "file"\) viewerWalkTokens\(t\);\n\s*if \(base\) void base\.call\(marked, t\);\n\s*\} \}\) as string;/);
-  const MAP = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "anchor-map.ts"), "utf8");
-  assert.match(MAP, /Lexer\.lex\(N\)/, "the walk lexes with the viewer's configured singleton (no private options)");
+  // rewrites them, so the lexer's shapes stand. Since decision 52 the parse is marked.parse's three steps called apart (its lexer,
+  // the walk, its parser, over a copy of the defaults as marked.parse copies them), with the literal-tags rule between the lexer and
+  // the walk (md-literal-tags.ts): the one rewrite of the tokens, and the same one this map applies after its own lex (placeTokens).
+  // Since that decision's review (2026-09-19) the three steps are the exported viewerHtml, the recipe this suite's stand-in renders
+  // through too, and mdBlock hands it the walk
+  assert.match(VIEW, /export function viewerHtml\(text: string, walk\?: \(token: Token\) => void\): string \{\n\s*const opts = \{ \.\.\.marked\.defaults \};\n\s*const tokens = marked\.lexer\(text, opts\);\n\s*literalizeUnclosedTags\(tokens\);\n\s*if \(walk\) marked\.walkTokens\(tokens, walk\);\n\s*return marked\.parser\(tokens, opts\);\n\}/);
+  assert.match(VIEW, /const dirty = viewerHtml\(text, \(t\) => \{\n\s*if \(t\.type === "code"\) \{ const c = t as Tokens\.Code; fences\.push\(\{ text: c\.text, indented: c\.codeBlockStyle === "indented" \}\); \}\n\s*if \(doc && doc\.kind === "file"\) viewerWalkTokens\(t\);\n\s*if \(base\) void base\.call\(marked, t\);\n\s*\}\);/);  const MAP = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "anchor-map.ts"), "utf8");
+  assert.match(MAP, /try \{ tokens = Lexer\.lex\(N\); literalizeUnclosedTags\(tokens\); \}/, "the walk lexes with the viewer's configured singleton (no private options) and runs the literal-tags rule right after its lex, as the viewer's parse does (md-literal-tags.ts)");
   assert.doesNotMatch(MAP, /marked\.(setOptions|use)\(/, "anchor-map holds no options of its own: it applies the one configuration (applyMdConfig) and lexes under it");
   assert.match(MAP, /^applyMdConfig\(\);/m, "…at load, so the static lexer sees every extension the renderer has, whichever module loaded first");
   assert.match(MAP, /from "\.\.\/\.\.\/vendor\/track-changents\/engine\.js"/, "the engine comes from the vendored copy (contract C4)");
@@ -1085,7 +1094,7 @@ test("caches re-analyze when a container's children are replaced or the source c
   const { box } = buildRendered(A);
   assert.equal(ok(mapRenderedSelection(wholeOf(firstEl(box, "H1")), El(box), A)).quote, "Alpha");
   for (const c of box.childNodes.slice()) box.removeChild(c);
-  for (const n of parseHTML(box.ownerDocument, marked.parse(B) as string)) box.appendChild(n);
+  for (const n of parseHTML(box.ownerDocument, viewerHtml(B))) box.appendChild(n);
   assert.equal(ok(mapRenderedSelection(wholeOf(firstEl(box, "H1")), El(box), B)).quote, "Beta");
   bad(mapRenderedSelection(wholeOf(firstEl(box, "H1")), El(box), A));
   // Raw: the same code element re-filled with another file

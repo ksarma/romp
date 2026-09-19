@@ -7,8 +7,7 @@
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import { inspect } from "node:util";
-import { marked } from "marked";
-import type { FileViewActionCtx, TrackedEdit } from "./file-view";
+import { viewerHtml, type FileViewActionCtx, type TrackedEdit } from "./file-view";
 import type { Status, StoreComment, LogEntry, Hunk } from "./file-comments-model";
 import { hideEdges, staysEnumerable } from "../test-dom-shim";
 
@@ -435,7 +434,7 @@ test("a Log edit row whose entry recorded no diff has nothing to open", async ()
 const FIG_SRC = "# Report\n\nIntro text here.\n\n```\n![Chart in a fence](figures/p95.png)\n```\n\n![Latency chart](figures/p95.png)\n\nThe summary follows.\n\n![Logo](logo.svg)\n";
 
 test("a click on a rendered picture offers Comment; the anchor is the embed's source text; the presel frame and the located ring go on the picture itself", async () => {
-  const h = await harness({ src: FIG_SRC, html: marked.parse(FIG_SRC) as string });
+  const h = await harness({ src: FIG_SRC, html: viewerHtml(FIG_SRC) });
   await h.ok({ store: null, storeMtimeNs: null, unsent: { comments: [], replies: [], accepted: 0, rejected: 0, watermark: null } });
   const imgs = h.body.querySelectorAll("img");
   assert.equal(imgs.length, 2, "the fenced embed renders as text, not a picture");
@@ -494,7 +493,7 @@ test("a click on a rendered picture offers Comment; the anchor is the embed's so
 
 test("a picture the source holds no embed for still gets the offer, and the composer then says why and offers Raw", async () => {
   const src = "Intro.\n\n![Latency chart](figures/p95.png)\n";
-  const html = (marked.parse(src) as string) + '<p><img src="ghost.png" alt="ghost"></p>';
+  const html = viewerHtml(src) + '<p><img src="ghost.png" alt="ghost"></p>';
   const h = await harness({ src, html });
   await h.ok({ store: null, storeMtimeNs: null });
   h.button.dispatch("click");

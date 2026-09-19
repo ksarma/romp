@@ -10,8 +10,9 @@
 // the source holds them, and one across rows to the span from the first character to the last, the line feeds and a quoted
 // fence's markers inside the quote as a Raw selection over the same characters mints (the brief's open question 2). Driven over
 // the synthetic fixture anchor-map-fixtures/cells.md's code section and anchor-map-fixtures/fenced.md (both in the notes-api
-// demo domain) rebuilt as the viewer renders them: marked's output under the one configuration (md-config.ts) parsed into the
-// DOM stand-in, then every fence dressed as mdBlock dresses it (file-view.ts): a language the viewer registers highlighted into
+// demo domain) rebuilt as the viewer renders them: marked's output as mdBlock parses it (its lexer, the literal-tags rule of
+// md-literal-tags.ts, its parser: viewerHtml) under the one configuration (md-config.ts) parsed into the DOM stand-in, then
+// every fence dressed as mdBlock dresses it (file-view.ts): a language the viewer registers highlighted into
 // hljs spans, the lines cut into `.cl` rows by the real wrapLinesHtml (code-block.ts) with the line feeds dropped, the Copy
 // button parked in the `<pre>`, and a URL in a row split into an `<a>` as linkifyFileText splits it. The idiom of
 // anchor-map-cells.test.ts. The browser leg, anchor-map-code-lines-browser.test.ts, runs the real viewer and the real panel.
@@ -31,6 +32,7 @@ import bash from "highlight.js/lib/languages/bash";
 import python from "highlight.js/lib/languages/python";
 import javascript from "highlight.js/lib/languages/javascript";
 import { applyMdConfig } from "./md-config";
+import { viewerHtml } from "./file-view";   // the viewer's parse (mdBlock's recipe: marked's lexer, the literal-tags rule of md-literal-tags.ts, the per-call walk, its parser), the stand-in's too
 import { wrapLinesHtml } from "./code-block";
 import { mapRenderedSelection, sourceBlockSpans, renderedBlockIndex, renderedBlockElements, paintRendered, paintChangesRendered, unpaintChanges, type SelLike, type MapResult, type ChangePaint } from "./anchor-map";
 import { hideEdges } from "../test-dom-shim";
@@ -184,7 +186,7 @@ function dressCode(box: FakeElement): void {
 function buildRendered(text: string): FakeElement {
   const doc = new FakeDocument();
   const box = doc.createElement("div"); box.setAttribute("class", "fileview-md");
-  for (const n of parseHTML(doc, marked.parse(text) as string)) box.appendChild(n);
+  for (const n of parseHTML(doc, viewerHtml(text))) box.appendChild(n);
   standInFill(box);
   dressCode(box);
   return box;
@@ -193,7 +195,7 @@ function buildRendered(text: string): FakeElement {
 function undressed(text: string): FakeElement {
   const doc = new FakeDocument();
   const box = doc.createElement("div"); box.setAttribute("class", "fileview-md");
-  for (const n of parseHTML(doc, marked.parse(text) as string)) box.appendChild(n);
+  for (const n of parseHTML(doc, viewerHtml(text))) box.appendChild(n);
   standInFill(box);
   return box;
 }
@@ -673,13 +675,15 @@ test("a tab-indented fence inside a list item, a fence whose lines open with tab
   mapsWhole(box, after, "c = 3"); mapsWhole(box, after, "b");
 });
 
-test("the Raw offer stands where the mapping still refuses: a selection from a code line into an html block after it names the html block with the Raw view at the block, and one across a table's cells names the one-cell rule, the code no longer the first obstacle", () => {
+test("the Raw offer stands where the mapping still refuses: a selection from a code line into an html block after it names the html block with the Raw view at the block, the code and the table between them no obstacle (since decision 53 of plans/file-review.md a selection across cells anchors; Slice 8 named the one-cell rule here), and one from a code line across the table's cells anchors, the fence's closer and the table's rows inside the quote", () => {
   const src = "```\ncode line one\ncode line two\n```\n\n| Col A | Col B |\n|-------|-------|\n| cell one | cell two |\n\n<div class=\"note\">Html block text</div>\n\nAfter para.\n";
   const box = buildRendered(src);
   const pre = find(box, "PRE", "code line one");
   const html = bad(mapRenderedSelection(sel(point(pre, "code line two"), point(box, "Html block text", true)), El(box), src), "the second code line to the html block");
-  assert.match(html.reason, /spans more than one cell of a table/, "the table between them is the first obstacle (before: the code block itself)");
-  assert.equal(src.slice(html.rawRange!.start, html.rawRange!.end), "Col A | Col B |\n|-------|-------|\n| cell one | cell two");
+  assert.match(html.reason, /an HTML block/, "the html block is the first obstacle (before: the one-cell rule; before Slice 8: the code block itself): " + html.reason);
+  assert.equal(html.blockStartOffset, at(src, "<div"));
+  const across = ok(mapRenderedSelection(sel(point(pre, "code line two"), point(box, "cell two", true)), El(box), src), "the second code line across the table's cells (before: the one-cell rule)");
+  assert.equal(across.quote, "code line two\n```\n\n| Col A | Col B |\n|-------|-------|\n| cell one | cell two");
   const noTable = "```\ncode line one\n```\n\n<div class=\"note\">Html block text</div>\n\nAfter para.\n";
   const box2 = buildRendered(noTable);
   const r = bad(mapSpan(box2, noTable, "code line one", "Html block text"), "the code line to the html block");

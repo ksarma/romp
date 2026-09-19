@@ -1,5 +1,5 @@
 // The whitespace rule of the Rendered paint (anchor-map.ts skipBlockWs and trimCollapsedMarks), over the REAL bundle in headless
-// Chromium: marked with the one configuration (md-config.ts), the sanitizer (md-sanitize.ts) and paintRendered, the DOM built as
+// Chromium: the viewer's parse (viewerHtml, file-view.ts) under the one configuration (md-config.ts), the sanitizer (md-sanitize.ts) and paintRendered, the DOM built as
 // the viewer's mdBlock builds it. Four legs (the Slice 4 review, rounds 9, 12 and 13):
 // 1. BLOCK_BOXES, the tags a whitespace-only text node between two of which is skipped without a measurement, is DERIVED here and
 //    held equal to the shipped set: every
@@ -56,15 +56,15 @@ const FEED = fs.readFileSync(path.join(UI, "feed.css"), "utf8");
 /** The Rendering section's block-level tags, the node pin's fixture (md-config-block-boxes.test.ts); leg 1 holds it to Chromium. */
 const FIXTURE = JSON.parse(fs.readFileSync(path.join(UI, "anchor-map-fixtures", "block-tags.json"), "utf8")) as { tags: Record<string, string> };
 
-/** marked with the viewer's grammar, the sanitizer and its profile, DOMPurify itself (for the allowlist), the paint and the
+/** The viewer's parse (file-view.ts viewerHtml, marked with the viewer's grammar), the sanitizer and its profile, DOMPurify itself (for the allowlist), the paint and the
  *  shipped set, bundled as the webview build bundles them. */
 function bundle(): string {
   const esbuild = requireCjs("esbuild");
   const r = esbuild.buildSync({
     stdin: {
-      contents: 'import DOMPurify from "dompurify";\nimport { marked } from "marked";\nimport { applyMdConfig } from "./md-config";\n'
+      contents: 'import DOMPurify from "dompurify";\nimport { viewerHtml } from "./file-view";\nimport { applyMdConfig } from "./md-config";\n'
         + 'import { sanitizeMd, MD_PURIFY, MD_FORBID_TAGS } from "./md-sanitize";\nimport { paintRendered, BLOCK_BOXES } from "./anchor-map";\nimport { unwrapMarks } from "./file-comments";\n'
-        + 'applyMdConfig();\n(window as any).__romp = { DOMPurify, marked, sanitizeMd, MD_PURIFY, MD_FORBID_TAGS, paintRendered, unwrapMarks, BLOCK_BOXES: Array.from(BLOCK_BOXES) };\n',
+        + 'applyMdConfig();\n(window as any).__romp = { DOMPurify, viewerHtml, sanitizeMd, MD_PURIFY, MD_FORBID_TAGS, paintRendered, unwrapMarks, BLOCK_BOXES: Array.from(BLOCK_BOXES) };\n',
       resolveDir: UI, loader: "ts", sourcefile: "paint-whitespace-probe.ts",
     },
     bundle: true, write: false, format: "iife", platform: "browser", target: "es2020",
@@ -93,7 +93,7 @@ try { pw = requireCjs("playwright"); } catch { pw = null; }
  *  read, and the panel's own unpaint step (file-comments.ts unwrapMarks, the same function Panel.unpaint runs: the marks' children back
  *  in place, each parent normalized once; plans/markdown-viewer.md Slice 5, section 2 (d)). */
 const HELPERS = `
-window.__render = (src) => { const md = document.getElementById("md"); md.replaceChildren(...Array.from(window.__romp.sanitizeMd(window.__romp.marked.parse(src)).childNodes)); };
+window.__render = (src) => { const md = document.getElementById("md"); md.replaceChildren(...Array.from(window.__romp.sanitizeMd(window.__romp.viewerHtml(src)).childNodes)); };
 window.__layout = () => { const md = document.getElementById("md"); const r = md.getBoundingClientRect();
   const tops = Array.from(md.children).map((c) => { const b = c.getBoundingClientRect(); return [c.tagName, Math.round(b.top * 100) / 100, Math.round(b.height * 100) / 100]; });
   const imgs = Array.from(md.querySelectorAll("img")).map((i) => { const b = i.getBoundingClientRect(); return [Math.round(b.x * 100) / 100, Math.round(b.y * 100) / 100]; });
@@ -253,7 +253,7 @@ test("one mark across a paragraph of 5,000 links costs what ten across 500 cost 
     const r = await page.evaluate(([large, small, pairs]: [string, string, number]) => {
       const w = window as any;
       const host = (): HTMLElement => { const h = document.createElement("div"); h.className = "fileview-md"; document.body.appendChild(h); return h; };
-      const build = (h: HTMLElement, src: string) => { h.replaceChildren(...Array.from(w.__romp.sanitizeMd(w.__romp.marked.parse(src)).childNodes as ArrayLike<Node>)); };
+      const build = (h: HTMLElement, src: string) => { h.replaceChildren(...Array.from(w.__romp.sanitizeMd(w.__romp.viewerHtml(src)).childNodes as ArrayLike<Node>)); };
       // the panel's own unpaint step (file-comments.ts unwrapMarks, what Panel.unpaint runs): the marks' children back in place, each parent
       // normalized once, after the loop (Slice 5, section 2 (d): per mark it cost the square of the paragraph's inline children)
       const unpaint = (h: HTMLElement) => { w.__romp.unwrapMarks(Array.from(h.querySelectorAll("mark"))); };
@@ -308,7 +308,7 @@ test("the trim over one mark across 5,000 links at 800 px unwraps one blank mark
     const r = await page.evaluate(([large, pairs]: [string, number]) => {
       const w = window as any;
       const host = (): HTMLElement => { const h = document.createElement("div"); h.className = "fileview-md"; h.style.width = "800px"; document.body.appendChild(h); return h; };
-      const build = (h: HTMLElement, src: string) => { h.replaceChildren(...Array.from(w.__romp.sanitizeMd(w.__romp.marked.parse(src)).childNodes as ArrayLike<Node>)); };
+      const build = (h: HTMLElement, src: string) => { h.replaceChildren(...Array.from(w.__romp.sanitizeMd(w.__romp.viewerHtml(src)).childNodes as ArrayLike<Node>)); };
       const unpaint = (h: HTMLElement) => { w.__romp.unwrapMarks(Array.from(h.querySelectorAll("mark"))); };   // the panel's own step (leg 3's comment)
       const range = (src: string) => ({ start: src.indexOf("[w0]"), end: src.indexOf("\n\nAfter para.") });
       const blank = (s: string) => /^\s*$/.test(s);
