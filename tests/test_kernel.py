@@ -105,7 +105,15 @@ class ViewBuilder(unittest.TestCase):
         names = td / "names"; names.mkdir()
         (names / SID).write_text("testsess\t%s\t#abcdef\n" % str(cdir))
         self.saved = (jd.NAMES, jd.PROJECTS, jd.CAPDIR, jd.ARCHDIR, jd.GOALDIR, jd.STATE,
-                      km.NAMES, km._live_map, km._GLOBAL_CLAUDE_MD, jd.gist_llm)
+                      km.NAMES, km._live_map, km._GLOBAL_CLAUDE_MD, jd.gist_llm,
+                      # km._sdk_backend too: a card build here can reach km._sdk(), which constructs the kernel's
+                      # backend singleton lazily over jd.STATE as it stands, this sandbox, and the singleton keeps
+                      # that root. Left in place it outlived the sandbox: the chat-signature stat exactness test in
+                      # tests/test_kernel_delta_send.py, running later in the alphabetical order, had its signature
+                      # consult a backend whose registry root was gone (fork_children answers {} on the OSError and
+                      # scans no reg) and read 0 registry stats against 39 (2026-09-19). Put back in tearDown, so the
+                      # next builder starts where this test found it.
+                      km._sdk_backend)
         # the captioner's MESSAGE caption (jd.gist_llm) — stub it so NO test fires a real LLM subprocess.
         # The provisional card reads the PERSISTED message caption ('<segid>#p'), not this directly; the
         # gist-specific tests write that caption to drive the card's "Analyzing: …" text.
@@ -152,7 +160,7 @@ class ViewBuilder(unittest.TestCase):
 
     def tearDown(self):
         (jd.NAMES, jd.PROJECTS, jd.CAPDIR, jd.ARCHDIR, jd.GOALDIR, jd.STATE,
-         km.NAMES, km._live_map, km._GLOBAL_CLAUDE_MD, jd.gist_llm) = self.saved
+         km.NAMES, km._live_map, km._GLOBAL_CLAUDE_MD, jd.gist_llm, km._sdk_backend) = self.saved
         self.td.cleanup()
 
     def _write_msg_caption(self, caption):

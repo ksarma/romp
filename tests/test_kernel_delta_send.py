@@ -807,19 +807,18 @@ class ByteIdenticalFrames(unittest.TestCase):
         self.assertEqual((cached, built), (0, 6), "never cached: the tab is rebuilt every cycle")
         self.assertEqual((d["pre"], d["post"], d["nosig"], d["failedBuilds"], d["targetedBuilds"]), (6, 6, 0, 0, 0))
 
-    def test_stats_counts_every_stat_a_signature_makes_by_execution(self):
-        """The exactness test (2026-09-19 review, regression-1: the first cut's per-site count saw 7 of about 23 stats per
-        signature and named a closed exclusion list that omitted six paths). memos.chatSig.stats must equal, over a real
-        push, an OUTSIDE count of every os.stat, os.lstat and DirEntry.stat made while a signature was open (_StatInterceptor:
-        wrappers around the kernel's own on the os and posix modules, a counting os.scandir; nothing of the kernel mocked),
-        over a world furnished so every channel runs: a transcript, a states file, the store triple, a working note, a git
-        worktree as the session's cwd with a CLAUDE.md on its chain (the cwd memos, _repo_index_key and _claudemd_key stat),
-        a task store directory with one task file (a DirEntry.stat through _entry_stat), a messages.jsonl and a postal card
-        (the postal key stats in the tail), and the transcript's checkpoint path (a realpath: lstats). One fresh module
-        import is forced inside the first signature: importlib stats through the posix module, so the equality holds only
-        with the posix wrap in place. Pinned: the equality, at least twenty stats per signature, and each channel seen
-        (lstat, DirEntry, posix). At the first cut this read 63 counted against about 200 intercepted over nine
-        signatures; restoring per-site counting alone (narrower) or re-adding one site count (wider) reds it."""
+    def _stats_world(self):
+        """The stats exactness test's furnished world (its docstring names what the world holds), run once through the
+        six-cycle harness under the outside interception, for that test and for the stale-singleton case: returns (the
+        memos.chatSig delta d, the interceptor ic, regs_present, n_sigs, the registry directory sdk, the CLAUDE_CONFIG_DIR
+        cfg, the imports list, the diff's same-object calls, the builds.chat snapshots (b0, b1)). The backend the signature
+        consults (_be = _sdk() in _chat_build_sig; its fork_children is the registry scan) is built HERE, over this root
+        with no boot reconcile, and handed to the signature in place of the kernel's lazily built singleton, so the
+        registry channel is a property of this world. The singleton keeps the jd.STATE of its construction: a peer module
+        that sandboxes jd.STATE and reaches km._sdk() under it (tests/test_kernel.py ViewBuilder, before it restored the
+        singleton) left one over a removed root, whose fork_children answers {} on the OSError and calls list_regs never,
+        so the signature made no registry stat, the counter correctly counted none, and the registry derivation read 0
+        against 39 in the alphabetical order (the round-2 review's prefix run, 2026-09-19)."""
         ps = km._PERF_STATS
         cfg = tempfile.TemporaryDirectory(); self.addCleanup(cfg.cleanup)
         if shutil.which("git") is None:
@@ -890,15 +889,39 @@ class ByteIdenticalFrames(unittest.TestCase):
             tasks = os.path.join(cfg.name, "tasks", self.SID); os.makedirs(tasks)
             with open(os.path.join(tasks, "1.json"), "w") as f:
                 f.write(json.dumps({"id": "1", "subject": "write the notes-api docs", "status": "pending"}))
+        self.assertTrue(km._sdk(), "premise: the SDK backend module loads (its list_regs is the registry scan)")
+        be = sys.modules["romp_sdk_backend"].SdkBackend(km.jd.STATE, "/bin/true", lambda *a, **k: None)   # this root, cold
         before, b0 = km._chat_sig_stats_report(), ps.snapshot()["builds"]["chat"]
         with mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": cfg.name}), mock.patch.object(km, "_pinned_notes_fp", pins_and_one_import), \
-                _StatInterceptor(km._CHAT_SIG_TL) as ic:
+                mock.patch.object(km, "_sdk", lambda: be), _StatInterceptor(km._CHAT_SIG_TL) as ic:
             _wire, calls, _rows = self._run(km._chat_diff, perf=ps, furnish=furnish, script=script, between=between)
         after, b1 = km._chat_sig_stats_report(), ps.snapshot()["builds"]["chat"]
         d = {k: after[k] - before[k] for k in after}
+        return d, ic, regs_present, d["pre"] + d["post"] + d["thread"], sdk, cfg, imports, calls, (b0, b1)
+
+    def test_stats_counts_every_stat_a_signature_makes_by_execution(self):
+        """The exactness test (2026-09-19 review, regression-1: the first cut's per-site count saw 7 of about 23 stats per
+        signature and named a closed exclusion list that omitted six paths). memos.chatSig.stats must equal, over a real
+        push, an OUTSIDE count of every os.stat, os.lstat and DirEntry.stat made while a signature was open (_StatInterceptor:
+        wrappers around the kernel's own on the os and posix modules, a counting os.scandir; nothing of the kernel mocked),
+        over a world furnished so every channel runs: a transcript, a states file, the store triple, a working note, a git
+        worktree as the session's cwd with a CLAUDE.md on its chain (the cwd memos, _repo_index_key and _claudemd_key stat),
+        a task store directory with one task file (a DirEntry.stat through _entry_stat), a messages.jsonl and a postal card
+        (the postal key stats in the tail), the transcript's checkpoint path (a realpath: lstats), and registry files with
+        one more written before every cycle, read by a backend the world builds over its own root (_stats_world). One fresh
+        module import is forced inside the first signature: importlib stats through the posix module, so the equality holds
+        only with the posix wrap in place. Pinned: the equality, at least twenty stats per signature, and each channel seen
+        (lstat, DirEntry, posix). At the first cut this read 63 counted against about 200 intercepted over nine
+        signatures; restoring per-site counting alone (narrower) or re-adding one site count (wider) reds it. The
+        counter counts every stat that occurs, and the per-channel derivations pin that the world made them: the registry
+        channel's 39 is a property of the world, the backend the signature consults reading the registry under this root,
+        not of the counter. A signature whose backend reads no registry (the kernel's singleton over a peer module's
+        removed sandbox, the alphabetical order's case of 2026-09-19) makes no registry stat, the counter counts none, the
+        equality holds at zero there and the derivation does not; the stale-singleton case below runs this world under
+        exactly that singleton."""
+        d, ic, regs_present, n_sigs, sdk, cfg, imports, calls, (b0, b1) = self._stats_world()
         self.assertEqual(calls, [False, True, False, True, False, True], "premise: rebuilt, served, alternating")
         self.assertEqual(len(imports), 1, "the fresh import ran once, inside the first signature")
-        n_sigs = d["pre"] + d["post"] + d["thread"]
         self.assertEqual(n_sigs, 9, "six pre-build and three post-build signatures, no thread")
         seen = {"stat": ic.stat, "posix": ic.posix_stat, "lstat": ic.lstat, "dirent": ic.dirent, "dirent_by_dir": ic.dirent_by_dir}
         self.assertEqual(d["stats"], ic.total, "memos.chatSig.stats equals every stat intercepted inside the %d signatures: %r" % (n_sigs, seen))
@@ -919,6 +942,35 @@ class ByteIdenticalFrames(unittest.TestCase):
         self.assertGreater(sum(regs_present), n_sigs, "the registry channel outnumbers the task store's: the uncounted road was the larger one")
         self.assertGreater(ic.posix_stat, 0, "the posix-module channel ran (the fresh import's path finder)")
         self.assertEqual(d["regReads"], n_sigs, "one registry read per signature")
+
+    def test_the_registry_channel_holds_under_a_peer_modules_stale_backend_singleton(self):
+        """The contamination class the alphabetical order exposed (the round-2 review's prefix run ending at this module,
+        2026-09-19: 0 != 39 on the registry derivation, with no registry directory among the intercepted DirEntry stats at
+        all, while the counter equalled the interception). The kernel's backend singleton is built lazily over jd.STATE as
+        it stands and keeps that root, so a peer module that sandboxes jd.STATE and reaches km._sdk() under it
+        (tests/test_kernel.py ViewBuilder, before it restored the singleton) leaves a backend over a removed root; its
+        fork_children answers {} on the OSError and calls list_regs never, so the signature makes no registry stat and the
+        counter, correctly, counts none. Reproduced in-process: a backend over a directory that is then removed is installed
+        as the singleton the signature would consult, and the exactness world runs under it. The registry channel still
+        counts every reg present at each pre-build signature, because the world hands the signature its own backend over
+        this root, and the equality holds. Red with the world consulting the singleton (0 against 39) and red with the
+        world's backend built over another root."""
+        self.assertTrue(km._sdk(), "premise: the SDK backend module loads")
+        gone = tempfile.mkdtemp()
+        stale = sys.modules["romp_sdk_backend"].SdkBackend(gone, "/bin/true", lambda *a, **k: None)
+        shutil.rmtree(gone)
+        saved = km._sdk_backend
+        km._sdk_backend = stale
+        self.addCleanup(setattr, km, "_sdk_backend", saved)
+        self.assertIs(km._sdk(), stale, "premise: the singleton the signature would consult is the stale one")
+        self.assertFalse(os.path.isdir(gone), "premise: its registry root is gone")
+        self.assertEqual(stale.fork_children(), {}, "premise: over a removed root fork_children answers {} and scans nothing")
+        d, ic, regs_present, n_sigs, sdk, *_ = self._stats_world()
+        self.assertEqual(n_sigs, 9, "six pre-build and three post-build signatures, no thread")
+        self.assertEqual(regs_present, [4, 5, 6, 7, 8, 9], "premise: three regs before any push, one more before each cycle")
+        self.assertEqual(ic.dirent_by_dir.get(str(sdk), 0), sum(regs_present),
+                         "every reg present at each pre-build signature is stat'ed under a stale singleton too (%r)" % (ic.dirent_by_dir,))
+        self.assertEqual(d["stats"], ic.total, "and memos.chatSig.stats equals every stat intercepted")
 
     SIDS_PEER = "11111111-2222-4333-8444-000000000919"
 
