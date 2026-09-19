@@ -113,8 +113,8 @@ export for the lifetime of that session, and the names never reach either docume
 kernel keys its tables by sid or rank and the denylist drops every name field), so the probe would only ever
 produce that false refusal. The private list is different in kind: it is the maintainer's explicit choice of
 what must never be published (a coined project nickname among them, which fits the identifier grammar and is
-neither the hostname nor the login, so no other probe knows it; the upload verb, 2026-09-18, is the first road
-where a document leaves the machine without a human reading it, which is what made the gap consequential), so a
+neither the hostname nor the login, so no other probe knows it; the upload verb, 2026-09-18, is a road where a
+document leaves the machine without a human reading it, which is what made the gap consequential), so a
 listed word that is also romp vocabulary refuses every export on that machine, naming the kind (`private
 string`) and the path, and the remedy is editing the list. A hostname or login that IS one of romp's identifiers
 (a user named root and the `POST /walk-root` route) still refuses; that is rare, and the refusal names the kind
