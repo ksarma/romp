@@ -34,8 +34,9 @@ tests/test_kernel_msgcaption.py; the loop cannot land here because the private-k
 pre-existing teardown leaks, so their save-and-restore product code lands first, then the ratchet's private-kernel
 arm; Y pins the limit as behaviour, a private-name leak over a removed root with the ratchet silent and the run green,
 red the day that arm lands), and the 316 the first sweep ran, module alone on the missing road; 364 modules in all. The
-first sweep, over its 316 at the base, module alone on the missing road, found the 4 red on these leaks and 1 red for an unrelated pre-existing reason (tests/test_sdk_rate_limit_usage.py, an
-unrestored ROMP_SERVE_TOKEN setdefault the judge fixture's environment check names; identical with the ratchet off);
+first sweep, over its 316 at the base, module alone on the missing road, found the 4 red on these leaks and 1 red for an
+unrelated pre-existing reason (tests/test_sdk_rate_limit_usage.py, an unrestored ROMP_SERVE_TOKEN setdefault the judge
+fixture's environment check names; identical with the ratchet off);
 at this head every one of the 364 is green alone (the missing road, CI's) except that one. The full-suite census, on
 the importable road, saw none of the five, because an earlier first builder in every worker made their builds cache
 hits: a green suite run is no evidence a module is clean, and the module-alone sweep is the measurement; the green CI
@@ -55,12 +56,14 @@ item, its own PR after this one. TheResidualIsWorded holds this wording here and
 The ratchet judges TRANSITIONS, at three windows. The test: the singleton read before the test and after its own
 teardown, and the test whose own transition made the bad state fails (a different object left, the directory
 removed under the object it found, or that object's state_dir repointed, both sides rendered from the reads'
-recorded text since the live attribute shows the after path on both). The class and module boundaries: a read at the scope's start and at its end,
-after tearDownClass or tearDownModule, and the scope whose setup or teardown made the bad state fails, the error
+recorded text since the live attribute shows the after path on both). The class and module boundaries: a read at the
+scope's start and at its end, after tearDownClass or tearDownModule, and the scope whose setup or teardown made the bad
+state fails, the error
 landing on the scope's last test with the boundary named. The setup before a test: a singleton found over a gone
 directory that no verdict has named yet was made by something outside every window (import-time code, or a fixture
-of a scope wider than the function) and is reported once per worker, at the first test that meets it, worded as inherited, raised after that test's own teardown
-so its body runs and its own transition is judged beside it; every later test that inherits the same object is quiet.
+of a scope wider than the function) and is reported once per worker, at the first test that meets it, worded as
+inherited, raised after that test's own teardown so its body runs and its own transition is judged beside it; every
+later test that inherits the same object is quiet.
 At the worker's first test window, where only import-time code and any fixture of a scope wider than the function has
 run, the same report covers a real backend over a directory that stands but is not jd.STATE when that backend is the
 object the module's own start read found; a module or class setup's install there is left to its boundary, which names
@@ -283,8 +286,9 @@ fixture READS and the branch each read feeds, with the case that reds under each
     those runs pin it by reading the boundary text, not the count); the quiet rule reading the inherited report's
     list too, the one-list behaviour (U's class boundary and V's module boundary disappear); the same-object gone
     transition deleted (D and L); the repoint of the last test's object dropped (X.Two's boundary disappears); the
-    put-back-repointed comparison dropped (X.Three's boundary disappears, the module end quiet on the named object); the put-back-of-a-gone-object branch deleted (P's boundary text disappears); the final start-to-end judgment
-    deleted (M's three boundary verdicts disappear); the object it accused not named (D.Two.a gets an inherited
+    put-back-repointed comparison dropped (X.Three's boundary disappears, the module end quiet on the named object); the
+    put-back-of-a-gone-object branch deleted (P's boundary text disappears); the final start-to-end judgment deleted
+    (M's three boundary verdicts disappear); the object it accused not named (D.Two.a gets an inherited
     report); the start read replaced by a null record (K.Two and others); the yield to the tests' windows removed
     (N: boundary text on every accused class, Two.b errors), without its first-window condition (Six's boundary
     disappears) or without its reference condition (K.One passes silently); the windows never recorded (as the
@@ -1180,8 +1184,9 @@ def summary_mismatch(out, errors):
     no newline); the segment class's newline exclusion ([^,\n]) and the [ ,] tail after the count are defence in
     depth over a value already reduced to one line, and no test can red on the exclusion alone. At the round-3 head
     the test named for the property credited the class; it pins SUMMARY_LINE's line selection
-    (NestedSummaryMatcher.test_the_count_is_read_on_the_summary_line_alone). The first form asked for "N passed, M errors in" and "N passed in" exactly, so one unrelated warning in
-    the child (an unpinned pytest's deprecation, a conftest filterwarnings entry pytest drops with a config warning)
+    (NestedSummaryMatcher.test_the_count_is_read_on_the_summary_line_alone). The first form asked for "N passed, M
+    errors in" and "N passed in" exactly, so one unrelated warning in the child (an unpinned pytest's deprecation, a
+    conftest filterwarnings entry pytest drops with a config warning)
     turned "6 passed, 3 errors in" into "6 passed, 1 warning, 3 errors in" and redded every run with a message that
     named no warning (round 1, 2026-09-19).
 
