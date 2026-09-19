@@ -290,7 +290,11 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   dead; the owner's decision of 2026-09-19) reloads the visible tab alone: the
   kernel re-skeletons the other tabs on the new socket as before, and each of
   them loads when tapped, for that socket's life, never in the background. The
-  desktop's return keeps today's chain.
+  hold is keyed on the shim's socket-flip frame, which follows every reopen
+  after the first connection and cannot tell a return apart from a kernel
+  restart or a dropped link while the app is in the foreground, so on the phone
+  every such redial holds the chain the same way. The desktop's redial keeps
+  today's chain.
 - **The Outline pane's ages run on the kernel's clock.** Its timestamps are the
   kernel's, so the pane never reads the browser's clock against them: it anchors
   on the frame's `now` paired with the moment that frame arrived from the wire
