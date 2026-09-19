@@ -71,7 +71,7 @@ import unittest
 import uuid
 from pathlib import Path
 from romp_load import load_source
-from env_ring_census import Census, DEFAULT_SOURCES, census
+from env_ring_census import Census, CensusError, DEFAULT_SOURCES, census
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
@@ -191,6 +191,22 @@ FLOORS = {
     "functions": 3157,             # every def and lambda of the three files, nested ones included
 }
 CALLS_BY_KIND = {"self": 183, "typed": 101, "bound-self": 7, "param": 34, "alias": 5}   # the 330's derivation, a floor each
+
+
+def _floor_shortfalls(counts, by_kind):
+    """Every floor the census's counts fall short of, as (name, found, floor): FLOORS over the counts, then
+    CALLS_BY_KIND over the per-kind calls. All of them, so a per-kind shortfall is named even when the doors total
+    falls with it (the round-6 mutation pass dropped `self` by one and saw only the doors floor fire, the assertions
+    running in order)."""
+    got = {"doors": counts["doors"], "calls_reaching_writer": counts["calls_reaching_writer"],
+           "log_param_fns": counts["log_param_fns"], "door_value_sites": counts["door_value_sites"],
+           "problem_row_sites": counts["conduit_sites"]["conduit:problem_row"],
+           "sdk_problem_sites": counts["conduit_sites"]["conduit:_sdk_problem"],
+           "feeder_appends": counts["feeder_appends"], "merge_reads": counts["merge_reads"],
+           "content_rows": counts["content_rows"], "functions": counts["functions"]}
+    out = [(k, got[k], floor) for k, floor in FLOORS.items() if got[k] < floor]
+    out += [(kind, by_kind.get(kind, 0), floor) for kind, floor in CALLS_BY_KIND.items() if by_kind.get(kind, 0) < floor]
+    return out
 
 
 class _Backend(unittest.TestCase):
@@ -932,18 +948,22 @@ class EnvRowsPopulation(unittest.TestCase):
         module-level format (an existence-only row, tainted through the surface set alone, owes the constant and no
         format: a surface name adds a fixed word). Red on 5d5507ee3 at twelve lines: _log_quietly's conduit and its
         six pick-naming callers, the mode landing's two routine lines, set_mode's line, the thinking override note and
-        set_env's success line; closed by problem=False inside _log_quietly and on the five lines."""
+        set_env's success line; closed by problem=False inside _log_quietly and on the five lines. The round-6 addendum
+        widened the taint (in-place adds, augmented assignment, attribute stores, module names, a re-keyed dict) and
+        found three more: the host-start notice (its pid derives from a process spawned with the launch's
+        credential-shaped names) and set_mode's two withdrawal lines, which name a pending pick; declared False."""
         c = self.c
         self.assertEqual([(dc.base, dc.lineno, dc.owner, why) for dc, why in c.explicit_violations], [],
                          "value-tainted door calls without an explicit constant problem= (or a content row with no single format)")
         declared_false = collections.Counter(dc.owner for dc in c.tainted if dc.problem_decl == ("const", False))
         self.assertEqual(declared_false, collections.Counter({
             "_log_quietly": 1, "_served_by_connect": 1, "_arm_reconnect_if_quiet": 2, "_note_work_ended": 1, "_settle_withdrawal": 1,
-            "_reset_reconnect_state": 1, "_do_set_mode": 4, "set_mode": 1, "_options": 1, "set_env": 1,
-            "_note_env_credential_names": 1, "_host_transport_for": 1}),
+            "_reset_reconnect_state": 1, "_do_set_mode": 4, "set_mode": 3, "_options": 1, "set_env": 1,
+            "_note_env_credential_names": 1, "_host_transport_for": 2, "_can_use_tool": 1}),
             "the routine lines declared problem=False by writing function: round 6's twelve (the conduit's own call, its six "
             "callers, two landing lines, set_mode, the thinking note, set_env's success line), the landing's two earlier "
-            "declarations, and the two boot-time notices")
+            "declarations, the two boot-time notices, and the addendum's three (the host-start notice, set_mode's two "
+            "withdrawal lines) plus the bypass-consult line the widened taint reaches through the conduit")
 
     def test_an_unreduced_door_call_is_named_never_dropped(self):
         """Rule (3): a door call whose message the walk cannot reduce to a literal head stays in the population (taint
@@ -967,10 +987,12 @@ class EnvRowsPopulation(unittest.TestCase):
         """The one sentence beside the nine, pinned: lines tainted through the pending-pick surface set alone (the
         reconnect heading's, the mode landing's) name a pick's existence in a fixed vocabulary plus the session name,
         never a value; every one declares a constant, none is a content row, and the ones filed problem=True are the
-        landing's three failure reports (the mode-truth tests own those)."""
+        landing's three failure reports (the mode-truth tests own those). 18 at the round-6 addendum: round 6's 15,
+        set_mode's two withdrawal lines and the bypass-consult line, reached once the taint followed attribute stores
+        (the mode the landing stores is derived from the surface set)."""
         c = self.c
         ex = c.existence_rows
-        self.assertGreaterEqual(len(ex), 15)
+        self.assertGreaterEqual(len(ex), 18)
         for dc in ex:
             self.assertEqual(dc.taint, frozenset({"pick"}), (dc.lineno, dc.taint))
             self.assertEqual(dc.problem_decl[0], "const", (dc.lineno, dc.problem_decl))
@@ -1006,17 +1028,32 @@ class EnvRowsPopulation(unittest.TestCase):
 
     def test_the_derivation_meets_its_floors(self):
         c = self.c
-        got = {"doors": c.counts["doors"], "calls_reaching_writer": c.counts["calls_reaching_writer"],
-               "log_param_fns": c.counts["log_param_fns"], "door_value_sites": c.counts["door_value_sites"],
-               "problem_row_sites": c.counts["conduit_sites"]["conduit:problem_row"],
-               "sdk_problem_sites": c.counts["conduit_sites"]["conduit:_sdk_problem"],
-               "feeder_appends": c.counts["feeder_appends"], "merge_reads": c.counts["merge_reads"],
-               "content_rows": c.counts["content_rows"], "functions": c.counts["functions"]}
-        for k, floor in FLOORS.items():
-            self.assertGreaterEqual(got[k], floor, "derivation blind: %s found %d, the floor at review round 6 is %d" % (k, got[k], floor))
+        self.assertEqual(_floor_shortfalls(c.counts, c.by_kind), [],
+                         "derivation blind: (floor, found, the floor at review round 6); a run that finds fewer is blind, not cleaner")
+        self.assertEqual(sum(c.by_kind.values()), c.counts["calls_reaching_writer"])
+
+    def test_a_per_kind_floor_fires_alone_and_at_the_floor_none_does(self):
+        """The round-6 mutation pass left CALLS_BY_KIND's per-kind floors unshown: dropping one self._log call lowered
+        `self` to 182 and the doors floor fired first. The shortfall list names every floor missed, so a per-kind
+        shortfall is named on its own; both boundary cases on a stand-in: at the floor nothing fires, one below it the
+        kind alone, and the doors total one below fires alone too."""
+        c = self.c
+        at_floor = dict(c.by_kind)
         for kind, floor in CALLS_BY_KIND.items():
-            self.assertGreaterEqual(c.by_kind[kind], floor, "derivation blind: %s calls %d, the floor is %d" % (kind, c.by_kind[kind], floor))
-        self.assertEqual(sum(c.by_kind.values()), got["calls_reaching_writer"])
+            at_floor[kind] = floor
+        counts = dict(c.counts)
+        counts["calls_reaching_writer"] = sum(at_floor.values())
+        for k in ("doors", "log_param_fns", "door_value_sites", "feeder_appends", "merge_reads", "content_rows", "functions"):
+            counts[k] = FLOORS[k]
+        self.assertEqual(_floor_shortfalls(counts, at_floor), [], "at every floor exactly, nothing fires")
+        for kind, floor in CALLS_BY_KIND.items():
+            with self.subTest(kind=kind):
+                low = dict(at_floor)
+                low[kind] = floor - 1
+                self.assertEqual(_floor_shortfalls(counts, low), [(kind, floor - 1, floor)], "the kind's floor fires alone")
+        low_doors = dict(counts)
+        low_doors["doors"] = FLOORS["doors"] - 1
+        self.assertEqual(_floor_shortfalls(low_doors, at_floor), [("doors", FLOORS["doors"] - 1, FLOORS["doors"])])
 
     def test_the_kernel_adds_no_content_row_so_a_module_copy_is_read_with_credentials_alone(self):
         """The planted-module and module-copy tests below run the census over kernel/sdk_backend.py and
@@ -1108,6 +1145,285 @@ class EnvRowsPopulation(unittest.TestCase):
         for k, v in sites.items():
             self.assertEqual(_lock_withs_above(v[0], parents), [], "%s (line %d) sits inside a with over a lock" % (k, v[0].lineno))
 
+
+
+class EnvRowsCensusBlindSpots(unittest.TestCase):
+    """The round-6 blind-pin lens planted a tenth env-carrying ring row 69 ways and the census passed 13 of them at its
+    baseline (2026-09-19): aliases of the door bound at module or class scope (a module `_RING = SdkBackend._log` or
+    `getattr(SdkBackend, "_log")`, a class-body `_ring = _log`, a method default `log=_log`), the door reached by
+    reflection (`operator.attrgetter("_log")`), env names reaching a seen door through a re-keyed dict return, an
+    in-place `append` in a loop, `+=`, an attribute stored in one method and read in another, and a module list's
+    `extend`, and second writers of the ring (`be._problems.append` from kernel.py, `self.backend._problems.append`
+    from a session, `self._problems.insert` in a second SdkBackend method). Each sabotage is replayed here on a module
+    copy or a synthetic module and must be LOUD: a tenth content row (the identity pin reds), a failure named by site,
+    or a CensusError. The copies edit anchors asserted present once in the module."""
+
+    FMT_ANCHOR = "RESERVED_DROP_RING = ("
+    METHOD_ANCHOR = "    def problem_seq(self) -> int:"
+    SESSION_ANCHOR = "    def _log_quietly(self, line: str) -> None:"
+    CRASH_ANCHOR = '_log(f"sdk session {self.name} crashed: '
+    TENTH = 'TENTH_RING = "env (%s): tenth %s"\n'
+    MSG = '"env (%s): tenth %s" % (sess.name, ", ".join(sorted(sess.env_vars)))'
+    RING = 'ring_text=TENTH_RING % (sess.name[:20], len(sess.env_vars))'
+    TENTH_ID = ("_tenth", "TENTH_RING", False)
+
+    @classmethod
+    def setUpClass(cls):
+        cls.src = Path(SDK_BACKEND).read_text(encoding="utf-8")
+        for needle in (cls.FMT_ANCHOR, cls.METHOD_ANCHOR, cls.SESSION_ANCHOR, cls.CRASH_ANCHOR):
+            assert cls.src.count(needle) == 1, "the copies' anchors are in the module once each: %r" % needle
+
+    def _copy(self, edit, name="sdk_backend.py"):
+        new = edit(self.src)
+        self.assertNotEqual(new, self.src, "the copy's edit must apply")
+        path = os.path.join(tempfile.mkdtemp(), name)
+        Path(path).write_text(new, encoding="utf-8")
+        return path
+
+    def _plant(self, name, src):
+        path = os.path.join(tempfile.mkdtemp(), name)
+        Path(path).write_text(src, encoding="utf-8")
+        return path
+
+    def _with_format(self, s):
+        return s.replace(self.FMT_ANCHOR, self.TENTH + self.FMT_ANCHOR)
+
+    def _method(self, body, extra_methods=""):
+        """A module copy with TENTH_RING and a new SdkBackend method `_tenth(self, sess)` whose body is `body`."""
+        return self._copy(lambda s: self._with_format(s).replace(
+            self.METHOD_ANCHOR, extra_methods + "    def _tenth(self, sess):\n" + body + "\n\n" + self.METHOD_ANCHOR))
+
+    def _census(self, *paths):
+        return Census(tuple(paths) + (CREDENTIALS_PY,), DEFAULT_SOURCES)
+
+    def _assert_tenth_found(self, c, kind, expect_failures=()):
+        """The planted row is a CONTENT row (found, env-tainted, its head read) and the pin's identity assertion
+        refuses on it by name."""
+        self.assertEqual([f[:3] for f in c.failures], list(expect_failures))
+        self.assertIn(self.TENTH_ID, c.content_identities())
+        self.assertEqual(len(c.content_rows), 10)
+        found = [dc for dc in c.door_calls if dc.owner == "_tenth"]
+        self.assertEqual([(dc.kind, sorted(dc.taint), dc.heads, dc.ring_formats) for dc in found],
+                         [(kind, ["env"], ["env (%s): tenth %s"], ["TENTH_RING"])])
+        self.assertEqual([w for dc, w in c.explicit_violations if dc.owner == "_tenth"], [])
+        with self.assertRaises(AssertionError) as cm:
+            EnvRowsPopulation._assert_pin(self, c)
+        self.assertIn("_tenth", str(cm.exception))
+
+    def test_a_door_aliased_at_module_scope_is_found_and_an_uncalled_one_is_a_failure(self):
+        """Family A of the lens, the module scope: `_RING = SdkBackend._log` and `_RING3 = getattr(SdkBackend, "_log")`
+        bound at import, called through the bare name with the message after an explicit self (the alias is the
+        writer's function, unbound); both quiet at aa1037c8f (doors 395, content 9, failures none). Found as kind
+        "alias" with the message read in the right position. A module alias nothing calls is a failure named by site."""
+        for label, binding in (("attribute", "_RING = SdkBackend._log"), ("getattr", '_RING = getattr(SdkBackend, "_log")')):
+            with self.subTest(alias=label):
+                c = self._census(self._copy(lambda s: self._with_format(s) + "\n%s\ndef _tenth(be, sess):\n    _RING(be, %s, problem=True, %s)\n"
+                                            % (binding, self.MSG, self.RING)))
+                self._assert_tenth_found(c, "alias")
+                self.assertIn("module alias _RING", [how for _b, _ln, how, _f in c.door_value_sites])
+        c = self._census(self._copy(lambda s: s + "\n_RING4 = SdkBackend._log\n"))
+        self.assertEqual([(k, b, t) for k, b, _ln, t in c.failures], [("door-escapes", "sdk_backend.py", "module alias _RING4 is never called")])
+        self.assertEqual(len(c.content_rows), 9)
+
+    def test_a_door_aliased_in_the_writers_class_body_is_found_and_an_ambiguous_name_is_a_failure(self):
+        """Family A, the class scope: a class-body `_ring_door = _log` (the writer's bare name resolves in its own class
+        body) called as `self._ring_door(...)`, and a method default `log=_log` called as `log(self, ...)`; both quiet
+        at aa1037c8f. Found as kinds "alias" and "param", the message read after the explicit self. The lens's own
+        spelling, `_ring`, is also ApiHealth's deque attribute, so a call on an untyped receiver could not be resolved:
+        the alias is found AND its name is a failure naming both owners, so it gets renamed rather than half-followed."""
+        with self.subTest(alias="class-body _ring_door = _log"):
+            c = self._census(self._copy(lambda s: self._with_format(s).replace(self.METHOD_ANCHOR,
+                "    _ring_door = _log\n\n    def _tenth(self, sess):\n        self._ring_door(%s, problem=True, %s)\n\n" % (self.MSG, self.RING) + self.METHOD_ANCHOR)))
+            self._assert_tenth_found(c, "alias")
+            self.assertIn("class alias _ring_door of SdkBackend", [how for _b, _ln, how, _f in c.door_value_sites])
+        with self.subTest(alias="method default log=_log"):
+            c = self._census(self._copy(lambda s: self._with_format(s).replace(self.METHOD_ANCHOR,
+                "    def _tenth(self, sess, log=_log):\n        log(self, %s, problem=True, %s)\n\n" % (self.MSG, self.RING) + self.METHOD_ANCHOR)))
+            self._assert_tenth_found(c, "param")
+            self.assertIn("parameter log of SdkBackend._tenth (default)", [how for _b, _ln, how, _f in c.door_value_sites])
+        with self.subTest(alias="the lens's _ring, ApiHealth's deque"):
+            c = self._census(self._copy(lambda s: self._with_format(s).replace(self.METHOD_ANCHOR,
+                "    _ring = _log\n\n    def _tenth(self, sess):\n        self._ring(%s, problem=True, %s)\n\n" % (self.MSG, self.RING) + self.METHOD_ANCHOR)))
+            self.assertEqual([(k, b) for k, b, _ln, _t in c.failures], [("door-alias-ambiguous", "sdk_backend.py")])
+            self.assertIn("ApiHealth._ring", c.failures[0][3])
+            self.assertIn(self.TENTH_ID, c.content_identities(), "found all the same through self in the owner class")
+            self.assertEqual([dc.kind for dc in c.door_calls if dc.base == "sdk_backend.py" and dc.owner in ("_record", "_prune", "counts", "snapshot") and dc.kind == "alias"], [],
+                             "ApiHealth's own self._ring calls are not door calls")
+
+    def test_an_unbound_call_through_the_class_reads_the_message_after_self(self):
+        """`SdkBackend._log(self, <env message>, problem=True, ring_text=...)` was caught at aa1037c8f by the unreduced
+        set alone: the walk took `self` as the message and never read the row's taint. The binding is read from the
+        receiver (a class name: unbound), so the message is the second positional and the row is a content row."""
+        c = self._census(self._method("        SdkBackend._log(self, %s, problem=True, %s)" % (self.MSG, self.RING)))
+        self._assert_tenth_found(c, "typed")
+        self.assertEqual([dc.lineno for dc in c.unreduced if dc.owner == "_tenth"], [])
+
+    def test_env_names_reach_a_seen_door_through_the_five_roads_the_lens_named_and_a_sixth(self):
+        """Family B: the door call was COUNTED (doors 396, calls 331) and classed untainted at aa1037c8f when the env
+        names reached it through a helper's dict return under another key, a list built by append in a loop, a string
+        built by +=, an attribute stored in one method and read in another, or a module-level list's extend; the
+        sixth is the same re-keying through a dict built in place. Each is a content row now. The ring text of each
+        plant derives from the road's own value (a count of it), never from a source read directly, so the taint that
+        makes the row a content row is the road's: with `len(sess.env_vars)` in the ring text the row would be tainted
+        through the ring text whatever the message carried (the addendum's first draft measured four of the six roads
+        green on the old census for that reason)."""
+        roads = {
+            "dict return under names": (lambda s: self._with_format(s).replace(self.METHOD_ANCHOR,
+                '    def _tenth(self, sess):\n        info = _tenth_info(sess)\n        self._log("env (%s): tenth %s" % (sess.name, ", ".join(info["names"])), '
+                'problem=True, ring_text=TENTH_RING % (sess.name[:20], len(info["names"])))\n\n' + self.METHOD_ANCHOR)
+                + '\ndef _tenth_info(sess):\n    return {"names": sorted(sess.env_vars)}\n'),
+            "append in a loop": (lambda s: self._with_format(s).replace(self.METHOD_ANCHOR,
+                '    def _tenth(self, sess):\n        parts = []\n        for k in sess.env_vars:\n            parts.append(k)\n'
+                '        self._log("env (%s): tenth %s" % (sess.name, ", ".join(parts)), problem=True, ring_text=TENTH_RING % (sess.name[:20], len(parts)))\n\n' + self.METHOD_ANCHOR)),
+            "augmented assignment": (lambda s: self._with_format(s).replace(self.METHOD_ANCHOR,
+                '    def _tenth(self, sess):\n        names = ""\n        for k in sess.env_vars:\n            names += k\n'
+                '        self._log("env (%s): tenth %s" % (sess.name, names), problem=True, ring_text=TENTH_RING % (sess.name[:20], len(names)))\n\n' + self.METHOD_ANCHOR)),
+            "attribute store read in another method": (lambda s: self._with_format(s).replace(self.METHOD_ANCHOR,
+                '    def _tenth_store(self, sess):\n        self._tenth_names = sorted(sess.env_vars)\n\n'
+                '    def _tenth(self, sess):\n        self._log("env (%s): tenth %s" % (sess.name, ", ".join(self._tenth_names)), problem=True, ring_text=TENTH_RING % (sess.name[:20], len(self._tenth_names)))\n\n' + self.METHOD_ANCHOR)),
+            "module list extend": (lambda s: s.replace(self.FMT_ANCHOR, self.TENTH + "_TENTH_SEEN = []\n" + self.FMT_ANCHOR).replace(self.METHOD_ANCHOR,
+                '    def _tenth(self, sess):\n        _TENTH_SEEN.extend(sorted(sess.env_vars))\n'
+                '        self._log("env (%s): tenth %s" % (sess.name, ", ".join(_TENTH_SEEN)), problem=True, ring_text=TENTH_RING % (sess.name[:20], len(_TENTH_SEEN)))\n\n' + self.METHOD_ANCHOR)),
+            "dict built in place, re-keyed": (lambda s: self._with_format(s).replace(self.METHOD_ANCHOR,
+                '    def _tenth(self, sess):\n        info = _tenth_info(sess)\n        self._log("env (%s): tenth %s" % (sess.name, ", ".join(info["names"])), '
+                'problem=True, ring_text=TENTH_RING % (sess.name[:20], len(info["names"])))\n\n' + self.METHOD_ANCHOR)
+                + '\ndef _tenth_info(sess):\n    d = {}\n    d["names"] = sorted(sess.env_vars)\n    return d\n'),
+        }
+        for road, edit in roads.items():
+            with self.subTest(road=road):
+                self._assert_tenth_found(self._census(self._copy(edit)), "self")
+
+    def test_the_env_key_of_a_dict_return_stays_a_source_at_the_read_and_does_not_taint_the_dicts_other_keys(self):
+        """The other boundary of the dict rule: a helper returning {"env": sess.env_vars, "mode": sess.mode} taints
+        no reader of its "mode" key (the env key is a source at its own read), so the nine stay nine; and the launch
+        shape, a source function returning a dict, taints `shape["mode"]` no more (before this rule the attributes
+        stored from it cascaded env taint to 96 content rows)."""
+        c = self._census(self._copy(lambda s: self._with_format(s).replace(self.METHOD_ANCHOR,
+            '    def _tenth(self, sess):\n        info = _tenth_info(sess)\n        self._log("env (%s): tenth %s" % (sess.name, info["mode"]), problem=True, '
+            'ring_text=TENTH_RING % (sess.name[:20], info["mode"]))\n\n' + self.METHOD_ANCHOR)
+            + '\ndef _tenth_info(sess):\n    return {"env": sess.env_vars, "mode": sess.mode}\n'))
+        self.assertEqual(c.failures, [])
+        self.assertEqual(len(c.content_rows), 9)
+        self.assertEqual([sorted(dc.taint) for dc in c.door_calls if dc.owner == "_tenth"], [[]])
+        head = census(CENSUS_FILES)
+        shape = [f for f in head.all_fns if f.qual == "SdkBackend._launch_shape"][0]
+        self.assertTrue(head._returns_dicts(shape), "the launch shape returns a dict: a source at its env key, not whole")
+        self.assertEqual(sorted(a for a, t in head.attr_taint.items() if "env" in t), ["_launched_env", "env_vars"],
+                         "the env-tainted attributes at this head are the two env source attributes themselves")
+
+    def test_the_doors_name_as_a_string_outside_getattr_is_a_failure(self):
+        """Reflection: `log=operator.attrgetter("_log")(self)` bound a planted helper to the door with the walk seeing
+        no door at all (doors 395, content 9, failures none at aa1037c8f). Every string constant spelling the door's
+        name outside the one getattr form the walk follows is a failure named by site, as is one spelling the ring's;
+        the module constant `LOG_ATTR = "_log"` handed to getattr is the same failure at the constant."""
+        helper = '\ndef _tenth_helper(sess, log=None):\n    log(%s, problem=True, %s)\n' % (self.MSG, self.RING)
+        with self.subTest(road="attrgetter"):
+            c = self._census(self._copy(lambda s: "import operator\n" + self._with_format(s).replace(self.METHOD_ANCHOR,
+                '    def _tenth(self, sess):\n        _tenth_helper(sess, log=operator.attrgetter("_log")(self))\n\n' + self.METHOD_ANCHOR) + helper))
+            self.assertEqual([(k, b, t.split(":")[0]) for k, b, _ln, t in c.failures], [("door-name-string", "sdk_backend.py", "the door's name '_log' is a string outside getattr(x, '_log')")])
+            self.assertIn('attrgetter', c.failures[0][3])
+            self.assertEqual([dc.owner for dc in c.door_calls if dc.owner in ("_tenth", "_tenth_helper")], [], "the door itself is invisible, which is why the string must be loud")
+        with self.subTest(road="a module constant naming the attribute"):
+            c = self._census(self._copy(lambda s: s.replace(self.FMT_ANCHOR, 'LOG_ATTR = "_log"\n' + self.TENTH + self.FMT_ANCHOR).replace(self.METHOD_ANCHOR,
+                '    def _tenth(self, sess):\n        _tenth_helper(sess, log=getattr(self, LOG_ATTR, None))\n\n' + self.METHOD_ANCHOR) + helper))
+            self.assertEqual([(k, b) for k, b, _ln, _t in c.failures], [("door-name-string", "sdk_backend.py")])
+        with self.subTest(road="the ring's name as a string"):
+            c = self._census(self._method('        getattr(self, "_problems").append({"text": "x"})'))
+            self.assertIn(("ring-name-string", "sdk_backend.py"), [(k, b) for k, b, _ln, _t in c.failures])
+        with self.subTest(road="the followed form is no failure"):
+            c = self._census(self._copy(lambda s: self._with_format(s).replace(self.METHOD_ANCHOR,
+                '    def _tenth(self, sess):\n        _tenth_helper(sess, log=getattr(self, "_log", None))\n\n' + self.METHOD_ANCHOR) + helper))
+            self.assertEqual(c.failures, [])
+            self.assertIn(("_tenth_helper", "TENTH_RING", False), c.content_identities())
+
+    def test_a_second_writer_of_the_ring_is_a_census_error_and_the_heads_own_references_pass(self):
+        """Family C: the ring the dashboard reads gained a row from kernel.py (`be._problems.append`), from a session
+        (`self.backend._problems.append`) and from a second SdkBackend method (`self._problems.insert(0, ...)`) with
+        the census at its baseline, because the writer was found by one shape and every other touch of the ring went
+        unread. Every reference to `_problems` on any receiver in the files is classified now: a second appender, any
+        other mutation, an alias, a return, a store outside __init__ or a touch outside the writer's class is a
+        CensusError naming the site; the head's own seven references (the __init__ binding, the writer's repeat lookup,
+        append and trim, problems()' copy, problem_keyed()'s scan) pass."""
+        row = '{"seq": 0, "t": 0, "text": "env (%s): tenth %s" % (sess.name, ", ".join(sess.env_vars))}'
+        cases = {
+            "kernel-side be._problems.append": (lambda: self._census(SDK_BACKEND, self._plant("plant.py", "def tenth(be, sess):\n    be._problems.append(%s)\n" % row)), "2 appenders"),
+            "a session's self.backend._problems.append": (lambda: self._census(self._copy(lambda s: s.replace(self.SESSION_ANCHOR,
+                "    def _tenth(self, sess):\n        self.backend._problems.append(%s)\n\n" % row + self.SESSION_ANCHOR))), "2 appenders"),
+            "a second method's self._problems.insert": (lambda: self._census(self._method("        self._problems.insert(0, %s)" % row)), "mutated other than by the writer's append"),
+            "an alias of the ring": (lambda: self._census(self._method('        rows = self._problems\n        rows.append({"text": "x"})')), "read where the walk cannot follow"),
+            "the ring returned": (lambda: self._census(self._method("        return self._problems")), "read where the walk cannot follow"),
+            "the ring rebound outside __init__": (lambda: self._census(self._method("        self._problems = []")), "rebound outside __init__"),
+            "a foreign class reading it": (lambda: self._census(self._copy(lambda s: s.replace(self.SESSION_ANCHOR,
+                "    def _tenth(self):\n        return len(self.backend._problems)\n\n" + self.SESSION_ANCHOR))), "touched outside its writer's class"),
+        }
+        for label, (build, words) in cases.items():
+            with self.subTest(case=label):
+                with self.assertRaises(CensusError) as cm:
+                    build()
+                self.assertIn(words, str(cm.exception))
+        head = census(CENSUS_FILES)
+        refs = [(mod.base, node.lineno, fn.qual if fn else None) for mod, node, fn in head.ring_refs]
+        self.assertEqual(len(refs), 7, refs)
+        self.assertEqual({q for _b, _ln, q in refs}, {"SdkBackend.__init__", "SdkBackend._log", "SdkBackend.problems", "SdkBackend.problem_keyed"})
+        self.assertEqual({b for b, _ln, _q in refs}, {"sdk_backend.py"})
+
+    def test_a_feeder_list_adding_by_insert_extend_or_augmented_assignment_is_a_feeder_append(self):
+        """The same family on the kernel's side: _sdk_problem_rows' lists took rows by `append` alone in the census's
+        eyes. A synthetic module standing in for kernel.py (its own _sdk_problem_rows reading a module list) adds by
+        insert, by extend and by +=, and each is a feeder append whose row text is read."""
+        for how, stmt in (("insert", 'ROWS.insert(0, {"text": "env (%s): tenth %s" % (sess.name, ", ".join(sess.env_vars))})'),
+                          ("extend", 'ROWS.extend([{"text": "env (%s): tenth %s" % (sess.name, ", ".join(sess.env_vars))}])'),
+                          ("augmented assignment", 'ROWS += [{"text": "env (%s): tenth %s" % (sess.name, ", ".join(sess.env_vars))}]')):
+            with self.subTest(how=how):
+                c = self._census(SDK_BACKEND, self._plant("plant.py", "ROWS = []\ndef _sdk_problem_rows():\n    return list(ROWS)\ndef feed(sess):\n    %s\n" % stmt))
+                self.assertEqual([(fn.name, lst) for fn, _c, lst in c.feeder_appends if fn.base == "plant.py"], [("feed", "ROWS")])
+                planted = [dc for dc in c.door_calls if dc.base == "plant.py"]
+                self.assertEqual([(dc.kind, sorted(dc.taint), dc.problem_decl) for dc in planted], [("feeder-append:ROWS", ["env"], ("const", True))])
+                self.assertEqual([w.split(" to ")[0] for dc, w in c.explicit_violations if dc.base == "plant.py"], ["problem=True with a ring text that reduces"])
+
+    def test_reduction_follows_a_conduit_to_its_sites_and_an_fstring_to_its_leading_text(self):
+        """The round-6 mutation pass applied no mutation that breaks reduction alone. A synthetic conduit `relay(be, m)`
+        with one literal site and one run-time site: the inner call's heads are the literal site's, the run-time site
+        is unreduced and the inner call is not; with every site run-time the inner call is unreduced too. And the
+        module's crash line (an f-string whose leading text the census reads) with its leading text removed joins the
+        unreduced set, so its reduction is shown to rest on that text."""
+        plant = ("def relay(be, m):\n    be._log(m)\n"
+                 "def a(be):\n    relay(be, 'x: literal')\n"
+                 "def b(be, e):\n    relay(be, str(e))\n")
+        c = self._census(SDK_BACKEND, self._plant("plant.py", plant))
+        inner = [dc for dc in c.door_calls if dc.base == "plant.py" and dc.kind == "typed"]
+        self.assertEqual([(dc.owner, dc.heads, dc.unreduced) for dc in inner], [("relay", ["x: literal"], False)])
+        sites = sorted((dc.owner, dc.heads, dc.unreduced) for dc in c.door_calls if dc.base == "plant.py" and dc.kind == "conduit:relay")
+        self.assertEqual(sites, [("a", ["x: literal"], False), ("b", [], True)])
+        c2 = self._census(SDK_BACKEND, self._plant("plant.py", plant.replace("'x: literal'", "repr(be)")))
+        self.assertEqual(sorted((dc.owner, dc.unreduced) for dc in c2.door_calls if dc.base == "plant.py"), [("a", True), ("b", True), ("relay", True)])
+        path = self._copy(lambda s: s.replace(self.CRASH_ANCHOR, '_log(f"{self.name} crashed: '))
+        c3 = self._census(path)
+        line = [i + 1 for i, ln in enumerate(Path(path).read_text(encoding="utf-8").splitlines()) if '_log(f"{self.name} crashed: ' in ln]
+        self.assertEqual(len(line), 1)
+        self.assertIn(line[0], [dc.lineno for dc in c3.unreduced if dc.base == "sdk_backend.py"], "the crash line's reduction rests on its leading text")
+        self.assertEqual(len([dc for dc in c3.unreduced if dc.base == "sdk_backend.py"]), 2, "the head's one plus the crash line")
+
+
+class LogQuietlyAtRuntime(_Backend):
+    """The runtime half of _log_quietly's problem=False (round 6; its lexical half is the census's rule (2)): a line
+    through the conduit inside a live except handler, where _log's default would file it, lands on the kernel log
+    and NOT on the ring, while a bare _log in the same handler does file, which shows the handler was live."""
+
+    def test_a_line_through_the_conduit_inside_a_live_handler_is_no_ring_row(self):
+        lines = []
+        self.be._log_cb = lines.append
+        sid = self.be.spawn("web", "/tmp", env=ENV)
+        s = self._sess(sid)
+        try:
+            raise RuntimeError("probe")
+        except RuntimeError:
+            self.be._log("probe: a bare line in a live handler")
+            s._log_quietly("reconnect (web): a routine line through the conduit")
+        texts = [r["text"] for r in self.be.problems()]
+        self.assertIn("probe: a bare line in a live handler", texts, "the handler was live: _log's default filed the bare line")
+        self.assertEqual([t for t in texts if "through the conduit" in t], [], "the conduit's line is no ring row")
+        self.assertIn("reconnect (web): a routine line through the conduit", lines, "the kernel log keeps it")
 
 class FlagSettingsLockOrder(_OptionsBackend):
     """The callee half of _flag_settings_lock's order sentence, pinned by execution (correctness-3, tests-4, regression-2;
@@ -2033,8 +2349,9 @@ class CredentialShapedNamesEndToEnd(_OptionsBackend):
                                  "%s: the format's worst case is its fixed text plus both budgets and the widest count" % fmt_name)
         self.assertEqual(lengths["REFUSAL_RING_HEAD"], cap, "the refusal ring's worst case is the cap exactly (round 3's arithmetic)")
         self.assertEqual(lengths["STORED_OFFENDER_RING"], 178 + len(suffix4), "the stored row: 178 plus the suffix at four digits")
-        self.assertEqual(lengths["RESERVED_DROP_RING"], 175 + len(suffix4),
-                         "the keyed skip (round 6): 117 fixed + session 20 + name 24 + count 14, plus the suffix at four digits, 234 of 240")
+        self.assertEqual(lengths["RESERVED_DROP_RING"], self._two_piece_worst(sb.RESERVED_DROP_RING) + len(suffix4),
+                         "the keyed skip (round 6): fixed text + session 20 + name 24 + count 14, plus the suffix at four digits")
+        self.assertEqual((len(sb.RESERVED_DROP_RING % ("", "")), lengths["RESERVED_DROP_RING"]), (117, 234), "117 fixed; 234 of 240 with the suffix")
         self.assertEqual(lengths["FORK_RESERVED_RING"], 187, "the fork's reserved drop, unkeyed: it fires once per fork (round 4's 187)")
         self.assertEqual(lengths["FORK_DROP_RING"], 160)
 
@@ -2055,7 +2372,8 @@ class CredentialShapedNamesEndToEnd(_OptionsBackend):
 
     def _copy_table(self, path, suffix4, cap):
         """The census over a module copy (with credentials.py; EnvRowsPopulation holds that kernel.py adds no content row),
-        the copy's own format texts, and the table's longest worst case per format."""
+        the copy's own format texts, and the table's longest worst case per format; `self.copy_formats` keeps the copy's
+        texts so an expected length is derived from the format rather than kept as a second copy of the arithmetic."""
         c = Census((path, CREDENTIALS_PY), DEFAULT_SOURCES)
         self.assertEqual(c.failures, [])
         keyed = {fmt for _o, fmt, k in c.content_identities() if k}
@@ -2064,8 +2382,14 @@ class CredentialShapedNamesEndToEnd(_OptionsBackend):
         consts = {t.id: ast.literal_eval(node.value) for node in tree.body if isinstance(node, ast.Assign)
                   for t in node.targets if isinstance(t, ast.Name) and t.id in on_line}
         self.assertEqual(sorted(consts), on_line)
+        self.copy_formats = consts
         worst = self._worst_cases(consts, keyed, suffix4, cap)
         return keyed, {n: max(len(t) for t in texts) for n, texts in worst.items()}
+
+    def _two_piece_worst(self, fmt):
+        """A two-piece format's unkeyed worst case from its own text: fixed text + session budget + name budget + the
+        widest count (the one arithmetic; the head's 175 for the skip is this over RESERVED_DROP_RING)."""
+        return len(fmt % ("", "")) + sb.RING_SESSION_BUDGET + sb.RING_NAME_BUDGET + len(" and %s more" % sb._cred.count_text(sb._cred.COUNT_CAP + 1))
 
     def test_the_worst_case_table_reds_where_a_keyed_reserved_row_crosses_the_cap(self):
         """kernel-2 with extra6-1 (review round 5 of the env-pick door, 2026-09-19) and the round-6 roster item: the
@@ -2094,7 +2418,8 @@ class CredentialShapedNamesEndToEnd(_OptionsBackend):
         with self.subTest(copy="the skip with its key removed"):
             keyed, lengths = self._copy_table(self._module_copy(lambda s: s.replace(self.SKIP_KEY, "")), suffix4, cap)
             self.assertEqual(keyed, {"STORED_OFFENDER_RING"})
-            self.assertEqual(lengths["RESERVED_DROP_RING"], 175, "unkeyed, no suffix rides it")
+            self.assertEqual(lengths["RESERVED_DROP_RING"], self._two_piece_worst(self.copy_formats["RESERVED_DROP_RING"]), "unkeyed, no suffix rides it")
+            self.assertEqual(lengths["RESERVED_DROP_RING"], self._two_piece_worst(sb.RESERVED_DROP_RING), "the copy's format is the head's")
             self.assertEqual([n for n, ln in sorted(lengths.items()) if ln > cap], [])
 
     def test_the_reserved_skip_row_is_keyed_so_a_second_connect_counts_on_it(self):
@@ -2113,6 +2438,10 @@ class CredentialShapedNamesEndToEnd(_OptionsBackend):
         self.assertEqual((rows[0].get("key"), rows[0].get("count")), (("env-reserved-skip", sid), 2))
         self.assertTrue(rows[0]["text"].startswith(sb.RESERVED_DROP_RING % ("web", "ROMP_SID") + " (1 repeat"), rows[0]["text"])
         self.assertNotIn(PARENT, rows[0]["text"], "names, never a value")
+        # the kernel log line keeps its words (round 6 shortened the ring FORMAT, not the line; pinned by the addendum)
+        self.assertEqual([ln for ln in self.lines if "ignoring reserved" in ln],
+                         ["env (web): ignoring reserved ROMP_SID from the stored session env: romp sets the identity env itself, and a "
+                          "session's credential is Claude Code's own"] * 2, "one log line per connect, the sentence whole")
 
     def _real_ring(self):
         """The row as the dashboard reads it: the class stubs _log to capture lines, so the stub goes and the kernel

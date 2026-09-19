@@ -10,14 +10,25 @@ by resolution and not by name:
 
   1. THE APPENDER. The one method whose body appends to `self._problems` is the ring writer (SdkBackend._log); its
      name is read from the file, and the census asserts no other def in the three files carries it, so a reference to
-     that attribute on any receiver is a reference to the writer.
+     that attribute on any receiver is a reference to the writer. The ring is PRIVATE to that class: every other
+     reference to `_problems`, on any receiver in any of the files, must be a read inside the writer's class through
+     self (a copying or counting builtin, a loop, a comprehension), the writer's own trim or __init__'s empty-list
+     binding; a second appender, an insert or extend, an alias, a return, a store, a del, or a touch from another
+     class or module is a CensusError (the round-6 blind-pin lens appended rows from kernel.py, from a session and
+     from a second SdkBackend method with the census at its baseline).
   2. CALLS REACHING IT. Every call resolving to the writer: `self.<door>` inside the writer's class; `<any>.<door>` on
-     another receiver (the backend held by a session, a `be` parameter); `self.<door>` inside a class that binds the
+     another receiver (the backend held by a session, a `be` parameter); `<Class>.<door>(self, ...)`, unbound, its
+     message read after the explicit self; `self.<door>` inside a class that binds the
      attribute in its __init__ from a parameter (ApiHealth), followed through every constructor call; a call through
      a PARAMETER (`log(...)`) followed through every call site of the enclosing function, positional or keyword,
-     through `getattr(x, "<door>", None)`, `partial`, a conditional expression and a forwarded parameter, and
-     through a closure that calls its enclosing function's parameter; and a call through a local alias assigned from
-     a door expression.
+     through `getattr(x, "<door>", None)`, `partial`, a conditional expression and a forwarded parameter, through a
+     default argument (`log=_log` in the writer's class body, `log=SdkBackend._log` at module level) and
+     through a closure that calls its enclosing function's parameter; a call through a local alias assigned from
+     a door expression; and a call through an alias bound at CLASS scope (`_ring_door = _log` in the writer's class
+     body, called as `self._ring_door(...)`; an alias whose name is also an attribute or method of another class is a
+     failure, since a call on an untyped receiver could not be resolved) or at MODULE scope (`_RING = SdkBackend._log`
+     or `getattr(SdkBackend, "_log")` at import, called by its bare name). Whether the message comes first or after an
+     explicit self is read from the binding (bound through an instance or getattr on one; unbound through the class).
   3. CONDUITS. A function whose door call's message is one of its own parameters (SdkSession._log_quietly,
      problem_row) is a conduit: each of its call sites is a door call whose message is the argument it passes, whose
      problem= is the inner call's when that is a constant, or the site's own argument when the inner call forwards a
@@ -27,10 +38,14 @@ by resolution and not by name:
      list it reads as a sibling of the ring, finds the functions that append to those lists (_sdk_problem,
      _note_ws_drop) and counts their call sites as door calls.
   5. DOOR VALUES. Every occurrence of a door expression that is not itself called (a `log=self._log` argument, a
-     `getattr(be, "_log", None)`, an alias assignment) is followed to a call: a parameter that is called or forwarded,
-     an attribute bound in __init__ that a method calls, an alias that is called. A door value the walk cannot follow
-     (one that escapes through a return, a container, an unresolvable callee) is a FAILURE named by site, never a
-     drop: a pin that cannot see must say so.
+     `getattr(be, "_log", None)`, an alias assignment, a default argument, a module- or class-level binding) is
+     followed to a call, in function bodies and at module and class scope alike: a parameter that is called or
+     forwarded, an attribute bound in __init__ that a method calls, an alias that is called (a module alias by its
+     bare name in some function of its module, a class alias as an attribute call). A door value the walk cannot
+     follow (one that escapes through a return, a container, an unresolvable callee, an alias nothing calls) is a
+     FAILURE named by site, never a drop: a pin that cannot see must say so. So is the door's name spelled as a
+     string anywhere but the getattr form the walk follows (`operator.attrgetter("_log")`, `LOG_ATTR = "_log"`,
+     `vars(be)["_log"]`: a door reached by reflection), and the ring's name spelled as a string at all.
   6. TAINT. A door call is VALUE-TAINTED when its message or its ring text carries a value derived from a per-session
      env source: the data road's sources (the env attributes of a session, the 'env' key of a registry row, launch
      shape or request body, the flag-settings constants and helpers, the reserved and credential name sets and the
@@ -39,7 +54,17 @@ by resolution and not by name:
      within a function), into a callee's parameters from every call site and out of a callee's return to every call
      site (context-insensitively: a helper whose parameter is tainted anywhere returns taint everywhere, the safe
      direction for a guard), through tuple returns by position, and into a nested function or lambda from the
-     enclosing scope. `_options`' return is opaque (the whole options dict; its env overlay is a source of its own),
+     enclosing scope; through augmented assignment (`names += k`); through an add in place (`parts.append(k)`,
+     `seen.extend(names)`, `d.setdefault(k, v)`, `d.update(...)`: the argument's taint marks the receiver, a local, a
+     module-level name for every reader in its module, or an attribute); through an attribute store (`self.x = v`
+     marks `.x` for every reader of `.x` on any receiver in the files, the direction that finds a value stored in one
+     method and read in another; the ring attribute itself excepted, being the sink); and through a dict return or
+     store per key: a dict carries "env" alone, and only what sits under a key that is NOT a source (the per-session
+     env's own key, 'env', is a source at every READ, so a dict does not carry it; a value re-keyed under any other
+     name crosses with the dict), while the existence of a pick (tag "pick") does not cross a dict at all, since a
+     session snapshot would carry the pending picks to every reader of every other field (the existence rows are the
+     direct readers of the surface set). A source FUNCTION that returns a dict (the launch shape) is a source at its
+     env key, not whole. `_options`' return is opaque (the whole options dict; its env overlay is a source of its own),
      and reads of the kernel's _pending_ops carry no value taint (a mixed container of every parked op kind).
   7. REDUCTION. Every door call's message is reduced to its literal head(s): a string constant, an f-string's leading
      text, the left side of a `%` or `+`, a `str()` wrap, a local followed to every assignment (a tuple unpacking to
@@ -143,13 +168,13 @@ def parsed(path):
 
 class Fn:
     __slots__ = ("qual", "name", "file", "base", "node", "cls", "parent", "params", "kwonly", "vararg", "kwarg",
-                 "defaults", "kind", "calls", "assigns", "returns", "lexical", "nested", "_params_set", "_assigned",
-                 "_loops", "_chain")
+                 "defaults", "kind", "calls", "assigns", "returns", "lexical", "nested", "globals_", "_params_set",
+                 "_assigned", "_loops", "_chain")
 
     def __init__(self, qual, name, file, node, cls, parent):
         self.qual, self.name, self.file, self.node, self.cls, self.parent = qual, name, file, node, cls, parent
         self.base = os.path.basename(file)
-        self.calls, self.assigns, self.returns, self.nested = [], [], [], {}
+        self.calls, self.assigns, self.returns, self.nested, self.globals_ = [], [], [], {}, set()
         self.lexical = {}          # id(call) -> True when the call sits inside an except handler of this def
         self.kind = "function"     # function | method | static | classmethod | lambda
         args = node.args
@@ -206,11 +231,37 @@ class Fn:
 
 
 class Cls:
-    __slots__ = ("name", "file", "node", "bases", "methods", "bindings")
+    __slots__ = ("name", "file", "node", "bases", "methods", "bindings", "class_assigns")
 
     def __init__(self, name, file, node, bases):
         self.name, self.file, self.node, self.bases = name, file, node, bases
         self.methods, self.bindings = {}, {}     # bindings: attr -> [(value node, Fn)] for `self.attr = value`
+        self.class_assigns = {}                  # name -> value node for `name = value` in the class body itself
+
+
+class ScopeFn:
+    """A stand-in for Fn where an expression is evaluated at MODULE or CLASS scope (a class-body alias, a method's
+    default argument, a module-level assignment): no parameters, no locals, no calls of its own, so every lookup the
+    walk makes through it falls to the class body and the module. `kind` is "scope"."""
+    __slots__ = ("qual", "name", "file", "base", "node", "cls", "parent", "kind", "calls", "assigns", "returns",
+                 "lexical", "nested", "_chain")
+
+    def __init__(self, mod, cls):
+        self.cls, self.parent, self.kind = cls, None, "scope"
+        self.file, self.base, self.node = mod.path, mod.base, cls.node if cls else mod.tree
+        self.name = self.qual = ("<class %s>" % cls.name) if cls else "<module>"
+        self.calls, self.assigns, self.returns, self.nested, self.lexical, self._chain = [], [], [], {}, {}, None
+
+    @staticmethod
+    def all_params():
+        return frozenset()
+
+    @staticmethod
+    def assigned():
+        return {}
+
+    def __repr__(self):
+        return "ScopeFn(%s:%s)" % (self.base, self.qual)
 
 
 class Mod:
@@ -275,12 +326,18 @@ class Census:
         self.fn_of = {}          # id(node) -> Fn for Call/Name/Attribute/Return nodes
         self.defs_by_name = collections.defaultdict(list)
         self.classes_by_name = collections.defaultdict(list)
+        self.cls_by_node = {}    # id(ClassDef) -> Cls
+        self.fn_by_node = {}     # id(FunctionDef | Lambda) -> Fn
+        self.attr_readers = collections.defaultdict(set)   # attribute name -> Fns reading `<x>.<name>`
+        self.ring_refs = []      # (Mod, Attribute node, enclosing Fn or None) for every `<x>._problems` in the files
+        self.ident_consts = []   # (Mod, Constant node, enclosing Fn or None) for every string constant spelling an identifier
         self.all_fns = []
         self.failures = []       # (kind, base, lineno, text)
         for f in self.files:
             self._index(f)
         self._resolve_all_calls()
         self._find_writer()
+        self._scope_aliases()
         self._door_calls()
         self._follow_door_values()
         self._taint()
@@ -302,6 +359,7 @@ class Census:
             fn.kind = kind
             mod.fns.append(fn)
             self.all_fns.append(fn)
+            self.fn_by_node[id(node)] = fn
             self.defs_by_name[name].append(fn)
             if parent is not None:
                 parent.nested.setdefault(name, []).append(fn)
@@ -309,11 +367,19 @@ class Census:
 
         def handle(child, cls, fn, handler):
             """One node, in the scope (cls, fn) and lexical handler state of its parent."""
+            if isinstance(child, ast.Attribute):
+                if child.attr == self.RING_ATTR:
+                    self.ring_refs.append((mod, child, fn))
+                if fn is not None and isinstance(child.ctx, ast.Load):
+                    self.attr_readers[child.attr].add(fn)
+            elif isinstance(child, ast.Constant) and isinstance(child.value, str) and child.value.isidentifier():
+                self.ident_consts.append((mod, child, fn))
             if isinstance(child, ast.ClassDef):
                 c = Cls(child.name, mod.path, child, [ast.unparse(b) for b in child.bases])
                 if fn is None:
                     mod.classes[child.name] = c
                 self.classes_by_name[child.name].append(c)
+                self.cls_by_node[id(child)] = c
                 for d in child.decorator_list + child.bases:
                     self.parents[d] = child
                     handle(d, cls, fn, handler)
@@ -354,13 +420,25 @@ class Census:
                 return
             if isinstance(child, ast.ExceptHandler):
                 handler = True
+            elif isinstance(child, ast.Global):
+                if fn is not None:
+                    fn.globals_.update(child.names)
             elif isinstance(child, (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.NamedExpr)):
                 if fn is not None:
                     fn.assigns.append(child)
-                    if fn.cls is not None and fn.kind == "method" and isinstance(child, ast.Assign):
-                        for t in child.targets:
+                    if fn.cls is not None and fn.kind == "method" and isinstance(child, (ast.Assign, ast.AnnAssign)) and child.value is not None:
+                        for t in (child.targets if isinstance(child, ast.Assign) else [child.target]):
                             if isinstance(t, ast.Attribute) and isinstance(t.value, ast.Name) and t.value.id == "self":
                                 fn.cls.bindings.setdefault(t.attr, []).append((child.value, fn))
+                elif cls is not None:
+                    # the class body's own names (a class-level alias `_ring = _log`, a constant): a Name evaluated in
+                    # the class body or in a method's default argument resolves here first
+                    if isinstance(child, ast.Assign):
+                        for t in child.targets:
+                            if isinstance(t, ast.Name):
+                                cls.class_assigns.setdefault(t.id, child.value)
+                    elif isinstance(child, ast.AnnAssign) and isinstance(child.target, ast.Name) and child.value is not None:
+                        cls.class_assigns.setdefault(child.target.id, child.value)
                 elif cls is None:
                     if isinstance(child, ast.Assign):
                         for t in child.targets:
@@ -400,6 +478,35 @@ class Census:
                 for fn in self.all_fns:
                     if fn.node is node:
                         return fn
+        return None
+
+    def scope_of(self, node):
+        """The node whose namespace a Name at `node`'s position resolves in: the nearest enclosing def or lambda whose
+        BODY holds it (a default argument, a decorator and an annotation belong to the scope enclosing the def), else
+        the class body, else the module. None for a node the index never saw."""
+        child, up = node, self.parents.get(node)
+        while up is not None:
+            if isinstance(up, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                if any(child is st for st in up.body):
+                    return up
+            elif isinstance(up, ast.Lambda):
+                if child is up.body:
+                    return up
+            elif isinstance(up, ast.ClassDef):
+                if any(child is st for st in up.body):
+                    return up
+            elif isinstance(up, ast.Module):
+                return up
+            child, up = up, self.parents.get(up)
+        return None
+
+    def scope_fn(self, node, mod):
+        """A ScopeFn for a node evaluated at module or class scope (None when the node sits in a function body)."""
+        sc = self.scope_of(node)
+        if isinstance(sc, ast.ClassDef):
+            return ScopeFn(mod, self.cls_by_node.get(id(sc)))
+        if isinstance(sc, ast.Module):
+            return ScopeFn(mod, None)
         return None
 
     def mod_of(self, fn):
@@ -557,17 +664,40 @@ class Census:
                     self.callers[callee].append((call, fn, via))
 
     # ------------------------------------------------------------------ the ring writer
+    RING_ATTR = "_problems"
+    # what may be done to a list in place, by method name: the ring accepts none of these but the writer's one append,
+    # and a merge-read list accepts them from its feeders (append, insert and extend add rows; the rest reorder or drop)
+    LIST_ADDERS = frozenset({"append", "insert", "extend", "appendleft", "extendleft", "__iadd__", "__setitem__"})
+    LIST_MUTATORS = LIST_ADDERS | frozenset({"pop", "remove", "clear", "sort", "reverse", "__delitem__"})
+    RING_READS = frozenset({"list", "reversed", "len", "tuple", "iter", "enumerate", "sorted", "any", "all", "sum"})
+
+    def _ring_refs(self):
+        """Every reference to the ring attribute (`<any receiver>._problems`) in the three files, with the function it
+        sits in (None at module or class scope). Blind-pin lens of review round 6: a row appended to the ring from
+        kernel.py (`be._problems.append(...)`), from a session (`self.backend._problems.append(...)`) or by a second
+        SdkBackend method (`self._problems.insert(0, ...)`) left the census at its baseline, because the writer was
+        found by ONE shape (`self._problems.append`) and every other touch of the ring went unread."""
+        return list(self.ring_refs)
+
     def _find_writer(self):
-        appenders = []
-        for fn in self.all_fns:
-            for call in fn.calls:
-                f = call.func
-                if (isinstance(f, ast.Attribute) and f.attr == "append" and isinstance(f.value, ast.Attribute)
-                        and f.value.attr == "_problems" and isinstance(f.value.value, ast.Name) and f.value.value.id == "self"):
-                    appenders.append((fn, call))
+        refs = self._ring_refs()
+        appenders, mutations = [], []
+        for mod, node, fn in refs:
+            up = self.parents.get(node)
+            if isinstance(up, ast.Attribute) and up.attr in self.LIST_MUTATORS:
+                call = self.parents.get(up)
+                if isinstance(call, ast.Call) and call.func is up:
+                    (appenders if up.attr == "append" else mutations).append((fn, call, node, mod))
+        if mutations:
+            raise CensusError("the ring is mutated other than by the writer's append: %s" % "; ".join(
+                "%s:%d %s.%s in %s" % (mod.base, node.lineno, ast.unparse(node), self.parents[node].attr, fn.qual if fn else "<scope>")
+                for fn, _call, node, mod in mutations))
         if len(appenders) != 1:
-            raise CensusError("the ring has %d appenders (self._problems.append): %r" % (len(appenders), appenders))
-        self.writer, self.append_call = appenders[0]
+            raise CensusError("the ring has %d appenders (<receiver>._problems.append): %r" % (
+                len(appenders), [(mod.base, node.lineno, fn.qual if fn else "<scope>") for fn, _c, node, mod in appenders]))
+        self.writer, self.append_call, app_node, _mod = appenders[0]
+        if self.writer is None or not (isinstance(app_node.value, ast.Name) and app_node.value.id == "self") or self.writer.cls is None:
+            raise CensusError("the ring's appender is not a method appending to its own self._problems: %r" % (self.writer,))
         self.door = self.writer.name
         self.writer_cls = self.writer.cls
         others = [d for d in self.defs_by_name.get(self.door, []) if d is not self.writer]
@@ -580,7 +710,42 @@ class Census:
         for needed in ("problem", "key", "ring_text"):
             if needed not in self.writer.all_params():
                 raise CensusError("the writer has no %r parameter" % needed)
-        # the kernel's feeders: the module-level lists _sdk_problem_rows reads, and the functions appending to them
+        # the ring is PRIVATE to its writer's class: every other reference to it is a read inside that class through
+        # self, consumed by a copying or counting builtin, a loop or a comprehension (the writer's repeat lookup,
+        # problems(), problem_keyed()), the writer's own trim (`del self._problems[:-N]`) or __init__'s empty-list
+        # binding; a reference from any other class or module, an alias, a return, a store or a del anywhere else is a
+        # census failure (an escape the walk cannot follow, or a second writer)
+        for mod, node, fn in refs:
+            if node is app_node:
+                continue
+            where = "%s:%d in %s" % (mod.base, node.lineno, fn.qual if fn else "<scope>")
+            if fn is None or self.class_of(fn) is not self.writer_cls or not (isinstance(node.value, ast.Name) and node.value.id == "self"):
+                raise CensusError("the ring is touched outside its writer's class (%s): %s" % (ast.unparse(node), where))
+            up = self.parents.get(node)
+            if isinstance(node.ctx, ast.Store):
+                if not (fn.name == "__init__" and isinstance(up, (ast.Assign, ast.AnnAssign))
+                        and isinstance(getattr(up, "value", None), ast.List) and not up.value.elts):
+                    raise CensusError("the ring is rebound outside __init__'s empty list: %s" % where)
+                continue
+            if isinstance(node.ctx, ast.Del):
+                raise CensusError("the ring is deleted: %s" % where)
+            if isinstance(up, ast.Subscript) and isinstance(up.ctx, ast.Del):
+                if fn is not self.writer:
+                    raise CensusError("the ring is trimmed outside the writer: %s" % where)
+                continue
+            if isinstance(up, ast.Subscript) and isinstance(up.ctx, ast.Store):
+                raise CensusError("a ring entry is assigned in place: %s" % where)
+            if isinstance(up, ast.Call) and isinstance(up.func, ast.Name) and up.func.id in self.RING_READS and any(a is node for a in up.args):
+                continue
+            if isinstance(up, ast.comprehension) and up.iter is node:
+                continue
+            if isinstance(up, (ast.For, ast.AsyncFor)) and up.iter is node:
+                continue
+            if isinstance(up, ast.Subscript) and isinstance(up.ctx, ast.Load):
+                continue
+            raise CensusError("the ring is read where the walk cannot follow it (%s): %s" % (ast.unparse(up)[:60] if up is not None else "?", where))
+        # the kernel's feeders: the module-level lists _sdk_problem_rows reads, and the functions adding to them (by
+        # append, insert, extend or +=)
         self.merge_reads, self.feeders, self.feeder_appends = [], {}, []
         for fn in self.all_fns:
             if fn.name == "_sdk_problem_rows" and fn.parent is None:
@@ -594,16 +759,76 @@ class Census:
                 for f2 in mod.fns:
                     for call in f2.calls:
                         c = call.func
-                        if (isinstance(c, ast.Attribute) and c.attr == "append" and isinstance(c.value, ast.Name)
+                        if (isinstance(c, ast.Attribute) and c.attr in self.LIST_ADDERS and isinstance(c.value, ast.Name)
                                 and c.value.id in lists and call.args):
                             self.feeder_appends.append((f2, call, c.value.id))
                             self.feeders[f2] = call
+                    for st in f2.assigns:
+                        if isinstance(st, ast.AugAssign) and isinstance(st.target, ast.Name) and st.target.id in lists:
+                            self.feeder_appends.append((f2, st, st.target.id))
+                            self.feeders[f2] = st
 
     # ------------------------------------------------------------------ door expressions and door calls
+    def _scope_aliases(self):
+        """Aliases of the door bound at CLASS or MODULE scope, resolved before the door calls are read (blind-pin lens
+        of review round 6: a module-level `_RING = SdkBackend._log` or `getattr(SdkBackend, "_log")`, a class-body
+        `_ring = _log` and a method default `log=_log` each carried a tenth env row past the census, which followed
+        door values inside function bodies only). A call through a class alias (`self._ring(...)`, `<any>._ring(...)`)
+        or a module alias (`_RING(...)`) is a door call of kind "alias"; the values themselves are followed to a call
+        or failed by _follow_door_values like every other door value."""
+        self.class_alias_doors = {}     # alias name -> [(Cls, value node)]
+        self.module_alias_doors = {}    # (module path, alias name) -> value node
+        self.ambiguous_aliases = set()  # class alias names also bound as an attribute or a method of another class
+        for mod in {m.path: m for m in self.mods.values()}.values():
+            sfn = ScopeFn(mod, None)
+            for name, value in mod.top_assigns.items():
+                if self.door_value(value, sfn) == "door":
+                    self.module_alias_doors[(mod.path, name)] = value
+            for lst in self.classes_by_name.values():
+                for cls in lst:
+                    if cls.file != mod.path:
+                        continue
+                    csfn = ScopeFn(mod, cls)
+                    for name, value in cls.class_assigns.items():
+                        if self.door_value(value, csfn) == "door":
+                            self.class_alias_doors.setdefault(name, []).append((cls, value))
+        # an alias name that is also an instance attribute, a method or a class-body name of an UNRELATED class cannot
+        # be resolved on a receiver the walk does not type: named, so the alias is renamed rather than half-followed
+        for name, lst in self.class_alias_doors.items():
+            owners = {id(c) for c, _v in lst}
+            elsewhere = []
+            for cl in self.classes_by_name.values():
+                for c in cl:
+                    if id(c) in owners:
+                        continue
+                    if name in c.bindings or name in c.methods or name in c.class_assigns:
+                        elsewhere.append("%s.%s" % (c.name, name))
+            if elsewhere:
+                self.ambiguous_aliases.add(name)
+                for c, v in lst:
+                    self.failures.append(("door-alias-ambiguous", os.path.basename(c.file), v.lineno,
+                                          "class alias %s of %s is also a name of %s; a call on an untyped receiver cannot be resolved"
+                                          % (name, c.name, ", ".join(sorted(elsewhere)))))
+
     def door_value(self, e, fn, seen=None):
         """'door' | 'not' | 'unfollowed' for an expression used as a value (or as a callee)."""
         seen = seen if seen is not None else set()
         door = self.door
+        if isinstance(e, ast.Attribute) and e.attr != door and e.attr in getattr(self, "class_alias_doors", {}):
+            # a class-body alias of the door (resolved in _scope_aliases), read through a receiver: `self.<alias>` in a
+            # class related to the alias's owner, `<Class>.<alias>` on the owner, or any other receiver when the alias's
+            # name is unambiguous across the files (an ambiguous name, one also bound as an instance attribute or a
+            # method elsewhere, is a failure recorded by _scope_aliases; ApiHealth's `self._ring` deque is such a name)
+            owners = [c for c, _v in self.class_alias_doors[e.attr]]
+            if isinstance(e.value, ast.Name) and e.value.id in ("self", "cls"):
+                cls = self.class_of(fn)
+                if cls is None:
+                    return "not"
+                related = {id(c) for c in self.mro(cls)} | {id(c) for c in self.subclasses(cls)}
+                return "door" if any(id(c) in related for c in owners) else "not"
+            if isinstance(e.value, ast.Name) and e.value.id in self.classes_by_name:
+                return "door" if any(c.name == e.value.id for c in owners) else "not"
+            return "door" if e.attr not in self.ambiguous_aliases else "not"
         if isinstance(e, ast.Attribute) and e.attr == door:
             if isinstance(e.value, ast.Name) and e.value.id == "self":
                 cls = self.class_of(fn)
@@ -642,11 +867,87 @@ class Census:
                     vals = []
                     for st in sts:
                         v = self._value_for(st, e.id)
-                        if v is not None:
+                        if v is not None and not isinstance(v, tuple):
                             vals.append(v)
                     return self._combine(self.door_value(v, s, seen) for v in vals)
-            return "not"
+            return self._scope_name_value(e, fn, seen, self.door_value, "door", "not")
         return "not"
+
+    def _scope_name_value(self, e, fn, seen, follow, hit, miss):
+        """A bare Name that is no parameter and no local of `fn`: the class body it is evaluated in (the writer's own
+        method name there, or a class-body alias), then the module's top-level assignments; `follow` is applied to the
+        binding found (door_value or door_binding), `hit` returned for the writer's own name, `miss` when there is none."""
+        sc = self.scope_of(e)
+        mod = self.mod_of(fn)
+        if isinstance(sc, ast.ClassDef):
+            c = self.cls_by_node.get(id(sc))
+            if c is not None:
+                if e.id == self.door and c.methods.get(self.door) is self.writer:
+                    return hit
+                if e.id in c.class_assigns:
+                    k = ("class", c.name, e.id)
+                    if k in seen:
+                        return miss
+                    seen.add(k)
+                    return follow(c.class_assigns[e.id], ScopeFn(mod, c), seen)
+        if e.id in mod.top_assigns:
+            k = ("module", mod.path, e.id)
+            if k in seen:
+                return miss
+            seen.add(k)
+            return follow(mod.top_assigns[e.id], ScopeFn(mod, None), seen)
+        return miss
+
+    def door_binding(self, e, fn, seen=None):
+        """'bound' | 'unbound' | 'mixed' | None for a door expression: whether a call through it supplies the message
+        FIRST (a bound method, `be._log(m)`) or after an explicit self (`SdkBackend._log(self, m)`, a class-body alias
+        or default of the writer's own function object). Blind-pin lens of review round 6: the unbound call was read
+        with `self` as its message, so the row's taint went unread and only the unreduced set caught it."""
+        seen = seen if seen is not None else set()
+        door = self.door
+        if isinstance(e, ast.Attribute):
+            if e.attr == door:
+                unbound = isinstance(e.value, ast.Name) and e.value.id in self.classes_by_name and e.value.id not in ("self", "cls")
+                return "unbound" if unbound else "bound"
+            if e.attr in self.class_alias_doors:
+                unbound = isinstance(e.value, ast.Name) and e.value.id in self.classes_by_name and e.value.id not in ("self", "cls")
+                return "unbound" if unbound else "bound"      # the alias is the writer's function; instance access binds it
+            return None
+        if isinstance(e, ast.Call):
+            f = e.func
+            if isinstance(f, ast.Name) and f.id == "getattr" and len(e.args) >= 2 and isinstance(e.args[1], ast.Constant) and e.args[1].value == door:
+                unbound = isinstance(e.args[0], ast.Name) and e.args[0].id in self.classes_by_name
+                return "unbound" if unbound else "bound"
+            if self._is_partial(e) and e.args:
+                b = self.door_binding(e.args[0], fn, seen)
+                return "bound" if b == "unbound" and len(e.args) > 1 else b    # partial(SdkBackend._log, be) supplies self
+            return None
+        if isinstance(e, ast.IfExp):
+            return self._combine_binding([self.door_binding(e.body, fn, seen), self.door_binding(e.orelse, fn, seen)])
+        if isinstance(e, ast.BoolOp):
+            return self._combine_binding(self.door_binding(v, fn, seen) for v in e.values)
+        if isinstance(e, ast.Name):
+            owner = self.is_param(e.id, fn)
+            if owner is not None:
+                k = ("binding", owner.qual, e.id)
+                if k in seen:
+                    return None
+                seen.add(k)
+                return self._combine_binding(self.door_binding(v, caller, seen) for v, caller in self.param_bindings(owner, e.id))
+            for s in self.scope_chain(fn):
+                sts = list(self._assigns_name(s, e.id))
+                if sts:
+                    vals = [self._value_for(st, e.id) for st in sts]
+                    return self._combine_binding(self.door_binding(v, s, seen) for v in vals if v is not None and not isinstance(v, tuple))
+            return self._scope_name_value(e, fn, seen, self.door_binding, "unbound", None)
+        return None
+
+    @staticmethod
+    def _combine_binding(results):
+        found = {r for r in results if r}
+        if not found:
+            return None
+        return found.pop() if len(found) == 1 else "mixed"
 
     @staticmethod
     def _combine(results):
@@ -702,6 +1003,9 @@ class Census:
                         kind = "self" if cls is not None and self.writer_cls in self.mro(cls) else "bound-self"
                     else:
                         kind = "typed"
+                elif isinstance(f, ast.Attribute) and f.attr in self.class_alias_doors:
+                    if self.door_value(f, fn) == "door":
+                        kind = "alias"          # a class-body alias of the door (`self._ring(...)`)
                 elif isinstance(f, ast.Name):
                     if self.is_param(f.id, fn) is not None:
                         if self.door_value(f, fn) == "door":
@@ -709,20 +1013,36 @@ class Census:
                     elif any(any(self._assigns_name(s, f.id)) for s in self.scope_chain(fn)):
                         if self.door_value(f, fn) == "door":
                             kind = "alias"
+                    elif (self.mod_of(fn).path, f.id) in self.module_alias_doors:
+                        if self.door_value(f, fn) == "door":
+                            kind = "alias"      # a module-level alias of the door (`_RING(...)`)
                 if kind is None:
                     continue
                 kws = {k.arg: k.value for k in call.keywords if k.arg}
-                message = call.args[0] if call.args else kws.get(msg)
+                binding = self.door_binding(f, fn) if kind in ("typed", "param", "alias") else "bound"
+                if binding == "mixed":
+                    self.failures.append(("door-binding", fn.base, call.lineno, "the door reaches %s both bound and unbound, so the "
+                                          "message's position differs by site: %s" % (fn.qual, ast.unparse(call)[:60])))
+                    binding = "bound"
+                if binding == "unbound":
+                    message = call.args[1] if len(call.args) > 1 else kws.get(msg)     # after the explicit self
+                else:
+                    message = call.args[0] if call.args else kws.get(msg)
                 dc = DoorCall(fn, call, kind, message, kws.get("ring_text"), kws.get("problem"), kws.get("key"))
                 dc.lexical = bool(fn.lexical.get(id(call)))
                 self.calls_reaching.append(dc)
                 self.by_kind[kind] += 1
-        # the feeders' own append calls are door calls of the kernel's siblings of the ring
+        # the feeders' own adds are door calls of the kernel's siblings of the ring: the row they add (an append's or
+        # extend's first argument, an insert's second, an augmented assignment's value) read for its "text" key
         self.feeder_calls = []
         for fn, call, listname in self.feeder_appends:
-            text = None
-            arg = call.args[0]
+            if isinstance(call, ast.AugAssign):
+                arg = call.value
+            else:
+                arg = call.args[1] if call.func.attr == "insert" and len(call.args) > 1 else call.args[0]
+            text = arg
             if isinstance(arg, ast.Dict):
+                text = None
                 for k, v in zip(arg.keys, arg.values):
                     if isinstance(k, ast.Constant) and k.value == "text":
                         text = v
@@ -810,32 +1130,105 @@ class Census:
             return v
         return expr
 
+    def _is_door_expr(self, node, fn):
+        """A door EXPRESSION: `<x>.<door>` read as a value, `getattr(x, "<door>", ...)`, a class-body alias of the door
+        read on a receiver, or the writer's bare name where a Name resolves in its class body (a class-level alias or a
+        method's default argument)."""
+        door = self.door
+        if isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Load):
+            return node.attr == door or (node.attr in self.class_alias_doors and self.door_value(node, fn) == "door")
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "getattr":
+            return len(node.args) >= 2 and isinstance(node.args[1], ast.Constant) and node.args[1].value == door
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load) and node.id == door:
+            sc = self.scope_of(node)
+            if isinstance(sc, ast.ClassDef):
+                c = self.cls_by_node.get(id(sc))
+                return c is not None and c.methods.get(door) is self.writer
+        return False
+
+    def _scope_walk(self, mod):
+        """Every node evaluated at MODULE or CLASS scope, with the class whose body holds it (None at module level):
+        module-level statements, class bodies, and the decorators, default arguments and annotations of the defs at
+        either level (evaluated in the enclosing scope, not the def's). Function bodies and lambdas are the per-function
+        walk's; nested classes' bodies are reached through their statements."""
+        out = []
+
+        def visit(n, cls):
+            stack = [n]
+            while stack:
+                x = stack.pop()
+                if isinstance(x, (ast.Lambda, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                    continue
+                out.append((x, cls))
+                stack.extend(ast.iter_child_nodes(x))
+
+        def stmts(body, cls):
+            for st in body:
+                if isinstance(st, ast.ClassDef):
+                    for d in st.decorator_list + st.bases + [kw.value for kw in st.keywords]:
+                        visit(d, cls)
+                    stmts(st.body, self.cls_by_node.get(id(st)))
+                elif isinstance(st, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    for d in st.decorator_list:
+                        visit(d, cls)
+                    visit(st.args, cls)
+                    if st.returns is not None:
+                        visit(st.returns, cls)
+                else:
+                    visit(st, cls)
+
+        stmts(mod.tree.body, None)
+        return out
+
     def _follow_door_values(self):
-        """Every door expression that is a value, not a callee, followed to a call. Records the sites."""
+        """Every door expression that is a value, not a callee, followed to a call. Records the sites. Three walks: the
+        body of every function (defaults, decorators and annotations excluded: they belong to the enclosing scope), the
+        module and class scopes of every file, and every string constant spelling the door's or the ring's name (a door
+        reached by reflection, `operator.attrgetter("_log")`, `getattr(be, LOG_ATTR)` with the name in a constant,
+        `vars(be)["_log"]`, is a door the walk cannot follow: blind-pin lens of review round 6)."""
         door = self.door
         self.door_value_sites = []     # (base, lineno, kind, fn)
         self.log_param_fns = set()     # Fns whose parameter is bound to a door somewhere
+        for mod, node, _fn in self.ident_consts:
+            up = self.parents.get(node)
+            if node.value == door:
+                followed = (isinstance(up, ast.Call) and isinstance(up.func, ast.Name) and up.func.id == "getattr"
+                            and len(up.args) >= 2 and up.args[1] is node)
+                if not followed:
+                    self.failures.append(("door-name-string", mod.base, node.lineno, "the door's name %r is a string outside "
+                                          "getattr(x, %r): %s" % (door, door, ast.unparse(up)[:60] if up is not None else "?")))
+            elif node.value == self.RING_ATTR:
+                self.failures.append(("ring-name-string", mod.base, node.lineno, "the ring's name %r is a string: %s"
+                                      % (self.RING_ATTR, ast.unparse(up)[:60] if up is not None else "?")))
         for fn in self.all_fns:
-            for node in ast.walk(fn.node):
-                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)) and node is not fn.node:
-                    continue
-                is_door = (isinstance(node, ast.Attribute) and node.attr == door and isinstance(node.ctx, ast.Load)) or (
-                    isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "getattr"
-                    and len(node.args) >= 2 and isinstance(node.args[1], ast.Constant) and node.args[1].value == door)
-                if not is_door:
-                    continue
-                if self.fn_for(node) is not fn and self.enclosing_fn(node) is not fn:
+            roots = fn.node.body if isinstance(fn.node, (ast.FunctionDef, ast.AsyncFunctionDef)) else [fn.node.body]
+            for root in roots:
+                for node in ast.walk(root):
+                    if not self._is_door_expr(node, fn):
+                        continue
+                    if self.fn_for(node) is not fn and self.enclosing_fn(node) is not fn:
+                        continue
+                    parent = self.parents.get(node)
+                    if isinstance(parent, ast.Call) and parent.func is node:
+                        continue      # called on the spot: a door call, counted above
+                    if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id == "self":
+                        cls = self.class_of(fn)
+                        if cls is not None and self.writer_cls not in self.mro(cls):
+                            # ApiHealth's `if self._log:` guard: a truthiness read of the bound attribute
+                            if self._truthiness_use(node):
+                                continue
+                    self._follow_value(node, fn)
+        for mod in {m.path: m for m in self.mods.values()}.values():
+            for node, cls in self._scope_walk(mod):
+                sfn = ScopeFn(mod, cls)
+                if not self._is_door_expr(node, sfn):
                     continue
                 parent = self.parents.get(node)
                 if isinstance(parent, ast.Call) and parent.func is node:
-                    continue      # called on the spot: a door call, counted above
-                if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id == "self":
-                    cls = self.class_of(fn)
-                    if cls is not None and self.writer_cls not in self.mro(cls):
-                        # ApiHealth's `if self._log:` guard: a truthiness read of the bound attribute
-                        if self._truthiness_use(node):
-                            continue
-                self._follow_value(node, fn)
+                    self.failures.append(("door-escapes", mod.base, node.lineno, "the door is called at %s scope: %s"
+                                          % (sfn.qual, ast.unparse(parent)[:60])))
+                    continue
+                self._follow_value(node, sfn)
 
     def _truthiness_use(self, node):
         up, n = self.parents.get(node), node
@@ -850,6 +1243,48 @@ class Census:
             n, up = up, self.parents.get(up)
         if isinstance(up, ast.keyword):
             n, up = up, self.parents.get(up)
+        if isinstance(up, ast.arguments):
+            # a default argument (`def m(self, sess, log=_log)`, `def f(be, log=SdkBackend._log)`): the parameter is
+            # door-bound at the def itself, so it must be called or forwarded like one bound at a call site
+            dfn = self.fn_by_node.get(id(self.parents.get(up)))
+            pname = None
+            if dfn is not None:
+                for i, d in enumerate(up.defaults):
+                    if d is n:
+                        pname = dfn.params[len(dfn.params) - len(up.defaults) + i]
+                for a, d in zip(up.kwonlyargs, up.kw_defaults):
+                    if d is n:
+                        pname = a.arg
+            if dfn is None or pname is None:
+                self.failures.append(("door-escapes", base, ln, "a door value is a default the walk cannot place: %s" % ast.unparse(up)[:80]))
+                return
+            self.door_value_sites.append((base, ln, "parameter %s of %s (default)" % (pname, dfn.qual), fn))
+            if not self._param_consumed(dfn, pname, depth):
+                self.failures.append(("door-escapes", base, ln, "parameter %s of %s (default) is never called or forwarded" % (pname, dfn.qual)))
+            return
+        if isinstance(up, (ast.Assign, ast.AnnAssign)) and fn.kind == "scope":
+            targets = self._targets(up)
+            if len(targets) == 1 and isinstance(targets[0], ast.Name):
+                name = targets[0].id
+                mod = self.mod_of(fn)
+                if fn.cls is None:
+                    # a module-level alias: called by its bare name in some function of the module where nothing
+                    # nearer shadows it
+                    called = any(isinstance(c.func, ast.Name) and c.func.id == name and self.is_param(name, f) is None
+                                 and not any(self._assigns_name(s, name) for s in self.scope_chain(f))
+                                 for f in mod.fns for c in f.calls)
+                    how = "module alias %s" % name
+                else:
+                    # a class-body alias: called as an attribute (`self.<alias>(...)`, `<any>.<alias>(...)`) anywhere
+                    called = any(isinstance(c.func, ast.Attribute) and c.func.attr == name for f in self.all_fns for c in f.calls)
+                    how = "class alias %s of %s" % (name, fn.cls.name)
+                if called:
+                    self.door_value_sites.append((base, ln, how, fn))
+                    return
+                self.failures.append(("door-escapes", base, ln, "%s is never called" % how))
+                return
+            self.failures.append(("door-escapes", base, ln, "a door value is bound at %s scope where the walk cannot follow: %s" % (fn.qual, ast.unparse(up)[:80])))
+            return
         if isinstance(up, ast.Call) and n is not up.func:
             callees = self.callees.get(id(up), [])
             if not callees:
@@ -950,15 +1385,28 @@ class Census:
         if isinstance(node, ast.Call):
             for callee, _via in self.callees.get(id(node), []):
                 tag = s["func"].get((callee.base, callee.qual))
-                if tag:
+                if tag and not self._returns_dicts(callee):
+                    # a source function that returns a DICT (the launch shape) is a source at its env key, a read of
+                    # its own ('env' in the key sources), not whole: its other keys carry what its return carries
                     return tag
         return None
 
+    def _returns_dicts(self, callee):
+        """Every return of `callee` is dict-valued (a literal, a comprehension, dict(...), a local built as one)."""
+        hit = self._dict_returners.get(callee)
+        if hit is None:
+            hit = self._dict_returners[callee] = bool(callee.returns) and all(self._dict_valued(r, callee) for r in callee.returns)
+        return hit
+
     def expr_taint(self, expr, fn):
         """The union of tags carried by any node in the expression's subtree; a resolved call contributes its callee's
-        return taint and is not walked into (its parameters are tainted by propagation instead)."""
+        return taint and is not walked into (its parameters are tainted by propagation instead). A Name that is no
+        parameter and no local of any enclosing scope reads the module-level name's taint; an attribute read
+        (`<x>.<attr>`) carries whatever any store into `.<attr>` put there (keyed by attribute NAME over every receiver,
+        the direction that finds a value stored in one method and read in another)."""
         tags = set()
         stack = [expr]
+        mod = self.mod_of(fn)
         while stack:
             node = stack.pop()
             if node is None:
@@ -981,14 +1429,25 @@ class Census:
             if tag:
                 tags.add(tag)
             if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+                found = False
                 for s in self.scope_chain(fn):
                     tn = self.tainted_names.get(s)
                     if tn and node.id in tn:
                         tags |= tn[node.id]
+                        found = True
                         break
                     if node.id in s.all_params() or node.id in s.assigned():
+                        found = True
                         break
+                if not found:
+                    gt = self.global_taint.get((mod.path, node.id))
+                    if gt:
+                        tags |= gt
                 continue
+            if isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Load):
+                at = self.attr_taint.get(node.attr)
+                if at:
+                    tags |= at
             if isinstance(node, ast.Call):
                 res = self.callees.get(id(node), [])
                 if res:
@@ -1010,11 +1469,22 @@ class Census:
         return tags
 
     def _taint(self):
-        self.tainted_names = {}      # Fn -> {name: set(tags)} (parameters and locals alike)
+        self.tainted_names = {}      # Fn -> {name: set(tags)} (parameters and locals alike; the WHOLE value's taint)
+        self.carried_names = {}      # Fn -> {name: set(tags)} a local's taint minus what sits under a SOURCE key of a dict
         self.ret_taint = {}          # Fn -> {"all"|index: set(tags)}
+        self.attr_taint = {}         # attribute name -> set(tags) stored into `<x>.<attr>` anywhere
+        self._dict_returners = {}    # Fn -> whether every return is dict-valued (a source at its env key, not whole)
+        self.global_taint = {}       # (module path, name) -> set(tags) stored into a module-level name from a function
+        self._grown_attrs, self._grown_globals = set(), set()
         work = collections.deque(self.all_fns)
         queued = set(id(f) for f in self.all_fns)
         rounds = 0
+
+        def enqueue(f):
+            if id(f) not in queued:
+                queued.add(id(f))
+                work.append(f)
+
         while work:
             fn = work.popleft()
             queued.discard(id(fn))
@@ -1022,33 +1492,48 @@ class Census:
             changed = self._taint_fn(fn)
             if changed:
                 for call, caller, _via in self.callers.get(fn, []):
-                    if id(caller) not in queued:
-                        queued.add(id(caller))
-                        work.append(caller)
+                    enqueue(caller)
                 for nested in [x for lst in fn.nested.values() for x in lst]:
-                    if id(nested) not in queued:
-                        queued.add(id(nested))
-                        work.append(nested)
+                    enqueue(nested)
             for callee in self._newly_tainted_callees:
-                if id(callee) not in queued:
-                    queued.add(id(callee))
-                    work.append(callee)
+                enqueue(callee)
+            if self._grown_attrs:
+                for attr in self._grown_attrs:
+                    for reader in self.attr_readers.get(attr, ()):
+                        enqueue(reader)
+                self._grown_attrs = set()
+            if self._grown_globals:
+                for path, _name in self._grown_globals:
+                    for reader in self.mods[path].fns:
+                        enqueue(reader)
+                self._grown_globals = set()
         self.taint_rounds = rounds
+
+    # methods that add to a container in place: a tainted argument taints the receiver (blind-pin lens of review
+    # round 6: `parts.append(k)` in a loop over the env names and a module list's `.extend(...)` carried the names to
+    # a door with the receiver read as clean)
+    MUTATING_METHODS = frozenset({"append", "extend", "insert", "add", "update", "setdefault", "appendleft", "extendleft",
+                                  "__setitem__", "push", "put", "put_nowait"})
+    ENV_ONLY = frozenset({"env"})
 
     def _taint_fn(self, fn):
         names = self.tainted_names.setdefault(fn, {})
+        carried = self.carried_names.setdefault(fn, {})
         self._newly_tainted_callees = []
         before = {k: set(v) for k, v in names.items()}
         before_ret = {k: set(v) for k, v in self.ret_taint.get(fn, {}).items()}
+        mod = self.mod_of(fn)
         for _ in range(6):
             grew = False
             for st in fn.assigns:
-                if isinstance(st, ast.AugAssign):
-                    continue
                 value = st.value
                 if value is None:
                     continue
                 vt = self.expr_taint(value, fn)
+                ct = self._container_taint(value, fn)
+                if isinstance(st, ast.AugAssign):
+                    grew |= self._store(fn, mod, names, carried, st.target, vt, ct)
+                    continue
                 targets = st.targets if isinstance(st, ast.Assign) else [st.target]
                 for t in targets:
                     if isinstance(t, (ast.Tuple, ast.List)):
@@ -1059,40 +1544,65 @@ class Census:
                                 et = self.expr_taint(("index", value, i), fn)
                             else:
                                 et = vt
-                            grew |= self._mark(names, el, et)
+                            grew |= self._store(fn, mod, names, carried, el, et, et)
                     else:
-                        grew |= self._mark(names, t, vt)
+                        grew |= self._store(fn, mod, names, carried, t, vt, ct)
             for node in fn.loops():
                 if isinstance(node, (ast.For, ast.AsyncFor, ast.comprehension)):
                     it = self.expr_taint(node.iter, fn)
                     if it:
                         for el in (node.target.elts if isinstance(node.target, (ast.Tuple, ast.List)) else [node.target]):
-                            grew |= self._mark(names, el, it)
+                            grew |= self._store(fn, mod, names, carried, el, it, it)
                 elif isinstance(node, (ast.With, ast.AsyncWith)):
                     for item in node.items:
                         if item.optional_vars is not None:
                             it = self.expr_taint(item.context_expr, fn)
                             if it:
-                                grew |= self._mark(names, item.optional_vars, it)
+                                grew |= self._store(fn, mod, names, carried, item.optional_vars, it, it)
+            # in-place adds: `parts.append(k)`, `seen.extend(names)`, `d.setdefault(k, v)`, `self.x.append(v)`
+            for call in fn.calls:
+                f = call.func
+                if not (isinstance(f, ast.Attribute) and f.attr in self.MUTATING_METHODS):
+                    continue
+                args = [a for a in call.args] + [k.value for k in call.keywords]
+                vt = set()
+                for a in args:
+                    vt |= self.expr_taint(a, fn)
+                if not vt:
+                    continue
+                if f.attr in ("setdefault", "__setitem__") and call.args and isinstance(call.args[0], ast.Constant) \
+                        and call.args[0].value in self.sources["key"]:
+                    ct = set()                       # stored under a source key: a source at the read
+                elif f.attr == "update":
+                    ct = set()
+                    for a in call.args:
+                        ct |= self._container_taint(a, fn)
+                    for k in call.keywords:
+                        if k.arg not in self.sources["key"]:
+                            ct |= self.expr_taint(k.value, fn)
+                else:
+                    ct = vt
+                grew |= self._store(fn, mod, names, carried, f.value, vt, ct)
             if not grew:
                 break
-        # returns. A dict-valued return is a container boundary: the taint it carries sits under a key, and the
-        # per-session env's keys are sources at the READ ('env' in DEFAULT_SOURCES), so the whole dict does not
-        # propagate (a session snapshot carries the env attributes and the pending picks to every reader of every
-        # other field; propagated whole, it tainted 946 functions' returns at this head).
+        # returns. A dict-valued return carries "env" alone, and only what sits under a key that is NOT a source
+        # (the per-session env's own key, 'env' in DEFAULT_SOURCES, is a source at the READ, so a dict does not carry
+        # it; a value re-keyed under any other name crosses with the dict: blind-pin lens of review round 6, a helper
+        # returning {"names": sorted(sess.env_vars)} read as clean). The existence of a pick (tag "pick") does not cross
+        # a dict return: a session snapshot carries the pending picks to every reader of every other field, and
+        # propagated whole it tainted 946 functions' returns at this head; the existence rows are the direct readers
+        # of the surface set.
         rt = self.ret_taint.setdefault(fn, {})
         for r in fn.returns:
             if r is None:
                 continue
             if isinstance(r, (ast.Tuple, ast.List)):
                 for i, el in enumerate(r.elts):
-                    if self._dict_valued(el, fn):
-                        continue
-                    t = self.expr_taint(el, fn)
+                    t = self._return_taint(el, fn)
                     if t:
                         rt.setdefault(i, set()).update(t)
-            elif not self._dict_valued(r, fn):
-                t = self.expr_taint(r, fn)
+            else:
+                t = self._return_taint(r, fn)
                 if t:
                     rt.setdefault("all", set()).update(t)
         # calls: taint the callees' parameters
@@ -1108,6 +1618,44 @@ class Census:
                         cn.setdefault(p, set()).update(t)
                         self._newly_tainted_callees.append(callee)
         return names != before or self.ret_taint.get(fn, {}) != before_ret
+
+    def _return_taint(self, expr, fn):
+        if self._dict_valued(expr, fn):
+            return self._container_taint(expr, fn) & self.ENV_ONLY
+        return self.expr_taint(expr, fn)
+
+    def _container_taint(self, value, fn):
+        """What a value carries ACROSS a container boundary (a return, an attribute store): for a dict literal, the
+        taint of every key and of every value not under a source key; for a dict comprehension, its key's and value's;
+        for dict(...), its arguments less the source-key keywords; for a local dict built in place, its carried taint;
+        for anything else, the whole expression's."""
+        if isinstance(value, ast.Dict):
+            tags = set()
+            for k, v in zip(value.keys, value.values):
+                if isinstance(k, ast.Constant) and k.value in self.sources["key"]:
+                    continue
+                if k is not None:
+                    tags |= self.expr_taint(k, fn)
+                tags |= self._container_taint(v, fn) if isinstance(v, (ast.Dict, ast.DictComp)) else self.expr_taint(v, fn)
+            return tags
+        if isinstance(value, ast.DictComp):
+            return self.expr_taint(value.key, fn) | self.expr_taint(value.value, fn)
+        if isinstance(value, ast.Call) and isinstance(value.func, ast.Name) and value.func.id == "dict":
+            tags = set()
+            for a in value.args:
+                tags |= self._container_taint(a, fn)
+            for k in value.keywords:
+                if k.arg not in self.sources["key"]:
+                    tags |= self.expr_taint(k.value, fn)
+            return tags
+        if isinstance(value, ast.IfExp):
+            return self._container_taint(value.body, fn) | self._container_taint(value.orelse, fn)
+        if isinstance(value, ast.Name) and self._dict_valued(value, fn):
+            for s in self.scope_chain(fn):
+                if value.id in s.all_params() or value.id in s.assigned():
+                    return set(self.carried_names.get(s, {}).get(value.id, set()))
+            return set()
+        return self.expr_taint(value, fn)
 
     def _dict_valued(self, expr, fn, depth=0):
         """A dict literal, a dict comprehension, a dict(...) call, a conditional of such, or a local every assignment
@@ -1131,22 +1679,60 @@ class Census:
             return True
         return False
 
-    @staticmethod
-    def _mark(names, target, tags):
+    def _store(self, fn, mod, names, carried, target, tags, ctags):
+        """`tags` flow into `target` (a Name, a `<x>.<attr>`, a subscript, a starred name): a local of fn takes them
+        (its carried set takes `ctags`, what crosses a dict boundary); a module-level name (declared global, or a module
+        list mutated in place) takes them for every reader in the module; an attribute takes `ctags` for every reader
+        of `.<attr>` in the three files. A subscript store under a constant SOURCE key ('env') marks the container
+        whole (a whole-value use reads it) but not its carried set (the read of that key is a source of its own)."""
         if not tags:
             return False
-        if isinstance(target, ast.Name):
-            name = target.id
-        elif isinstance(target, ast.Subscript):
-            base = target.value
-            while isinstance(base, (ast.Subscript, ast.Attribute)):
-                base = base.value
-            if not isinstance(base, ast.Name) or base.id in ("self", "cls"):
-                return False
-            name = base.id
-        elif isinstance(target, ast.Starred) and isinstance(target.value, ast.Name):
-            name = target.value.id
-        else:
+        root, src_key = target, False
+        if isinstance(root, ast.Starred):
+            root = root.value
+        while isinstance(root, ast.Subscript):
+            if isinstance(root.slice, ast.Constant) and root.slice.value in self.sources["key"]:
+                src_key = True
+            root = root.value
+        if isinstance(root, ast.Attribute):
+            return self._mark_attr(root.attr, set() if src_key else ctags)
+        if not isinstance(root, ast.Name):
+            return False
+        name = root.id
+        is_global = name in fn.globals_ or (name not in fn.assigned() and self.is_param(name, fn) is None
+                                             and not any(name in s.assigned() or name in s.all_params() for s in self.scope_chain(fn))
+                                             and (name in mod.top_assigns or name in mod.top_lists))
+        if is_global:
+            return self._mark_global(mod, name, set() if src_key else ctags)
+        grew = self._mark(names, name, tags)
+        if not src_key:
+            self._mark(carried, name, ctags)
+        return grew
+
+    def _mark_attr(self, attr, tags):
+        if not tags or attr == self.RING_ATTR:
+            return False          # the ring is the sink; what its rows carry is the population itself, not a source
+        cur = self.attr_taint.get(attr, set())
+        if tags <= cur:
+            return False
+        self.attr_taint[attr] = cur | tags
+        self._grown_attrs.add(attr)
+        return True
+
+    def _mark_global(self, mod, name, tags):
+        if not tags:
+            return False
+        key = (mod.path, name)
+        cur = self.global_taint.get(key, set())
+        if tags <= cur:
+            return False
+        self.global_taint[key] = cur | tags
+        self._grown_globals.add(key)
+        return True
+
+    @staticmethod
+    def _mark(names, name, tags):
+        if not tags:
             return False
         cur = names.get(name, set())
         if tags <= cur:
@@ -1256,14 +1842,23 @@ class Census:
                 dc.ring_formats = sorted({r[1] for r in rr if r[0] == "fmt"})
                 if any(r[0] not in ("fmt",) for r in rr):
                     dc.ring_formats = dc.ring_formats + ["UNBOUNDED:%s" % ",".join(sorted(str(r[1]) for r in rr if r[0] != "fmt"))]
-        # a conduit's inner call reduces through its sites; re-run the unreduced flag for inner calls after the sites
-        for dc in self.door_calls:
-            if dc.fn in self.conduits and any(inner is dc for inner, _p in self.conduits[dc.fn]):
-                sites = [s for s in self.conduit_calls if s.via is dc or any(i is dc for _p, _r, i in s.alts)]
-                heads = {h for s in sites for h in s.heads}
-                dc.heads = sorted(heads - ({""} if len(heads) > 1 else set()))
-                # a conduit's own call has the heads its sites give it: none at all (no site, or none that reduces) is unreduced
-                dc.unreduced = not sites or all(s.unreduced for s in sites)
+        # a conduit's inner call reduces through its sites; re-run the unreduced flag for inner calls after the sites, to a
+        # fixpoint, since a site can itself be a conduit (its message its own parameter) whose flag the pass recomputes:
+        # read in one pass in source order, an inner call took its sites' first-pass flags (round-6 addendum: a conduit
+        # whose two sites both forwarded run-time data read as reduced)
+        for _ in range(8):
+            changed = False
+            for dc in self.door_calls:
+                if dc.fn in self.conduits and any(inner is dc for inner, _p in self.conduits[dc.fn]):
+                    sites = [s for s in self.conduit_calls if s.via is dc or any(i is dc for _p, _r, i in s.alts)]
+                    heads = {h for s in sites for h in s.heads}
+                    dc.heads = sorted(heads - ({""} if len(heads) > 1 else set()))
+                    # a conduit's own call has the heads its sites give it: none at all (no site, or none that reduces) is unreduced
+                    new = not sites or all(s.unreduced for s in sites)
+                    if new != dc.unreduced:
+                        dc.unreduced, changed = new, True
+            if not changed:
+                break
 
     # ------------------------------------------------------------------ classification
     def _classify(self):

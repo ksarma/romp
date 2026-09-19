@@ -5122,14 +5122,19 @@ ERROR_CENTER_TEXT_CAP = 240
 # which round 5 found narrower than the claim four ways: problem_row was a third door it never read, kernel.py names no
 # call _log so its negative half passed by construction, a message the walk could not reduce fell out of both
 # assertions, and the head filter stood in for a rule). tests/env_ring_census.py derives, from the AST of this file,
-# kernel.py and credentials.py: the one appender to the ring (SdkBackend._log); every call that resolves to it, on any
-# receiver, through a log= parameter followed to every call site (getattr, partial, a forwarded parameter, a closure),
-# through a local alias, and through a conduit whose message is its own parameter (SdkSession._log_quietly,
-# problem_row); the kernel's feeders of the same bell (_sdk_problem and _note_ws_drop, whose lists _sdk_problem_rows
-# merges beside this ring); and every door passed as a value, followed to a call or reported as a failure. Over those
-# doors it derives the rows whose message or ring text carries a value of the pick, its file or its rule (the sources:
-# the session's env attributes, the 'env' key of a registry row or launch shape, the flag-settings constants and
-# helpers, the reserved and credential name sets and the functions judging them) and that are filed problem=True, and
+# kernel.py and credentials.py: the one appender to the ring (SdkBackend._log; the ring is private to its class, and
+# any other touch of _problems, on any receiver in any of the three files, fails the census); every call that resolves
+# to it, on any receiver, through a log= parameter followed to every call site (getattr, partial, a forwarded
+# parameter, a default argument, a closure), through an alias at any scope (a local, a class-body name, a module-level
+# binding at import), and through a conduit whose message is its own parameter (SdkSession._log_quietly, problem_row);
+# the kernel's feeders of the same bell (_sdk_problem and _note_ws_drop, whose lists _sdk_problem_rows merges beside
+# this ring); every door passed as a value, followed to a call or reported as a failure; and the door's name spelled as
+# a string outside the getattr form the walk follows (a door reached by reflection), a failure too. Over those doors it
+# derives the rows whose message or ring text carries a value of the pick, its file or its rule (the sources: the
+# session's env attributes, the 'env' key of a registry row or launch shape, the flag-settings constants and helpers,
+# the reserved and credential name sets and the functions judging them; the taint follows assignments, calls and
+# returns, adds in place, augmented assignment, attribute stores and module-level names, and a dict by key) and that
+# are filed problem=True, and
 # holds them to the ENV ROWS line below the ring formats: each has a ring_text whose length is a function of its FORMAT,
 # never of what a pick or a stored env carries, and tests/test_session_env.py computes a worst case for every format on
 # the line (a keyed row's with _log's repeat suffix at a four-digit count, the one piece of a row this module does not
@@ -12798,7 +12803,9 @@ class SdkBackend:
                 self._host_spawning.discard(sess.sid)
         t = self._new_host_transport(sess, sock, -1)
         sess._host = t
-        self._log("host (%s): started a session host (pid %d)" % (sess.name, proc.pid))
+        self._log("host (%s): started a session host (pid %d)" % (sess.name, proc.pid), problem=False)   # routine, and
+        #   declared so (ring census, round 6 addendum of the env-pick door): the process was spawned with the launch's
+        #   credential-shaped names in its environment, so the walk reads its pid as derived from them
         return t
 
     def _new_host_transport(self, sess, sock, offset):
@@ -17685,7 +17692,8 @@ class SdkBackend:
                     # alone (review round 5; _settle_withdrawal), and in the arm-to-teardown half of the
                     # window the loop top composes the relaunch from the session, so nothing is redundant
                     s._withdraw_held_pick("mode", standing=standing)
-                    self._log("mode (%s): set to %s; the pending %s pick is withdrawn" % (s.name, mode, declared))
+                    self._log("mode (%s): set to %s; the pending %s pick is withdrawn" % (s.name, mode, declared),
+                              problem=False)   # routine; names a pending pick, so the classification is declared (ring census)
                 elif launching_mode == "bypassPermissions":
                     # ALREADY APPLYING in the spawn window (review round 2, 2026-09-09): the connect in
                     # progress launches bypass (_launching carries it; the surfaces are cleared at the arm and
@@ -17736,7 +17744,8 @@ class SdkBackend:
                 # bypass (review round 5; the CLI accepts that call on a bypass launch, so the request was
                 # redundant, not refused)
                 s._withdraw_held_pick("mode", standing=standing)
-                self._log("mode (%s): set to %s; the pending %s pick is withdrawn" % (s.name, mode, declared))
+                self._log("mode (%s): set to %s; the pending %s pick is withdrawn" % (s.name, mode, declared),
+                          problem=False)   # routine; names a pending pick, so the classification is declared (ring census)
             else:
                 # a live pick while a mode pick waits on a reconnect: the newer intent wins, and the live
                 # switch applies it, so the pending pick is withdrawn (review round 2, 2026-09-09, for the
