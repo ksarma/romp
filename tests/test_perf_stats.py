@@ -5053,7 +5053,12 @@ class Disclosed(unittest.TestCase):
     # closing check: a clause phrased with one of them tomorrow is found, where before it was not (a clause planted with
     # unless left both tests green, executed). before is not a word of the grammar: its one hit, "glibc before 2.33", is a
     # platform list no single-box execution holds, so an entry for it would fail; the residue the grammar leaves is stated
-    # in the PR body.
+    # in the PR body. Since the reviewer's re-check of the second closing check (2026-09-19) this grammar is the SECOND
+    # layer: COVERAGE, the table below, classifies every character of the paragraph and takes an unconditional row on the
+    # author's reason; the grammar is the mechanical check that no unconditional or names row carries one of these words
+    # (the forward direction, restated on the rows) and that every conditional entry carries one (the reverse). A clause
+    # phrased with a word outside this list is the coverage walk's to catch, as an unclassified or reworded span, not this
+    # list's.
     CLAUSE_MARKERS = (r"\bonly\b", r"\bper\b(?!-)", r"\bwhere\b", r"\bwhen\b", r"\bwhatever\b", r"\bwhoever\b", r"\beach\b",
                       r"\bevery\b", r"\balone\b", r"\bwith or without\b", r"\bcollapsed\b", r"\bcoarsened\b", r"\brounded\b",
                       r"\bnull\b", r"\bin place of\b", r"\bexactly one of\b", r"\badds no number\b", r"\bfor a snapshot\b",
@@ -5812,7 +5817,15 @@ class Disclosed(unittest.TestCase):
         of it); an entry removed while its words stay (the same red at its words); an entry whose words carry no conditioning
         word (the reverse direction names it); a listed entry's words misspelled (the count is not one). A clause added
         without any conditioning word is outside this grammar, by construction: the grammar is the words listed, and a new
-        conditioning word is added to CLAUSE_MARKERS, and the body's copy of the list, when the paragraph gains one."""
+        conditioning word is added to CLAUSE_MARKERS, and the body's copy of the list, when the paragraph gains one. Since
+        the reviewer's re-check of the second closing check (2026-09-19) such a clause is the coverage table's to catch and
+        this test is the SECOND layer: COVERAGE classifies every character of the paragraph, in the test named for it, and
+        takes an unconditional row on the author's reason; this grammar is the mechanical check that no unconditional or
+        names row carries a listed conditioning word, the forward direction restated on the rows so that a row relabelled
+        from conditional to unconditional is named here by the row and the word, and that every conditional entry carries
+        one, the reverse direction. A clause phrased with a word outside this list is caught by the coverage walk as an
+        unclassified or reworded span (executed: a clause planted with no listed word left this test green and reddened
+        the walk; one planted with only reddened both)."""
         para = self._paragraph()
         spans = []
         for words, _, _ in self.CONDITIONAL_CLAIMS:
@@ -5837,6 +5850,19 @@ class Disclosed(unittest.TestCase):
                             "a listed clause the grammar does not find: %r" % words)
         self.assertTrue(re.search(self.CLAUSE_MARKERS[1], "one per route"), "per, the word alone, is a marker")
         self.assertFalse(re.search(self.CLAUSE_MARKERS[1], "per-process and per-machine"), "the hyphenated per- is not")
+        # the second layer, on the rows: no row COVERAGE classifies unconditional, and neither derived names row, carries a
+        # conditioning word. The same fact as the forward direction above (coverage being exhaustive, the hits outside the
+        # entries and heads are exactly the hits inside these rows), stated on the rows so a row relabelled from conditional
+        # to unconditional is named by the row and the word, and a names list that gains a route spelled with one is too
+        rows = 0
+        for row in self.COVERAGE:
+            text, _, key = self._coverage_span(row)
+            if key is None or key[0] == "names":
+                rows += 1
+                for pattern in self.CLAUSE_MARKERS:
+                    m = re.search(pattern, text)
+                    self.assertIsNone(m, "a row classified unconditional carries the conditioning word %r: %r" % (m and m.group(0), text[:120]))
+        self.assertGreater(rows, 0, "the coverage table has unconditional rows for the grammar to check")
 
     def test_the_disclosure_paragraph_is_one_sentence_so_the_coverage_table_is_the_unit(self):
         """The reviewer's re-check of the second closing check (2026-09-19) asked for the paragraph's SENTENCES enumerated
