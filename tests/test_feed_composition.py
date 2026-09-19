@@ -1904,7 +1904,7 @@ class AccountingGuard(unittest.TestCase):
                 self.assertIs(km._feed_cards_memo[0], frame["asks"], "the memo keeps the asks list, by design")
                 del frame, parts
                 gc.collect()
-                self.assertIsNone(ref(), "%s: the faulted pass's frame dict is retained through the memo" % name)
+                self.assertTrue(ref() is None, "%s: the faulted pass's frame dict is retained through the memo" % name)
             km._feed_cards_memo = None
 
     def test_the_wire_row_reads_the_cells_slot_once_so_an_estimate_is_never_labelled_exact(self):
