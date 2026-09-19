@@ -15,6 +15,8 @@ import base64
 import collections
 import concurrent.futures
 import copy
+import fcntl
+import hashlib
 import inspect
 import io
 import json
@@ -1505,44 +1507,109 @@ class RoutingStatements(unittest.TestCase):
     therefore derived here from the tree, not listed: the files that name a block are found by reading them, pinned as a
     set so a new one turns the test red until it is swept, and none of them may carry a wording a round retired
     (RETIRED_WORDINGS at the top of this module). The truth of what the files say is measured by the routing tests above
-    (PushRowsByPurpose, JobRowsByOwner); this test holds only the scope and the retired wordings."""
+    (PushRowsByPurpose, JobRowsByOwner); this test holds only the scope and the retired wordings.
 
-    ROOTS = ("kernel", "bin", "cli", "docs", "upstream", "tests", "scripts", "ui/webview")
-    TEXT = (".py", ".md", ".bats", ".ts", ".js", ".mjs", ".sh", ".css", ".html", ".txt", ".toml", ".yml", ".yaml", "")
-    SKIP_DIRS = {"node_modules", "dist", "out-tests", "__pycache__", "assets"}
+    The tree is every text file git tracks or would track (PR 797's closing check, 2026-09-19): `git ls-files --cached
+    --others --exclude-standard` at the repo root, so an untracked file is swept before it is committed, no directory
+    excluded, symlinks skipped (bin/romp-kernel points at the kernel), a file read as text when its first 8 KiB hold no
+    NUL byte and it decodes as UTF-8. The eight-directory walk this replaced omitted the root files, plans/, claude/,
+    hooks/, vscode-extension/ and ui/ outside ui/webview; none of them named a block, so the pin was complete by luck
+    and would not have caught a statement added there. Measured at that head: 3044 files, about 71 MB of text, 0.64 s
+    for the whole tree against 0.59 s for the eight directories, so the wider scope costs nothing worth a list. An
+    untracked file git does not ignore is read too: ui/out-tests, the webview test build's output, is not ignored, so
+    its compiled files are read when it exists; no ui/webview source names a block today, so no copy there can, and a
+    source that starts to would red this pin on a machine holding the build output before it did in CI. The scan
+    takes a shared file lock and the plant test below an exclusive one: pytest-xdist can run the three tests on
+    different workers at once, and a sibling's scan during the plant would read the plant and red."""
+
     BLOCKS = re.compile(r"stagesForeign|cycleJobsMs|connectPush\.stagesMs|stages_foreign|cycle_jobs_ms|connect_stages_ms")
     # the places a routing sentence lives today; a file added here has been read against the measured cells
     PLACES = {"bin/romp", "docs/reference.md", "kernel/kernel.py", "tests/test_first_cycle_stage_split.py",
               "tests/test_jobs_thread_split.py", "tests/test_perf_stats.py", "upstream/2026-09-18-stage-attribution.md"}
+    PROBE = 8192                                  # bytes read for the NUL probe: a png, a font, a recording fails it in its header
 
-    def _places(self):
+    @contextlib.contextmanager
+    def _tree_lock(self, exclusive):
+        """The repo root, held under a file lock every test process of this tree shares (the lock file sits in the temp
+        dir under the root's hash; flock, so a process that dies drops it)."""
         root = Path(HERE).parent
+        lock = Path(tempfile.gettempdir()) / ("romp-routing-sweep-%s.lock" % hashlib.sha1(str(root).encode()).hexdigest()[:12])
+        with open(lock, "a+") as fh:
+            fcntl.flock(fh, fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH)
+            try:
+                yield root
+            finally:
+                fcntl.flock(fh, fcntl.LOCK_UN)
+
+    def _scan(self, root):
+        """{relative path: text} for every text file under `root` that git tracks or would track and that names a block."""
+        listing = subprocess.run(["git", "-C", str(root), "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+                                 capture_output=True, check=True).stdout
         found = {}
-        for top in self.ROOTS:
-            for dirpath, dirnames, filenames in os.walk(root / top):
-                dirnames[:] = [d for d in dirnames if d not in self.SKIP_DIRS and not d.startswith(".")]
-                for fn in filenames:
-                    path = Path(dirpath) / fn
-                    if path.suffix not in self.TEXT or path.is_symlink():
-                        continue
-                    try:
-                        text = path.read_text()
-                    except (UnicodeDecodeError, OSError):
-                        continue
-                    if self.BLOCKS.search(text):
-                        found[str(path.relative_to(root))] = text
+        for rel in listing.decode().split("\0"):
+            path = root / rel
+            if not rel or path.is_symlink():
+                continue
+            try:
+                raw = path.read_bytes()
+            except OSError:                           # in the index, gone from the working tree
+                continue
+            if b"\0" in raw[:self.PROBE]:
+                continue
+            try:
+                text = raw.decode()
+            except UnicodeDecodeError:
+                continue
+            if self.BLOCKS.search(text):
+                found[rel] = text
         return found
 
-    def test_the_files_that_name_a_routed_block_are_the_swept_set(self):
-        found = self._places()
+    def _places(self):
+        with self._tree_lock(exclusive=False) as root:
+            return self._scan(root)
+
+    def _pin_swept_set(self, found):
         self.assertEqual(set(found), self.PLACES, "a file names a routed block and is not in the sweep (or left it): %r" % sorted(set(found) ^ self.PLACES))
 
-    def test_no_swept_file_carries_a_retired_wording(self):
-        for rel, text in sorted(self._places().items()):
+    def _pin_no_retired_wording(self, found):
+        for rel, text in sorted(found.items()):
             joined = " ".join(text.split())
             for key, phrase in sorted(RETIRED_WORDINGS.items()):
                 self.assertFalse(phrase in joined, "%s carries a wording a review round retired (%s): %r" % (rel, key, phrase))
                 #                                    not assertNotIn: its failure message would print the whole file
+
+    def test_the_files_that_name_a_routed_block_are_the_swept_set(self):
+        self._pin_swept_set(self._places())
+
+    def test_no_swept_file_carries_a_retired_wording(self):
+        self._pin_no_retired_wording(self._places())
+
+    def test_the_file_set_is_read_from_the_tree_not_listed(self):
+        """A file planted in plans/, a directory the replaced walk never entered, naming a block and carrying a retired
+        wording, is found by the scan and reds both pins; without it both are green. Both states are measured in this one
+        test under the exclusive lock, the plant removed in a finally, its name unique to this process."""
+        with self._tree_lock(exclusive=True) as root:
+            clean = self._scan(root)
+            self._pin_swept_set(clean); self._pin_no_retired_wording(clean)                          # green without the plant
+            plant = root / "plans" / ("routing-sweep-plant-%d-%s.md" % (os.getpid(), os.urandom(4).hex()))
+            rel = str(plant.relative_to(root))
+            try:
+                plant.write_text("A planted note naming stagesForeign, " + RETIRED_WORDINGS["push-inside-cycle"] + ".\n")
+                planted = self._scan(root)
+                self.assertIn(rel, sorted(planted), "the scan reads the tree, untracked files included: the plant is found")
+                #                    the paths, not the dict: a failure would otherwise print seven files' text
+                with self.assertRaises(AssertionError) as swept:
+                    self._pin_swept_set(planted)
+                self.assertIn(rel, str(swept.exception), "the swept-set pin names the plant")
+                with self.assertRaises(AssertionError) as worded:
+                    self._pin_no_retired_wording(planted)
+                self.assertIn(rel, str(worded.exception), "the wording pin names the plant")
+                self.assertIn("push-inside-cycle", str(worded.exception), "and the wording it carries")
+            finally:
+                plant.unlink(missing_ok=True)
+            after = self._scan(root)
+            self.assertNotIn(rel, sorted(after), "the plant is gone")
+            self._pin_swept_set(after); self._pin_no_retired_wording(after)                          # green again
 
     def test_this_modules_top_keys_comment_names_both_families(self):
         line = next(l for l in Path(__file__).read_text().splitlines() if l.strip().startswith('"stagesForeign",'))
