@@ -317,13 +317,17 @@ plant with the Name branch dropped escapes that census and is caught by the samp
 passed of 17), the state that read 12 passed at the head of the build's verifier pass after the round-2 fixes. The grammar table
 (the version demand): Call removed from _AST_CONCRETE reds the interpreter check naming Call and every census, the harness's
 setUp among them, since _walk refuses the first Call it meets (18 failed, 1 passed of 19); TypeIgnore removed, a class no parse
-here produces, reds the interpreter check alone, naming it (1 failed, 18 passed); a fake node class planted into the ast module
-at import reds the interpreter check naming Frobnicate (1 failed, 18 passed); _walk passing an unknown node instead of raising
-reds the refusal case, AssertionError not raised (1 failed, 18 passed); a census walking a tree outside _walk reds the refusal
-case's source pin, 2 spellings against 1 (1 failed, 18 passed); on 3.14t, TemplateStr and Interpolation removed red the
-interpreter check naming both and the enumeration at F61, where _walk refuses the TemplateStr (2 failed, 17 passed). The clean
-module with the table: 19 passed single-process on 3.10, 3.11, 3.12, 3.13 and 3.14t, and with four workers on 3.12. The bypass
-plants (correctness-2, regression-2), re-taken at this head of 20 cases, each landed on the kernel alone, run single-process on
+here produces, reds the interpreter check alone, naming it (1 failed, 18 passed of 19); a fake node class planted into the ast
+module at import reds the interpreter check naming Frobnicate (1 failed, 18 passed of 19); _walk passing an unknown node instead of
+raising reds the refusal case, AssertionError not raised (1 failed, 18 passed of 19); a census walking a tree outside _walk reds the
+refusal case's source pin, 2 spellings against 1 (1 failed, 18 passed of 19; that pin, a count of one spelling, is the structural
+walker case's since the round-4 fixes); on 3.14t, TemplateStr and Interpolation removed red the interpreter check naming both and
+the enumeration at F61, where _walk refuses the TemplateStr (2 failed, 17 passed of 19). The clean module with the table, at the
+head of the round-3 fixes that added it, 19 cases: 19 passed single-process on 3.10, 3.11, 3.12, 3.13 and 3.14t, and with four
+workers on 3.12 (review round 4, correctness-2 and regression-4: the figures of this paragraph read against 19 while its final
+head had 20 cases and the clean line named no head, so each names its count now, the clean line its head by role, and the clean
+module at the head of the round-4 fixes is pinned by the Docs case in the next paragraph). The bypass
+plants (correctness-2, regression-2), re-taken at the head the round-4 ruling read, of 20 cases, each landed on the kernel alone, run single-process on
 3.12 and reverted with the kernel, the judge and this module hashed before and after: the kernel opening and parsing the store
 file itself, and the kernel calling jd._read_store_json, each per session in the pass loop, 20 passed each and no file changed
 across a run; a second judge module loaded under another name, rebound to the state and its shared door called per session,
@@ -331,6 +335,47 @@ reds the kernel-wide birth pin alone, naming `_PJ.load_goals_shared` as a fifth 
 green at both earlier heads, before the pin); the alias control, the shared door bound at kernel import
 and called per session, 6 failed, 14 passed, the shared reconciliation on every harness case and the birth pin; and the count
 pin: the sentence's count set to a stale figure reds the Docs case naming both figures (1 failed, 19 passed).
+
+Review round 4 (2026-09-19; seventeen findings, none refuted, three mediums, and the reviewer's synthesis: three contracts stated
+as lists, each falsified by the first construct nobody listed, fixed as one inversion keyed on the closed set rather than a longer
+list). Each state below was landed on kernel/kernel.py, kernel/judge.py or this module and reverted, the module run single-process
+on 3.12 through the clean runner unless another interpreter is named; a figure names the case count it reads against, since the
+round's fixes add two cases, the walker pin and the fill-road case, and until the bypass sentence's count is re-taken at the
+round's final head the Docs count pin reads red at every head of the fixes, so every figure below counts that standing red among
+the failed. The bound's third clause (tests-2, regression-2, extra4-1), at the head that added it, 22 cases: the roster pin reads,
+for every second-key bump in the door's body, the innermost statement list holding it, asserts that list holds exactly one
+second-key bump over the full subtrees of its statements and ends in a Return or a Raise, and derives the fill road's entry keys as
+the call keys whose list falls through, asserting them equal to SHARED_FILL_KEYS, which _pass sums; a refuse bump beside the dup
+bump reds the at-most-one clause (2 failed, 20 passed of 22), the refuse block's return replaced by a pass reds the ends-in-Return
+clause (2 failed, 20 passed), and an absent bump below the miss bump reds the derived fill keys, absent among them, with the shared
+reconciliation of the five cases that call the door (7 failed, 15 passed); the refuters' baseline for a second bump beside an
+existing one and for a new fill key was 20 passed of 20 at the head the round-4 ruling read. By execution, a store whose bytes do
+not parse, read once through the door for the never-walked sid, bumps miss once, corrupt once and hands off once
+(TheDoorBumpsAtMostOneSecondKeyPerCall), and a dup bump spelled through __setitem__ beside the corrupt bump reds that case alone,
+the AST clause reading neither spelling (2 failed, 20 passed). The dup and refuse layer (extra5-1), at the head that added it, 22
+cases: a dup bump and a refuse bump planted after the walk's read and conditioned on its miss, so each rides beside a genuine
+fill, each red _pass's zero line at the first pass of the three cases whose first pass fills, {'dup': 2} against {} with the bound
+green at two fills (4 failed, 18 passed of 22 each; at the head before the line, 1 failed, 21 passed, the standing red alone); the
+same plants unconditioned were caught before by the bound at the run pass alone, two second bumps against zero fills (2 failed, 20
+passed), and red the zero line first now (4 failed, 18 passed). The identity lines (correctness-3), at the head that added them:
+the gate decorator's wraps dropped reds the walk census's identity line naming the wrapper gated (2 failed, 20 passed; at the head
+before, the site count's 0 against 1, a true red with a false cause, 2 failed, 20 passed), and a decorator without wraps on the
+gate factory reds the gate scan's identity line naming its wrapper, alone with nothing planted (2 failed, 20 passed) and beside the
+harness ceilings and the per-spelling dict with a shared load planted in the gate's body (8 failed, 14 passed; at the head before,
+the ceilings alone, the scan green reading the wrapper, 6 failed, 16 passed). The population (tests-3), at the head that pinned it:
+one writer-door call site re-doored to the shared door reds the per-spelling dict, 26 and 8 against 27 and 7 with the sum unchanged
+at 58, and one removed reds it 26 against 27 (2 failed, 20 passed each; the set assertion green under both at the head before, 1
+failed, 21 passed). The messages (tests-4, regression-5, extra7-2): the pair beside a fill, a corrupt bump and a goal_io loads bump
+after the walk's read, reds the first pass's writerLoads line 2 against 0 and the two unwalked-sid sweep cases' hand-off lines 2
+against 0 and 3 against 1, each naming the pair and printing writerLoads, the call counters and the second bumps (4 failed, 18
+passed; the same three lines at the head before, each naming another cause); a row's limit set outside _LIMITS reds naming the
+classes by their count, five (2 failed, 20 passed); TypeIgnore deleted from the ast module at import reds the interpreter check
+naming the removal as the third cause (2 failed, 20 passed). The staleness (correctness-2, regression-4): the round-3 paragraph's
+figures are labelled with the count they read against and its clean line with its head by role, and the clean module at the head of
+the round-4 fixes is pinned by the Docs case beside the bypass count, the line's figures summed against the loader's count; that
+clean figure set one below reds the Docs case at the clean line naming both figures (1 failed, 21 passed, the case red at the other
+line when the figure is right). The clean module at this head, the head of the round-4 fixes: 21 passed, 1 failed (the Docs count
+pin, its bypass sentence's count one re-take behind) single-process on 3.10, 3.11, 3.12, 3.13 and 3.14t.
 
 Drives the real pass (_auto_nudge_tick) over two alive sessions with real transcript files and real goal stores, on the
 suite's fake clock (the pass takes `now`). SYNTHETIC fixtures only; a PRIVATE synthetic sid pair (the goal-store fixture
@@ -2379,14 +2424,26 @@ class Docs(unittest.TestCase):
         self.assertIn("loads (the walk's shared goal-store reads", field, "the _PerfStats field docstring names the counter")
 
     def test_the_bypass_retake_sentence_counts_this_heads_cases(self):
-        """The module docstring says the three bypass plants were re-taken at this head over its N cases (review round 3,
-        correctness-2 and regression-2: the sentence was true when written and went stale nine commits and one case later, its count
-        one case behind the module's). N is read here against the loader's count of this module's cases, so a case
-        added without a re-take reds this line and names the two figures, instead of leaving a count that reads true and is not."""
+        """Two sentences of the module docstring state a figure read at this head over its cases, and each is read here against the
+        loader's count of this module's cases, so a case added without a re-take reds this line naming the two figures, instead of
+        leaving a count that reads true and is not. The round-4 paragraph's clean line (review round 4, correctness-2 and
+        regression-4: the round-3 paragraph's clean line read 19 passed at a head of 20 cases, and this pin read the bypass sentence
+        alone, so the same staleness class survived one sentence away): its figures, passed and, while the bypass count awaits its
+        re-take, failed, must sum to the case count; the earlier paragraphs' clean lines name their heads by role and their counts and
+        do not match this regex. The bypass sentence (review round 3, correctness-2 and regression-2: the sentence was true when
+        written and went stale nine commits and one case later, its count one case behind the module's): the three bypass plants were
+        re-taken at this head over its N cases."""
         doc = " ".join(sys.modules[__name__].__doc__.split())
+        n = unittest.defaultTestLoader.loadTestsFromModule(sys.modules[__name__]).countTestCases()
+        m = re.search(r"The clean module at this head, the head of the round-4 fixes: (\d+) passed(?:, (\d+) failed \([^)]*\))? "
+                      r"single-process on 3\.10, 3\.11, 3\.12, 3\.13 and 3\.14t", doc)
+        self.assertIsNotNone(m, "the round-4 paragraph's clean line names this head by role and its figures on the five interpreters")
+        passed, failed = int(m.group(1)), int(m.group(2) or 0)
+        self.assertEqual(passed + failed, n, "the clean line's figures, %d passed and %d failed, sum to %d and this module has %d cases: the "
+                                             "line was written at another head; re-take the five-interpreter run at this head and write its "
+                                             "figures" % (passed, failed, passed + failed, n))
         m = re.search(r"re-taken at this head, the head of the round-3 fixes, over its (\d+) cases", doc)
         self.assertIsNotNone(m, "the docstring's bypass sentence names the head by role and the count of cases it was re-taken over")
-        n = unittest.defaultTestLoader.loadTestsFromModule(sys.modules[__name__]).countTestCases()
         self.assertEqual(int(m.group(1)), n, "the sentence's count of cases, %s, is this module's, %d: a case was added since the plants "
                                              "were re-taken, so re-take them (the three bypass plants and the alias control, each landed "
                                              "on the kernel, run and reverted with the three files hashed) and write the new count"
