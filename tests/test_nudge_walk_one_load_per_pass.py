@@ -2255,7 +2255,10 @@ class TheGrammarIsTheOneTheWalkersClassify(unittest.TestCase):
         present = {n for n in _AST_CONCRETE if n in classes}
         self.assertEqual(present, expected,
                          "Python %s defines exactly the table's concrete classes at or below its version: missing %r (a name the table lists "
-                         "for this version that the interpreter lacks: a misspelling, or a gate set too low), early %r (a class the interpreter "
+                         "for this version that the interpreter lacks: a misspelling, a gate set too low, or a class the interpreter removed, "
+                         "for which no since-gate edit is correct: give the table a removal gate for the entry before listing the class as "
+                         "absent; the version column is a lower bound alone today, since no released or beta interpreter has removed a "
+                         "listed class), early %r (a class the interpreter "
                          "defines before the version the table says adds it)" % (version, sorted(expected - present), sorted(present - expected)))
         self.assertEqual(_AST_KNOWN, frozenset(classes[n] for n in present), "the class set _walk refuses against is the same table, by identity")
         for n in sorted(present):
