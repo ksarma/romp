@@ -665,7 +665,12 @@ producer on 2026-09-19 that found the list type-agnostic on that build; one
 probe per type widens it), keeps a monitor, an agent or a workflow run it
 omits until the CLI's own stream ends it, and counts a running task it names
 that the kernel never saw; a turn that ends without that report holds what
-nothing spoke for, said in the log). Nothing here ends work on an inference
+nothing spoke for, said in the log). A task counted from the report alone
+starts, for the elapsed time shown, at the report's moment (the report carries
+no start time) and has no tool-use id until the CLI's stream supplies one, so
+such a shell, which streams nothing until its end, is absent from the chat's
+background-task box and offers no Stop there until its end frame, while every
+other reading counts it. Nothing here ends work on an inference
 that it ended: a task is torn down, or reported to the session as cut off,
 only on the CLI's own report; a retry after a handshake that timed out against
 a surviving CLI retires nothing, and a stand-down after four such timeouts

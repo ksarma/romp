@@ -250,6 +250,23 @@ class StopReconciler(_Backend):
         self.assertIn("task-p", self.sess._bg_tasks, "the seeded reconcile holds it live: pending is not terminal")
         self.assertEqual(self.sess._live_work_counts(), (0, 1), "the live authority holds the row, so the disagreement is harmless")
 
+    def test_the_ledger_reconcile_reads_the_one_usable_report_decision_so_an_unreadable_list_tombstones_nothing(self):
+        # the mutation pass over round 4 (2026-09-19; m27): the Stop hook feeds ONE usable-report decision to both
+        # reconciles, so the launch ledger does not act on a list the seeded reconcile refused. A ledger branch that read
+        # the raw list and filtered entries itself was left green: on a list with an entry the kernel cannot key it
+        # would tombstone every live entry absent from the readable ones as "gone", the destructive verdict the
+        # whole-list refusal exists to prevent. Two unreadable shapes: a dict with no id, and a non-dict entry beside a
+        # readable one (which is not adopted either)
+        self._launch_bash()
+        self._stop(self.sess, [{"type": "shell", "status": "running", "description": "no id here"}])
+        live, ended = self._ledger()
+        self.assertEqual([e["tid"] for e in live], ["task-aa11"], "a list this kernel cannot read rules nothing")
+        self.assertEqual(ended, [])
+        self._stop(self.sess, [{"id": "task-zz99", "type": "shell", "status": "running", "description": "readable"}, "not an entry"])
+        live, ended = self._ledger()
+        self.assertEqual([e["tid"] for e in live], ["task-aa11"], "the readable entry beside the unreadable one is not adopted")
+        self.assertEqual(ended, [])
+
 
 class KernelSeamEnrichesTheStream(unittest.TestCase):
     """_bg_live_norm: the lifecycle set stays the liveness authority; the ledger ENRICHES its rows by

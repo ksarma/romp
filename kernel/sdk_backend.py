@@ -4045,26 +4045,37 @@ def report_absence_decides(kind) -> bool:
 
 # The CLI's Stop-payload TYPE LABEL -> the task registry DISCRIMINANT every other writer of a _bg_tasks row
 # carries (a stream frame's task_type, the reg mirror's `type`). The inverse of the producer's own label table,
-# read from the bundled CLI 2.1.266 on 2026-09-19: local_bash->shell, local_agent->subagent,
-# local_workflow->workflow, remote_agent->cloud session. `monitor` has no injective inverse (monitor_mcp and
-# monitor_ws BOTH label to it), so it maps to ITSELF, and so does any label the table does not name (the
-# producer's own `?? r.type` fallback already delivers an unknown label as its raw discriminant). An absent or
-# empty label stays "" (a type never learned). Applied wherever a _bg_tasks row is built from a report or from
-# the reg mirror, so a row adopted from a report, or seeded from a mirror an earlier build wrote with the label,
-# reads local_workflow (not "workflow") and its self-heal and _reconcile_workflow_agents run (round 4 of the
-# reviewer's review, 2026-09-19; its correctness-1, with both refuters' riders: normalise at the seed too, and
-# leave monitor unmapped since the inverse is not injective).
+# read from the bundled CLI 2.1.266 on 2026-09-19, TEN entries: local_agent->subagent, local_workflow->workflow,
+# local_bash->shell, monitor_mcp->monitor, monitor_ws->monitor, mcp_task->MCP task, in_process_teammate->teammate,
+# dream->dream, auto_mode_scan->auto-mode scan, remote_agent->cloud session. `monitor` has no injective inverse
+# (monitor_mcp and monitor_ws BOTH label to it), so it maps to ITSELF; `dream` labels to its own discriminant and
+# needs no entry; the other seven are inverted here. Only a type BEYOND the ten reaches the producer's `?? r.type`
+# fallback and arrives as its raw discriminant, so a label this table does not name maps to itself for that case
+# alone (the round 4 addendum, 2026-09-19; the adoption lens: the table covered four of the ten, and the comment
+# claimed the fallback delivered the rest, so a task the report named as "MCP task", "teammate" or "auto-mode
+# scan" was adopted, mirrored and re-seeded after a restart under the label, apart from a stream-started row of
+# the same task). An absent or empty label stays "" (a type never learned). Applied wherever a _bg_tasks row is
+# built from a report or from the reg mirror, so a row adopted from a report, or seeded from a mirror an earlier
+# build wrote with the label, reads local_workflow (not "workflow") and its self-heal and
+# _reconcile_workflow_agents run (round 4 of the reviewer's review, 2026-09-19; its correctness-1, with both
+# refuters' riders: normalise at the seed too, and leave monitor unmapped since the inverse is not injective).
+# The kernel launches whichever `claude` the PATH resolves, so a read of one build speaks for one build: a later
+# build's new label arrives as itself until this table learns it, with its date.
 _REPORT_LABEL_TO_DISCRIMINANT = {
     "shell": "local_bash",
     "subagent": "local_agent",
     "workflow": "local_workflow",
     "cloud session": "remote_agent",
+    "MCP task": "mcp_task",                  # the three below since the round 4 addendum (2026-09-19)
+    "teammate": "in_process_teammate",
+    "auto-mode scan": "auto_mode_scan",
 }
 
 
 def _bg_type_discriminant(label) -> str:
     """A Stop-payload type LABEL, or a discriminant already, normalised to the registry discriminant (the table
-    above). A discriminant, a `monitor` label and any unrecognised label map to themselves; an absent label to ""."""
+    above). A discriminant, a `monitor` label, `dream` and a label beyond the producer's table map to themselves;
+    an absent label to ""."""
     s = str(label or "")
     return _REPORT_LABEL_TO_DISCRIMINANT.get(s, s)
 
@@ -4092,6 +4103,17 @@ def _bg_row(*, type, desc, since, toolUseId="", lastTool="") -> dict:
         or a later report retires it, so a quiet deploy waits to its 15-minute backstop. That is correct, a
         genuinely live task should hold a deploy (the automatic converge reads would_cut, in-flight turns alone,
         and is unaffected).
+      * TOOL-USE ID and SINCE (the round 4 addendum, 2026-09-19; the adoption lens): the payload's entry carries
+        neither, so an adopted row's toolUseId is "" and its since is the ADOPTION time (the awaiting row's
+        elapsed and _live_bg_tasks' order read from the hook, not the launch; no source exists to correct it). The
+        id is learned from the first stream frame that carries one (_on_task_event, the started/progress branch,
+        which rewrites the mirror with it): an agent's or a run's progress frames do (2.1.266 passes the task's
+        toolUseId when the task records one); a shell streams nothing between its start and its end, so an
+        adopted SHELL keeps "" for its life. Until then the row is counted everywhere that reads _bg_tasks (the
+        awaiting rows, /busy, the banner, the hold on a pick) but is ABSENT from the chat's background-task box,
+        whose scan rows kernel.py's _bg_tasks gates on live tool-use ids, so the box offers no Stop for it
+        (request_stop_task resolves by that id), and the judge cannot place it (an empty id reads as pending).
+        The CLI's own stream ends it.
     Callers: the adoption in _reconcile_seeded_with_report, the seed in _seed_live_work_from_reg, and
     _on_task_event's entry mint (its task_type is already a discriminant, so the normalisation is a no-op there)."""
     return {"desc": str(desc or ""), "type": _bg_type_discriminant(type),
@@ -11931,6 +11953,13 @@ class SdkSession:
                     entry["desc"] = str(d.get("description"))
                 if d.get("last_tool_name"):
                     entry["lastTool"] = str(d.get("last_tool_name"))
+                if d.get("tool_use_id") and not entry.get("toolUseId"):
+                    # a row that never learned its tool-use id (one ADOPTED from a turn-end report, whose payload
+                    # carries none: _bg_row's invariants) learns it from the first frame that carries one, and the
+                    # mirror is rewritten with it so the chat box's gate keeps its scan row and a Stop by that id can
+                    # reach it (the round 4 addendum, 2026-09-19; the adoption lens). A row that has its id keeps it
+                    entry["toolUseId"] = str(d.get("tool_use_id"))
+                    changed = True
                 if isinstance(d.get("workflow_progress"), list) and not entry.get("type"):
                     # only a Workflow run ships a per-agent list; a self-healed entry (no task_started seen)
                     # learns its type from it, so the run's later events reach _reconcile_workflow_agents
@@ -12165,7 +12194,14 @@ class SdkSession:
         description, on every report and not only after a seed, joins _reported_tasks like a confirmed row, so the
         settle holds for work the CLI says is running instead of arming against the CLI's own report (until round 2 the
         launch ledger adopted it and the live set did not, and a test pinned the arm as the expected outcome). An
-        adopted row carries no tool-use id, so the chat box cannot stop it by that id; the CLI's own stream ends it.
+        adopted row's since is the adoption time and its tool-use id is "" until a stream frame carries one (the
+        payload has neither; _bg_row's invariants say what follows): an agent's or a run's progress frame teaches it,
+        a shell streams none, so an adopted SHELL is absent from the chat's background-task box and offers no Stop
+        there until its end frame, while every other reader counts it (the round 4 addendum, 2026-09-19). The CLI's own
+        stream ends it. The same scope bounds the presence rule: a row the stream started or has since spoken for is the
+        stream's, so a later report that lists it with a terminal status does not retire it (its end frame is the
+        designed signal, and the payload lists in-flight work); "trust presence always" is a rule about the rows
+        awaiting a verdict, not every row (the adoption lens's fourth item, noted and not a defect).
         Before round 2 the
         settle dropped every seeded row no FRAME had spoken for during the turn, and a refuter showed that silence is
         the ordinary case, not a rare one: a backgrounded shell streams task_started and then nothing until its terminal
