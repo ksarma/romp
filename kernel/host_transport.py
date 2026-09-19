@@ -113,7 +113,15 @@ def host_log_mark(state_dir, sid: str) -> int:
     that host's reason and remedy onto the card and into the ledger. The kernel knows when it spawned; that fact
     cannot be absent, and this repo keys on the event rather than on a proxy for it. A byte offset rather than a
     line count so a line a dying host left unterminated stays with that host's run. Nothing truncates host.log
-    between the mark and the read: the host appends, the kernel only reads."""
+    between the mark and the read: the host appends, the kernel only reads.
+
+    The mark's reach (extra6-1, round 3 of the review, 2026-09-19): the two REFUSED-road reads named above, and
+    only those. The served road, sdk_backend._file_host_log_rows at the hello and at the exit, reads from a LINE
+    position the registry keeps under the host's identity (hostLogPos) and starts at zero for an identity it has
+    not seen, never from this mark; over a host.log that survived a previous launch (a stale kernel-held lease
+    keeps the directory) a fresh host that serves therefore files the previous host's rows as its own problem
+    rows, except the rows a refused launch filed itself, whose position the refused roads record. Bounding the
+    served road on this mark, in bytes, is its own change by the reviewer's ruling, not part of this one."""
     try:
         return os.stat(host_dir(state_dir, sid) / "host.log").st_size
     except OSError:

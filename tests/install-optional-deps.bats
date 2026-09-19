@@ -870,9 +870,9 @@ EOF
 # pinned only by a grep of the script's own source, so the comparison and its exit could be deleted with the suite
 # green. These two cases EXECUTE it: the venv's stub python hands the verify heredoc to a real interpreter with a fake
 # claude_agent_sdk site (dist-info and all) on its path, at another version and at the pin.
-_fake_sdk_site() {   # $1 dir, $2 the version its dist-info declares
+_fake_sdk_site() {   # $1 dir, $2 the version its dist-info declares, $3 the module's own __version__ when it differs (round 3)
     mkdir -p "$1/claude_agent_sdk" "$1/claude_agent_sdk-$2.dist-info"
-    printf '__version__ = "%s"\n' "$2" > "$1/claude_agent_sdk/__init__.py"
+    printf '__version__ = "%s"\n' "${3:-$2}" > "$1/claude_agent_sdk/__init__.py"
     printf 'Metadata-Version: 2.1\nName: claude-agent-sdk\nVersion: %s\n' "$2" > "$1/claude_agent_sdk-$2.dist-info/METADATA"
 }
 
@@ -935,6 +935,85 @@ EOF
     [[ "$output" == *"claude-agent-sdk $pin ready ("* ]]
     [[ "$output" == *"romp-sdk-setup: done"* ]]
     [[ "$output" != *"the venv holds"* ]]
+}
+
+# extra7-3 and extra8-1 (round 3 of the review, 2026-09-19): the closing check moved the HOST's version read to the
+# imported module's own __version__ (the pin exists to know which code runs) and left this script's verify step on
+# importlib.metadata, so a site whose module and dist-info disagree, the very configuration that ruling was taken
+# for, was reported "ready" here at the pin and then refused or flagged at every host launch. The verify step now
+# loads kernel/session_host.py by path under the venv's python and calls its installed_sdk_version(), the host's own
+# reader; these cases plant that disagreement and hold the two readers to one answer.
+_host_reads() {   # what a session host launched on the fake venv would read: installed_sdk_version() under the venv's python
+    ROMP_SDK_VENV="$TEST_DIR/state/sdkvenv" "$TEST_DIR/state/sdkvenv/bin/python" - <<PY
+import importlib.util
+spec = importlib.util.spec_from_file_location("romp_session_host_probe", "$ROMP_DIR/kernel/session_host.py")
+m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+print(m.installed_sdk_version())
+PY
+}
+
+@test "romp-sdk-setup: a site whose module says another version than its dist-info at the pin is refused, naming both versions and the module's file, and the host reads the same version the script names" {
+    pin="$(sed -n 's/^SDK_TESTED_VERSION = "\([^"]*\)".*$/\1/p' "$ROMP_DIR/kernel/session_host.py" | head -1)"
+    _fake_sdk_site "$TEST_DIR/site" "$pin" "9.9.9"                      # the metadata says the pin; the module that imports says 9.9.9
+    _verifying_venv_python "$STUB/python3.12"
+
+    PATH="$(bare_path)" ROMP_PYTHON="$STUB/python3.12" FAKE_SDK_SITE="$TEST_DIR/site" run "$ROMP_DIR/bin/romp-sdk-setup"
+
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"that imports under the venv's python is 9.9.9 (from $TEST_DIR/site/claude_agent_sdk/__init__.py)"* ]]   # the module, and where it came from
+    [[ "$output" == *"package metadata says $pin"* ]]                 # the other source, named too
+    [[ "$output" == *"every host launch would run 9.9.9"* ]]            # the consequence, in the host's terms
+    [[ "$output" != *" ready ("* ]]
+    [[ "$output" != *"romp-sdk-setup: done"* ]]
+    [[ "$output" != *"the venv holds claude-agent-sdk"* ]]              # not the plain wrong-version text, which would be false on every word here
+    # the agreement pin: the host's own read over the same venv returns the version the script refused on
+    FAKE_SDK_SITE="$TEST_DIR/site" run _host_reads
+    [ "$status" -eq 0 ]
+    [ "$output" = "9.9.9" ]
+}
+
+@test "romp-sdk-setup: a module at the pin over a venv whose metadata says another version is refused by the second check, in its own words" {
+    pin="$(sed -n 's/^SDK_TESTED_VERSION = "\([^"]*\)".*$/\1/p' "$ROMP_DIR/kernel/session_host.py" | head -1)"
+    _fake_sdk_site "$TEST_DIR/site" "0.0.1" "$pin"                      # the module that imports is the pin; the venv's own record is not
+    _verifying_venv_python "$STUB/python3.12"
+
+    PATH="$(bare_path)" ROMP_PYTHON="$STUB/python3.12" FAKE_SDK_SITE="$TEST_DIR/site" run "$ROMP_DIR/bin/romp-sdk-setup"
+
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"claude_agent_sdk $pin imports (from $TEST_DIR/site/claude_agent_sdk/__init__.py), the pinned version, but the venv's package metadata says 0.0.1"* ]]
+    [[ "$output" != *" ready ("* ]]
+    [[ "$output" != *"romp-sdk-setup: done"* ]]
+    FAKE_SDK_SITE="$TEST_DIR/site" run _host_reads
+    [ "$output" = "$pin" ]                                              # the host would run the pin; the venv is still not ready
+}
+
+@test "romp-sdk-setup: a venv whose SDK does not import after the install is refused with the import error, not a traceback" {
+    mkdir -p "$TEST_DIR/site"                                           # an empty site: nothing to import
+    _verifying_venv_python "$STUB/python3.12"
+    pin="$(sed -n 's/^SDK_TESTED_VERSION = "\([^"]*\)".*$/\1/p' "$ROMP_DIR/kernel/session_host.py" | head -1)"
+
+    PATH="$(bare_path)" ROMP_PYTHON="$STUB/python3.12" FAKE_SDK_SITE="$TEST_DIR/site" run "$ROMP_DIR/bin/romp-sdk-setup"
+
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"claude-agent-sdk does not import under the venv's python"* ]]
+    [[ "$output" == *"after an install of ==$pin"* ]]
+    [[ "$output" == *"ModuleNotFoundError"* ]]                          # the error's own type and message ride along
+    [[ "$output" != *"Traceback"* ]]
+    [[ "$output" != *"romp-sdk-setup: done"* ]]
+}
+
+@test "romp-sdk-setup: the ready line says the version was read as the session host reads it, and from where" {
+    pin="$(sed -n 's/^SDK_TESTED_VERSION = "\([^"]*\)".*$/\1/p' "$ROMP_DIR/kernel/session_host.py" | head -1)"
+    _fake_sdk_site "$TEST_DIR/site" "$pin"
+    _verifying_venv_python "$STUB/python3.12"
+
+    PATH="$(bare_path)" ROMP_PYTHON="$STUB/python3.12" FAKE_SDK_SITE="$TEST_DIR/site" run "$ROMP_DIR/bin/romp-sdk-setup"
+
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"claude-agent-sdk $pin ready ("* ]]
+    [[ "$output" == *"read as the session host reads it (the module's __version__, from $TEST_DIR/site/claude_agent_sdk/__init__.py)"* ]]
+    FAKE_SDK_SITE="$TEST_DIR/site" run _host_reads
+    [ "$output" = "$pin" ]                                              # both readers: the pin
 }
 
 @test "romp-sdk-setup: installs cryptography beside the SDK (same pip, same venv) and verifies it too" {

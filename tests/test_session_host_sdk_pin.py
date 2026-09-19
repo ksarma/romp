@@ -33,8 +33,17 @@ failure's reason states the version beside every spawn failure alike, never the 
 gone (fresh-1); the deadline road files its own row (kernel-2); the relation guard of the reason composer is pinned,
 with the field-absent case on both guards (tests-2); and the pin reads the version of the module the host imports,
 falling back to the metadata (a copy ahead of the tested site, with the metadata still saying tested).
+
+Round 3 (2026-09-19) added the pins the closing check's fix lacked, each proved by mutation (the case is red with the
+watermark dropped to the file's start and green with it): the exited road's drift row in the NEXT kernel life over a
+surviving log (correctness-1, extra7-1, tests-2, kernel-1), the deadline road's reason for a host that wedges after a
+failing row (tests-1, correctness-2) and for one that wrote nothing over a previous host's rows (tests-1, extra7-2,
+kernel-1); the once-per-kernel-life memo across two sessions (tests-3, extra8-2); the non-object JSON lines the row
+reader skips (tests-4); a refused launch's rows not filed again by the next host that serves (regression-1); and the
+machine venv read the way the host reads it (extra7-3, extra8-1; the installer's own leg is in the bats file).
 """
 import asyncio
+import contextlib
 import importlib.abc
 import importlib.metadata
 import json
@@ -100,6 +109,7 @@ SDK_SITE = _venv_site(SDKVENV)
 _tags = sorted(p.name for p in (SDKVENV / "lib").glob("python3.*")) if (SDKVENV / "lib").is_dir() else []
 VENV_PYTHON = next((shutil.which(t) for t in _tags if shutil.which(t)), None)
 SID = "11111111-2222-3333-4444-0000000000c1"
+SID2 = "11111111-2222-3333-4444-0000000000c2"         # a second session on the same box (the memo is per box, not per session)
 LEAF, NAME = sh.SDK_INTERNALS[0]
 OTHER = "9.9.9"                                      # a version that is not the tested one, whatever the pin says
 
@@ -465,9 +475,16 @@ class HostProcess(unittest.TestCase):
         with open(hd / "host.log", "a") as f:
             f.write(json.dumps({"t": 2, "kind": "cli-spawn-failed", "error": "FileNotFoundError"}) + "\nnot json\n")
         self.assertEqual(ht.host_exit_reason(d, SID), "FileNotFoundError")
+        # tests-4 (round 3 of the review, 2026-09-19): a line that parses as JSON but is not an object (null, a list,
+        # a number) is skipped like the unparseable one, never handed to the reverse scan's row.get. Placed BEFORE the
+        # later failing row so the scan must step over them to reach it; the guard's absence raises here.
         with open(hd / "host.log", "a") as f:
-            f.write(json.dumps({"t": 3, "kind": "host-crashed", "error": "later"}) + "\n")
+            f.write("null\n[1, 2]\n42\n" + json.dumps({"t": 3, "kind": "host-crashed", "error": "later"}) + "\n")
         self.assertEqual(ht.host_exit_reason(d, SID), "later", "the last such row wins")
+        self.assertEqual([r["kind"] for r in ht.host_log_rows(d, SID)], ["host-started", "cli-spawn-failed", "host-crashed"],
+                         "the row reader returns objects only")
+        (hd / "host.log").write_text(json.dumps({"t": 1, "kind": "cli-spawn-failed", "error": "OSError"}) + "\nnull\n")
+        self.assertEqual(ht.host_exit_reason(d, SID), "OSError", "a non-object LAST line is stepped over too")
 
     def test_an_untested_but_working_sdk_is_filed_as_a_problem_row_naming_the_versions_and_the_remedy(self):
         d = tempfile.mkdtemp(); self.addCleanup(shutil.rmtree, d, True); logs = []
@@ -982,6 +999,235 @@ class HostProcess(unittest.TestCase):
         self.assertTrue(rows[1]["text"].endswith("see hosts/%s/host.log" % SID), "no failing row, so no reason: the log's path alone")
         self.assertNotIn(OTHER, str(cm.exception), "a wedged host wrote no failure to state the version beside")
 
+    # ── round 3 of the review (2026-09-19): the spawn watermark, pinned by mutation ──────────────────────────────
+    # The closing check's fix (the reason and the drift row read past host_log_mark, host.log's size before the spawn)
+    # was held by no test: dropping any of its four reads to the file's start (since=0 in _file_refused_launch_context,
+    # a 0 for the mark at either of its call sites, since=0 on the deadline road's reason read) or replacing the
+    # deadline road's reason with "" left the whole suite green, and under each a refused launch filed a FALSE
+    # host.sdk-untested row carrying a previous host's version and the repin remedy. The cases below each go red under
+    # the mutation they name and green with the read as written; a case green under the mutation is not a pin. Every
+    # one needs the stale KERNEL-held lease: with no lease the leftover directory is cleared before the spawn and no
+    # seeded row survives, so a lease-less version of these cases pins nothing (the refuters verified that both ways).
+    _STALE = {"pid": 2 ** 22 - 1, "start": "gone", "t": 0, "holder": {"kind": "kernel", "pid": 2 ** 22 - 2, "start": "gone"}}
+    _UNTESTED = {"t": 2, "kind": "sdk-version-untested", "installed": OTHER, "tested": sh.SDK_TESTED_VERSION, "relation": "newer"}
+
+    def _stale_lease_root(self, sids=((SID, "web"),)):
+        """A state root with hosts on and, for each (sid, name), a registry entry and a stale kernel-held lease (a
+        crashed kernel's leftover: a holder of kind kernel with no live process), which keeps hosts/<sid> and its
+        host.log across launches. Returns the root and its session-events reader; backends are minted by the case,
+        since a kernel life is one backend and the memo lives in it."""
+        d = tempfile.mkdtemp(); self.addCleanup(shutil.rmtree, d, True)
+        Path(d, "session-hosts").write_text("on")
+        for sid, name in sids:
+            sb.write_reg(Path(d), sid, {"sid": sid, "name": name, "alive": True, "lastSid": sid, "cwd": d})
+            sb.write_lease(d, dict(self._STALE, sid=sid))
+            self.assertEqual(sb.lease_state(sb.read_lease(d, sid), time.time()), "no-live-process", "the precondition")
+
+        def events():
+            p = Path(d) / sb.SESSION_EVENTS_FILE
+            return [json.loads(l) for l in p.read_text().splitlines()] if p.exists() else []
+        return d, events
+
+    @staticmethod
+    def _backend(d, logs):
+        return sb.SdkBackend(d, "/bin/true", lambda *a, **k: None, log=lambda m, *a, **k: logs.append(m))
+
+    @staticmethod
+    def _sess(sid=SID, name="web"):
+        return types.SimpleNamespace(sid=sid, name=name, _host_intent=True, _host=None, _host_is_attach=False,
+                                     _options_login="", _seed_for_dead_cli=lambda cli: None)
+
+    @staticmethod
+    def _exiting(rows, code=1):
+        """A fake _spawn_host whose host appends `rows` to host.log and has exited (poll() gives `code`)."""
+        def spawn(sess, spec_path, secret_env=None):
+            with open(Path(spec_path).parent / "host.log", "a") as f:
+                for row in rows:
+                    f.write(json.dumps(row) + "\n")
+            return types.SimpleNamespace(poll=lambda: code, returncode=code, pid=4242, terminate=lambda: None)
+        return spawn
+
+    @staticmethod
+    def _wedging(rows, ended=None):
+        """A fake _spawn_host whose host appends `rows` and then never exits (poll() stays None): the deadline road."""
+        def spawn(sess, spec_path, secret_env=None):
+            with open(Path(spec_path).parent / "host.log", "a") as f:
+                for row in rows:
+                    f.write(json.dumps(row) + "\n")
+            return types.SimpleNamespace(poll=lambda: None, returncode=None, pid=4343,
+                                         terminate=lambda: ended.append(1) if ended is not None else None)
+        return spawn
+
+    def _launch(self, be, sess, spawn, wait=None):
+        """One _host_transport_for through `spawn`, refused: the exception. `wait` shortens SOCKET_WAIT_S for the
+        deadline road."""
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(mock.patch.object(be, "_spawn_host", spawn))
+            if wait is not None:
+                stack.enter_context(mock.patch.object(sb._ht(), "SOCKET_WAIT_S", wait))
+            with self.assertRaises(sb.CLIConnectionErrorLike) as cm:
+                asyncio.run(be._host_transport_for(sess, types.SimpleNamespace(), (None, None, None)))
+        return cm.exception
+
+    # correctness-1, extra7-1, tests-2 and kernel-1 (the exited road): red with `since=0` in _file_refused_launch_context
+    # or a 0 for the mark at the exited road's call. A SECOND backend is the discriminating part: it is the next kernel
+    # life, with an empty memo, over the same surviving log; one backend with one more launch is absorbed by the memo.
+    def test_the_next_kernel_life_files_no_drift_row_from_a_previous_hosts_untested_row_when_its_host_wrote_nothing(self):
+        d, events = self._stale_lease_root()
+        first_logs, second_logs = [], []
+        be1 = self._backend(d, first_logs)
+        self._launch(be1, self._sess(), self._exiting([{"t": 1, "kind": "host-started"}, self._UNTESTED,
+                                                       {"t": 3, "kind": "cli-spawn-failed", "error": "TypeError"}]))
+        self.assertEqual([r["kind"] for r in events()], ["host.sdk-untested", "host.exited-before-socket"], "the first life: the fact, then the failure")
+        self.assertEqual(len((ht.host_dir(d, SID) / "host.log").read_text().splitlines()), 3, "the log survived: the stale lease kept the directory")
+        # the next kernel life: a fresh backend (an empty memo), whose host dies writing nothing
+        be2 = self._backend(d, second_logs)
+        second = str(self._launch(be2, self._sess(), self._exiting([])))
+        rows = events()
+        self.assertEqual([r["kind"] for r in rows], ["host.sdk-untested", "host.exited-before-socket", "host.exited-before-socket"],
+                         "no second drift row: the first host's fact is not this launch's")
+        self.assertTrue(second.endswith("see hosts/%s/host.log" % SID), second)
+        for needle in (OTHER, sh.SDK_REPIN_COMMAND, "written against", "this host ran"):
+            self.assertNotIn(needle, second)
+            self.assertNotIn(needle, rows[2]["text"])
+        self.assertFalse(any(OTHER in l for l in second_logs), "nor a kernel-log line about it in the second life: %r" % second_logs)
+        # and a host of the second life that failed on its own has its own bare type, never the first host's fact beside it
+        third = str(self._launch(be2, self._sess(), self._exiting([{"t": 4, "kind": "host-started"},
+                                                                    {"t": 5, "kind": "cli-spawn-failed", "error": "FileNotFoundError"}])))
+        rows = events()
+        self.assertEqual(len(rows), 4)
+        self.assertTrue(third.endswith("host.log: FileNotFoundError"), third)
+        self.assertTrue(rows[3]["text"].endswith("host.log: FileNotFoundError"), rows[3]["text"])
+        self.assertEqual([r["kind"] for r in rows].count("host.sdk-untested"), 1)
+
+    # tests-1 (leg 1) and correctness-2 (the deadline road's reason): red with the read replaced by `reason = ""`. A
+    # real host leaves some 16 to 19 ms between a failing row and its exit, so this read answers for a host that wedges
+    # AFTER failing (a non-daemon worker thread can hold a process open), a reachable shape and not ordinary failure.
+    def test_a_host_that_wedges_after_a_failing_row_has_that_row_read_at_the_deadline(self):
+        d, be, s, logs, events = self._refusing_backend()
+        ended = []
+        exc = str(self._launch(be, s, self._wedging([{"t": 1, "kind": "host-started"}, self._UNTESTED,
+                                                     {"t": 3, "kind": "cli-spawn-failed", "error": "TypeError"}], ended), wait=0.3))
+        self.assertEqual(ended, [1], "the wedged host was ended")
+        rows = events()
+        self.assertEqual([r["kind"] for r in rows], ["host.sdk-untested", "host.never-served-socket"])
+        fact = "host.log: TypeError (this host ran %s %s, newer than" % (sh.SDK_DIST, OTHER)
+        self.assertIn(fact, exc, "the card carries the failing row's type with the version beside it")
+        self.assertIn(fact, rows[1]["text"], "and so does the ledger row")
+        self.assertNotIn(sh.SDK_REPIN_COMMAND, exc); self.assertNotIn(sh.SDK_REPIN_COMMAND, rows[1]["text"])
+        self.assertIn(sh.SDK_REPIN_COMMAND, rows[0]["text"], "the remedy rides with the fact's own row")
+        # the same road with no untested row: the bare type, and the reason still read
+        d2, be2, s2, logs2, events2 = self._refusing_backend()
+        exc2 = str(self._launch(be2, s2, self._wedging([{"t": 1, "kind": "host-started"},
+                                                        {"t": 2, "kind": "cli-spawn-failed", "error": "FileNotFoundError"}]), wait=0.3))
+        rows2 = events2()
+        self.assertEqual([r["kind"] for r in rows2], ["host.never-served-socket"])
+        self.assertTrue(exc2.endswith("host.log: FileNotFoundError"), exc2)
+        self.assertTrue(rows2[0]["text"].endswith("host.log: FileNotFoundError"), rows2[0]["text"])
+
+    # tests-1 (leg 2), extra7-2 and kernel-1 (the deadline road's watermark): red with `since=0` on the deadline road's
+    # reason read, or a 0 for the mark at its _file_refused_launch_context call, or `since=0` inside that function.
+    # The previous host's rows are seeded before the spawn (a host of an earlier kernel life whose crash record and
+    # untested row survived under the stale lease); this launch's host wedges writing nothing.
+    def test_a_wedged_host_that_wrote_nothing_inherits_no_previous_hosts_reason_or_drift_row_at_the_deadline(self):
+        d, events = self._stale_lease_root()
+        hd = ht.host_dir(d, SID); hd.mkdir(parents=True)
+        previous = [{"t": 1, "kind": "host-started"}, self._UNTESTED, {"t": 3, "kind": "cli-spawn-failed", "error": "TypeError"},
+                    {"t": 4, "kind": "host-started"}, {"t": 5, "kind": "host-crashed", "error": sh.sdk_mismatch_text(OTHER, LEAF + "." + NAME)}]
+        (hd / "host.log").write_text("".join(json.dumps(r) + "\n" for r in previous))
+        logs = []
+        be = self._backend(d, logs)                          # a new kernel life: nothing in the memo
+        ended = []
+        exc = self._launch(be, self._sess(), self._wedging([], ended), wait=0.3)
+        self.assertEqual(ended, [1])
+        text = str(exc)
+        rows = events()
+        self.assertEqual([r["kind"] for r in rows], ["host.never-served-socket"], "no drift row: the untested row in the file is a previous host's")
+        self.assertTrue(text.endswith("did not serve its socket within 0 s; it was ended; see hosts/%s/host.log" % SID), text)
+        self.assertTrue(rows[0]["text"].endswith("see hosts/%s/host.log" % SID), rows[0]["text"])
+        # the recorded launch error, the card's source, ends there too
+        real = sb.SdkSession(be, sb.read_reg(Path(d), SID))
+        be._record_launch_error(real, exc)
+        recorded = (sb.read_reg(Path(d), SID) or {})["launchError"]["text"]
+        self.assertTrue(recorded.endswith("see hosts/%s/host.log" % SID), recorded)
+        for needle in (OTHER, sh.SDK_TESTED_VERSION, sh.SDK_REPIN_COMMAND, "written against", "TypeError", "this host ran"):
+            for where, s in (("the exception", text), ("the ledger row", rows[0]["text"]), ("the recorded launch error", recorded)):
+                self.assertNotIn(needle, s, "%s carries a previous host's %r" % (where, needle))
+        self.assertFalse(any(OTHER in l for l in logs), "no kernel-log line about the previous host's version either")
+        self.assertEqual(len((hd / "host.log").read_text().splitlines()), len(previous), "the wedged host wrote nothing and the file is intact")
+
+    # regression-1 (round 3 of the review, 2026-09-19): a refused launch was reported twice over a surviving log,
+    # host.exited-before-socket at the refusal and then host.spawn-failed for the SAME cli-spawn-failed row at the
+    # next host's hello, because the served road starts an identity it has not seen at line zero and the refused roads
+    # recorded no position. Now they record how far they filed (hostLogPos under HOST_LOG_POS_REFUSED) and the served
+    # road starts the next host, whatever its identity, past it. Red on the tree before the fix.
+    def test_a_refused_launchs_rows_are_not_filed_again_when_a_later_host_serves_over_the_surviving_log(self):
+        d, events = self._stale_lease_root()
+        be1 = self._backend(d, [])
+        self._launch(be1, self._sess(), self._exiting([{"t": 1, "kind": "host-started"}, self._UNTESTED,
+                                                       {"t": 3, "kind": "cli-spawn-failed", "error": "TypeError"}]))
+        self.assertEqual([r["kind"] for r in events()], ["host.sdk-untested", "host.exited-before-socket"])
+        # the next kernel life (an empty memo): a host SERVES over the surviving log, and its hello files the log's rows
+        logs = []
+        be2 = self._backend(d, logs)
+        served = types.SimpleNamespace(sid=SID, name="web", _host=types.SimpleNamespace(hello={"host": {"pid": 77, "start": "s77"}}))
+        be2._file_host_log_rows(served)
+        kinds = [r["kind"] for r in events()]
+        self.assertNotIn("host.spawn-failed", kinds, "the refused launch's failure row is not a second report: %r" % kinds)
+        self.assertEqual(kinds, ["host.sdk-untested", "host.exited-before-socket"], "nor its untested row a second drift row")
+        self.assertFalse(any(OTHER in l for l in logs), "and no kernel-log line for it in this life: %r" % logs)
+        # the served host's own rows are still filed, once
+        with open(ht.host_dir(d, SID) / "host.log", "a") as f:
+            f.write(json.dumps({"t": 9, "kind": "reader-behind"}) + "\n")
+        be2._file_host_log_rows(served)
+        self.assertEqual([r["kind"] for r in events()], ["host.sdk-untested", "host.exited-before-socket", "host.reader-behind"])
+        be2._file_host_log_rows(served)
+        self.assertEqual(len(events()), 3, "no line is filed twice")
+        kept = (sb.read_reg(Path(d), SID) or {})["hostLogPos"]
+        self.assertEqual(kept, {"host": "77:s77", "pos": 4}, "the position now belongs to the served host")
+        # the mechanism: both refused roads record the position they filed up to, under a host that is no identity
+        d2, events2 = self._stale_lease_root()
+        be3 = self._backend(d2, [])
+        self._launch(be3, self._sess(), self._exiting([{"t": 1, "kind": "host-started"}, {"t": 2, "kind": "cli-spawn-failed", "error": "OSError"}]))
+        self.assertEqual((sb.read_reg(Path(d2), SID) or {})["hostLogPos"], {"host": sb.HOST_LOG_POS_REFUSED, "pos": 2})
+        self._launch(be3, self._sess(), self._wedging([{"t": 3, "kind": "host-started"}]), wait=0.3)
+        self.assertEqual((sb.read_reg(Path(d2), SID) or {})["hostLogPos"], {"host": sb.HOST_LOG_POS_REFUSED, "pos": 3}, "the deadline road too")
+        self.assertEqual([r["kind"] for r in events2()], ["host.exited-before-socket", "host.never-served-socket"])
+        # a kernel restart attaching to the SAME served host still continues from its own position (the identity key)
+        sb.write_reg(Path(d2), SID, dict(sb.read_reg(Path(d2), SID), hostLogPos={"host": "77:s77", "pos": 3}))
+        with open(ht.host_dir(d2, SID) / "host.log", "a") as f:
+            f.write(json.dumps({"t": 4, "kind": "end-forced", "cliPid": 5}) + "\n")
+        be3._file_host_log_rows(types.SimpleNamespace(sid=SID, name="web", _host=types.SimpleNamespace(hello={"host": {"pid": 77, "start": "s77"}})))
+        self.assertEqual([r["kind"] for r in events2()], ["host.exited-before-socket", "host.never-served-socket", "host.end-forced"])
+
+    # tests-3 and extra8-2 (round 3 of the review, 2026-09-19): the memo's key is the (installed, tested) pair and NOT
+    # the sid, so a second SESSION under the same pair files no row and gets the plain kernel-log line; the comment, the
+    # docstring, both docs and the ledger say so, and no test held it (a sid in the key left every case green). Red
+    # with the sid added to the key, in either spelling.
+    def test_the_untested_row_is_once_per_kernel_life_across_sessions_not_once_per_session(self):
+        d = tempfile.mkdtemp(); self.addCleanup(shutil.rmtree, d, True); logs = []
+        be = sb.SdkBackend(d, "/bin/true", lambda *a, **k: None, log=logs.append)
+
+        def events():
+            p = Path(d) / sb.SESSION_EVENTS_FILE
+            return [json.loads(l) for l in p.read_text().splitlines()] if p.exists() else []
+        base = be.problem_seq()
+        for sid, name, pid in ((SID, "web", 101), (SID2, "api", 202)):
+            sb.write_reg(Path(d), sid, {"sid": sid, "name": name, "alive": True, "lastSid": sid})
+            hd = ht.host_dir(d, sid); hd.mkdir(parents=True)
+            (hd / "host.log").write_text(json.dumps({"t": 1, "kind": "host-started"}) + "\n" + json.dumps(self._UNTESTED) + "\n")
+            sess = types.SimpleNamespace(sid=sid, name=name, _host=types.SimpleNamespace(hello={"host": {"pid": pid, "start": "s%d" % pid}}))
+            be._file_host_log_rows(sess)
+        rows = events()
+        self.assertEqual([r["kind"] for r in rows], ["host.sdk-untested"], "one row for the box, whichever session met it first")
+        self.assertEqual((rows[0]["sid"], rows[0]["name"]), (SID, "web"))
+        self.assertEqual(len([p for p in be.problems() if OTHER in p["text"]]), 1, "one error-centre entry")
+        self.assertEqual(be.problem_seq(), base + 1)
+        self.assertTrue(any("api" in l and OTHER in l and "once" in l and sb.PROBLEM_ROW_MARK not in l for l in logs),
+                        "the second session is one plain kernel-log line naming it: %r" % logs)
+        self.assertEqual(sum(1 for l in logs if "host.sdk-untested" in l and sb.PROBLEM_ROW_MARK in l), 1)
+        self.assertEqual(be._sdk_untested_reported, {(OTHER, sh.SDK_TESTED_VERSION)}, "the key is the pair alone")
+
 
 class LaunchErrorCard(unittest.TestCase):
     """correctness-1 and kernel-1 (one defect; round 1 of the review, 2026-09-18): the mismatch reason the launch
@@ -1127,6 +1373,29 @@ class MachineVenv(unittest.TestCase):
         self.assertEqual(dist.version, sh.SDK_TESTED_VERSION,
                          "the venv holds %s, the pin says %s: run %s (or move the pin after verifying the imports)"
                          % (dist.version, sh.SDK_TESTED_VERSION, sh.SDK_REPIN_COMMAND))
+
+    # extra7-3 and extra8-1 (round 3 of the review, 2026-09-19): the metadata leg above reads what was INSTALLED; the
+    # host reads what RUNS (installed_sdk_version: the imported module's __version__, the metadata as the fallback),
+    # and bin/romp-sdk-setup's verify step now calls that same function by path under the venv's python. This leg
+    # reads the machine's venv the way both of them do, under a python of the venv's tag, so a site whose module
+    # and dist-info disagree fails here the way it fails at a launch; the installer's own case, over a fixture that
+    # plants that disagreement, is in tests/install-optional-deps.bats.
+    @unittest.skipUnless(SDK_SITE and VENV_PYTHON, "no SDK venv on this machine, or no python of its tag on PATH for the probe")
+    def test_the_machines_sdk_venv_reads_the_tested_version_the_way_the_host_and_the_installer_read_it(self):
+        probe = ("import importlib.util, json\n"
+                 "spec = importlib.util.spec_from_file_location('romp_session_host_probe', %r)\n"
+                 "m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)\n"
+                 "import claude_agent_sdk as sdk\n"
+                 "print(json.dumps({'have': m.installed_sdk_version(), 'module': getattr(sdk, '__version__', None), 'pin': m.SDK_TESTED_VERSION}))\n"
+                 % os.path.join(ROOT, "kernel", "session_host.py"))
+        env = dict(os.environ, PYTHONPATH=str(SDK_SITE))
+        got = subprocess.run([VENV_PYTHON, "-c", probe], env=env, capture_output=True, text=True, timeout=60)
+        self.assertEqual(got.returncode, 0, got.stderr)
+        out = json.loads(got.stdout)
+        self.assertEqual(out["have"], sh.SDK_TESTED_VERSION,
+                         "the venv's module reads %s, the pin says %s: run %s (or move the pin after verifying the imports)"
+                         % (out["have"], sh.SDK_TESTED_VERSION, sh.SDK_REPIN_COMMAND))
+        self.assertEqual(out["module"], out["have"], "the module's own __version__ is what the read returns when the module exports one")
 
     @unittest.skipUnless(SDK_SITE and VENV_PYTHON, "no SDK venv on this machine, or no python of its tag on PATH for the probe")
     def test_the_internals_resolve_in_the_machines_venv_under_a_python_of_its_own_tag(self):
