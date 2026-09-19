@@ -3092,7 +3092,8 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   `push.chat`, `push.feed`, `push.timeline`, `push.send`, `push.warm`,
   `push.feedFirst`; a fresh snapshot lists every one at zero. Two of those
   are split further: inside `push.chat`, `push.chat.sig` (each tab's build
-  signature, every tab every cycle, the post-build check included; itself
+  signature, every tab past the cold gate every cycle, the post-build check
+  included; itself
   split into `push.chat.sig.static`, the signature less its dependency
   tail, and `push.chat.sig.deps`, the tail evaluated over the cached
   build's record, the task-output stats, the path-token re-resolves and
@@ -3185,9 +3186,14 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   push-marked write from a thread owning no cycle included, under the
   `stagesForeign` rule above) record no CPU row, so each row's CPU is the
   same writer's as its wall. Over a window, wall minus user minus sys is
-  the stage's wait (the GIL, the syscalls); the split between user and sys
-  is tick-sampled by the operating system and scaled to the exact total,
-  so read it over a window, never off one cycle. The reads cost two
+  the stage's wait (the GIL, the syscalls). Read the block over a window,
+  never off one cycle: `getrusage(RUSAGE_THREAD)`'s total is the thread's
+  runtime as of its last scheduler update (a tick, 1 ms at HZ=1000, or a
+  context switch), not the instant of the read, split into user and sys by
+  the tick counts, so a mark over a sub-millisecond stage reads 0 on the
+  marks no update fell in and a whole tick on the others (0.3 ms spins
+  read 0 in 111 of 200 trials at HZ=1000), and only the sum over a window
+  estimates the CPU. The reads cost two
   `getrusage` calls per mark, about 230 clock reads per cycle at 38 tabs.
   Empty where the platform has no per-thread rusage (macOS): an empty
   block means no clock, not no CPU.
@@ -3823,7 +3829,9 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   comment promotion and the backend's connect handshake run), which take
   no signature and which `builds.chat` labels
   `targeted` under `bg_miss` only when the tab is unwatched. Two identities
-  follow. Over any window `pre` equals `builds.chat` `cached` plus `built`
+  follow, read at rest (between pushes; while a tab is in flight `pre` runs
+  one ahead, since its note is folded before the tab's `builds.chat`
+  record). `pre` equals `builds.chat` `cached` plus `built`
   less `targetedBuilds` plus `failedBuilds`. Over a window with
   `failedBuilds` zero `post` equals `built` less `targetedBuilds` less
   `nosig`, and otherwise exceeds it by the failed builds whose signature was
@@ -3861,10 +3869,14 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   reaches; `DirEntry.stat` in `_entry_stat` and its twins in the judge,
   event-model and SDK-backend modules, which every scandir entry's stat in
   `kernel/` goes through (a source pin derives the entry names from every
-  scandir there), because a `DirEntry` stats in C and reaches no wrapper. Not in the count, and not countable from Python: the fstat
-  inside `open()` (C, part of a read, counted by the read counters and the
-  bytes column) and a `DirEntry.is_dir` on a filesystem that reports no
-  d_type. A test intercepts `os.stat`, `os.lstat` and `DirEntry.stat`
+  scandir there), because a `DirEntry` stats in C and reaches no wrapper.
+  Not in the count, and not countable from Python (C makes them with no
+  Python call per stat): the fstat inside `open()` (part of a read, counted
+  by the read counters and the bytes column), the fstat inside `scandir()`
+  on the directory it opens, a `DirEntry` predicate (`is_dir`, `is_file`,
+  `is_symlink`) on a symlink entry or on a filesystem that reports no
+  d_type, and the stats of the git children a cold cwd memo forks, made in
+  another process. A test intercepts `os.stat`, `os.lstat` and `DirEntry.stat`
   in-process around real signatures over a real state root and asserts the
   counter equals the interception count; at the previous head the counter
   saw about 7 of 23 stats per signature. `namesReads` counts raw

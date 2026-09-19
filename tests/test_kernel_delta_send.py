@@ -539,8 +539,9 @@ class ByteIdenticalFrames(unittest.TestCase):
     def _identities(self, d, b0, b1):
         """The two reconciliation identities the block comment, the docstring row and docs/reference.md state, checked from
         the payload alone over a window (`d` the memos.chatSig deltas, `b0` and `b1` the builds.chat blocks at its ends),
-        and the two counts they lean on returned: (cached, built). pre = cached + built - targetedBuilds + failedBuilds over
-        any window; post = built - targetedBuilds - nosig over a window with failedBuilds 0, and otherwise post exceeds
+        and the two counts they lean on returned: (cached, built). pre = cached + built - targetedBuilds + failedBuilds at rest
+        (the reads here are between pushes; a tab in flight puts pre one ahead, its note folded before the tab's build_chat
+        record); post = built - targetedBuilds - nosig over a window with failedBuilds 0, and otherwise post exceeds
         that by at most failedBuilds (the failed builds whose signature was also None: nosig counts those tabs, built does
         not)."""
         cached, built = b1["cached"] - b0["cached"], b1["built"] - b0["built"]
@@ -905,6 +906,50 @@ class ByteIdenticalFrames(unittest.TestCase):
         self.assertGreaterEqual(d["stats"], 7)
         self.assertEqual((d["pre"], d["post"], d["pushes"], d["compares"]), (0, 0, 0, 0), "not a loop count")
 
+    def test_a_thread_signature_outside_a_push_counts_the_shared_components_and_one_under_a_pushs_scope_does_not(self):
+        """The block comment's shared-components gloss by execution (2026-09-19 review, the meaning lens): inside a push the
+        components every tab shares (_chat_sig_shared) are read once before the loop, on no signature's count; a signature
+        taken OUTSIDE a push (a comments frame's thread signature, the WS comment routes) reads them inside its own scope,
+        so they count on it. The same thread signature under _live_scope.chat_shared set as a push sets it and under None:
+        the difference in stats is exactly what _chat_sig_shared alone stats inside a scope (the memos it rests on are
+        warmed first, so cold and warm do not mix), the same for the names read, and every count equals the outside
+        interception."""
+        tsid = self.SIDS_PEER
+        td = tempfile.TemporaryDirectory(); self.addCleanup(td.cleanup)
+        path = os.path.join(td.name, tsid + ".jsonl")
+        with open(path, "w") as f:
+            f.write("{}\n")
+        sess = {"sid": tsid, "name": "api", "anchor": None, "path": path, "mtime": self.NOW}
+        saved = dict(km._built_thread)
+        self.addCleanup(lambda: (km._built_thread.clear(), km._built_thread.update(saved), km._thread_fold_keep[1].discard(tsid)))
+
+        def take(shared):
+            km._built_thread.pop(tsid, None)
+            with mock.patch.object(km._live_scope, "chat_shared", shared, create=True), mock.patch.object(km._live_scope, "names", None, create=True):
+                before = km._chat_sig_stats_report()
+                with _StatInterceptor(km._CHAT_SIG_TL) as ic:
+                    km._thread_events(tsid, None, self.NOW, {})
+                after = km._chat_sig_stats_report()
+            d = {k: after[k] - before[k] for k in after}
+            self.assertEqual((d["thread"], d["stats"]), (1, ic.total), "one thread signature, its stats what ran: %r" % (d,))
+            return d
+        with mock.patch.object(km, "_thread_reg", lambda t: {}), mock.patch.object(km, "_sdk_sess", lambda sid, now: dict(sess)), \
+                mock.patch.object(km, "build_session", lambda sid, now, live_map=None, **kw: {"type": "session", "id": sid, "events": []}):
+            take(km._chat_sig_shared())                    # warms every memo the signature and the shared components rest on
+            inside = take(km._chat_sig_shared())           # as a push leaves the components for its loop
+            outside = take(None)                           # as a comments frame takes it outside a push
+            again = take(km._chat_sig_shared())
+            before = km._chat_sig_stats_report()
+            with _StatInterceptor(km._CHAT_SIG_TL) as ic, km._chat_sig_scope():
+                km._chat_sig_shared()                      # the components alone, inside a scope, warm
+            own = {k: v - before[k] for k, v in km._chat_sig_stats_report().items()}
+        self.assertEqual(own["stats"], ic.total)
+        self.assertGreater(own["stats"], 0, "the shared components stat (the flags file, the cards file, the cleared log, the names)")
+        self.assertEqual(inside["stats"], again["stats"], "premise: warm, the same count twice under a push's scope")
+        self.assertEqual(outside["stats"] - inside["stats"], own["stats"],
+                         "outside a push the signature pays the shared components' stats: %d against %d" % (outside["stats"], inside["stats"]))
+        self.assertEqual(outside["namesReads"] - inside["namesReads"], own["namesReads"], "...and their names read, the same way")
+
     def test_the_warm_tab_census_counts_by_what_the_connected_clients_hold(self):
         """The census the warm-tab gate question needs (the design's dropped alternative, kept as a count): a cached tab
         every connected chat client holds as a skeleton and no client watches is warmEligible; the same tab with a plain
@@ -1203,7 +1248,7 @@ class ByteIdenticalFrames(unittest.TestCase):
 
     def test_the_chat_stage_is_split_into_its_seams(self):
         """Stage 1 of the incremental-push design (2026-09-18): push.chat is a container of three seams in stages_ms
-        and in the cycle's split: sig (the tab's signature, every tab every cycle, the post-build one included),
+        and in the cycle's split: sig (the tab's signature, every tab past the cold gate every cycle, the post-build one included),
         build (build_session, a rebuild only) and send (the diff and the per-client sends). A served tab records
         sig and send and no build."""
         ps = km._PERF_STATS
