@@ -15,9 +15,13 @@
 // every patch from it recovers (needSlot) and the slot crosses whole per change, the pre-delta cost, rendered from the
 // flat list (federation.ts judgingToWire). Its feed frame keys asks as this table does and seeds as any other. The
 // refusal is the one silent shape whose repair never repairs (a bad base or a malformed patch files nothing either,
-// but the whole frame they earn seeds), so it is reported through the OPTIONAL second callback at the moment the seed
-// is refused, never per patch: federation.ts says it once per conn per slot (a hostconn row and a console line); the
-// extension's pipe has no diagnostics road and passes none.
+// but the whole frame they earn seeds). At the seed it tells nothing apart, though: a remote that never patches (one
+// before the slot protocol) and one that will send the same whole frame, which renders either way, so nothing is
+// said there. The event that costs is the PATCH that finds no base because the slot's whole frame was refused, and
+// that is where the OPTIONAL second callback hears of it, per such patch, with the collection and shape the table
+// could not key; federation.ts says it once per distinct row (a hostconn row and a console line, keyed on the reason
+// and the remote's build). A patch on a slot never seeded, or whose revision misses the held base, is the receiver's
+// own resync and says nothing. The extension's pipe has no diagnostics road and passes none.
 type Slot = "feed" | "bars";
 type Frame = Record<string, any>;
 type Collection = { order: string[]; items: Map<string, any> };
@@ -40,7 +44,7 @@ function split(value: any, kind: string): Collection {
   // header's pre-T278c judging); an absent collection is left as before (the kernel keys nothing for it either and
   // sends such a frame whole, so a base seeded over it is never patched).
   if (value !== undefined && value !== null && (kind.startsWith("dictlist:") ? !object(value) : !Array.isArray(value))) {
-    throw new Unkeyable(kind + " collection is " + (Array.isArray(value) ? "a list" : "not a list"));
+    throw new Unkeyable(kind + " is " + (Array.isArray(value) ? "a list" : "not a list"));
   }
   const order: string[] = [], items = new Map<string, any>();
   const field = kind === "byid" ? "id" : kind.slice(kind.indexOf(":") + 1);
@@ -94,9 +98,13 @@ function stringKeys(value: any): string[] {
 
 export class ViewDeltas {
   private bases = new Map<Slot, Base>();
-  /** `needSlot` asks the sending kernel for a slot whole; `unkeyable`, optional, hears of a full frame refused as a base
-   *  (the slot, and the table's reason: kind and container, no frame content), at the refusal and never per patch. */
-  constructor(private needSlot: (slot: string) => void, private unkeyable?: (slot: string, why: string) => void) {}
+  // a slot whose last whole frame this table refused as a base, and why (collection, kind and container, no frame
+  // content): read by the patch that then finds no base, cleared by a whole frame that seeds
+  private refused = new Map<Slot, string>();
+  /** `needSlot` asks the sending kernel for a slot whole; `unkeyed`, optional, hears of a patch that found no base
+   *  because the slot's whole frame was refused as one (the slot, and the table's reason), per such patch and never at
+   *  the refusal itself: only a patch tells that the remote patches at all. */
+  constructor(private needSlot: (slot: string) => void, private unkeyed?: (slot: string, why: string) => void) {}
 
   private recover(slot: string): null {
     const known = slotOf(slot);
@@ -111,18 +119,22 @@ export class ViewDeltas {
     const full = slotOf(msg?.type);
     if (full) {
       const maps = new Map<string, Collection>();
-      try {
-        for (const [name, kind] of Object.entries(KINDS[full])) maps.set(name, split(msg[name], kind));
-      } catch (e) {
-        if (!(e instanceof Unkeyable)) throw e;
-        // the header's rule: no base for a frame this table cannot key, so the next patch recovers (needSlot) and
-        // that kernel serves the slot whole again; the frame itself continues whole, as every full frame does. Said
-        // here, at the refusal (the one place the standing cost is attributable), to a consumer that listens
-        this.bases.delete(full);
-        this.unkeyable?.(full, (e as Error).message);
-        return msg;
+      for (const [name, kind] of Object.entries(KINDS[full])) {
+        try {
+          maps.set(name, split(msg[name], kind));
+        } catch (e) {
+          if (!(e instanceof Unkeyable)) throw e;
+          // the header's rule: no base for a frame this table cannot key, so the next patch recovers (needSlot) and
+          // that kernel serves the slot whole again; the frame itself continues whole, as every full frame does. The
+          // refusal is remembered, by collection and shape, for the patch that finds no base below; nothing is said
+          // here, where a remote that never patches and one that will are the same frame
+          this.bases.delete(full);
+          this.refused.set(full, name + " " + (e as Error).message);
+          return msg;
+        }
       }
       this.bases.set(full, { rev: 0, msg, maps });
+      this.refused.delete(full);   // a whole frame this table keys ends the refusal: the slot has a base again
       return msg;
     }
     if (msg?.type !== "delta") return msg;
@@ -131,7 +143,16 @@ export class ViewDeltas {
     // through its whole frames even when this receiver cannot decode its patches.
     if (!slot) return typeof msg.slot === "string" && msg.slot ? this.recover(msg.slot) : null;
     const base = this.bases.get(slot);
-    if (!base || base.rev !== msg.base) return this.recover(slot);
+    if (!base) {
+      // No base to apply onto. A patch before any whole frame on this socket is the receiver's own resync; one after a
+      // whole frame this table REFUSED is the standing cost the header describes, and this is the one moment it is
+      // attributable (that remote patches, and this side keys none of its whole frames), so the listener hears of it
+      // here, per patch; the resync is the same either way.
+      const why = this.refused.get(slot);
+      if (why) this.unkeyed?.(slot, why);
+      return this.recover(slot);
+    }
+    if (base.rev !== msg.base) return this.recover(slot);
     try {
       if (!Number.isSafeInteger(msg.base) || msg.base < 0 || !Number.isSafeInteger(msg.rev) || msg.rev !== msg.base + 1 || !object(msg.coll)) {
         throw new Error("invalid delta revision or collections");

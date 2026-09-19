@@ -925,7 +925,8 @@ interface Conn {
   readyAcked?: boolean; // the remote answered this page's `ready` with a `caps` frame at least once (the shim's readyAcked): the redial gate's latch that the remote served this page whole and holds its sessions
   dialedReconnect?: boolean; // the CURRENT socket was dialed with reconnect=1, so its open must post NO `ready`: the redial's dial term IS the handshake, and a `ready` would make the remote's ready reset pop `reconnect` and serve the whole board (the shim posts no ready on a redial for the same reason)
   deferred?: boolean; // a dial connect() put off because the pane's LOCAL socket is down (window.__rompLocalUp false): set with the one dial-deferred row per down spell, cleared by the dial that finally runs
-  saidDelta?: Set<string>; // the delta breadcrumbs this conn has filed, as ev:slot (delta-unkeyable-seed, delta-unknown-slot): said once per conn per slot (sayDeltaOnce), since both conditions last the conn's life and a row per frame would be a row a minute per host; the conn's, so a redial keeps it and a detach ends it
+  saidDelta?: Set<string>; // the delta breadcrumbs this conn has filed (delta-unkeyed-base, delta-unknown-slot), each as the ROW it filed: ev and why, the why carrying the slot, the reason and the remote's build as the /tunnels row last named it (peerSha). Keyed on the EVENT, not the conn's life (sayDeltaOnce, 2026-09-19): the same row again, however many patches, reposts or redials produce it, files nothing (a row per frame would be a row a minute per host); a different reason, or the same reason from a remote that redialed on another build, is news and files. The conn's, so a detach ends it
+  peerSha?: string; // the remote kernel's build as the hub's /tunnels row last named it (kernelSha: the sha it booted from, "-dirty" included), read by poll() every 4 s; "" when the row names none (an older remote, or before the hub's supervisor has read the peer's /version; a rig without the poll). The delta breadcrumbs carry it in their why and key their latch on it, so a redial across the remote's deploy says its row again (2026-09-19)
   // KERNEL_SETTING messages (newest per type) and the pane's own BOOKKEEPING (newest per key, see
   // BOOKKEEPING) that arrived while this host's socket was down — flushed on the socket's open event
   // (sendRemote/flushPending). Bounded by construction: one entry per setting type, per bookkeeping
@@ -1222,16 +1223,18 @@ export class FederationManager {
         // A patch for a slot this receiver has no table for (a kernel newer than this bundle, serving a slot it does
         // not know) is the one frame neither path decodes: the receiver asks that kernel for the whole slot and yields
         // nothing, and the drop is said here first, the way every other drop on this layer is (a hostconn row under the
-        // keys the family already has, and the console), never silently. Said ONCE per conn per slot (sayDeltaOnce, the
-        // slotless patch its own key): the condition lasts the conn's life, and a row per patch would be the flood this
-        // layer exists to end (the phone's 86 rows), while the ask stays per patch since it is the resync itself and the
-        // kernel coalesces asks (2026-09-19). A known slot's patch that cannot apply is the receiver's own resync
-        // (needSlot on this conn) and needs no row: the full frame it earns is the repair.
+        // keys the family already has, and the console), never silently. Said once per distinct row (sayDeltaOnce: the
+        // slot, a slotless patch its own, and the remote's build when the /tunnels row names one), the rule the
+        // refused-base row shares (mintReceiver): a row per patch would be the flood this layer exists to end (the
+        // phone's 86 rows), while the ask stays per patch since it is the resync itself and the kernel coalesces asks
+        // (2026-09-19). A known slot's patch that cannot apply is the receiver's own resync (needSlot on this conn) and
+        // needs no row: the full frame it earns is the repair.
         if (msg && msg.type === "delta" && !(typeof msg.slot === "string" && Object.prototype.hasOwnProperty.call(VIEW_DELTA_KINDS, msg.slot))) {
           const slot = typeof msg.slot === "string" ? msg.slot : "";
-          if (this.sayDeltaOnce(c, "delta-unknown-slot", slot)) {
-            try { console.error("federation: a delta frame from " + host + " names a slot this side does not decode (" + (slot || "no slot") + "): asking that kernel for the whole slot (said once for this connection)"); } catch (e) { /* nothing to report to */ }
-            this.diag("hostconn", { host, ev: "delta-unknown-slot", why: slot });
+          const why = slot + this.peerTag(c);
+          if (this.sayDeltaOnce(c, "delta-unknown-slot", why)) {
+            try { console.error("federation: a delta frame from " + host + this.peerWord(c) + " names a slot this bundle does not decode (" + (slot || "no slot") + "): asking that kernel for the whole slot"); } catch (e) { /* nothing to report to */ }
+            this.diag("hostconn", { host, ev: "delta-unknown-slot", why });
           }
         }
         msg = vd.receive(msg);
@@ -1811,6 +1814,9 @@ export class FederationManager {
       const c = this.conns.get(host);
       if (!c) continue;
       c.live = t.status === "up";
+      // …and the remote's build as the row names it (kernelSha; "" until the kernel's supervisor has read the peer's
+      // /version, and a stale row keeps the last one): the delta breadcrumbs' latch key (sayDeltaOnce, Conn.peerSha)
+      c.peerSha = typeof t.kernelSha === "string" ? t.kernelSha : "";
       if (c.live && (!c.ws || c.ws.readyState === 3)) this.connect(c);
     }
     // Publish reachability for the panes. The kernel's own tunnel health is the authority (it dials and
@@ -1863,33 +1869,50 @@ export class FederationManager {
   }
 
   /** The view-delta receiver for one of `host`'s sockets (Conn.viewDeltas): a patch it cannot apply asks THIS host's
-   *  kernel for the whole slot, routed by host through sendRemote so the ask rides the conn's CURRENT socket. A full
-   *  frame the receiver refuses as a base (a collection its table cannot key: a kernel before T278c keying judging as a
-   *  flat list, or a future collection keyed by another table) is said once per conn per slot, at the refusal: a
-   *  hostconn row under the keys the family already has (ev delta-unkeyable-seed, why the slot) and a console line,
-   *  the one row that names why every patch from that host crosses whole (view-deltas.ts, its header). Never per
-   *  patch (the resync is the receiver's own, and the whole frame it earns is the repair) and never per re-sent whole
-   *  frame (an idle slot reposts one about every 60 s). */
+   *  kernel for the whole slot, routed by host through sendRemote so the ask rides the conn's CURRENT socket. A patch
+   *  that finds no base because the slot's whole frame was refused as one (a collection the receiver's table cannot key:
+   *  a kernel before T278c keying judging as a flat list, or a future collection keyed by another table) is said: a
+   *  hostconn row under the keys the family already has (ev delta-unkeyed-base; why the slot, the collection and shape
+   *  the table could not key, and the remote's build when the /tunnels row names one) and a console line, the one row
+   *  that names why that host's slot crosses whole per change (view-deltas.ts, its header). Said at the PATCH and not
+   *  at the refused seed: the seed alone cannot tell a remote that never patches (one before the slot protocol, whose
+   *  whole frames render as they always did) from one that will, and a row there would name a remote behaving as
+   *  designed. Said once per distinct row (sayDeltaOnce): the receiver reports every such patch, and the resync's
+   *  re-sent whole frame is refused again, so the same reason from the same build files nothing more, however many
+   *  patches, reposts or redials; a different reason (another collection or shape), or a redial that finds the remote
+   *  on a new build, files again. */
   private mintReceiver(host: string): ViewDeltas {
     return new ViewDeltas(
       (slot) => this.sendRemote(host, { type: "needSlot", slot }),
-      (slot, why) => {
+      (slot, reason) => {
         const c = this.conns.get(host);   // the conn whose receiver is running: inboundNow reads it off the live conn
-        if (!c || !this.sayDeltaOnce(c, "delta-unkeyable-seed", slot)) return;
-        try { console.error("federation: a whole " + slot + " frame from " + host + " keys a collection this side cannot (" + why + "): no base is held for it, so every " + slot + " patch from that kernel is asked for whole"); } catch (e) { /* nothing to report to */ }
-        this.diag("hostconn", { host, ev: "delta-unkeyable-seed", why: slot });
+        if (!c) return;
+        const why = slot + " " + reason + this.peerTag(c);
+        if (!this.sayDeltaOnce(c, "delta-unkeyed-base", why)) return;
+        try { console.error("federation: a " + slot + " patch from " + host + this.peerWord(c) + " arrived for a slot whose whole frame this side did not key (" + reason + "): that kernel is asked for the whole slot, and each change to its " + slot + " crosses whole until a whole frame from it keys"); } catch (e) { /* nothing to report to */ }
+        this.diag("hostconn", { host, ev: "delta-unkeyed-base", why });
       });
   }
 
-  /** Whether a delta breadcrumb (`ev`, about `slot`) is new to this conn, and latch it: the first call per conn per slot
-   *  answers true, every later one false (Conn.saidDelta). */
-  private sayDeltaOnce(conn: Conn, ev: string, slot: string): boolean {
-    const key = ev + ":" + slot;
+  /** Whether a delta breadcrumb (the row `ev` would file, with its `why`) is new to this conn, and latch it. The key is
+   *  the row itself, ev and why, the why carrying the slot, the reason and the remote's build (peerTag), so the latch is
+   *  keyed on the EVENT the row describes and not on the conn's life: the same row files once, however many frames or
+   *  redials produce it; a changed reason, or a redial that finds the remote on another build, files its own row
+   *  (Conn.saidDelta). No time window: the event is what a window would approximate. */
+  private sayDeltaOnce(conn: Conn, ev: string, why: string): boolean {
+    const key = JSON.stringify([ev, why]);
     const said = (conn.saidDelta ||= new Set<string>());
     if (said.has(key)) return false;
     said.add(key);
     return true;
   }
+
+  /** The remote's build for a breadcrumb's `why` (" @<sha>", the /tunnels row's kernelSha as poll() last read it;
+   *  Conn.peerSha), "" when the row names none. Inside `why` and not a field of its own: the family's admitted keys have
+   *  none for a peer's build (buildId is the feed counter's), and the kernel's table is untouched. */
+  private peerTag(c: Conn): string { return c.peerSha ? " @" + c.peerSha : ""; }
+  /** The same for a console line: " (its kernel at <sha>)", or "". */
+  private peerWord(c: Conn): string { return c.peerSha ? " (its kernel at " + c.peerSha + ")" : ""; }
 
   // The remote socket's URL, carrying THIS page's own dial terms for its app so a federated pane is served
   // the way the local pane is (the design in plans/federated-pane-dial-terms.md): a bare

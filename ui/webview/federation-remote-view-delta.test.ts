@@ -315,11 +315,12 @@ test("a remote patch for a slot this side does not decode is said (a hostconn ro
   });
 });
 
-// The condition lasts the conn's life (the slot stays unknown to this bundle), so the row and the console line are said
-// once per conn per slot, like the sibling dial-deferred row and the refused-seed row below (Conn.saidDelta); the
-// needSlot stays per patch, since it is the resync itself and the kernel coalesces asks. The slot name is the key, the
-// empty string for a slotless patch its own; a detach ends the conn and its latch, a redial keeps both.
-test("the unknown-slot breadcrumb is latched per conn per slot: a second patch for the slot is asked for whole again but said no more, a second slot has its own row, a re-attached host is said again, a redialed socket is not", async () => {
+// The row and the console line are said once per distinct ROW (Conn.saidDelta, sayDeltaOnce): the slot (the empty
+// string for a slotless patch its own) and the remote's build when the hub's /tunnels row names one (this rig has no
+// row, so none), the rule the refused-base row shares below; the needSlot stays per patch, since it is the resync itself
+// and the kernel coalesces asks. A detach ends the conn and its latch; a redial keeps the conn, and the same slot from
+// the same remote on the redialed socket is the same event, said no more (the build case is further down).
+test("the unknown-slot breadcrumb is said once per event: a second patch for the slot is asked for whole again but said no more, a second slot has its own row, a re-attached host is said again, a redialed socket (the same slot, the same remote) is not", async () => {
   await withManager("timeline", ({ fm, sent }) => countingConsoleErrors((errors) => {
     seedLocalTimeline(fm);
     const ws = attached(fm);
@@ -395,16 +396,21 @@ test("two hosts with the same bare lane: a patch from one host reassembles onto 
 // whole frame renders through judgingToWire, which converts the flat list; every patch from that kernel recovers, so its
 // bars cross whole per change, the pre-delta cost. A future collection keyed by another table takes the same road. The
 // refused seed is the one silent shape whose repair never repairs (a bad base or a malformed patch files nothing either,
-// but the whole frame they earn seeds), so it is said ONCE per conn per slot: a hostconn row under the family's keys
-// (ev delta-unkeyable-seed, why the slot) and a console line, at the refusal, never per patch and never per re-sent
-// whole frame (an idle slot reposts one about every 60 s).
+// but the whole frame they earn seeds). The seed itself is not the event: a remote before the slot protocol sends the
+// same flat list in whole frames and never a patch, and at the seed the two are one frame, so a row there would name a
+// remote behaving as designed (its whole frames render as they always did). The event is the first PATCH that finds no
+// base because the seed was refused: the receiver reports each such patch, and federation says it once per distinct
+// row (ev delta-unkeyed-base; why the slot, the collection and shape the table could not key, and the remote's build
+// when the /tunnels row names one), never per patch, per re-sent whole frame (an idle slot reposts one about every
+// 60 s) or per redial that reproduces it.
 const oldJudging = (t: number, judge: string, t1: number | null) => ({ sid: SID_A, t, judge, t1, kind: "run", text: "judged" });
 const oldKey = (e: any) => SID_A + SEP + e.t + SEP + e.judge + SEP + e.t1;   // bykeys:sid,t,judge,t1, joined by the unit separator
 const oldFull = (sid: string, judging: any[]) =>
   ({ type: "bars", turns: { [sid]: [bar("seg-1", 1000, 1005, "first")] }, judging, messages: [], now: 500, warming: false,
      _keys: { turns: [sid + SEP + "seg-1"], judging: judging.map(oldKey), messages: [] } });
-const unkeyableRows = (sent: any[]) =>
-  sent.filter((x) => x && x.type === "clientDiag" && x.what === "hostconn" && x.data && x.data.ev === "delta-unkeyable-seed").map((x) => x.data);
+const REFUSED_JUDGING = "bars judging dictlist:k is a list";   // the row's why: the slot, the collection, its kind in the table and the container the table could not key
+const unkeyedRows = (sent: any[]) =>
+  sent.filter((x) => x && x.type === "clientDiag" && x.what === "hostconn" && x.data && x.data.ev === "delta-unkeyed-base").map((x) => x.data);
 // console.error, counted for the test's span (the sibling unknown-slot arm prints its line; this one is counted too)
 async function countingConsoleErrors(fn: (errors: string[]) => void | Promise<void>): Promise<void> {
   const errors: string[] = [];
@@ -413,7 +419,7 @@ async function countingConsoleErrors(fn: (errors: string[]) => void | Promise<vo
   try { await fn(errors); } finally { console.error = real; }
 }
 
-test("a bars full frame from a kernel before T278c (judging a flat list, its own _keys) seeds no base: the frame renders whole through judgingToWire, its patch asks that kernel for the whole slot, and the refused seed is said once", async () => {
+test("a bars full frame from a kernel before T278c (judging a flat list, its own _keys) seeds no base and is said by nothing: the frame renders whole through judgingToWire; its first patch asks that kernel for the whole slot and is the event said, once, naming the collection and shape", async () => {
   await withManager("timeline", ({ fm, emitted, sent }) => countingConsoleErrors((errors) => {
     seedLocalTimeline(fm);
     fm.openRemote(HOST, true);
@@ -425,39 +431,42 @@ test("a bars full frame from a kernel before T278c (judging a flat list, its own
     let m = last(barsOf(emitted));
     assert.deepEqual(ids(m.turns[HOST + ":" + SID_A]), ["seg-1"], "the full frame merges as any other");
     assert.deepEqual(m.judging[HOST + ":" + SID_A].map((c: any) => c.j), ["unblocker"], "the flat list rendered compact through judgingToWire, under the prefixed lane");
-    assert.deepEqual(unkeyableRows(sent), [{ host: HOST, ev: "delta-unkeyable-seed", why: "bars" }],
-      "the refused seed is said at the refusal: one hostconn row under the family's keys, naming the host and the slot (the one row that attributes the standing cost: every patch from this kernel crosses whole)");
-    assert.equal(errors.length, 1, "and once on the console: " + errors.join(" | "));
-    assert.match(errors[0], /TESTHOST/);
-    assert.match(errors[0], /bars/);
+    ws.frame(full);   // the idle slot's repost: refused again
+    assert.deepEqual(unkeyedRows(sent), [], "the refused seed alone files nothing: at the seed a remote that never patches and one that will send the same frame, and the frame rendered");
+    assert.equal(errors.length, 0, "and nothing on the console: " + errors.join(" | "));
     const before = barsOf(emitted).length;
     const e2 = oldJudging(1011, "planner", null);
     ws.frame({ type: "delta", slot: "bars", base: 0, rev: 1, coll: { judging: { set: { [oldKey(e2)]: e2 } } }, rest: { now: 515 } });
     assert.deepEqual(ws.sent, [{ type: "needSlot", slot: "bars" }], "the patch is not applied onto a frame this receiver could not key: that kernel is asked for the whole slot on this conn");
     assert.equal(barsOf(emitted).length, before, "nothing emitted for the patch");
     assert.deepEqual(localAsks(sent), [], "the local kernel is not asked");
-    assert.equal(unkeyableRows(sent).length, 1, "the patch's resync files nothing: the row is the seed's");
+    assert.deepEqual(unkeyedRows(sent), [{ host: HOST, ev: "delta-unkeyed-base", why: REFUSED_JUDGING }],
+      "the patch is the event: one hostconn row under the family's keys, naming the host, the slot, the collection and the shape this side's table could not key (no build: this rig has no /tunnels row)");
+    assert.equal(errors.length, 1, "and once on the console: " + errors.join(" | "));
+    assert.match(errors[0], /a bars patch from TESTHOST arrived/);
+    assert.match(errors[0], /judging dictlist:k is a list/);
     // the whole slot the ask earns, as that kernel sends it: the flat list grown by the entry, keys and all
     ws.frame({ ...full, judging: [e1, e2], now: 515, _keys: { ...full._keys, judging: [oldKey(e1), oldKey(e2)] } });
     m = last(barsOf(emitted));
     assert.deepEqual(m.judging[HOST + ":" + SID_A].map((c: any) => c.j), ["unblocker", "planner"],
       "both marks, compact, from the whole frame (a seeded base would have assembled the patched entry alone, in the old shape, under the lane)");
     assert.deepEqual(ids(m.turns[HOST + ":" + SID_A]), ["seg-1"]);
-    assert.equal(unkeyableRows(sent).length, 1, "the re-sent whole frame is refused again and said no more: latched per conn per slot");
+    assert.equal(unkeyedRows(sent).length, 1, "the re-sent whole frame is refused again and says nothing");
     ws.frame({ type: "delta", slot: "bars", base: 0, rev: 1, coll: { judging: { set: {} } }, rest: { now: 520 } });
     assert.deepEqual(ws.sent, [{ type: "needSlot", slot: "bars" }, { type: "needSlot", slot: "bars" }], "every patch from that kernel recovers: the slot crosses whole per change");
     assert.deepEqual(localAsks(sent), []);
-    assert.equal(unkeyableRows(sent).length, 1);
+    assert.equal(unkeyedRows(sent).length, 1, "the second patch is the same event (the same reason, the same remote): said no more");
     assert.equal(errors.length, 1, "one console line for the whole exchange");
     fm.conns.get(HOST).closed = true;
   }));
 });
 
-test("two hosts before T278c: the refused seed is said once per host (per conn, per slot), and a redial on a conn keeps its latch", async () => {
+test("two hosts before T278c: the row is per host (per conn), and a redial on a conn that reproduces the same event (the same reason, the same remote) is said no more", async () => {
   await withManager("timeline", ({ fm, emitted, sent }) => countingConsoleErrors((errors) => {
     seedLocalTimeline(fm);
     const HOST_B = "TESTHOSTB";
     const full = oldFull(SID_A, [oldJudging(1001, "unblocker", 1002)]);
+    const patch = (now: number) => ({ type: "delta", slot: "bars", base: 0, rev: 1, coll: { judging: { set: {} } }, rest: { now } });
     fm.openRemote(HOST, true);
     const wsA = last(FakeWS.made);
     wsA.open();
@@ -466,11 +475,15 @@ test("two hosts before T278c: the refused seed is said once per host (per conn, 
     const wsB = last(FakeWS.made);
     wsB.open();
     wsB.frame(full);
-    assert.deepEqual(unkeyableRows(sent), [{ host: HOST, ev: "delta-unkeyable-seed", why: "bars" }, { host: HOST_B, ev: "delta-unkeyable-seed", why: "bars" }], "one row per host");
-    wsA.frame(full); wsB.frame(full);   // the idle slot's reposts: refused again, said no more
-    assert.equal(unkeyableRows(sent).length, 2);
-    // a redial on A's conn (the watchdog's abandon-and-dial) mints a fresh receiver, and the fresh receiver refuses the
-    // same seed; the latch is the CONN's, not the receiver's, so the redialed socket's refusal is not said again
+    assert.deepEqual(unkeyedRows(sent), [], "two refused seeds and no patch yet: nothing said");
+    wsA.frame(patch(505)); wsB.frame(patch(605));
+    assert.deepEqual(unkeyedRows(sent), [{ host: HOST, ev: "delta-unkeyed-base", why: REFUSED_JUDGING }, { host: HOST_B, ev: "delta-unkeyed-base", why: REFUSED_JUDGING }], "one row per host: each conn's own latch");
+    wsA.frame(full); wsB.frame(full);   // the resyncs' whole frames: refused again
+    wsA.frame(patch(510)); wsB.frame(patch(610));   // the next change's patches: the same event on each conn
+    assert.equal(unkeyedRows(sent).length, 2, "said no more");
+    // a redial on A's conn (the watchdog's abandon-and-dial) mints a fresh receiver, which refuses the same seed and reports
+    // its first patch; the latch is the CONN's and keyed on the event, and the event is the same (the same reason, and no
+    // /tunnels row names a build in this rig), so the redialed socket's report is said no more
     const conn = fm.conns.get(HOST);
     clock += REMOTE_STALE_MS + 1000;
     fm.watchdog(clock);
@@ -479,7 +492,9 @@ test("two hosts before T278c: the refused seed is said once per host (per conn, 
     assert.equal(fm.conns.get(HOST), conn, "on the same conn");
     wsA2.open();
     wsA2.frame(full);
-    assert.equal(unkeyableRows(sent).length, 2, "the redialed socket's refusal is not said again: the vintage did not change with the socket");
+    wsA2.frame(patch(700));
+    assert.deepEqual(wsA2.sent, [{ type: "needSlot", slot: "bars" }], "asked all the same, on the new socket: the ask is the resync");
+    assert.equal(unkeyedRows(sent).length, 2, "the redialed socket's report is not said again: the same reason from the same remote is the event already said");
     assert.equal(errors.length, 2, "two console lines, one per host");
     assert.deepEqual(ids(last(barsOf(emitted)).turns[HOST_B + ":" + SID_A]), ["seg-1"], "both hosts' frames rendered whole throughout");
     fm.conns.get(HOST).closed = true; fm.conns.get(HOST_B).closed = true;
@@ -499,7 +514,172 @@ test("the same vintage's feed full frame keys asks as this table does and seeds 
     assert.deepEqual(last(feedsOf(emitted)).asks.map((a: any) => a.itemId).sort(), [SID_L + ":g1", SID_A + ":g1", SID_A + ":g2"].sort());
     assert.deepEqual(ws.sent, [], "nothing asked of the remote");
     assert.deepEqual(localAsks(sent), []);
-    assert.deepEqual(unkeyableRows(sent), [], "its feed frame seeded: nothing to say");
+    assert.deepEqual(unkeyedRows(sent), [], "its feed frame seeded: nothing to say");
     fm.conns.get(HOST).closed = true;
   });
 });
+
+// ── a kernel before the slot protocol (2026-09-19) ──────────────────────────────────────────────────────────────────
+// A remote before a750f860d (8a4d48f10 among them) sends the same flat judging in whole frames and never a patch. The
+// receiver refuses its seed too, and that costs nothing: its whole frames render as they always did, and no patch ever
+// asks for one. No row names it (corner 2d of tests/test_federated_capability_corners_served.py, the served twin of this
+// pin): the row is the first patch's, and a row at the seed would have named a remote behaving as designed, since the
+// seed cannot tell this remote from one that will patch.
+test("a remote before the slot protocol (the same flat judging, no _keys, whole frames only) is refused as a base and never named: its whole frames render, and no row is filed without a patch", async () => {
+  await withManager("timeline", ({ fm, emitted, sent }) => countingConsoleErrors((errors) => {
+    seedLocalTimeline(fm);
+    fm.openRemote(HOST, true);
+    const ws = last(FakeWS.made);
+    ws.open();
+    const preDelta = (judging: any[], now: number) =>
+      ({ type: "bars", turns: { [SID_A]: [bar("seg-1", 1000, 1005, "first")] }, judging, messages: [], now, warming: false });
+    const e1 = oldJudging(1001, "unblocker", 1002), e2 = oldJudging(1011, "planner", null);
+    ws.frame(preDelta([e1], 500));
+    assert.deepEqual(last(barsOf(emitted)).judging[HOST + ":" + SID_A].map((c: any) => c.j), ["unblocker"], "rendered whole, compact, through judgingToWire");
+    const before = barsOf(emitted).length;
+    assert.ok(before > 0);
+    ws.frame(preDelta([e1, e2], 515));   // the change, whole, as that vintage sends every change
+    ws.frame(preDelta([e1, e2], 575));   // the idle repost a minute on
+    assert.equal(barsOf(emitted).length, before + 2, "each whole frame re-emits the merge");
+    assert.deepEqual(last(barsOf(emitted)).judging[HOST + ":" + SID_A].map((c: any) => c.j), ["unblocker", "planner"], "the change shows");
+    assert.deepEqual(ws.sent, [], "nothing asked: no patch, so no resync");
+    assert.deepEqual(unkeyedRows(sent), [], "no row: nothing names a remote behaving as designed (the row is the first patch's, and none comes)");
+    assert.equal(errors.length, 0, "and nothing on the console: " + errors.join(" | "));
+    fm.conns.get(HOST).closed = true;
+  }));
+});
+
+// ── the latch is keyed on the event, not the conn's life (2026-09-19) ───────────────────────────────────────────────
+// Conn.saidDelta holds the ROWS a conn has filed (ev and why; the why carries the slot, the reason and the remote's build
+// as the hub's /tunnels row names it, Conn.peerSha), so the same event files once however many patches, reposts or
+// redials produce it, while a row that would say something different files: another collection or shape refused, or the
+// same refusal from a remote that came back on another build. A latch on the conn's life would have missed the case an
+// admin looks at: a redial that crosses the remote's deploy, the new build refusing the seed too, said by nothing because
+// the old row outlived what it described. No time window (the repo's rule: the event, not a period that approximates
+// it). Both breadcrumbs share the rule (sayDeltaOnce).
+const barsPatchEmpty = (now: number) => ({ type: "delta", slot: "bars", base: 0, rev: 1, coll: { judging: { set: {} } }, rest: { now } });
+
+test("the refused-base row is keyed on the event: a second collection refused on the same conn is its own row, and a redial that reproduces the first refusal (the same reason, the same remote) is not", async () => {
+  await withManager("timeline", ({ fm, sent }) => countingConsoleErrors((errors) => {
+    seedLocalTimeline(fm);
+    fm.openRemote(HOST, true);
+    const ws = last(FakeWS.made);
+    ws.open();
+    const full = oldFull(SID_A, [oldJudging(1001, "unblocker", 1002)]);
+    ws.frame(full); ws.frame(barsPatchEmpty(505));
+    assert.deepEqual(unkeyedRows(sent).map((r) => r.why), [REFUSED_JUDGING]);
+    // the same kernel's frame keyed by yet another table: turns as a LIST where this table says dictlist:id (judging keyed
+    // as this table does, so the refusal is turns' alone): a different reason, its own row
+    const turnsAsList = { type: "bars", turns: [bar("seg-1", 1000, 1005, "first")], judging: {}, messages: [], now: 600, warming: false };
+    ws.frame(turnsAsList); ws.frame(barsPatchEmpty(605));
+    assert.deepEqual(unkeyedRows(sent).map((r) => r.why), [REFUSED_JUDGING, "bars turns dictlist:id is a list"], "a refusal for another collection is its own row, naming it");
+    assert.equal(errors.length, 2);
+    ws.frame(turnsAsList); ws.frame(barsPatchEmpty(610));
+    assert.equal(unkeyedRows(sent).length, 2, "the same again: nothing");
+    // a redial (the watchdog's abandon-and-dial): the fresh receiver refuses the FIRST shape again and reports its patch;
+    // the row would read as the first did, so it is not filed
+    const conn = fm.conns.get(HOST);
+    clock += REMOTE_STALE_MS + 1000;
+    fm.watchdog(clock);
+    const ws2 = last(FakeWS.made);
+    assert.notEqual(ws2, ws, "redialed");
+    assert.equal(fm.conns.get(HOST), conn, "on the same conn");
+    ws2.open(); ws2.frame(full); ws2.frame(barsPatchEmpty(700));
+    assert.deepEqual(ws2.sent, [{ type: "needSlot", slot: "bars" }], "asked on the new socket: the resync is per patch");
+    assert.equal(unkeyedRows(sent).length, 2, "the redial reproduced an event already said (the same reason, the same remote): no row");
+    assert.equal(errors.length, 2);
+    fm.conns.get(HOST).closed = true;
+  }));
+});
+
+// the hub's /tunnels answer, as poll() reads it: one row for TESTHOST, `kernelSha` the remote kernel's build (the sha it
+// booted from, as the hub's supervisor read it off the peer's /version), which poll() carries onto the conn (Conn.peerSha)
+function tunnelsStub(row: Record<string, any>): () => void {
+  const g: any = globalThis;
+  const had = "fetch" in g, prev = g.fetch;
+  g.fetch = async () => ({ ok: true, json: async () => ({ tunnels: [{ host: HOST, hasToken: true, localPort: 5, status: "up", ...row }] }) });
+  return () => { if (had) g.fetch = prev; else delete g.fetch; };
+}
+
+test("…and on the remote's build: the same refusal from the same build across a redial files nothing; a redial that finds the /tunnels row naming a new build (the remote redeployed) files the row again, naming the build", async () => {
+  const row: Record<string, any> = { kernelSha: "aaaaaaaaa" };
+  const restore = tunnelsStub(row);
+  try {
+    await withManager("timeline", ({ fm, sent }) => countingConsoleErrors(async (errors) => {
+      seedLocalTimeline(fm);
+      fm.openRemote(HOST, true);
+      const ws = last(FakeWS.made);
+      await fm.poll();   // the row in hand
+      const conn = fm.conns.get(HOST);
+      assert.equal(conn.peerSha, "aaaaaaaaa", "poll() read the row's kernelSha onto the conn");
+      ws.open();
+      const full = oldFull(SID_A, [oldJudging(1001, "unblocker", 1002)]);
+      ws.frame(full); ws.frame(barsPatchEmpty(505));
+      assert.deepEqual(unkeyedRows(sent), [{ host: HOST, ev: "delta-unkeyed-base", why: REFUSED_JUDGING + " @aaaaaaaaa" }], "the row names the remote's build");
+      assert.equal(errors.length, 1);
+      assert.match(errors[0], /aaaaaaaaa/, "so does the console line");
+      // a redial to the SAME build (a blip; the watchdog's abandon-and-dial): the same event, nothing
+      clock += REMOTE_STALE_MS + 1000;
+      fm.watchdog(clock);
+      const ws2 = last(FakeWS.made);
+      assert.notEqual(ws2, ws, "redialed");
+      ws2.open(); ws2.frame(full); ws2.frame(barsPatchEmpty(600));
+      assert.deepEqual(ws2.sent, [{ type: "needSlot", slot: "bars" }], "asked: the resync is per patch");
+      assert.equal(unkeyedRows(sent).length, 1, "the same refusal from the same build: not said again, however many redials");
+      // the remote restarts on a new build: the hub's supervisor re-reads its /version, the row's kernelSha changes, the
+      // next poll carries it onto the conn, and the redialed socket's first patch after the refused seed is news
+      row.kernelSha = "bbbbbbbbb";
+      await fm.poll();
+      assert.equal(conn.peerSha, "bbbbbbbbb");
+      clock += REMOTE_STALE_MS + 1000;
+      fm.watchdog(clock);
+      const ws3 = last(FakeWS.made);
+      assert.notEqual(ws3, ws2, "redialed again");
+      assert.equal(fm.conns.get(HOST), conn, "the same conn throughout: the latch is the conn's, and the event moved");
+      ws3.open(); ws3.frame(full); ws3.frame(barsPatchEmpty(700));
+      assert.deepEqual(unkeyedRows(sent).map((r) => r.why), [REFUSED_JUDGING + " @aaaaaaaaa", REFUSED_JUDGING + " @bbbbbbbbb"], "the redial across the deploy files the row again, naming the new build");
+      assert.equal(errors.length, 2);
+      assert.match(errors[1], /bbbbbbbbb/);
+      ws3.frame(full); ws3.frame(barsPatchEmpty(705));
+      assert.equal(unkeyedRows(sent).length, 2, "and the new build's row is latched like the old one's");
+      fm.conns.get(HOST).closed = true;
+    }));
+  } finally { restore(); }
+});
+
+test("the unknown-slot breadcrumb shares the rule: the same slot from the same build across a redial is said no more, and a redial that finds a new build says it again, naming the build", async () => {
+  const row: Record<string, any> = { kernelSha: "aaaaaaaaa" };
+  const restore = tunnelsStub(row);
+  try {
+    await withManager("timeline", ({ fm, sent }) => countingConsoleErrors(async (errors) => {
+      seedLocalTimeline(fm);
+      const ws = attached(fm);
+      await fm.poll();
+      const rows = () => sent.filter((x) => x && x.type === "clientDiag" && x.what === "hostconn" && x.data && x.data.ev === "delta-unknown-slot").map((x) => x.data);
+      const lanes = (base: number) => ({ type: "delta", slot: "lanes", base, rev: base + 1, coll: {}, rest: { now: 505 } });
+      ws.frame(lanes(0)); ws.frame(lanes(1));
+      assert.deepEqual(rows(), [{ host: HOST, ev: "delta-unknown-slot", why: "lanes @aaaaaaaaa" }], "said once, naming the slot and the remote's build");
+      assert.equal(errors.length, 1);
+      assert.match(errors[0], /aaaaaaaaa/);
+      clock += REMOTE_STALE_MS + 1000;
+      fm.watchdog(clock);
+      const ws2 = last(FakeWS.made);
+      assert.notEqual(ws2, ws, "redialed");
+      ws2.open(); ws2.frame(lanes(0));
+      assert.equal(rows().length, 1, "the same slot from the same build on the redialed socket: not again");
+      assert.deepEqual(ws2.sent, [{ type: "needSlot", slot: "lanes" }], "…but asked, on the new socket");
+      row.kernelSha = "bbbbbbbbb";
+      await fm.poll();
+      clock += REMOTE_STALE_MS + 1000;
+      fm.watchdog(clock);
+      const ws3 = last(FakeWS.made);
+      assert.notEqual(ws3, ws2);
+      ws3.open(); ws3.frame(lanes(0));
+      assert.deepEqual(rows().map((r) => r.why), ["lanes @aaaaaaaaa", "lanes @bbbbbbbbb"], "the redial across the remote's deploy says it again, naming the new build");
+      assert.equal(errors.length, 2);
+      assert.match(errors[1], /bbbbbbbbb/);
+      fm.conns.get(HOST).closed = true;
+    }));
+  } finally { restore(); }
+});
+

@@ -387,6 +387,10 @@ class _Corner(unittest.TestCase):
             raise unittest.SkipTest("the hub never reported the checked-in peer up: %r" % (rows,))
         cls.result, cls.driver_error = None, None
         cls._drive()
+        # the remote's build as the hub's /tunnels row names it after the drive (kernelSha, read by the hub's supervisor off
+        # the peer's /version; "" when it never answered one): the pages' delta breadcrumbs carry it in their why
+        cls.hub_row = cls._hub_tunnels_row()
+        cls.remote_sha = (cls.hub_row or {}).get("kernelSha") or ""
         cls.remote_wire = cls._remote_wire_memos()
         cls.hub_diag_rows = cls._read_hub_diag_rows()
         cls._report()
@@ -439,6 +443,15 @@ class _Corner(unittest.TestCase):
         cls.result = json.loads(line[len("RESULT:"):])
 
     @classmethod
+    def _hub_tunnels_row(cls):
+        try:
+            with urllib.request.urlopen("http://127.0.0.1:%d/tunnels?token=%s" % (cls.hport, cls.htoken), timeout=5) as r:
+                rows = json.loads(r.read().decode()).get("tunnels") or []
+        except Exception:
+            return None
+        return next((t for t in rows if t.get("host") == HOST), None)
+
+    @classmethod
     def _remote_wire_memos(cls):
         """The remote's memos.wire counters (feed_slot_split counts slot-path feed sends) and, for the record, its send
         counters by kind and slot (sends.full/delta/deduped.feed: count and bytes), read once after the driver."""
@@ -470,7 +483,7 @@ class _Corner(unittest.TestCase):
         for r in cls.hub_diag_rows:
             k = "%s/%s" % (r.get("surface"), r.get("what"))
             rows[k] = rows.get(k, 0) + 1
-        rec = {"corner": cls.__name__, "hub_root": cls.hub_root, "remote_root": cls.remote_root, "strip_caps": cls.strip_caps,
+        rec = {"corner": cls.__name__, "hub_root": cls.hub_root, "remote_root": cls.remote_root, "strip_caps": cls.strip_caps, "remote_sha": cls.remote_sha,
                "change": cls.change, "driver_error": cls.driver_error, "result": cls.result, "remote_wire": cls.remote_wire,
                "remote_sends": getattr(cls, "remote_sends", {}),
                "hub_diag_by_kind": rows,
@@ -531,19 +544,24 @@ class _Corner(unittest.TestCase):
     def _unknown_slot_rows(self):
         return [r.get("data") for r in self.hub_diag_rows if r.get("surface") == "federation" and (r.get("data") or {}).get("ev") == "delta-unknown-slot"]
 
-    def _unkeyable_seed_rows(self):
-        return [r.get("data") for r in self.hub_diag_rows if r.get("surface") == "federation" and (r.get("data") or {}).get("ev") == "delta-unkeyable-seed"]
+    def _unkeyed_base_rows(self):
+        return [r.get("data") for r in self.hub_diag_rows if r.get("surface") == "federation" and (r.get("data") or {}).get("ev") == "delta-unkeyed-base"]
 
-    def _assert_the_refused_bars_seed_is_said_once(self):
+    def _assert_the_unkeyed_bars_base_is_said_once(self):
         """A remote whose whole bars frame the receiver cannot key (its judging a flat list: every kernel before T278c)
-        seeds no base, and that refusal is said exactly once per conn per slot: one hostconn row from the timeline page's
-        conn (the one page that receives bars), naming the host and the slot, however many whole frames the drive
-        refused (the seed's, the ready's re-base, the resync's answers, the idle slot's reposts) and however many
-        patches resynced. The feed frame of the same vintage keys asks as the table does, so no row names the feed."""
+        seeds no base, and the first bars PATCH that then finds none is said exactly once: one hostconn row from the
+        timeline page's conn (the one page that receives bars), naming the host, the slot, the collection and shape the
+        table could not key, and the remote's build as the hub's /tunnels row names it, however many patches resynced
+        and however many whole frames were refused (the seed's, the ready's re-base, the resync's answers, the idle
+        slot's reposts). The seed itself files nothing (the pre-delta corner, which never patches, has no row). The feed
+        frame of the same vintage keys asks as the table does, so no row names the feed."""
         self._control()
-        self.assertEqual(self._unkeyable_seed_rows(), [{"host": HOST, "ev": "delta-unkeyable-seed", "why": "bars"}],
-                         "the refused bars seed is said once, by the timeline page's conn; rows by kind: %r"
-                         % (sorted({(r.get("surface"), r.get("what"), (r.get("data") or {}).get("ev")) for r in self.hub_diag_rows}),))
+        self.assertTrue(self._sends("timeline", "relay", "needSlot"), "a bars patch resynced on the timeline relay socket: the row is that patch's")
+        why = "bars judging dictlist:k is a list" + (" @" + self.remote_sha if self.remote_sha else "")
+        self.assertEqual(self._unkeyed_base_rows(), [{"host": HOST, "ev": "delta-unkeyed-base", "why": why}],
+                         "the first bars patch onto the refused seed is said once, by the timeline page's conn, naming the remote's build "
+                         "(the hub's row: %r); rows by kind: %r"
+                         % (self.hub_row, sorted({(r.get("surface"), r.get("what"), (r.get("data") or {}).get("ev")) for r in self.hub_diag_rows}),))
 
     def _control(self):
         self._driver_ran()
@@ -713,9 +731,11 @@ class CornerNewLocalV1Remote(_Corner):
     judging as a flat list the receiver cannot key (view-deltas.ts, its header), so the receiver seeds no base for it:
     each bars patch (the append's, then the idle slot's clock-only one a minute later) is answered by a needSlot on
     the relay socket, the receiver's own resync, and that kernel re-sends the whole bars frame, which is the repair;
-    the bar shows through it. Nothing is filed for a resync (the whole frame it earns is the repair); the refused SEED
-    is said once per conn per slot (a hostconn row, ev delta-unkeyable-seed, why bars, from the timeline page's conn),
-    the one row that names why that host's bars cross whole."""
+    the bar shows through it. Nothing is filed for a resync as such (the whole frame it earns is the repair), and
+    nothing for the refused seed as such (at the seed this vintage and a pre-delta one send the same frame); the first
+    bars PATCH that finds no base because the seed was refused is said once (a hostconn row, ev delta-unkeyed-base, why
+    the slot, the collection and shape the table could not key, and this remote's build as the hub's /tunnels row names
+    it, from the timeline page's conn), the one row that names why that host's bars cross whole."""
     change = "transcript"
     wait_ms = 20000
     wait_delta_ms = 80000
@@ -763,8 +783,8 @@ class CornerNewLocalV1Remote(_Corner):
                          "one needSlot for the bars slot per patch, on the relay socket: asks %r, frames %r" % (asks, kinds))
         self.assertEqual(self._sends("timeline", "local", "needSlot"), [])
 
-    def test_the_refused_bars_seed_is_said_once(self):
-        self._assert_the_refused_bars_seed_is_said_once()
+    def test_the_unkeyed_bars_base_is_said_once(self):
+        self._assert_the_unkeyed_bars_base_is_said_once()
 
     def test_nothing_dropped(self):
         self._assert_nothing_dropped()
@@ -774,10 +794,11 @@ class CornerNewLocalV1Remote(_Corner):
 
 class CornerNewLocalV0Remote(_Corner):
     """New local, a remote from before the delta protocol (ROMP_CORNER_V0_REMOTE_ROOT, e.g. 8a4d48f10): whole frames
-    only, feed and bars, applied by the unchanged arms with nothing asked and no row but one: that vintage's bars frame
-    keys judging as a flat list too, so the receiver refuses it as a base and says so once (a hostconn row,
-    delta-unkeyable-seed), a refusal that costs nothing here since a pre-delta kernel sends no patch. The wire pays a
-    whole frame per change and per minute, the pre-delta cost. The change is a transcript append (rounds 2 and 3 filed
+    only, feed and bars, applied by the unchanged arms with nothing asked and NO row: that vintage's bars frame keys
+    judging as a flat list too, so the receiver refuses it as a base, but a pre-delta kernel sends no patch, so the
+    refusal costs nothing and nothing names it (the row is the first patch's; a row at the seed would have named a
+    remote behaving as designed). The wire pays a whole frame per change and per minute, the pre-delta cost. The change
+    is a transcript append (rounds 2 and 3 filed
     a todo, whose visible side that vintage has none of: it serves the feed payload to no Waiting client and minted no
     rolled-up todo card on the feed page); its visible sides are the bar on the hub's timeline and the swap of api's
     provisional row on the Outline, both asserted (the frames are whole here, so the swap is an observable beside the
@@ -811,8 +832,13 @@ class CornerNewLocalV0Remote(_Corner):
     def test_the_timeline_shows_the_appended_bar(self):
         self._assert_bar_drawn()
 
-    def test_the_refused_bars_seed_is_said_once(self):
-        self._assert_the_refused_bars_seed_is_said_once()
+    def test_no_row_names_a_remote_that_never_patches(self):
+        # the receiver refused this vintage's bars seed (its judging is a flat list) exactly as it refuses the pre-T278c
+        # corner's, and no patch ever came, so no row: the refusal is said at the first patch, never at the seed
+        self._control()
+        self.assertEqual([k for k in self._kinds("timeline") if k[0] == "delta"], [], "no patch on the timeline relay socket")
+        self.assertEqual(self._unkeyed_base_rows(), [], "no delta-unkeyed-base row for a remote that sends whole frames only; rows by kind: %r"
+                         % (sorted({(r.get("surface"), r.get("what"), (r.get("data") or {}).get("ev")) for r in self.hub_diag_rows}),))
 
     def test_nothing_dropped(self):
         self._assert_nothing_dropped()
