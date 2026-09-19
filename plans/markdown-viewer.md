@@ -3058,7 +3058,10 @@ re-verifies. Where the code as built departs from the text above, why, and which
    element the UA sheet hides, so nothing of it showed while its text stood in the DOM, in the hay and in the reader's
    text, and a comment on it painted a mark with no box whose card offered Scroll to nothing; both are closed by the
    drop on both sides), an svg's `<title>` kept (`dropsContent`: `TITLE` is dropped in HTML content alone); an RCDATA
-   element left open across blocks (`<textarea>`, `<plaintext>`) is read to its block's end where the parser reads on;
+   element left open across blocks (`<textarea>`, `<plaintext>`) is read to its block's end where the parser reads on
+   (history since decision 52 of plans/file-review.md, 2026-09-18, for the start tag written in prose with no end tag
+   in its block, which is literal text on both sides now, md-literal-tags.ts; the divergence is left to a `<textarea/>`
+   or a `<plaintext/>` written with the self-closing syntax, which the parser opens);
    an inline `<textarea>` shows marked's HTML for the tokens inside it, decoded (`Parser.parseInline`:
    `<b>b</b> <em>c</em>` for `<b>b</b> *c*`, where round 3 read the tokens as markup), rendered as the viewer rendered
    THIS document, the file kind's token walk run over the tokens first (`fileKindWalk`, since round 5:
@@ -3085,7 +3088,10 @@ re-verifies. Where the code as built departs from the text above, why, and which
    elements left open and dropped the block's rest, where 78c0806ce read on), and the annotation-xml's encoding is an
    exact match of the value, as the parser compares it, so a blank inside the quotes makes it no integration point and
    the reader closes the math at its end tag and reads on, `ma8 y8` against a DOM showing `ma8 x y8`, the breakout
-   class as recorded (round 7 allowed the blanks and dropped the block's rest); a start tag that breaks out of foreign
+   class as recorded (round 7 allowed the blanks and dropped the block's rest; history since decision 52 of
+   plans/file-review.md, 2026-09-18: the `<b>` with no end tag in its block is literal text inside the dropped math on
+   both sides, so the DOM shows `ma8 y8` as the reader does, and anchor-map-html-text-browser.test.ts holds the shape
+   as an agreement, its recorded divergences the `/>` forms alone); a start tag that breaks out of foreign
    content, a `<b>` inside `<math><mrow>` or an annotation-xml with no HTML encoding, is not modelled, pre-existing
    and identical on main, recorded); round 4's inline branch had no such stack, so `<svg><title>icon</svg> beside` in
    a paragraph, a list item, a quote, a heading or a cell read the title's text to the block's end, tags and all); and
@@ -3180,7 +3186,9 @@ re-verifies. Where the code as built departs from the text above, why, and which
    math), anchor-map-html-text-browser.test.ts (1 leg, 85 subtests, new in the review's round 5: every html-text shape
    rendered through marked, applyMdConfig and sanitizeMd in headless Chromium, the reader's text against the box's
    textContent and each quote's real paintRendered marks over that DOM, the plan's recorded open-textarea divergence
-   pinned on both sides; red over a git archive of 701728eae on the eight round-5 shapes, and 9 of 59 red under a
+   pinned on both sides (history since decision 52 of plans/file-review.md, 2026-09-18: the open `<textarea>` is literal
+   text on both sides and one of the module's agreed shapes, its recorded divergences the `/>` forms alone); red over
+   a git archive of 701728eae on the eight round-5 shapes, and 9 of 59 red under a
    sanitizer mutation that kept foreignObject and dropped every title while the text test stayed green, the gap the
    leg closes; its round 6: three round-5 entries' `shown` strings carried a blank the rule removed and passed under
    the marks' whitespace-blind compare, so each `shown` is the text test's string now and the needle compare is
@@ -3193,7 +3201,8 @@ re-verifies. Where the code as built departs from the text above, why, and which
    open and closed, mtext, an svg title open and closed, 17 red over a git archive of 78c0806ce; its round 8: three
    shapes, the raw table whose rows marked splits into two html blocks with the cells asserted, an mglyph self-closed
    inside an mi and a malignmark start tag inside an mtext, and one recorded entry, an annotation-xml whose encoding
-   carries a trailing blank inside the quotes, the reader's `ma8 y8` against the DOM's `ma8 x y8`, each red over a git
+   carries a trailing blank inside the quotes, the reader's `ma8 y8` against the DOM's `ma8 x y8` (history since
+   decision 52 of plans/file-review.md, 2026-09-18: an agreed shape now, `ma8 y8` on both sides), each red over a git
    archive of 99e7e2d0c), anchor-map-dom-rules-browser.test.ts (1 leg, new in the review's round 5, over the real
    viewer and panel: one `<title>` left in the DOM and it the svg's, the titles' text gone from the viewer and from
    the chat's sanitizeMd, a comment inside a title painting nothing with its card offering Reveal and one across it
@@ -7230,7 +7239,10 @@ test family re-verifies. Where the code as built departs from the text above, wh
    two-table shape's both outcomes over the fixture's two top-level tables and over two tables in one list item) and
    the browser leg's two-cell drag hold it; anchor-map-obsidian.test.ts's first-obstacle test (31) and
    anchor-map-wrappers.test.ts (38) are re-pinned where their spans now meet the rule or now map, each flip stated
-   with its before in the commit.
+   with its before in the commit. Overturned by decision 53 of plans/file-review.md (2026-09-18): a selection across
+   several cells of one table anchors to its span, the pipes and the delimiter row inside the quote, and the one-cell
+   sentence, `cellsRule`, `coveredCells` and `coveredOnly` are gone from the map; this item stands as the slice's
+   history.
 4. *Item 4, the change marks and the deletion points inside a fence or a table take the exact path.* This follows from
    items 1 and 2 with no code of its own (open question 10, the default): an insertion or a substitution inside a cell
    or a line paints by the change's own position with no count, where the fallback's ordinal had marked it under the
@@ -7579,7 +7591,11 @@ test family re-verifies. Where the code as built departs from the text above, wh
    note's not-modelled list); the formatting element a paragraph leaves open (`<b>`, `<i>`, `<a>`, `<code>`, `<em>`
    with no closer), routed here by the Slice 5 review's round 4 with its `Block.leaves` fix shape, is NOT built in
    this slice and stays open with that shape (the brief records it under its section 2 and routes it to no unit; the
-   pairing was not touched by the build, whose items are the walk and the paint); the 1,000-row table's numbers the
+   pairing was not touched by the build, whose items are the walk and the paint; built since as decision 52 of
+   plans/file-review.md, 2026-09-18, by a rule the viewer and the map share rather than by `Block.leaves`: an inline
+   start tag with no end tag in its block renders as its own characters on both sides, so the block maps and that
+   fix shape is moot for the bare spelling, while the self-closing spelling (`<b/>`, `<div/>`, `<table/>`,
+   `<title/>`) stays HTML and keeps that shape, as decision 52 records); the 1,000-row table's numbers the
    brief asked for were taken beside the fence's (item 2), the table's emission running once per source on the Walked
    row as before and the one-cell rule's check being one scan of the table's cells per selection. Five sentences in
    earlier notes are history since this build: the Slice 5 note's guarantees paragraph (above) says "PRE and TD stay

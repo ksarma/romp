@@ -11,7 +11,7 @@ import * as assert from "node:assert/strict";
 import { inspect } from "node:util";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { marked } from "marked";
+import { viewerHtml } from "./file-view";   // the viewer's parse (mdBlock's recipe: marked's lexer, the literal-tags rule of md-literal-tags.ts, the per-call walk, its parser), the stand-in's too
 import { topVisibleIndex, blockIndexAt, followPlace, readPlace, seatPlace, type Place } from "./reader-place";
 import { sourceBlockSpans, renderedBlockIndex, renderedBlockElements, rawRowSpan, rawRowForOffset } from "./anchor-map";
 import { hideEdges, sameNodes, staysEnumerable } from "../test-dom-shim";
@@ -123,7 +123,7 @@ function rendered(src: string, top0 = 0, h = 40): { body: FakeElement; md: FakeE
   const doc = new FakeDocument();
   const body = doc.createElement("div"); body.setAttribute("class", "fileview-body"); body.box = { top: 100, bottom: 700 };
   const md = doc.createElement("div"); md.setAttribute("class", "fileview-md");
-  for (const n of parseHTML(doc, marked.parse(src) as string)) md.appendChild(n);
+  for (const n of parseHTML(doc, viewerHtml(src))) md.appendChild(n);
   body.appendChild(md);
   const blocks = md.childNodes.filter((n): n is FakeElement => n instanceof FakeElement);
   blocks.forEach((b, i) => { b.box = { top: top0 + i * h, bottom: top0 + (i + 1) * h - 8 }; });

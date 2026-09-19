@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
-"""The guide's Comments paragraph says three things Slice 8 of plans/markdown-viewer.md made true, and the viewer does them.
+"""The guide's Comments paragraph says three things Slice 8 of plans/markdown-viewer.md and decision 53 of
+plans/file-review.md made true, and the viewer does them.
 
-A table cell and a line of a code block can be commented from the Rendered view like any passage (items 1 and 2: the
-anchor map positions a table's cells and a code block's lines as it positions prose, walkTable and walkCode in the
-block walk, where before the slice both were holes whose selection refused); what cannot be mapped from the Rendered
-view is a selection across two cells of a table or one touching a formula (item 3: the one-cell rule's sentence, with
-the Raw view offered on the exact span; the formula's sentence from Slice 5), the parenthetical no longer naming a table
-or a code block; and a comment on a formula that stands on its own line highlights the whole formula (item 5: the block
-class on the `.katex-display` box, painted by the anchor map for the two comment classes and dressed by a rule that is
-byte-equal in both sheets). Each clause is pinned flattened, so a rewrap survives, and cross-checked against the source
-that keeps it. The clauses the vocabulary, anchors and Slice 5 pins read (tests/test_guide_files_comment_vocabulary.py,
+A table cell, a selection across several cells of a table and a line of a code block can be commented from the
+Rendered view like any passage (Slice 8, items 1 and 2: the anchor map positions a table's cells and a code block's
+lines as it positions prose, walkTable and walkCode in the block walk, where before the slice both were holes whose
+selection refused; decision 53: a selection whose span covers two or more cells of one table anchors to its span, the
+pipes between the cells inside the quote, where Slice 8's item 3 refused it with the one-cell sentence and the Raw view
+offered on the covered cells); what cannot be mapped from the Rendered view is a selection touching a formula (the
+formula's sentence from Slice 5), the parenthetical no longer naming a selection across cells, a table or a code block;
+and a comment on a formula that stands on its own line highlights the whole formula (item 5: the block class on the
+`.katex-display` box, painted by the anchor map for the two comment classes and dressed by a rule that is byte-equal in
+both sheets). Each clause is pinned flattened, so a rewrap survives, and cross-checked against the source that keeps it.
+The clauses the vocabulary, anchors and Slice 5 pins read (tests/test_guide_files_comment_vocabulary.py,
 tests/test_guide_files_comments_anchors.py, tests/test_guide_files_keyboard_overlap_fold.py) sit in the same paragraph
 and are re-read here unchanged, the refusal's tail clause byte for byte among them, so an edit that moves one fails in
 one place and not two. Synthetic: only the repo's own text.
@@ -63,8 +66,9 @@ def _rule(css, head):
     return css[starts[0]:css.index("}", starts[0]) + 1]
 
 
-CELLS_AND_LINES = "A table cell and a line of a code block can be commented from the Rendered view like any passage."
-CANNOT_MAP = ("When a passage cannot be mapped from the Rendered view (a selection across two cells of a table, a formula), "
+CELLS_AND_LINES = ("A table cell, a selection across several cells of a table and a line of a code block can be commented from the "
+                   "Rendered view like any passage; a comment across cells quotes the pipes between them as the file holds them.")
+CANNOT_MAP = ("When a passage cannot be mapped from the Rendered view (a formula), "
               "the panel says so, keeps your comment, and offers the Raw view with the passage selected.")
 TAIL = "the panel says so, keeps your comment, and offers the Raw view with the passage selected"
 FORMULA = "A comment on a formula that stands on its own line (a `$$` block) highlights the whole formula."
@@ -78,12 +82,13 @@ class TheGuideSaysSo(unittest.TestCase):
         section = _section(_read("docs", "guide.md"), "Files")
         self.paragraph = _paragraph(section, "**Comments and tracked changes.**")
 
-    def test_a_cell_and_a_code_line_comment_from_the_rendered_view(self):
+    def test_a_cell_a_selection_across_cells_and_a_code_line_comment_from_the_rendered_view(self):
         self.assertIn(CELLS_AND_LINES, self.paragraph)
 
-    def test_what_cannot_be_mapped_is_a_selection_across_cells_or_a_formula(self):
+    def test_what_cannot_be_mapped_is_a_formula(self):
         self.assertIn(CANNOT_MAP, self.paragraph)
         self.assertNotIn("(a table, a code block)", self.paragraph, "the parenthetical before Slice 8")
+        self.assertNotIn("(a selection across two cells of a table, a formula)", self.paragraph, "the parenthetical before decision 53")
 
     def test_a_comment_on_a_display_formula_highlights_the_whole_formula(self):
         self.assertIn(FORMULA, self.paragraph)
@@ -109,8 +114,9 @@ class TheGuideSaysSo(unittest.TestCase):
 
 
 class TheViewerDoesIt(unittest.TestCase):
-    """Each clause against the source that keeps it, so a walk that stops positioning cells or lines, a reworded
-    refusal, a dropped block rule or a class the two modules no longer agree on fails here beside the prose."""
+    """Each clause against the source that keeps it, so a walk that stops positioning cells or lines, the one-cell rule's
+    names or its sentence coming back, a reworded refusal, a dropped block rule or a class the two modules no longer agree
+    on fails here beside the prose."""
 
     def setUp(self):
         self.am = _read("ui", "webview", "anchor-map.ts")
@@ -126,41 +132,30 @@ class TheViewerDoesIt(unittest.TestCase):
         self.assertIn("walkTable(t as Tokens.Table, view.sub(p, p + raw.length), em);", self.am)
         self.assertIn("walkCode(t as Tokens.Code, view.sub(p, p + raw.length), em);", self.am)
 
-    def test_a_selection_across_two_cells_is_refused_with_the_raw_view_offered_on_the_span(self):
-        # one constant since the Slice 8 review's round 3, when the rule gained a second reading: the pass's, over the cells of every
-        # table in the span's blocks, and the one over a covered formula's table the pass does not reach (coveredCells, for a table
-        # with no positioned character in the selection, and for a selection whose characters are the covered formulas alone); since
-        # the review's round 5 both read ONE rule (cellsRule) that counts the table's cells by SOURCE SPAN against the selection's
-        # span, widened by a formula the selection covered whole at either end, so a cell that emits no positioned character (a
-        # formula alone, a picture alone) counts wherever the drag's ends fell, and both offer the Raw view on the exact span of the
-        # table's covered cells, the first covered cell's start through the last's end, clipped to the selection's (round 4 had the
-        # pass count positioned characters and widen its own offer; round 3 offered the whole widened span)
-        self.assertIn('const ONE_CELL = "%s";' % ONE_CELL, self.am, "the one-cell rule's sentence, the constant its refusals share")
-        offers = re.findall(r"refuse\(ONE_CELL,\s*\{(.*?)\}\s*\);", self.am, re.S)
-        self.assertEqual(len(offers), 1, "one refusal, cellsRule's, read by the pass and by the covered formula's check")
-        offer = offers[0]
-        self.assertIn("rawHasQuote: true", offer, "the Raw view is offered on the span, so Save works from Raw")
-        self.assertIn("rawRange: { start: s, end: e }", offer, "the exact span, the table's covered cells")
-        self.assertIn("blockStartOffset: s", offer, "the panel's search for the span begins at the span, not at the table")
-        rule = self.am[self.am.index("const cellsRule = (blk: Block, tb: TableSpan, start: number, end: number): MapRefusal | null => {"):]
-        rule = rule[:rule.index("refuse(ONE_CELL, {")]
-        self.assertIn(".filter((x) => nOf(idx, x.startN) < end && nOf(idx, x.endN) > start);", rule, "the cells are counted by source span against the selection's")
-        self.assertIn("if (cells.length < 2) return null;", rule, "two or more of the table's cells in the span refuse")
-        self.assertIn("const s = Math.max(start, nOf(idx, cells[0].startN)), e = Math.min(end, nOf(idx, cells[cells.length - 1].endN));", rule,
-                      "the offer: the first covered cell's start through the last's end, clipped to the selection's span")
-        # the pass reads the rule for every table of the block against the selection's span there, widened by the covered formulas;
-        # the covered formula's check reads it for the formula's table
-        self.assertIn("const sp = widened(b === bs ? nOf(idx, blk.pos[from]) : -Infinity, b === be ? nOf(idx, blk.pos[to - 1]) + 1 : Infinity);", self.am,
-                      "the pass's span in the block: its first positioned character's offset in the first block, its last's plus one in the last, the block's whole extent between")
-        self.assertIn("for (const tb of blk.tables) { const r = cellsRule(blk, tb, sp.start, sp.end); if (r) return r; }", self.am, "every table of the block against that span")
-        self.assertIn("const r = tb ? cellsRule(fh.blk, tb, start, end) : null;", self.am, "the covered formula's table against the widened span")
-        self.assertNotIn("if (x.startK < t && x.endK > f) hit++;", self.am, "the count over positioned characters, round 4's, is gone")
+    def test_a_selection_across_cells_anchors_to_its_span(self):
+        # decision 53 (plans/file-review.md): the one-cell rule Slice 8 built and its review refined through five rounds (the
+        # sentence, cellsRule counting a table's cells by source span, coveredCells for a covered formula's table, the pass's
+        # call per table) is gone from the selection map; a selection across cells maps as any selection over more than one
+        # block does, its anchor the source from its first positioned character to its last, widened by a formula it covered
+        # whole at either end, the quote that slice; anchor-map-cells.test.ts holds the anchoring itself (its FAILS-BEFORE
+        # case: two body cells anchor to `GET /notes | 120 ms`, the pipe inside the quote); a refusal written under a new
+        # name and sentence passes this source pin and fails there
+        head = _header_comment(self.am)
+        self.assertIn("a selection across several cells of one table maps to its span", head)
+        self.assertNotIn("a selection spanning two cells of a table is refused with the reason named", head, "the header's sentence before decision 53")
+        self.assertNotIn(ONE_CELL, self.am, "the one-cell sentence, retired by decision 53")
+        self.assertNotIn("spans more than one cell", self.am, "no refusal names a count of cells")
+        for gone in ("const ONE_CELL", "const cellsRule", "const coveredCells", "const coveredOnly"):
+            self.assertNotIn(gone, self.am, "%s, the one-cell rule's, is gone" % gone)
+        sel = self.am[self.am.index("export function mapRenderedSelection("):]   # the Rendered map: mapRawSelection carries the same return line
+        self.assertIn("const { start, end } = widened(nOf(idx, idx.blocks[bs].pos[ks]), nOf(idx, idx.blocks[be].pos[ke - 1]) + 1);", sel,
+                      "the anchor: the first positioned character through the last, widened by a formula covered whole at either end")
+        self.assertIn("return { ok: true, range: { start, end }, quote: source.slice(start, end) };", sel, "the quote is that slice of the source")
 
     def test_a_formula_touched_from_rendered_is_refused_in_the_same_shape(self):
         self.assertIn('const FORMULA_TOUCHED = "%s";' % FORMULA_TOUCHED, self.am)
-        # both sentences a person reads keep the guide's shape: what the selection does, then the Raw view
-        for sentence in (ONE_CELL, FORMULA_TOUCHED):
-            self.assertRegex(sentence, r"^This selection (touches|spans) .*; .*comment on it from the Raw view\.$")
+        # the sentence a person reads keeps the guide's shape: what the selection does, then the Raw view
+        self.assertRegex(FORMULA_TOUCHED, r"^This selection touches .*; .*comment on it from the Raw view\.$")
 
     def test_a_display_formula_takes_the_block_class_the_panel_strips_and_both_sheets_dress(self):
         m = re.search(r'^const BLOCK_PAINT_FOR = new Set\(\[(.*)\]\);$', self.am, re.M)

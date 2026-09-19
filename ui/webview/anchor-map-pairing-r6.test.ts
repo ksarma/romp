@@ -12,7 +12,7 @@
 // a control. Fixtures are synthetic.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { marked } from "marked";
+import { viewerHtml } from "./file-view";   // the viewer's parse (mdBlock's recipe: marked's lexer, the literal-tags rule of md-literal-tags.ts, the per-call walk, its parser), the stand-in's too
 import { applyMdConfig, resolveWikilink } from "./md-config";
 import { mapRenderedSelection, sourceBlockSpans, renderedBlockIndex, renderedBlockElements, renderedBlockWrappers, paintRendered, type SelLike, type MapResult } from "./anchor-map";
 import { hideEdges } from "../test-dom-shim";
@@ -160,7 +160,7 @@ function standInFill(root: FakeElement): void {
 function buildRendered(text: string): FakeElement {
   const doc = new FakeDocument();
   const box = doc.createElement("div"); box.setAttribute("class", "fileview-md");
-  for (const n of parseHTML(doc, marked.parse(text, { walkTokens: (t) => { resolveWikilink(t); } }) as string)) box.appendChild(n);
+  for (const n of parseHTML(doc, viewerHtml(text, (t) => { resolveWikilink(t); }))) box.appendChild(n);
   standInSanitize(box);
   standInFill(box);
   return box;

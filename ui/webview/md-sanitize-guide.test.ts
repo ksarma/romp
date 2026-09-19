@@ -34,7 +34,8 @@ function htmlParagraphClauses(): string[] {
 
 test("the guide does not say a <style> block's text stays as prose; it says that of a form and a <dialog>", () => {
   const clauses = htmlParagraphClauses();
-  const style = clauses.filter((c) => c.includes("`<style>`"));
+  // the paragraph names `<style>` twice since decision 52 (the block dropped whole, and the raw-text names that take the rest of the file); this pin is about the block
+  const style = clauses.filter((c) => c.includes("`<style>` block"));
   assert.equal(style.length, 1, "one clause names the <style> block");
   assert.doesNotMatch(style[0], /stays as prose|text stays/, "a <style> block's contents go with it (DOMPurify's default FORBID_CONTENTS)");
   assert.doesNotMatch(style[0], /`<dialog>`|\bform\b/, "the <style> block is not grouped with the elements whose text survives");

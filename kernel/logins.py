@@ -203,7 +203,10 @@ def write_record(state_dir, rec: dict) -> None:
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         f.write(json.dumps(rec, sort_keys=True))
     os.replace(tmp, p)
-    os.chmod(p, 0o600)   # a pre-existing record keeps its mode through the rename: tighten it too
+    os.chmod(p, 0o600)   # the rename publishes the TEMP's mode (a pre-existing record's mode does not survive it);
+    #                      the create's 0600 is subject to the umask, so this repairs a umask that strips owner bits
+    #                      (0200 or 0277 publish 0400 without it). Comment corrected in PR 789's review round 1,
+    #                      2026-09-18; the chmod stays, it is live under those umasks.
 
 
 def _with_state(rec: dict, now: float) -> dict:

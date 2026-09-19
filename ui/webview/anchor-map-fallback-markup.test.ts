@@ -28,6 +28,7 @@ import assert from "node:assert/strict";
 import { inspect } from "node:util";
 import { marked } from "marked";
 import { applyMdConfig, resolveWikilink } from "./md-config";   // the one markdown configuration, applied here as the viewer applies it
+import { viewerHtml } from "./file-view";   // the viewer's parse (mdBlock's recipe: marked's lexer, the literal-tags rule of md-literal-tags.ts, the per-call walk, its parser), the stand-in's too
 import {
   mapRawSelection, paintRendered, paintChangesRendered, unpaintChanges, stripMarkupMapped, renderedQuote,
   type ChangePaint, type SelLike,
@@ -146,12 +147,16 @@ function standInSanitize(root: FakeElement): void {
     standInSanitize(c);
   }
 }
+// The stand-in renders through the viewer's own parse (file-view.ts viewerHtml, mdBlock's recipe) with the file kind's wikilink
+// stamp as the per-call walk (resolveWikilink), the walk marked.parse ran for it before.
+// The corpus holds start tags with no end tag in their block (`List<String>`, `set <VAR> to`, a seeded `List<cellNNN>`), which render
+// as their characters now where the browser used to open an unknown element and show nothing of them.
 /** The viewer's Rendered body: `div.fileview-md > marked output`, the file kind's wikilink stamp applied as file-view-links.ts applies
  *  it (so `[[Note]]` shows `Note`, the surface comments are made on), the sanitizer's drops stood in for. */
 function buildRendered(text: string): FakeElement {
   const doc = new FakeDocument();
   const box = doc.createElement("div"); box.setAttribute("class", "fileview-md");
-  for (const n of parseHTML(doc, marked.parse(text, { walkTokens: (t) => { resolveWikilink(t); } }) as string)) box.appendChild(n);
+  for (const n of parseHTML(doc, viewerHtml(text, (t) => { resolveWikilink(t); }))) box.appendChild(n);
   standInSanitize(box);
   return box;
 }
@@ -487,7 +492,7 @@ test("Rendered fallback, a table hole: cells with no whitespace between them in 
   // a DOM with the newlines between tags gone (a minifying step): the cells' text nodes are adjacent
   const doc = new FakeDocument();
   const box = doc.createElement("div"); box.setAttribute("class", "fileview-md");
-  for (const n of parseHTML(doc, (marked.parse(CELLS) as string).replace(/>\n</g, "><"))) box.appendChild(n);
+  for (const n of parseHTML(doc, viewerHtml(CELLS, (t) => { resolveWikilink(t); }).replace(/>\n</g, "><"))) box.appendChild(n);
   const marks = paintRendered(El(box), CELLS, rangeOf(CELLS, "cell one | cell two"), "fc-hl") as unknown as FakeElement[] | null;
   assert.ok(marks && marks.length, "painted over adjacent cells");
   assert.deepEqual(textMarks(marks!).map((m) => m.textContent), ["cell one", "cell two"]);

@@ -65,7 +65,14 @@ until you choose to [reach it from elsewhere](guide.md#remote-access).
 `~/.local/state/romp/` for the [SDK backend's](guide.md#session-backends)
 dependency, `claude-agent-sdk`, and for `cryptography`, which
 [notifications to a phone or browser](guide.md#notifications-on-your-phone)
-need; if those say the package is missing, `bin/romp-sdk-setup` installs it.
+need; if those say the package is missing, `bin/romp-sdk-setup` installs it,
+at the one version the session host's private SDK imports are written against
+(`SDK_TESTED_VERSION` in `kernel/session_host.py`; the script reads that line,
+and a host started on a version that has moved one of those internals fails
+loudly, naming both versions, rather than on the moved internal; one whose
+internals still resolve runs the session and files a problem row saying so,
+once per kernel life for each installed version, so a later host on the same
+version is a kernel-log line and not a second row).
 The VS Code / Cursor extension, built and
 installed. A `pre-push` hook in the clone's own git directory, which does
 nothing unless you give it a list of strings to watch for. The one-line

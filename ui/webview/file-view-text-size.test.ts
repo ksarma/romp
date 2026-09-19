@@ -18,10 +18,9 @@ import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
-import { marked } from "marked";   // the browser leg renders a synthetic task list through the real marked for mdBlock's task stamp
 import { inspect } from "node:util";
 import { assertHiddenEvent, hideEdges, sameNodes, staysEnumerable } from "../test-dom-shim";
-import type { FileViewActionCtx } from "./file-view";
+import { viewerHtml, type FileViewActionCtx } from "./file-view";   // viewerHtml: the browser leg renders a synthetic task list through the viewer's own parse for mdBlock's task stamp
 import { scriptLiteral } from "./real-viewer-leg";
 import { setMdSanitizer } from "./md-sanitize";   // the sanitizer seam the node suites install a stand-in through (Slice 7 of plans/markdown-viewer.md)
 
@@ -955,7 +954,7 @@ function sanitizerJs(): string {
 }
 const STAMP_CODE = (() => { const at = VIEW.indexOf("box.querySelectorAll('li > input"); return at < 0 ? "" : VIEW.slice(at, VIEW.indexOf("\n  });", at) + 6); })();
 const STAMP_PAGE = (css: string) => sheet(css) + `<body class="fileview-open"><div id="romp-fileview"><div class="fileview" id="root"><div class="fileview-body" id="body"><div class="fileview-md" id="md"></div></div></div></div></body></html>`;
-const STAMP_PREP = `(() => { const box = document.getElementById("md"); box.replaceChildren(...Array.from(sanitizeMd(${JSON.stringify(marked.parse(STAMP_MD) as string)}).childNodes)); ${STAMP_CODE} })()`;
+const STAMP_PREP = `(() => { const box = document.getElementById("md"); box.replaceChildren(...Array.from(sanitizeMd(${JSON.stringify(viewerHtml(STAMP_MD))}).childNodes)); ${STAMP_CODE} })()`;
 const STAMP_MEASURE = `(() => Array.from(document.querySelectorAll("#md li")).map((li) => {
   const input = li.querySelector("input"), lr = li.getBoundingClientRect();
   return { text: (li.textContent || "").replace(/\\s+/g, " ").trim(), stamped: li.classList.contains("task-list-item"), bullet: getComputedStyle(li).listStyleType,

@@ -630,6 +630,29 @@ target opens the file in the viewer, and a section link scrolls to it. An image 
 the `<title>` of an inline `svg`, the drawing's tooltip, stays. The same rules apply to the
 HTML in a chat message, where a link to an element's own `id` or `<a name>` lands on it under
 the prefix.
+A tag opened in a line of prose and not closed in the same paragraph, heading, list item or
+table cell (a placeholder typed mid-sentence as `<table>`, say) is shown as the characters
+typed, not read as HTML, and can be commented on like any passage; a tag closed in the same
+block, a tag that never takes an end tag such as `<br>` or `<img>`, and a tag written with a
+slash before its `>` (`<x/>`) are HTML as before. A tag the viewer reads as an HTML block
+rather than as prose is HTML as before too: a tag first on its line, after a list marker or a
+`>` included, whose name is on CommonMark's HTML-block list (`<table>`, `<div>`, `<p>` and
+`<pre>` are on it; `<span>`, `<b>` and an invented name are not), or a tag alone on a line where
+a paragraph would begin. The same placeholder typed first on its line is therefore read as
+HTML: the browser shows no `<table>`, and a comment on the passage goes through the Raw view.
+A chat message is not read this way. A `<title>`, `<script>`, `<style>` or `<iframe>` that
+stays HTML takes everything after it out of the Rendered view, up to an end tag of its name,
+or the end of the file when there is none: a browser reads `<title/>` as `<title>`, so the tag
+written with the slash mid-sentence does this, and so does the tag first on its line; a
+`<textarea>` in either place shows that stretch as unformatted characters instead: after the
+tag first on its line the file's own text, and after the tag written with the slash
+mid-sentence the HTML the viewer built from the rest of its paragraph and the blocks after it,
+tags such as `</p>` and `<h2>` among the characters. Inside an
+inline `svg` or `math`, a child tag left open
+(`<svg><title>icon</svg>`, say) disappears from the Rendered view: the same rule makes it text,
+but the text lands inside the drawing, which the browser draws without it, or inside the
+`math`, which the viewer drops whole, so a comment on it goes through the Raw view, which shows
+it. A child closed with its own end tag, the drawing's `<title>` included, is HTML as before.
 
 **Comments and tracked changes.** The viewer's **Comments** action opens a panel beside
 the file, where each card sits level with the passage it is about and scrolls with the text;
@@ -644,10 +667,10 @@ keyboard); type the comment
 **Save** button; on a phone or a tablet the button is the way, and the line under the box says so.
 Saving leaves the text where it is. When the new card lands out of view, a line at the foot of the panel, **Saved · the card is above** (or **below**), says where it went; click the line to bring the card into view, or leave it: it goes with your next scroll, click, tap, or key, except Tab or a modifier key pressed on its own, so you can reach it from the keyboard.
 In the list under a narrow column, the line stands under the panel's header instead.
-**Comment on this file** leaves a comment on the file as a whole, which every file takes. A table cell and a
-line of a code block can be commented from the Rendered view like any passage. When a passage cannot be mapped from the
-Rendered view (a selection across two cells of a table, a formula), the panel says so, keeps your comment, and offers the
-Raw view with the passage selected. A comment on a formula that stands on its own line (a `$$` block)
+**Comment on this file** leaves a comment on the file as a whole, which every file takes. A table cell, a selection
+across several cells of a table and a line of a code block can be commented from the Rendered view like any passage; a
+comment across cells quotes the pipes between them as the file holds them. When a passage cannot be mapped from the
+Rendered view (a formula), the panel says so, keeps your comment, and offers the Raw view with the passage selected. A comment on a formula that stands on its own line (a `$$` block)
 highlights the whole formula. Comments are stored beside the file, in the
 `.trackchanges/` folder at the root of its project (the nearest git repository, vault, or
 folder that already holds one; a file with none gets the folder created beside it), in the
