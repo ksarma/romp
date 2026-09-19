@@ -317,6 +317,36 @@
 // option, an `env -S` string and `xargs` stays (an external command cannot reassign the calling shell's names; both
 // sides are observable once ruled). No verdict changes: the corpus's 285 entries keep theirs.
 //
+// THE SEVENTH PASS (2026-09-19; the sixth pass's ATTACKER on 86c0643ec, whose report the workflow that ran it read as no finding
+// when the agent died on 529s, so fd531044b's message and fork PR #780's body said the attacker filed none: it filed 77 in-model
+// live overwrites in 13 spelling classes, each a value the command SPELLS that this resolution half resolved to a string the
+// shell does not produce, judged the wrong path and allowed while the shell wrote a tracked file; 0 structural). Closed as ONE
+// rule, THE READABILITY RULE, stated once at RESOLVED_NAME below and implemented as one predicate (plainSequence, plainValue,
+// recordPlainWord, recordSegment, taintWord): a name is readable only when every write to it is a plain top-level
+// `NAME=plain-string` the shell performs as spelled, and any other construct that can write it makes it unreadable, keyed on the
+// construct's shape and never on a list of commands (the reviewer's framing: B2's unknown-defaults-to-unreadable doctrine,
+// already applied to a `read` and a loop variable, applied to assignment; a contract that states its boundary as a list is
+// falsified by the first construct nobody listed, which is why the rule replaces the list). The classes: C1 a tilde opening an
+// assignment value (plainValue: `~/` and `~` resolve through HOME, `~+` and `~-` through PWD and OLDPWD, a `~user` and a tilde
+// after a `:` leave the name unreadable); C2 a declaration flag that transforms the value (INERT_DECLARATION_FLAGS: `-g`, `-x`,
+// `-r` and `--` alone are inert; the attribute persists, so the taint is sticky); C3 a nameref (the target is tainted, or every
+// name when the target is one the shell fills in; `unset` does not free a nameref's target, refTargets); C4 an assembled name
+// operand (the resolved name is tainted when it resolves, every name when it does not); C5 scoping (a pipeline's tail, a `{ }`
+// group whose closing brace is piped or backgrounded, a wrapper's argument, an assignment-only segment's words read left to
+// right; C5e, `time x=b` and a prefix on a special builtin, shell-dependent and unreadable); C6 functions (`function NAME {` is
+// a definition; a call by the head as spelled, a wrapper's name included, poisons); C7 a subscript. Found with the fix, the same
+// rule's unlisted spellings, each a live overwrite at 86c0643ec: an eval that assembles `HOME=` then a `~` write (the poison
+// now covers HOME, PWD and OLDPWD), zsh's `print -v x` and `${x::=..}`, and a piped `{ cd docs; }` group whose cd was followed
+// (the group frame restores the directory). A plain `unset NAME` in plain sequence RESETS the name (the shells drop its value
+// and attributes, measured), so a plain write after it is readable again. From a tracked cwd every one of the attacker's 62 rows
+// there refuses, by name where the value resolves (a `~/` value, an assembled name that resolves, two assignment words read
+// in order) and as not literal with the construct named otherwise; from a cwd in no project the 15 rows the guard resolved
+// wrongly split into 5 refused by name (the value resolves) and 10 the ruled residual (an opaque expansion after a literal head
+// outside every project, allowed, and the write lands: the boundary B2 states, unchanged by this pass). The cost, measured
+// against the corpus (285 entries, no verdict changes) and the dollar matrix and stated with the change: a `~/` value resolves
+// through HOME at no cost; `declare -i x=5` (and `-a`, `-A`) then `$x`, `let x=5` then `$x`, a pipeline-tail assignment (which
+// zsh keeps) and a piped plain group then `$x` each refuse from a tracked cwd where the shell's value was known.
+//
 // THE LISTS THAT REMAIN, each with the side its GAP falls on (a missing entry causes a false refusal, or a write):
 //   PREFIXES (the wrapper set): gap = a WRITE (an unlisted wrapper is read as its own command, an unmodelled writer by
 //     the contract), so the set is stated on the four surfaces and the unlisted wrappers the passes found (unshare,
@@ -348,20 +378,24 @@
 // for paths, a link whose source it cannot read, a `~` or `$HOME` write beside a mention of HOME or beside a variable
 // name the shell fills in, a template or format string as an interpreter's write path, and, from any working directory,
 // a write through an alias the command makes (a hard link, `cp -l`, `cp -s`, `link`, a link whose source it cannot read)
-// whose source lies in a tracked project or is one it cannot read. A value it can read (a name the command set to a
-// plain string earlier in the same command, HOME, PWD, OLDPWD, `~+` and `~-`, none of them once the command names or
-// may fill in the name) is resolved first and the real path judged. These write forms are not modelled and still
-// reach a tracked file: rsync; awk with a redirect inside its program; ed; ex; make; find with -delete or -exec; a
-// git subcommand that writes the working tree (checkout, stash, apply, reset, rm, clean, mv); a computed or escaped
-// path inside an interpreter (a name, sys.argv, os.environ or process.env, a concatenation or an escape sequence in
-// the string, in python3 -c or node -e); a script the shell reads from elsewhere (eval, xargs, a sourced file, trap,
-// a command whose name is an expansion, a script held in a variable); a command that runs another command and is
-// outside the guard's wrapper set (unshare, nsenter, script, setarch, setpriv, strace, coproc and their kin); a link
-// made by a writer outside the model (python, tar, rsync) that a later modelled write follows; shuf -o; a cd through
-// CDPATH; and an opaque expansion from a cwd outside every project, leading or after a literal head outside every
-// project (a `..` inside the value could climb into a project; from a cwd in a tracked project the same word is
-// refused as not literal). The same paragraph, and this writer list, are on the vendored SKILL.md, hooks/README.md
-// and docs/install.md, pinned identical by a test.
+// whose source lies in a tracked project or is one it cannot read. A value it can read is resolved first and the real
+// path judged. A name is readable only when every write to it in the command is a plain top-level `NAME=plain-string`
+// the shell performs as spelled: no tilde opening the value, no declaration flag that transforms it, no nameref
+// reaching it, no name the shell fills in, no subshell, pipeline, piped group or body scope, no wrapper argument, no
+// call of a function the command defines in any spelling, no subscript; any other construct that can write the name,
+// listed here or not, leaves it unreadable, the doctrine a `read` and a loop variable already had. HOME, PWD, OLDPWD,
+// `~+` and `~-` are read the same way, none of the three once the command names or may fill in the name. These write
+// forms are not modelled and still reach a tracked file: rsync; awk with a redirect inside its program; ed; ex; make;
+// find with -delete or -exec; a git subcommand that writes the working tree (checkout, stash, apply, reset, rm, clean,
+// mv); a computed or escaped path inside an interpreter (a name, sys.argv, os.environ or process.env, a concatenation
+// or an escape sequence in the string, in python3 -c or node -e); a script the shell reads from elsewhere (eval, xargs,
+// a sourced file, trap, a command whose name is an expansion, a script held in a variable); a command that runs another
+// command and is outside the guard's wrapper set (unshare, nsenter, script, setarch, setpriv, strace, coproc and their
+// kin); a link made by a writer outside the model (python, tar, rsync) that a later modelled write follows; shuf -o; a
+// cd through CDPATH; and an opaque expansion from a cwd outside every project, leading or after a literal head outside
+// every project (a `..` inside the value could climb into a project; from a cwd in a tracked project the same word is
+// refused as not literal). The same paragraph, and this writer list, are on the vendored SKILL.md, hooks/README.md and
+// docs/install.md, pinned identical by a test.
 
 import fs from 'node:fs';
 import os from 'node:os';
@@ -1254,14 +1288,23 @@ function commandOf(words) {
   let k = 0;
   const chdirs = [];
   const writes = [];
+  const wrappers = [];   // the wrappers peeled, in order (the seventh pass: the cd text names the innermost one and what it does with a cd)
   let wrapped = false;   // the walk-around lens second pass (family 6): a wrapper prefix was peeled before the command
   for (;;) {
     while (k < words.length && RESERVED.has(words[k].text)) k++;
+    const first = k;
     while (k < words.length && /^[A-Za-z_][A-Za-z0-9_]*\+?=/.test(words[k].raw)) k++;
-    if (k >= words.length) return null;
+    // The readability rule (the sixth pass's attacker, C5c, 2026-09-19): after a wrapper an assignment-shaped word is the
+    // wrapper's ARGUMENT, not an assignment (bash looks `command x=b` up as a command; env sets it for a command that is not
+    // there; `time x=b` assigns in bash alone), so the segment is not assignment-only: the words come back as the arguments
+    // of a command with no name, and recordAssignments reads each as a write it does not follow. Before, null came back and
+    // the caller read the segment as plain assignments, so `x=../docs/report.md; command x=other.md; cp base/report.md
+    // scratch/$x` resolved $x to other.md while every shell kept the tracked path.
+    if (k >= words.length) return wrapped ? { name: '', args: words.slice(first), chdirs, writes, wrapped, wrappers } : null;
     const name = path.basename(words[k].text);
-    if (!PREFIXES.has(name)) return { name, args: words.slice(k + 1), chdirs, writes, wrapped };
+    if (!PREFIXES.has(name)) return { name, args: words.slice(k + 1), chdirs, writes, wrapped, wrappers };
     wrapped = true;
+    wrappers.push(name);
     k++;
     const spec = WRAPPER_OPT[name];
     let lead = spec.lead || 0;
@@ -2135,20 +2178,73 @@ function unreadableExpandedNames(segments) {
 // note, since class E asked only whether the head parents or sits under a root). So the guard RESOLVES every expansion
 // whose value it can read and judges the real path; what stays opaque keeps the verdict the working directory gives it
 // (the reviewer's option (c), 2026-09-19: refused as not literal from a tracked cwd, dropped from a cwd in no project;
-// the header states the principle and the residual with its boundary). What it can read: an assignment earlier in the same command whose value is a plain string (`x='../sub-on/p'`,
-// `export x=...`, `declare x=...`, at the top level, in plain sequence, not in a body, a subshell or after `&&`/`||`,
-// and not followed by an eval, a sourced file, a call of a function the command defines, or a read into the name);
-// HOME through the guard's own home (unless the command names or fills in HOME, rule (a) and M1, and the same for PWD
-// and OLDPWD: valueOf reads no name on EXPANDED_NAMES that the command names or may fill in); PWD through the
-// directory it knows; OLDPWD, `~+` and `~-` through the directory before a `cd` in the same command. A value that is
-// empty or holds a space, a glob character or an expansion of its own is not read (the shell would split or match it).
-// A `$(...)`, a backtick, a `${name:-x}`, a variable the command does not set to a plain string, a loop variable, a
-// name a `read` fills in, and any name once an eval, a source or a function call ran, stay opaque, and are judged as
-// before B2. The cost is measured in tools/romp-track-bash-guard-corpus.json (the b2-readable and b2-opaque entries) and
-// stated with the change.
+// the header states the principle and the residual with its boundary). PWD is read through the directory the guard
+// knows; OLDPWD, `~+` and `~-` through the directory before a `cd` in the same command; HOME through the guard's own
+// home; none of the three once the command names the name outside an expansion or may fill it in (rule (a) and M1:
+// valueOf reads no name on EXPANDED_NAMES that unreadableExpandedNames returns). A value that is empty or holds a
+// space, a glob character or an expansion of its own is not read (the shell would split or match it). A `$(...)`, a
+// backtick and a `${name:-x}` stay opaque.
+//
+// THE READABILITY RULE (the sixth pass's attacker, 2026-09-19: 77 in-model live overwrites in 13 spelling classes, each a
+// value the command SPELLS that this half resolved to a string the shell does not produce; the reviewer's framing: this is
+// B2's own unknown-defaults-to-unreadable doctrine, already applied to a `read` and a loop variable, applied to
+// assignment). A name is readable only when every write to it in the command is a plain top-level `NAME=plain-string`
+// the shell performs as spelled: a word of a segment holding assignment words alone, in plain sequence (no if, loop,
+// case, subshell or function body, no `{ }` group that is piped or backgrounded, not after `&&`, `||` or `|`, not piped
+// or backgrounded itself, no wrapper before it), the words of that segment read left to right as the shells perform them,
+// the value literal, non-empty, without whitespace or a glob character, and without a tilde the shell would expand (an
+// unquoted `~` opening the value or following a `:`, which bash, zsh and dash all expand there: `~/` and `~` resolve
+// through HOME, `~+` and `~-` through PWD and OLDPWD, when those are readable, and `~user` never); a declaration
+// (`export`, `declare`, `typeset`, `readonly`) counts as that write only with inert flags (INERT_DECLARATION_FLAGS: `-g`,
+// `-x`, `-r`, `--`). ANY OTHER CONSTRUCT THAT CAN WRITE THE NAME MAKES IT UNREADABLE from that construct to the end of the
+// command, and a plain write after it does not restore it (a declaration attribute persists, a nameref persists): a
+// declaration flag outside the inert set (`-l`, `-u`, `-i`, `-a`, `-A`, `-n`, zsh's `-L`, `-R` and their kin), a nameref
+// (`declare -n r=x` writes x through r), a subscript (`x[0]=`, `x[1,8]=`, `printf -v 'x[0]'`), `+=`, an assignment-shaped
+// word in any other position (an argument of a wrapper or of any command, `let x=5`, a prefix `x=v cmd`, which dash and
+// bash's POSIX mode keep for a special builtin), the bare identifier as a word or a token of a word that is not an option
+// (`read x`, `printf -v x`, `unset x`, `mapfile x`, zsh's `print -v x` and `set -A x`, the target of a nameref), an
+// assignment inside a `${x=..}`, `${x:=..}` or zsh `${x::=..}` expansion, the name in an arithmetic body, a `for` or
+// `select` variable, a `{ }` group whose closing brace is piped or backgrounded (a subshell, so its assignments and cds
+// did not happen here), and, for every name at once, an eval, a source, xargs, a call of a function the command defines
+// (`f() {`, `function f {` and `function f () {` alike, called by any spelling, a wrapper's name included) or a name
+// operand the shell fills in (M1's construct, `export $h=...`: the resolved name is tainted when h is readable, every name
+// when it is not). The predicate is one function, recordAssignments below, and is keyed on the construct, never on a
+// list of commands, so a spelling nobody listed is caught by the shape it must take: a name the command touches
+// anywhere but in the one readable form is a name it may write. The cost, measured against the corpus and the dollar
+// matrix and stated in fork PR #780's body: a `~/` value resolves through HOME at no cost; `declare -i x=5` (and `-a`,
+// `-A`) then `$x`, a pipeline-tail assignment (zsh keeps it, bash and dash do not), a `{ }` group that is piped, a `let`,
+// an `export x` of a name set earlier and a bare mention of the name as a word before the write each refuse from a tracked
+// cwd where the value would have resolved. HOME, PWD and OLDPWD stay as rule (a) and M1 leave them, unreadable for the
+// whole command once the command names the name outside an expansion or may fill it in, and an eval, a source or a call
+// of a function the command defines makes them unreadable from that point, as it does every name.
 const RESOLVED_NAME = /^\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))/;
 const VAR_ASSIGNERS = new Set(['export', 'declare', 'typeset', 'readonly']);   // NAME=VALUE operands that persist in this shell at the top level
 const VAR_POISONERS = new Set(['eval', 'source', '.', 'xargs']);   // after these the guard reads no assigned name
+// The declaration flags under which a `declare`/`typeset`/`export`/`readonly NAME=VALUE` stays the plain write the rule
+// reads: they change neither the value nor what the name refers to. Every other letter (`-l` lowercases, `-u` uppercases,
+// `-i` evaluates, `-a`/`-A` make an array, `-n` a nameref, zsh's `-L n`/`-R n` pad or truncate, `-Z`, `-U`, `-T`, `-t`,
+// `-H`, `-h`, `-F`, `-E`, `-p` prints) leaves every name of the declaration unreadable; the gap of this list falls on the
+// refuse side (a flag not listed refuses).
+const INERT_DECLARATION_FLAGS = new Set(['g', 'x', 'r']);
+const IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/;
+// The index of a segment's command word as spelled: the first word that is neither a reserved word nor assignment-shaped,
+// before any wrapper is peeled (-1 for assignments alone). A `NAME=value` before it is a prefix assignment on the command.
+function rawHeadIndexOf(words) {
+  let k = 0;
+  while (k < words.length && (RESERVED.has(words[k].text) || /^[A-Za-z_][A-Za-z0-9_]*\+?=/.test(words[k].raw))) k++;
+  return k < words.length ? k : -1;
+}
+// The tokens of a word's text that are identifiers and came from the command's own text (not from an expansion, mark 'x',
+// nor from the guard's home, mark 'h'): `r=x` yields r and x, `x[0]` yields x, `'x'` yields x.
+function identifierTokens(text, marks) {
+  const out = [];
+  for (const m of text.matchAll(/[A-Za-z_][A-Za-z0-9_]*/g)) {
+    if (marks && /[xh]/.test(marks.slice(m.index, m.index + m[0].length))) continue;
+    if (/^[0-9]/.test(m[0])) continue;
+    out.push(m[0]);
+  }
+  return out;
+}
 // Whether every expansion left in `text` is the process id (for the numeric flag of a partly resolved word).
 function numericRunsOnly(text, marks) {
   for (let i = 0; i < text.length;) {
@@ -2173,12 +2269,26 @@ function extract(command, ctx) {
   let unknownDir = ctx.unknownDir;
   let unknownWhy = ctx.unknownWhy;   // for the refusal: which construct made the directory unknown (round 3)
   let keywordMode = !!ctx.keywordMode;   // bash's `set -k` is on from an earlier segment (setsKeywordMode)
-  // B2: the names this command set to a plain string (name -> value; null for a name it set to something the guard cannot
-  // read), the directory before the last `cd` (OLDPWD), and whether an eval, a source or a function call has run since
+  // B2: the names this command set to a plain string (name -> value; null for a name a write the readability rule does not
+  // follow touched, which stays null: a later plain write does not restore it), why each such name is unreadable (for the
+  // refusal), the directory before the last `cd` (OLDPWD), and whether an eval, a source, a function call or a name operand
+  // the shell fills in has run since (then no name is read, and poisonWhy says which construct)
   const vars = ctx.vars || new Map();
+  const unreadableWhy = ctx.unreadableWhy || new Map();
   let oldDir = ctx.oldDir === undefined ? null : ctx.oldDir;
   let varsPoisoned = !!ctx.varsPoisoned;
+  let poisonWhy = ctx.poisonWhy || null;
   const definedFunctions = ctx.definedFunctions || new Set();
+  // The readability rule's two marks: a name a construct outside the plain form may write (sticky), and the whole table
+  // once a construct may write any name. The text names the construct, so the refusal can say why the name was not read.
+  const wroteThrough = (name, construct, raw) => `the command writes \`${name}\` through ${construct} (${raw}), which I do not follow`;
+  const taint = (name, why) => {
+    if (!name || !IDENTIFIER.test(name)) return;
+    if (vars.has(name) && vars.get(name) === null) return;
+    vars.set(name, null);
+    if (why && !unreadableWhy.has(name)) unreadableWhy.set(name, why);
+  };
+  const poison = (why) => { if (!varsPoisoned) { varsPoisoned = true; poisonWhy = why; } };
   const setUnknown = (why) => { unknownDir = true; if (!unknownWhy) unknownWhy = why; };
   const setKnown = (d) => { dir = d; unknownDir = false; unknownWhy = null; };
   // B2: a `cd` or `pushd` sets OLDPWD to the directory it left, when the guard knew it; a move it cannot follow leaves
@@ -2197,16 +2307,24 @@ function extract(command, ctx) {
   const unreadableNames = new Map(ctx.unreadableNames || []);
   for (const [k, v] of unreadableExpandedNames(segments)) if (!unreadableNames.has(k)) unreadableNames.set(k, v);
   const homeWhy = ctx.homeWhy || unreadableNames.get('HOME') || null;
-  const homeAssigned = ctx.homeAssigned || !!homeWhy;
-  const homeWord = (w) => !!(homeAssigned && w && w.marks && w.marks.includes('h'));
+  const homeAssigned = ctx.homeAssigned || !!homeWhy;   // HOME unreadable for the whole command: a mention outside an expansion in any form but the plain write, or a name the shell fills in
+  // HOME unreadable NOW: for the whole command as above, or from an eval, a source, a call of a function the command defines
+  // or a name operand the shell fills in on (the readability rule: such a construct may write any name, HOME included; before
+  // it, `e=$(printf 'HO%s' ME=<notes>); eval "$e"; printf poison > ~/n1.md` resolved `~` through the guard's home and bash,
+  // zsh and dash wrote the tracked note)
+  const homeUnreadableNow = () => homeAssigned || varsPoisoned;
+  const homeWhyNow = () => homeWhy || (varsPoisoned && poisonWhy ? { kind: 'poisoned', name: 'HOME', text: poisonWhy } : null);
+  const homeWord = (w) => !!(homeUnreadableNow() && w && w.marks && w.marks.includes('h'));
   // B2: the plain-string value of `name` as the shell will expand it, or null when the guard cannot read it. An expanded
   // name the command names outside an expansion, or may fill in (M1), is not read (PWD and OLDPWD as HOME; B2's first
-  // draft read the guard's own directory for `$PWD` while `PWD=<dir>; cp x $PWD/docs/report.md` wrote a tracked file).
+  // draft read the guard's own directory for `$PWD` while `PWD=<dir>; cp x $PWD/docs/report.md` wrote a tracked file);
+  // no name is read once the table is poisoned (the readability rule), HOME, PWD and OLDPWD included.
   const valueOf = (name) => {
+    if (varsPoisoned) return null;
     if (name === 'HOME') return homeAssigned ? null : os.homedir();
     if (name === 'PWD') return unknownDir || unreadableNames.has('PWD') ? null : dir;
     if (name === 'OLDPWD') return unreadableNames.has('OLDPWD') ? null : oldDir;
-    if (varsPoisoned || !vars.has(name)) return null;
+    if (!vars.has(name)) return null;
     return vars.get(name);
   };
   // B2: a word with the expansions the guard can read replaced by their values (quoted text, since a value with a
@@ -2218,8 +2336,14 @@ function extract(command, ctx) {
     let text = '';
     let marks = '';
     let changed = false;
-    let named = null;   // the first expanded name left opaque because the command names or may fill it in (the refusal says so)
-    const unread = (name) => { if (!named && unreadableNames.has(name)) named = { ...unreadableNames.get(name), kind: 'namedExpansion' }; return null; };
+    let named = null;   // the first expanded name left opaque because the command names or may fill it in, or a construct wrote it (the refusal says so)
+    const unread = (name) => {
+      if (named) return null;
+      if (unreadableNames.has(name)) named = { ...unreadableNames.get(name), kind: 'namedExpansion' };
+      else if (unreadableWhy.has(name)) named = { kind: 'namedExpansion', name, text: unreadableWhy.get(name) };
+      else if (varsPoisoned && poisonWhy) named = { kind: 'namedExpansion', name, text: poisonWhy };
+      return null;
+    };
     for (let i = 0; i < T.length;) {
       if (M[i] !== 'x') { text += T[i]; marks += M[i]; i++; continue; }
       let j = i;
@@ -2259,48 +2383,186 @@ function extract(command, ctx) {
     const g = !hasX && hasGlobChar(text, marks);
     return word(text, !hasX && !g, w.raw, { glob: g, marks, at: w.at, numeric: hasX && numericRunsOnly(text, marks) && !hasGlobChar(text, marks), why: named });
   };
-  // B2: record what a segment assigns, once its own words have been judged (the assignment takes effect for LATER
-  // segments): a top-level assignment in plain sequence with a plain-string value is read; every other assignment to
-  // a name (a value the guard cannot read, `+=`, one in a body, a subshell or after `&&`/`||`, a `read`, a loop
-  // variable, a nameref, an unset) makes the name unreadable for the rest of the command.
-  const recordAssignments = (seg, idx, cmd) => {
+  // THE PREDICATE of the readability rule (the statement is at RESOLVED_NAME). Three parts share it, each run once a segment's
+  // own words have been judged (an assignment takes effect for LATER segments; a prefix assignment expands the old value in
+  // its own command): plainSequence says whether a segment's assignments are this shell's own, in order; recordPlainWord
+  // reads the one form the rule reads, one word at a time as the shells perform them (the caller resolves each word with
+  // the names the words before it set, C5d); recordSegment reads every other segment as writes the rule does not follow,
+  // keyed on the SHAPE of each word and never on a list of commands, so a construct nobody listed is caught by the shape it
+  // must take to name the variable.
+  const plainSequence = (seg, idx) => {
     const prevOp = idx > 0 ? segments[idx - 1].op : '';
-    const reliable = frames.length === 0 && prevOp !== '&&' && prevOp !== '||' && seg.op !== '|' && seg.op !== '&';
-    const set = (name, w) => {
-      const eq = w.text.indexOf('=');
-      const plusEq = eq > 0 && w.text[eq - 1] === '+';
-      const literalValue = w.literal && !w.glob && eq >= 0 && !plusEq;
-      vars.set(name, reliable && literalValue ? w.text.slice(eq + 1) : null);
-    };
-    const nameOf = (w) => { const m = w.raw.match(/^([A-Za-z_][A-Za-z0-9_]*)(\+?=|$)/); return m ? m[1] : null; };
+    if (!frames.every((f) => f.kind === 'group')) return { ok: false, why: 'an if, loop, case or function body, or a subshell' };   // a plain `{ }` group runs in this shell; its closing brace settles a piped or backgrounded one
+    if (prevOp === '&&' || prevOp === '||') return { ok: false, why: `a command after \`${prevOp}\`, which may not run` };
+    if (prevOp === '|' || seg.op === '|') return { ok: false, why: 'a pipeline, whose members bash and dash run in a subshell (zsh keeps the last in this shell)' };
+    if (seg.op === '&') return { ok: false, why: 'a backgrounded command, which runs in a subshell' };
+    return { ok: true, why: null };
+  };
+  // The value of a plain assignment word as the shell stores it: the text after `=`, with a tilde the shell expands there
+  // resolved (`~/` and `~` through HOME, `~+` through PWD, `~-` through OLDPWD, when readable); null with the reason when the
+  // value is not a plain string (empty, split, matched or filled in by the shell, a `~user`, a tilde after a `:`, which bash,
+  // zsh and dash all expand in an assignment, or a tilde through a name the guard cannot read). The lexer expands `~` at a
+  // word's start alone, so inside a value it is text (mark 'u') and is read here (C1: `x=~/../notes-api/docs/report.md; cp
+  // base/report.md $x` was read as a path under the cwd while all three shells wrote through the home).
+  const plainValue = (w, eq) => {
+    const v = w.text.slice(eq + 1);
+    if (!w.literal || w.glob || v === '' || /[\s\0*?[]/.test(v)) return { value: null, why: 'a value that is empty, or that the shell would split, match or fill in' };
+    const marksV = w.marks ? w.marks.slice(eq + 1) : 'u'.repeat(v.length);
+    if (marksV[0] === 'u' && v[0] === '~') {
+      const m = v.match(/^~([+-]?)(?=\/|$)/);
+      if (!m) return { value: null, why: 'a value that begins with `~user`, a directory the shell looks up and I do not read' };
+      const home = valueOf(m[1] === '+' ? 'PWD' : m[1] === '-' ? 'OLDPWD' : 'HOME');
+      if (home == null) return { value: null, why: `a value that begins with \`~${m[1]}\`, which I cannot read here` };
+      return { value: home + v.slice(m[0].length), why: null };
+    }
+    for (const m of v.matchAll(/:~/g)) if (marksV[m.index + 1] === 'u') return { value: null, why: 'a value with a tilde after a colon, which bash, zsh and dash expand' };
+    return { value: v, why: null };
+  };
+  // the readable form: a word of a segment holding assignment words alone (commandOf gave null), resolved by the caller
+  const recordPlainWord = (w, seg, idx, seq) => {
+    const m = w.raw.match(/^([A-Za-z_][A-Za-z0-9_]*)(\+?=)/);
+    if (!m) return;   // a reserved word (`{`, `}`, `then`, `!`)
+    const name = m[1];
+    const group = frames.length && frames[frames.length - 1].kind === 'group' ? frames[frames.length - 1] : null;
+    if (group) group.names.add(name);   // the closing brace of a piped or backgrounded group taints them (a subshell)
+    if (EXPANDED_NAMES.includes(name)) return;   // HOME, PWD and OLDPWD: the mention made them unreadable for the whole command (rule (a)); the guard's own home and directory model are not overridden
+    if (m[2] === '+=') { taint(name, wroteThrough(name, '`+=`, an append', w.raw)); return; }
+    if (!seq.ok) { taint(name, wroteThrough(name, seq.why, w.raw)); return; }
+    const { value, why } = plainValue(w, m[0].length - 1);
+    if (value == null) { taint(name, wroteThrough(name, why, w.raw)); return; }
+    if (vars.has(name) && vars.get(name) === null) return;   // a write the rule did not follow touched it earlier: it stays unreadable
+    vars.set(name, value);
+  };
+  const rawHeadIndex = rawHeadIndexOf;
+  const rawHeadOf = (words) => { const k = rawHeadIndex(words); return k < 0 ? null : words[k].text; };
+  // the names a nameref points at: `unset` does not free them (bash writes x through r after `declare -n r=x; unset x`, measured)
+  const refTargets = ctx.refTargets || new Set();
+  // A word's writes by shape, on the word as resolved (`w`, so `export $h=v` with h readable taints the name h holds) and as
+  // spelled (`pre`, so a value's text is not read as a mention): (i) an lvalue shape at any position, the head included
+  // (`x[0]=v` is a command to the lexer), with a name the shell fills in before the `=` poisoning every name; (ii) the bare
+  // identifier as a whole word or a token of a word that is not an option, in the command's own text (`read x`, `printf -v
+  // x`, zsh's `print -v x`, `declare -n r=x`'s target, `let "x = 5"`); (iii) an assignment inside a `${x=..}`, `${x:=..}`
+  // or zsh `${x::=..}` expansion.
+  const taintWord = (w, pre, k, headIdx, cmd) => {
+    if (!w || !w.text) return;
+    const T = w.text;
+    const M = w.marks || 'u'.repeat(T.length);
+    const headName = cmd && cmd.name ? cmd.name : cmd && cmd.wrapped ? cmd.wrappers[cmd.wrappers.length - 1] : (headIdx >= 0 ? seg0(headIdx) : null);
+    // a name the shell fills in before an `=` (`export $(echo x)=v`, `declare $h=v` with h opaque; M1's construct, C4): the
+    // name part came from an expansion (mark 'x', or the NUL a substitution stands as), so it may be any name
+    const eq = T.indexOf('=');
+    const namePart = eq > 0 ? T.slice(0, eq) : '';
+    const insideBraces = (namePart.match(/\{/g) || []).length > (namePart.match(/\}/g) || []).length;   // the `=` of a `${x:=..}` sits inside the expansion: rule (iii) below reads it
+    if (namePart && !insideBraces && !/[\s/]/.test(namePart) && (namePart.includes('\0') || /x/.test(M.slice(0, eq)))) { poison(`the command's \`${headName || 'command'}\` takes a variable name the shell fills in when it runs (${w.raw}), and a name I cannot read may be any name`); return; }
+    const m = T.match(/^([A-Za-z_][A-Za-z0-9_]*)(\+?=|\[)/);
+    if (m) {
+      const where = m[2] === '[' ? 'a subscript' : headIdx > k ? `a prefix assignment on \`${headName}\`, which the shell keeps for that command (dash and bash's POSIX mode keep it for a special builtin)` : cmd && cmd.wrapped && !cmd.name ? `an argument of the wrapper \`${headName}\`, which the shell hands to it rather than assigning` : `an assignment-shaped word of \`${headName}\``;
+      taint(m[1], wroteThrough(m[1], where, w.raw));
+    }
+    if (k !== headIdx && !(/^[-+]/.test(pre.text) && pre.text.length > 1)) for (const t of identifierTokens(pre.text, pre.marks)) if (!m || t !== m[1]) taint(t, wroteThrough(t, `a word of \`${headName || pre.text}\` that names it`, pre.raw));
+    for (const e of pre.text.matchAll(/\$\{([A-Za-z_][A-Za-z0-9_]*)(?:\[[^\]]*\])?:*=/g)) if ((pre.marks || '')[e.index] === 'x') taint(e[1], wroteThrough(e[1], 'a `${name=..}`, `${name:=..}` or `${name::=..}` expansion, which assigns it', pre.raw));
+  };
+  let seg0 = () => null;   // the text of the segment's word at an index, bound per segment by recordSegment
+  // an arithmetic body (`(( x = 5 ))`, `$(( x++ ))`, `let`'s cousin `for (( x=0; ... ))`) may assign any name in it
+  const taintArith = (seg) => { for (const a of seg.arith) for (const t of identifierTokens(a, null)) taint(t, wroteThrough(t, 'an arithmetic body, which may assign it', `(( ${a.trim()} ))`)); };
+  // every other segment (a command, a wrapper, a declaration, a loop head): each word a write the rule does not follow
+  const recordSegment = (seg, idx, cmd, preWords) => {
+    const seq = plainSequence(seg, idx);
     const head = seg.words.length ? seg.words[0].text : '';
-    if ((head === 'for' || head === 'select') && seg.words[1] && seg.words[1].literal) { vars.set(seg.words[1].text, null); return; }
-    if (!cmd) {   // an assignment-only segment
-      for (const w of seg.words) { const n = nameOf(w); if (n && isAssignmentWord(w)) set(n, w); }
+    const headIdx = rawHeadIndex(seg.words);
+    seg0 = (i) => (seg.words[i] ? seg.words[i].text : null);
+    // (1) a for or select loop variable
+    if ((head === 'for' || head === 'select') && seg.words[1] && seg.words[1].literal) taint(seg.words[1].text, wroteThrough(seg.words[1].text, `a \`${head}\` loop variable`, seg.words[1].raw));
+    // (2) a construct that may write ANY name: an eval, a source, xargs, a call of a function the command defines by any spelling
+    // (the head as spelled, before a wrapper peel: `env() { x=..; }; env true` runs the function, C6b)
+    const rawHead = rawHeadOf(seg.words);
+    if (cmd && (VAR_POISONERS.has(cmd.name) || definedFunctions.has(cmd.name) || (rawHead != null && definedFunctions.has(rawHead)))) {
+      poison(VAR_POISONERS.has(cmd.name) ? `an earlier \`${cmd.name}\` may assign any name` : `an earlier call of \`${definedFunctions.has(cmd.name) ? cmd.name : rawHead}\`, a function the command defines, may assign any name`);
       return;
     }
-    if (VAR_POISONERS.has(cmd.name) || definedFunctions.has(cmd.name)) { varsPoisoned = true; return; }
-    if (VAR_ASSIGNERS.has(cmd.name) || cmd.name === 'local') {
-      const nameref = cmd.args.some((w) => w.literal && /^-[A-Za-z]*n/.test(w.text));
+    // (2b) M1's own detector, per segment: a name operand the shell fills in on a reader or declaration (`read $h`, `printf -v
+    // "$h"`, `declare -n r=$h`) may name any variable, so every name is unreadable from here (rule (a) already holds HOME, PWD
+    // and OLDPWD for the whole command)
+    const assembled = assembledNameOperand([seg]);
+    if (assembled) poison(`the command's \`${assembled.verb}\` takes a variable name the shell fills in when it runs (${assembled.raw}), and a name I cannot read may be any name`);
+    // (3) a declaration: inert flags and a plain value keep the plain write; any other flag, a nameref, `local`, a name with
+    // no value or a subscript, or a value the guard does not read, taints the name; a nameref's target too (`declare -n r=x`
+    // writes x through r), or every name when the target is one the shell fills in
+    const handled = new Set();
+    if (cmd && (VAR_ASSIGNERS.has(cmd.name) || cmd.name === 'local')) {
+      const flags = cmd.args.filter((w) => /^[-+]/.test(w.text) && w.text.length > 1);
+      const opaqueFlag = flags.find((w) => !w.literal);
+      if (opaqueFlag) poison(`the command's \`${cmd.name}\` carries an option the shell fills in (${opaqueFlag.raw}), which may change what it does to any of its names`);
+      const bad = flags.filter((w) => w.text !== '--' && (w.text[0] === '+' || w.text.startsWith('--') || ![...w.text.slice(1)].every((c) => INERT_DECLARATION_FLAGS.has(c))));
+      const nameref = flags.some((w) => w.literal && /^-[A-Za-z]*n/.test(w.text));
+      // bash and dash reject `local` outside a function and zsh rejects `local -n` (measured 2026-09-19), so a top-level
+      // `local -n r=x` writes nothing through r; r itself is tainted below, as every `local` name is (zsh performs a plain
+      // `local x=v` at the top level, bash and dash do not)
+      const localTop = cmd.name === 'local' && frames.every((f) => f.kind === 'group');
       for (const w of cmd.args) {
-        if (/^[-+]/.test(w.text) && w.text.length > 1) continue;
-        const n = nameOf(w);
-        if (!n) continue;
-        if (nameref || cmd.name === 'local' || !w.literal) vars.set(n, null);
-        else set(n, w);
+        if (/^[-+]/.test(w.text) && w.text.length > 1) { handled.add(w); continue; }
+        const m = w.text.match(/^([A-Za-z_][A-Za-z0-9_]*)(\+?=|\[|$)/);
+        if (!m) continue;   // a value operand (zsh's `typeset -L 17`), or a word taintWord reads
+        if (/x/.test((w.marks || '').slice(0, m[1].length)) || w.text.slice(0, m[1].length).includes('\0')) continue;   // a name the shell fills in: taintWord poisons
+        handled.add(w);
+        const name = m[1];
+        if (nameref && m[2] === '=' && !localTop) {
+          const target = w.text.slice(m[0].length);
+          if (w.literal && IDENTIFIER.test(target)) { refTargets.add(target); taint(target, wroteThrough(target, `a nameref (\`${cmd.name} -n\`: a write to \`${name}\` writes \`${target}\`)`, w.raw)); }
+          else poison(`the command's \`${cmd.name} -n\` makes \`${name}\` a reference to a name the shell fills in (${w.raw}), which may be any name`);
+        }
+        if (EXPANDED_NAMES.includes(name)) continue;   // HOME, PWD, OLDPWD: unreadable for the whole command by the mention (rule (a))
+        if (bad.length) { taint(name, wroteThrough(name, `a \`${cmd.name}\` flag that can change the value or what the name is (${bad.map((f) => f.text).join(' ')})`, w.raw)); continue; }
+        if (nameref) { taint(name, wroteThrough(name, `a nameref (\`${cmd.name} -n\`)`, w.raw)); continue; }
+        if (cmd.name === 'local') { taint(name, wroteThrough(name, 'a `local`, which zsh performs at the top level and bash and dash reject', w.raw)); continue; }
+        if (m[2] === '[') { taint(name, wroteThrough(name, 'a subscript', w.raw)); continue; }
+        if (m[2] === '+=') { taint(name, wroteThrough(name, '`+=`, an append', w.raw)); continue; }
+        if (m[2] === '') { taint(name, wroteThrough(name, `a \`${cmd.name}\` of the name alone, which may change how it is read`, w.raw)); continue; }
+        if (!seq.ok) { taint(name, wroteThrough(name, seq.why, w.raw)); continue; }
+        const { value, why } = plainValue(w, m[0].length - 1);
+        if (value == null) { taint(name, wroteThrough(name, why, w.raw)); continue; }
+        if (vars.has(name) && vars.get(name) === null) continue;
+        vars.set(name, value);
       }
-      return;
     }
-    if (cmd.name === 'read' || cmd.name === 'mapfile' || cmd.name === 'readarray' || cmd.name === 'unset' || cmd.name === 'getopts') {
-      for (const w of cmd.args) if (!(w.text.startsWith('-') && w.text.length > 1) && /^[A-Za-z_][A-Za-z0-9_]*$/.test(w.text)) vars.set(w.text, null);
-      return;
+    // (3b) a plain `unset NAME` (or `unset -v NAME`) in plain sequence RESETS the name: bash, zsh and dash drop its value and
+    // every attribute (`declare -l x; unset x; x=../docs/REPORT.MD` gives the spelled value, measured), so a plain write after it
+    // is the readable form again; the table stays poisoned if it was, a name a nameref points at stays unreadable (bash still
+    // writes it through the reference after the unset), and any other `unset` flag taints its operands
+    if (cmd && cmd.name === 'unset' && seq.ok) {
+      const flags = cmd.args.filter((w) => /^-/.test(w.text) && w.text.length > 1);
+      const plainUnset = flags.every((w) => w.literal && (w.text === '-v' || w.text === '--'));
+      for (const w of cmd.args) {
+        if (/^-/.test(w.text) && w.text.length > 1) { handled.add(w); continue; }
+        if (!w.literal || !IDENTIFIER.test(w.text) || EXPANDED_NAMES.includes(w.text)) continue;   // an assembled or subscripted name: taintWord reads it
+        handled.add(w);
+        if (plainUnset && !refTargets.has(w.text)) { vars.delete(w.text); unreadableWhy.delete(w.text); }
+        else taint(w.text, wroteThrough(w.text, `an \`unset\`${refTargets.has(w.text) ? ' of a name a nameref points at' : ` with ${flags.map((f) => f.text).join(' ')}`}`, w.raw));
+      }
     }
-    if (cmd.name === 'printf') {
+    // (4) every other word, the head included, by shape (taintWord)
+    for (let k = 0; k < seg.words.length; k++) {
+      if (handled.has(seg.words[k])) continue;
+      taintWord(seg.words[k], preWords[k] || seg.words[k], k, headIdx, cmd);
+    }
+    // (5) an arithmetic body may assign any name in it
+    taintArith(seg);
+    // (6) the readers' name operands by RESOLVED text (a glued `-vNAME` included), beside the shape rule: the resolved text is
+    // what the shell assigns (`read $h` with h set to x reads into x)
+    if (cmd && (cmd.name === 'read' || cmd.name === 'mapfile' || cmd.name === 'readarray' || (cmd.name === 'unset' && !seq.ok) || cmd.name === 'getopts')) {
+      for (const w of cmd.args) if (!(w.text.startsWith('-') && w.text.length > 1)) { const n = w.text.match(/^[A-Za-z_][A-Za-z0-9_]*/); if (n) taint(n[0], wroteThrough(n[0], `a name operand of \`${cmd.name}\``, w.raw)); }
+    }
+    if (cmd && cmd.name === 'printf') {
       const v = cmd.args.findIndex((w) => /^-[A-Za-z]*v/.test(w.text));
-      if (v >= 0) { const t = cmd.args[v].text; const nm = t.length > t.indexOf('v') + 1 ? t.slice(t.indexOf('v') + 1) : (cmd.args[v + 1] && cmd.args[v + 1].text); if (nm) vars.set(nm, null); }
+      if (v >= 0) {
+        const t = cmd.args[v].text;
+        const nm = t.length > t.indexOf('v') + 1 ? t.slice(t.indexOf('v') + 1) : (cmd.args[v + 1] && cmd.args[v + 1].text);
+        const n = nm && nm.match(/^[A-Za-z_][A-Za-z0-9_]*/);
+        if (n) taint(n[0], wroteThrough(n[0], 'a `printf -v`', cmd.args[v].raw));
+      }
     }
   };
-  const HOME_UNKNOWN = `${homeWhy ? homeWhy.text : 'the command names HOME outside an expansion'}, so it may reassign HOME before this runs and \`~\` and \`$HOME\` name a directory I cannot read`;
+  const homeUnknownText = () => `${(homeWhyNow() || {}).text || 'the command names HOME outside an expansion'}, so \`~\` and \`$HOME\` name a directory I cannot read here`;
   // Class H (2026-09-19): a symlink an `ln -s` with literal operands and an untouched name makes before a later word,
   // resolved as the kernel will resolve it once it exists. `links` maps an absolute link path to the absolute path it
   // points at; foldSegments (in resolveLiteral) follows it as it folds a later literal target, so a `..` after the link
@@ -2454,7 +2716,7 @@ function extract(command, ctx) {
     if (!w) return;   // a word that is only an expansion (`"$(mktemp)"`) has no text after quote removal, and is still a target
     // class D: the command reassigned HOME, so a word that expanded it (marked 'h') is unreadable. Recorded by its
     // raw spelling with no marks, so the own-project step does not read the guard's home value and the cwd rule decides.
-    if (homeAssigned && w.marks && w.marks.includes('h')) { cannotRead(word(w.raw, false, w.raw), how, { kind: 'homeAssigned', text: homeWhy ? homeWhy.text : 'the command names HOME outside an expansion' }); return; }
+    if (homeUnreadableNow() && w.marks && w.marks.includes('h')) { cannotRead(word(w.raw, false, w.raw), how, { kind: 'homeAssigned', text: (homeWhyNow() || {}).text || 'the command names HOME outside an expansion' }); return; }
     if (w.glob) {
       // every match, as the shell names each (a redirection onto several: zsh's multios writes each, bash
       // writes none and says so, so the over-count costs a command bash refuses anyway); no match, the cwd
@@ -2500,7 +2762,10 @@ function extract(command, ctx) {
     // a script handed to a named shell sees the environment alone, so it inherits none of them (fail closed: a name
     // this command set but did not export is empty there, and one it exported may be read by a script the guard does
     // not follow)
-    const sub = extract(text, { dir, unknownDir, unknownWhy, shell: sh, depth: depth + 1, homeAssigned, homeWhy, unreadableNames, links, cdFunctions, mutated, keywordMode, vars: fresh ? new Map() : new Map(vars), oldDir, varsPoisoned: fresh ? false : varsPoisoned, definedFunctions });
+    const sub = extract(text, {
+      dir, unknownDir, unknownWhy, shell: sh, depth: depth + 1, homeAssigned: homeUnreadableNow(), homeWhy: homeWhyNow(), unreadableNames, links, cdFunctions, mutated, keywordMode,
+      vars: fresh ? new Map() : new Map(vars), unreadableWhy: fresh ? new Map() : new Map(unreadableWhy), refTargets: fresh ? new Set() : new Set(refTargets), oldDir, varsPoisoned: fresh ? false : varsPoisoned, poisonWhy: fresh ? null : poisonWhy, definedFunctions,
+    });
     targets.push(...sub.targets);
     unresolved.push(...sub.unresolved);
     if (sub.opaque) sawOpaqueCommand = true;
@@ -2575,9 +2840,47 @@ function extract(command, ctx) {
       continue;
     }
     if (seg.paren === ')') { closeSubshell(); continue; }
+    // `function NAME {` and `function NAME` then `{` (bash, zsh; the parentheses optional): a definition, not a run (C6a: it was
+    // read as a command named `function`, so the body's assignment was read as the shell's own and the call poisoned nothing).
+    // The frame is the one `name() {` gets, its braces counted by `braces` below; `function NAME () {` takes the paren path above.
+    if (seg.words.length >= 2 && seg.words[0].text === 'function' && seg.words[0].marks && seg.words[0].marks[0] === 'u' && seg.words[1].literal && seg.op !== '(' && !frames.some((f) => f.kind === 'function')) {
+      definedFunctions.add(seg.words[1].text);
+      frames.push({ kind: 'function', name: seg.words[1].text, bodyMoved: false, dir, unknownDir, unknownWhy, depth: 0 });
+      seg.words = seg.words.slice(2);
+      if (!seg.words.length) continue;   // the `{` opens the next segment, which `braces` counts
+    }
     braces(seg);
+    // A `{ }` group at the top level (C5b): a frame the readability rule looks through (a plain group runs in this shell) until
+    // its closing brace is piped or backgrounded, when the group ran in a subshell: the names it assigned are tainted and the
+    // directory it moved to restored (`{ cd docs; } | cat; cp base/report.md docs/report.md` was judged from docs/ while bash
+    // wrote the tracked file from the cwd, found with the sixth pass's fix).
+    if (frames.every((f) => f.kind === 'group') && seg.words.length && seg.words[0].text === '{' && seg.words[0].marks && seg.words[0].marks[0] === 'u') {
+      frames.push({ kind: 'group', names: new Set(), dir, unknownDir, unknownWhy, oldDir });
+    } else if (frames.length && frames[frames.length - 1].kind === 'group' && seg.words.length && seg.words[0].text === '}' && seg.words[0].marks && seg.words[0].marks[0] === 'u') {
+      const g = frames.pop();
+      if (seg.op === '|' || seg.op === '&') {
+        const how = seg.op === '|' ? 'a `{ }` group that is piped, which the shells run in a subshell' : 'a `{ }` group that is backgrounded, which the shells run in a subshell';
+        for (const n of g.names) taint(n, wroteThrough(n, how, '{ ... }'));
+        ({ dir, unknownDir, unknownWhy, oldDir } = g);
+      }
+    }
     // B2: the expansions the guard can read are resolved before the segment's words and targets are judged
     for (const r of seg.redirects) r.target = resolveWord(r.target);
+    if (commandOf(seg.words) === null) {
+      // assignment words alone, this shell's own when in plain sequence (the readability rule's one readable form): the frame of
+      // an if, while or until head opens first, then each word is resolved with the names the words before it set and recorded,
+      // left to right as the shells perform them (C5d: `x=../docs/report.md y=$x` gives y the NEW x); the redirections were
+      // resolved above, before any of them (bash expands a redirection before it assigns)
+      const head0 = seg.words.length ? seg.words[0].text : '';
+      if (head0 === 'if' || head0 === 'while' || head0 === 'until') frames.push({ kind: head0, moved: false });
+      const seq = plainSequence(seg, idx);
+      seg.words = seg.words.map((w) => { const r = resolveWord(w); recordPlainWord(r, seg, idx, seq); return r; });
+      for (const r of seg.redirects) if (WRITE_REDIRECTS.has(r.op)) add(r.target, `${r.op} redirection`);
+      for (const inner of seg.subs) recurse(inner);
+      taintArith(seg);   // a bare `(( x = 5 ))` is a segment with no words: its body may assign any name in it
+      continue;
+    }
+    const preWords = seg.words;   // as spelled: the readability rule reads a mention in the command's own text, not in a resolved value
     seg.words = seg.words.map(resolveWord);
     for (const r of seg.redirects) if (WRITE_REDIRECTS.has(r.op)) add(r.target, `${r.op} redirection`);   // a glob: every match (add)
     for (const inner of seg.subs) recurse(inner);
@@ -2585,7 +2888,7 @@ function extract(command, ctx) {
     if (head in CLOSERS) closeCompound(CLOSERS[head]);
     else if (head === 'if' || head === 'while' || head === 'until' || head === 'for' || head === 'case') frames.push({ kind: head, moved: false });
     const cmd = commandOf(seg.words);
-    if (!cmd) { recordAssignments(seg, idx, null); continue; }
+    if (!cmd) { recordSegment(seg, idx, null, preWords); continue; }
     if (cmd.unknown) {
       // rule (b) (the third pass, 2026-09-19): a wrapper option its table does not parse in full. The option, its `=value`
       // and every later word are recorded as targets the hook cannot read, so the own-project step judges each literal
@@ -2637,7 +2940,9 @@ function extract(command, ctx) {
     for (const args of variants) {
     // the walk-around lens second pass (family 6): a call to a function whose body moved the shell moves the cwd, which the guard does not
     // follow into the call, so the directory is unknown from here (the body was modelled as not moving the shell)
+    const calledAsSpelled = rawHeadOf(seg.words);   // the head before a wrapper peel: a function named like a wrapper is called by that name (C6b)
     if (cdFunctions.has(name)) setUnknown(`an earlier call of the function \`${name}\` may change the directory, which I do not follow`);
+    else if (calledAsSpelled != null && cdFunctions.has(calledAsSpelled)) setUnknown(`an earlier call of the function \`${calledAsSpelled}\` may change the directory, which I do not follow`);
     // a file a wrapper itself writes (`time -o FILE`): judged in the shell's cwd, and again below once the wrappers'
     // chdirs are entered, since the guard does not order one wrapper's option against another's chdir (over-counting is
     // the refuse direction)
@@ -2652,7 +2957,7 @@ function extract(command, ctx) {
     const chdirSaved = cmd.chdirs.length ? { dir, unknownDir, unknownWhy } : null;
     for (const c of cmd.chdirs) {
       if (!c.word) { setUnknown(`an earlier \`${c.flag}\` names no directory`); continue; }
-      if (homeWord(c.word)) { setUnknown(`an earlier \`${c.flag} ${c.word.raw}\` goes through HOME, and ${HOME_UNKNOWN}`); continue; }
+      if (homeWord(c.word)) { setUnknown(`an earlier \`${c.flag} ${c.word.raw}\` goes through HOME, and ${homeUnknownText()}`); continue; }
       if (!c.word.literal) { setUnknown(`an earlier \`${c.flag}\` names ${c.word.raw}, a directory the shell fills in when the command runs`); continue; }
       const r = resolveLiteral(c.word.text, unknownDir ? null : dir);
       if (r == null) setUnknown(`an earlier \`${c.flag}\` follows a directory I could not read`);
@@ -2689,9 +2994,9 @@ function extract(command, ctx) {
           a = m && m.length === 1 ? m[0] : word(a.text, false, a.raw, { marks: a.marks });
         }
         // a bare `cd`, or a `cd ~/x`, goes to HOME: a directory the guard cannot read once the command names HOME (rule (a))
-        if (!a) { if (block) moveUnknown(block); else if (homeAssigned) moveUnknown(`an earlier bare \`${name}\` goes to HOME, and ${HOME_UNKNOWN}`); else moveTo(os.homedir()); }
+        if (!a) { if (block) moveUnknown(block); else if (homeUnreadableNow()) moveUnknown(`an earlier bare \`${name}\` goes to HOME, and ${homeUnknownText()}`); else moveTo(os.homedir()); }
         else if (a.text === '-') moveUnknown(`an earlier \`${name} -\` returns to a directory this command did not set`);
-        else if (homeWord(a)) moveUnknown(`an earlier \`${name} ${a.raw}\` goes through HOME, and ${HOME_UNKNOWN}`);
+        else if (homeWord(a)) moveUnknown(`an earlier \`${name} ${a.raw}\` goes through HOME, and ${homeUnknownText()}`);
         else if (!a.literal) moveUnknown(`an earlier \`${name}\` names ${a.raw}, a directory the shell fills in when the command runs`);
         else {
           const to = resolveAgainst(a.text, unknownDir ? null : dir);
@@ -2838,7 +3143,7 @@ function extract(command, ctx) {
     // the reading of LATER segments only, never this command's own write
     recordMutations(name, args, unknownDir ? null : dir);
     }
-    recordAssignments(seg, idx, cmd);   // B2: this segment's assignments hold for the segments after it
+    recordSegment(seg, idx, cmd, preWords);   // B2 and the readability rule: this segment's writes hold for the segments after it
   }
   activeLinks = prevLinks;
   // `links` (class H) are returned so evaluate can follow them while it places the targets the hook could not read (M3):

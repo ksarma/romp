@@ -3841,6 +3841,37 @@ document stands on its own, each with the reasoning it was given.
     wrapper option, an `env -S` string and `xargs` stays (an external command cannot reassign the calling shell's
     names; both sides are observable once ruled: from a tracked cwd the refusal's class, from a cwd in no project the
     verdict). No verdict changes: the corpus's 285 entries keep theirs.
+    The seventh pass (2026-09-19; the sixth pass's attacker on 86c0643ec, whose report the workflow that ran it read as no
+    finding when the agent died on 529s, so the pin addendum's commit message and the PR body said the attacker filed none)
+    found 77 in-model live overwrites in 13 spelling classes, each a value the command spells that the resolution half
+    resolved to a string the shell does not produce, judged the wrong path and allowed while the shell wrote a tracked file
+    (0 structural). They are closed as one rule, THE READABILITY RULE, stated once at the resolution half (the comment at
+    `RESOLVED_NAME`) and on the four surfaces' contract paragraph, and implemented as one predicate (`plainSequence`,
+    `plainValue`, `recordPlainWord`, `recordSegment`, `taintWord`): a name is readable only when every write to it in the
+    command is a plain top-level `NAME=plain-string` the shell performs as spelled, and any other construct that can write it
+    makes it unreadable from that construct on (a plain write after it does not restore it), keyed on the construct's shape
+    (an lvalue-shaped word in any position, the bare identifier as a whole word or a token of a word that is not an option,
+    an assignment inside a `${x=..}` or `${x:=..}` expansion, a name in an arithmetic body, `identifierTokens`) and never on a
+    list of commands, the reviewer's framing being B2's own unknown-defaults-to-unreadable doctrine, already applied to a
+    `read` and a loop variable, applied to assignment. The classes: a tilde opening an assignment value (`plainValue`: `~/`
+    and `~` resolve through HOME, `~+` and `~-` through PWD and OLDPWD, a `~user` and a tilde after a `:` leave the name
+    unreadable); a declaration flag that transforms the value (`INERT_DECLARATION_FLAGS`: `-g`, `-x`, `-r` and `--` alone
+    are inert); a nameref (the target tainted, `refTargets`, or every name when the target is one the shell fills in); an
+    assembled name operand (the resolved name tainted when it resolves, every name when it does not); scoping (a pipeline's
+    tail, a `{ }` group whose closing brace is piped or backgrounded, which also restores the directory, a wrapper's
+    argument, `commandOf` returning the assignment words as a nameless command's arguments, an assignment-only segment's
+    words read left to right); functions (`function NAME {` is a definition, and a call by the head as spelled, a wrapper's
+    name included, poisons every name); a subscript. Found with the fix, the same rule's unlisted spellings: an eval that
+    assembles `HOME=` then a `~` write (the poison covers HOME, PWD and OLDPWD, `homeUnreadableNow`), zsh's `print -v x`
+    and `${x::=..}`, and a piped `{ cd docs; }` group whose cd was followed. A plain `unset NAME` in plain sequence resets
+    the name (the shells drop its value and attributes, measured), so a plain write after it is readable again. From a
+    tracked cwd every one of the attacker's 62 rows there refuses, by name where the value resolves and as not literal with
+    the construct named otherwise; from a cwd in no project the 15 rows the guard resolved wrongly split into 5 refused by
+    name and 10 the ruled residual (an opaque expansion after a literal head outside every project, allowed and landing,
+    the boundary B2 states). The cost, measured against the corpus (285 entries, no verdict changes) and the dollar matrix
+    and stated in the PR body: a `~/` value resolves through HOME at no cost; `declare -i x=5` (and `-a`, `-A`) then `$x`,
+    `let x=5` then `$x`, a pipeline-tail assignment (which zsh keeps) and a piped plain group then `$x` each refuse from a
+    tracked cwd where the shell's value was known.
     Without ROMP_SID it exits 0 before reading stdin (decision 24). Cost: about 60 ms
     per Bash call when no target needs the link closure (a read, a literal target outside any project, an explicit
     hit on the project's tracked list, an empty list); a write to a file inside a tracking project that the list
