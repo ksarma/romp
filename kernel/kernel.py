@@ -493,10 +493,12 @@ _GC_HOOK_SAID = [False]   # whether a failure inside the gc.callbacks hook has b
 #                           rest counted only, since the hook runs at every collection and a line per failure would be the noise
 
 
-# The collector's third threshold, raised once at boot (_raise_gc_gen2_threshold, 2026-09-19). CPython runs a FULL
-# collection at a generation-1 trigger only when counts[2] exceeds thresholds[2] AND the objects promoted since the last
-# full collection exceed a quarter of the long-lived total; counts[2] rises by one per generation-1 collection and resets
-# at a full one. A production kernel at 6.8 h up read counts [188, 5, 175] against thresholds [700, 10, 10]: at 175
+# The collector's third threshold, raised once at boot (_raise_gc_gen2_threshold, 2026-09-19). CPython decides at each
+# young-generation trigger (thresholds[0] net allocations) which generation to collect, and runs a FULL collection only
+# when counts[2] exceeds thresholds[2] AND the objects promoted since the last full collection exceed a quarter of the
+# long-lived total; counts[2] rises by one per generation-1 collection and resets at a full one, so a full collection
+# fires at the first young trigger after the generation-1 collection that lifts counts[2] over thresholds[2].
+# A production kernel at 6.8 h up read counts [188, 5, 175] against thresholds [700, 10, 10]: at 175
 # against 10 the count gate was permanently open and the quarter rule alone timed full collections, 701 of them in 6.8 h
 # (103 an hour, one every 35 s, mean 2.97 s, max 5.70 s, 8.5% of a core, every pause holding the interpreter lock so
 # every page and request stalled with it). The default below is the measured generation-1 rate (136,738 in 24,480 s,

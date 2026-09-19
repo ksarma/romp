@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """The collector's third threshold, raised once at boot (_raise_gc_gen2_threshold, 2026-09-19).
 
-CPython runs a FULL collection at a generation-1 trigger only when counts[2] exceeds thresholds[2] AND the objects
-promoted since the last full collection exceed a quarter of the long-lived total. A production kernel at 6.8 h up read
+CPython decides at each young-generation trigger which generation to collect and runs a FULL collection only when
+counts[2] exceeds thresholds[2] AND the objects promoted since the last full collection exceed a quarter of the
+long-lived total (counts[2] rises by one per generation-1 collection, so a full one fires at the first young trigger
+after the generation-1 collection that lifts it over thresholds[2]). A production kernel at 6.8 h up read
 counts [188, 5, 175] against thresholds [700, 10, 10]: at 175 against 10 the count gate was permanently open, so the
 quarter rule alone timed full collections, 701 in 6.8 h (103 an hour, mean 2.97 s, max 5.70 s, 8.5% of a core), each
 holding the interpreter lock so every page and request stalled with it. The step reads thresholds 0 and 1 as found and
