@@ -7,7 +7,10 @@
 // button arm with "1 picture from another host is not loaded." and the two word buttons; Escape and a second press disarm
 // and leave the card up; "Print without them" leaves the placeholder and prints once the held picture lands; "Print with
 // them" restores the placeholder (the host's request appears) and prints only after that picture settled; window.print,
-// stubbed on the page to record the call, fires only with every <img> complete. (2) Ctrl+P with a file open runs the
+// stubbed on the page to record the call, fires only with every <img> complete; the wait's line carries the viewer's loader
+// after its words (the swirl, the wordmark and the three dots, inline on the words' row at the row's size, every part
+// animating, hidden from the status's announcement: the loading-state rule; the first build showed the words alone).
+// (2) Ctrl+P with a file open runs the
 // flow and the browser's raw print is prevented (a window keydown listener reads defaultPrevented after the viewer's
 // capture-phase listener); with no file open, or with a text field focused, the key is untouched and nothing prints. (3)
 // a note with no placeholder and its pictures complete prints on one click, in the click's own task, with no line shown;
@@ -67,6 +70,25 @@ const imgFacts = (page: any): Promise<{ total: number; incomplete: number; gates
   return { total: imgs.length, incomplete: imgs.filter((i) => !i.complete).length, gates: document.querySelectorAll('[data-act="fv-load"]').length };
 });
 const printsReach = (page: any, n: number, timeout = 10000): Promise<unknown> => page.waitForFunction((k: number) => (window as any).__prints.length >= k, n, { timeout });
+/** The line's height on screen, for the one-row check below. */
+const lineHeight = (page: any): Promise<number> => page.evaluate(() => document.getElementById("fileview-print-line")!.getBoundingClientRect().height);
+type Loader = { present: boolean; after?: boolean; hidden?: string | null; parts?: string[]; wordmark?: string | null; swirl?: boolean; display?: string; padding?: string; fontSize?: string; rowFontSize?: string; running?: number[]; rowHeight?: number };
+/** The wait's loader as the line holds it: after the words (the line's first node stays the text, so the words above read as
+ *  before), hidden from the status's announcement, the viewer's markup (the swirl, the wordmark, three dots), an inline flex
+ *  box on the words' row with no padding of its own at the row's font size, every part's animation running, and the row's
+ *  height (the loader's own rule would add 60px of padding and a row of its own). */
+const loaderFacts = (page: any): Promise<Loader> => page.evaluate(() => {
+  const line = document.getElementById("fileview-print-line");
+  const load = line ? line.querySelector(".fileview-load") as HTMLElement | null : null;
+  if (!line || !load) return { present: false };
+  const cs = getComputedStyle(load);
+  return { present: true, after: !!line.firstChild && line.firstChild.nodeType === 3 && line.lastChild === load, hidden: load.getAttribute("aria-hidden"),
+    parts: Array.from(load.children).map((c) => c.tagName), wordmark: (load.querySelector("span") as HTMLElement | null)?.textContent ?? null,
+    swirl: ((load.querySelector("img") as HTMLImageElement | null)?.getAttribute("src") || "") === "/media/romp-swirl-glyph.svg",
+    display: cs.display, padding: cs.padding, fontSize: cs.fontSize, rowFontSize: getComputedStyle(line).fontSize,
+    running: Array.from(load.querySelectorAll("img, .fileview-dot")).map((el) => (el as HTMLElement).getAnimations().filter((a) => a.playState === "running").length),
+    rowHeight: line.getBoundingClientRect().height };
+});
 
 type Scene = { page: any; errors: string[]; requests: string[]; release: () => Promise<void>; heldCount: () => number };
 /** The viewer over `note`: the local pictures answered from the origin's route (the held one parked in `held` until
@@ -138,11 +160,23 @@ test("case 1: a gated note. The chord arms (FAILS BEFORE: the raw print runs unp
     assert.equal((await prints(page)).length, 0);
     // without them: the placeholder stays, the wait runs over the slow picture, the print fires when it lands
     await page.click("#romp-fileview .fileview-print");
+    assert.equal((await loaderFacts(page)).present, false, "the armed line carries no loader: nothing is loading yet");
+    const armedHeight = await lineHeight(page);
     await page.click('#fileview-print-line button:has-text("Print without them")');
     b = await bar(page);
     assert.equal(b.phase, "preparing"); assert.equal(b.busy, true);
     assert.equal(b.line, "Preparing 1 picture…", "the slow picture is the one still loading");
     assert.deepEqual(b.buttons, [], "the wait's line has no buttons");
+    const load = await loaderFacts(page);
+    assert.equal(load.present, true, "the wait's line carries the viewer's loader (the loading-state rule)");
+    assert.equal(load.after, true, "after the words: the line's first node is still the text");
+    assert.equal(load.hidden, "true", "hidden from the status's announcement, which reads the words alone");
+    assert.deepEqual(load.parts, ["IMG", "SPAN", "I", "I", "I"], "the swirl, the wordmark and three dots");
+    assert.equal(load.wordmark, "romp"); assert.equal(load.swirl, true, "the swirl glyph at its media path");
+    assert.equal(load.display, "inline-flex", "inline on the words' row"); assert.equal(load.padding, "0px", "none of the loader's own 30px paddings");
+    assert.equal(load.fontSize, load.rowFontSize, "at the row's size: the loader's 0.86em does not compound under the line's");
+    assert.deepEqual(load.running, [1, 1, 1, 1], "the swirl's spin and each dot's pulse are running");
+    assert.ok(load.rowHeight! <= armedHeight + 2, "one row: the wait's line is no taller than the armed line was (" + load.rowHeight + " vs " + armedHeight + ")");
     assert.equal((await imgFacts(page)).gates, 1, "the placeholder stands: nothing fetched from the other host");
     await frames(page, 3);
     assert.equal((await prints(page)).length, 0, "no print while the picture is still loading");

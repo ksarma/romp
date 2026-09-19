@@ -5,7 +5,9 @@
 //     stays where it is), and "Print with them" loads the hosts the title names, never a host the title never named; a body
 //     with no placeholder disarms, and the next press prints. Before this the line and the title stood as the press left
 //     them while the click read the hosts from the new body, so a Reload that brought a placeholder on a new host had the
-//     click fetch from a host the person was never shown;
+//     click fetch from a host the person was never shown; and (the review's consolidation) a placeholder the person
+//     activates by hand under the armed line, by its click or by Enter on it, is counted again the same way: the line and
+//     the title follow the one just loaded, and the last one gone disarms;
 // (B) Escape while the bar is armed is left to a control that owns it: the text-size flyout (a role=group under a trigger
 //     with aria-haspopup, whose dismiss is a document listener that stopPropagation does not keep from the flow's listener
 //     on the same node) closes on one Escape with the bar still armed, from the trigger and from inside the menu; the
@@ -219,6 +221,45 @@ test("(A) a Raw pick under the armed line disarms (the rows hold no placeholder)
     assert.deepEqual(hostsAsked(s.requests), [], "no request reached the host");
     assert.deepEqual(s.errors, [], "no script error");
     await page.close();
+  });
+});
+
+test("(A) a placeholder the person activates by hand under the armed line is counted again: the same line reads the count left and the title names the host left, the clicked host asked as its click asks it; Enter on the last one disarms, and the next press prints at once", { timeout: 120000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    for (const mode of ["pane", "chat"] as Mode[]) {
+      const s = await scene(browser, mode, TWO);
+      const { page } = s;
+      await waitGates(page, 2);
+      await page.click(PRINT_BTN);
+      let b = await bar(page);
+      assert.equal(b.phase, "armed", mode + ": armed over the two placeholders"); assert.equal(b.line, "2 pictures from other hosts are not loaded.");
+      assert.deepEqual(b.titles, ["Load the pictures from " + HOST_A + " and " + HOST_B + ", then print", WITHOUT_TITLE]);
+      await markLine(page);
+      // by the mouse: the first placeholder, on A
+      await page.click('#romp-fileview [data-act="fv-load"]');
+      await waitGates(page, 1);
+      b = await bar(page);
+      assert.equal(b.phase, "armed", mode + ": still armed over the one left"); assert.equal(b.lines, 1);
+      assert.equal(b.probe, true, mode + ": the same row, its words rewritten in place");
+      assert.equal(b.line, "1 picture from another host is not loaded.", mode + ": the count follows the placeholder the click loaded (FAILS BEFORE: the count stood at 2 until a repaint)");
+      assert.deepEqual(b.titles, ["Load the pictures from " + HOST_B + ", then print", WITHOUT_TITLE], mode + ": the title names the host left alone");
+      assert.deepEqual(hostsAsked(s.requests), [HOST_A], mode + ": the clicked host was asked, as its click asks it, and no other");
+      assert.equal((await prints(page)).length, 0, mode + ": nothing printed by the click");
+      // by the keyboard: Enter on the last one, on B
+      await page.focus('#romp-fileview [data-act="fv-load"]');
+      await page.keyboard.press("Enter");
+      await waitGates(page, 0);
+      b = await bar(page);
+      assert.equal(b.phase, null, mode + ": no placeholder left: the line went"); assert.equal(b.line, null); assert.equal(b.cardUp, true, mode + ": the card stays up");
+      assert.deepEqual(hostsAsked(s.requests), [HOST_A, HOST_B].sort(), mode + ": the second host was asked by the key");
+      assert.equal((await prints(page)).length, 0, mode + ": nothing printed by the activations");
+      await page.waitForFunction(() => Array.from(document.querySelectorAll("#romp-fileview img")).every((i: any) => i.complete), null, { timeout: 10000 });
+      await page.click(PRINT_BTN);
+      const p = await prints(page);
+      assert.equal(p.length, 1, mode + ": the next press prints at once"); assert.equal(p[0].gates, 0); assert.equal(p[0].incomplete, 0);
+      assert.deepEqual(s.errors, [], mode + ": no script error");
+      await page.close();
+    }
   });
 });
 

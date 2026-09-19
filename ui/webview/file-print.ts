@@ -1,7 +1,8 @@
 // Print a file from the viewer, with its pictures (the print follow-on to plans/markdown-viewer.md's Slice 3, item 12; the
 // contract of 2026-09-19, parts P1, P2 and P6). The @media print block in the sheets prints the open file alone, black on
-// white, but nothing awaited the pictures: the browser's own Ctrl/Cmd+P printed a gated figure as its placeholder and a
-// picture still loading as the browser had it at that instant. This module is the flow in front of window.print():
+// white, but nothing awaited the pictures: the browser's own print (its menu; Ctrl/Cmd+P on a page without the dashboard's
+// command palette, whose dispatcher holds that chord there) printed a gated figure as its placeholder and a picture still
+// loading as the browser had it at that instant. This module is the flow in front of window.print():
 //   1. A press (the bar's Print glyph button, Download's shape, or Ctrl/Cmd+P while a file is open and no text field holds the keyboard)
 //      counts the gated placeholders in the body (figure-gate.ts, found by their data-act as the gate finds them: an
 //      author can type the class, never the data attribute). With any, the bar ARMS instead of printing: one line under
@@ -17,13 +18,19 @@
 //      the new count and the title with the new hosts, in place; over none the line goes, since the question it asked is
 //      moot, and the next press prints. Before this the line and the title stood as the press left them while "with
 //      them" read the hosts at the click, so a Reload that brought a placeholder on a new host had the click fetch from a
-//      host the title never named (the second review, 2026-09-19).
+//      host the title never named (the second review, 2026-09-19). A placeholder the person activates by hand under the
+//      armed line (its click, or Enter or Space on it: the viewer's own gate handlers on the body, file-view.ts loadGate)
+//      is counted again the same way, heard on the card after the body's handler ran, so the count and the title follow
+//      the one just loaded and the last one gone disarms (the review's consolidation, 2026-09-19: before this the count
+//      stood as the press left it until a repaint).
 //   2. Then the wait: every <img> in the body reaches complete (its load or its error), and a <video poster> or an svg
 //      <image> is awaited through a probe Image at the same URL (neither element reports completeness; the probe asks the
 //      browser for the URL the element itself fetched, so no other host is reached), bounded by PRINT_SETTLE_MS, 8 s,
 //      after which the print runs anyway: a picture still loading prints as the browser has it, a failed one as its
-//      label. The line reads "Preparing N pictures…" meanwhile. With no gated placeholder and every picture complete the
-//      press prints at once, in the click's own task. The wait is AIMED at the body as it stands, and re-aimed when the
+//      label. The line reads "Preparing N pictures…" meanwhile, beside the viewer's loader (the swirl, the wordmark and the
+//      three dots, .fileview-load inline in the row: ui/CLAUDE.md's loading-state rule, which puts the romp loader on every
+//      wait; the first build showed the words alone). With no gated placeholder and every picture complete the press
+//      prints at once, in the click's own task. The wait is AIMED at the body as it stands, and re-aimed when the
 //      body is repainted under it (the host's `body` report: a reload's landing, a format pick, the editor's exit; the
 //      pictures listened on were the old body's, detached by the swap) and again at the settle (a picture that entered or
 //      was re-aimed since the collection, a heal's retry of a failed figure among them, is awaited too), always under the
@@ -35,7 +42,8 @@
 // viewers call (file-view.ts openFileView and openUrlView): the button, the line, the wait, the print. It registers ONE
 // document keydown listener per open, in the capture phase, so an Escape while armed is stopped before the viewer's own
 // Escape (a bubble listener on the document, which closes the card) and the chord is prevented before the browser's raw
-// print runs; the host's close hook removes it with the viewer. Nothing else is registered. Three keys are left alone by
+// print runs; the host's close hook removes it with the viewer. Nothing else is registered on the document (the card carries
+// the placeholder listener, onGateAct, which goes with the card). Three keys are left alone by
 // that listener: an Escape that is some control's own (a key a listener ahead of this one already stopped, read through
 // the event's stop flag: the viewer's text-size flyout is dismissed by a document listener wired before this per-open one,
 // which closes the flyout and stops the key; ownsEscape: the keyboard inside a menu, a listbox or a dialog, the WAI-ARIA
@@ -368,13 +376,26 @@ export function installFilePrint(host: PrintHost): { button: HTMLButtonElement; 
     }
     notice = false;
   };
-  const showLine = (words: string): HTMLElement => {
+  /** The line, a row of the card right under the bar: `words` as its first node (the armed line's buttons and the wait's
+   *  loader follow it, so a recount can rewrite the words in place). `loading` adds the viewer's loader after the words
+   *  (the swirl, the wordmark and the three pulsing dots, file-view.ts's markup, `.fileview-load` under the sheets'
+   *  `.fileview-print-line .fileview-load` rule so it sits inline in the row; hidden from the status's announcement, which
+   *  reads the words alone). */
+  const showLine = (words: string, loading = false): HTMLElement => {
     dropLine();
     const row = doc.createElement("div");
     row.className = "fileview-err " + PRINT_LINE_CLASS;
     row.id = PRINT_LINE_ID;
     row.setAttribute("role", "status");
     row.textContent = words;
+    if (loading) {
+      const load = doc.createElement("div");
+      load.className = "fileview-load fileview-print-load";
+      load.setAttribute("aria-hidden", "true");
+      load.innerHTML = '<img src="/media/romp-swirl-glyph.svg" alt=""><span>romp</span>'
+        + '<i class="fileview-dot"></i><i class="fileview-dot"></i><i class="fileview-dot"></i>';
+      row.appendChild(load);
+    }
     host.card.insertBefore(row, host.bar.nextSibling);
     line = row;
     return row;
@@ -408,7 +429,7 @@ export function installFilePrint(host: PrintHost): { button: HTMLButtonElement; 
       const left = waitEnds - Date.now();
       if (why === "settled" && left > 0) {
         const more = aimWait(left);             // the body as it stands now: something entered or was re-aimed since the collection
-        if (more > 0) { showLine(preparingWords(more)); return; }
+        if (more > 0) { showLine(preparingWords(more), true); return; }
       }
       feed({ kind: "ready" });
     });
@@ -423,7 +444,7 @@ export function installFilePrint(host: PrintHost): { button: HTMLButtonElement; 
   const reaim = (): void => {
     const n = aimWait(Math.max(0, waitEnds - Date.now()));
     if (n === 0) { feed({ kind: "ready" }); return; }
-    showLine(preparingWords(n));
+    showLine(preparingWords(n), true);
   };
   const doPrint = (): void => {
     const done = (): void => { window.removeEventListener("afterprint", done); feed({ kind: "printed" }); };
@@ -473,7 +494,7 @@ export function installFilePrint(host: PrintHost): { button: HTMLButtonElement; 
         return;
       }
       case "skip": feed({ kind: "prepare", pending: beginWait() }); return;
-      case "wait": showLine(preparingWords(state.pending)); break;
+      case "wait": showLine(preparingWords(state.pending), true); break;
       case "print": dropLine(); syncButton(); doPrint(); return;   // doPrint feeds `printed` itself, which syncs
       case "printPdf": dropLine(); syncButton(); doPrintPdf(); return;   // doPrintPdf feeds `printed` too
       case "none": break;
@@ -489,6 +510,22 @@ export function installFilePrint(host: PrintHost): { button: HTMLButtonElement; 
     feed({ kind: "press", gated: n, pending: n > 0 ? 0 : beginWait() });
   };
   btn.addEventListener("click", press);
+  /** A placeholder the person activates by hand while the bar is armed (its click, or Enter or Space on it: the viewer's own
+   *  gate handlers on the body, file-view.ts loadGate and gateKeys) loads its host at once, so the body's placeholders are
+   *  counted again and the line's count and the hosts its title grants follow, as a repaint's do; the last one gone
+   *  disarms. Heard on the card in the bubble phase: the body is the card's descendant, so its handlers run first whatever
+   *  the registration order, and the restore has run when this reads the body. The placeholder is found by its mark on the
+   *  event's target, which the restore detached from the body but left whole. A click on the line's own buttons names no
+   *  placeholder and changes nothing here; the two viewers' gate handlers stand on the body, never on the card. */
+  const onGateAct = (e: Event): void => {
+    if (state.phase !== "armed") return;
+    if (e.type === "keydown") { const k = (e as KeyboardEvent).key; if (k !== "Enter" && k !== " ") return; }
+    const t = e.target as Element | null;
+    if (!t || typeof t.closest !== "function" || t.closest('[data-act="' + GATE_ACT + '"]') === null) return;
+    feed({ kind: "recount", gated: gates().length });
+  };
+  host.card.addEventListener("click", onGateAct);
+  host.card.addEventListener("keydown", onGateAct);
   const onKey = (e: KeyboardEvent): void => {
     if (e.key === "Escape") {
       if (e.cancelBubble) return;                // a listener ahead of this one on the document stopped the key: it is that control's (the text-size flyout's dismiss, file-view.ts wireZoomDismiss, a capture listener wired before this per-open one, which closes the flyout and stops the event; stopPropagation stops no listener on the same node, and the flag, the DOM standard's alias for the stop propagation flag, is how a later one reads the claim). The bar stays armed for the next Escape

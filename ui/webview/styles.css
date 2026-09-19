@@ -4743,6 +4743,10 @@ body.filebrowse-open { overflow: hidden; }
   animation: fileview-pulse 1.1s ease-in-out infinite; }
 .fileview-dot:nth-of-type(2) { animation-delay: 0.18s; }
 .fileview-dot:nth-of-type(3) { animation-delay: 0.36s; }
+/* the print wait's line carries the loader inline beside its words (file-print.ts showLine, the loading-state rule): a row of
+   the loader's own rule would stand 60px taller and dim; here it is an inline flex box on the words' line, at the row's size
+   (the loader's 0.86em would compound under .fileview-err's) with the word buttons' gap, byte-equal in both sheets */
+.fileview-print-line .fileview-load { display: inline-flex; padding: 0; margin-left: 10px; font-size: 1em; vertical-align: middle; }
 
 @keyframes fileview-pulse { 0%, 100% { opacity: 0.25; } 50% { opacity: 1; } }
 

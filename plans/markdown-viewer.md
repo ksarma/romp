@@ -7799,32 +7799,43 @@ that list and no other, so the title and the loads are one list by construction.
 the keyboard where it was; over none the line goes, since the question it asked is moot, and the next press prints.
 Before this the line and the title stood as the press left them while "with them" read the hosts at the click, so a
 Reload that brought a placeholder on a new host had the click fetch from a host the title never named (the second
-review, 2026-09-19). A word button of the line that holds the keyboard when the line goes hands it to the Print button,
-the trigger, as the Outline popover's Escape does for its button, never to the document's body, where the browser's
-fixup would drop it; not at the close, where the card goes with the line. Then the wait, `settlePictures` over
-`collectPictures`: every `<img>` in the body to `complete` (its load or its error), and a `<video poster>` or an svg
-`<image href>` through a probe `Image` at the element's resolved URL, since neither element reports completeness; the
-probe asks for a URL the element itself fetched, which the browser normally serves from its memory cache and otherwise
-requests a second time from the same host, never from a new one. A gated poster or href has been moved aside and is not
-probed, and a placeholder's img has no src and is complete by HTML's definition, so "without them" waits on nothing for
-a placeholder. The line reads "Preparing 1 picture…" or "Preparing N pictures…" meanwhile. The wait ends at the last
-load or error event, or at `PRINT_SETTLE_MS`, 8 s, after which the print runs anyway: a picture still loading prints as
-the browser has it and a failed one as its label, so a route that never answers cannot hold the print (the events are
-the trigger and the deadline is the backstop). The wait is aimed at the body as it stands and re-aimed in two cases:
-when the host reports a repaint under it (P7's body report: a reload's landing, a format pick, the editor's exit; the
-pictures listened on were the old body's, detached by the swap), the driver collects the new body's pictures and waits
-on those; and at each settle it reads the body again for a picture that entered or was re-aimed since the collection (a
-heal's retry of a failed figure among them). Both re-aims run under the deadline the press set, never past it, so the
-print fires with every picture in the body complete, or at the deadline, and a re-aim that finds nothing loading prints
-at once. The line's count follows each re-aim. The machine holds its phase through the repaint (a body report of true
-during the wait is `none` there); the re-aim is the driver's, as the collection is. With no placeholder and every
-picture complete the press prints at once, inside the click's own task. Then `window.print()`; on afterprint, or at once
-when print returns, the bar rests. The button carries `data-print` with the phase while it is not resting, `.on` and
-aria-expanded while armed, `.fileview-busy` and aria-busy through the wait and the print. The line is a row of the card,
-not part of `.fileview-bar`: the viewer's own notice (`#fileview-save-err`, inserted above the main row) can stand under
-it at the same time, two rows. A gated clip (a video or audio placeholder) is counted in the line's "pictures" wording,
-since every placeholder is counted. `setPrintSettleMs` and `printSettleMs` are the deadline's test seam; nothing in the
-product calls them, and real-viewer-leg.ts's bundle exports them for the browser leg.
+review, 2026-09-19). A placeholder the person activates by hand under the armed line (its click, or Enter or Space on
+it: the viewer's own gate handlers on the body, `loadGate` and `gateKeys`) is counted again the same way: the driver
+hears the activation on the card in the bubble phase (`onGateAct`), after the body's handler restored the picture, so
+the count and the title follow the one just loaded, and the last one gone disarms; before this the count stood as the
+press left it until a repaint (the review's consolidation, 2026-09-19). A word button of the line that holds the
+keyboard when the line goes hands it to the Print button, the trigger, as the Outline popover's Escape does for its
+button, never to the document's body, where the browser's fixup would drop it; not at the close, where the card goes
+with the line. Then the wait, `settlePictures` over `collectPictures`: every `<img>` in the body to `complete` (its load
+or its error), and a `<video poster>` or an svg `<image href>` through a probe `Image` at the element's resolved URL,
+since neither element reports completeness; the probe asks for a URL the element itself fetched, which the browser
+normally serves from its memory cache and otherwise requests a second time from the same host, never from a new one. A
+gated poster or href has been moved aside and is not probed, and a placeholder's img has no src and is complete by
+HTML's definition, so "without them" waits on nothing for a placeholder. The line reads "Preparing 1 picture…" or
+"Preparing N pictures…" meanwhile. Beside the words the line carries the viewer's loader, the swirl, the wordmark and
+the three pulsing dots (`.fileview-load`, the markup file-view.ts's waits use, hidden from the status's announcement),
+inline on the words' row under a rule of its own in both sheets, `.fileview-print-line .fileview-load` (an inline flex
+box, no padding, the row's size, the word buttons' gap; fileview-parity.test.ts holds it byte-equal): ui/CLAUDE.md's
+loading-state rule puts the romp loader on every wait, and the first build showed the words alone (the review's
+consolidation, 2026-09-19; file-print-browser.test.ts case 1 reads the loader's parts, its computed style and its
+running animations). The wait ends at the last load or error event, or at `PRINT_SETTLE_MS`, 8 s, after which the print
+runs anyway: a picture still loading prints as the browser has it and a failed one as its label, so a route that never
+answers cannot hold the print (the events are the trigger and the deadline is the backstop). The wait is aimed at the
+body as it stands and re-aimed in two cases: when the host reports a repaint under it (P7's body report: a reload's
+landing, a format pick, the editor's exit; the pictures listened on were the old body's, detached by the swap), the
+driver collects the new body's pictures and waits on those; and at each settle it reads the body again for a picture
+that entered or was re-aimed since the collection (a heal's retry of a failed figure among them). Both re-aims run under
+the deadline the press set, never past it, so the print fires with every picture in the body complete, or at the
+deadline, and a re-aim that finds nothing loading prints at once. The line's count follows each re-aim. The machine
+holds its phase through the repaint (a body report of true during the wait is `none` there); the re-aim is the driver's,
+as the collection is. With no placeholder and every picture complete the press prints at once, inside the click's own
+task. Then `window.print()`; on afterprint, or at once when print returns, the bar rests. The button carries
+`data-print` with the phase while it is not resting, `.on` and aria-expanded while armed, `.fileview-busy` and aria-busy
+through the wait and the print. The line is a row of the card, not part of `.fileview-bar`: the viewer's own notice
+(`#fileview-save-err`, inserted above the main row) can stand under it at the same time, two rows. A gated clip (a video
+or audio placeholder) is counted in the line's "pictures" wording, since every placeholder is counted.
+`setPrintSettleMs` and `printSettleMs` are the deadline's test seam; nothing in the product calls them, and
+real-viewer-leg.ts's bundle exports them for the browser leg.
 
 P3. **A picture opened directly prints fitted to the page.** Inside the print block of both sheets, right after the
 `.fileview-body` line: `.fileview-imgbox { padding: 0; }` and `.fileview-img { max-width: 100%; max-height: 100vh;
@@ -7901,11 +7912,12 @@ named below so the list stays two-way. tools/markdown-viewer-plan-print-record.t
 sentences here to the tree, statements only, the sources read with their comments removed: the chord's fourth condition
 against the palette's binding, its dispatcher's wiring and the shell page that loads it; the repeats; the three Escapes
 the armed bar leaves alone against the two selectors, the typing predicate and the Outline popover; the machine's phases
-and events; the re-aim and the recount; the two titles and the kept hosts; the focus hand-back; P5's palette clause
-against the guide; the count in the listing sentence above against the listing; the takings module's name; and open
-point 2's Chromium clause against the driver leg. tools/markdown-viewer-plan-print-vocabulary.test.mjs holds this
-section's words to CONTEXT.md's File comment entry: what the Comments panel draws over a PDF page is called comments
-here, never `annotation`, which that entry lists under _Avoid_ (a review finding, 2026-09-19).
+and events; the re-aim and the recount, at a repaint and at a placeholder activated by hand; the loader on the wait's
+line against the flow, both sheets and the parity pin; the two titles and the kept hosts; the focus hand-back; P5's
+palette clause against the guide; the count in the listing sentence above against the listing; the takings module's
+name; and open point 2's Chromium clause against the driver leg. tools/markdown-viewer-plan-print-vocabulary.test.mjs
+holds this section's words to CONTEXT.md's File comment entry: what the Comments panel draws over a PDF page is called
+comments here, never `annotation`, which that entry lists under _Avoid_ (a review finding, 2026-09-19).
 
 - ui/webview/file-print.test.ts, under node with no DOM: `step` over every phase and event, the words, the chord,
   `settlePictures` over fake pictures and a fake clock (the incomplete pictures alone are waited on; load or error
@@ -7913,18 +7925,19 @@ here, never `annotation`, which that entry lists under _Avoid_ (a review finding
   8 s constant and its seam, `collectPictures` over a body stand-in, the PDF press and `pdfFrameWindow` over window
   stand-ins, and the disabled phase (every other event changes nothing there; the body's arrival rests; the body going out
   from rest, the armed line, the wait or the print disarms and disables).
-- ui/webview/file-print-browser.test.ts, headless Chromium over the real viewer through real-viewer-leg.ts: a gated
-  note on the pane (the chord and the button arm; Escape and a second press disarm and leave the card up; "Print
-  without them" keeps the placeholder, makes no request to the host and prints once a parked picture lands; "Print with
-  them" restores the placeholder, the host's request appears, and the print comes after that picture settled; every
-  recorded print has zero incomplete `<img>`); the chord on the chat modal (prevented, and printing a complete note at
-  once; untouched with a text field focused or with no file open); one click on a complete note, Rendered and Raw,
-  inside the click handler; the deadline shortened to 300 ms through the seam and restored; the URL kind arming; a parked
-  answer on the pane (Print disabled over the loader, aria-disabled and `data-print` reading disabled; a forced click, a
-  programmatic click and the chord printing nothing, the chord prevented; the answer released, the button live and the
-  next press printing). Its FAILS BEFORE, recorded at the unwired viewer: the chord unprevented with a placeholder
-  standing and an `<img>` incomplete; and, for the parked answer, at the first build, whose button was live over the
-  loader.
+- ui/webview/file-print-browser.test.ts, headless Chromium over the real viewer through real-viewer-leg.ts: a gated note
+  on the pane (the chord and the button arm; Escape and a second press disarm and leave the card up; "Print without
+  them" keeps the placeholder, makes no request to the host and prints once a parked picture lands; "Print with them"
+  restores the placeholder, the host's request appears, and the print comes after that picture settled; every recorded
+  print has zero incomplete `<img>`; the wait's line carries the viewer's loader after its words, inline at the row's
+  size, its animations running, the row one line); the chord on the chat modal (prevented, and printing a complete note
+  at once; untouched with a text field focused or with no file open); one click on a complete note, Rendered and Raw,
+  inside the click handler; the deadline shortened to 300 ms through the seam and restored; the URL kind arming; a
+  parked answer on the pane (Print disabled over the loader, aria-disabled and `data-print` reading disabled; a forced
+  click, a programmatic click and the chord printing nothing, the chord prevented; the answer released, the button live
+  and the next press printing). Its FAILS BEFORE, recorded at the unwired viewer: the chord unprevented with a
+  placeholder standing and an `<img>` incomplete; and, for the parked answer, at the first build, whose button was live
+  over the loader.
 - ui/webview/file-print-media-browser.test.ts: the picture rule under emulated print media on the pane and the feed
   modal (the computed values, one A4 page for the tall picture, the screen values back, one click printing), and the
   PDF under two launches, Playwright's headless shell, which has no PDF viewer and takes the tab path of itself, and
@@ -7956,10 +7969,12 @@ here, never `annotation`, which that entry lists under _Avoid_ (a review finding
   review found: (A) a Reload landing under the armed line is counted again (the same line reads the new count and the
   title names the new hosts, "Print with them" loads those hosts and never a host the title did not name; a landing on a
   new host alone names it alone and the old host is never asked; a landing with no placeholder disarms and the next
-  press prints; a Raw pick under the armed line disarms, and Rendered again re-arms nothing until the next press); (B)
-  Escape with the text-size flyout open while armed closes the flyout alone, from the trigger and from inside the menu,
-  the bar still armed; Escape in the Comments composer while armed cancels the draft, the composer's own rule, the bar
-  still armed; the next Escape disarms and the card stays up; at rest the composer's Escape is untouched.
+  press prints; a Raw pick under the armed line disarms, and Rendered again re-arms nothing until the next press; a
+  placeholder activated by hand under the armed line, by its click and by Enter, is counted again: the line and the
+  title follow, the clicked host is asked as its click asks it, the last one gone disarms and the next press prints);
+  (B) Escape with the text-size flyout open while armed closes the flyout alone, from the trigger and from inside the
+  menu, the bar still armed; Escape in the Comments composer while armed cancels the draft, the composer's own rule, the
+  bar still armed; the next Escape disarms and the card stays up; at rest the composer's Escape is untouched.
 - ui/webview/file-view-print-takings-browser.test.ts, headless Chromium: P7's takings after a paint that held the
   file, each executed: a reload that fails while the bar is armed (the line goes, the button disables, the chord is
   prevented and prints nothing, a forced click and a programmatic click print nothing; the file back, the button is live
@@ -7971,10 +7986,11 @@ here, never `annotation`, which that entry lists under _Avoid_ (a review finding
   red against the viewer with one report removed at a time.
 - tests/test_guide_print_palette_chord.py, Python: the guide's palette clause against the palette's default binding,
   its dispatcher's wiring on the pane documents and the flow's listener.
-- The standing print, gate and bar suites, run at each part's tip as the commit messages record: fileview-parity.test.ts
-  and file-view-print-browser.test.ts (the block byte-equal), file-view-print-inks-browser.test.ts,
-  file-view-print-marks-browser.test.ts, figure-gate.test.ts, file-view-figures-gate-browser.test.ts,
-  pdf-new-tab.test.ts, button-vocab.test.ts, file-view.test.ts.
+- The standing print, gate and bar suites, run at each part's tip as the commit messages record:
+  ui/webview/fileview-parity.test.ts (the block byte-equal, and since the consolidation the wait line's loader rule,
+  `.fileview-print-line .fileview-load`, byte-equal too) and file-view-print-browser.test.ts (the block byte-equal),
+  file-view-print-inks-browser.test.ts, file-view-print-marks-browser.test.ts, figure-gate.test.ts,
+  file-view-figures-gate-browser.test.ts, pdf-new-tab.test.ts, button-vocab.test.ts, file-view.test.ts.
 
 **Open points for the owner.**
 
