@@ -1566,16 +1566,18 @@ class RoutingStatements(unittest.TestCase):
     hooks/ 8, claude/ 4, overrides/ 2, postal/ 2, .githooks/ 1), and inside its eight roots it read only a suffix
     allowlist and pruned assets and dot directories, 68 more (37 under docs/assets, 26 .json, 3 .bash, 1 .csv, 1 .svg);
     none of the 441 named a block, so the pin was complete by luck and would not have caught a statement added there.
-    Measured at 639043a31 in a clean worktree: git lists 3109 paths, 14 are symlinks, 41 hold a NUL in their first 8 KiB,
-    none fails to decode, 3054 read as text, 71.8 MB (decimal) of them. The count moves with every file added, so it is
-    only ever quoted with its head; no directory list is kept. An untracked file git does not ignore is read too: a
-    scratch note, a saved diff, an editor backup, a .orig or .rej a merge left, a caption under docs/assets (none of
-    those is ignored here), so a machine holding one reds this pin before CI does; the webview test build's output,
-    vscode-extension/out-tests, is ignored by vscode-extension/.gitignore and never read, and ui/out-tests does not
-    exist. The scan takes a file lock shared and the plant test below takes it exclusive: pytest-xdist can run the tests
-    on different workers at once, and a sibling's scan during the plant would read the plant and red. The lock is one
-    file per checkout, in its git dir, so an xdist worker, a second pytest run, or a run under its own TMPDIR all wait
-    on the same inode (the first version sat in the per-process temp root tests/__init__.py mints and serialised
+    Of the 441, 41 (18 under assets/ and vscode-extension/media, 23 under docs/assets) are binaries the scan drops on
+    their first bytes too, so the text the walk missed and the scan now reads is 400 files (355 outside its roots, 45
+    inside). Measured at 639043a31 in a clean worktree: git lists 3109 paths, 14 are symlinks, 41 hold a NUL in their
+    first 8 KiB, none fails to decode, 3054 read as text, 71.8 MB (decimal) of them. The count moves with every file
+    added, so it is only ever quoted with its head; no directory list is kept. An untracked file git does not ignore is
+    read too: a scratch note, a saved diff, an editor backup, a .orig or .rej a merge left, a caption under docs/assets
+    (none of those is ignored here), so a machine holding one reds this pin before CI does; the webview test build's
+    output, vscode-extension/out-tests, is ignored by vscode-extension/.gitignore and never read, and ui/out-tests does
+    not exist. The scan takes a file lock shared and the plant test below takes it exclusive: pytest-xdist can run the
+    tests on different workers at once, and a sibling's scan during the plant would read the plant and red. The lock is
+    one file per checkout, in its git dir, so an xdist worker, a second pytest run, or a run under its own TMPDIR all
+    wait on the same inode (the first version sat in the per-process temp root tests/__init__.py mints and serialised
     nothing).
 
     What PLACES counts, since PR 797's closing check asked for the derivation: one entry per text file in the tree
@@ -1583,11 +1585,11 @@ class RoutingStatements(unittest.TestCase):
     size of PLACES, a set of files. `git ls-files -z --cached --others --exclude-standard | xargs -0 grep -I -l -E
     '<the BLOCKS pattern>'` at the repo root approximates it (at 639043a31 it lists the same files plus the bin/romp-kernel
     symlink the scan skips) and is not the scan's rule (GNU grep 3.11; another grep's -I may differ): grep -I drops a
-    file when it meets a NUL byte in what it has read before the first match, so a NUL after the scan's 8 KiB probe hides
-    a file the scan reads, and grep -I has no UTF-8 requirement, so it lists a file the scan skips on a decode error; at
-    639043a31 no listed file is in either class. No count of statements is held anywhere: a statement has no unit a regex
-    fixes (a line matching BLOCKS, an occurrence of it and a sentence give three different numbers over the same files),
-    and the sweep needs the files to read, not a tally."""
+    file when it meets a NUL byte in what it has read before the first match, so a NUL after the scan's 8 KiB probe
+    hides a file the scan reads, and grep -I has no UTF-8 requirement, so it lists a file the scan skips on a decode
+    error; at 639043a31 no listed file is in either class. No count of statements is held anywhere: a statement has no
+    unit a regex fixes (a line matching BLOCKS, an occurrence of it and a sentence give three different numbers over the
+    same files), and the sweep needs the files to read, not a tally."""
 
     BLOCKS = re.compile(r"stagesForeign|cycleJobsMs|connectPush\.stagesMs|stages_foreign|cycle_jobs_ms|connect_stages_ms")
     # the places a routing sentence lives today; a file added here has been read against the measured cells
