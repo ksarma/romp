@@ -8240,9 +8240,13 @@ class SdkSession:
         this same closer from a pick parked on a never-landed object and folded its own closer into this shape at its
         rebase (its round 1, 2026-09-19). BOTH BRANCHES END IN A LOG LINE, filed through _log_quietly (that round's
         regression-5): the served branch's line and the ask's tail run after the decision is made and the request
-        scheduled (request_reconnect never raises: _call_on_loop), so a kernel log callback that raises (a closed stderr
-        under a service restart, _log_quietly's case) must not reach the guard's handler, whose restore would put a
-        served pick's pending back or spend the ask's slot flag on a relaunch that is already armed."""
+        scheduled (request_reconnect never raises: _call_on_loop), so a log callback that raises cannot reach the guard's
+        handler, whose restore would put a served pick's pending back or spend the ask's slot flag on a relaunch that is
+        already armed. The kernel's own callback never raises (kernel.py's _backend_log writes through _exit_log, which
+        swallows every exception, since 2026-09-10; that round's injector lens, 2026-09-19), so with the kernel's wiring
+        the routing changes nothing observable; it holds for any callback a constructor passes, and its pin is a
+        characterisation labelled as such (tests/test_billing_route.py). _log_quietly's own closed-stderr case describes
+        a callback that is not the kernel's."""
         with self._hold_write():
             if self._launched_auth is None:
                 self._launched_auth = self.auth_live
@@ -8321,7 +8325,9 @@ class SdkSession:
             else "the %s" % self._launched_auth
         # the tail is a log line after the ask is made (the request scheduled, the flag and the memo written): filed
         # through _log_quietly (round 1 of the billing verb's review, 2026-09-19; its regression-5), so a callback that
-        # raises cannot hand a made ask to the guard's restore, which would spend its slot flag and re-arm its memo
+        # raises cannot hand a made ask to the guard's restore, which would spend its slot flag and re-arm its memo, nor
+        # leave _connect_landed, which runs the landing roads bare on the loop thread. The kernel's own callback never
+        # raises (_recover_picked_pending_at_init's docstring says why the routing is a characterisation's subject)
         if how == "init":
             self._log_quietly("auth (%s): this session's surviving CLI reported its billing, %s, while its pick is %s; the pick was "
                               "left to this report and nothing was armed for it, so it is asked now; %s"

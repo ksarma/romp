@@ -2288,16 +2288,21 @@ class BackendHelpers(unittest.TestCase):
         self.assertIs(bool(self._reg(s.sid).get("authPending")), False)
 
     def test_a_walk_step_that_raises_after_its_mirror_has_the_reg_rolled_back_with_the_pair(self):
-        # round 1 of the review (tests-3, both refuters): the guard's step road retries the mirror of the PAIR (_mirror_auth),
-        # not the flag alone (_mirror_auth_pending), and nothing pinned it: the two tests above inject their fault AT the
-        # reg write that would have put the pick there, so a retry that mirrored the flag alone, or no retry at all, left
-        # them green. The fault here lands AFTER set_auth's mirror, at a point the code reaches in production: set_auth's
-        # tail line ("set to ...; reconnecting to apply") is the first line the step files after its mirror and its
-        # request, and _log runs the kernel's callback bare, so a stderr closed under a service restart raises exactly
-        # there (_log_quietly's documented case; the other two raises the finding named cannot happen: request_reconnect
-        # goes through _call_on_loop, which never raises, and _poke swallows). The callback raises once, on that line
-        # alone: a callback that kept raising would take the guard's own row down too (a bare _log in its handler,
-        # 787's, not this round's)
+        # CHARACTERISATION PIN (round 1 of the review, tests-3, both refuters; relabelled by the round's addendum after its
+        # injector lens, 2026-09-19): the guard's step road retries the mirror of the PAIR (_mirror_auth), not the flag alone
+        # (_mirror_auth_pending), and nothing pinned it: the two tests above inject their fault AT the reg write that would
+        # have put the pick there, so a retry that mirrored the flag alone, or no retry at all, left them green. The fault
+        # here lands AFTER set_auth's mirror, on the step's own tail line, and it is one NO PRODUCTION ROAD MAKES AT THIS
+        # HEAD: the ruling offered two injectors, a raising log callback (_log_quietly's closed-stderr case) and a raising
+        # _note_reconnect_ask, and neither raises with the kernel's wiring. The kernel's only log callback is kernel.py's
+        # _backend_log, which writes through _exit_log's try/except (since 2026-09-10), and everything else the request
+        # branch runs after its mirror cannot raise: _note_reconnect_ask takes locks and formats a string, request_reconnect
+        # goes through _call_on_loop (never raises), _poke swallows, and the walk passes chip=False so no chip is written.
+        # What this pins is the guard's containment against an arbitrary post-mirror raise, the shape of fork PR #787's own
+        # pin (tests/test_sdk_backend.py, the step that fails after its mirror write, which patches _note_reconnect_ask to
+        # raise): the retry writes the pair back, and the mutation that mirrors the flag alone reds it. The callback raises
+        # once, on that line alone: a callback that kept raising would take the guard's own row down too (a bare _log in
+        # its handler, fork PR #787's, not this round's)
         web, api = self._sess("web", launched="login"), self._sess("api", launched="login")
         for s in (web, api):
             self._queue_loop(s)
@@ -2421,6 +2426,20 @@ class BackendHelpers(unittest.TestCase):
         four._landing_ask_bounded = True                              # a stale memo, were one ever left
         self.assertTrue(self.be.set_auth(four.sid, "key", chip=False))
         self.assertEqual((four._relaunch_bounded, four._landing_ask_bounded), (False, False), "a plain pick's pending inherits no memo")
+        # (8) _follow_default's SECOND withdrawal (the mutation pass's Q8, 2026-09-19): a CLI that reports the key while romp's
+        # own launch meant the login, on a box whose settings carry no apiKeyHelper (key_state "missing": a credential in
+        # the CLI's own environment), has any standing ask withdrawn in one line, and the memo goes with it. The pending
+        # must not be the default's own pair, or the no-new-ask guard returns first, so it is a moot key pick's
+        self.be.key_state = lambda: "missing"
+        five = self._sess("five", auth="key", launched="login")
+        five.auth_live = "key"
+        five._auth_pending, five._landing_ask_bounded = "key", True
+        self._queue_loop(five)
+        self.assertTrue(self.be.follow_default_auth(five.sid))
+        self.assertEqual((five._auth_pending, five._relaunch_bounded, five._landing_ask_bounded), ("", False, False), "the key-report withdrawal")
+        self.assertTrue(any("bills a key romp does not control" in m and "the pending key reconnect is withdrawn" in m for m in self.logs),
+                        self.logs[-3:])
+        self.be.key_state = lambda: "unknown"
         # THE CONSEQUENCE, on the one road that asks a landed session's pick again inside one kernel life: a key pick whose
         # own request the connect in progress served (on this box a key pick and a login pick compose the same shape) and
         # whose landing then finds it unserved asks it through _ask_parked_pick, which draws the memo. Served at (1), web's
@@ -2443,12 +2462,17 @@ class BackendHelpers(unittest.TestCase):
         self.assertIs(web._relaunch_bounded, False)
 
     def test_the_asks_tail_and_the_served_line_are_filed_quietly_so_a_raising_log_callback_cannot_undo_a_decision(self):
-        # round 1 of the review (regression-5, narrowed by its refuter): request_reconnect cannot raise (_call_on_loop) and
-        # _poke swallows, so the one raise reachable after the closer's decision is the kernel's log callback (a closed
-        # stderr under a service restart, _log_quietly's case). Filed bare, the ask's tail line raised into the guard,
-        # which restored the slot flag and the memo as found (a made ask, its flag spent) and filed a "step failed" row
-        # for an ask that stood; the served branch's line put a served pick's pending back. Both lines go through
-        # _log_quietly now, and the comment says both branches end in a log line
+        # CHARACTERISATION PIN (round 1 of the review, regression-5, narrowed by its refuter; relabelled by the round's
+        # addendum after its injector lens, 2026-09-19). The refuter's narrowing said the one raise reachable after the
+        # closer's decision is the kernel's log callback (a closed stderr under a service restart, _log_quietly's case). It
+        # is not: the kernel wires _backend_log, which writes through _exit_log's try/except (kernel.py, since 2026-09-10),
+        # so with the kernel's callback no raise reaches the guard after the decision, at 1100d3f0f as here, and the
+        # routing through _log_quietly is defensive. What this pins is the routing itself, for any callback a constructor
+        # passes: filed bare, the ask's tail line raised into the guard, which restored the slot flag and the memo as found
+        # (a made ask, its flag spent) and filed a "step failed" row for an ask that stood; the served branch's line put a
+        # served pick's pending back; and the landing road's tail (the third leg, the mutation pass's L2) raised out of
+        # _connect_landed, which runs it bare on the loop thread, after the ask was made. Each leg reds under the mutation
+        # that files its line bare
         web, wq = self._leased_unreported_follower("web", composed="key")
         self.assertEqual(self.be.set_auth_followers("login")["moved"], ["web"])
         web._connect_landed()
@@ -2474,6 +2498,18 @@ class BackendHelpers(unittest.TestCase):
         self.be._log_cb = real_cb
         self.assertEqual((api._auth_pending, self._reg(api.sid)["authPending"], len(aq)), ("", False, 0), "served stays served")
         self.assertEqual([p["text"] for p in self.be.problems(10) if "step failed" in p["text"]], [])
+        # the third leg, the landing road's tail: the high's report-on-record road, asked at the landing through
+        # _ask_parked_pick's attach branch, which _connect_landed runs bare on the loop thread
+        docs, dq = self._unkeyed_key_survivor("docs", "report", "key")
+        self.assertTrue(self.be.set_auth(docs.sid, "login", chip=False))
+        self.assertEqual((docs._auth_pending_target(), len(dq)), (("login", ""), 0), "parked for the landing")
+        self.be._log_cb = closed_on("left to this landing, so it is asked now")
+        try:
+            docs._connect_landed()                                # the attach can tell: the pick is asked, its tail filed quietly
+        finally:
+            self.be._log_cb = real_cb
+        self.assertEqual((len(dq), docs._auth_pending, docs._relaunch_bounded, self._reg(docs.sid)["authPending"]), (1, "login", False, True),
+                         "the landing returned with its ask standing as made")
 
     def test_billing_view_names_the_stored_login_the_running_cli_launched_on(self):
         # CHARACTERISATION PIN (round 1 of the review, 2026-09-19; tests-4): `launchedLogin` and `launchedLabel` were only ever
@@ -2492,6 +2528,26 @@ class BackendHelpers(unittest.TestCase):
         t.client = object()
         view = self.be.billing_view(t.sid)
         self.assertEqual((view["launched"], view["launchedLogin"], view["launchedLabel"]), ("key", "", ""), "the key branch names no login")
+
+    def test_record_reads_is_the_records_own_read_as_an_object(self):
+        # the mutation pass (2026-09-19; its P3): every pin of the route's probe ran through the route tests' fake backend,
+        # so the real predicate (`bool(read_reg(...))`) was unpinned and `return True` left the module green. The route asks
+        # it on a real state directory before every `default` and `--now` drop (kernel.py's two gate-off roads), so its
+        # inputs are the records that directory holds: a written record; a body that is not JSON (a torn or hand-edited
+        # file: romp's own writer is atomic, so such a body comes from outside it); JSON that is not an object; and a record
+        # gone since the resolver named it. read_reg's one handler takes OSError and ValueError alike, so the absent file's
+        # ENOENT and an EACCES read answer the same None (no mode case here: a root runner reads a mode-000 file anyway, and
+        # a pin that skips is worse than none). Red under `return True`
+        s = self._sess("web")
+        p = sb._reg_path(Path(self.d), s.sid)
+        self.assertIs(self.be.record_reads(s.sid), True, "a written record reads as an object")
+        p.write_text("{not a record")
+        self.assertIs(self.be.record_reads(s.sid), False, "a body that is not JSON does not read")
+        p.write_text("[]")
+        self.assertIs(self.be.record_reads(s.sid), False, "JSON that is not an object does not read (read_reg's rule)")
+        p.write_text(json.dumps({"sid": s.sid, "name": "web"}))
+        self.assertIs(self.be.record_reads(s.sid), True, "healed, it reads again")
+        self.assertIs(self.be.record_reads("11111111-2222-3333-4444-999999999999"), False, "no record at all: the absent file")
 
 
 class ParkedPickRefusedAtTheDrain(unittest.TestCase):
@@ -2856,6 +2912,14 @@ class VerbWords(unittest.TestCase):
         self.assertEqual(out.stdout.strip(),
                          "romp billing: no follower moved to the API key; 0 skipped; "
                          "2 parked (api, docs): they are mid-move, so the pick applies after the move finishes")
+        # CHARACTERISATION PIN (the mutation pass's V3, 2026-09-19): the printer's own word when the answer carries
+        # parkedSessions and no parkedReconnect. No kernel at this head answers that shape (the two keys were added together),
+        # so this pins the literal's agreement with the kernel's word, not a road; red under the mutation that changes it
+        del reply["parkedReconnect"]
+        out = self._romp("--all-following", "key", reply=(200, reply))
+        self.assertEqual(out.stdout.strip(),
+                         "romp billing: no follower moved to the API key; 0 skipped; "
+                         "2 parked (api, docs): they are mid-move, so the pick applies %s" % km._BILLING_PARK_WORDS["move"])
 
     def test_the_read_names_the_stored_login_the_cli_launched_on(self):
         # CHARACTERISATION PIN (round 1 of the review, 2026-09-19; tests-4): the launched line with a stored login's id, with
