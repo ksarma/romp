@@ -500,7 +500,7 @@ test('the numeric narrowing: a target whose only expansions are $$ or ${$} and w
     assert.equal(run(`echo x > ${out}/run-$$/../plain.log`).status, 0);
     const refused = run(`echo x > "${out}/x-$(date +%s).log"`);
     assert.equal(refused.status, 2);
-    assert.match(refused.stderr, NOT_LITERAL);
+    assert.match(refused.stderr, NOT_LITERAL, 'from the tracked cwd a substitution in the name is refused by the cwd rule (B2 as ruled resolves the values it can read and leaves an opaque one to that rule)');
     const folded = run(`mkdir -p ${out}/run-$$ && echo x > ${out}/run-$$/../linkdocs/report.md`);
     assert.equal(folded.status, 2, 'the link after the fold, as a process');
     const crossed = run(`echo x > ${second}/notes/log-$$.md`);
@@ -632,7 +632,14 @@ test('the numeric set is $$ and ${$} in every shell, and nothing else: RANDOM, S
       `export BASHPID=${back}; cp base/report.md "${out}/$BASHPID"`,                    // round 2's zsh road
       `echo x > ${out}/x-$BASHPID.log`,
     ];
-    assert.deepEqual(verdicts(refused), allOf(refused, REFUSED));
+    // B2 (2026-09-19): a shape whose assignment is a plain string at the top level of its shell (`unset RANDOM; RANDOM=<back>;
+    // cp … "<out>/$RANDOM"`, `export BASHPID=<back>; …`, the `bash -c`, `declare -g`, heredoc and `sh -c` twins) is RESOLVED,
+    // so the guard names the tracked file the traversal lands on; the rest (a name set inside a function, a sourced file,
+    // no assignment in sight) stay refused as words it cannot read. Either way the numeric narrowing never applies.
+    const resolved = new Set(refused.filter((c) => /(unset (RANDOM|SECONDS); (declare -g )?(RANDOM|SECONDS)=|export BASHPID=|^sh -c 'RANDOM=)/.test(c) && !/f\(\)/.test(c)));
+    assert.equal(resolved.size, 7, `the seven shapes B2 resolves: ${[...resolved].join(' | ')}`);
+    const byName = (c) => (/^Track-changes is ON for /.test(evaluate(payload(c)) || '') ? 'refused by name' : verdictOf(c));
+    assert.deepEqual(Object.fromEntries(refused.map((c) => [c, byName(c)])), Object.fromEntries(refused.map((c) => [c, resolved.has(c) ? 'refused by name' : REFUSED])));
     const allowed = [
       `echo x > "${out}/build-$$.log"`,                                                  // the pid, in every shell and spelling
       `echo x > ${out}/x-\${$}.log`,
@@ -1323,9 +1330,15 @@ test('a leading $HOME or ${HOME} followed by a slash or the word end is the home
     assert.deepEqual(targets('cp base/report.md "$HOME"', '/'), [path.join(proj, 'report.md')], 'the word end: the home directory itself, a destination folder');
     assert.deepEqual(targets('cp base/report.md $HOME', '/'), [path.join(proj, 'report.md')]);
     // the boundary: another variable, a suffix, a default, a variable after it, text before it, a quote after it
-    const others = ['echo x > $HOMEDIR/x.log', 'echo x > "$HOME.bak/x.log"', 'echo x > "${HOME:-/tmp}/x.log"', 'echo x > "$HOME/$NAME.md"', 'echo x > x$HOME/y', 'echo x > $HOME"/x"'];
+    const others = ['echo x > $HOMEDIR/x.log', 'echo x > "${HOME:-/tmp}/x.log"', 'echo x > "$HOME/$NAME.md"'];
     for (const cmd of others) assert.deepEqual(targets(cmd), [], `not read: ${cmd}`);
     assert.deepEqual(verdicts(others), allOf(others, REFUSED));
+    // B2 (2026-09-19): a `$HOME` elsewhere in a word is read through the guard's home too (the home here is the project), so
+    // these resolve to literal paths beside the project and pass; before B2 they were words the hook could not read
+    assert.deepEqual(targets('echo x > "$HOME.bak/x.log"'), [`${proj}.bak/x.log`], 'a $HOME glued to text resolves');
+    assert.deepEqual(targets('echo x > x$HOME/y'), [path.join(proj, `x${proj}`, 'y')]);
+    assert.deepEqual(targets('echo x > $HOME"/x"'), [path.join(proj, 'x')]);
+    for (const cmd of ['echo x > "$HOME.bak/x.log"', 'echo x > x$HOME/y', 'echo x > $HOME"/x"']) assert.equal(evaluate(payload(cmd)), null, `resolved to an untracked path: ${cmd}`);
   } finally { process.env.HOME = home; }
   // the refused write the round found: a log under the home, from a cwd inside the tracked project
   const out = outsideDir();
@@ -2317,8 +2330,8 @@ test('rule (c) non-literal link source: an ln -s whose source the guard cannot r
   fs.writeFileSync(path.join(proj, 'notes', 'n1.md'), 'a tracked note\n');
   fs.mkdirSync(path.join(proj, 'sub'));
   const cases = [
-    'ln -s "$PWD/docs" mydocs && cp base/report.md mydocs/report.md',      // the third pass, #59
-    'ln -sf "$PWD/docs" md2 && cp base/report.md md2/report.md',           // N1
+    'ln -s "$(pwd)/docs" mydocs && cp base/report.md mydocs/report.md',    // the third pass, #59 (its `$PWD` spelling resolves since B2, below)
+    'ln -sf "$(pwd)/docs" md2 && cp base/report.md md2/report.md',         // N1
     'ln -s $(echo docs) md3 && cp base/report.md md3/report.md',            // N2
     'ln -s "$D" md4; echo x > md4/n1.md',
     'ln -s -t sub "$SRC"; echo x > sub/report.md',                          // the name is the source\'s basename, unreadable: the folder is unknown
@@ -2333,6 +2346,8 @@ test('rule (c) non-literal link source: an ln -s whose source the guard cannot r
   }
   // the twins: a literal source is resolved (class H), a link to an untracked folder is allowed, and a write NOT through the link is judged as ever
   assert.match(evaluate(payload('ln -s docs mydocs && cp base/report.md mydocs/report.md')), /^Track-changes is ON for /, 'a literal source resolves to the tracked file');
+  // B2 (2026-09-19): `$PWD` is a value the guard reads, so the third pass's `"$PWD/docs"` source is literal now and class H refuses by name
+  for (const cmd of ['ln -s "$PWD/docs" mydocs && cp base/report.md mydocs/report.md', 'ln -sf "$PWD/docs" md2 && cp base/report.md md2/report.md']) assert.match(evaluate(payload(cmd)), /^Track-changes is ON for /, `a $PWD source resolves, class H: ${cmd}`);
   assert.equal(evaluate(payload('ln -s base mylink && cp base/report.md mylink/other.md')), null, 'a literal link to an untracked folder is allowed');
   assert.equal(evaluate(payload('ln -s "$PWD/base" mylink2 && cp base/report.md docs/other.md')), null, 'a non-literal link the later write does not pass through changes nothing');
   assert.equal(evaluate(payload('ln -s $(echo base) md6; cp base/report.md scratch.md')), null, 'the same, another spelling');
@@ -2420,18 +2435,21 @@ test('rule (e) any-depth parent prefix: a literal head that is a proper ancestor
     ];
     for (const [cmd, at, root] of refused) {
       const reason = evaluate(payload(cmd, at));
-      if (root === null) { assert.equal(reason, null, `the literal head filters the first segment: ${cmd}`); continue; }
+      if (root === null) { assert.equal(reason, null, `the literal head filters the first segment, and from a cwd in no project the opaque expansion keeps the cwd rule (B2 as ruled: the opaque-head refusal is not built): ${cmd}`); continue; }
       assert.ok(reason && reason.includes('sits above the tracked project') && reason.includes(root), `class E at any depth names the project beneath: ${cmd}: ${reason}`);
       assert.ok(!/\u2014/.test(reason) && !ROMP_NOUNS.test(reason.split(R).join('<r>')), 'no em dash, no romp noun');
     }
     const both = evaluate(payload(`printf poison > ${R}/$x/docs/report.md`, cwd));
     assert.ok(both.includes(na) && both.includes(deep) && both.includes(path.join(R, 'lnproj')), `every root beneath is named, a link to one included: ${both}`);
-    // the twins: a folder with no project beneath, a numeric-only name, a literal name, and a head under no project's ancestor
-    assert.equal(evaluate(payload(`cp ${R}/src.md ${R}/empty/$x.log`, cwd)), null, 'no tracked root under the head: allowed');
-    assert.equal(evaluate(payload(`cp ${R}/src.md ../../empty/$x/report.md`, cwd)), null, 'the same, relative');
+    // the twins: a numeric-only name, a literal name, and a folder with no project beneath (not class E; from a cwd in no
+    // project the opaque expansion after it keeps the cwd rule and is allowed, B2 as ruled, the residual the four surfaces
+    // state with its boundary) are allowed, opaque or with the name set to a plain string first (the resolved path judged)
+    for (const cmd of [`cp ${R}/src.md ${R}/empty/$x.log`, `cp ${R}/src.md ../../empty/$x/report.md`, `printf x > ${R}/scratch/$x.log`]) {
+      assert.equal(evaluate(payload(cmd, cwd)), null, `no tracked root under the head: allowed from a cwd in no project: ${cmd}`);
+      assert.equal(evaluate(payload(`x=plain; ${cmd}`, cwd)), null, `with the name set to a plain string the resolved path is allowed: ${cmd}`);
+    }
     assert.equal(evaluate(payload(`printf x > ../../$$.log`, cwd)), null, 'a numeric-only expansion is not class E');
     assert.equal(evaluate(payload(`printf x > ../../plain.log`, cwd)), null, 'a literal name in the grandparent is allowed');
-    assert.equal(evaluate(payload(`printf x > ${R}/scratch/$x.log`, cwd)), null, 'a folder beside the projects with none beneath: allowed');
     // real bash: the two-segment expansion reaches the root one level down and overwrites the tracked file; the hook refuses it
     const ov = overwrites(`x=f/notes-api; cp ${R}/src.md ../../$x/docs/report.md`, path.join(na, 'docs', 'report.md'), cwd);
     assert.equal(ov.changed, true, 'the two-segment expansion overwrites the tracked file in real bash');
@@ -2840,6 +2858,188 @@ test('B1 an alias made in the command puts the project its SOURCE lies in in pla
     assert.equal(ovz.changed, true, 'and in real zsh');
     fs.rmSync(path.join(out, 's-alias'), { force: true });
     assert.equal(fs.readFileSync(seed, 'utf8'), 'a tracked note\n');
+  } finally { fs.rmSync(out, { recursive: true, force: true }); }
+});
+
+
+test("B2 as ruled: the values the guard can read are resolved and the real path judged (an in-command plain-string assignment, HOME, PWD, OLDPWD, ~+ and ~-); what stays opaque keeps the verdict the working directory gives it, refused as not literal from the tracked cwd and allowed from a cwd in no project (the residual, stated with its boundary and measured landing); an assignment in a body, after &&, in a subshell, a read, a loop variable, an eval or a function call leaves the name opaque; real bash and zsh overwrite through the resolved value and the hook refuses", () => {
+  const out = outsideDir();
+  try {
+    fs.mkdirSync(path.join(out, 'scratch'));
+    fs.mkdirSync(path.join(proj, 'scratch'));
+    fs.writeFileSync(path.join(proj, 'notes', 'n1.md'), 'a tracked note\n');
+    const BY_NAME = /^Track-changes is ON for /;
+    // readable: the resolved path is judged by name, tracked refused and untracked allowed, from a tracked cwd and from one in no project
+    for (const [cmd, cwd, want] of [
+      ["x='../docs/report.md'; cp base/report.md scratch/$x", proj, BY_NAME],                          // attack 2's row, from the tracked cwd
+      [`v='../../${path.basename(proj)}/docs/report.md'; cp ${proj}/base/report.md scratch/$v`, out, BY_NAME],   // and from a cwd in no project beside the project (attack 2's `scratch/$v`)
+      [`x='../${path.basename(proj)}/notes'; printf poison > ${out}/$x/rep.md`, out, BY_NAME],                    // the matrix's row 2898: a literal head outside every project, the climb inside the value
+      ['x=other.md; echo hi > docs/$x', proj, null],                                                     // resolved to an untracked file: allowed, where before it was refused as not literal
+      ['d=docs; cd $d && cp ../base/report.md report.md', proj, BY_NAME],                                // a cd through a resolved name moves the directory
+      ['echo x > "$PWD/docs/report.md"', proj, BY_NAME],
+      ['cp base/report.md $PWD/scratch/copy.md', proj, null],
+      ['cd docs; cp ../base/report.md $OLDPWD/docs/report.md', proj, BY_NAME],
+      [`cd ${proj}; cd ${out}; echo poison > ~-/docs/report.md`, out, BY_NAME],                          // attack 1's P11, from a cwd in no project
+      [`cd ${out}/scratch && echo x > ~-/scratch/back.log`, proj, null],
+      ['echo x > ~+/notes/n2.md', proj, BY_NAME],
+      [`a=$HOME/scratch; echo x > $a/h.log`, proj, null],
+      [`y=sub; x=$y/deep; mkdir -p ${out}/scratch/$x && echo x > ${out}/scratch/$x/f.log`, out, null],   // a value built from an earlier resolved name
+      [`export n=run2; echo x > ${out}/scratch/$n.log`, out, null],
+      [`n=run1; echo x > ${out}/scratch/$n.log`, proj, null],                                            // from a tracked cwd too: resolved, outside, allowed
+      [`x=a; flock -x . -c "echo x > ${out}/scratch/$x/y"`, out, null],                                  // the outer shell expands the double-quoted name before flock runs it
+    ]) {
+      const reason = evaluate(payload(cmd, cwd));
+      if (want === null) assert.equal(reason, null, `resolved to a path outside every tracked file: allowed: ${cmd}`);
+      else assert.ok(reason && want.test(reason), `resolved and judged by name: ${cmd}: ${reason}`);
+    }
+    // opaque after a literal head (B2 as ruled, the reviewer's option (c), 2026-09-19): the word keeps the verdict the working
+    // directory gives it, refused as not literal from the tracked cwd, naming the project (class F and the cwd rule, as before
+    // B2), and dropped from a cwd in no project; the allowed rows are run in real bash and zsh from that cwd with the tracked
+    // subset fingerprinted after (each lands under <out>/scratch, or fails on a folder that is not there)
+    const opaque = [
+      `echo x > ${out}/scratch/$name.log`,
+      `cp base/report.md ${out}/scratch/$(date +%s).md`,
+      `echo x > ${out}/scratch/\${TMPDIR:-x}/a.log`,
+      `echo x > ${out}/scratch/\`date +%s\`.log`,
+      `if true; then n=a; fi; echo x > ${out}/scratch/$n.log`,                // an assignment in a body may not run
+      `false && n=a; echo x > ${out}/scratch/$n.log`,                         // after && it may not run
+      `(n=a); echo x > ${out}/scratch/$n.log`,                                // in a subshell it does not persist
+      `n=a | cat; echo x > ${out}/scratch/$n.log`,
+      `read n <<< a; echo x > ${out}/scratch/$n.log`,
+      `for f in a b; do echo x > ${out}/scratch/$f.log; done`,
+      `n=a; eval 'n=b'; echo x > ${out}/scratch/$n.log`,                     // an eval may reassign anything
+      `f() { n=b; }; n=a; f; echo x > ${out}/scratch/$n.log`,                // a call of a function the command defines may too
+      `n=a; . ./rc; echo x > ${out}/scratch/$n.log`,
+      `n=$(pwd); echo x > ${out}/scratch/$n.log`,                             // a value the guard cannot read
+      `n='a b'; echo x > "${out}/scratch/$n.log"`,                            // a value the shell would split
+      `n='*'; echo x > ${out}/scratch/$n.log`,                                // a value the shell would match
+      `n=a; n+=b; echo x > ${out}/scratch/$n.log`,
+      `n=a; unset n; echo x > ${out}/scratch/$n.log`,
+      `n=run1; sh -c 'echo x > ${out}/scratch/$n.log'`,                        // the inner shell sees the environment alone
+      `echo x > scratch/$name.log`,                                            // a relative head too
+    ];
+    const fingerprint = () => `${shaOf(report)} ${fs.readdirSync(path.join(proj, 'notes')).sort().join(',')}`;
+    const before = fingerprint();
+    for (const cmd of opaque) {
+      const fromProj = evaluate(payload(cmd, proj));
+      assert.ok(fromProj && NOT_LITERAL.test(fromProj) && fromProj.includes(proj), `from the tracked cwd an opaque expansion is refused as not literal, naming the project: ${cmd}: ${fromProj}`);
+      assert.ok(fromProj.includes('track-edit') && !/\u2014/.test(fromProj) && !ROMP_NOUNS.test(fromProj.split(proj).join('<p>').split(out).join('<o>')), 'the remedy, no em dash, no romp noun');
+      assert.equal(evaluate(payload(cmd, out)), null, `from a cwd in no project the same word keeps the cwd rule and is allowed: ${cmd}`);
+      for (const shell of ['bash', 'zsh']) spawnSync(shell, ['-c', cmd], { cwd: out, encoding: 'utf8', env: { PATH: process.env.PATH } });
+    }
+    assert.equal(fingerprint(), before, 'the allowed opaque rows, run from the cwd in no project, left the tracked subset as it was');
+    // the twins: a numeric name, a literal name, and a word with NO literal head from a cwd in no project (the contract's stated residual)
+    for (const cmd of [`echo x > ${out}/scratch/x-$$.log`, `echo x > ${out}/scratch/plain.log`, 'echo x > $name.log', 'echo x > x-$name.log', 'cp base/report.md "$DST"', `n=a; echo x > ${out}/scratch/$n-$$.log`]) {
+      assert.equal(evaluate(payload(cmd, out)), null, `allowed from a cwd in no project: ${cmd}`);
+    }
+    // the grammar: the resolved word is literal and keeps its raw spelling for the refusal; an opaque one keeps its marks
+    const r1 = extractWriteTargets(`n=run1; echo x > ${out}/scratch/$n.log`, out);
+    assert.deepEqual([r1.targets.map((t) => t.path), r1.unresolved], [[path.join(out, 'scratch', 'run1.log')], []]);
+    const r2 = extractWriteTargets(`echo x > ${out}/scratch/$name.log`, out).unresolved;
+    assert.equal(r2.length, 1);
+    assert.equal(r2[0].raw, `${out}/scratch/$name.log`);
+    assert.ok(r2[0].marks.includes('x'));
+    // real shells: the matrix's row and P11 overwrite the tracked file when unguarded; the hook refuses each
+    const row = `x='../${path.basename(proj)}/notes'; printf poison > ${out}/$x/rep.md`;
+    for (const shell of ['bash', 'zsh']) {
+      const r = spawnSync(shell, ['-c', row], { cwd: out, encoding: 'utf8', env: { PATH: process.env.PATH } });
+      assert.equal(r.status, 0, r.stderr);
+      assert.equal(fs.readFileSync(path.join(proj, 'notes', 'rep.md'), 'utf8'), 'poison', `${shell} wrote the tracked folder through the resolved value`);
+      fs.rmSync(path.join(proj, 'notes', 'rep.md'));
+    }
+    assert.equal(runHook(row, out).status, 2, 'the hook refuses the row');
+    const p11 = `cd ${proj}; cd ${out}; echo poison > ~-/docs/report.md`;
+    assert.equal(overwrites(p11, report, out).changed, true, 'P11 overwrites the tracked file in real bash from a cwd in no project');
+    assert.equal(runHook(p11, out).status, 2, 'and the hook refuses it');
+    assert.equal(runHook(`echo x > ${out}/scratch/$name.log`, out).status, 0, 'the process allows the opaque word from a cwd in no project (the cwd rule)');
+    assert.equal(runHook(`echo x > ${out}/scratch/$name.log`, proj).status, 2, 'and refuses it from the tracked cwd');
+    assert.equal(runHook(`n=run1; echo x > ${out}/scratch/$n.log`, proj).status, 0, 'and allows the resolved twin from the tracked cwd');
+    // the residual, with its boundary (the reviewer's option (c), 2026-09-19): a literal head outside every project followed by an
+    // opaque expansion whose value can climb with `..` is allowed from a cwd in no project, and when the environment holds such a
+    // value the write lands in the tracked folder; from the tracked cwd the same word is refused as not literal
+    const residual = `printf poison > ${out}/$x/rep.md`;
+    assert.equal(evaluate(payload(residual, out)), null, 'allowed from a cwd in no project: the stated residual');
+    assert.match(evaluate(payload(residual, proj)) || '', NOT_LITERAL, 'refused as not literal from the tracked cwd: the boundary');
+    for (const shell of ['bash', 'zsh']) {
+      const r = spawnSync(shell, ['-c', residual], { cwd: out, encoding: 'utf8', env: { PATH: process.env.PATH, x: `../${path.basename(proj)}/notes` } });
+      assert.equal(r.status, 0, r.stderr);
+      assert.equal(fs.readFileSync(path.join(proj, 'notes', 'rep.md'), 'utf8'), 'poison', `${shell} lands the write in the tracked folder through the environment's value: the residual as stated`);
+      fs.rmSync(path.join(proj, 'notes', 'rep.md'));
+    }
+    assert.equal(runHook(residual, out).status, 0);
+    assert.equal(runHook(residual, proj).status, 2);
+  } finally { fs.rmSync(out, { recursive: true, force: true }); }
+});
+
+test('a mention of PWD or OLDPWD outside an expansion, or a variable name the shell fills in, makes $PWD, $OLDPWD, ~+ and ~- unreadable for the whole command, as a mention of HOME does (B2 as ruled; its first draft read them through its own directory model, the fifth pass\'s attacker found); a command that only expands them is resolved; real bash, zsh and dash overwrite through the reassigned name and the hook refuses from the tracked cwd, while from a cwd in no project the word keeps the cwd rule', () => {
+  const out = outsideDir();
+  try {
+    fs.mkdirSync(path.join(out, 'scratch'));
+    fs.mkdirSync(path.join(proj, 'scratch'));
+    fs.writeFileSync(path.join(proj, 'notes', 'n1.md'), 'a tracked note\n');
+    const web = trackedProjectAt(out, 'web');
+    const webReport = path.join(web, 'docs', 'report.md');
+    const scratch = path.join(proj, 'scratch');
+    const BARE = 'names PWD outside an expansion';
+    const BARE_OLD = 'names OLDPWD outside an expansion';
+    // the attacker's rows: from an untracked folder of the tracked project, the reassigned name resolves nowhere the guard can
+    // read, so the word keeps the cwd rule (class F, naming the project) and the reason says why the name was not read
+    const rows = [
+      [`PWD=${web}; cp ${web}/base/report.md $PWD/docs/report.md`, scratch, BARE, ['bash', 'zsh', 'dash']],
+      [`PWD=${web}; cp ${web}/base/report.md \${PWD}/docs/report.md`, scratch, BARE, ['bash', 'zsh', 'dash']],
+      [`export PWD=${web}; cp ${web}/base/report.md $PWD/docs/report.md`, scratch, BARE, ['bash', 'zsh', 'dash']],
+      [`PWD=${web}; cp ${web}/base/report.md ~+/docs/report.md`, scratch, BARE, ['bash']],
+      [`declare PWD=${web}; cp ${web}/base/report.md $PWD/docs/report.md`, scratch, BARE, ['bash']],
+      [`h=P; export \${h}WD=${web}; cp ${web}/base/report.md $PWD/docs/report.md`, scratch, 'a name I cannot read may be PWD', ['bash', 'zsh']],   // M1's assembled name
+      [`cd ${scratch}; OLDPWD=${web}; cp ${web}/base/report.md $OLDPWD/docs/report.md`, out, BARE_OLD, ['bash', 'zsh', 'dash']],
+      [`cd ${scratch}; OLDPWD=${web}; cp ${web}/base/report.md ~-/docs/report.md`, out, BARE_OLD, ['bash']],
+    ];
+    for (const [cmd, cwd, why, shells] of rows) {
+      const reason = evaluate(payload(cmd, cwd));
+      assert.ok(reason && NOT_LITERAL.test(reason) && reason.includes(proj) && reason.includes(why), `refused as not literal, naming the project and why the name was not read: ${cmd}: ${reason}`);
+      assert.ok(!/\u2014/.test(reason) && !ROMP_NOUNS.test(reason.split(proj).join('<p>').split(out).join('<o>')), 'no em dash, no romp noun');
+      for (const shell of shells) assert.equal(overwrites(cmd, webReport, cwd, shell).changed, true, `${shell} overwrites the tracked file through the reassigned name: ${cmd}`);
+      assert.equal(runHook(cmd, cwd).status, 2, `the hook refuses: ${cmd}`);
+    }
+    // after a literal head outside every project the same name is opaque and the word keeps the cwd rule (B2 as ruled): from a
+    // cwd in no project it is allowed (run in both shells below, the tracked files unchanged), from the tracked cwd it is refused
+    // as not literal with the reason
+    const headRow = `PWD=${web}; echo x > ${out}/scratch/$PWD/x.md`;
+    assert.equal(evaluate(payload(headRow, out)), null, 'from a cwd in no project the opaque word is dropped');
+    assert.equal(runHook(headRow, out).status, 0);
+    const headReason = evaluate(payload(headRow, scratch));
+    assert.ok(headReason && NOT_LITERAL.test(headReason) && headReason.includes(proj) && headReason.includes(BARE), `from the tracked cwd: ${headReason}`);
+    assert.equal(runHook(headRow, scratch).status, 2);
+    // the grammar: the word carries why its expansion stayed opaque; without the mention it resolves
+    const u = extractWriteTargets(`PWD=${web}; echo x > $PWD/y.md`, scratch).unresolved;
+    assert.equal(u.length, 1);
+    assert.deepEqual([u[0].why.kind, u[0].why.name], ['namedExpansion', 'PWD']);
+    assert.deepEqual(extractWriteTargets('echo x > $PWD/y.md', scratch).targets.map((t) => t.path), [path.join(scratch, 'y.md')]);
+    // the twins: a command that only expands PWD or OLDPWD is resolved and judged as B2 does; a mention beside no such
+    // expansion changes nothing; the by-name refusal of a resolved tracked path stands
+    const twins = [
+      [`cp ${web}/base/report.md $PWD/copy.md`, scratch, null],
+      [`cp ${web}/base/report.md ~+/copy2.md`, scratch, null],
+      [`cd ${out}/scratch && echo x > $OLDPWD/scratch/back.log`, proj, null],
+      [`cd ${out}/scratch && echo x > ~-/scratch/back2.log`, proj, null],
+      [`echo PWD > ${out}/scratch/pwd.log`, proj, null],
+      [`echo x > "$PWD/docs/report.md"`, proj, /^Track-changes is ON for /],
+      [`cd docs; cp ../base/report.md $OLDPWD/docs/report.md`, proj, /^Track-changes is ON for /],
+    ];
+    const before = `${shaOf(report)} ${shaOf(webReport)}`;
+    for (const [cmd, cwd, want] of twins) {
+      const reason = evaluate(payload(cmd, cwd));
+      if (want === null) {
+        assert.equal(reason, null, `allowed: ${cmd}`);
+        for (const shell of ['bash', 'zsh']) {
+          const r = spawnSync(shell, ['-c', cmd], { cwd, encoding: 'utf8', env: { PATH: process.env.PATH } });
+          assert.equal(r.status, 0, `${shell}: ${cmd}: ${r.stderr}`);
+        }
+      } else assert.match(reason, want, `judged by name: ${cmd}`);
+    }
+    for (const shell of ['bash', 'zsh']) spawnSync(shell, ['-c', headRow], { cwd: out, encoding: 'utf8', env: { PATH: process.env.PATH } });   // lands under <out>/scratch, or fails on the folder that is not there; nothing tracked
+    assert.equal(`${shaOf(report)} ${shaOf(webReport)}`, before, 'the allowed twins and the literal-head row left both tracked files as they were');
+    assert.equal(fs.readFileSync(path.join(scratch, 'copy.md'), 'utf8'), 'an older copy\n', 'the resolved $PWD twin landed in the untracked folder');
   } finally { fs.rmSync(out, { recursive: true, force: true }); }
 });
 

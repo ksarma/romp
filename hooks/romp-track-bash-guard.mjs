@@ -126,7 +126,8 @@
 // no environment value reaches a message: a `"$HOME/x.md"` target is expanded and refused by its
 // resolved path, which is HOME's value). The refusal says the target is not literal and asks for the
 // path spelled out, which then takes today's verdict (a file outside the project runs as usual, a
-// tracked one goes through track-edit). With no such project in play the word is dropped, as before.
+// tracked one goes through track-edit). With no such project in play the word is dropped, as before; since B2 (below)
+// an expansion whose value the guard can read is resolved first, and the resolved path takes the literal verdict.
 // Like the vendored guard it lets a non-text file through (an image or a PDF cannot take a tracked
 // edit, so the raw write is the only way to regenerate a figure), and it exits 0 at once, before
 // stdin is read, when ROMP_SID is absent from its environment (decision 24: registered machine-wide,
@@ -248,6 +249,39 @@
 // `printf -v "$name"`, a relative write after `set -f` or `shopt -s nocasematch`, an f-string path from a tracked cwd,
 // and a write through a link whose source is a substitution from a cwd in no project.
 //
+// B2 AS RULED (THE FIFTH PASS'S SECOND COMMIT, 2026-09-19; the reviewer's option (c) on the measured delta: the
+// resolution half kept, the refusal half dropped; the dropped sequence is fork PR #780's cb0b15422 and 24acdce20). A
+// literal head outside every project bounds nothing once an opaque expansion follows it, since a `..` inside the
+// value escapes any prefix (the matrix's `x='../sub-on/p$abc'; printf poison > <out>/$x/rep.md` from a cwd in no
+// project overwrote the tracked note while class E asked only whether the head parents or sits under a root). So
+// extract RESOLVES every expansion whose value it can read before a word is judged (resolveWord, valueOf,
+// recordAssignments): a name the command set to a plain string earlier, at the top level in plain sequence; HOME
+// through the guard's home; PWD through the directory it knows; OLDPWD, `~+` and `~-` through the directory before a
+// `cd` in the same command; none of HOME, PWD and OLDPWD once the command names the name outside an expansion or may
+// fill it in (rule (a) and M1, keyed on EXPANDED_NAMES, which lists every name valueOf substitutes:
+// unreadableExpandedNames). The resolved word is judged as literal (`x=other.md; echo hi > docs/$x` by name, allowed;
+// `x='../docs/report.md'; cp base/report.md scratch/$x` refused by name; `PWD=<web>; cp <web>/base/report.md
+// $PWD/docs/report.md` from a tracked cwd refused as not literal, the reason naming the mention of PWD). What stays
+// opaque (a `$(...)`, a `${name:-x}`, a name the command does not set to a plain string, a loop variable, a name a
+// `read` fills in, any name once an eval, a source, an unknown wrapper option or a call of a function the command
+// defines ran) keeps the verdict the working directory gives it: refused as not literal from a cwd in a tracked
+// project (class F and the cwd rule, as before B2), dropped from a cwd in no project. THE PRINCIPLE (the reviewer's,
+// 2026-09-19): a guard is strictest where its subject is and loosest where its subject is not; this guard's subject
+// is tracked files inside projects; from a tracked cwd an opaque expansion is refused before and after B2, since that
+// is where the danger and the user's intent live; from a cwd in no project the guard reaches furthest from its
+// subject and must not refuse on a value it cannot know. The threat model is the user's own box against ACCIDENT, not
+// malice: for the dropped refusal half to be worth the refusals it added, an accidental opaque value would have to
+// hold a climbing relative path AND land on a tracked file, issued from a cwd outside every project; a variable
+// holding climbing relative text is rare by accident, a user in a scratch directory writing `$USER.log` or `$(date
+// +%s).md` is ordinary, and a guard that refuses ordinary work gets switched off. THE RESIDUAL, with its boundary: a
+// literal head outside every project followed by an opaque expansion whose value can climb with `..` is allowed from
+// a cwd in no project; from a tracked cwd the refusal stands unchanged. The cost, measured against
+// tools/romp-track-bash-guard-corpus.json (the b2-readable and b2-opaque entries, 44 shapes from a cwd in no project
+// and from a tracked one; a sample of shapes, not the population of commands): none of the 164 ordinary commands
+// changes verdict; the 22 readable shapes refuse 3 times after resolution, each by name on a tracked file the value
+// reaches (one of them a live overwrite before), and 20 of their 22 refusals from the tracked cwd became allowances;
+// the 22 opaque shapes keep their verdicts, refused from the tracked cwd and allowed from the cwd in no project.
+//
 // THE LISTS THAT REMAIN, each with the side its GAP falls on (a missing entry causes a false refusal, or a write):
 //   PREFIXES (the wrapper set): gap = a WRITE (an unlisted wrapper is read as its own command, an unmodelled writer by
 //     the contract), so the set is stated on the four surfaces and the unlisted wrappers the passes found (unshare,
@@ -256,8 +290,10 @@
 //   COPY_OPT (cp/mv/install/ln): gap = a false refusal (an option not in the table refuses, on every path).
 //   INERT_SET_LETTERS, INERT_SET_OPTIONS, INERT_SHOPT: gap = a false refusal (an option not listed makes the directory
 //     unknown); since the fifth commit each entry is decided by THE CRITERION stated at the tables and carries its reason.
-//   EXPANDED_NAMES: gap = a WRITE only if expansionAt ever substitutes a name not listed here; today it substitutes HOME
-//     alone, and the two are one edit apart (the comment at each names the other).
+//   EXPANDED_NAMES: gap = a WRITE if valueOf or expansionAt ever substitutes a name not listed here (B2's first draft added
+//     PWD and OLDPWD to valueOf while the list named HOME alone, and `PWD=<dir>; cp x $PWD/docs/report.md` wrote a tracked
+//     file, the fifth pass's attacker found); it lists HOME, PWD and OLDPWD, the three valueOf reads, and the comment at
+//     each names the other.
 //   NUMERIC_EXPANSIONS: gap = a false refusal (an expansion not listed is unreadable).
 //   ANSI_C_SHELLS, SHELLS: gap = a false refusal (a shell not listed gets the restricted reading, or is not recursed
 //     and its script's literal targets are judged by the own-project step as words the hook cannot read).
@@ -268,7 +304,6 @@
 //     markerAt mirrors store-io's list and family 5 refuses a nested one.
 //   The sed, perl, truncate and interpreter option lists: gap = an over-count (an unknown option is read as a flag and
 //     the operand after it as a file), the refuse direction.
-//
 // THE CONTRACT. This guard is best-effort against known write forms: it refuses the shell writes it models and, by
 // design, allows anything it does not recognise, so it never blocks ordinary work it cannot read; it is a backstop, not
 // a complete boundary. The allow-by-default for an unmodelled writer is deliberately not flipped, since flipping it
@@ -278,17 +313,19 @@
 // for paths, a link whose source it cannot read, a `~` or `$HOME` write beside a mention of HOME or beside a variable
 // name the shell fills in, a template or format string as an interpreter's write path, and, from any working directory,
 // a write through an alias the command makes (a hard link, `cp -l`, `cp -s`, `link`, a link whose source it cannot read)
-// whose source lies in a tracked project or is one it cannot read. These write forms are not modelled and still reach a
-// tracked file: rsync; awk with a redirect inside its program; ed; ex; make; find with -delete or -exec; a git
-// subcommand that writes the working tree (checkout, stash, apply, reset, rm, clean, mv); a computed path inside an
-// interpreter (a name, sys.argv, os.environ or process.env in python3 -c or node -e); a script the shell reads from
-// elsewhere (eval, xargs, a sourced file, trap, a command whose name is an expansion, a script held in a variable); a
-// command that runs another command and is outside the guard's wrapper set (unshare, nsenter, script, setarch, setpriv,
-// strace, coproc and their kin); a link made by a writer outside the model (python, tar, rsync) that a later modelled
-// write follows; shuf -o; a cd through CDPATH; and a leading opaque expansion from a cwd outside every project. The same
-// paragraph, and this writer list, are on the vendored SKILL.md, hooks/README.md and docs/install.md, pinned identical
-// by a test.
-
+// whose source lies in a tracked project or is one it cannot read. A value it can read (a name the command set to a
+// plain string earlier in the same command, HOME, PWD, OLDPWD, `~+` and `~-`, none of them once the command names or
+// may fill in the name) is resolved first and the real path judged. These write forms are not modelled and still
+// reach a tracked file: rsync; awk with a redirect inside its program; ed; ex; make; find with -delete or -exec; a
+// git subcommand that writes the working tree (checkout, stash, apply, reset, rm, clean, mv); a computed path inside
+// an interpreter (a name, sys.argv, os.environ or process.env in python3 -c or node -e); a script the shell reads
+// from elsewhere (eval, xargs, a sourced file, trap, a command whose name is an expansion, a script held in a
+// variable); a command that runs another command and is outside the guard's wrapper set (unshare, nsenter, script,
+// setarch, setpriv, strace, coproc and their kin); a link made by a writer outside the model (python, tar, rsync)
+// that a later modelled write follows; shuf -o; a cd through CDPATH; and an opaque expansion from a cwd outside every
+// project, leading or after a literal head outside every project (a `..` inside the value could climb into a project;
+// from a cwd in a tracked project the same word is refused as not literal). The same paragraph, and this writer list,
+// are on the vendored SKILL.md, hooks/README.md and docs/install.md, pinned identical by a test.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -367,6 +404,7 @@ function word(text, literal, raw, extra) {
   return {
     text, literal, raw, glob: !!(extra && extra.glob), marks: extra && extra.marks != null ? extra.marks : null,
     at: extra && extra.at != null ? extra.at : null, numeric: !!(extra && extra.numeric),
+    why: extra && extra.why ? extra.why : null,   // why an expansion in it stayed opaque (resolveWord's named expansion), for the refusal
   };
 }
 
@@ -1182,7 +1220,7 @@ function commandOf(words) {
   let wrapped = false;   // the walk-around lens second pass (family 6): a wrapper prefix was peeled before the command
   for (;;) {
     while (k < words.length && RESERVED.has(words[k].text)) k++;
-    while (k < words.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[k].raw)) k++;
+    while (k < words.length && /^[A-Za-z_][A-Za-z0-9_]*\+?=/.test(words[k].raw)) k++;
     if (k >= words.length) return null;
     const name = path.basename(words[k].text);
     if (!PREFIXES.has(name)) return { name, args: words.slice(k + 1), chdirs, writes, wrapped };
@@ -1900,7 +1938,13 @@ const RECURSION_CAP = 64;
 // the gap the fourth pass found (2026-09-19): a NAME the shell fills in (`export ${h}${m}=…`, `declare -n r=${h}${m}`,
 // `printf -v "${h}${m}"`, `typeset ${h}${m}=`, `read ${h}${m}`, `export "$(printf 'HOME=…')"`, `read -r "$(printf HOME)"`)
 // reassigns HOME with no literal token anywhere, so assembledNameOperand (below) closes it on the visible construct.
-const EXPANDED_NAMES = ['HOME'];
+// B2 as ruled (2026-09-19; the fifth pass's attacker on B2's first draft): valueOf substitutes PWD and OLDPWD beside HOME,
+// and while this list named HOME alone `PWD=<web>; cp <web>/base/report.md $PWD/docs/report.md` from a tracked cwd was
+// resolved through the directory the guard knew and allowed while the shell wrote the tracked file (refused as not
+// literal before B2). The list names every name valueOf substitutes, so rule (a) and M1 cover
+// each: a mention of PWD or OLDPWD outside an expansion, or a name the shell fills in, makes `$PWD`, `$OLDPWD`, `~+` and
+// `~-` unreadable for the whole command (unreadableExpandedNames), and the word they stand in keeps the cwd rule.
+const EXPANDED_NAMES = ['HOME', 'PWD', 'OLDPWD'];
 function bareExpandedNames(segments) {
   const found = new Set();
   const scan = (text, marks) => {
@@ -2009,12 +2053,52 @@ function assembledNameOperand(segments) {
 // Why `~` and `$HOME` are unreadable in this command, or null: rule (a)'s bare identifier, or M1's assembled name. The text
 // is the reason clause the refusal and the unknown-directory message carry.
 function homeUnreadableWhy(segments) {
-  if (bareExpandedNames(segments).has('HOME')) {
-    return { kind: 'bare', text: 'the command names HOME outside an expansion (an assignment, a declaration, a nameref, a read or an argument that could reassign it)' };
+  return unreadableExpandedNames(segments).get('HOME') || null;
+}
+// Every expanded name (EXPANDED_NAMES) the command may reassign, each with the reason clause the refusal carries: rule
+// (a)'s bare identifier for that name, or M1's assembled name (which may be any of them). valueOf reads none of these
+// (B2 as ruled, 2026-09-19: B2's first draft held back HOME alone, and a `PWD=` or `OLDPWD=` in the command was resolved
+// through the guard's own directory model, a live overwrite the fifth pass's attacker found).
+function unreadableExpandedNames(segments) {
+  const bare = bareExpandedNames(segments);
+  const a = bare.size === EXPANDED_NAMES.length ? null : assembledNameOperand(segments);
+  const out = new Map();
+  for (const name of EXPANDED_NAMES) {
+    if (bare.has(name)) out.set(name, { kind: 'bare', name, text: `the command names ${name} outside an expansion (an assignment, a declaration, a nameref, a read or an argument that could reassign it)` });
+    else if (a) out.set(name, { kind: 'assembled', name, text: `the command's \`${a.verb}\` takes a variable name the shell fills in when it runs (${a.raw}), and a name I cannot read may be ${name}` });
   }
-  const a = assembledNameOperand(segments);
-  if (a) return { kind: 'assembled', text: `the command's \`${a.verb}\` takes a variable name the shell fills in when it runs (${a.raw}), and a name I cannot read may be HOME` };
-  return null;
+  return out;
+}
+// B2 (the fifth pass's second commit, 2026-09-19, the reviewer's ruling with its condition): a literal head outside every
+// project bounds nothing once an opaque expansion follows it, since a `..` inside the value escapes any prefix (the fourth
+// pass's matrix: `x='../sub-on/p$abc'; printf poison > <out>/$x/rep.md` from a cwd in no project overwrote the tracked
+// note, since class E asked only whether the head parents or sits under a root). So the guard RESOLVES every expansion
+// whose value it can read and judges the real path; what stays opaque keeps the verdict the working directory gives it
+// (the reviewer's option (c), 2026-09-19: refused as not literal from a tracked cwd, dropped from a cwd in no project;
+// the header states the principle and the residual with its boundary). What it can read: an assignment earlier in the same command whose value is a plain string (`x='../sub-on/p'`,
+// `export x=...`, `declare x=...`, at the top level, in plain sequence, not in a body, a subshell or after `&&`/`||`,
+// and not followed by an eval, a sourced file, a call of a function the command defines, or a read into the name);
+// HOME through the guard's own home (unless the command names or fills in HOME, rule (a) and M1, and the same for PWD
+// and OLDPWD: valueOf reads no name on EXPANDED_NAMES that the command names or may fill in); PWD through the
+// directory it knows; OLDPWD, `~+` and `~-` through the directory before a `cd` in the same command. A value that is
+// empty or holds a space, a glob character or an expansion of its own is not read (the shell would split or match it).
+// A `$(...)`, a backtick, a `${name:-x}`, a variable the command does not set to a plain string, a loop variable, a
+// name a `read` fills in, and any name once an eval, a source or a function call ran, stay opaque, and are judged as
+// before B2. The cost is measured in tools/romp-track-bash-guard-corpus.json (the b2-readable and b2-opaque entries) and
+// stated with the change.
+const RESOLVED_NAME = /^\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))/;
+const VAR_ASSIGNERS = new Set(['export', 'declare', 'typeset', 'readonly']);   // NAME=VALUE operands that persist in this shell at the top level
+const VAR_POISONERS = new Set(['eval', 'source', '.', 'xargs']);   // after these the guard reads no assigned name
+// Whether every expansion left in `text` is the process id (for the numeric flag of a partly resolved word).
+function numericRunsOnly(text, marks) {
+  for (let i = 0; i < text.length;) {
+    if (marks[i] !== 'x') { i++; continue; }
+    let j = i;
+    while (j < text.length && marks[j] === 'x') j++;
+    if (!NUMERIC_EXPANSIONS.includes(text.slice(i, j))) return false;
+    i = j;
+  }
+  return true;
 }
 export function extractWriteTargets(command, cwd, shell = null) {
   return extract(command, { dir: cwd || null, unknownDir: !cwd, unknownWhy: cwd ? null : 'no working directory is known for it', shell, depth: 0 });
@@ -2029,8 +2113,18 @@ function extract(command, ctx) {
   let unknownDir = ctx.unknownDir;
   let unknownWhy = ctx.unknownWhy;   // for the refusal: which construct made the directory unknown (round 3)
   let keywordMode = !!ctx.keywordMode;   // bash's `set -k` is on from an earlier segment (setsKeywordMode)
+  // B2: the names this command set to a plain string (name -> value; null for a name it set to something the guard cannot
+  // read), the directory before the last `cd` (OLDPWD), and whether an eval, a source or a function call has run since
+  const vars = ctx.vars || new Map();
+  let oldDir = ctx.oldDir === undefined ? null : ctx.oldDir;
+  let varsPoisoned = !!ctx.varsPoisoned;
+  const definedFunctions = ctx.definedFunctions || new Set();
   const setUnknown = (why) => { unknownDir = true; if (!unknownWhy) unknownWhy = why; };
   const setKnown = (d) => { dir = d; unknownDir = false; unknownWhy = null; };
+  // B2: a `cd` or `pushd` sets OLDPWD to the directory it left, when the guard knew it; a move it cannot follow leaves
+  // OLDPWD unknown
+  const moveTo = (d) => { oldDir = unknownDir ? null : dir; setKnown(d); };
+  const moveUnknown = (why) => { oldDir = null; setUnknown(why); };
   // Class D (2026-09-19): a leading `~/`, `$HOME/` or `${HOME}/` expands through os.homedir(), but a
   // command can reassign HOME before the write (`HOME=notes; > $HOME/seed.md` from a tracked project put
   // the write in a tracked folder while the guard read the real home). Since the third pass (rule (a)) the
@@ -2038,9 +2132,115 @@ function extract(command, ctx) {
   // not a list of assignment forms; when it appears, the home the guard read may not be the one the shell
   // uses, so a word that expanded it (marked 'h') is a target the hook cannot read, and a `cd` to such a
   // word, or a bare `cd`, leaves the directory unknown, for the whole command.
-  const homeWhy = ctx.homeWhy || homeUnreadableWhy(segments);
+  // the expanded names this command may reassign (rule (a), M1; B2 as ruled: PWD and OLDPWD beside HOME), the
+  // parent's marks inherited by a `$(...)` and a script, its own added
+  const unreadableNames = new Map(ctx.unreadableNames || []);
+  for (const [k, v] of unreadableExpandedNames(segments)) if (!unreadableNames.has(k)) unreadableNames.set(k, v);
+  const homeWhy = ctx.homeWhy || unreadableNames.get('HOME') || null;
   const homeAssigned = ctx.homeAssigned || !!homeWhy;
   const homeWord = (w) => !!(homeAssigned && w && w.marks && w.marks.includes('h'));
+  // B2: the plain-string value of `name` as the shell will expand it, or null when the guard cannot read it. An expanded
+  // name the command names outside an expansion, or may fill in (M1), is not read (PWD and OLDPWD as HOME; B2's first
+  // draft read the guard's own directory for `$PWD` while `PWD=<dir>; cp x $PWD/docs/report.md` wrote a tracked file).
+  const valueOf = (name) => {
+    if (name === 'HOME') return homeAssigned ? null : os.homedir();
+    if (name === 'PWD') return unknownDir || unreadableNames.has('PWD') ? null : dir;
+    if (name === 'OLDPWD') return unreadableNames.has('OLDPWD') ? null : oldDir;
+    if (varsPoisoned || !vars.has(name)) return null;
+    return vars.get(name);
+  };
+  // B2: a word with the expansions the guard can read replaced by their values (quoted text, since a value with a
+  // space or a glob character is not read), the rest left as they stand; the word's raw spelling is kept for the refusal.
+  const resolveWord = (w) => {
+    if (!w || w.literal || !w.marks || !w.marks.includes('x')) return w;
+    const T = w.text;
+    const M = w.marks;
+    let text = '';
+    let marks = '';
+    let changed = false;
+    let named = null;   // the first expanded name left opaque because the command names or may fill it in (the refusal says so)
+    const unread = (name) => { if (!named && unreadableNames.has(name)) named = { ...unreadableNames.get(name), kind: 'namedExpansion' }; return null; };
+    for (let i = 0; i < T.length;) {
+      if (M[i] !== 'x') { text += T[i]; marks += M[i]; i++; continue; }
+      let j = i;
+      while (j < T.length && M[j] === 'x') j++;
+      const run = T.slice(i, j);
+      let value = '';
+      let ok = true;
+      let end = j;
+      for (let k = 0; k < run.length && ok;) {
+        const m = run.slice(k).match(RESOLVED_NAME);
+        if (m) {
+          const v = valueOf(m[1] || m[2]);
+          if (v == null) { unread(m[1] || m[2]); ok = false; break; }
+          value += v;
+          k += m[0].length;
+          continue;
+        }
+        // `~+` and `~-`: the tilde stands as one expansion and the sign follows it as text
+        if (run[k] === '~' && k === run.length - 1 && end < T.length && M[end] === 'u' && (T[end] === '+' || T[end] === '-')) {
+          const v = valueOf(T[end] === '+' ? 'PWD' : 'OLDPWD');
+          if (v == null) { unread(T[end] === '+' ? 'PWD' : 'OLDPWD'); ok = false; break; }
+          value += v;
+          k++;
+          end++;
+          continue;
+        }
+        ok = false;
+      }
+      if (!ok || value === '' || /[\s*?[\0]/.test(value)) { text += T.slice(i, j); marks += M.slice(i, j); i = j; continue; }
+      text += value;
+      marks += 'q'.repeat(value.length);
+      changed = true;
+      i = end;
+    }
+    if (!changed) return named ? { ...w, why: named } : w;
+    const hasX = marks.includes('x') || text.includes('\0');
+    const g = !hasX && hasGlobChar(text, marks);
+    return word(text, !hasX && !g, w.raw, { glob: g, marks, at: w.at, numeric: hasX && numericRunsOnly(text, marks) && !hasGlobChar(text, marks), why: named });
+  };
+  // B2: record what a segment assigns, once its own words have been judged (the assignment takes effect for LATER
+  // segments): a top-level assignment in plain sequence with a plain-string value is read; every other assignment to
+  // a name (a value the guard cannot read, `+=`, one in a body, a subshell or after `&&`/`||`, a `read`, a loop
+  // variable, a nameref, an unset) makes the name unreadable for the rest of the command.
+  const recordAssignments = (seg, idx, cmd) => {
+    const prevOp = idx > 0 ? segments[idx - 1].op : '';
+    const reliable = frames.length === 0 && prevOp !== '&&' && prevOp !== '||' && seg.op !== '|' && seg.op !== '&';
+    const set = (name, w) => {
+      const eq = w.text.indexOf('=');
+      const plusEq = eq > 0 && w.text[eq - 1] === '+';
+      const literalValue = w.literal && !w.glob && eq >= 0 && !plusEq;
+      vars.set(name, reliable && literalValue ? w.text.slice(eq + 1) : null);
+    };
+    const nameOf = (w) => { const m = w.raw.match(/^([A-Za-z_][A-Za-z0-9_]*)(\+?=|$)/); return m ? m[1] : null; };
+    const head = seg.words.length ? seg.words[0].text : '';
+    if ((head === 'for' || head === 'select') && seg.words[1] && seg.words[1].literal) { vars.set(seg.words[1].text, null); return; }
+    if (!cmd) {   // an assignment-only segment
+      for (const w of seg.words) { const n = nameOf(w); if (n && isAssignmentWord(w)) set(n, w); }
+      return;
+    }
+    if (cmd.unknown || cmd.opaque || 'script' in cmd) { varsPoisoned = true; return; }
+    if (VAR_POISONERS.has(cmd.name) || definedFunctions.has(cmd.name)) { varsPoisoned = true; return; }
+    if (VAR_ASSIGNERS.has(cmd.name) || cmd.name === 'local') {
+      const nameref = cmd.args.some((w) => w.literal && /^-[A-Za-z]*n/.test(w.text));
+      for (const w of cmd.args) {
+        if (/^[-+]/.test(w.text) && w.text.length > 1) continue;
+        const n = nameOf(w);
+        if (!n) continue;
+        if (nameref || cmd.name === 'local' || !w.literal) vars.set(n, null);
+        else set(n, w);
+      }
+      return;
+    }
+    if (cmd.name === 'read' || cmd.name === 'mapfile' || cmd.name === 'readarray' || cmd.name === 'unset' || cmd.name === 'getopts') {
+      for (const w of cmd.args) if (!(w.text.startsWith('-') && w.text.length > 1) && /^[A-Za-z_][A-Za-z0-9_]*$/.test(w.text)) vars.set(w.text, null);
+      return;
+    }
+    if (cmd.name === 'printf') {
+      const v = cmd.args.findIndex((w) => /^-[A-Za-z]*v/.test(w.text));
+      if (v >= 0) { const t = cmd.args[v].text; const nm = t.length > t.indexOf('v') + 1 ? t.slice(t.indexOf('v') + 1) : (cmd.args[v + 1] && cmd.args[v + 1].text); if (nm) vars.set(nm, null); }
+    }
+  };
   const HOME_UNKNOWN = `${homeWhy ? homeWhy.text : 'the command names HOME outside an expansion'}, so it may reassign HOME before this runs and \`~\` and \`$HOME\` name a directory I cannot read`;
   // Class H (2026-09-19): a symlink an `ln -s` with literal operands and an untouched name makes before a later word,
   // resolved as the kernel will resolve it once it exists. `links` maps an absolute link path to the absolute path it
@@ -2210,7 +2410,7 @@ function extract(command, ctx) {
       // command removed, renamed or linked is unreadable for THAT reason, so the family-3 refusal and the alias's source
       // decide, from any cwd; before, it was recorded with no reason and judged against a tree where the link did not exist
       const m = mutatedUnderLiteralPart(w);
-      cannotRead(w, how, m ? mutatedWhy(m) : null);
+      cannotRead(w, how, m ? mutatedWhy(m) : (w.why || null));
       return;
     }
     if (!w.text) return;
@@ -2235,9 +2435,13 @@ function extract(command, ctx) {
   let sawOpaqueCommand = false;
   // A script run by `sh` (a `$(...)`, a heredoc-fed shell, a `-c` operand) is read as that shell reads it; a
   // `$(...)` in this command runs in this command's shell, so it inherits `shell`, and the directory state.
-  const recurse = (text, sh = shell) => {
+  const recurse = (text, sh = shell, fresh = sh !== shell) => {
     if (depth >= RECURSION_CAP) { sawOpaqueCommand = true; return; }
-    const sub = extract(text, { dir, unknownDir, unknownWhy, shell: sh, depth: depth + 1, homeAssigned, homeWhy, links, cdFunctions, mutated, keywordMode });
+    // B2: a `$(...)` runs in a subshell of this shell and sees its names (a copy: its own assignments do not come back);
+    // a script handed to a named shell sees the environment alone, so it inherits none of them (fail closed: a name
+    // this command set but did not export is empty there, and one it exported may be read by a script the guard does
+    // not follow)
+    const sub = extract(text, { dir, unknownDir, unknownWhy, shell: sh, depth: depth + 1, homeAssigned, homeWhy, unreadableNames, links, cdFunctions, mutated, keywordMode, vars: fresh ? new Map() : new Map(vars), oldDir, varsPoisoned: fresh ? false : varsPoisoned, definedFunctions });
     targets.push(...sub.targets);
     unresolved.push(...sub.unresolved);
     if (sub.opaque) sawOpaqueCommand = true;
@@ -2303,6 +2507,7 @@ function extract(command, ctx) {
       const named = prev && prev.op === '(' && (prev.words.length === 1 || (prev.words.length === 2 && prev.words[0].text === 'function'));
       if (next && next.paren === ')' && named) {
         const fname = prev.words.length === 1 ? prev.words[0].text : prev.words[1].text;
+        definedFunctions.add(fname);   // B2: a call of it may assign any name
         frames.push({ kind: 'function', name: fname, bodyMoved: false, dir, unknownDir, unknownWhy, depth: 0 });   // name() ... : a definition, not a run
         idx++;
         continue;
@@ -2312,13 +2517,16 @@ function extract(command, ctx) {
     }
     if (seg.paren === ')') { closeSubshell(); continue; }
     braces(seg);
+    // B2: the expansions the guard can read are resolved before the segment's words and targets are judged
+    for (const r of seg.redirects) r.target = resolveWord(r.target);
+    seg.words = seg.words.map(resolveWord);
     for (const r of seg.redirects) if (WRITE_REDIRECTS.has(r.op)) add(r.target, `${r.op} redirection`);   // a glob: every match (add)
     for (const inner of seg.subs) recurse(inner);
     const head = seg.words.length ? seg.words[0].text : '';
     if (head in CLOSERS) closeCompound(CLOSERS[head]);
     else if (head === 'if' || head === 'while' || head === 'until' || head === 'for' || head === 'case') frames.push({ kind: head, moved: false });
     const cmd = commandOf(seg.words);
-    if (!cmd) continue;
+    if (!cmd) { recordAssignments(seg, idx, null); continue; }
     if (cmd.unknown) {
       // rule (b) (the third pass, 2026-09-19): a wrapper option its table does not parse in full. The option, its `=value`
       // and every later word are recorded as targets the hook cannot read, so the own-project step judges each literal
@@ -2329,6 +2537,7 @@ function extract(command, ctx) {
       cannotRead(word(option, false, option), wrapper, why);
       if (value) cannotRead(value, wrapper, why);
       for (const w of rest) cannotRead(w, wrapper, why);
+      varsPoisoned = true;   // B2: what the wrapper ran is not known
       continue;
     }
     if (cmd.opaque) {
@@ -2345,10 +2554,11 @@ function extract(command, ctx) {
       }
       for (const w of rest) cannotRead(w, option, why);
       sawOpaqueCommand = true;
+      varsPoisoned = true;   // B2
       continue;
     }
     if ('script' in cmd) {   // `flock … -c 'string'` runs the string through `$SHELL -c`, read like `sh -c` (round 4)
-      if (cmd.script && cmd.script.literal) recurse(cmd.script.text);
+      if (cmd.script && cmd.script.literal) recurse(cmd.script.text, shell, true);   // `$SHELL -c`: a fresh shell, the names not inherited (B2)
       else if (cmd.script) sawOpaqueCommand = true;
       continue;
     }
@@ -2420,27 +2630,27 @@ function extract(command, ctx) {
           a = m && m.length === 1 ? m[0] : word(a.text, false, a.raw, { marks: a.marks });
         }
         // a bare `cd`, or a `cd ~/x`, goes to HOME: a directory the guard cannot read once the command names HOME (rule (a))
-        if (!a) { if (block) setUnknown(block); else if (homeAssigned) setUnknown(`an earlier bare \`${name}\` goes to HOME, and ${HOME_UNKNOWN}`); else setKnown(os.homedir()); }
-        else if (a.text === '-') setUnknown(`an earlier \`${name} -\` returns to a directory this command did not set`);
-        else if (homeWord(a)) setUnknown(`an earlier \`${name} ${a.raw}\` goes through HOME, and ${HOME_UNKNOWN}`);
-        else if (!a.literal) setUnknown(`an earlier \`${name}\` names ${a.raw}, a directory the shell fills in when the command runs`);
+        if (!a) { if (block) moveUnknown(block); else if (homeAssigned) moveUnknown(`an earlier bare \`${name}\` goes to HOME, and ${HOME_UNKNOWN}`); else moveTo(os.homedir()); }
+        else if (a.text === '-') moveUnknown(`an earlier \`${name} -\` returns to a directory this command did not set`);
+        else if (homeWord(a)) moveUnknown(`an earlier \`${name} ${a.raw}\` goes through HOME, and ${HOME_UNKNOWN}`);
+        else if (!a.literal) moveUnknown(`an earlier \`${name}\` names ${a.raw}, a directory the shell fills in when the command runs`);
         else {
           const to = resolveAgainst(a.text, unknownDir ? null : dir);
-          if (to == null) setUnknown(`an earlier \`${name}\` follows one I could not read`);
+          if (to == null) moveUnknown(`an earlier \`${name}\` follows one I could not read`);
           else if (!enterable(to)) {
             // the shell stays put when a cd fails, so a relative write after it lands where the command started;
             // a directory the command makes first (`mkdir -p x && cd x`) is not there when the hook runs either
             // (round 3; the cost is stated in decision 47)
             dir = to;
-            setUnknown(`an earlier \`${name} ${a.raw}\` names a directory the command cannot enter when I check it (it may be made first, or the cd may fail and the write land where the command started)`);
-          } else if (block) setUnknown(block);   // the walk-around lens second pass: a clean move the guard cannot rely on
-          else setKnown(to);
+            moveUnknown(`an earlier \`${name} ${a.raw}\` names a directory the command cannot enter when I check it (it may be made first, or the cd may fail and the write land where the command started)`);
+          } else if (block) moveUnknown(block);   // the walk-around lens second pass: a clean move the guard cannot rely on
+          else moveTo(to);
         }
         movedHere();
         if (a && a.literal && a.text !== '-') markFunctionBody();   // a real cd in a function body moves it when called
         break;
       }
-      case 'popd': setUnknown('an earlier `popd` returns to a directory this command did not set'); movedHere(); break;
+      case 'popd': moveUnknown('an earlier `popd` returns to a directory this command did not set'); movedHere(); break;
       // `chdir` is cd's synonym in zsh and dash and no command in bash, and the guard does not know which shell runs the
       // line (the third pass): a cd it cannot know ran, family 6
       case 'chdir': setUnknown('an earlier `chdir` moves the shell in zsh and dash and fails in bash, so where the shell is after it is not known'); movedHere(); break;
@@ -2553,6 +2763,7 @@ function extract(command, ctx) {
     // the reading of LATER segments only, never this command's own write
     recordMutations(name, args, unknownDir ? null : dir);
     }
+    recordAssignments(seg, idx, cmd);   // B2: this segment's assignments hold for the segments after it
   }
   activeLinks = prevLinks;
   // `links` (class H) are returned so evaluate can follow them while it places the targets the hook could not read (M3):
@@ -3017,6 +3228,12 @@ function ownProjectFor(u, memo) {
   // could land in a project (measured: `abc='$abc'; > BASE/roots/p$abc/docs/report.md` from a cwd in no project).
   // Only when D sits under no project at all: when D is itself under a project (a non-refusable one, so `own` is
   // null), the cwd rule already decides and this listing would be spent per call for nothing.
+  // B2 as ruled (the reviewer's option (c), 2026-09-19): when D is under no project and parents no root, the word keeps
+  // the cwd rule whatever follows D. Every value the guard can read was resolved in extract, so an expansion left here is
+  // opaque, and a `..` inside its value could climb from D into a project; the refusal of that case (the dropped half of
+  // B2, fork PR #780's cb0b15422) fired only from a cwd in no project, where the guard is furthest from its subject, and is
+  // not built: the residual is stated on the four surfaces with its boundary (from a tracked cwd the same word is refused
+  // as not literal by the cwd rule, as before B2).
   if (process.env.TRACKCHANGES_ROOT || findVaultRoot(path.join(D, 'x'))) return null;
   return parentTrackedRoots(D, segPrefix, memo);
 }
@@ -3321,8 +3538,11 @@ export function evaluate(raw) {
     const entry = hit.guardedEntry
       ? `, and ${hit.dir} holds ${hit.guardedEntry}, which is or leads to a tracked file of that project, a name the copy could take`
       : '';
+    // B2 as ruled: an expanded name the command names or may fill in (PWD, OLDPWD; HOME takes the homeAssigned text above)
+    // is one the guard would otherwise read, so the refusal says why it did not
+    const named = u.why && u.why.kind === 'namedExpansion' ? ` (${u.why.text}, so I do not read \`$${u.why.name}\` here)` : '';
     return `Track-changes is ON in ${where}, so this command is blocked here: its ${u.how} names ${u.raw}, `
-      + `which is not a literal path${entry}. The shell fills that in when the command runs, so I cannot tell which `
+      + `which is not a literal path${entry}${named}. The shell fills that in when the command runs, so I cannot tell which `
       + `file it would write, and a tracked file written that way would carry no change for me to accept or `
       + `reject. Spell the path out: outside that project the command then runs as usual, and a tracked file `
       + `takes its change through track-edit instead:\n${TRACK_EDIT}`;

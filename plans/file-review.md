@@ -3765,6 +3765,43 @@ document stands on its own, each with the reasoning it was given.
     variable name the shell fills in, the template path and the alias among what is refused, and the interpreter's
     computed forms, the unbounded class of command-running wrappers and a link made by an unmodelled writer among what
     still reaches a tracked file.
+    B2 (the second commit of the fifth pass, 2026-09-19; the reviewer's ruling with its condition, then the reviewer's
+    option (c) on the measured delta: the resolution half kept, the refusal half dropped; the dropped sequence is fork
+    PR #780's cb0b15422 and 24acdce20): a literal head outside every project bounds nothing once an opaque expansion
+    follows it (the matrix's `x='../sub-on/p$abc'; printf poison > <out>/$x/rep.md` from a cwd in no project). `extract`
+    now RESOLVES every expansion whose value it can read before judging a word (`resolveWord`, `valueOf`): a name the
+    command set to a plain string earlier, at the top level in plain sequence (`recordAssignments`, which marks a name
+    set in a body, a subshell or after `&&`/`||`, by a `read`, a loop, a nameref, an unset or a `+=`, or any name once
+    an eval, a source, an unknown wrapper option or a call of a function the command defines ran, as unreadable); HOME
+    through the guard's home; PWD through the directory it knows; OLDPWD, `~+` and `~-` through the directory before a
+    `cd` in the same command; none of HOME, PWD and OLDPWD once the command names the name outside an expansion or may
+    fill it in (`EXPANDED_NAMES` names every name `valueOf` substitutes and `unreadableExpandedNames` returns each the
+    command may reassign with its reason, rule (a) and M1; B2's first draft read `$PWD` and `$OLDPWD` through the
+    guard's own directory model while the command reassigned them, so `PWD=<web>; cp <web>/base/report.md
+    $PWD/docs/report.md` from a tracked cwd wrote the tracked file, the fifth pass's attacker found; the refusal says
+    why the name was not read); a `$(...)` in a subshell inherits a copy of the names, a script handed to a named shell
+    none. The resolved word is judged as literal (`x=other.md; echo hi > docs/$x` by name; `x='../docs/report.md'; cp
+    base/report.md scratch/$x` refused by name; attack 1's `~-` road and attack 2's `scratch/$v` road closed the same
+    way). What stays opaque keeps the verdict the working directory gives it: refused as not literal from a cwd in a
+    tracked project (class F and the cwd rule, as before B2), dropped from a cwd in no project. THE PRINCIPLE (the
+    reviewer's): a guard is strictest where its subject is and loosest where its subject is not; this guard's subject is
+    tracked files inside projects; from a tracked cwd an opaque expansion is refused before and after B2, since that is
+    where the danger and the user's intent live; from a cwd in no project the guard reaches furthest from its subject
+    and must not refuse on a value it cannot know. The threat model is the user's own box against accident, not malice:
+    for the dropped refusal half to be worth the refusals it added, an accidental opaque value would have to hold a
+    climbing relative path AND land on a tracked file, issued from a cwd outside every project; a variable holding
+    climbing relative text is rare by accident, a user in a scratch directory writing `$USER.log` or `$(date +%s).md` is
+    ordinary, and a guard that refuses ordinary work gets switched off. THE RESIDUAL, with its boundary, on the four
+    surfaces: a literal head outside every project followed by an opaque expansion whose value can climb with `..` is
+    allowed from a cwd in no project; from a tracked cwd the refusal stands unchanged. The cost, measured
+    (tools/romp-track-bash-guard-corpus.json, the b2-readable and b2-opaque entries, 44 shapes run from a cwd in no
+    project and from a tracked one; a sample of shapes, not the population of commands, so the principle decides and the
+    count describes): none of the 164 ordinary commands changes verdict; the 22 readable shapes refuse 3 times after
+    resolution, each by name on a tracked file the value reaches (one of them a live overwrite before), and 20 of their
+    22 refusals from the tracked cwd became allowances; the 22 opaque shapes keep their verdicts, refused from the
+    tracked cwd and allowed from the cwd in no project; three recorded false refusals from earlier passes are allowed
+    now that their value resolves (a `$PWD` link source, an `x=scratch` class-E entry, a `~+` spelling), and one cost
+    entry is added, a `$PWD` write beside a mention of PWD from the tracked cwd.
     Without ROMP_SID it exits 0 before reading stdin (decision 24). Cost: about 60 ms
     per Bash call when no target needs the link closure (a read, a literal target outside any project, an explicit
     hit on the project's tracked list, an empty list); a write to a file inside a tracking project that the list

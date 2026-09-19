@@ -134,21 +134,52 @@ relative path resolves, nor which grammar is in force; `set -f`, `noglob`,
 `nomatch`, `markdirs`, `cdsilent`, `pushdminus`, `extquote`, `set -k` and their
 kin are off them, and bash's `set -k` is read both ways); and the remedy line
 quotes its `--file` path in single quotes, so a path holding a `$` pastes back
-unchanged. This guard is best-effort against known write forms: it refuses the
-shell writes it models and, by design, allows anything it does not recognise, so
-it never blocks ordinary work it cannot read; it is a backstop, not a complete
-boundary. The allow-by-default for an unmodelled writer is deliberately not
-flipped, since flipping it would refuse almost all normal work. What it does
-refuse, while a tracked project is in play, is a write it reads but cannot
-place: a target it cannot read, a path it cannot check (a stat error other than
-not-found), an option on a modelled writer or wrapper it does not parse in full,
-an env -S string, a shell option it does not know to be inert for paths, a link
-whose source it cannot read, a `~` or `$HOME` write beside a mention of HOME or
-beside a variable name the shell fills in, a template or format string as an
+unchanged. Its second commit (B2 as the reviewer ruled it, option (c) on the
+measured delta: the resolution half kept, the refusal half dropped) reads the
+values it can: a name the command sets to a plain string earlier (`x='../sub'`,
+`export x=...`, at the top level in plain sequence), HOME, PWD, OLDPWD, `~+` and
+`~-`, resolving them in every word and judging the real path (so `x=other.md;
+echo hi > docs/$x` is judged by name and allowed, and `x='../docs/report.md'; cp
+base/report.md scratch/$x` refuses by name), and reads none of HOME, PWD and
+OLDPWD once the command names the name outside an expansion or may fill it in
+(so `PWD=<dir>; cp x $PWD/docs/report.md` from a tracked cwd is refused as not
+literal, the reason naming the mention); what stays opaque (a name the command
+never sets, one set in a body, after `&&`, in a subshell, by a `read`, a loop,
+an eval, a sourced file or a function call, a `$(...)`) keeps the verdict the
+working directory gives it, refused as not literal from a cwd in a tracked
+project and allowed from a cwd in no project. The principle: a guard is
+strictest where its subject is and loosest where its subject is not; this
+guard's subject is tracked files inside projects, and from a cwd in no project
+it must not refuse on a value it cannot know (a user in a scratch directory
+writing `$USER.log` or `$(date +%s).md` is ordinary work, and a guard that
+refuses ordinary work gets switched off). The residual, with its boundary: a
+literal head outside every project followed by an opaque expansion whose value
+can climb with `..` is allowed from a cwd in no project; from a tracked cwd the
+refusal stands unchanged. The cost is measured against the corpus, a sample:
+none of the 164 ordinary commands changes verdict; of 44 shapes with a literal
+head outside every project followed by an expansion, run from a cwd in no
+project and from a tracked one, the 22 readable ones refuse 3 times after
+resolution, each by name on a tracked file (20 refusals from the tracked cwd
+became allowances), and the 22 opaque ones keep their 22 refusals from the
+tracked cwd and their 22 allowances from the cwd in no project. This guard is
+best-effort against known write forms: it refuses the shell writes it models
+and, by design, allows anything it does not recognise, so it never blocks
+ordinary work it cannot read; it is a backstop, not a complete boundary. The
+allow-by-default for an unmodelled writer is deliberately not flipped, since
+flipping it would refuse almost all normal work. What it does refuse, while a
+tracked project is in play, is a write it reads but cannot place: a target it
+cannot read, a path it cannot check (a stat error other than not-found), an
+option on a modelled writer or wrapper it does not parse in full, an env -S
+string, a shell option it does not know to be inert for paths, a link whose
+source it cannot read, a `~` or `$HOME` write beside a mention of HOME or beside
+a variable name the shell fills in, a template or format string as an
 interpreter's write path, and, from any working directory, a write through an
 alias the command makes (a hard link, `cp -l`, `cp -s`, `link`, a link whose
 source it cannot read) whose source lies in a tracked project or is one it
-cannot read. These write forms are not modelled and still reach a tracked file:
+cannot read. A value it can read (a name the command set to a plain string
+earlier in the same command, HOME, PWD, OLDPWD, `~+` and `~-`, none of them once
+the command names or may fill in the name) is resolved first and the real path
+judged. These write forms are not modelled and still reach a tracked file:
 rsync; awk with a redirect inside its program; ed; ex; make; find with -delete
 or -exec; a git subcommand that writes the working tree (checkout, stash, apply,
 reset, rm, clean, mv); a computed path inside an interpreter (a name, sys.argv,
@@ -158,8 +189,11 @@ expansion, a script held in a variable); a command that runs another command and
 is outside the guard's wrapper set (unshare, nsenter, script, setarch, setpriv,
 strace, coproc and their kin); a link made by a writer outside the model
 (python, tar, rsync) that a later modelled write follows; shuf -o; a cd through
-CDPATH; and a leading opaque expansion from a cwd outside every project. Whichever way you write a tracked file, use `track-edit`, so your change
-comes back to be accepted or rejected.
+CDPATH; and an opaque expansion from a cwd outside every project, leading or
+after a literal head outside every project (a `..` inside the value could climb
+into a project; from a cwd in a tracked project the same word is refused as not
+literal). Whichever way you write a tracked file, use `track-edit`, so your
+change comes back to be accepted or rejected.
 
 For ANY change to the file, use the CLI, NOT the Edit/Write/MultiEdit tools:
 
