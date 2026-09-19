@@ -43,8 +43,10 @@ and Sessions.backend_for run as stubs, so a loader inside their real bodies is o
 source census in TheCountersOneSite instead, one level deep (the helper's own source, checked to be the named helper's: a
 decorator without functools.wraps would hand the census its wrapper's source), while a loader that would reach a body under
 another name, or through a string, is refused where that name is born, by a pin over the kernel's and the judge's whole
-source (every loader by attribute the callee of a call; no alias, bare name, parameter, keyword or loader-naming string handed
-to a dynamic lookup spells one; review round 4), and the census's own forms, counted and missed, are enumerated in
+source (every loader by attribute the callee of a call; no alias, bare name, parameter, keyword, or loader-naming string constant
+handed to a dynamic lookup or a dict read or used as a subscript key spells one; a name assembled at run time or bound before the
+lookup is outside every static pin here, a limit the enumeration holds on its side; review round 4), and the census's own forms,
+counted and missed, are enumerated in
 TheCensusOverEveryForm; setUp checks that it rebinds
 exactly the listed names, so the census reads the fixture's list and not a hand-kept copy of it, and the check spans the
 whole setUp: its snapshots are setUp's first statements and its comparison the last, and the judge names the rebind moves are
@@ -367,8 +369,14 @@ def _loader_sites(obj, needle):
     "load_goals_shared")` (the string built by concatenation too), `exec` or `eval` of a string, `compile` of one,
     `operator.attrgetter("load_goals_shared")`, `vars(jd)["load_goals_shared"]` or `jd.__dict__[...]`,
     `jd.__getattribute__("load_goals_shared")`, and `getattr` on an `importlib.import_module` result (review round 4: the limit
-    named in full; the sample case holds the getattr form at no site, and the kernel-wide pin, _loader_births, refuses a
-    loader-naming string handed to any of these in the kernel and the judge). A name bound OUTSIDE obj's source is no site in
+    named in full; the sample case holds the getattr form at no site). The kernel-wide pin, _loader_births, refuses a
+    loader-naming string CONSTANT handed to any of these, handed to a dict read (`.get`, `.pop`, `.setdefault`, `.__getitem__`)
+    or used as a subscript key, in the kernel and the judge; a name assembled at run time or bound to a variable before the
+    lookup (`"load_" + "goals_shared"`, `n = "load_goals_shared"; getattr(jd, n)`) is spelled in no constant it reads and is
+    outside every static pin in this module (the pre-emption verifier of review round 4 planted the two subscript forms and the
+    dict read as a real load in a replaced helper and the module stayed green; _LIMITS names the two classes, string and
+    assembled, and the enumeration runs the pin over each form of both and expects a birth from the first class and none from
+    the second). A name bound OUTSIDE obj's source is no site in
     obj either (a module-level alias of a door, an import alias at module level, a module-level dict or partial, a closure
     variable, a parameter, a class or instance attribute when only the method is scanned): the same pin refuses every such birth
     in the kernel and the judge, where the alias is spelled. And the census reads the object it is handed: behind a decorator
@@ -412,6 +420,7 @@ def _bump_sites(obj):
 
 
 _DYNAMIC_LOOKUPS = ("getattr", "exec", "eval", "compile", "__import__", "import_module", "attrgetter", "vars", "__getattribute__")
+_DICT_READS = ("get", "pop", "setdefault", "__getitem__")   # a namespace dict read by key: jd.__dict__.get("load_goals_shared") and its kin
 
 
 def _loader_births(path, judge):
@@ -421,9 +430,18 @@ def _loader_births(path, judge):
     dict or list, a default, an assignment target); a bare Name spelled with a loader (in the kernel, any: the kernel reaches
     the judge's doors as `jd.<door>(...)`; in the judge, `judge`, one that is neither the callee of a call nor the loader a
     boundary wrapper hands to _or_fault, which is what `handoffs` lists as (wrapper, loader)); an import alias; a parameter or
-    a keyword named like a loader; a loader defined behind a decorator; and a loader-naming string constant among the
-    arguments of a call to one of _DYNAMIC_LOOKUPS. `called` counts each spelling called and `defs` each def named like a
-    loader, so a caller can check the population it read is the doors' and not empty."""
+    a keyword named like a loader; a loader defined behind a decorator; and a loader-naming string CONSTANT where a string
+    reaches a binding: among the arguments of a call to one of _DYNAMIC_LOOKUPS (getattr, exec, eval, compile, __import__,
+    import_module, attrgetter, vars, __getattribute__) or of a dict read named in _DICT_READS (get, pop, setdefault,
+    __getitem__), the callee matched by its last name, or as the slice of a Subscript (`vars(jd)["load_goals_shared"]`,
+    `jd.__dict__["load_goals_shared"]`). The first cut read a dynamic lookup's arguments alone, and the pre-emption verifier of
+    review round 4 planted both subscript forms and `jd.__dict__.get(...)` as a real load inside a replaced helper's body with
+    the module green. The limit that remains is a name assembled at run time or bound before the lookup: a concatenation or a
+    format that splits the needle (`"load_" + "goals_shared"`, `"load_%s_shared" % "goals"`) and `n = "load_goals_shared";
+    getattr(jd, n)` spell it in no constant this pin reads and are outside every static pin in this module (_LIMITS names the
+    class `assembled`, and the enumeration holds each form of the string and assembled classes on the side it falls). `called`
+    counts each spelling called and `defs` each def named like a loader, so a caller can check the population it read is the
+    doors' and not empty."""
     tree = ast.parse(path.read_text(encoding="utf-8"))
     parents = {}
     for node in ast.walk(tree):
@@ -464,9 +482,11 @@ def _loader_births(path, judge):
             defs[n.name] = defs.get(n.name, 0) + 1
             if n.decorator_list:
                 born.append((n.lineno, "a loader defined behind a decorator: %s" % n.name))
+        if isinstance(n, ast.Subscript) and isinstance(n.slice, ast.Constant) and isinstance(n.slice.value, str) and "load_goals" in n.slice.value:
+            born.append((n.lineno, "a loader-naming string as a subscript key in %s: %r" % (enclosing(n), n.slice.value[:48])))
         if isinstance(n, ast.Call):
             last = n.func.id if isinstance(n.func, ast.Name) else n.func.attr if isinstance(n.func, ast.Attribute) else ""
-            if last in _DYNAMIC_LOOKUPS:
+            if last in _DYNAMIC_LOOKUPS or last in _DICT_READS:
                 for a in list(n.args) + [k.value for k in n.keywords]:
                     for sub in ast.walk(a):
                         if isinstance(sub, ast.Constant) and isinstance(sub.value, str) and "load_goals" in sub.value:
@@ -1216,19 +1236,25 @@ class TheCountersOneSite(unittest.TestCase):
     def test_no_other_name_for_a_loader_is_born_in_the_kernel_or_the_judge(self):
         """The census reads a body. A loader that reaches a body under another name (a module-level `_lgs = jd.load_goals_shared`,
         a `from romp_judge import load_goals_shared as _lgs` at module level, a dict of callables, a functools.partial, a closure
-        variable, a parameter) or through a string (getattr, exec, eval, compile, operator.attrgetter, vars(), __getattribute__,
-        importlib) is no site in that body, and inside a replaced helper nothing else sees it (review round 4: every such form
-        scanned as no site on 3.10 through 3.13 while a recorder saw the real load). So the kernel and the judge are each read
-        once, whole, where any such name would be born, by _loader_births: in the kernel every reference to a loader by attribute
-        is the callee of a call and no alias, bare name, parameter, keyword or loader-naming string handed to a dynamic lookup
-        spells one; in the judge every bare loader name is the callee of a call or the loader a boundary wrapper hands to
-        _or_fault, the four doors are defined once each and undecorated, and the same list of births is empty. The population
-        read is asserted too, so an empty file or a moved door cannot pass as clean: the kernel calls the judge's four doors by
-        `jd.<door>` and no other spelling (58 references at this round), and the two hand-offs are the two outer wrappers'."""
+        variable, a parameter) or through a string constant (getattr, exec, eval, compile, operator.attrgetter, __getattribute__,
+        importlib, `vars(jd)[...]`, `jd.__dict__[...]`, `jd.__dict__.get(...)`) is no site in that body, and inside a replaced
+        helper nothing else sees it (review round 4: every such form scanned as no site on 3.10 through 3.13 while a recorder saw
+        the real load; the pre-emption verifier then planted the two subscript forms and the dict read as a real load in
+        _closer_settled, and the first cut of this pin, which read a dynamic lookup's arguments alone, let all three pass). So the
+        kernel and the judge are each read once, whole, where any such name would be born, by _loader_births: in the kernel every
+        reference to a loader by attribute is the callee of a call and no alias, bare name, parameter, keyword, or loader-naming
+        constant handed to a dynamic lookup or a dict read or used as a subscript key spells one; in the judge every bare loader
+        name is the callee of a call or the loader a boundary wrapper hands to _or_fault, the four doors are defined once each and
+        undecorated, and the same list of births is empty. The population read is asserted too, so an empty file or a moved door
+        cannot pass as clean: the kernel calls the judge's four doors by `jd.<door>` and no other spelling (58 references at this
+        round), and the two hand-offs are the two outer wrappers'. The limit that stays: a name assembled at run time or bound to a
+        variable before the lookup is spelled in no constant the pin reads (the `assembled` class of _LIMITS, which the enumeration
+        holds on that side)."""
         born, called, defs, handoffs = _loader_births(Path(os.path.realpath(km.__file__)), judge=False)
         self.assertEqual(born, [], "%s: a loader bound to another name, or reached through a string, is a body the census cannot read; every "
                                    "reference to a loader in the kernel is the callee of a call spelled jd.<door>(...), so no other name is born "
-                                   "and no string names one: %s" % (KERNEL_FILE, "; ".join("line %d, %s" % b for b in born)))
+                                   "and no string constant names one (handed to a dynamic lookup or a dict read, or used as a subscript key): %s"
+                                   % (KERNEL_FILE, "; ".join("line %d, %s" % b for b in born)))
         self.assertEqual(set(called), {"jd.load_goals", "jd.load_goals_or_fault", "jd.load_goals_shared", "jd.load_goals_shared_or_fault"},
                          "%s: the kernel calls the judge's four doors by attribute and no other loader spelling (the pin above read a non-empty "
                          "population; a spelling missing here is a door the kernel no longer calls or a file that is not the kernel's, a fifth is "
@@ -1237,8 +1263,9 @@ class TheCountersOneSite(unittest.TestCase):
         self.assertEqual((defs, handoffs), ({}, []), "%s: the kernel defines no loader and hands none to _or_fault" % KERNEL_FILE)
         born, called, defs, handoffs = _loader_births(Path(os.path.realpath(jd.__file__)), judge=True)
         self.assertEqual(born, [], "%s: the judge reaches its own doors by bare name as the callee of a call, or hands one to _or_fault from a "
-                                   "boundary wrapper, and gives them no other name (no alias, parameter, keyword, attribute, decorator or "
-                                   "loader-naming string handed to a dynamic lookup): %s" % (JUDGE_FILE, "; ".join("line %d, %s" % b for b in born)))
+                                   "boundary wrapper, and gives them no other name (no alias, parameter, keyword, attribute, decorator, or "
+                                   "loader-naming string constant handed to a dynamic lookup or a dict read or used as a subscript key): %s"
+                                   % (JUDGE_FILE, "; ".join("line %d, %s" % b for b in born)))
         self.assertEqual(defs, dict.fromkeys(("load_goals", "load_goals_or_fault", "load_goals_shared", "load_goals_shared_or_fault"), 1),
                          "%s: the four doors are defined once each (a fifth def named like a loader is a new door, which needs a recorder or a "
                          "bound): %r" % (JUDGE_FILE, defs))
@@ -1290,8 +1317,10 @@ class TheCountersOneSite(unittest.TestCase):
                          "a loader reached through a string, getattr here (exec, eval, compile, operator.attrgetter, vars(), __dict__ and "
                          "__getattribute__ the same, and getattr on an importlib.import_module result), is spelled in no Name, Attribute or "
                          "alias node and is outside the census: the limit _loader_sites's docstring states, held by the census reading code and "
-                         "not strings; the kernel-wide pin refuses a loader-naming string handed to those callables in the kernel and the judge, "
-                         "so the limit is this census's and not the module's (review round 4): %r" % _loader_sites(via_getattr, "load_goals"))
+                         "not strings. The kernel-wide pin refuses the loader-naming constant where it is handed to those callables, to a dict "
+                         "read or used as a subscript key, in the kernel and the judge; a name assembled at run time or bound to a variable "
+                         "before the lookup is outside that pin as well (review round 4; the enumeration holds both classes on their sides): %r"
+                         % _loader_sites(via_getattr, "load_goals"))
 
 
 # The census's form enumeration (review round 4). One sample module per form, written to a file and imported so inspect can read
@@ -1301,7 +1330,10 @@ class TheCountersOneSite(unittest.TestCase):
 # fails to compile below it, which the test checks), the sites _loader_sites answers for the needle "load_goals" as line indices
 # into the target's source, the site count for the needle "jd.load_goals_shared", and, for a form the census answers no site
 # for, the stated limit it falls under (_LIMITS). The expectations are the lens's, read on 3.10 through 3.13 and identical there
-# but for the three gated forms; the bodies' `romp_judge` is the stub's name when loaded.
+# but for the three gated forms, plus four rows the pre-emption verifier's forms added (F07c, F07d, F07e, F30d: the string class
+# split by what the kernel-wide pin refuses); the bodies' `romp_judge` is the stub's name when loaded. For a form of the string or
+# the assembled class the enumeration also runs the kernel-wide pin, _loader_births, over the form's file and expects a birth from
+# the first and none from the second, so each class is held on the side it falls.
 _STUB_JUDGE, _STUB_KERNEL = "romp_judge_c7pin_stub", "romp_kernel_c7pin_stub"
 _FORM_PRE = ("import functools, importlib, operator, sys\n"
              "import %s as jd\n"
@@ -1310,9 +1342,14 @@ _FORM_PRE = ("import functools, importlib, operator, sys\n"
              "_NUDGE_WALK_STATS = {'loads': 0}\n"
              "X = 3\n" % (_STUB_JUDGE, _STUB_KERNEL))
 _LIMITS = {
-    "string": "a loader reached through a string (getattr, exec, eval, compile, operator.attrgetter, vars(), __dict__, __getattribute__, "
-              "getattr on an importlib.import_module result): the limit _loader_sites states; the kernel-wide pin refuses such a call "
-              "in the kernel and the judge",
+    "string": "a loader reached through a string CONSTANT (getattr, exec, eval, compile, operator.attrgetter, __getattribute__, getattr on "
+              "an importlib.import_module result, vars(jd)[...], jd.__dict__[...], jd.__dict__.get(...)): the limit _loader_sites states, "
+              "closed by the kernel-wide pin, _loader_births, which refuses the constant where it is handed to the lookup or to a dict read "
+              "or used as a subscript key; the enumeration runs that pin over each form of this class and expects a birth",
+    "assembled": "a loader reached through a name assembled at run time or bound before the lookup (a concatenation or a format that "
+                 "splits the needle, a variable holding the name): spelled in no node and in no constant either census reads, so outside "
+                 "every static pin in this module, the kernel-wide pin included; the enumeration runs that pin over each form of this class "
+                 "and expects no birth, so the class is held on the side it falls",
     "outside": "a loader that reaches the scanned body under a name bound outside it (a module-level alias, an import alias at module "
                "level, a module-level dict or partial, a closure variable, a parameter, a class or instance attribute when only the "
                "method is scanned): the birth the kernel-wide pin refuses in the kernel and the judge",
@@ -1338,8 +1375,14 @@ _LOADER_FORMS = [
      'from romp_judge import *\ndef f(sid):\n    return load_goals_shared(sid)\n', 'f', None, [1], 0, None),
     ('F07', 'getattr with a string',
      "def f(sid):\n    return getattr(jd, 'load_goals_shared')(sid)\n", 'f', None, [], 0, 'string'),
-    ('F07b', 'getattr with a string built by concatenation',
+    ('F07b', 'getattr with a string built by concatenation (the needle survives in one constant)',
      "def f(sid):\n    return getattr(jd, 'load_goals_' + 'shared')(sid)\n", 'f', None, [], 0, 'string'),
+    ('F07c', 'getattr with a string built by a concatenation that SPLITS the needle',
+     "def f(sid):\n    return getattr(jd, 'load_' + 'goals_shared')(sid)\n", 'f', None, [], 0, 'assembled'),
+    ('F07d', 'getattr with the name bound to a variable first',
+     "def f(sid):\n    n = 'load_goals_shared'\n    return getattr(jd, n)(sid)\n", 'f', None, [], 0, 'assembled'),
+    ('F07e', 'getattr with a %-format that splits the needle',
+     "def f(sid):\n    return getattr(jd, 'load_%s_shared' % 'goals')(sid)\n", 'f', None, [], 0, 'assembled'),
     ('F08', 'importlib.import_module(...).<loader>',
      "def f(sid):\n    return importlib.import_module('romp_judge').load_goals_shared(sid)\n", 'f', None, [1], 0, None),
     ('F08b', "getattr(importlib.import_module(...), '<loader>')",
@@ -1444,6 +1487,8 @@ _LOADER_FORMS = [
      "def f(sid):\n    return jd.__dict__['load_goals_shared'](sid)\n", 'f', None, [], 0, 'string'),
     ('F30c', "jd.__getattribute__('<loader>')",
      "def f(sid):\n    return jd.__getattribute__('load_goals_shared')(sid)\n", 'f', None, [], 0, 'string'),
+    ('F30d', "jd.__dict__.get('<loader>')",
+     "def f(sid):\n    return jd.__dict__.get('load_goals_shared')(sid)\n", 'f', None, [], 0, 'string'),
     ('F31', 'keyword argument NAMED like the loader (no loader referenced)',
      'def g(**k):\n    return k\ndef f(sid):\n    return g(load_goals_shared=sid)\n', 'f', None, [], 0, 'none'),
     ('F32', 'a PARAMETER named like the loader, called (not the loader)',
@@ -1557,7 +1602,11 @@ class TheCensusOverEveryForm(unittest.TestCase):
     and per hand-off form _pass_through_lines answers the lines and the call count setUp's guard reads. Review round 4: a lens
     enumerated the forms on 3.10 through 3.13 and found the tables identical but for the gated forms; this is that enumeration
     as the module's own check, so a census that visits one node kind less reds here naming the form (review round 3's alias
-    finding: over Name and Attribute alone, an import alias inside a helper's body was no site, and no sample said so)."""
+    finding: over Name and Attribute alone, an import alias inside a helper's body was no site, and no sample said so). The loader
+    forms of the string and the assembled classes are also run through the kernel-wide pin, _loader_births, over the form's own
+    file: a birth from every string form and none from any assembled form, so the pin is held against the input it refuses and
+    the input it lets pass, and the two limit texts cannot overstate it (the pre-emption verifier of review round 4 found the
+    module's text saying the pin closed the string limit while vars(jd)[...] and jd.__dict__[...] passed it)."""
 
     def setUp(self):
         self.td = tempfile.TemporaryDirectory()
@@ -1579,6 +1628,9 @@ class TheCensusOverEveryForm(unittest.TestCase):
         spec.loader.exec_module(mod)
         return mod
 
+    def _path(self, fid):
+        return Path(self.td.name) / ("c7pin_form_%s.py" % fid)
+
     def _target(self, fid, body, dotted):
         obj = self._module("c7pin_form_" + fid, _FORM_PRE + body.replace("romp_judge", _STUB_JUDGE))
         for part in dotted.split("."):
@@ -1587,8 +1639,8 @@ class TheCensusOverEveryForm(unittest.TestCase):
 
     def test_every_loader_form_is_a_site_where_the_table_says_or_a_stated_limit(self):
         here = sys.version.split()[0]
-        self.assertEqual(len(_LOADER_FORMS), 95, "the table carries the lens's 95 loader forms")
-        self.assertEqual(len({row[0] for row in _LOADER_FORMS}), 95, "with distinct ids")
+        self.assertEqual(len(_LOADER_FORMS), 99, "the table carries the lens's 95 loader forms and the pre-emption verifier's four")
+        self.assertEqual(len({row[0] for row in _LOADER_FORMS}), 99, "with distinct ids")
         counted, limits, gated = 0, {}, []
         for fid, form, body, dotted, needs, sites, jds, limit in _LOADER_FORMS:
             self.assertEqual(limit is None, bool(sites), "%s (%s): a form the census counts names no limit and a form it misses names one" % (fid, form))
@@ -1608,12 +1660,22 @@ class TheCensusOverEveryForm(unittest.TestCase):
             self.assertEqual(len(_loader_sites(obj, "jd.load_goals_shared")), jds,
                              "%s (%s): on %s the walk census's needle 'jd.load_goals_shared' counts %d and the table expects %d"
                              % (fid, form, here, len(_loader_sites(obj, "jd.load_goals_shared")), jds))
+            if limit in ("string", "assembled"):
+                born = _loader_births(self._path(fid), judge=False)[0]
+                self.assertEqual(bool(born), limit == "string",
+                                 "%s (%s): the kernel-wide pin, _loader_births, over this form's file %s; a form of the string class hands a "
+                                 "loader-naming constant to a lookup or a dict read or uses it as a subscript key and the pin refuses it (a "
+                                 "birth), a form of the assembled class spells the name in no constant and the pin lets it pass, the limit "
+                                 "stated as %r; births: %s"
+                                 % (fid, form, "reports a birth" if born else "reports none", limit,
+                                    "; ".join("line %d, %s" % b for b in born) or "none"))
             if limit is None:
                 counted += 1
             else:
                 limits[limit] = limits.get(limit, 0) + 1
-        self.assertEqual(counted + sum(limits.values()) + len(gated), 95, "every row was counted, a limit, or gated: %d, %r, %r" % (counted, limits, gated))
-        self.assertEqual(limits, {"string": 10, "outside": 9, "wrapper": 2, "none": 6}, "the missed forms by limit, the lens's classification")
+        self.assertEqual(counted + sum(limits.values()) + len(gated), 99, "every row was counted, a limit, or gated: %d, %r, %r" % (counted, limits, gated))
+        self.assertEqual(limits, {"string": 11, "assembled": 3, "outside": 9, "wrapper": 2, "none": 6},
+                         "the missed forms by limit: the lens's classification with its string class split by what the kernel-wide pin refuses")
 
     def test_every_bump_form_reads_as_the_table_says(self):
         self.assertEqual(len(_BUMP_FORMS), 20, "the table carries the lens's 20 bump forms")
