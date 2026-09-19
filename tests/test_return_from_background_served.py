@@ -529,11 +529,16 @@ class ReturnFromBackground(unittest.TestCase):
             act = [t for t in strip if t.get("active")]
             self.assertEqual([t["id"] for t in act], [r["activeSid"]], where + "the stored tab is the active one: %r" % (strip,))
             self.assertFalse(act[0].get("skeleton"), where + "…and whole, not a skeleton: %r" % (act,))
+            n = (r.get("chatSessions") or {}).get(r["activeSid"])
+            self.assertIsInstance(n, int, where + "the stored tab's full was delivered to the chat pane (its event count recorded): %r" % (r.get("chatSessions"),))
+            self.assertGreaterEqual(n, 0, where + "%r" % (r.get("chatSessions"),))
             if boot_tab:
                 want = sorted(x[0] for x in TRANSCRIPT_SESSIONS if x[0] != r["activeSid"])
                 self.assertTrue(want, where + "the transcript-bearing others are not an empty set")
                 self.assertEqual(sorted(t["id"] for t in strip if t.get("skeleton")), want, where + "behind the %s tab the chain has not run: every other transcript-bearing tab is still a skeleton at the settle: %r" % (boot_tab, strip))
         if boot_tab and tap == "chat":
+            cv = r.get("chatVisibility") or {}
+            self.assertEqual(cv.get("observer"), "function", where + "the chat document has its IntersectionObserver (the hook's road exists): %r" % (cv,))
             # carried by paneHidden() (nextPrefetch's `hidden` term), not by the start gate: the chat is display:none here, so this reads 0 with
             # the gate term removed too (the refuters' converse mutation, review round 1); the gate's own witness is _gate, the held-full leg
             self.assertEqual(r.get("prefetchBeforeTap"), 0, where + "no background full left while the chat pane was display:none behind the %s tab" % boot_tab)
@@ -724,22 +729,29 @@ class ReturnFromBackground(unittest.TestCase):
 
     # The F1 legs (stage 0, review round 1): a phone opened on the Feed tab holds the chat's idle chain while the chat is display:none
     # (paneHidden) and the Chat tab's show re-arms it, by one of two roads in render.ts: the chat-visibility hook (onShown, the published
-    # word's flip from hidden to shown) and the panes-word belt (the shell's word saying the chat is on). The ACTIVE tab is the
-    # transcript-less `docs` (review round 3, extra9-1): with `web` active its full was heavy (events, no DOM) and render.ts deferred
-    # the build to a rAF; Firefox runs no rAF in a display:none iframe, so the idle pass's mid-build yield re-armed itself every pass
-    # until the show and then issued the prefetch on its own, and the Firefox leg stayed green with BOTH roads removed (the round-1
-    # refuters' finding). A full with no events builds synchronously, no rAF is pending, and the two roads are the only re-arm.
+    # word's flip from hidden to shown) and the panes-word belt (the shell's word saying the chat is on). On Chromium and WebKit the two
+    # roads are the only re-arm, so the legs there red when BOTH go (the round-3 record) and pass through either alone: the hook's own
+    # witness is tests/test_pane_hidden_word_browser.py (real engines) and the belt's is the executed panes-handler case in
+    # ui/webview/skeleton-tabs-wiring.test.ts. The ACTIVE tab is the transcript-less `docs` (review round 3, extra9-1), chosen to leave
+    # no build rAF pending while hidden; measured, its full still carries two events (the kernel's head events for a session with no
+    # transcript), so render.ts still defers its build, and the tab stays for the strip pin in _dial (docs whole and active while the
+    # three transcript-bearing tabs are still skeletons behind the Feed tab: the diet's shape, read off the DOM).
     def test_phone_opened_on_the_feed_tab_arms_the_chain_when_chat_is_shown(self):
         self._leg("phone", "hung", 12, tap="chat", boot_tab="feed", active_sid=SESSIONS[3][0])   # Chromium: the observer speaks for the hidden-since-load frame, so the hook runs at the show; the belt runs too
 
     def test_firefox_phone_opened_on_the_feed_tab_arms_the_chain_when_chat_is_shown(self):
-        # THE BELT'S WITNESS: Firefox's observer does not speak for a chat frame hidden since load, so at the show its first word is the
-        # shown one and the hook (onShown: hidden, then shown) never runs; the panes-word belt is the only re-arm here, and this leg
-        # reds when the belt goes (the round-3 record). The hook's own real-browser witness is tests/test_pane_hidden_word_browser.py.
+        # THE OUTCOME ON FIREFOX, NOT A ROAD (review round 3, extra9-1, traced): Firefox runs no rAF in a display:none iframe (idle
+        # callbacks and timers it does run; probed on all three engines), so the active tab's deferred build stays pending for as long as
+        # the chat is hidden and the idle pass's mid-build yield re-arms itself every pass (98 self re-arms at a 16 ms cadence before the
+        # tap in the traced run) until the show, when the rAF runs and the next pass issues the prefetch on its own. With BOTH roads
+        # removed this leg stays green (the record), so it witnesses neither; it pins that a Firefox phone opened on another tab asks
+        # nothing while the chat is hidden and loads its other tabs after the Chat tab's show, whichever mechanism carries it. Firefox's
+        # observer does not speak for a frame hidden since load (its first word is the shown one), so the hook is inert here and the
+        # belt, when the yield is not spinning, is the re-arm; the belt's executed witness is in ui/webview/skeleton-tabs-wiring.test.ts.
         self._leg("phone", "hung", 12, engine="firefox", tap="chat", boot_tab="feed", active_sid=SESSIONS[3][0])
 
     def test_webkit_phone_opened_on_the_feed_tab_arms_the_chain_when_chat_is_shown(self):
-        self._leg("phone", "hung", 12, engine="webkit", tap="chat", boot_tab="feed", active_sid=SESSIONS[3][0])   # Safari's engine: requestIdleCallback is absent and the chain runs on the 16 ms fallback; its observer speaks while hidden, so the hook and the belt both run
+        self._leg("phone", "hung", 12, engine="webkit", tap="chat", boot_tab="feed", active_sid=SESSIONS[3][0])   # Safari's engine: requestIdleCallback is absent and the chain runs on the 16 ms fallback; its observer speaks while hidden, so the hook and the belt both run, and the leg reds when both go
 
     def test_phone_refused_30s_slow(self):
         self._leg("phone", "refused", 30)

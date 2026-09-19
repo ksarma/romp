@@ -184,6 +184,16 @@ const install = (opts) => {
       if (v && typeof v.inbound === "function") { const orig = v.inbound; v.inbound = (h, m) => { try { if (m && m.type === "feed" && Array.isArray(m.asks)) { w.__labFeed.asks = m.asks.length; w.__labFeed.fulls++; } else if (m && m.type === "feedDelta") w.__labFeed.deltas++; } catch (e) { /* counting only */ } return orig(h, m); }; }
     } });
   }
+  // the chat pane's session fulls, as delivered (review round 3, extra9-1): per id the event count of the last `session` frame, so a
+  // leg can say whether a tab's full was heavy (render.ts defers a build with events to a rAF) or empty
+  if (location.pathname === "/chat" && w.__rompFed === undefined && !w.__labChatHook) {
+    w.__labChatHook = true; w.__labChat = { sessions: {} };
+    let realC;
+    Object.defineProperty(w, "__rompFed", { configurable: true, get: () => realC, set: (v) => {
+      realC = v;
+      if (v && typeof v.inbound === "function") { const orig = v.inbound; v.inbound = (h, m) => { try { if (m && m.type === "session" && m.id) w.__labChat.sessions[m.id] = Array.isArray(m.events) ? m.events.length : -1; } catch (e) { /* counting only */ } return orig(h, m); }; }
+    } });
+  }
   if (w === w.top && !w.__labTopInit) {
     w.__labTopInit = true;   // once per window: the shell's document is never replaced
     if (opts.bootTab) { try { localStorage.setItem("romp-mobile-tab", opts.bootTab); } catch (e) { /* no storage */ } }   // the tab the phone was left on (stage 0: the boot tab decides which panes load at boot)
@@ -280,6 +290,7 @@ try {
   // the chat strip after the settle (review round 3, extra9-1): which tab is active and which tabs are skeletons, read off the pane's DOM
   // (display:none behind another tab or not); the leg's stored tab is echoed so the check can compare
   out.activeSid = cfg.activeSid || "";
+  out.chatSessions = await (async () => { const f = page.frames().find((fr) => { try { return new URL(fr.url()).pathname === "/chat"; } catch (e) { return false; } }); if (!f) return null; try { return await f.evaluate(() => (window.__labChat || {}).sessions || null); } catch (e) { return null; } })();
   out.chatStrip = await (async () => { const f = page.frames().find((fr) => { try { return new URL(fr.url()).pathname === "/chat"; } catch (e) { return false; } }); if (!f) return null;
     try { return await f.evaluate(() => Array.from(document.querySelectorAll("#tabs .tab[data-id]")).map((t) => ({ id: t.dataset.id, skeleton: t.classList.contains("tab-skeleton"), active: t.classList.contains("active") }))); } catch (e) { return null; } })();
   // the iframes' src after the settle: the lazy contract read off the DOM (a lazy pane has none until its tap; every eager pane has its page)
@@ -406,6 +417,9 @@ try {
     if (cfg.expectPrefetchAfterChatTap) {
       const prefetchAsks = () => out.dials.filter((d) => d.app === "chat").reduce((n, d) => n + (d.needFull || []).filter((w) => w === "prefetch").length, 0);
       out.prefetchBeforeTap = prefetchBeforeTap;
+      // the chat frame's visibility roads at the tap (extra9-1): its observer, and the published word (undefined: never published)
+      out.chatVisibility = await (async () => { const f = page.frames().find((fr) => { try { return new URL(fr.url()).pathname === "/chat"; } catch (e) { return false; } }); if (!f) return null;
+        try { return await f.evaluate(() => ({ observer: typeof IntersectionObserver, word: window.__rompPaneHidden === undefined ? "undefined" : String(window.__rompPaneHidden) })); } catch (e) { return null; } })();
       const pfDeadline = now() + (cfg.bootTimeoutMs || 30000);
       while (now() < pfDeadline && prefetchAsks() <= prefetchBeforeTap) await sleep(100);
       out.prefetchAfterChatTapMs = prefetchAsks() > prefetchBeforeTap ? now() - out.t.tap : -1;

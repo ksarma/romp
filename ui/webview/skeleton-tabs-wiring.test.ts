@@ -476,3 +476,32 @@ test("review round 1 (2026-09-19): the gate's show half, the chat pane's show re
     assert.doesNotMatch(line, /phoneLayout|parentMobile|phoneShell|__rompMobileOn/, "no layout read at a gate opener site: " + line.trim().slice(0, 80));
   }
 });
+
+test("review round 3 (2026-09-19, extra9-1): the panes-word BELT, executed: the chat's panes handler arms the chain on the word that brings the chat on, and on nothing else", () => {
+  // The belt's own witness (the served Firefox leg, added as it, stays green with the belt removed: Firefox runs no rAF in a display:none
+  // iframe, the active tab's deferred build stays pending and the idle pass's mid-build yield issues the prefetch at the show on its own;
+  // the traced record in tests/test_return_from_background_served.py). The handler's `on` block is lifted from render.ts and run over the
+  // shell's words with a counting schedulePrebuild; the regex pin above holds the block's text, this holds what it does.
+  const start = RENDER.indexOf('  if (m.romp === "panes") {');
+  assert.ok(start > 0, "the chat's panes handler was found");
+  const inner = RENDER.indexOf('    if (m.on && typeof m.on === "object") {', start);
+  const end = RENDER.indexOf("    // which panes exist to bring forward", start);
+  assert.ok(inner > start && end > inner && end - inner < 2000, "the handler's `on` block was found inside it (a slice over nothing would run nothing): " + [start, inner, end].join(","));
+  const block = RENDER.slice(inner, end);
+  assert.match(block, /schedulePrebuild\(\)/, "the slice carries the belt's arm (or the mutation removed it)");
+  const js = requireCjs("esbuild").transformSync(block, { loader: "ts" }).code;
+  const run = new Function("m", "state", "let panesOn = state.panesOn; let armed = 0; const schedulePrebuild = () => { armed++; };\n" + js + "\nreturn { panesOn, armed };") as
+    (m: unknown, st: { panesOn: Record<string, boolean> }) => { panesOn: Record<string, boolean>; armed: number };
+  let r = run({ romp: "panes", on: { chat: true, feed: false } }, { panesOn: { chat: false, feed: true } });
+  assert.equal(r.armed, 1, "the shell's word says the chat is on where the last word said off (a phone's Chat tab tapped): the belt arms the idle chain once");
+  assert.deepEqual(r.panesOn, { chat: true, feed: false }, "whole-set replace: the word is the new set");
+  r = run({ romp: "panes", on: { chat: true, feed: false } }, { panesOn: { chat: true, feed: false } });
+  assert.equal(r.armed, 0, "a repeat word with the chat on (the shell re-tells on socket events and layout flips) arms nothing");
+  r = run({ romp: "panes", on: { chat: false, feed: true } }, { panesOn: { chat: true, feed: false } });
+  assert.equal(r.armed, 0, "the word that takes the chat off screen arms nothing");
+  r = run({ romp: "panes", on: { chat: true } }, { panesOn: {} });
+  assert.equal(r.armed, 0, "the first word ever is no flip (no previous word said off; the desktop's chat is never off, and a boot's arm is the strip's)");
+  r = run({ romp: "panes", on: { chat: "yes" as unknown as boolean } }, { panesOn: { chat: false } });
+  assert.equal(r.armed, 0, "only the literal true is on: a stray non-boolean reads as off and arms nothing");
+  assert.deepEqual(r.panesOn, { chat: false }, "…and the set records it as off");
+});
