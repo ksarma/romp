@@ -1,9 +1,9 @@
 ---
 title: A conftest ratchet fails the test that leaves the kernel's backend singleton changed or over a removed directory
 status: candidate
-where: tests/conftest.py, tests/test_sdk_singleton_ratchet.py
+where: tests/test_kernel.py (ViewBuilder saves km._sdk_backend with its sandbox and puts it back), tests/conftest.py, tests/test_sdk_singleton_ratchet.py
 added: 2026-09-19
-pr:
+pr: 850
 tier: docs
 offered:
 closed:
