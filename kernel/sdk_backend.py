@@ -5115,6 +5115,42 @@ FLAG_SETTINGS_DIR = "sdk-flag-settings"   # per-session --settings payloads, one
 # whole there stays under it (review round 1 of the env-pick door, 2026-09-18: set_env's refusal row was 414
 # characters and clipped mid-word on both surfaces). Pinned to the TypeScript literal by tests/test_session_env.py.
 ERROR_CENTER_TEXT_CAP = 240
+# The stored-offender row's short form for that centre (_launch_flag_settings) is bounded by construction (the round-2
+# addendum of the env-pick door, 2026-09-19: round 2's short form was pinned at a length two demo names happened to
+# fit, and the reviewer showed that a third stored name, or a longer one, pushed the row past the cap and clipped the
+# same remedy clause regression-1 had lost). The text names ONE variable, the first in the sorted order the log line
+# lists them in, and counts the rest ("and 3 more"), and it cuts the session name and that variable to a budget each,
+# marked, so its length is the format's plus the two budgets plus the digits of the two counts, whatever a stored env
+# carries and however long its names; the tail (the remedy and the clause that it reaches the flag-settings file) is
+# present in every case. The variable's budget is OP_SERVICE_ACCOUNT_TOKEN's length, the longest 1Password name, so
+# every 1Password name is whole; the session name's is 20, since a session name has no length cap of its own
+# (kernel.NAME_RE) and the bound must not rest on one. The kernel log line carries every name and the whole session
+# name. tests/test_session_env.py computes the worst case from the format, pins it under the cap with _log's repeat
+# suffix, and renders the row through the real ring for one, two and twenty variables and for names past the budgets.
+STORED_OFFENDER_SESSION_BUDGET = 20
+STORED_OFFENDER_NAME_BUDGET = len("OP_SERVICE_ACCOUNT_TOKEN")
+STORED_OFFENDER_RING = ("env (%s): credential-shaped %s stored; launched until re-declared without it: "
+                        "romp new --env/--no-env clears flag-settings file too")
+_CUT_MARK = "\u2026"   # the feed's own marker for a cut (kernel._sdk_problem_text), one character
+
+
+def _cut_to(text, budget: int) -> str:
+    """`text` whole when it fits `budget` characters, else its head cut to the budget with _CUT_MARK as the last
+    character, so the result is never longer than the budget."""
+    text = str(text)
+    return text if len(text) <= budget else text[:budget - len(_CUT_MARK)] + _CUT_MARK
+
+
+def stored_offender_ring_text(session_name, names) -> str:
+    """The error-centre text of the stored-offender row (the comment above STORED_OFFENDER_SESSION_BUDGET says why it
+    is shaped so). `names` are the credential-shaped variables a stored session env carries, at least one (the caller
+    says nothing when there are none): the first in sorted order is named, cut to STORED_OFFENDER_NAME_BUDGET, the
+    rest are a count, and the session name is cut to STORED_OFFENDER_SESSION_BUDGET. Values never reach here."""
+    names = sorted(str(n) for n in names)
+    who = _cut_to(names[0], STORED_OFFENDER_NAME_BUDGET)
+    if len(names) > 1:
+        who = "%s and %d more" % (who, len(names) - 1)
+    return STORED_OFFENDER_RING % (_cut_to(session_name, STORED_OFFENDER_SESSION_BUDGET), who)
 # ONE lock for the two writers of a per-sid flag-settings file (review round 2 of the env-pick door, 2026-09-19): the
 # connect's whole-file write (flag_settings_path, called from _launch_flag_settings) and the env pick's edit of the
 # file's env block (flag_settings_sync_env, called from set_env). Until this round the two ran unlocked, and the
@@ -14812,13 +14848,18 @@ class SdkBackend:
         (flag_settings_path), so the line's advice removes the value from every file (review round 1, 2026-09-18:
         the first wording promised a redaction that left the value in this file). The ring gets a short form
         under ERROR_CENTER_TEXT_CAP that keeps that clause and the --no-env road (review round 2, 2026-09-19: the
-        full sentence ran to 333 characters and the error centre clipped it before either); the kernel log keeps
-        the whole line, and the row is keyed, so a repeat adds _log's count suffix (about 55 characters) to the
-        short form rather than a row: the short form fits the cap with that suffix for a session name of up to 16
-        characters and one variable name of up to 24 (OP_SERVICE_ACCOUNT_TOKEN's length), pinned by execution
-        through the real ring in tests/test_session_env.py; a session storing several such names, or a longer
-        name, has its tail clipped there and the whole on the kernel log line. A fork copies no such name (fork),
-        so its own connect says nothing."""
+        full sentence ran to 333 characters and the error centre clipped it before either), and that short form is
+        bounded by construction (stored_offender_ring_text; the round-2 addendum, 2026-09-19: the first short form
+        was pinned at a length two demo names happened to fit, and the reviewer showed that a third name, or a
+        longer one, clipped the same clause again). It names one variable, the first in the sorted order the log
+        line lists them in, counts the rest, and cuts the session name and that variable to a budget each with a
+        marker, so its length is a function of the format and the two counts' digits, whatever a stored env
+        carries, and the tail clause is present in every case; the kernel log keeps the whole line, every name
+        whole, and the row is keyed, so a repeat adds _log's count suffix (55 characters at one repeat) to the
+        short form rather than a row. tests/test_session_env.py computes the worst case from the format and pins
+        it under the cap with that suffix, and renders the row through the real ring for one, two and twenty
+        variables and for a name and a session name past their budgets. A fork copies no such name (fork), so its
+        own connect says nothing."""
         reserved = ENV_RESERVED_NAMES + AUTH_ENV_NAMES
         with _flag_settings_lock:
             env_vars = {k: v for k, v in sess.env_vars.items() if k not in reserved}
@@ -14836,8 +14877,7 @@ class SdkBackend:
                           "it (romp new --env with the rest of the set, or --no-env), which removes it from the registry "
                           "and from this session's flag-settings file" % (sess.name, names),
                           problem=True, key=("env-stored-credential", sess.sid),
-                          ring_text="env (%s): credential-shaped %s stored; launched until re-declared without it (romp new "
-                                    "--env or --no-env), clearing registry and flag-settings file" % (sess.name, names))
+                          ring_text=stored_offender_ring_text(sess.name, stored))
             return flag_settings_path(self.state_dir, sess.sid, ultracode=ultracode, fast=fast, env=env_vars,
                                       no_helper=login, log=self._log)
 

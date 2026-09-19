@@ -19484,7 +19484,14 @@ def _apply_new_session_prefs(sid, body):
     review, 2026-09-18). An env pick the backend refuses is echoed as `envRefused` (_env_refusal's
     generic sentence, names nothing of the pick), never as `env`, for the same reason (review round 2 of
     the env-pick door, 2026-09-19: the verdict was dropped here too, so a redaction the backend could not
-    complete printed as "env cleared")."""
+    complete printed as "env cleared"). Two refusal fields, one per leg, and this docstring is the one place
+    their relationship is stated (the round-2 addendum, 2026-09-19; the leg comments below point here). The
+    echo is read per asked key: `romp new` tells a refused ask from a dropped one (an older kernel that never
+    answered it) by the presence of that key's own echo, so each leg's refusal sits in its own slot beside the
+    key it answers, and the two differ in scope on purpose: `refused` is the setter's own sentence and names the
+    level, since a level is not a secret; `envRefused` is generic and names nothing of the pick, since its values
+    may be. A third leg that can refuse (model, say) should generalise the shape, one slot per leg under one
+    rule, rather than add a third sibling field with a spelling of its own (the reviewer's note, paraphrased)."""
     out = {}
     m = str((body or {}).get("model") or "").strip()
     e = str((body or {}).get("effort") or "").strip()
@@ -19510,7 +19517,8 @@ def _apply_new_session_prefs(sid, body):
         else:
             # refused (a Codex model whose catalog does not offer the level, or a catalog the backend could not
             # read): the echo carries the refusal in place of the level, so the caller is loud, and stderr says so
-            # once, as the typed route does
+            # once, as the typed route does. Its relationship to the env leg's `envRefused` below (two fields, two
+            # scopes) is stated in this function's docstring, the one place for it (the round-2 addendum, 2026-09-19)
             out["refused"] = _effort_refusal(be, e)
             sys.stderr.write("effort %r for %s refused by %s (POST /new)\n" % (e, sid, type(be).__name__))
     if ev is not None and hasattr(be, "set_env"):
@@ -19522,7 +19530,8 @@ def _apply_new_session_prefs(sid, body):
             # redaction the backend could not complete was echoed as applied and `romp new` printed "env cleared"
             # while the value stayed in the registry and the flag-settings file. The echo carries the refusal in
             # its own slot, never the `env` key, and stderr says so once with the NAMES of the pick only (the dict
-            # carries values, and a credential-shaped one is what the door refuses)
+            # carries values, and a credential-shaped one is what the door refuses). The relationship to the effort
+            # leg's `refused` above is the docstring's
             out["envRefused"] = _env_refusal()
             sys.stderr.write("env %s for %s refused by %s (POST /new)\n"
                              % (" ".join(sorted(ev)) or "(cleared)", sid, type(be).__name__))

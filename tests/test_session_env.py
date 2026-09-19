@@ -23,7 +23,10 @@ The mechanics under test:
   * _options threads the session's env into that file at EVERY connect — the file is rewritten on
     each use, so reconnects re-assert the reg's env by construction (pinned by tampering the file
     between two _options calls), and reads the env again under the writers' lock at the write, so
-    a redaction landing mid-compose is what launches.
+    a redaction landing mid-compose is what launches. Its stored-offender row has a short form for
+    the error centre that is bounded by construction (one variable named, the rest counted, the
+    session name and the named variable cut to a budget each; the round-2 addendum, 2026-09-19),
+    pinned as a property through the real ring for one, two and twenty variables.
   * set_env mirrors set_effort's shape (persist + reconnect to apply; env is connect-time), minus
     the badge/chip machinery that belongs to the not-yet-built UI slice; an UNCHANGED re-assert
     (the `romp new --env` re-brief on a standing session, or the fresh-spawn echo) skips the
@@ -1389,36 +1392,137 @@ class CredentialShapedNamesEndToEnd(_OptionsBackend):
         self.assertEqual(self._reg(sid)["env"], ENV)
         self.assertFalse(any(val in m for m, _p, _k in self.logged), "no log line carries the value")
 
-    def test_the_stored_offender_row_fits_the_error_centre_after_a_repeat(self):
-        """regression-1 (review round 2 of the env-pick door, 2026-09-19): the reworded row ran to 333 characters
-        against the 240-character error-centre cap this PR introduced, so the dashboard clipped it mid-parenthesis
-        and lost exactly the clause round 1 ordered added (the redaction reaches the flag-settings file; the --no-env
-        road). Rendered through the REAL ring (no stub of _log) after a repeat, the form a second connect leaves,
-        with a session name of 16 characters and the longest 1Password name: the bound the short form is written
-        to. The feed's cut is applied too. A change to the cap, the suffix or the wording fails here, loudly."""
-        del self.be._log                                        # the real ring: the row as the dashboard reads it
-        km = load_source("romp_kernel", os.path.join(BIN, "romp-kernel"))
-        name = "notes-api-web-01"
-        self.assertEqual(len(name), 16)
-        sid = self.be.spawn(name, "/tmp", env=ENV)
-        val = _secret_value("op-token")
-        self.be._update_reg(sid, env={**ENV, "OP_SERVICE_ACCOUNT_TOKEN": val})    # 24 characters, the longest 1Password name
+    def _real_ring(self):
+        """The row as the dashboard reads it: the class stubs _log to capture lines, so the stub goes and the kernel
+        log's lines are captured instead (every name whole is the LOG line's promise, the short form's is the cap)."""
+        del self.be._log
+        self.lines = []
+        self.be._log_cb = self.lines.append
+        return load_source("romp_kernel", os.path.join(BIN, "romp-kernel"))
+
+    def _repeat_suffix(self):
+        """_log's count suffix as the REAL ring renders it at one repeat, the form a second connect leaves, read from
+        the ring rather than spelled here, so a change to that suffix moves the bound this class pins."""
+        self.be._log("probe", problem=True, key=("probe",))
+        self.be._log("probe", problem=True, key=("probe",))
+        row = [r for r in self.be.problems() if r.get("key") == ("probe",)][0]
+        self.assertTrue(row["text"].startswith("probe (1 repeat"), row["text"])
+        return row["text"][len("probe"):]
+
+    def _stored_row_after_a_repeat(self, session_name, names):
+        """A session launched twice with `names` stored under credential-shaped spellings: the keyed row after the ring
+        counted the repeat, and the values, which must appear nowhere."""
+        sid = self.be.spawn(session_name, "/tmp", env=ENV)
+        vals = {n: _secret_value("v%d" % i) for i, n in enumerate(names)}
+        self.be._update_reg(sid, env={**ENV, **vals})
         s = self._sess(sid)
         self.be._options(s, dict)
         self.be._options(s, dict)                              # the repeat: the ring counts it on the row, with a suffix
         rows = [r for r in self.be.problems() if r.get("key") == ("env-stored-credential", sid)]
         self.assertEqual(len(rows), 1, "keyed: one row, counted")
         self.assertEqual(rows[0]["count"], 2)
-        text = rows[0]["text"]
-        self.assertIn("repeat", text, "rendered with the ring's count suffix")
-        self.assertLessEqual(len(text), sb.ERROR_CENTER_TEXT_CAP, "whole in the error centre: %d characters: %s" % (len(text), text))
-        self.assertEqual(km._sdk_problem_text(text), text, "and whole in the feed")
-        self.assertIn("OP_SERVICE_ACCOUNT_TOKEN", text)
-        self.assertIn("--no-env", text, "the road that works when the offender is the only stored variable")
-        self.assertIn("flag-settings file", text, "round 1's clause: the redaction reaches the file too")
-        self.assertIn("launched until", text, "and that the session launches with it until then")
-        self.assertNotIn(val, text)
-        self.assertLessEqual(len(rows[0]["first"]), sb.ERROR_CENTER_TEXT_CAP, "the first fire fits too")
+        self.assertIn("repeat", rows[0]["text"], "rendered with the ring's count suffix")
+        return rows[0], vals
+
+    STORED_ROW_TAIL = ("launched until", "romp new --env", "--no-env", "flag-settings file")
+
+    def test_the_stored_offender_row_fits_the_error_centre_for_one_two_and_twenty_variables(self):
+        """regression-1 (review round 2 of the env-pick door, 2026-09-19) and its addendum. The reworded row ran to
+        333 characters against the 240-character error-centre cap this PR introduced, so the dashboard clipped it
+        mid-parenthesis and lost exactly the clause round 1 ordered added (the redaction reaches the flag-settings
+        file; the --no-env road). Round 2's short form was then pinned at a length two demo names happened to fit,
+        and the reviewer showed that the bound was a measurement, not a property: a third stored name, or a longer
+        one, clipped the same clause again. The form is bounded by construction now (stored_offender_ring_text: one
+        variable named, the rest counted, the session name and the named variable cut to a budget each), and THIS
+        test pins the property rather than a length: rendered through the REAL ring (no stub of _log) after a
+        repeat, the form a second connect leaves, with the longest 1Password name as the one named, the row fits
+        the cap and the feed's cut for one, two and twenty stored variables alike, the tail clause is present in
+        every case, the count says how many more, and the kernel log line names every variable whole."""
+        km = self._real_ring()
+        for count in (1, 2, 20):
+            with self.subTest(variables=count):
+                names = ["OP_SERVICE_ACCOUNT_TOKEN"] + ["SVC_%02d_API_TOKEN" % i for i in range(count - 1)]   # sorts first
+                row, vals = self._stored_row_after_a_repeat("notes-api-web-%02d" % count, names)
+                text = row["text"]
+                self.assertLessEqual(len(text), sb.ERROR_CENTER_TEXT_CAP, "whole in the error centre: %d characters: %s" % (len(text), text))
+                self.assertEqual(km._sdk_problem_text(text), text, "and whole in the feed")
+                self.assertIn("OP_SERVICE_ACCOUNT_TOKEN", text, "the first variable in sorted order is named")
+                if count > 1:
+                    self.assertIn(" and %d more stored" % (count - 1), text, "the rest are a count")
+                else:
+                    self.assertNotIn("more", text)
+                for clause in self.STORED_ROW_TAIL:
+                    self.assertIn(clause, text, "the tail is present whatever the count: %s" % text)
+                self.assertFalse(any(v in text for v in vals.values()))
+                self.assertLessEqual(len(row["first"]), sb.ERROR_CENTER_TEXT_CAP, "the first fire fits too")
+                line = [ln for ln in self.lines if "credential-shaped" in ln and "notes-api-web-%02d" % count in ln]
+                self.assertEqual(len(line), 2, "one kernel log line per connect: %r" % (self.lines,))
+                for n in names:
+                    self.assertIn(n, line[0], "the kernel log line names every variable whole")
+                self.assertFalse(any(v in ln for v in vals.values() for ln in self.lines))
+
+    def test_the_stored_offender_rows_worst_case_is_computed_from_the_format_and_fits_the_cap(self):
+        """The bound as a property of the format (the round-2 addendum, 2026-09-19): the worst case the construction
+        allows, a session name and a first variable past their budgets and a count of more, is computed HERE from
+        the format's own pieces and asserted under the cap with _log's repeat suffix as the real ring renders it.
+        The measurements round 2 took stand as evidence of what the earlier form did: its fixed text was 143
+        characters plus every name whole, so with the 55-character one-repeat suffix it measured 216 for a
+        3-character session with NOTES_API_TOKEN and 238 for a 16-character session with OP_SERVICE_ACCOUNT_TOKEN,
+        against the cap of 240, and 242 for the same 3-character session with those two names together: the second
+        name already spent the cap. The bounded form's fixed text is 127 characters, its budgets 20 and 24, and
+        with " and 99 more" and the one-repeat suffix its worst case is 238; the two characters left are a third
+        digit in either count, and each further digit costs one character of the tail's last word."""
+        self._real_ring()
+        suffix = self._repeat_suffix()
+        fixed = sb.STORED_OFFENDER_RING % ("", "")
+        self.assertEqual(fixed.count("%"), 0, "two slots, the session name and the names, and nothing else")
+        long_session = "s" * (sb.STORED_OFFENDER_SESSION_BUDGET + 20)
+        long_name = "NOTES_" + "X" * 40 + "_TOKEN"
+        names = [long_name] + ["ZZ_%02d_TOKEN" % i for i in range(19)]                # the long one sorts first
+        worst = sb.stored_offender_ring_text(long_session, names)
+        self.assertEqual(len(worst), len(fixed) + sb.STORED_OFFENDER_SESSION_BUDGET + sb.STORED_OFFENDER_NAME_BUDGET
+                         + len(" and 19 more"), "both budgets spent, plus the count: the format's worst case")
+        self.assertLessEqual(len(worst) + len(suffix), sb.ERROR_CENTER_TEXT_CAP,
+                             "the worst case fits with the ring's suffix: %d + %d against %d"
+                             % (len(worst), len(suffix), sb.ERROR_CENTER_TEXT_CAP))
+        self.assertLessEqual(len(sb.stored_offender_ring_text(long_session, names * 5)) + len(suffix),
+                             sb.ERROR_CENTER_TEXT_CAP, "a third digit in the count of more fits too")
+        for clause in self.STORED_ROW_TAIL:
+            self.assertIn(clause, worst)
+        self.assertEqual(sb.STORED_OFFENDER_NAME_BUDGET, len("OP_SERVICE_ACCOUNT_TOKEN"),
+                         "the longest 1Password name is whole under the budget")
+        self.assertEqual(sb.stored_offender_ring_text("web", ["NOTES_API_TOKEN"]),
+                         fixed.replace("env ()", "env (web)").replace("credential-shaped  stored", "credential-shaped NOTES_API_TOKEN stored"))
+        self.assertIn("credential-shaped NOTES_API_TOKEN and 1 more stored",
+                      sb.stored_offender_ring_text("web", ["OP_SERVICE_ACCOUNT_TOKEN", "NOTES_API_TOKEN"]), "two: the first and a count")
+
+    def test_a_variable_or_session_name_past_its_budget_is_cut_with_a_marker_and_the_tail_stays(self):
+        """How a very long name is handled (the round-2 addendum, 2026-09-19, which asked for the decision to be
+        stated and pinned): the named variable and the session name are each CUT to their budget, the cut marked
+        with the feed's own one-character mark, rather than the row naming nothing or the tail going; the kernel
+        log line carries both whole. Through the real ring after a repeat, like the rows above."""
+        km = self._real_ring()
+        long_session = "notes-api-" + "w" * 30                                          # 40 characters, budget 20
+        long_name = "NOTES_" + "X" * 40 + "_TOKEN"                                       # 52 characters, budget 24
+        row, vals = self._stored_row_after_a_repeat(long_session, [long_name, "ZZ_TOKEN"])
+        text = row["text"]
+        self.assertLessEqual(len(text), sb.ERROR_CENTER_TEXT_CAP, (len(text), text))
+        self.assertEqual(km._sdk_problem_text(text), text)
+        cut_name = long_name[:sb.STORED_OFFENDER_NAME_BUDGET - 1] + sb._CUT_MARK
+        cut_session = long_session[:sb.STORED_OFFENDER_SESSION_BUDGET - 1] + sb._CUT_MARK
+        self.assertEqual(len(cut_name), sb.STORED_OFFENDER_NAME_BUDGET)
+        self.assertIn("env (%s): credential-shaped %s and 1 more stored" % (cut_session, cut_name), text)
+        self.assertNotIn(long_name, text, "the whole name is the log line's")
+        self.assertNotIn(long_session, text)
+        for clause in self.STORED_ROW_TAIL:
+            self.assertIn(clause, text, "the tail stays when the names are cut: %s" % text)
+        self.assertFalse(any(v in text for v in vals.values()))
+        line = [ln for ln in self.lines if long_name in ln]
+        self.assertEqual(len(line), 2, "the kernel log line carries the whole name at each connect")
+        self.assertIn(long_session, line[0])
+        self.assertIn("ZZ_TOKEN", line[0])
+        self.assertNotIn(sb._CUT_MARK, line[0], "nothing is cut on the log line")
+        self.assertEqual(sb._cut_to("short", 24), "short", "a name within its budget is whole, unmarked")
 
     def test_the_refusal_line_is_headed_once_and_fits_the_caps(self):
         """Review round 1 of the env-pick door (2026-09-18): the set_env line read "pick refused: env: ..." and ran
