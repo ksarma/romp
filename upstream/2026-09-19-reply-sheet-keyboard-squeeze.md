@@ -3,7 +3,7 @@ title: The todo Reply sheet holds three rows with the phone keyboard up; the lon
 status: candidate
 where: ui/webview/styles.css (#ut-reply-prompt .ut-reply-input, #ut-reply-prompt .ut-detail.open, #ut-reply-prompt.kb-tight), ui/webview/waiting.ts showReply, ui/webview/render.ts showUserTodoReply
 added: 2026-09-19
-pr:
+pr: 859
 tier: fix
 offered:
 closed:
