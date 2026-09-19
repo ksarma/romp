@@ -72,18 +72,32 @@ What the old hub showed (2026-09-19, the bundle at 01d4fbe43): the old bundle di
 its Outline files one delta-unapplied row per remote feed patch. That correspondence is what the class pins: in each
 window and over the whole drive, the rows equal, by rev, the feed slot patches the Outline's own relay sockets
 received (the hook records a delta frame's rev; the row files the same rev). The count is one drive's, not a
-property of the bundle: 3 / 0 / 3 / 3 across phase A, the link down, phase B and phase C in the recorded drive
-(ROMP_LINKDROP_LAB=1 ROMP_LINKDROP_OLD_HUB_BUILD=1 pytest tests/test_federated_linkdrop_served.py), and 3 / 0 / 1 / 3
-in one of eight drives at round 1's head, when two relay sockets churned inside phase B and absorbed two notices into
-whole frames (no patch, so no row; the equality held at 7 / 7). ZERO while the link was down in every drive. The storm is gated on remote patches arriving, which is gated on the link: with phase D due while the
-link was down, no row filed until the link returned, the return's whole frame carried D and filed no row for it, and
-the next patch (phase B's) filed a row again. A relay redial does not end the storm but restarts it: each redial's one
-whole frame catches the old page up once and the next patch freezes it again, so on a hub whose link comes and goes
-the storm pauses and resumes with the link and looks intermittent and self-healing when it is neither. That is why the old-hub class stays in this lab: a lab that only proves the fixed
-behaviour loses the evidence of what was fixed, and a reader in three months must be able to learn that a redial used
-to restart the storm. The new bundle files zero such rows across the same drive, and the three mutations recorded in the report
-(the redial term stripped, the whole-frame base write dropped, the local-down gate dropped) each turn one of its
-assertions red, so a zero here is a zero the drive can see through.
+property of the bundle: 3 / 0 / 3 / 3 across phase A, the link down, phase B and phase C in the recorded drive at the
+round-2 head (ROMP_LINKDROP_LAB=1 ROMP_LINKDROP_OLD_HUB_BUILD=1 pytest tests/test_federated_linkdrop_served.py). One
+reviewer drive at round 1's head gave 3 / 0 / 1 / 3 (two relay sockets churned inside phase B and absorbed two
+notices into whole frames: no patch, so no row, and the equality held at 7 / 7), as did one verifier drive at the
+round-2 head whose hook was mutated for a red (its hub rows are real); every other recorded drive of the unmutated
+module, the reviewers' further drives at round 1's head and the builder's earlier drives at three pre-PR vintages
+(two with a hand-built old hub), gave 3 / 0 / 3 / 3. ZERO while the link was down in every recorded drive. The storm
+is gated on remote patches arriving, which is gated on the link: with phase D due while the link was down, no row
+filed until the link returned, the return's whole frame carried D and filed no row for it, and the next patch (phase
+B's) filed a row again. A relay redial does not end the storm but restarts it: each redial's one whole frame catches
+the old page up once and the next patch freezes it again, so on a hub whose link comes and goes the storm pauses and
+resumes with the link and looks intermittent and self-healing when it is neither. That is why the old-hub class
+stays in this lab: a lab that only proves the fixed behaviour loses the evidence of what was fixed, and a reader in
+three months must be able to learn that a redial used to restart the storm. The new bundle files zero such rows
+across the same drive, and the three mutations recorded in the report (the redial term stripped, the whole-frame
+base write dropped, the local-down gate dropped) each turn one of its assertions red, so a zero here is a zero the
+drive can see through.
+
+The driver ends before CI does. CI's served job runs every served lab in one pytest process under pytest-timeout's
+600 s per-test cap (thread method: it ends the whole process), and the drive runs in setUpClass, so the node driver's
+subprocess timeout sits under that cap with room for the boot around it (DRIVER_TIMEOUT_S), and every wait the driver
+places draws on one shared budget (driver_budget_ms, BUDGET_JS) sized so the driver's worst case sits under the
+subprocess timeout (driver_worst_case_s): a wait that never comes spends the budget once, every later wait returns at
+once and is recorded as expired, and a degraded drive is this class's failure naming the wait, not a thread dump in
+place of every served lab collected after this one. tests/test_federated_linkdrop_driver_bound.py pins the arithmetic
+and the budget.
 
 This lab boots subprocess kernels and drives Chromium; it loads no romp code in-process, so it carries no in-process
 state-isolation preamble and is not scanned by tests/test_state_isolation_order.py (as its siblings). Synthetic
@@ -136,6 +150,49 @@ HUB_DOWN_S = 3.0             # the hub stays down this long before its respawn: 
 BAD_ROWS = _corners.BAD_ROWS
 BAD_EVS = ("delta-unknown-slot", "delta-unkeyed-base")
 
+# ---- the driver's bound ----
+# CI's served job runs one pytest process over every served lab with pytest-timeout at 600 s per test, thread method
+# (.github/workflows/ci.yml, the served step): a test that outlives it ends the WHOLE process, so a drive that hung here
+# would take every served lab collected after this module with it and leave no summary. The drive runs in setUpClass, so
+# the node driver's subprocess timeout sits under that cap with room for the boot around it (two kernels and the dist copy
+# before the drive, the readers after: 55 s measured for the whole setUpClass), and the driver's own worst case
+# (driver_worst_case_s: its wait budget plus the bounded work between the waits) sits under the subprocess timeout, so a
+# degraded drive returns through its wait budget with the expired waits recorded or, for a hang in the control door,
+# through driver_error ("driver timed out"), and the labs after this one still run. The sibling labs' child timeouts are
+# 240 s and 300 s. tests/test_federated_linkdrop_driver_bound.py pins the arithmetic, the budget and the bytes sent.
+CI_TEST_TIMEOUT_S = 600      # pytest --timeout on CI's served step
+BOOT_ROOM_S = 120            # setUpClass outside the drive: the kernels' boots, the dist copy, the readers after the drive
+DRIVER_TIMEOUT_S = 480       # the node driver's subprocess timeout: CI_TEST_TIMEOUT_S - BOOT_ROOM_S
+DRIVER_FIXED_S = 40          # the driver's work outside its waits and the control door: the browser launch (playwright's own
+#                              30 s cap, then exit 3), the snapshots and the visible reads
+POST_TIMEOUT_S = 5           # one control-door post to the remote (a notice, a todo); measured in milliseconds
+HUB_TERM_WAIT_S = 10         # _restart_hub waits this long for SIGTERM to end the hub before SIGKILL
+HUB_SPAWN_TRIES = 40         # _spawn_hub's /healthz tries, a 1 s probe and a 0.5 s pause each (the respawn answers in about a second)
+PHASE_SETTLE_MS = 1500       # phase() lets the panes' rows land on the hub before marking the phase's end
+QUIET_TRIES, QUIET_STEP_MS = 7, 2000   # quiet(): up to QUIET_TRIES windows of QUIET_STEP_MS with no new relay frame on any page
+
+
+def hub_restart_bound_s():
+    """The control door's /restart-hub at its worst: the SIGTERM wait, the held-down spell, every /healthz try."""
+    return HUB_TERM_WAIT_S + HUB_DOWN_S + HUB_SPAWN_TRIES * 1.5
+
+
+def change_bundle_bound_s(changes):
+    """One /change at its worst: the gaps between the notices and every post at POST_TIMEOUT_S (the append is a file write)."""
+    posts = (NOTICES_PER_PHASE if "notice" in changes else 0) + (1 if "todo" in changes else 0)
+    return (NOTICES_PER_PHASE - 1) * NOTICE_GAP_S + posts * POST_TIMEOUT_S
+
+
+def driver_worst_case_s(cls):
+    """The longest the class's driver can run: its wait budget (every wait it places draws on it, BUDGET_JS) plus the
+    work between the waits that the budget does not cover, each at its own bound: the down dwell, the hub restart, the
+    change bundles (A, D, B and, with the local drop, C), the phases' settles, the launch and the snapshots. Pinned
+    under DRIVER_TIMEOUT_S by tests/test_federated_linkdrop_driver_bound.py."""
+    phases = 3 if cls.local_drop else 2
+    restart = hub_restart_bound_s() if cls.local_drop else 0.0
+    return ((cls.driver_budget_ms + cls.down_dwell_ms + phases * PHASE_SETTLE_MS) / 1000.0 + restart
+            + (phases + 1) * change_bundle_bound_s(cls.changes) + DRIVER_FIXED_S)
+
 
 def _root_knob(name):
     return _corners._root_knob(name)
@@ -144,7 +201,7 @@ def _root_knob(name):
 def _post(port, token, route, body):
     req = urllib.request.Request("http://127.0.0.1:%d%s?token=%s" % (port, route, token), data=json.dumps(body).encode(),
                                  headers={"Content-Type": "application/json"}, method="POST")
-    with urllib.request.urlopen(req, timeout=10) as resp:
+    with urllib.request.urlopen(req, timeout=POST_TIMEOUT_S) as resp:
         return json.loads(resp.read().decode())
 
 
@@ -342,12 +399,32 @@ class _Control(threading.Thread):
             pass
 
 
+# The driver's waits share ONE budget (cfg.driverBudgetMs, the class's driver_budget_ms): every timeout the driver hands
+# playwright and every poll loop of its own is capped at what is left of it, so a wait that never comes spends the budget
+# once, every later wait returns at once and is recorded as expired, and the driver ends inside its subprocess timeout
+# (DRIVER_TIMEOUT_S) instead of pytest-timeout ending the whole served pytest process at CI's per-test cap. Pure in `now`
+# and `sleep`, so tests/test_federated_linkdrop_driver_bound.py runs it under node with a clock of its own; DRIVER opens
+# with it.
+BUDGET_JS = r"""
+const makeBudget = ({ budgetMs, now, sleep, out }) => {
+  const t0 = now();
+  const left = () => Math.max(0, t0 + budgetMs - now());
+  const capped = (ms) => Math.max(1, Math.min(ms, left()));   // playwright reads a timeout of 0 as NO timeout: never 0
+  const waitFor = async (fn, timeout, what) => {              // poll fn every 250 ms until it holds or the capped timeout ends
+    const cap = capped(timeout), s = now();
+    while (now() - s < cap) { if (await fn()) return true; await sleep(capped(250)); }
+    out.timeouts.push(what + (left() === 0 ? " (the driver's wait budget was spent)" : "")); return false;
+  };
+  return { left, capped, waitFor };
+};
+"""
+
 # The Chromium driver (the corners lab's hook, per SOCKET): every WebSocket a page dials is recorded with its URL, its
 # kind (relay: the /remote/<host>/ws path), its dial, open and close stamps, the close code and cleanliness, the shim's
 # local-up word at the dial, and, on a relay socket, every non-keepalive frame's type, slot and size; every needSlot,
 # needFullFeed and ready the page sends is recorded with the socket it left on. The phases run in node against the
 # control door (cfg.ctl) and the hub's /tunnels; marks stamp every transition for the Python side's windows.
-DRIVER = r"""
+DRIVER = BUDGET_JS + r"""
 import { createRequire } from "node:module";
 import fs from "node:fs";
 const require = createRequire(process.env.EXT_PKG);
@@ -357,7 +434,8 @@ let browser;
 try { browser = await chromium.launch(cfg.launch || {}); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
 const context = await browser.newContext({ viewport: { width: 1200, height: 700 } });
-const out = { pages: {}, marks: {}, phases: {}, tunnels: [], ctl: {}, timeouts: [], quietGaveUp: [], console: [], provBefore: null, died: null };
+const out = { pages: {}, marks: {}, phases: {}, tunnels: [], ctl: {}, timeouts: [], quietGaveUp: [], console: [], provBefore: null, died: null, budget: null };
+const budget = makeBudget({ budgetMs: cfg.driverBudgetMs, now: Date.now, sleep: (ms) => new Promise((r) => setTimeout(r, ms)), out });
 const hook = (o) => {
   window.__socks = []; window.__sends = []; const W = window.WebSocket;
   const strip = (u) => o.stripCaps && u.indexOf("/remote/") !== -1 ? u.replace(/([?&])caps=[^&]*&?/, (m, sep) => sep).replace(/[?&]$/, "") : u;
@@ -403,15 +481,17 @@ const tunnelsStatus = async () => {
   try { const r = await fetch(cfg.tunnelsUrl, { cache: "no-store" }); const j = await r.json(); const row = (j.tunnels || []).find((t) => t.host === cfg.host); st = row ? String(row.status) : "absent"; } catch (e) {}
   out.tunnels.push({ at: Date.now(), status: st }); return st;
 };
-const waitFor = async (fn, timeout, what) => {
-  const t0 = Date.now();
-  while (Date.now() - t0 < timeout) { if (await fn()) return true; await pages[APPS[0]].waitForTimeout(250); }
-  out.timeouts.push(what); return false;
-};
+const waitFor = budget.waitFor;
 const relayFramesTotal = async () => { let n = 0; for (const app of APPS) { const s = await snap(pages[app]); for (const k of s.socks) if (k.relay) n += k.frames.length; } return n; };
-// two seconds with no new relay frame on any page, up to seven tries; a give-up is recorded (out.quietGaveUp), not fatal:
-// the old bundle's socket churn can keep frames coming, and the phase still runs
-const quiet = async (what) => { for (let i = 0; i < 7; i++) { const a = await relayFramesTotal(); await pages[APPS[0]].waitForTimeout(2000); if (await relayFramesTotal() === a) return; } out.quietGaveUp.push(what); };
+// cfg.quietStepMs with no new relay frame on any page, up to cfg.quietTries tries; a give-up is recorded (out.quietGaveUp),
+// not fatal: the old bundle's socket churn can keep frames coming, and the phase still runs; a spent budget is a give-up too
+const quiet = async (what) => {
+  for (let i = 0; i < cfg.quietTries; i++) {
+    if (budget.left() === 0) { out.quietGaveUp.push(what + " (the driver's wait budget was spent)"); return; }
+    const a = await relayFramesTotal(); await pages[APPS[0]].waitForTimeout(budget.capped(cfg.quietStepMs)); if (await relayFramesTotal() === a) return;
+  }
+  out.quietGaveUp.push(what);
+};
 const provText = () => pages.fleet ? pages.fleet.evaluate((sel) => { const e = document.querySelector(sel); return e ? e.textContent : null; }, cfg.provSel) : Promise.resolve(null);
 const cardSel = (ch, n) => '[data-key="a:notice:' + cfg.sid + ':' + ch.noticeKeys[n] + ':' + ch.noticeRevs[n] + '"]';
 const visible = async (ch) => {
@@ -421,12 +501,16 @@ const visible = async (ch) => {
   if (pages.fleet && ch.prompt) v.prov = await provText();
   return v;
 };
+// the phase's visibles, waited for CONCURRENTLY (three pages, three waiters), so the point is bounded by ms, not three
+// times it, and each waiter's timeout draws on the budget
 const waitVisible = async (ch, ms) => {
   const t0 = Date.now();
   const last = ch.noticeKeys.length - 1;
-  try { await pages.feed.locator(cardSel(ch, last)).first().waitFor({ state: "attached", timeout: ms }); } catch (e) {}
-  if (pages.waiting && ch.todoText) { try { await pages.waiting.locator(".ut-text", { hasText: ch.todoText }).first().waitFor({ timeout: ms }); } catch (e) {} }
-  if (pages.fleet && ch.prompt) { try { await pages.fleet.waitForFunction(([sel, t]) => { const e = document.querySelector(sel); return !!e && e.textContent === t; }, [cfg.provSel, ch.prompt], { timeout: ms }); } catch (e) {} }
+  const quietly = (p) => p.catch(() => {});
+  const waits = [quietly(pages.feed.locator(cardSel(ch, last)).first().waitFor({ state: "attached", timeout: budget.capped(ms) }))];
+  if (pages.waiting && ch.todoText) waits.push(quietly(pages.waiting.locator(".ut-text", { hasText: ch.todoText }).first().waitFor({ timeout: budget.capped(ms) })));
+  if (pages.fleet && ch.prompt) waits.push(quietly(pages.fleet.waitForFunction(([sel, t]) => { const e = document.querySelector(sel); return !!e && e.textContent === t; }, [cfg.provSel, ch.prompt], { timeout: budget.capped(ms) })));
+  await Promise.all(waits);
   const v = await visible(ch); v.waitedMs = Date.now() - t0; return v;
 };
 const freshRelayWithFeed = async (sinceKey) => { for (const app of APPS) { const s = await snap(pages[app]); if (!s.socks.some((k) => k.relay && k.dialedAt >= out.marks[sinceKey] && k.frames.some((f) => f.t === "feed"))) return false; } return true; };
@@ -435,7 +519,7 @@ const phase = async (name) => {
   mark(name + "0");
   const ch = await ctl("change", { phase: name });
   const rec = { change: ch, seen: await waitVisible(ch, cfg.waitMs) };
-  await pages.feed.waitForTimeout(1500);   // let the panes' rows land on the hub
+  await pages.feed.waitForTimeout(cfg.phaseSettleMs);   // let the panes' rows land on the hub
   mark(name + "1");
   for (const app of APPS) rec[app] = await snap(pages[app]);
   out.phases[name] = rec;
@@ -447,12 +531,12 @@ try {
     page.on("pageerror", () => {});
     page.on("console", (msg) => { const t = msg.text(); if (t.indexOf("federation:") === 0) out.console.push({ app, at: Date.now(), text: t.slice(0, 300) }); });
     await page.addInitScript(hook, { stripCaps: !!cfg.stripCaps });
-    await page.goto(cfg.urls[app]);
+    await page.goto(cfg.urls[app], { timeout: budget.capped(cfg.pageWaitMs) });
     pages[app] = page;
   }
-  for (const app of APPS) {
-    await pages[app].waitForFunction(() => (window.__socks || []).some((s) => s.relay), null, { timeout: 30000 });
-    await pages[app].waitForFunction(() => (window.__socks || []).some((s) => s.relay && s.frames.some((f) => f.t === "feed")), null, { timeout: 30000 });
+  for (const app of APPS) {   // the start's waits draw on the budget too; one that expires throws, and the driver ends (out.died)
+    await pages[app].waitForFunction(() => (window.__socks || []).some((s) => s.relay), null, { timeout: budget.capped(cfg.pageWaitMs) });
+    await pages[app].waitForFunction(() => (window.__socks || []).some((s) => s.relay && s.frames.some((f) => f.t === "feed")), null, { timeout: budget.capped(cfg.pageWaitMs) });
   }
   mark("ready");
   out.provBefore = await provText();
@@ -463,9 +547,9 @@ try {
   mark("drop");
   await ctl("drop");
   out.phases.drop = { held };
-  await waitFor(async () => { for (const app of APPS) { const s = await snap(pages[app]); if (held[app].some((i) => !s.socks[i].closeAt)) return false; } return true; }, 30000, "every held relay socket closes after the drop");
+  await waitFor(async () => { for (const app of APPS) { const s = await snap(pages[app]); if (held[app].some((i) => !s.socks[i].closeAt)) return false; } return true; }, cfg.waitsMs.closed, "every held relay socket closes after the drop");
   mark("closed");
-  await waitFor(async () => (await tunnelsStatus()) !== "up", 60000, "the hub's row leaves up");
+  await waitFor(async () => (await tunnelsStatus()) !== "up", cfg.waitsMs.rowDown, "the hub's row leaves up");
   mark("rowDown");
   out.phases.drop.rowStatus = await tunnelsStatus();
   // (2b) a change is DUE while the link is down: phase D's bundle goes to the remote's real port through the control door
@@ -481,9 +565,9 @@ try {
   // (3) the link returns: the supervisor reads the row up, the pages' polls dial again
   mark("resume");
   await ctl("resume");
-  await waitFor(async () => (await tunnelsStatus()) === "up", 90000, "the hub's row returns to up");
+  await waitFor(async () => (await tunnelsStatus()) === "up", cfg.waitsMs.rowUp, "the hub's row returns to up");
   mark("rowUp");
-  await waitFor(() => freshRelayWithFeed("resume"), 90000, "a fresh relay socket per page holds the remote's full frame after the link's return");
+  await waitFor(() => freshRelayWithFeed("resume"), cfg.waitsMs.redialed, "a fresh relay socket per page holds the remote's full frame after the link's return");
   mark("redialed");
   out.phases.D.seenAfterReturn = await waitVisible(chD, cfg.waitMs);   // the redial's whole frame carries the change made while the link was down
   const chB = await phase("B");
@@ -494,9 +578,9 @@ try {
     mark("restart");
     await ctl("restart-hub");
     mark("restarted");
-    await waitFor(async () => { for (const app of APPS) { const s = await snap(pages[app]); if (!s.socks.some((k) => !k.relay && k.dialedAt >= out.marks.restart && k.openAt)) return false; } return true; }, 60000, "the pages' local sockets reopen");
+    await waitFor(async () => { for (const app of APPS) { const s = await snap(pages[app]); if (!s.socks.some((k) => !k.relay && k.dialedAt >= out.marks.restart && k.openAt)) return false; } return true; }, cfg.waitsMs.localUp, "the pages' local sockets reopen");
     mark("localUp");
-    await waitFor(() => freshRelayWithFeed("restart"), 90000, "a fresh relay socket per page holds the remote's full frame after the local return");
+    await waitFor(() => freshRelayWithFeed("restart"), cfg.waitsMs.redialed2, "a fresh relay socket per page holds the remote's full frame after the local return");
     mark("redialed2");
     const chC = await phase("C");
     out.phases.C.seenA = await visible(chA);
@@ -504,6 +588,7 @@ try {
     out.phases.C.seenD = await visible(chD);
   }
   mark("end");
+  out.budget = { ms: cfg.driverBudgetMs, leftMs: budget.left() };   // how much of the wait budget a drive leaves: the record's margin
   for (const app of APPS) out.pages[app] = await snap(pages[app]);
 } catch (e) {
   out.died = String(e).slice(0, 400);
@@ -527,7 +612,17 @@ class _LinkDrop(unittest.TestCase):
     #                            fails-before lever (an old hub named by ROMP_LINKDROP_HUB_ROOT) turns the new class red instead of adapting it
     changes = ("notice", "todo", "append")
     local_drop = True
-    wait_ms = 20000
+    wait_ms = 20000           # each point's visibles after a change (the card, the todo, the provisional row), waited for concurrently
+    # The driver's waitFor caps by the mark each wait ends at, sized at three to six times the measured wait: the held sockets
+    # closing (0.01 s), the row leaving up (6 to 14 s: the supervisor's silent-poll window, longest under the old bundle's
+    # churn), the row returning to up (1 to 9 s), a fresh relay socket per page with a whole frame (1 to 5 s), the local
+    # sockets reopening (4 s), the relay after the local return (under 1 s). Every one draws on driver_budget_ms as well
+    # (BUDGET_JS), which is the binding bound.
+    waits_ms = {"closed": 20000, "rowDown": 40000, "rowUp": 40000, "redialed": 30000, "localUp": 30000, "redialed2": 30000}
+    page_wait_ms = 30000      # the start, per page: its load, its first relay socket, that socket's whole frame
+    driver_budget_ms = 240000  # every wait the driver places draws on this one budget: between two and a half and five times a healthy
+    #                            drive's total waiting (52 s on the new bundle, 87 s on the old, whose frozen feed page shows a phase's
+    #                            cards only at the next churned socket's whole frame); the record's budget.leftMs says what a drive left
     down_dwell_ms = 12000     # the row stays down this long after the supervisor marks it: a quiescent tail well past one 4 s /tunnels poll
     quiet_tail_ms = 6000      # no relay dial in this window before resume: the poll read the row down and connect() gated on live=false
     apps = ("waiting", "fleet", "feed")
@@ -653,7 +748,7 @@ class _LinkDrop(unittest.TestCase):
         lab_hub = os.path.join(cls.lab, "hub")
         env = _lab.kernel_env(lab_hub, os.path.join(lab_hub, "claude"), os.path.join(cls.lab, "dist"), cls.hport, cls.htoken, ROMP_HOST_NAME="HUB")
         proc = subprocess.Popen([os.path.join(cls.hub_root or ROOT, "bin", "romp-kernel")], stdout=open(cls.hlog, "a"), stderr=subprocess.STDOUT, env=env)
-        for _ in range(120):
+        for _ in range(HUB_SPAWN_TRIES):   # a 1 s probe and a 0.5 s pause each: hub_restart_bound_s counts them
             try:
                 urllib.request.urlopen("http://127.0.0.1:%d/healthz" % cls.hport, timeout=1)
                 return proc
@@ -672,7 +767,7 @@ class _LinkDrop(unittest.TestCase):
         p = cls.hub_proc
         p.terminate()
         try:
-            p.wait(timeout=10)
+            p.wait(timeout=HUB_TERM_WAIT_S)
         except subprocess.TimeoutExpired:
             p.kill()
             p.wait()
@@ -718,14 +813,19 @@ class _LinkDrop(unittest.TestCase):
         conf = {"urls": {app: "http://127.0.0.1:%d/%s?wid=%s&token=%s" % (cls.hport, app, WID, cls.htoken) for app in cls.apps},
                 "tunnelsUrl": "http://127.0.0.1:%d/tunnels?token=%s" % (cls.hport, cls.htoken),
                 "ctl": "http://127.0.0.1:%d" % cls.ctl.port, "host": HOST, "sid": SID_R0,
-                "stripCaps": cls.strip_caps, "localDrop": cls.local_drop, "waitMs": cls.wait_ms, "downDwellMs": cls.down_dwell_ms, "apps": list(cls.apps), "provSel": PROV_SEL}
+                "stripCaps": cls.strip_caps, "localDrop": cls.local_drop, "waitMs": cls.wait_ms, "downDwellMs": cls.down_dwell_ms, "apps": list(cls.apps), "provSel": PROV_SEL,
+                "waitsMs": dict(cls.waits_ms), "pageWaitMs": cls.page_wait_ms, "driverBudgetMs": cls.driver_budget_ms,
+                "phaseSettleMs": PHASE_SETTLE_MS, "quietTries": QUIET_TRIES, "quietStepMs": QUIET_STEP_MS}
         with open(cfg, "w") as f:
             json.dump(conf, f)
         driver = os.path.join(cls.lab, "driver.mjs")
         with open(driver, "w") as f:
             f.write(DRIVER)
         try:
-            p = subprocess.run(["node", driver], capture_output=True, text=True, timeout=900,
+            # DRIVER_TIMEOUT_S sits under CI's per-test cap (CI_TEST_TIMEOUT_S, pytest-timeout on the served step) with
+            # BOOT_ROOM_S for the rest of setUpClass, and above driver_worst_case_s(cls), so a drive that outlives it is a
+            # hang in the control door and ends here as this class's driver_error, not as pytest-timeout ending the process
+            p = subprocess.run(["node", driver], capture_output=True, text=True, timeout=DRIVER_TIMEOUT_S,
                                env=dict(os.environ, EXT_PKG=os.path.join(EXT, "package.json"), CFG=cfg))
         except subprocess.TimeoutExpired as e:
             so = e.stdout if isinstance(e.stdout, str) else (e.stdout or b"").decode()
@@ -1048,13 +1148,29 @@ class _LinkDrop(unittest.TestCase):
             self.assertEqual(self._sends(app, "relay", "needSlot"), [], "…and the remote for no slot")
             self.assertEqual(self._sends(app, "relay", "needFullFeed") + self._sends(app, "local", "needFullFeed"), [], "…and nobody for a full feed: every feedDelta found its base on the socket it arrived on")
 
+    def _carries_cards(self, f):
+        """Whether a recorded relay frame carries a card upsert: a feedDelta with an `asks` list (the hook records its
+        length, None when the frame had none) or a feed slot patch whose `coll` names asks. A feed-family patch with
+        neither is the connect push's LEDGERS ATTACH, by design and with no card in it: the `ready`-time whole frame is
+        the cached, ledger-less one and the push that follows sends the ledgers as a delta (kernel.py _send_feed_now), a
+        feedDelta on a page that announced the cap, a feed slot patch on one that did not. The head drive's record holds
+        one, a second after the Waiting page's restart whole frame (round 2's review, finding 1)."""
+        if f["t"] == "feedDelta":
+            return f.get("asks") is not None
+        if f["t"] == "delta" and f["slot"] == "feed":
+            return "asks" in (f.get("coll") or [])
+        return False
+
     def _assert_change_due_while_down_crossed_nothing_and_the_return_carried_it_whole(self):
         """The gate, established rather than exhibited (round 1): phase D's change bundle was posted to the remote's real
         port after the hub's row went down and before the dwell ended, so a patch was DUE with the link down. While down
         the change is absent from every page (the card, and on the new bundle the todo and the provisional row), no
         outline/delta-unapplied row files, and the link's return serves each page ONE whole frame that carries it: the
-        change is visible after the return, no patch of any kind (delta or feedDelta) reaches any page between the
-        return and phase B's first change, and it stays visible after phase B and at the end."""
+        change is visible after the return, no patch carrying a card reaches any page between the return and phase B's
+        first change (the ledgers attach that can follow the whole frame carries none, _carries_cards), no row files in
+        that window beyond the one the old bundle files for such an attach, and the change stays visible after phase B
+        and at the end. The whole frame's precedence on its socket is the redial pins' (every opened socket's first
+        feed-family frame is a whole feed)."""
         m = self._marks()
         D = self._phase("D")
         made = [c for c in self.changes_made if c.get("phase") == "D"]
@@ -1072,11 +1188,25 @@ class _LinkDrop(unittest.TestCase):
         self.assertEqual(down, [], "no outline/delta-unapplied row filed while the link was down with phase D due: %r" % (down,))
         self._assert_seen(D["seenAfterReturn"], True, todo=todo, prompt=prompt, what="phase D after the link's return (the redial's whole frame carried it)")
         for app in self.apps:
-            socks = self._relay_socks(app)
-            patches = [(s["i"], f["t"], f["slot"], f["at"] - m["resume"]) for s in socks for f in s["frames"] if f["t"] in ("delta", "feedDelta") and m["resume"] <= f["at"] < m["B0"]]
-            self.assertEqual(patches, [], "no patch reached the %s page between the link's return and phase B's first change (the catch-up is one whole frame, never a replayed patch): %r" % (app, patches))
-            wholes = [f for s in socks for f in s["frames"] if f["t"] == "feed" and m["resume"] <= f["at"] < m["B0"]]
+            window = [(s, f) for s in self._relay_socks(app) for f in s["frames"] if m["resume"] <= f["at"] < m["B0"]]
+            carrying = [(s["i"], f["t"], f["slot"], f.get("asks") if f["t"] == "feedDelta" else f.get("coll"), round((f["at"] - m["resume"]) / 1000.0, 2))
+                        for s, f in window if self._carries_cards(f)]
+            self.assertEqual(carrying, [], "no patch carrying a card reached the %s page between the link's return and phase B's first change (the "
+                                           "catch-up is one whole frame, never a replayed patch; a ledgers attach after the whole frame carries no card): %r" % (app, carrying))
+            wholes = [f for s, f in window if f["t"] == "feed"]
             self.assertTrue(wholes, "…and a whole feed frame did reach the %s page in that window: %r" % (app, [self._kinds(s) for s in self._relay_socks(app, "resume", "B0")]))
+        # the rows, read over the return window itself (round 2's review, finding 2; the down window's zero above ends 1.5 s
+        # after resume and reaches none of the return's whole frames, which arrive 1 to 5 s after it): no outline/
+        # delta-unapplied row for the return's whole frame or for a replayed patch. Padded on the left as _rows_in pads
+        # (the kernel's whole-second floor) and closed one second before B0 (phase B's first row is stamped at a floor no
+        # earlier than B0 - 1 s, B0 being marked before the change is posted). The one row allowed is the old bundle's for
+        # a ledgers attach the Outline received in the window, matched by rev; a row with no such patch behind it is stray.
+        t0, t1 = m["resume"] / 1000.0 - 1.5, m["B0"] / 1000.0 - 1.0
+        rows = self._outline_unapplied([r for r in self.hub_diag_rows if t0 <= float(r.get("t") or 0) <= t1])
+        attach_revs = sorted(int(f["rev"]) for f in self._outline_feed_patches() if m["resume"] - 1500 <= f["at"] < m["B0"] and not self._carries_cards(f))
+        stray = [d for d in rows if not (isinstance(d, dict) and d.get("slot") == "feed" and d.get("rev") is not None and int(d["rev"]) in attach_revs)]
+        self.assertEqual(stray, [], "no outline/delta-unapplied row filed between the link's return and phase B's first change beyond one per ledgers attach the "
+                                    "Outline received there (a row here is a row for the return's whole frame or for a replayed patch); rows %r, attaches by rev %r" % (rows, attach_revs))
         self._assert_seen(self._phase("B")["seenD"], True, todo=todo, what="phase D's changes after phase B")
         if self.local_drop:
             self._assert_seen(self._phase("C")["seenD"], True, todo=todo, what="phase D's changes at the end")
@@ -1139,8 +1269,9 @@ class LinkDropBothNew(_LinkDrop):
 
     def test_a_change_due_while_the_link_was_down_crossed_nothing_and_the_return_carried_it_whole(self):
         """Phase D (cards, a todo, an appended pair) posted with the row down: absent from every page while down, no row,
-        then the return's whole frame carries all of it (card, todo text, the provisional row's prompt) with no patch of
-        any kind before phase B's first change."""
+        then the return's whole frame carries all of it (card, todo text, the provisional row's prompt) with no patch
+        carrying a card before phase B's first change (a ledgers attach after the whole frame is allowed, and carries
+        none)."""
         self._assert_change_due_while_down_crossed_nothing_and_the_return_carried_it_whole()
 
     def test_the_local_drop_deferred_the_relay_dial_once_and_the_return_dialed_once(self):
@@ -1180,11 +1311,12 @@ class LinkDropOldLocal(_LinkDrop):
     filed no row until the return's whole frame carried it), and it RESUMES after each redial's whole frame (the whole
     frame catches the page up once; the next patch freezes again). The class pins the correspondence, not a count: per
     window and over the whole drive, the rows equal the Outline's own feed slot patches by rev, non-empty in every
-    phase and empty while the link was down. One drive's count on the bundle at 01d4fbe43 (2026-09-19): 3 / 0 / 3 / 3
-    across phase A, the link down, phase B and phase C; another drive at the same head gave 3 / 0 / 1 / 3 when socket
-    churn inside phase B absorbed two notices into whole frames. A relay redial does not end the
-    storm but restarts it, so with a link that comes and goes the storm looks intermittent and self-healing when it is
-    neither; this class keeps that evidence beside the new bundle's zero. The catch-up half IS asserted on the old feed
+    phase and empty while the link was down. One drive's count on the bundle at 01d4fbe43 (2026-09-19, the round-2
+    head): 3 / 0 / 3 / 3 across phase A, the link down, phase B and phase C; a reviewer's drive at round 1's head gave
+    3 / 0 / 1 / 3 when socket churn inside phase B absorbed two notices into whole frames (the module docstring gives
+    the recorded population). A relay redial does not end the storm but restarts it, so with a link that comes and goes
+    the storm looks intermittent and self-healing when it is neither; this class keeps that evidence beside the new
+    bundle's zero. The catch-up half IS asserted on the old feed
     page: phase B's cards show after the link's return redial and still show after the local restart's, phase C's show
     after that redial, and phase D's (posted while the link was down) show after the return, so a redial's whole frame
     catches the old page up and the next patch freezes it again. The steady-state freeze itself (a card that never
@@ -1290,9 +1422,10 @@ class LinkDropOldLocal(_LinkDrop):
 
     def test_a_change_due_while_the_link_was_down_crossed_nothing_and_the_return_carried_it_whole(self):
         """The gate's own leg on the old bundle: phase D's cards, posted with the row down, reach no page and file no row
-        while the link is down; the return's whole frame carries them (visible after the return, no delta frame between
-        the return and phase B's first change), and phase B's patches then file rows again (the storm test's phase B
-        equality). A pause in the storm with a change due is the link, not the page."""
+        while the link is down; the return's whole frame carries them (visible after the return, no patch carrying a
+        card and no row for one between the return and phase B's first change; a ledgers attach and the row this bundle
+        files for it are allowed), and phase B's patches then file rows again (the storm test's phase B equality). A
+        pause in the storm with a change due is the link, not the page."""
         self._assert_change_due_while_down_crossed_nothing_and_the_return_carried_it_whole()
 
 
