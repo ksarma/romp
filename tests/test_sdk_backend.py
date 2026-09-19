@@ -13513,6 +13513,9 @@ class SettingsPickThroughTheLoopUnderAHost(SettingsPickThroughTheLoop):
             self.detach_mode = False
             self.end_grace = 120.0
             self.sent = []
+            self.close_gate = None                      # a threading.Event: close() waits for it before it sends (the end grace a
+            #   real close spends waiting for the CLI to exit), so a test can park the loop thread inside a teardown, after
+            #   the arm and before the loop top that follows it (the ordered adoption-then-teardown case, round 6 addendum)
 
         async def connect(self):
             self.hello = self._hello
@@ -13520,6 +13523,8 @@ class SettingsPickThroughTheLoopUnderAHost(SettingsPickThroughTheLoop):
             self._init_pending = False                  # the fake client's handshake completes at once
 
         async def close(self):
+            if self.close_gate is not None:
+                await asyncio.get_running_loop().run_in_executor(None, self.close_gate.wait)
             # HostTransport.close's rule: a kernel leaving, or a connect that never completed, detaches; else `end`
             self.sent.append("detach" if (self.detach_mode or self._init_pending) else "end")
 
@@ -13588,7 +13593,8 @@ class SettingsPickThroughTheLoopUnderAHost(SettingsPickThroughTheLoop):
         self.assertIsNone(s.snapshot()["pickHeld"])
         self.assertEqual(s.snapshot()["effort"], "low")
 
-    def _survivor_with_a_carried_ask(self, first_handshake_times_out=False, handshake_timeouts=None, bg_tasks=None):
+    def _survivor_with_a_carried_ask(self, first_handshake_times_out=False, handshake_timeouts=None, bg_tasks=None,
+                                     carried_ask=True):
         """The reg a kernel restart leaves for a follower asked to move (authPending), whose hosted CLI survived on the key
         with one background task the previous kernel mirrored (bgTasks; a shell in the task registry's own spelling,
         local_bash, the task_started frame's task_type; `bg_tasks` replaces the list), the CLI's identity named
@@ -13596,13 +13602,23 @@ class SettingsPickThroughTheLoopUnderAHost(SettingsPickThroughTheLoop):
         connects spawn as the class does. `handshake_timeouts`: how many attaches in a row reach the host and time out after
         their hello (the loop's retry road up to three; the fourth is the stand-down), each against the SAME surviving CLI;
         `first_handshake_times_out` is the one-timeout spelling. The attach after the last timeout reaches that CLI and
-        completes; connects after it spawn."""
+        completes; connects after it spawn.
+
+        `carried_ask` False builds the same survivor with a CLI that AGREES with the machine default: authPending off AND
+        apiKeyAuth False, since the attach landing stamps the CLI's report (reg apiKeyAuth, restored as auth_live) against
+        the default and runs the default step on it, so authPending off alone leaves a report that says key and the landing
+        asks again. The two shapes exist because the carried ask is the point of the callers that read the hold, the arm
+        and the landing, while for the no-work adoption tests (bg_tasks=[], _survivor_on_the_default) it was an unintended
+        second writer: with no seeded row to hold the arm, the ask re-made at the attach relaunched at once and the loop
+        top's _drop_live_work("reconnect") cleared the live sets on the loop thread while the test's hook adopted from the
+        main thread (fork PR #787's round 6 addendum, 2026-09-19: CI red on three of them, every one green alone; in
+        production the Stop hook is an SDK callback on the loop thread, so the two never interleave there)."""
         timeouts = int(handshake_timeouts) if handshake_timeouts is not None else (1 if first_handshake_times_out else 0)
         rows = bg_tasks if bg_tasks is not None else [{"taskId": "t-1", "type": "local_bash", "desc": "a long sweep",
                                                         "since": int(time.time()) - 600, "toolUseId": "tu-1", "lastTool": ""}]
         sb.write_sdk_default(self.be.state_dir, auth="login", authExplicit=True)
         reg = sb.read_reg(self.be.state_dir, self.SID)
-        reg.update(authPending=True, apiKeyAuth=True, spawnedAtCli="4301:c1", bgTasks=rows)
+        reg.update(authPending=bool(carried_ask), apiKeyAuth=bool(carried_ask), spawnedAtCli="4301:c1", bgTasks=rows)
         sb.write_reg(self.be.state_dir, self.SID, reg)
         self.s = sb.SdkSession(self.be, dict(reg))
         self.be.sessions[self.SID] = self.s
@@ -13622,6 +13638,13 @@ class SettingsPickThroughTheLoopUnderAHost(SettingsPickThroughTheLoop):
             return t
         be._host_transport_for = attach_first
         return self.s
+
+    def _survivor_on_the_default(self, bg_tasks=None):
+        """The survivor above with a CLI on the machine default and no ask carried (carried_ask False): the attach re-makes
+        no ask, draws no slot and relaunches nothing, so the test's own hook call is the live sets' only writer. The shape
+        for a test about adoption, the report's reconcile or the drop called directly, none of which reads the hold, the
+        arm or the landing (fork PR #787's round 6 addendum; the fixture's docstring says what the carried ask cost them)."""
+        return self._survivor_with_a_carried_ask(bg_tasks=bg_tasks, carried_ask=False)
 
     def test_a_carried_ask_holds_at_the_boot_attach_for_the_surviving_clis_work_seeded_from_the_reg(self):
         """The reviewer's regression-1 (round 1, 2026-09-18), executed: the ask a follower carried across a kernel restart
@@ -14281,7 +14304,7 @@ class SettingsPickThroughTheLoopUnderAHost(SettingsPickThroughTheLoop):
         # leaked in _subagents, and every settings-pick reconnect held for the kernel's life. _bg_row now normalises the
         # label to the discriminant at the adoption, so the run's agent is reconciled
         self._helper()
-        s = self._survivor_with_a_carried_ask(bg_tasks=[])
+        s = self._survivor_on_the_default(bg_tasks=[])
         c1 = self._connect()
         asyncio.run(s._stop_hook({"background_tasks": [
             {"id": "w-1", "type": "workflow", "status": "running", "description": "a fan-out run"}]}, None, None))
@@ -14300,7 +14323,7 @@ class SettingsPickThroughTheLoopUnderAHost(SettingsPickThroughTheLoop):
         # never entered a set the retire loop walked, so a later report could not rule it and an adopted shell was held
         # for the kernel's life. It now joins _reported_tasks, so the next report's omission retires it (it is a shell)
         self._helper()
-        s = self._survivor_with_a_carried_ask(bg_tasks=[])
+        s = self._survivor_on_the_default(bg_tasks=[])
         self._connect()
         asyncio.run(s._stop_hook({"background_tasks": [
             {"id": "t-9", "type": "shell", "status": "running", "description": "a launch no kernel heard", "command": "sleep 9"}]}, None, None))
@@ -14395,7 +14418,7 @@ class SettingsPickThroughTheLoopUnderAHost(SettingsPickThroughTheLoop):
         # discriminant, so the adopted row carries it from the adoption on; and since the payload carries no start
         # time, the row's since is the adoption time
         self._helper()
-        s = self._survivor_with_a_carried_ask(bg_tasks=[])
+        s = self._survivor_on_the_default(bg_tasks=[])
         self._connect()
         t0 = int(time.time())
         asyncio.run(s._stop_hook({"background_tasks": [
@@ -14423,7 +14446,7 @@ class SettingsPickThroughTheLoopUnderAHost(SettingsPickThroughTheLoop):
         # place it. A progress frame that carries the id (an agent's or a run's; 2.1.266 passes the task's toolUseId when
         # the task records one) teaches the row its id once, and the mirror is rewritten with it
         self._helper()
-        s = self._survivor_with_a_carried_ask(bg_tasks=[])
+        s = self._survivor_on_the_default(bg_tasks=[])
         self._connect()
         asyncio.run(s._stop_hook({"background_tasks": [
             {"id": "ag-9", "type": "subagent", "status": "running", "description": "Running a reviewer agent"}]}, None, None))
@@ -14449,7 +14472,7 @@ class SettingsPickThroughTheLoopUnderAHost(SettingsPickThroughTheLoop):
         # pokes nothing; the learn itself pokes exactly once. A characterisation pin of the clause the round 4 addendum
         # added: green on 0f11cca0e by design, red under the mutation (the `not entry.get("toolUseId")` guard dropped)
         self._helper()
-        s = self._survivor_with_a_carried_ask(bg_tasks=[])
+        s = self._survivor_on_the_default(bg_tasks=[])
         self._connect()
         asyncio.run(s._stop_hook({"background_tasks": [
             {"id": "ag-9", "type": "subagent", "status": "running", "description": "Running a reviewer agent"}]}, None, None))
@@ -14492,7 +14515,7 @@ class SettingsPickThroughTheLoopUnderAHost(SettingsPickThroughTheLoop):
         # is. With the discard gone the adopted shell stayed in the reported set and the omission retired a task whose
         # stream had just reported it running
         self._helper()
-        s = self._survivor_with_a_carried_ask(bg_tasks=[])
+        s = self._survivor_on_the_default(bg_tasks=[])
         self._connect()
         asyncio.run(s._stop_hook({"background_tasks": [
             {"id": "t-9", "type": "shell", "status": "running", "description": "a launch no kernel heard", "command": "sleep 9"}]}, None, None))
@@ -14508,7 +14531,7 @@ class SettingsPickThroughTheLoopUnderAHost(SettingsPickThroughTheLoop):
         # nothing (the seeded set's is). Left standing after the rows died with the CLI, the id would make the next
         # report's reconcile hold a phantom row of a type never learned and say so
         self._helper()
-        s = self._survivor_with_a_carried_ask(bg_tasks=[])
+        s = self._survivor_on_the_default(bg_tasks=[])
         self._connect()
         asyncio.run(s._stop_hook({"background_tasks": [
             {"id": "t-9", "type": "shell", "status": "running", "description": "a launch no kernel heard", "command": "sleep 9"}]}, None, None))
@@ -14564,7 +14587,7 @@ class SettingsPickThroughTheLoopUnderAHost(SettingsPickThroughTheLoop):
         # the row with, and a teardown clears all three), so the tolerance is defensive and the state is constructed
         # here. A bare pop would raise KeyError into the reconcile's guard, say the reconcile failed, and skip the clears
         self._helper()
-        s = self._survivor_with_a_carried_ask(bg_tasks=[])
+        s = self._survivor_on_the_default(bg_tasks=[])
         self._connect()
         with s._sub_lock:
             s._reported_tasks.add("ghost-1")                                 # an id a report spoke for, its row gone
@@ -14583,7 +14606,7 @@ class SettingsPickThroughTheLoopUnderAHost(SettingsPickThroughTheLoop):
         # signal, and the payload lists in-flight work. This pins the design as it stands (the docstring scopes "trust
         # presence always" to the rows awaiting a verdict); a change of that design changes this test with it
         self._helper()
-        s = self._survivor_with_a_carried_ask(bg_tasks=[])
+        s = self._survivor_on_the_default(bg_tasks=[])
         self._connect()
         s._on_task_event("task_started", {"task_id": "t-5", "task_type": "local_bash", "description": "a stream-started sweep",
                                            "tool_use_id": "tu-5"})
@@ -14676,7 +14699,7 @@ class SettingsPickThroughTheLoopUnderAHost(SettingsPickThroughTheLoop):
         # of it). Two reports that decide nothing: one listing a stream-started row (the stream's, not this reconcile's), and
         # an empty one with nothing seeded or reported
         self._helper()
-        s = self._survivor_with_a_carried_ask(bg_tasks=[])
+        s = self._survivor_on_the_default(bg_tasks=[])
         self._connect()
         s._on_task_event("task_started", {"task_id": "t-5", "task_type": "local_bash", "description": "a stream-started sweep",
                                            "tool_use_id": "tu-5"})
@@ -14696,7 +14719,7 @@ class SettingsPickThroughTheLoopUnderAHost(SettingsPickThroughTheLoop):
         # predates this round and holds on the base too; it discriminates by mutation (dropping the cut). The fixture stays
         # under the CLI's own 1000-character cap, so the payload is one the producer can emit
         self._helper()
-        s = self._survivor_with_a_carried_ask(bg_tasks=[])
+        s = self._survivor_on_the_default(bg_tasks=[])
         self._connect()
         desc = ("a long description of a sweep over the notes-api fixtures, " * 20)[:700]
         self.assertEqual(len(desc), 700)
@@ -14715,7 +14738,7 @@ class SettingsPickThroughTheLoopUnderAHost(SettingsPickThroughTheLoop):
         # the CLI says is running is never discarded) and held on an omission, with one problem row naming the label, keyed by
         # it. The known labels, `monitor` and "MCP task" among them, file no row
         self._helper()
-        s = self._survivor_with_a_carried_ask(bg_tasks=[])
+        s = self._survivor_on_the_default(bg_tasks=[])
         self._connect()
         asyncio.run(s._stop_hook({"background_tasks": [
             {"id": "k-1", "type": "kite", "status": "running", "description": "a task of a type this build has never seen"},
@@ -14752,7 +14775,7 @@ class SettingsPickThroughTheLoopUnderAHost(SettingsPickThroughTheLoop):
         # whose label differs past the 60th character counts on the same row (the key is the bounded label). Characterisation
         # pin: green on 2db48571e by design; it discriminates by mutation (the bound dropped; the per-report dedupe dropped)
         self._helper()
-        s = self._survivor_with_a_carried_ask(bg_tasks=[])
+        s = self._survivor_on_the_default(bg_tasks=[])
         self._connect()
         label = "kite-" + "x" * 65
         self.assertEqual(len(label), 70)
@@ -14774,7 +14797,7 @@ class SettingsPickThroughTheLoopUnderAHost(SettingsPickThroughTheLoop):
         # (no id) carrying fourteen keys: the shape names the first twelve, sorted, and no more. Characterisation pin: green on
         # 2db48571e by design; it discriminates by mutation (the cap dropped names fourteen)
         self._helper()
-        s = self._survivor_with_a_carried_ask(bg_tasks=[])
+        s = self._survivor_on_the_default(bg_tasks=[])
         self._connect()
         asyncio.run(s._stop_hook({"background_tasks": [{"k%02d" % i: i for i in range(1, 15)}]}, None, None))
         rows = self._unreadable_rows()
@@ -14782,6 +14805,122 @@ class SettingsPickThroughTheLoopUnderAHost(SettingsPickThroughTheLoop):
         self.assertIn("(1 entry, 1 this kernel cannot key (not an object, or no id); keys seen: k01, k02, k03, k04, k05, k06, k07, k08, "
                       "k09, k10, k11, k12)", rows[0]["text"])
         self.assertNotIn("k13", rows[0]["text"])
+
+    def test_a_survivor_on_the_default_attaches_with_no_ask_and_no_relaunch_so_a_hook_is_the_live_sets_only_writer(self):
+        """The precondition the no-work adoption tests above rest on (fork PR #787's round 6 addendum, 2026-09-19): a
+        survivor whose CLI agrees with the machine default (_survivor_on_the_default: authPending off and apiKeyAuth False,
+        so the attach landing stamps login against a login default) is left quiet by the landing's default step. No ask is
+        re-made, no slot is drawn, nothing relaunches, and the first turn's init and settle after the attach change none
+        of it: one Client instance, the host never asked to end its CLI. So nothing but the test's own hook call writes the
+        live sets. Refusable by swapping in the carried-ask shape: the landing then asks again and a second Client lands."""
+        self._helper()
+        s = self._survivor_on_the_default(bg_tasks=[])
+        self.assertEqual(s._auth_pending, "", "no ask carried across the restart")
+        c1 = self._connect()
+        t1 = self.hosted[0]
+        self.assertEqual(s._launched_auth, "login", "the attach stamped the CLI's report: on the default")
+        self.assertEqual(s._auth_pending, "", "the landing re-made no ask")
+        self.assertFalse((sb.read_reg(self.be.state_dir, self.SID) or {}).get("authPending"))
+        self.assertFalse(s._reconnect); self.assertFalse(s._reconnect_when_idle); self.assertFalse(s._reconnect_held_for_work)
+        self.assertFalse(s._relaunch_bounded); self.assertFalse(s._slot_wait); self.assertIsNone(s._relaunch_slot)
+        self.assertIsNone(s._launching, "the attach's spawn window ended at its landing")
+        self.assertFalse(any("the reconnect it was asked for is asked again" in l or "waiting for a relaunch slot" in l
+                             for l in self.lines), self.lines[-8:])
+        self._turn(c1)                                        # the first turn after the attach: its init reports the login
+        self._wait(lambda: s.inflight == 0 and getattr(s, "_settled_msg", None) is not None, "the first turn after the attach settled")
+        self._settled("the first settle")
+        self.assertEqual(len(self._Client.instances), 1, "no relaunch: nothing was asked"); self.assertIs(s.client, c1)
+        self.assertEqual(t1.sent, [], "the host is never asked to end its CLI"); self.assertFalse(c1.torn_down)
+        self.assertEqual(len(self.hosted), 1)
+        self.assertFalse(s._reconnect); self.assertFalse(s._reconnect_when_idle); self.assertEqual(s._auth_pending, "")
+        self.assertFalse(any("asked again" in l or "relaunch slot" in l for l in self.lines), self.lines[-8:])
+
+    def test_a_survivor_carrying_the_ask_with_no_work_is_asked_again_at_the_attach_and_relaunches_at_once(self):
+        """The other arm of that precondition (fork PR #787's round 6 addendum, 2026-09-19): the carried-ask shape with no
+        work the reg recorded (bg_tasks=[]) has the attach landing ask again, the arm find the session quiet (no seeded row
+        holds it), the slot granted at once (the budget is free) and the relaunch fire: the host's CLI is ended and a second
+        Client lands. That relaunch's loop top runs _drop_live_work("reconnect") on the loop thread, so a hook driven from
+        the test's thread meanwhile is a second writer racing it; this is the state the no-work adoption tests must never
+        sit in, and _survivor_on_the_default is how they stay out of it. Refusable by swapping the fixture: on the default
+        nothing is asked again and no second Client ever appears."""
+        self._helper()
+        s = self._survivor_with_a_carried_ask(bg_tasks=[])
+        self.assertEqual(s._auth_pending, "login", "the carried ask")
+        c1 = self._connect()
+        t1 = self.hosted[0]
+        self.assertEqual(s._live_work_counts(), (0, 0), "no work the reg recorded: nothing holds the arm")
+        self.assertTrue(any("attached to this session's surviving CLI, which runs on the key while the machine default is login" in l
+                            and "the reconnect it was asked for is asked again" in l for l in self.lines), self.lines[-8:])
+        self._wait(lambda: len(self._Client.instances) == 2 and self._Client.instances[1] is s.client and s._launching is None,
+                   "the relaunch landed on a fresh host")
+        self._settled("the landing")
+        self.assertEqual(t1.sent, ["end"], "the relaunch's teardown ended the host's CLI"); self.assertTrue(c1.torn_down)
+        self.assertEqual(len(self.hosted), 2, "one fresh host for the relaunch"); self.assertEqual(s._launched_auth, "login")
+        self._wait(lambda: s._auth_pending == "" and not (sb.read_reg(self.be.state_dir, self.SID) or {}).get("authPending"),
+                   "the landing served the carried ask")
+
+    def test_the_relaunchs_own_teardown_ordered_after_an_adoption_retires_the_adopted_row_and_the_next_report_holds_no_phantom(self):
+        """The reviewer's condition on fork PR #787's round 6 addendum (2026-09-19): removing the harness race must not lose
+        the ORDERED case's coverage on the loop-driven road. In production the Stop hook is an SDK hook callback on the
+        session's loop thread, the thread that runs a relaunch's teardown, so a report's adoption and the loop top's
+        _drop_live_work("reconnect") never interleave: a row adopted before the teardown is work that died with the CLI it
+        ran in, retired by the drop with its death notice, and the next report holds no phantom for it. The two teardown
+        pins above call _drop_live_work directly; this one drives the connect loop's own call, ordered after the adoption.
+        Two ordering devices, both deterministic, neither a sleep: (1) the spawn-stagger slot the re-made ask's arm draws
+        before its teardown (_arm_reconnect_if_quiet, on backend._spawn_sem), held whole by this test, so the arm waits
+        with the CLI serving until the test has installed (2) a gate on the surviving transport's close (the end grace a
+        real HostTransport.close spends waiting for the CLI to exit), which parks the loop thread inside the first
+        client's teardown: after the arm, before the loop top. The slot alone cannot order an adoption before the drop:
+        the grant re-runs the arm's quiet check and an adopted row is live work, so the grant holds ("not quiet any more;
+        the slot goes back", verified by execution). So the adoption lands while the loop is parked in the teardown, and
+        the gate's release is the one event after which the drop runs. The wait after the release is the relaunch's own
+        landing (the loop constructs the fresh client AFTER its drop: two Client instances, s.client the second), never a
+        predicate over the sets the drop clears, which would be true the moment it returned whatever the drop did."""
+        self._helper()
+        sem = self.be._spawn_sem
+        held = []
+        while sem.acquire(blocking=False):
+            held.append(sem.release)
+        self.assertGreaterEqual(len(held), 1, "the machine-wide spawn stagger has permits to hold")
+
+        def release_all():
+            while held:
+                held.pop()()
+        self.addCleanup(release_all)
+        gate = threading.Event()
+        self._parks = [gate]                                  # tearDown opens it on a failure before the release
+        s = self._survivor_with_a_carried_ask(bg_tasks=[])
+        c1 = self._connect()
+        t1 = self.hosted[0]
+        self._wait(lambda: s._slot_wait, "the re-made ask's arm waits for its slot with the CLI still serving")
+        self.assertEqual(len(self._Client.instances), 1); self.assertEqual(t1.sent, []); self.assertFalse(s._reconnect)
+        t1.close_gate = gate                                  # installed while the arm is held: no teardown can run past it
+        held.pop()()                                          # one permit back: the grant re-runs the arm, quiet, and it fires
+        self._wait(lambda: c1.torn_down, "the arm fired at the grant and the teardown reached the transport's close, where the gate holds it")
+        self.assertEqual(t1.sent, [], "parked before the send: the loop thread waits on the gate inside the teardown")
+        self.assertEqual(len(self._Client.instances), 1, "no fresh client yet: the loop top is behind the gate")
+        # the adoption, from this thread, while the loop thread is parked in the teardown: ordered before the drop
+        asyncio.run(s._stop_hook({"background_tasks": [
+            {"id": "t-9", "type": "shell", "status": "running", "description": "a launch no kernel heard", "command": "sleep 9"}]}, None, None))
+        self.assertEqual(sorted(s._bg_tasks), ["t-9"]); self.assertEqual(s._reported_tasks, {"t-9"}); self.assertEqual(s._live_work_counts(), (0, 1))
+        self.assertEqual(len(self._Client.instances), 1, "still parked: the adoption preceded the drop")
+        gate.set()                                            # the one event: the close sends `end`, the loop top drops, the fresh client is built
+        self._wait(lambda: len(self._Client.instances) == 2 and self._Client.instances[1] is s.client and s._launching is None,
+                   "the relaunch landed on a fresh host, built after the loop top's drop")
+        self._settled("the landing")
+        c2 = self._Client.instances[1]
+        self.assertEqual(t1.sent, ["end"], "the teardown ended the host's CLI once the gate opened")
+        self.assertEqual(s._live_work_counts(), (0, 0), "the adopted row died with the CLI it ran in")
+        self.assertEqual(s._bg_tasks, {}); self.assertEqual(s._seeded_tasks, set()); self.assertEqual(s._reported_tasks, set())
+        self.assertTrue(any("dropped 0 subagents and 1 background task on reconnect" in l for l in self.lines), self.lines[-10:])
+        self.assertEqual((sb.read_reg(self.be.state_dir, self.SID) or {}).get("bgTasks"), [], "the mirror is cleared with the drop")
+        self._wait(lambda: any("cut off when the claude process" in str(p) for p in s.pending())
+                   or any("cut off when the claude process" in w for w in c2.writes),
+                   "the death notice for the adopted row, queued by the drop (a deliberate restart, never a crash)")
+        n = len(self.lines)
+        asyncio.run(s._stop_hook({"background_tasks": []}, None, None))   # the fresh CLI's first report: nothing running
+        self.assertEqual([l for l in self.lines[n:] if "background task" in l], [], "no phantom: the drop left no id behind to hold")
+        self.assertEqual(s._live_work_counts(), (0, 0)); self.assertEqual(s._reported_tasks, set())
 
 
 class ReportAbsencePredicate(unittest.TestCase):
