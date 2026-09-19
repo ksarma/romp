@@ -961,3 +961,143 @@ test("twenty-one patches for one slot this bundle does not decode, on one conn: 
     fm.conns.get(HOST).closed = true;
   }));
 });
+
+// ── the held pair across a redial (2026-09-19) ───────────────────────────────────────────────────────────────────────
+// A kernel that stamps its frames (gen on the bars full and on each patch) leaves the receiver's bars base a pair, read
+// through the receiver's one read (ViewDeltas.held): (gen, 0) at the full, (gen, rev) after a per-cycle patch, (newGen,
+// through) after a composed frame. connect()'s re-mint is gated on that base, so a receiver holding a pair survives the
+// redial and remoteDialUrl writes held:bars:<gen>.<rev> beside REMOTE_DIAL_CAPS, on both redial roads; a timeline conn
+// holds no raw feed base, so no held:feed rides, and conn.feedRaw is undefined before and after. A base holding no gen
+// (every kernel in this repo today) is re-minted as before (tests 4 and 5 above stand unchanged). The composed frame that
+// answers a declaration carries `through` and is accepted at any rev at or above its base, R equal to r included (the
+// caught-up resume of a peer that had applied the slot's last frame before the close), where a base-plus-one test would
+// refuse it into a needSlot and a whole slot; a frame carrying no through keeps the base-plus-one test.
+const G = 7, G2 = 9;
+const remoteBarsStamped = (gen: number) => ({ ...remoteBars(), gen });
+const barsCycle = (gen: number, base: number, b: any, now: number) => ({ ...barsPatch(base, b, now), gen });
+const composed = (base: number, rev: number, gen: number, newGen: number, coll: any, now: number) => ({ type: "delta", slot: "bars", gen, newGen, base, rev, through: rev, coll, rest: { now } });
+const heldBars = (fm: any) => fm.conns.get(HOST).viewDeltas.held("bars");
+
+test("a timeline conn whose bars base holds a pair redials declaring held:bars:g.r alone on the onclose road, conn.feedRaw undefined before and after; the composed patch that answers (R at least r plus 2) applies with no needSlot and the base is then (g2, R)", async () => {
+  await withManager("timeline", ({ fm, emitted, sent }) => {
+    seedLocalTimeline(fm);
+    fm.openRemote(HOST, true);
+    const ws = last(FakeWS.made), conn = fm.conns.get(HOST);
+    assert.equal(qOf(ws.url).get("caps"), "feedDelta", "the first dial: no base, nothing declared");
+    ws.open();
+    ws.frame(remoteBarsStamped(G));
+    assert.deepEqual(heldBars(fm), { gen: G, rev: 0 }, "the stamped full leaves (gen, 0)");
+    ws.frame(barsCycle(G, 0, bar("seg-2", 1010, 1015, "second"), 505));
+    assert.deepEqual(heldBars(fm), { gen: G, rev: 1 }, "a per-cycle stamped patch leaves (gen, rev)");
+    assert.equal(conn.feedRaw, undefined, "a timeline conn holds no raw feed base");
+    const vd = conn.viewDeltas, before = barsOf(emitted).length;
+    ws.readyState = 3;
+    const redials = armedRedials(() => ws.onclose!({ code: 1006, wasClean: false }));
+    redials[0]();
+    const ws2 = last(FakeWS.made);
+    assert.notEqual(ws2, ws, "a fresh socket");
+    assert.equal(fm.conns.get(HOST), conn, "on the same conn");
+    assert.equal(qOf(ws2.url).get("caps"), "feedDelta,held:bars:7.1", "the redial declares the receiver's pair, and no held:feed");
+    assert.equal(qOf(ws2.url).get("delta"), "1");
+    assert.equal(conn.viewDeltas, vd, "the mechanism: the receiver survived the redial, its bars base holding a gen");
+    assert.equal(conn.feedRaw, undefined, "still no raw feed base");
+    ws2.open();
+    // the composed frame the declaration earns: revs 2 through 3 in one patch, stamped with the new generation
+    ws2.frame(composed(1, 3, G, G2, { turns: { set: { [SID_A + SEP + "seg-3"]: bar("seg-3", 1020, 1025, "third") } } }, 515));
+    assert.deepEqual(ws2.sent, [], "no needSlot: the composed frame applied onto the surviving base");
+    assert.equal(barsOf(emitted).length, before + 1, "the merge moved once");
+    assert.deepEqual(ids(last(barsOf(emitted)).turns[HOST + ":" + SID_A]), ["seg-1", "seg-2", "seg-3"], "the composed frame's bar landed beside the held ones");
+    assert.deepEqual(heldBars(fm), { gen: G2, rev: 3 }, "the base is then (newGen, through)");
+    assert.deepEqual(localAsks(sent), []);
+    ws2.frame(barsCycle(G2, 3, bar("seg-4", 1030, 1035, "fourth"), 520));
+    assert.deepEqual(heldBars(fm), { gen: G2, rev: 4 }, "and the stream continues under the new generation");
+    assert.deepEqual(ws2.sent, []);
+    fm.conns.get(HOST).closed = true;
+  });
+});
+
+test("the watchdog's abandon-and-dial declares the same pair on its road", async () => {
+  await withManager("timeline", ({ fm }) => {
+    seedLocalTimeline(fm);
+    const ws = attached(fm);   // a gen-less full first
+    assert.equal(heldBars(fm), null, "a full carrying no gen leaves no pair");
+    ws.frame(remoteBarsStamped(G));
+    ws.frame(barsCycle(G, 0, bar("seg-2", 1010, 1015, "second"), 505));
+    const conn = fm.conns.get(HOST), vd = conn.viewDeltas;
+    clock += REMOTE_STALE_MS + 1000;
+    fm.watchdog(clock);
+    assert.equal(ws.onclose, null, "the watchdog abandoned the quiet socket");
+    const ws2 = last(FakeWS.made);
+    assert.notEqual(ws2, ws);
+    assert.equal(qOf(ws2.url).get("caps"), "feedDelta,held:bars:7.1");
+    assert.equal(conn.viewDeltas, vd, "the receiver survived");
+    assert.equal(conn.feedRaw, undefined);
+    fm.conns.get(HOST).closed = true;
+  });
+});
+
+test("the caught-up resume: a composed patch at base r, rev r, through r applies with no needSlot, with an empty coll and with a set, the base then (g2, r); a per-cycle patch (g2, r plus 1) after it applies; a patch carrying no through at a rev other than base plus one recovers as today", async () => {
+  await withManager("timeline", ({ fm, emitted }) => {
+    seedLocalTimeline(fm);
+    fm.openRemote(HOST, true);
+    const ws = last(FakeWS.made);
+    ws.open();
+    ws.frame(remoteBarsStamped(G));
+    ws.frame(barsCycle(G, 0, bar("seg-2", 1010, 1015, "second"), 505));
+    ws.frame(barsCycle(G, 1, bar("seg-3", 1020, 1025, "third"), 510));
+    assert.deepEqual(heldBars(fm), { gen: G, rev: 2 });
+    const before = barsOf(emitted).length;
+    // R equal to r with an empty coll: the peer had applied the slot's last frame before the close; the kernel composes
+    // nothing and stamps the new generation
+    ws.frame(composed(2, 2, G, G2, {}, 515));
+    assert.deepEqual(ws.sent, [], "accepted: no needSlot, no whole slot at rev 0");
+    assert.deepEqual(heldBars(fm), { gen: G2, rev: 2 }, "the base is (g2, r)");
+    assert.deepEqual(ids(last(barsOf(emitted)).turns[HOST + ":" + SID_A]), ["seg-1", "seg-2", "seg-3"], "the held bars stand");
+    assert.equal(barsOf(emitted).length, before + 1, "the frame continues as a whole frame (the clock moved)");
+    assert.equal(fm.perHostTlBars[HOST].now, 515);
+    ws.frame(barsCycle(G2, 2, bar("seg-4", 1030, 1035, "fourth"), 520));
+    assert.deepEqual(ws.sent, [], "a per-cycle patch after it applies");
+    assert.deepEqual(heldBars(fm), { gen: G2, rev: 3 });
+    assert.deepEqual(ids(last(barsOf(emitted)).turns[HOST + ":" + SID_A]), ["seg-1", "seg-2", "seg-3", "seg-4"]);
+    // R equal to r with a set: the same acceptance, the set applied
+    ws.frame(composed(3, 3, G2, 11, { turns: { set: { [SID_A + SEP + "seg-4"]: bar("seg-4", 1030, 1040, "fourth") } } }, 525));
+    assert.deepEqual(ws.sent, []);
+    assert.deepEqual(heldBars(fm), { gen: 11, rev: 3 });
+    assert.deepEqual(fm.perHostTlBars[HOST].turns[HOST + ":" + SID_A].map((b: any) => [b.id, b.end]), [["seg-1", 1005], ["seg-2", 1015], ["seg-3", 1025], ["seg-4", 1040]], "the set landed");
+    // no through, rev other than base plus one: the base-plus-one test stands for a per-cycle patch
+    const applied = barsOf(emitted).length;
+    ws.frame({ type: "delta", slot: "bars", gen: 11, base: 3, rev: 5, coll: {}, rest: { now: 530 } });
+    assert.deepEqual(ws.sent, [{ type: "needSlot", slot: "bars" }], "recovered: a per-cycle patch skipping a rev asks for the whole slot, as today");
+    assert.equal(barsOf(emitted).length, applied, "nothing emitted");
+    assert.equal(heldBars(fm), null, "recover() dropped the base, so nothing is declared until the whole slot re-seeds it");
+    ws.frame(remoteBarsStamped(12));
+    assert.deepEqual(heldBars(fm), { gen: 12, rev: 0 }, "the whole slot the ask earns re-seeds the pair under the kernel's new generation");
+    fm.conns.get(HOST).closed = true;
+  });
+});
+
+test("a bars full refused as unkeyable (judging a flat list, the pre-T278c shape) seeds no base and its conn redials with no held member; a gen-less bars base declares nothing either", async () => {
+  await withManager("timeline", ({ fm }) => {
+    seedLocalTimeline(fm);
+    fm.openRemote(HOST, true);
+    const ws = last(FakeWS.made), conn = fm.conns.get(HOST);
+    ws.open();
+    ws.frame({ ...remoteBarsStamped(G), judging: [{ sid: SID_A, t: 1, judge: "j", t1: 2 }], _keys: ["sid", "t", "judge", "t1"] });
+    assert.equal(heldBars(fm), null, "the refused frame seeds no base: no pair, whatever its stamp");
+    const vd = conn.viewDeltas;
+    ws.readyState = 3;
+    const redials = armedRedials(() => ws.onclose!({ code: 1006, wasClean: false }));
+    redials[0]();
+    const ws2 = last(FakeWS.made);
+    assert.equal(qOf(ws2.url).get("caps"), "feedDelta", "no held member");
+    assert.notEqual(conn.viewDeltas, vd, "…and the receiver was re-minted");
+    ws2.open();
+    ws2.frame(remoteBars());   // a keyable full carrying no gen
+    assert.equal(heldBars(fm), null, "a gen-less base holds no pair");
+    ws2.readyState = 3;
+    const again = armedRedials(() => ws2.onclose!({ code: 1006, wasClean: false }));
+    again[0]();
+    assert.equal(qOf(last(FakeWS.made).url).get("caps"), "feedDelta", "a gen-less bars base declares nothing, and the receiver is re-minted as PR 815 pins");
+    fm.conns.get(HOST).closed = true;
+  });
+});

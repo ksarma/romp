@@ -34,7 +34,7 @@ import unittest
 import urllib.request
 import uuid
 from pathlib import Path
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 import lab_dist
 
@@ -58,6 +58,98 @@ def _free_port():
     p = s.getsockname()[1]
     s.close()
     return p
+
+
+# ── the relay dial's caps term, derived from the drive (2026-09-19) ──
+# federation.ts writes a relay dial's caps as its own decoder word (REMOTE_DIAL_CAPS) plus the held members it reads from the
+# CONN's own bases after connect()'s gated reset: held:feed:<gen>.<rev> from the pair beside the raw feed base, held:bars from
+# the receiver's bars base, each omitted when its base is absent or holds no gen. The page's caps string is never a source.
+# A lab derives the expectation from the DRIVE, the frames the host's previous relay socket received as the driver's hook
+# records them (type, slot and the stamp fields, never content), by the same rule; on a kernel whose frames carry no gen
+# (every kernel in this repo today) that is "feedDelta" on every dial, a redial included, and the labs record exactly that.
+REMOTE_DIAL_CAPS = "feedDelta"
+STAMP_FIELDS = ("gen", "newGen", "base", "rev", "through")   # what a hook copies off a frame beside its type: numbers, no content
+
+
+def _stamp_field(f, k):
+    v = f.get(k)
+    return v if isinstance(v, int) and not isinstance(v, bool) and v >= 0 else None
+
+
+def held_pair(frames, slot):
+    """The (gen, rev) pair the client holds for `slot` ("feed" or "bars") after `frames`, one relay socket's recorded frames in
+    order, by federation.ts's rule: a full carrying gen leaves (gen, 0) and a full carrying none clears the pair; a stamped
+    delta leaves (newGen or gen, through) when composed (through carried), else (gen, rev); a gen-less delta moves nothing.
+    A stamped delta the client would refuse (its gen not the held one, its base above the held rev) is not modelled: a lab's
+    stream is the kernel's own and applies. None when no pair is held."""
+    full, delta = ("feed", "feedDelta") if slot == "feed" else ("bars", "delta")
+    pair = None
+    for f in frames:
+        t = f.get("t")
+        if t == full:
+            g = _stamp_field(f, "gen")
+            pair = (g, 0) if g is not None else None
+        elif t == delta and (slot == "feed" or f.get("slot") == "bars"):
+            g = _stamp_field(f, "gen")
+            if g is None or pair is None:
+                continue
+            through, rev, new_gen = _stamp_field(f, "through"), _stamp_field(f, "rev"), _stamp_field(f, "newGen")
+            if through is not None:
+                pair = (new_gen if new_gen is not None else g, through)
+            elif rev is not None:
+                pair = (g, rev)
+    return pair
+
+
+def expected_relay_caps(prev_frames):
+    """The caps term a relay dial carries: REMOTE_DIAL_CAPS, then held:feed:<g>.<r> and held:bars:<g>.<r> for the pairs the
+    host's PREVIOUS relay socket left the conn (held_pair over its recorded frames), each omitted when none is held.
+    `prev_frames` is None for a first dial (no socket before it). A redial whose previous socket recorded no frames is an
+    empty drive and an AssertionError: the expectation never rests on nothing."""
+    if prev_frames is None:
+        return REMOTE_DIAL_CAPS
+    if not prev_frames:
+        raise AssertionError("the host's previous relay socket recorded no frames: no drive to derive the redial's caps term from")
+    words = [REMOTE_DIAL_CAPS]
+    for slot in ("feed", "bars"):
+        pair = held_pair(prev_frames, slot)
+        if pair is not None:
+            words.append("held:%s:%d.%d" % (slot, pair[0], pair[1]))
+    return ",".join(words)
+
+
+def relay_dials(dials):
+    """[(index, host, url)] for every /remote/<host>/ws dial among `dials`, the page's dials in order (the index is the hook's
+    socket index, the `sock` its frame records carry). Guarded non-empty."""
+    out = []
+    for i, u in enumerate(dials):
+        m = re.search(r"/remote/([^/]+)/ws", u)
+        if m:
+            out.append((i, unquote(m.group(1)), u))
+    if not out:
+        raise AssertionError("the page dialed no relay socket: %r" % (dials,))
+    return out
+
+
+def assert_relay_dials(tc, app, dials, frames, caps=True):
+    """Every relay dial the page made carries `app`, delta=1 and the caps term expected_relay_caps derives from the frames the
+    host's previous relay socket received (`frames`: the hook's records, each naming its socket index under `sock`), or no
+    caps term where the lab strips it (caps False). Returns the dials checked, [(index, host, url)]."""
+    by_sock = {}
+    for f in frames or []:
+        by_sock.setdefault(f.get("sock"), []).append(f)
+    prev = {}
+    checked = relay_dials(dials)
+    for i, host, u in checked:
+        qs = parse_qs(urlsplit(u).query)
+        tc.assertEqual(qs.get("app"), [app], "the pane's app on the relay dial: %r" % (u,))
+        tc.assertEqual(qs.get("delta"), ["1"], "the page's delta term rides the relay dial (since 2026-09-15): %r" % (u,))
+        expected = expected_relay_caps(by_sock.get(prev[host], []) if host in prev else None) if caps else None
+        tc.assertEqual(qs.get("caps"), ([expected] if expected else None),
+                       "the relay dial's caps term: federation's decoder word and the held members its conn's bases give it, "
+                       "derived from the host's previous socket's frames (none on a first dial), or no term where the page strips it: %r" % (u,))
+        prev[host] = i
+    return checked
 
 
 SEED_PAIRS = 6         # closed pairs per seed transcript: one bar each on the timeline
@@ -183,10 +275,11 @@ def checkin(hport, htoken, rport, rtoken, host=HOST):
     raise unittest.SkipTest("the hub never reported the checked-in peer up: %r" % (rows,))
 
 
-# The Chromium driver: hook every socket URL the page dials (window.__dials), persist the watched tab as a
-# REMOTE session before the page's scripts run (the shim's ?active= and __rompDialTerms read it), open the
-# hub's /chat page in a skeleton posture, and wait for the relay socket to the remote. The kernel-side
-# observables (the remote's /perf and client-diag) are read from Python after this returns.
+# The Chromium driver: hook every socket URL the page dials (window.__dials) and, on a relay socket, every frame it
+# receives by its socket index, type, slot and stamp fields (window.__frames: no content; the drive expected_relay_caps
+# reads), persist the watched tab as a REMOTE session before the page's scripts run (the shim's ?active= and
+# __rompDialTerms read it), open the hub's /chat page in a skeleton posture, and wait for the relay socket to the remote.
+# The kernel-side observables (the remote's /perf and client-diag) are read from Python after this returns.
 DRIVER = r"""
 import { createRequire } from "node:module";
 import fs from "node:fs";
@@ -198,11 +291,27 @@ try { browser = await chromium.launch(cfg.launch || {}); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
 const context = await browser.newContext({ viewport: { width: 1200, height: 700 } });
 const page = await context.newPage();
-const out = { dials: [], died: null, tabSeen: false };
+const out = { dials: [], frames: [], died: null, tabSeen: false };
 page.on("pageerror", () => {});
 await page.addInitScript(() => {
-  window.__dials = []; const W = window.WebSocket;
-  window.WebSocket = function (url, protos) { window.__dials.push(String(url)); return protos === undefined ? new W(url) : new W(url, protos); };
+  window.__dials = []; window.__frames = []; const W = window.WebSocket;
+  window.WebSocket = function (url, protos) {
+    const u = String(url); const idx = window.__dials.length; window.__dials.push(u);
+    const w = protos === undefined ? new W(u) : new W(u, protos);
+    if (u.indexOf("/remote/") !== -1) {
+      w.addEventListener("message", (ev) => {
+        try {
+          const m = JSON.parse(ev.data);
+          if (m && m.type !== "ka") {
+            const f = { sock: idx, t: String(m.type), slot: m.slot ? String(m.slot) : "" };
+            for (const k of ["gen", "newGen", "base", "rev", "through"]) if (typeof m[k] === "number") f[k] = m[k];
+            window.__frames.push(f);
+          }
+        } catch (e) {}
+      });
+    }
+    return w;
+  };
   window.WebSocket.prototype = W.prototype; window.WebSocket.CONNECTING = 0; window.WebSocket.OPEN = 1; window.WebSocket.CLOSING = 2; window.WebSocket.CLOSED = 3;
 });
 // the watched tab is a REMOTE session, host-prefixed as the dashboard carries it: __rompDialTerms carries it
@@ -216,14 +325,50 @@ try {
   try { await page.locator("#tabs .tab", { hasText: "TESTHOST" }).first().waitFor({ timeout: 15000 }); out.tabSeen = true; } catch (e) {}
   // let the remote serve the skeleton client: the watched tab full, the cold tab skipped, the relay wsopen row filed
   await page.waitForTimeout(3000);
-  out.dials = await page.evaluate(() => (window.__dials || []).slice());
+  Object.assign(out, await page.evaluate(() => ({ dials: (window.__dials || []).slice(), frames: (window.__frames || []).slice() })));
 } catch (e) {
   out.died = String(e).slice(0, 400);
-  try { out.dials = await page.evaluate(() => (window.__dials || []).slice()); } catch (e2) {}
+  try { Object.assign(out, await page.evaluate(() => ({ dials: (window.__dials || []).slice(), frames: (window.__frames || []).slice() }))); } catch (e2) {}
 }
 console.log("RESULT:" + JSON.stringify(out));
 await browser.close();
 """
+
+
+class HeldPairRule(unittest.TestCase):
+    """The drive-derived expectation's rule, pinned on synthetic frame records (no kernel): the labs above run against kernels
+    whose frames carry no gen, so the stamped arms of held_pair and expected_relay_caps are exercised here alone until a
+    kernel stamps its frames."""
+
+    def test_a_full_carrying_gen_leaves_gen_0_and_a_gen_less_full_clears_the_pair(self):
+        self.assertEqual(held_pair([{"t": "feed", "gen": 7}], "feed"), (7, 0))
+        self.assertIsNone(held_pair([{"t": "feed"}], "feed"), "a kernel before the stamp: no pair")
+        self.assertIsNone(held_pair([{"t": "feed", "gen": 7}, {"t": "feed"}], "feed"), "a gen-less full after a stamped one clears the pair (a rollback)")
+        self.assertIsNone(held_pair([], "feed"))
+
+    def test_a_stamped_delta_advances_the_pair_and_a_gen_less_one_moves_nothing(self):
+        frames = [{"t": "feed", "gen": 7}, {"t": "feedDelta", "gen": 7, "base": 0, "rev": 1}]
+        self.assertEqual(held_pair(frames, "feed"), (7, 1), "a per-cycle stamped delta: (gen, rev)")
+        frames.append({"t": "feedDelta", "gen": 7, "newGen": 9, "base": 1, "rev": 4, "through": 4})
+        self.assertEqual(held_pair(frames, "feed"), (9, 4), "a composed frame: (newGen, through)")
+        frames.append({"t": "feedDelta", "base": 4, "rev": 5})
+        self.assertEqual(held_pair(frames, "feed"), (9, 4), "a gen-less delta moves nothing")
+        self.assertIsNone(held_pair([{"t": "feedDelta", "gen": 7, "base": 0, "rev": 1}], "feed"), "a delta before any full: nothing held")
+
+    def test_the_bars_slot_reads_bars_fulls_and_bars_patches_alone(self):
+        frames = [{"t": "bars", "gen": 3}, {"t": "delta", "slot": "bars", "gen": 3, "base": 0, "rev": 1},
+                  {"t": "delta", "slot": "lanes", "gen": 3, "base": 1, "rev": 2}, {"t": "feed", "gen": 7}]
+        self.assertEqual(held_pair(frames, "bars"), (3, 1), "another slot's patch and the feed full do not move the bars pair")
+        self.assertEqual(held_pair(frames, "feed"), (7, 0))
+
+    def test_expected_relay_caps_is_the_decoder_word_plus_each_held_member_and_fails_on_an_empty_drive(self):
+        self.assertEqual(expected_relay_caps(None), "feedDelta", "a first dial: no socket before it")
+        self.assertEqual(expected_relay_caps([{"t": "feed"}, {"t": "caps"}]), "feedDelta", "a redial after gen-less frames: undeclared")
+        self.assertEqual(expected_relay_caps([{"t": "feed", "gen": 7}, {"t": "feedDelta", "gen": 7, "base": 0, "rev": 2}]), "feedDelta,held:feed:7.2")
+        self.assertEqual(expected_relay_caps([{"t": "bars", "gen": 3}]), "feedDelta,held:bars:3.0")
+        self.assertEqual(expected_relay_caps([{"t": "feed", "gen": 7}, {"t": "bars", "gen": 3}]), "feedDelta,held:feed:7.0,held:bars:3.0", "both, feed first")
+        with self.assertRaises(AssertionError):
+            expected_relay_caps([])   # a redial whose previous socket recorded nothing: no drive
 
 
 class FederatedDialTerms(unittest.TestCase):
@@ -379,6 +524,16 @@ class FederatedDialTerms(unittest.TestCase):
         self.assertEqual(qs.get("delta"), ["1"], "delta rides every dial, as the local pane's does")
         self.assertEqual(qs.get("skeleton"), ["1"], "the page's skeleton posture rode the remote dial")
         self.assertEqual(qs.get("active"), [SID_R0], "the watched remote tab, stripped to its bare sid")
+
+    def test_the_remote_dial_caps_term_is_the_decoder_word_and_the_members_its_conns_bases_hold(self):
+        # derived from the drive (assert_relay_dials): a first dial has no socket before it and states the decoder word alone;
+        # the frames the relay socket then received are what a redial's held member would be derived from, and on a kernel
+        # whose frames carry no gen (this checkout's) that would be the decoder word alone too
+        self._driver_ran()
+        checked = assert_relay_dials(self, "chat", self.result["dials"], self.result.get("frames"))
+        self.assertEqual([h for _i, h, _u in checked], [HOST], "one relay dial, to the checked-in host: %r" % (checked,))
+        frames = [f for f in self.result.get("frames") or [] if f.get("sock") == checked[0][0]]
+        self.assertTrue(frames, "the relay socket recorded the remote's frames (the drive a redial's member is derived from)")
 
     def test_the_remote_iid_is_namespaced_by_the_hub_wid(self):
         qs = parse_qs(urlsplit(self._relay_dial()).query)

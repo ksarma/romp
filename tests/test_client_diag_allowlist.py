@@ -538,6 +538,7 @@ class ClientDiagAllowlistTest(unittest.TestCase):
                 ("hostconn", {"host": host, "ev": "delta-unknown-slot", "why": "lanes"}),   # a remote patch for a slot the conn's receiver has no table for (2026-09-19)
                 ("hostconn", {"host": host, "ev": "delta-unkeyed-base", "why": "bars judging dictlist:k is a list @a1b2c3d4e"}),   # a remote's patch that found no base because its whole frame was refused as one (a collection the receiver's table cannot key): the slot, the collection and shape, and the remote's build when the /tunnels row names one; once per distinct row (2026-09-19)
                 ("feedDelta-nobase", {"host": host, "buildId": "b1"}),
+                ("feedDelta-stale", {"host": host, "buildId": "b1", "why": "gen"}),   # a stamped remote feedDelta refused by the gen gate (its gen not the held pair's, its base above the held rev, its through below it, or no rev): the ask carries the held pair (2026-09-19)
                 ("feedmerge", {"counts": {host: 4}}),
                 ("sendqueue", {"host": host, "msgType": "prompt", "gt": 2, "rs": 0, "superseded": True}),
                 ("senddrop", {"host": host, "msgType": "prompt", "why": "closed"}),

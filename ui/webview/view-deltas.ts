@@ -31,7 +31,10 @@
 type Slot = "feed" | "bars";
 type Frame = Record<string, any>;
 type Collection = { order: string[]; items: Map<string, any> };
-type Base = { rev: number; msg: Frame; maps: Map<string, Collection> };
+// A base holds a `gen` beside its rev once a kernel's frames carry one (the resume protocol's generation stamp,
+// 2026-09-19): the full's gen at the full, a composed frame's newGen after it applies, a per-cycle delta's gen after it.
+// A kernel before the stamp seeds none, and held() then reports no pair, so nothing is declared for that base.
+type Base = { rev: number; gen?: number; msg: Frame; maps: Map<string, Collection> };
 export const VIEW_DELTA_KINDS: Record<Slot, Record<string, string>> = {
   feed: { asks: "byid:itemId" },
   bars: { turns: "dictlist:id", judging: "dictlist:k", messages: "byid" },
@@ -40,6 +43,8 @@ const KINDS = VIEW_DELTA_KINDS; // pinned to the kernel-produced fixture and the
 const SEP = "\u001f";
 const object = (v: any): v is Frame => !!v && typeof v === "object" && !Array.isArray(v);
 const slotOf = (s: any): Slot | null => s === "feed" || s === "bars" ? s : null;
+/** A generation stamp as a frame carries it (a non-negative safe integer), or undefined for a frame that carries none. */
+export const genOf = (v: any): number | undefined => Number.isSafeInteger(v) && v >= 0 ? v : undefined;
 class Unkeyable extends Error {}   // a present collection whose container the kind cannot key: the frame seeds nothing
 
 function split(value: any, kind: string): Collection {
@@ -116,6 +121,17 @@ export class ViewDeltas {
    *  the refusal itself: only a patch tells that the remote patches at all. */
   constructor(private needSlot: (slot: string) => void, private unkeyed?: (slot: string, why: string) => void) {}
 
+  /** The pair a slot's base holds for a resume declaration (the dial's held:<slot>:<gen>.<rev> member): its gen and rev,
+   *  or null when the slot has no base or its base holds no gen (a kernel before the generation stamp seeds none, and
+   *  nothing is declared for it). The one read beside receive(): federation.ts's connect() keeps a receiver whose bars
+   *  base holds a pair across a redial and re-mints one whose base holds none, and its remoteDialUrl writes the member
+   *  from the same read, so the declared pair is the applied one and has no home but the base. */
+  held(slot: string): { gen: number; rev: number } | null {
+    const known = slotOf(slot);
+    const base = known ? this.bases.get(known) : undefined;
+    return base && base.gen !== undefined ? { gen: base.gen, rev: base.rev } : null;
+  }
+
   private recover(slot: string): null {
     const known = slotOf(slot);
     if (known) this.bases.delete(known);
@@ -146,7 +162,7 @@ export class ViewDeltas {
           return msg;
         }
       }
-      this.bases.set(full, { rev: 0, msg, maps });
+      this.bases.set(full, { rev: 0, gen: genOf(msg.gen), msg, maps });   // the full's gen, when the kernel stamps one
       this.refused.delete(full);   // a whole frame this table keys ends the refusal: the slot has a base again
       return msg;
     }
@@ -167,7 +183,14 @@ export class ViewDeltas {
     }
     if (base.rev !== msg.base) return this.recover(slot);
     try {
-      if (!Number.isSafeInteger(msg.base) || msg.base < 0 || !Number.isSafeInteger(msg.rev) || msg.rev !== msg.base + 1 || !object(msg.coll)) {
+      // A per-cycle patch advances the base by one (rev equal to base plus one, the test every kernel in this repo
+      // passes). A COMPOSED frame (2026-09-19) carries `through`, the rev it composes up to from the declared base, and
+      // its rev is at or above its base: R equal to r included, the caught-up resume of a peer that had applied the
+      // slot's last frame before the close (base r, rev r, through r, a coll that may be empty), which a base-plus-one
+      // test would refuse into a needSlot and a whole slot at rev 0 under a new gen. Every other rev recovers as today.
+      const composed = msg.through !== undefined;
+      const revOk = composed ? Number.isSafeInteger(msg.through) && msg.rev >= msg.base : msg.rev === msg.base + 1;
+      if (!Number.isSafeInteger(msg.base) || msg.base < 0 || !Number.isSafeInteger(msg.rev) || !revOk || !object(msg.coll)) {
         throw new Error("invalid delta revision or collections");
       }
       const kinds = KINDS[slot], next = { ...base.msg }, maps = new Map(base.maps);
@@ -203,7 +226,10 @@ export class ViewDeltas {
         maps.set(name, collection);
         next[name] = assemble(collection, kinds[name], base.msg[name]);
       }
-      this.bases.set(slot, { rev: msg.rev, msg: next, maps });
+      // the pair the base holds after the frame: a composed frame leaves (newGen, its rev), a per-cycle delta (gen, rev);
+      // a frame carrying no stamp leaves the base's gen as it was (none on a kernel before the stamp)
+      const gen = composed && genOf(msg.newGen) !== undefined ? genOf(msg.newGen) : genOf(msg.gen) !== undefined ? genOf(msg.gen) : base.gen;
+      this.bases.set(slot, { rev: msg.rev, gen, msg: next, maps });
       return next;
     } catch {
       // A malformed patch never partially advances the held maps or reaches a consumer.

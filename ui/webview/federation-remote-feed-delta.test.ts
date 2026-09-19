@@ -12,7 +12,7 @@
 // Synthetic only (host TESTHOST, placeholder uuids, the notes-api demo: sessions `api` and `worker`).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { FederationManager, REMOTE_REDIAL_MS } from "./federation";
+import { FederationManager, REMOTE_REDIAL_MS, REMOTE_STALE_MS } from "./federation";
 import * as fed from "./federation";
 // the manager's announced capability, read off the module namespace so this file still bundles (and runs red) against a
 // federation.ts that predates the export: the wire word is asserted literally below, the export beside it
@@ -589,5 +589,189 @@ test("late timers on a conn whose own replacement socket is CONNECTING, then OPE
     assert.equal(feeds(emitted).length, before + 1);
     assert.equal(conn.viewDeltas, vd);
     conn.closed = true;
+  });
+});
+
+// ── the held pair across a redial (2026-09-19) ───────────────────────────────────────────────────────────────────────
+// A kernel that stamps its frames (gen on the full and on each feedDelta) leaves the conn's raw base a pair (Conn.feedHeld):
+// (gen, 0) at the full, advanced by each delta that applies. connect()'s per-dial reset is gated per base, so a base holding
+// a pair survives the redial and remoteDialUrl writes it as held:feed:<gen>.<rev> beside REMOTE_DIAL_CAPS, on both redial
+// roads, with reconnect=1 and without, and the remote composes the feed from the declared rev instead of serving it whole.
+// A base holding no gen (every kernel in this repo today) is reset as before and declares nothing (tests 5 and 8 above
+// stand unchanged). The pair is read from the base alone: the page's own terms may carry a held:feed member (the pair the
+// page holds for its LOCAL kernel) and it never reaches a remote dial. The composed frame that answers a declaration (base
+// r, rev R, through R, gen g, newGen g2) applies onto the surviving base; a stamped delta whose gen differs, or whose base
+// is above the held rev, posts needFullFeed carrying the held pair on the arriving conn and applies nothing.
+const G = 7, G2 = 9;
+const stamped = (over: Record<string, unknown> = {}) => ({ ...remoteFull(), gen: G, ...over });
+/** a per-cycle stamped delta from rev `base` to `base + 1`: card n set */
+const cycle = (gen: number, base: number, n: number) => ({ type: "feedDelta", gen, base, rev: base + 1, now: 510 + n, buildId: 10 + n, asks: [card(SID_A, n)] });
+/** the page's terms carrying its LOCAL kernel's held pair and its hold words: none of it is a remote dial's */
+const pageTerms = () => ({ ...terms(), proto: 2, caps: "feedDelta,readyGate,held:feed:1.1" });
+const heldOf = (fm: any) => fm.conns.get(HOST).feedHeld;
+
+test("a conn whose raw base holds a pair redials declaring it on the onclose road: caps=feedDelta,held:feed:g.r beside reconnect=1, g.r the conn's applied pair and not the page's, no held:bars; the composed feedDelta that answers applies onto the surviving base and moves the pair to (newGen, through)", async () => {
+  await withManager(({ fm, emitted, sent }) => {
+    fm.outbound({ type: "ready", proto: 2 });
+    fm.openRemote(HOST, true);
+    const ws = last(FakeWS.made), conn = fm.conns.get(HOST);
+    assert.equal(qOf(ws.url).get("caps"), "feedDelta", "the first dial: no base yet, nothing declared");
+    ws.open();
+    ws.frame({ type: "caps" });   // the remote acked the page's ready: a later dial is a redial
+    ws.frame(stamped());
+    assert.deepEqual(heldOf(fm), { gen: G, rev: 0 }, "the stamped full leaves the pair (gen, 0)");
+    ws.frame(cycle(G, 0, 2));
+    assert.deepEqual(heldOf(fm), { gen: G, rev: 1 }, "a per-cycle stamped delta advances it to (gen, rev)");
+    assert.deepEqual(last(feeds(emitted)).asks.map((a: any) => a.itemId).sort(), [SID_A + ":g1", SID_A + ":g2"].sort());
+    const before = feeds(emitted).length;
+    ws.readyState = 3;
+    const timers = heldTimers(() => ws.onclose!({ code: 1006, wasClean: false }));
+    assert.equal(timers.length, 1);
+    timers[0]();
+    const ws2 = last(FakeWS.made);
+    assert.notEqual(ws2, ws, "a fresh socket");
+    assert.equal(fm.conns.get(HOST), conn, "…on the same conn");
+    const q = qOf(ws2.url);
+    assert.equal(q.get("caps"), "feedDelta,held:feed:7.1", "the redial declares the conn's pair beside the decoder word: not the page's held:feed:1.1, and no held:bars (a feed conn holds no bars base)");
+    assert.equal(q.get("reconnect"), "1");
+    assert.equal(q.get("delta"), "1", "the page's terms ride as before");
+    assert.ok(conn.feedRaw, "the mechanism: the gen-holding base survived the redial");
+    assert.deepEqual(heldOf(fm), { gen: G, rev: 1 });
+    ws2.open();
+    assert.deepEqual(ws2.sent, [], "a redial posts no ready");
+    // the composed frame the declaration earns: everything from rev 1 through 4 in one delta, stamped with the new generation
+    ws2.frame({ type: "feedDelta", gen: G, newGen: G2, base: 1, rev: 4, through: 4, now: 600, buildId: 20, asks: [card(SID_A, 5)], removeAsks: [SID_A + ":g2"] });
+    assert.equal(feeds(emitted).length, before + 1, "the composed frame applied onto the surviving base and the merge moved once");
+    assert.deepEqual(last(feeds(emitted)).asks.map((a: any) => [a.itemId, a.sid]).sort(), [[SID_A + ":g1", HOST + ":" + SID_A], [SID_A + ":g5", HOST + ":" + SID_A]].sort(), "the merge reads the result prefixed");
+    assert.deepEqual(ws2.sent, [], "nothing asked: no needFullFeed");
+    assert.deepEqual(diagRows(sent, "feedDelta-nobase"), []);
+    assert.deepEqual(diagRows(sent, "feedDelta-stale"), []);
+    assert.deepEqual(heldOf(fm), { gen: G2, rev: 4 }, "the pair is (newGen, through)");
+    ws2.frame(cycle(G2, 4, 6));
+    assert.deepEqual(heldOf(fm), { gen: G2, rev: 5 }, "and the stream continues under the new generation");
+    fm.conns.get(HOST).closed = true;
+  }, { terms: pageTerms });
+});
+
+test("the watchdog's abandon-and-dial declares the same pair, without reconnect when the remote never acked the ready: the member rides a first dial's shape too", async () => {
+  await withManager(({ fm }) => {
+    fm.openRemote(HOST, true);   // no ready posted, no caps frame: the redial gate stays shut
+    const ws = last(FakeWS.made), conn = fm.conns.get(HOST);
+    ws.open();
+    ws.frame(stamped());
+    ws.frame(cycle(G, 0, 2));
+    ws.frame(cycle(G, 1, 3));
+    assert.deepEqual(heldOf(fm), { gen: G, rev: 2 });
+    clock += REMOTE_STALE_MS + 1000;   // an OPEN socket quiet past the stale bound: the watchdog abandons it and dials
+    fm.watchdog(clock);
+    assert.equal(ws.onclose, null, "the watchdog abandoned the quiet socket");
+    const ws2 = last(FakeWS.made);
+    assert.notEqual(ws2, ws);
+    assert.equal(fm.conns.get(HOST), conn);
+    const q = qOf(ws2.url);
+    assert.equal(q.get("caps"), "feedDelta,held:feed:7.2", "declared without reconnect: the kernel reads the member at the compose on either dial");
+    assert.equal(q.get("reconnect"), null);
+    assert.ok(conn.feedRaw, "the base survived");
+    fm.conns.get(HOST).closed = true;
+  }, { terms: pageTerms });
+});
+
+test("a stamped delta whose gen differs, or whose base is above the held rev, or whose through is below it, posts needFullFeed carrying the held pair on the arriving conn and applies nothing; the feedDelta-stale row names the cause; the full the ask earns re-seeds the pair", async () => {
+  await withManager(({ fm, emitted, sent }) => {
+    const ws = attached(fm);   // a gen-less full first: the pair is absent
+    assert.equal(heldOf(fm), undefined);
+    ws.frame(stamped({ buildId: 2 }));
+    ws.frame(cycle(G, 0, 2));
+    assert.deepEqual(heldOf(fm), { gen: G, rev: 1 });
+    const before = feeds(emitted).length, raw = fm.conns.get(HOST).feedRaw;
+    ws.frame({ type: "feedDelta", gen: G + 1, base: 1, rev: 2, now: 520, buildId: 30, asks: [card(SID_A, 9)] });
+    assert.deepEqual(ws.sent, [{ type: "needFullFeed", gen: G, rev: 1 }], "another generation: the ask carries the held pair, for the kernel to compose from");
+    ws.frame({ type: "feedDelta", gen: G, base: 3, rev: 4, now: 521, buildId: 31, asks: [card(SID_A, 9)] });
+    assert.equal(ws.sent.length, 2, "a base above the held rev: asked again");
+    assert.deepEqual(last(ws.sent), { type: "needFullFeed", gen: G, rev: 1 });
+    ws.frame({ type: "feedDelta", gen: G, base: 0, rev: 1, through: 0, now: 522, buildId: 32, asks: [card(SID_A, 9)] });
+    assert.equal(ws.sent.length, 3, "a composed frame reaching below the held rev: asked again");
+    assert.deepEqual(diagRows(sent, "feedDelta-stale"), [{ host: HOST, buildId: 30, why: "gen" }, { host: HOST, buildId: 31, why: "base" }, { host: HOST, buildId: 32, why: "through" }], "one why per cause");
+    assert.equal(feeds(emitted).length, before, "nothing applied, nothing emitted");
+    assert.equal(fm.conns.get(HOST).feedRaw, raw, "the base stands");
+    assert.deepEqual(heldOf(fm), { gen: G, rev: 1 }, "…and the pair with it");
+    assert.deepEqual(diagRows(sent, "feedDelta-nobase"), [], "not a no-base: a base is held");
+    assert.equal(sent.filter((x) => x && x.type === "needFullFeed").length, 0, "the local kernel is not asked");
+    // the full the ask earns, stamped with the kernel's new generation: the pair re-seeds and the stream applies from it
+    ws.frame(stamped({ gen: 11, buildId: 40 }));
+    assert.deepEqual(heldOf(fm), { gen: 11, rev: 0 });
+    ws.frame(cycle(11, 0, 4));
+    assert.deepEqual(heldOf(fm), { gen: 11, rev: 1 });
+    assert.equal(ws.sent.length, 3, "no further ask");
+    fm.conns.get(HOST).closed = true;
+  });
+});
+
+test("the vintage guard: a delta carrying no gen applies onto a base holding none and moves no pair, and that conn's redial declares nothing; a full carrying no gen after a gen-holding pair clears the pair and the next dial carries no held:feed", async () => {
+  await withManager(({ fm, emitted }) => {
+    const ws = attached(fm);
+    assert.equal(heldOf(fm), undefined, "a full carrying no gen (every kernel in this repo today) leaves no pair");
+    ws.frame({ type: "feedDelta", now: 510, buildId: 2, asks: [card(SID_A, 2)] });
+    assert.deepEqual(last(feeds(emitted)).asks.map((a: any) => a.itemId).sort(), [SID_A + ":g1", SID_A + ":g2"].sort(), "the gen-less delta applied on the base's presence alone");
+    assert.deepEqual(ws.sent, []);
+    assert.equal(heldOf(fm), undefined, "…and moved no pair");
+    ws.readyState = 3;
+    const timers = heldTimers(() => ws.onclose!({ code: 1006, wasClean: false }));
+    timers[0]();
+    const ws2 = last(FakeWS.made);
+    assert.equal(qOf(ws2.url).get("caps"), "feedDelta", "a gen-less base declares nothing: the redial is undeclared, as every remote redial is until the kernel stamps its frames");
+    assert.equal(fm.conns.get(HOST).feedRaw, undefined, "and the gen-less base was reset with the dead socket, as before");
+    ws2.open();
+    ws2.frame(stamped());
+    ws2.frame(cycle(G, 0, 3));
+    assert.deepEqual(heldOf(fm), { gen: G, rev: 1 });
+    ws2.frame(remoteFull());   // a full carrying no gen after a gen-holding pair: a kernel rolled back to one before the stamp
+    assert.equal(heldOf(fm), undefined, "the pair is cleared by the gen-less full");
+    assert.ok(fm.conns.get(HOST).feedRaw, "the base is the new full");
+    ws2.readyState = 3;
+    const timers2 = heldTimers(() => ws2.onclose!({ code: 1006, wasClean: false }));
+    timers2[0]();
+    assert.equal(qOf(last(FakeWS.made).url).get("caps"), "feedDelta", "the next dial carries no held:feed");
+    fm.conns.get(HOST).closed = true;
+  }, { terms: pageTerms });
+});
+
+// One base is the real shape: the kernel serves the feed payload to a feed-riding app's socket and the bars to a timeline's,
+// and each conn dials with one app, so a feed conn holds feedRaw and never a bars base and a timeline conn the reverse. The
+// two-base state is a harness construction (inbound stores a feed frame on any manager, and the receiver seeds a bars base
+// on any conn), checked for the shape of the members alone: each written from its own base, in this order.
+const SEP = String.fromCharCode(31);
+const remoteBarsStamped = (gen: number) => ({ type: "bars", gen, turns: { [SID_A]: [{ id: "seg-1", start: 1000, end: 1005, q: "first" }] }, judging: {}, messages: [], now: 500, warming: false });
+const barsCycle = (gen: number, base: number, id: string) => ({ type: "delta", slot: "bars", gen, base, rev: base + 1, coll: { turns: { set: { [SID_A + SEP + id]: { id, start: 1010, end: 1015, q: "next" } } } }, rest: { now: 505 } });
+
+test("the both-gen shape check: a conn whose raw feed base and receiver bars base each hold a pair redials with held:feed:g.r and held:bars:g.r both, each from its own base; the composed frames that answer apply onto each surviving base with nothing asked", async () => {
+  await withManager(({ fm, emitted }) => {
+    fm.openRemote(HOST, true);
+    const ws = last(FakeWS.made), conn = fm.conns.get(HOST);
+    ws.open();
+    ws.frame(stamped());
+    ws.frame(cycle(G, 0, 2));
+    ws.frame(remoteBarsStamped(G));
+    ws.frame(barsCycle(G, 0, "seg-2"));
+    ws.frame(barsCycle(G, 1, "seg-3"));
+    assert.deepEqual(heldOf(fm), { gen: G, rev: 1 });
+    assert.deepEqual(conn.viewDeltas.held("bars"), { gen: G, rev: 2 }, "the receiver's one read: the bars base's pair");
+    assert.deepEqual(conn.viewDeltas.held("feed"), { gen: G, rev: 0 }, "the receiver's feed slot is seeded by every remote full and never patched on a feedDelta conn (it goes with the receiver); the dial's held:feed is the RAW base's pair, 7.1, not this 7.0");
+    const vd = conn.viewDeltas, before = feeds(emitted).length;
+    ws.readyState = 3;
+    const timers = heldTimers(() => ws.onclose!({ code: 1006, wasClean: false }));
+    timers[0]();
+    const ws2 = last(FakeWS.made);
+    assert.equal(qOf(ws2.url).get("caps"), "feedDelta,held:feed:7.1,held:bars:7.2", "both members, each its own base's pair, in this order");
+    assert.equal(conn.viewDeltas, vd, "the receiver survived: its bars base holds a gen");
+    assert.ok(conn.feedRaw, "the raw base survived: it holds a gen");
+    ws2.open();
+    ws2.frame({ type: "feedDelta", gen: G, newGen: G2, base: 1, rev: 3, through: 3, now: 600, buildId: 20, asks: [card(SID_A, 5)] });
+    assert.equal(feeds(emitted).length, before + 1, "the composed feedDelta applied onto the surviving raw base");
+    assert.deepEqual(heldOf(fm), { gen: G2, rev: 3 });
+    ws2.frame({ type: "delta", slot: "bars", gen: G, newGen: G2, base: 2, rev: 5, through: 5, coll: { turns: { set: { [SID_A + SEP + "seg-9"]: { id: "seg-9", start: 1020, end: 1025, q: "ninth" } } } }, rest: { now: 600 } });
+    assert.deepEqual(conn.viewDeltas.held("bars"), { gen: G2, rev: 5 }, "the composed bars patch applied onto the surviving receiver base");
+    assert.deepEqual(ws2.sent, [], "nothing asked of the remote on either slot");
+    fm.conns.get(HOST).closed = true;
   });
 });

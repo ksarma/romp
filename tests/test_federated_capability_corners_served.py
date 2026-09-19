@@ -194,6 +194,7 @@ const hook = (o) => {
           const m = JSON.parse(ev.data);
           if (m && m.type !== "ka") {
             const f = { sock: idx, t: String(m.type), slot: m.slot ? String(m.slot) : "", len: String(ev.data).length, at: Date.now() };
+            for (const k of ["gen", "newGen", "base", "rev", "through"]) if (typeof m[k] === "number") f[k] = m[k];   // the stamp fields, no content: the drive a redial's held member is derived from
             if (m.type === "feed" || m.type === "feedDelta") { f.asks = Array.isArray(m.asks) ? m.asks.length : null; f.buildId = m.buildId; }
             if (m.type === "feed") f.rest = JSON.stringify(Object.fromEntries(Object.entries(m).filter(([k]) => k !== "asks" && k !== "ledgers" && k !== "now" && k !== "buildId"))).length;
             if (m.type === "delta") { f.coll = Object.keys(m.coll || {}); f.restKeys = Object.keys(m.rest || {}); f.restAll = !!m.restAll; const set = ((m.coll || {}).turns || {}).set; f.setKeys = set ? Object.keys(set) : []; }
@@ -590,11 +591,13 @@ class _Corner(unittest.TestCase):
 
     # ---- the assertions the decoded corners share ----
     def _assert_dials(self, caps):
+        """Every page's relay dial carries its app, delta=1 and the caps term derived from the frames its host's previous socket
+        received (tests/test_federated_dial_terms_served.py assert_relay_dials: the decoder word, plus the held members the
+        conn's bases give a redial; the decoder word alone on a first dial and on a kernel whose frames carry no gen), or none
+        where this corner strips it."""
         for app in self.apps:
-            qs = parse_qs(urlsplit(self._relay_dial(app)).query)
-            self.assertEqual(qs.get("app"), [app])
-            self.assertEqual(qs.get("delta"), ["1"], "the page's delta term rides the %s relay dial (since 2026-09-15)" % app)
-            self.assertEqual(qs.get("caps"), (["feedDelta"] if caps else None), "the %s relay dial's caps term: %r" % (app, qs))
+            page = self._page(app)
+            _dial.assert_relay_dials(self, app, page["dials"], page["frames"], caps=caps)
 
     def _assert_change_posted(self):
         self._driver_ran()
@@ -968,7 +971,7 @@ const out = { dials: [], hostOf: {}, bytes: {}, ka: {}, fedHosts: null, fedBefor
 page.on("pageerror", () => {});
 await page.addInitScript(() => { try { localStorage.setItem("romp:settings", JSON.stringify({ perfShare: true })); } catch (e) {} });
 await page.addInitScript(() => {
-  window.__dials = []; window.__hostOf = {}; window.__bytes = {}; window.__ka = {}; window.__full = {}; window.__posted = 0;
+  window.__dials = []; window.__hostOf = {}; window.__bytes = {}; window.__ka = {}; window.__full = {}; window.__posted = 0; window.__frames = [];
   const W = window.WebSocket;
   window.WebSocket = function (url, protos) {
     const u = String(url); const idx = window.__dials.length; window.__dials.push(u);
@@ -977,7 +980,14 @@ await page.addInitScript(() => {
     const w = protos === undefined ? new W(u) : new W(u, protos);
     w.addEventListener("message", (ev) => {
       window.__bytes[idx] += (ev.data && ev.data.length) || 0;
-      try { const j = JSON.parse(ev.data); if (j && j.type === "ka") window.__ka[idx]++; if (j && j.type === "feed") window.__full[idx] = true; } catch (e) {}
+      try {
+        const j = JSON.parse(ev.data); if (j && j.type === "ka") window.__ka[idx]++; if (j && j.type === "feed") window.__full[idx] = true;
+        if (j && j.type !== "ka" && window.__hostOf[idx]) {   // a relay socket's frame: type, slot and stamp fields, no content (the drive expected_relay_caps reads)
+          const f = { sock: idx, t: String(j.type), slot: j.slot ? String(j.slot) : "" };
+          for (const k of ["gen", "newGen", "base", "rev", "through"]) if (typeof j[k] === "number") f[k] = j[k];
+          window.__frames.push(f);
+        }
+      } catch (e) {}
     });
     const send = w.send.bind(w);
     w.send = (d) => { try { const j = JSON.parse(d); if (j && j.type === "clientDiag" && j.surface === "perf" && j.what === "minute") window.__posted++; } catch (e) {} return send(d); };
@@ -991,7 +1001,7 @@ try {
   await page.waitForTimeout(cfg.settleMs);
   const snap = await page.evaluate(() => {
     const fed = window.__rompFed, perf = window.__rompPerf;
-    const r = { dials: window.__dials.slice(), hostOf: Object.assign({}, window.__hostOf), bytes: Object.assign({}, window.__bytes), ka: Object.assign({}, window.__ka),
+    const r = { dials: window.__dials.slice(), hostOf: Object.assign({}, window.__hostOf), bytes: Object.assign({}, window.__bytes), ka: Object.assign({}, window.__ka), frames: window.__frames.slice(),
                 fedHosts: fed && typeof fed.hosts === "function" ? fed.hosts() : null,
                 fedBefore: fed && typeof fed.wsBytesByHost === "function" ? fed.wsBytesByHost() : null,
                 hadPerf: !!(perf && typeof perf.tick === "function") };
@@ -1175,15 +1185,12 @@ class TwoHostsBytesByHost(unittest.TestCase):
         return sums, ws
 
     # ---- the assertions ----
-    def test_the_relay_dials_carry_the_decoder_word_and_none_of_the_pages_caps(self):
+    def test_the_relay_dials_carry_the_decoder_word_and_the_members_the_conns_bases_hold(self):
+        # derived from the drive (assert_relay_dials): each host's first dial states the decoder word alone, and a redial's
+        # member would be derived from the frames its previous socket recorded (none carries a gen on this checkout's kernels)
         self._driver_ran()
-        relay = [u for u in self.result["dials"] if "/remote/" in u]
-        self.assertTrue(relay, "the feed page dialed the remotes' relay sockets: %r" % (self.result["dials"],))
-        for u in relay:
-            qs = parse_qs(urlsplit(u).query)
-            self.assertEqual(qs.get("app"), ["feed"], "the pane's app on the relay dial: %r" % (u,))
-            self.assertEqual(qs.get("delta"), ["1"], "the page's delta term rides the relay dial (since 2026-09-15): %r" % (u,))
-            self.assertEqual(qs.get("caps"), ["feedDelta"], "federation's own decoder word alone, none of the page's caps (readyGate stays home): %r" % (u,))
+        checked = _dial.assert_relay_dials(self, "feed", self.result["dials"], self.result.get("frames"))
+        self.assertEqual(sorted(h for _i, h, _u in checked), sorted(TWO_HOSTS), "one relay dial per host: %r" % (checked,))
         self.assertEqual(sorted(h for h in self.result["hostOf"].values() if h), sorted(TWO_HOSTS), "one relay dial per host")
 
     def test_the_minute_row_carries_each_hosts_bytes_by_position_equal_to_its_sockets_own_count_keepalives_included(self):
