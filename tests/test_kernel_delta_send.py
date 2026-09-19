@@ -1030,6 +1030,21 @@ class ByteIdenticalFrames(unittest.TestCase):
             self.assertEqual(seen.count("push.chat.sig.deps"), 1, "cycle %d: the tail runs once, in the pre-build signature: %r" % (i, seen))
             self.assertEqual(seen[:3], ["push.chat.sig.static", "push.chat.sig.deps", "push.chat.sig"], "cycle %d: the sub-seams close before the seam: %r" % (i, seen))
 
+    @staticmethod
+    def _thread_rusage_fake():
+        """(reads, fake): a getrusage that records and fakes the THREAD reads alone (who 11, the patched _RUSAGE_THREAD),
+        advancing one ms of user and half a ms of system time per read, and hands any other `who` (RUSAGE_SELF from
+        _process_stats on a platform without /proc) to the real getrusage, so only thread reads move the fake clock."""
+        reads = []
+        real = km.resource.getrusage
+
+        def fake(who):
+            if who != 11:
+                return real(who)
+            reads.append(who)
+            return types.SimpleNamespace(ru_utime=0.001 * len(reads), ru_stime=0.0005 * len(reads), ru_maxrss=0)
+        return reads, fake
+
     def test_the_chat_seams_record_their_thread_cpu_from_a_bounded_number_of_rusage_reads(self):
         """Stage 1 of the chat-signature design (2026-09-18): the chat loop reads getrusage(RUSAGE_THREAD) at each seam's
         open and close and stages_cpu_ms carries the delta beside the wall. Under a fake clock that advances one ms of
@@ -1038,18 +1053,20 @@ class ByteIdenticalFrames(unittest.TestCase):
         bound (two per mark: the container, the signature and its deps sub-seam, the send; a rebuild adds the build seam
         and the post-build signature; the harness's own snapshot may add one)."""
         ps = km._PERF_STATS
-        reads = []
-
-        def fake(who):
-            reads.append(who)
-            return types.SimpleNamespace(ru_utime=0.001 * len(reads), ru_stime=0.0005 * len(reads), ru_maxrss=0)
-        before = ps.snapshot()["stages_cpu_ms"]
+        reads, fake = self._thread_rusage_fake()
+        # `before` is read INSIDE the patch (2026-09-19 review, tests-1): with the platform's own _RUSAGE_THREAD None (macOS) the
+        # snapshot's block is empty and the before/after join raised KeyError where the two test_perf_stats siblings skip;
+        # under the patch the block is populated on every platform. The fake counts only the seams' thread reads (who 11)
+        # and delegates any other `who` to the real getrusage, because _process_stats falls back to getrusage(RUSAGE_SELF)
+        # where /proc is absent (the same macOS shape), inside the harness's snapshots: with those reads faked too they
+        # advanced the fake clock and landed in `reads`, and the 21/6/15 arithmetic below and the count bound were red.
         with mock.patch.object(km, "_RUSAGE_THREAD", 11), mock.patch.object(km.resource, "getrusage", fake):
+            before = ps.snapshot()["stages_cpu_ms"]
+            del reads[:]
             _wire, calls, rows = self._run(km._chat_diff, perf=ps)
             after = ps.snapshot()["stages_cpu_ms"]
         self.assertEqual(calls, [False, True, False, True, False, True], "premise: rebuilt, served, alternating")
-        self.assertEqual(reads, [11] * len(reads), "every read asked for the thread's rusage")
-        self.assertLessEqual(len(reads), 6 * 16, "at most sixteen reads per cycle: %d over six" % len(reads))
+        self.assertLessEqual(len(reads), 6 * 16, "at most sixteen thread reads per cycle: %d over six" % len(reads))
         d = {k: {c: after[k][c] - before[k][c] for c in ("user", "sys")} for k in after if k in before}
         self.assertGreaterEqual(d["push.chat.sig"]["user"], 9 * 1.0 - 1e-6, "nine signatures, each at least one read apart")
         self.assertAlmostEqual(d["push.chat.sig"]["sys"], d["push.chat.sig"]["user"] / 2.0, msg="the fake's ratio survives the fold")
@@ -1105,11 +1122,7 @@ class ByteIdenticalFrames(unittest.TestCase):
 
         def build(frame):
             raise RuntimeError("synthetic build failure")
-        reads = []
-
-        def fake(who):
-            reads.append(who)
-            return types.SimpleNamespace(ru_utime=0.001 * len(reads), ru_stime=0.0005 * len(reads), ru_maxrss=0)
+        reads, fake = self._thread_rusage_fake()          # thread reads alone: RUSAGE_SELF (a /proc-less platform's) goes to the real clock
         before = ps.snapshot()["stages_ms"]
         with mock.patch.object(km, "_RUSAGE_THREAD", 11), mock.patch.object(km.resource, "getrusage", fake):
             before_cpu = ps.snapshot()["stages_cpu_ms"]["push.chat.build"]
