@@ -44,8 +44,11 @@ move by the walk's count per pass. A skipped look repeats its verdict and writes
 so it needs no data: the recorder sees no call from either.
 
 The gate's load is `_nudge_placement_gate`'s currency check after a derivation (upstream's since the 2026-09-09 fold; ruling
-A listed it as open, to be offered upstream, never edited here): one call per DERIVED session, none when the gate is served
-or the look skipped. So the first pass and a moved-transcript pass derive and the gate loads once per derived session
+A listed it as open, to be offered upstream, never edited here): at most one call per DERIVED session, none when the gate
+is served or the look skipped. A derive whose parse the cache does not hold checks nothing: `derived` is bumped on every
+non-raising derivation and the currency read sits under `if parse_key is not None`, so the code's invariant is the bound,
+and the equality the cases assert holds here because the harness's parsed_session records every parse in jd._PARSE_CACHE.
+So the first pass and a moved-transcript pass derive and the gate loads once per derived session
 beside the walk's one; a ledger-driven run pass (the ledger is the tenth keyed file) re-evaluates every look with the gate
 served, so the walk loads once and the gate not at all. A look the state gates end before the store read (a working
 session's, say) runs, records, and loads through neither.
@@ -84,6 +87,10 @@ of the real `_session_awaiting` or the real `_closer_settled` leaves every execu
 the source census naming the helper (1 failed, 6 passed each); the same plant in `_nudge_look_check`, which the fixture
 does not replace, reds by execution naming `_nudge_look_check` (4 failed, 3 passed); with `_session_working` real, a
 bare shared load at the top of its body reds by execution naming `_session_working`, where the stub hid it before (3
+failed, 4 passed). The gate's bound: with the fixture's parse not recorded in jd._PARSE_CACHE, the first pass derives twice
+and checks nothing (derived 2, gate 0), the bound holds and the qualified equality reds with its fixture message, at the
+first pass's gate assertion (3 failed, 4 passed); the currency read duplicated in `_nudge_placement_gate` after the
+derive count gives two checks per derive, and the bound, the per-sid ceiling and the first pass's gate assertion red (3
 failed, 4 passed). The store's counters: a reference to the
 real door bound at kernel import (`_REAL_LGS = jd.load_goals_shared`) and called per session in the pass loop is
 invisible to the recorders and reds the reconciliation on every pass whose looks run, the counters two calls over the
@@ -386,7 +393,8 @@ class OneSharedLoadPerAliveSessionPerPass(_WalkHarness):
                          "the walk takes exactly one shared load per alive session when its look reaches the store (condition 7, the walk's bound)")
         self.assertEqual(p1["loads"], 2, "memos.nudgeWalk.loads moves by the walk's count: one per look that reached the store")
         self.assertEqual((p1["gate"], p1["memo"]), ({SID_A: 1, SID_B: 1}, (0, 2)),
-                         "the placement gate's currency check loads once per derived session, and here every gate derived (condition 7, the gate's bound)")
+                         "the placement gate's currency check loads at most once per derived session; here every gate derived with its parse "
+                         "cached, so each checked once (condition 7, the gate's bound)")
         self.assertEqual(p1["writer"], 0, "zero plain load_goals in the decision path")
         self.assertEqual(p1["shared"], {"hit": 2, "miss": 2}, "the store's counters: each walk read fills (a miss), each gate check hits")
         for sid in SIDS:
@@ -431,7 +439,12 @@ class OneSharedLoadPerAliveSessionPerPass(_WalkHarness):
             for sid in SIDS:
                 self.assertLessEqual(p["walk"][sid], 1, "%s %s: the walk takes at most one shared load per alive session per pass (condition 7, the walk's bound)" % (name, sid[-4:]))
                 self.assertLessEqual(p["gate"][sid], 1, "%s %s: the placement gate checks at most once per derived session (condition 7, the gate's bound)" % (name, sid[-4:]))
-            self.assertEqual(sum(p["gate"].values()), p["memo"][1], "%s: the gate's checks equal its derives, none on a served or skipped look" % name)
+            self.assertLessEqual(sum(p["gate"].values()), p["memo"][1],
+                                 "%s: the gate's checks never exceed its derives (condition 7, the gate's bound; a derive without a cached parse "
+                                 "checks nothing)" % name)
+            self.assertEqual(sum(p["gate"].values()), p["memo"][1],
+                             "%s: equal here because the harness's parsed_session records every parse in jd._PARSE_CACHE, so every derive "
+                             "holds its parse and checks once; the gate's rule is the bound above" % name)
             self.assertEqual(p["sweep"], {}, "%s: the fixture ledger holds no wake record, so the wake sweep reads no store" % name)
         self.assertEqual(self.fb.sent, [], "nudges off: nothing injected")
         served = km._PERF_STATS.snapshot()["memos"]["nudgeWalk"]
