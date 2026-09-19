@@ -1239,5 +1239,384 @@ class Census(unittest.TestCase):
         self.assertFalse([s for s in self.sites if s.file == "kernel/judge.py" and s.klass == "outbound"])
 
 
+# ---------------------------------------------------------------------------------------------------
+# The form space, planted: one instance of every form, its loopback twin, and the shapes that are not forms.
+# ---------------------------------------------------------------------------------------------------
+
+PLANTED = '''\
+import asyncio
+import os
+import shlex
+import socket
+import ssl
+import subprocess
+import sys
+import urllib.request
+from urllib import request as ur
+import http.client
+import requests
+import websockets
+import websocket
+
+SSH_BIN = os.environ.get("ROMP_SSH_BIN", "ssh")
+_SSH_OPTS = ["-o", "BatchMode=yes"]
+KPORTS = ["http://127.0.0.1:29855", "http://127.0.0.1:7878"]
+HOST = "127.0.0.1"
+BASE = f"http://{HOST}:{os.environ.get('PORT', '1')}"
+FEED = "https://example.invalid/prices.json"
+
+
+def f_urlopen():
+    return urllib.request.urlopen("https://example.invalid/x")                # L1 urlopen outbound
+
+def f_request():
+    return ur.Request("https://example.invalid/y", method="POST")              # L2 Request outbound
+
+def f_opener():
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    return opener.open(ur.Request("https://example.invalid/z"))               # L3 opener.open outbound
+
+def f_http():
+    return http.client.HTTPConnection("example.invalid", 80)                    # L4 HTTPConnection outbound
+
+def f_https():
+    return http.client.HTTPSConnection(host="example.invalid")                  # L5 HTTPSConnection outbound
+
+def f_create():
+    return socket.create_connection(("example.invalid", 443))                   # L6 create_connection outbound
+
+def f_connect():
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.connect(("example.invalid", 443))                                         # L7 socket.connect outbound
+
+def f_wrap():
+    ctx = ssl.create_default_context()
+    return ctx.wrap_socket(socket.socket(), server_hostname="example.invalid")  # L8 wrap_socket outbound
+
+async def f_open():
+    return await asyncio.open_connection("example.invalid", 443)                # L9 open_connection outbound
+
+def f_lib():
+    return requests.get("https://example.invalid/api")                          # L10 http-library outbound
+
+def f_ws():
+    return websockets.connect("wss://example.invalid/ws")                       # L11 websocket outbound
+
+def f_curl():
+    subprocess.run(["curl", "-fsSL", "https://example.invalid/get-pip.py"])     # L12 tool curl outbound
+
+def f_wget():
+    subprocess.check_output(["/usr/bin/wget", "-qO-", "https://example.invalid/a"])   # L13 tool wget outbound
+
+def f_git():
+    subprocess.run(["git", "-C", "/x", "fetch", "origin", "main"], timeout=5)   # L14 tool git fetch
+
+def f_gh():
+    subprocess.run(["gh", "pr", "view", "1"])                                   # L15 tool gh
+
+def f_ssh():
+    subprocess.run([SSH_BIN] + _SSH_OPTS + ["--", "host", "true"])              # L16 tool ssh
+
+def f_npm():
+    subprocess.run(["npm", "install", "--no-audit"], check=True)                # L17 tool npm install
+
+def f_pip():
+    subprocess.run([sys.executable, "-m", "pip", "install", "x"], check=True)   # L18 tool pip install
+
+def f_shell():
+    script = "cd /x && git fetch %s refs/tags/v1 && ./install.sh" % "origin"
+    subprocess.Popen(["bash", "-c", script])                                    # L19 shell-string git fetch
+
+def f_git_ssh():
+    env = dict(os.environ, GIT_SSH_COMMAND="%s -o BatchMode=yes" % SSH_BIN)
+    subprocess.run(["git", "status"], env=env)                                  # L20 GIT_SSH_COMMAND
+
+def f_wrapper_ls_remote(top):
+    return _git_net_out(["ls-remote", "--heads", "origin", "x"], top, timeout=3, env=None)   # L21 tool through the wrapper
+
+def _git_net_out(args, cwd, timeout, env):
+    return subprocess.Popen(["git", "-C", cwd] + args)
+
+def f_argv_built_elsewhere():
+    argv = _tunnel_argv()
+    subprocess.Popen(argv)                                                      # L22 tool ssh through a call's return
+
+def _tunnel_argv():
+    return [SSH_BIN, "-N", "-T"] + _SSH_OPTS + ["--", "host"]                  # L23 tool ssh, a list literal in a return
+
+def f_terminal():
+    tmpl = "open -na Ghostty --args -e ssh -t {host} 'cd {dir}'"
+    parts = shlex.split(tmpl)
+    argv = [p.replace("{host}", "h") for p in parts]
+    subprocess.Popen(argv)                                                      # L24 shell-string ssh through shlex.split
+
+def f_system():
+    os.system("rsync -a /x host:/y")                                            # L25 shell-string rsync
+
+def f_star(*argv):
+    return urllib.request.urlopen(*argv)                                        # L26 urlopen, an unknown shape: outbound
+
+
+# ---- loopback twins -------------------------------------------------------------------------
+
+def t_urlopen():
+    return urllib.request.urlopen("http://127.0.0.1:1/x")                       # T1
+
+def t_request():
+    return ur.Request(BASE + "/y")                                              # T2 through an f-string and HOST
+
+def t_opener():
+    opener = urllib.request.build_opener()
+    return opener.open("http://127.0.0.1:2/z")                                  # T3
+
+def t_http():
+    return http.client.HTTPConnection("127.0.0.1", 80)                          # T4
+
+def t_https():
+    return http.client.HTTPSConnection("127.0.0.1", 443)                        # T5
+
+def t_create(port):
+    return socket.create_connection(("127.0.0.1", int(port)), timeout=6)        # T6
+
+def t_connect(port):
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    return s.connect_ex(("127.0.0.1", int(port)))                              # T7
+
+async def t_open():
+    return await asyncio.open_connection("127.0.0.1", 1)                        # T9
+
+def t_lib():
+    return requests.get("http://127.0.0.1:1/api")                               # T10
+
+def t_ws():
+    return websocket.create_connection("ws://127.0.0.1:1/ws")                   # T11
+
+def t_curl():
+    subprocess.run(["curl", "-s", "http://127.0.0.1:1/healthz"])                # T12
+
+def t_loop():
+    for u in KPORTS:
+        return urllib.request.urlopen(u + "/version", timeout=1)                # T13 through a for loop over a module list
+
+def t_param(u):
+    return urllib.request.urlopen(u + "/status")                                # T14 a parameter, every caller loopback
+
+def t_caller():
+    return t_param(_kernel())
+
+def _kernel():
+    for u in KPORTS:
+        return u
+    return None
+
+def t_percent(port, route):
+    req = ur.Request("http://127.0.0.1:%d%s" % (port, route))                   # T15 percent formatting
+    return urllib.request.urlopen(req, timeout=3)                               # T16 a Request bound to a name
+
+
+# ---- lookalikes, the route probe and the shapes that are not forms --------------------------------
+
+def x_lookalike():
+    return urllib.request.urlopen("http://127.0.0.1.example/")                  # X1 outbound: a lookalike host
+
+def x_localhost():
+    return http.client.HTTPConnection("localhost", 80)                          # X2 outbound: localhost is not 127.0.0.1
+
+def x_placeholder(sub):
+    return ur.Request(sub["endpoint"], method="POST")                           # X3 outbound: nothing resolves
+
+def x_probe():
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    s.connect(("192.0.2.1", 9))                                                 # X4 route-probe
+
+def n_open():
+    open("/x")
+    import json
+    json.loads("{}")
+    subprocess.run(["ls", "-l"])
+    subprocess.run(["git", "config", "--get-all", "remote.origin.fetch"])
+    subprocess.run(["git", "-C", "/x", "rev-parse", "HEAD"])
+    subprocess.run(["sh", "-c", "echo curl is not run here"])
+    subprocess.run(["sh", "-c", "command -v curl >/dev/null"])
+    print("ssh -t host")
+    be = object()
+    be.connect("sid")
+'''
+
+
+def _planted_line(marker):
+    for n, line in enumerate(PLANTED.splitlines(), 1):
+        if "# " + marker + " " in line or line.rstrip().endswith("# " + marker):
+            return n
+    raise AssertionError("no planted line carries the marker " + marker)
+
+
+class FormSpace(unittest.TestCase):
+    """Every form in FORMS planted once in a synthetic module and found; every dial form's loopback twin classed
+    loopback; the lookalikes outbound; the shapes that are not forms not counted."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.sites = scan_module("planted/probe.py", PLANTED)
+        cls.by_line = {}
+        for s in cls.sites:
+            cls.by_line.setdefault(s.line, []).append(s)
+
+    def _one(self, marker, kind, klass, tool=None):
+        line = _planted_line(marker)
+        rows = self.by_line.get(line, [])
+        match = [s for s in rows if s.kind == kind and (tool is None or s.tool == tool)]
+        self.assertTrue(match, "%s: no %s%s site at planted line %d; found %s" % (
+            marker, kind, " " + tool if tool else "", line, [(s.kind, s.tool, s.klass) for s in rows]))
+        self.assertEqual(match[0].klass, klass, "%s: classed %s, expected %s" % (marker, match[0].klass, klass))
+        return match[0]
+
+    def test_every_form_is_planted_and_found_outbound(self):
+        expected = {
+            "L1": ("urlopen", None), "L2": ("Request", None), "L3": ("opener.open", None),
+            "L4": ("HTTPConnection", None), "L5": ("HTTPSConnection", None), "L6": ("create_connection", None),
+            "L7": ("socket.connect", None), "L8": ("wrap_socket", None), "L9": ("open_connection", None),
+            "L10": ("http-library", None), "L11": ("websocket", None), "L12": ("tool", "curl"),
+            "L13": ("tool", "wget"), "L14": ("tool", "git fetch"), "L15": ("tool", "gh"), "L16": ("tool", "ssh"),
+            "L17": ("tool", "npm install"), "L18": ("tool", "pip install"), "L19": ("shell-string", "git fetch"),
+            "L20": ("GIT_SSH_COMMAND", "git over ssh"), "L21": ("tool", "git ls-remote"), "L22": ("tool", "ssh"),
+            "L23": ("tool", "ssh"), "L24": ("shell-string", "ssh"), "L25": ("shell-string", "rsync"),
+            "L26": ("urlopen", None),
+        }
+        for marker, (kind, tool) in expected.items():
+            self._one(marker, kind, "outbound", tool)
+        # the planted kinds are the form space, both ways: a matcher dropped from the scanner reds above by
+        # marker, a FORMS row with no plant or a plant with no FORMS row reds here
+        self.assertEqual(sorted({k for k, _ in expected.values()}), sorted(FORM_KINDS))
+        self.assertEqual(len(FORM_KINDS), len(set(FORM_KINDS)))
+        # the attribution: a nested list literal in a return is the enclosing def's; the module scope has none
+        self.assertEqual(self._one("L23", "tool", "outbound", "ssh").function, "_tunnel_argv")
+        self.assertEqual(self._one("L3", "opener.open", "outbound").function, "f_opener")
+
+    def test_every_dial_forms_loopback_twin_is_classed_loopback(self):
+        for marker, kind in (("T1", "urlopen"), ("T2", "Request"), ("T3", "opener.open"), ("T4", "HTTPConnection"),
+                             ("T5", "HTTPSConnection"), ("T6", "create_connection"), ("T7", "socket.connect"),
+                             ("T9", "open_connection"), ("T10", "http-library"), ("T11", "websocket"),
+                             ("T13", "urlopen"), ("T14", "urlopen"), ("T15", "Request"), ("T16", "urlopen")):
+            self._one(marker, kind, "loopback")
+        self._one("T12", "tool", "loopback", "curl")
+
+    def test_a_lookalike_a_localhost_and_an_unresolved_host_are_outbound_and_the_udp_connect_is_a_route_probe(self):
+        self._one("X1", "urlopen", "outbound")
+        self._one("X2", "HTTPConnection", "outbound")
+        self._one("X3", "Request", "outbound")
+        self._one("X4", "socket.connect", "route-probe")
+        self.assertFalse(is_loopback(set()), "nothing resolved is not loopback")
+        self.assertFalse(is_loopback({"http://127.0.0.1:1/a", "https://example.invalid/b"}), "every rendering must be")
+        self.assertTrue(is_loopback({"127.0.0.1", "127.0.0.1:8080", "http://127.0.0.1:<?><?>/x"}))
+        self.assertFalse(is_loopback({"127.0.0.10"}))
+
+    def test_the_shapes_that_are_not_forms_are_not_counted(self):
+        start = _planted_line("X4") + 1
+        stray = [s for s in self.sites if s.line > start]
+        self.assertEqual(stray, [], "sites counted inside n_open, which runs no request: %s" % stray)
+        # the command grammar on its own: exact words, command position, lookups dropped
+        self.assertIsNone(tool_in(["git", "config", "--get-all", "remote.origin.fetch"]))
+        self.assertEqual(tool_in(["git", "-C", "/x", "ls-remote", "--tags", "origin"]), "git ls-remote")
+        self.assertEqual(tool_in(['"$VENV/bin/pip"', "install", "-q", "x"]), "pip install")
+        self.assertEqual(tool_in(["python3", "-m", "pip", "download", "x"]), "pip download")
+        self.assertIsNone(tool_in(["python3", "-m", "venv", "install"]))
+        self.assertEqual(tools_in_text('if command -v curl >/dev/null 2>&1; then curl -fsSL "$1" -o "$2"; fi'),
+                         [("curl", ["curl", "-fsSL", '"$1"', "-o", '"$2"'])])
+        self.assertEqual(tools_in_text('echo "  curl -fsSL https://example.invalid/x | bash"'), [])
+        self.assertEqual(tools_in_text('_r="$(_cfg | curl -sf "http://127.0.0.1:$p/x")" || true'),
+                         [("curl", ["curl", "-sf", '"http://127.0.0.1:$p/x"'])])
+        # curl's own -w format and a ${var} keep their braces; a brace group's { and } split
+        self.assertEqual(tools_in_text("""_o="$(_cfg | curl -s -w '\\n%{http_code}' "${u}" "$@")" || { echo no >&2; return 1; }"""),
+                         [("curl", ["curl", "-s", "-w", "'\\n%{http_code}'", '"${u}"', '"$@"'])])
+        self.assertEqual([t for t, _ in tools_in_text("A=1 exec ssh -N host; git status; nohup gh pr view 1")], ["ssh", "gh"])
+
+    def test_the_shell_layer_reads_command_position_continuations_wrappers_heredocs_and_scopes(self):
+        text = "\n".join([
+            "#!/usr/bin/env bash",
+            "# curl https://example.invalid/comment",
+            "fetch() {   # $1 url",
+            '  if command -v curl >/dev/null 2>&1; then curl -fsSL --max-time 60 "$1" -o "$2"',
+            '  elif command -v wget >/dev/null 2>&1; then wget -qO "$2" "$1"',
+            "  else return 1; fi",
+            "}",
+            "_kcurl() {",
+            '    _out="$(_cfg | curl -s --config - "$@")" || return 1',
+            "}",
+            '_kcurl "http://127.0.0.1:$port/a"',
+            '_kcurl "http://127.0.0.1:$port/b"',
+            "_ocurl() {",
+            '    curl -s "$1"',
+            "}",
+            '_ocurl "https://example.invalid/outside"',
+            'echo "  curl -fsSL https://example.invalid/bootstrap.sh | bash"',
+            '_resp="$(_cfg | curl -sf -m 10 --config - -X POST \\',
+            '    "http://127.0.0.1:$_kport/fork" \\',
+            "    -d '{}')\"",
+            "python3 - <<'PY'",
+            "print('pip install nothing here')",
+            "PY",
+            '"$VENV/bin/pip" install -q "claude-agent-sdk==1.0"',
+            'if [[ "${1:-}" == "watch-pr" ]]; then',
+            '    _repo="$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || true)"',
+            "    git status",
+            "fi",
+            "git fetch origin main",
+        ])
+        rows = scan_shell_text("bin/probe", text)
+        got = [(s.line, s.function, s.tool, s.klass) for s in rows]
+        self.assertEqual(got, [
+            (4, "fetch", "curl", "outbound"),
+            (5, "fetch", "wget", "outbound"),
+            (9, "_kcurl", "curl", "loopback"),          # "$@" filled with 127.0.0.1 by every caller
+            (14, "_ocurl", "curl", "outbound"),         # "$1" filled from outside by its caller
+            (18, "top-level", "curl", "loopback"),      # the URL on a continuation line
+            (24, "top-level", "pip install", "outbound"),
+            (26, "verb watch-pr", "gh", "outbound"),
+            (29, "top-level", "git fetch", "outbound"),
+        ])
+
+    def test_the_node_layer_resolves_a_host_constant_and_a_url_variable_two_hops_deep(self):
+        text = "\n".join([
+            "const http = require('http');",
+            "const HOST = '127.0.0.1';",
+            "const CONTROL_PORT = 7432;",
+            "// http.get('https://example.invalid/comment')",
+            "function probe(port, cb) {",
+            "  const req = http.get({ host: HOST, port, path: '/version', timeout: 5000 }, (res) => {});",
+            "}",
+            "function outside() {",
+            "  const req = http.get('https://example.invalid/x', (res) => {});",
+            "}",
+            "function control(pathname) {",
+            "  const u = new URL(`http://${HOST}:${CONTROL_PORT}${pathname}`);",
+            "  const req = http.request(u, { method: 'GET' }, (res) => {});",
+            "}",
+            "const far = 'https://example.invalid/y';",
+            "const later = () => {",
+            "  fetch(far);",
+            "};",
+        ])
+        rows = scan_node_text("bin/probe-manager", text)
+        self.assertEqual([(s.line, s.function, s.tool, s.klass) for s in rows], [
+            (6, "probe", "http.get", "loopback"),
+            (9, "outside", "http.get", "outbound"),
+            (13, "control", "http.request", "loopback"),
+            (17, "later", "fetch", "outbound"),
+        ])
+
+    def test_the_allowlist_check_reports_both_directions_on_a_planted_census(self):
+        sites = scan_module("planted/probe.py", PLANTED)
+        entries = (Entry("planted/probe.py", "f_urlopen", ("urlopen",), "w", "g", "d"),
+                   Entry("planted/probe.py", "no_such_function", ("urlopen",), "w", "g", "d"))
+        orphans, unused = _unmatched(sites, entries)
+        self.assertTrue(any(o.startswith("planted/probe.py:%d in f_request:" % _planted_line("L2")) for o in orphans), orphans)
+        self.assertFalse(any("f_urlopen" in o for o in orphans))
+        self.assertEqual(unused, ["planted/probe.py no_such_function (urlopen)"])
+        # a kind the entry does not name is an orphan too
+        orphans, _ = _unmatched(sites, (Entry("planted/probe.py", "f_urlopen", ("Request",), "w", "g", "d"),))
+        self.assertTrue(any("in f_urlopen:" in o for o in orphans))
+
+
 if __name__ == "__main__":
     unittest.main()
