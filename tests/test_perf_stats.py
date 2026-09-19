@@ -1596,8 +1596,8 @@ class RoutingStatements(unittest.TestCase):
         # A plant exists only while its owner holds the exclusive lock, so whatever the glob finds under that lock is a
         # dead run's leftover (pytest-timeout's os._exit, which CI's --timeout-method=thread uses, a SIGKILL, a scope
         # stop: none of them reaches the plant test's finally), and the glob matches no tracked file (git grep
-        # routing-sweep-plant finds only this module). Safe ONLY because the lock is one file per checkout (the
-        # previous commit): under a per-process lock this could delete a sibling's live plant.
+        # routing-sweep-plant finds only this module). Safe ONLY because the lock is one file per checkout: under a
+        # per-process lock this could delete a sibling's live plant.
         with cls._tree_lock(exclusive=True) as root:
             cls._remove_stale_plants(root)
 
@@ -1921,6 +1921,36 @@ class RoutingStatements(unittest.TestCase):
         with mock.patch.object(RoutingStatements, "_scan", side_effect=probe):
             self._places()
         self.assertEqual(seen, [["READ"]], "_places scans while this process holds the shared lock")
+
+    def test_the_healer_runs_while_holding_the_exclusive_lock(self):
+        """The composition, not its halves: setUpClass calls the healer INSIDE its exclusive hold. The source pin in the
+        stale-plant test checks that both call forms appear in setUpClass, and a healer moved to just after the with
+        block satisfies it (round 2's two-direction sweep); that is the placement the setUpClass comment warns could
+        delete a sibling's live plant. The healer is patched with a probe that records, from /proc/locks, the flock
+        modes this process holds on the lock file when it is called, so no plant is touched."""
+        if not os.path.exists("/proc/locks"):
+            self.skipTest("/proc/locks is how a process's own flocks are read")
+        seen = []
+
+        def probe(root):
+            seen.append(self._flocks_this_process_holds(self._lock_path(root)))
+        with mock.patch.object(RoutingStatements, "_remove_stale_plants", side_effect=probe):
+            RoutingStatements.setUpClass()
+        self.assertEqual(seen, [["WRITE"]], "setUpClass calls the healer while this process holds the exclusive lock")
+
+    def test_the_healer_leaves_a_file_that_is_not_a_plant(self):
+        """The glob's other edge: a plans/ file off the plant shape survives the healer. Narrowing the glob reds the
+        stale-plant test; widening it to every *.md left every test here green while setUpClass deleted 35 tracked plans
+        from the working tree (round 2's two-direction sweep), and a destructive operation whose scope can widen silently
+        needs a guard on that side."""
+        with self._tree_lock(exclusive=True) as root:
+            control = root / "plans" / ("routing-sweep-control-%d.md" % os.getpid())   # names no block
+            try:
+                control.write_text("a control note\n")
+                self._remove_stale_plants(root)
+                self.assertTrue(control.exists(), "the healer removes plants alone")
+            finally:
+                control.unlink(missing_ok=True)
 
     def test_this_modules_top_keys_comment_names_both_families(self):
         line = next(l for l in Path(__file__).read_text().splitlines() if l.strip().startswith('"stagesForeign",'))
