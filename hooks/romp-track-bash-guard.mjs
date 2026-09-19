@@ -157,7 +157,7 @@
 // read like `flock -c`, not skipped as an operand. (2) ANY ASSIGNMENT FORM: HOME (the one variable the guard expands)
 // as an lvalue in any form the shells offer (`HOME=`, `HOME+=`, `export`/`declare`/`typeset`/`local`/`readonly HOME`,
 // `read HOME`, `printf -v HOME`, `mapfile`/`readarray HOME`, `env HOME=… cmd`, `getopts … HOME`, `for HOME in`)
-// makes `$HOME` and `~` unreadable for the whole command (assignsHome). (3) IN-COMMAND PREFIX MUTATIONS: an earlier
+// makes `$HOME` and `~` unreadable for the whole command (since the third pass, the bare identifier anywhere, below). (3) IN-COMMAND PREFIX MUTATIONS: an earlier
 // `rm`/`rmdir`/`mv`/hard `ln`/`cp -l`/`cp -s` that removes, renames or aliases a path makes every later word under
 // that prefix unreadable, since what it resolves to at run time is not what the hook sees (mutated/recordMutations);
 // the `ln -s` class-H rewrite is kept only when nothing else in the command touched the link name or its source, and
@@ -177,16 +177,72 @@
 // physically, as chdir(2) does. Each family errs toward a false refusal, recoverable in one step, never a missed
 // overwrite; the costs are listed with the change.
 //
-// THE CONTRACT. This guard is BEST-EFFORT against known write forms: it refuses the shell writes it models and,
-// by design, ALLOWS anything it does not recognise, so it never blocks ordinary work it cannot read. The allow-by-
-// default for an UNMODELLED writer is deliberately not flipped: flipping it would refuse almost all normal work. The
-// one class flipped to refuse is a path the hook cannot check: a stat error other than ENOENT anywhere on a judged
-// path (family 4 above, the class-G flip applied to every judged path). It is a backstop,
-// not a complete boundary. These write forms are not modelled and still reach a tracked file: rsync; awk with a
-// redirect inside its program; ed; ex; make; find with -delete or -exec; a git subcommand that writes the working
-// tree (checkout, stash, apply, reset, rm, clean, mv); a computed path inside an interpreter (python3 -c, node -e);
-// and a leading opaque expansion from a cwd outside every project. The same paragraph, and this writer list, are
-// on the vendored SKILL.md, hooks/README.md and docs/install.md, pinned identical by a test.
+// The walk-around lens, THIRD pass (2026-09-19) re-keyed six of those rules on what the guard can SEE, after a third attack
+// walked around each enumeration with the next spelling (a nameref and `select HOME in` past the assignment forms; a
+// glued `env -Cdocs`, an abbreviated `env --chd=` and `--c`, a nested `env -C docs env -C ..` and an `env -S` string
+// beginning with env's own option past the wrapper lists; a non-literal `ln -s` source past class H; zsh's `set -o
+// chaselinks` past the physical-cd list; a two-segment expansion under a grandparent past the direct-children scan; and
+// `cp --targ` from a cwd in no project past the unknown-option refusal). The reviewer's rule (2026-09-19 08:50Z,
+// paraphrased): a rule implemented as an enumeration of spellings is a case list, and the next spelling walks around it;
+// a rule is keyed on a token, an unparsed option, a non-literal operand or the presence of a construct, never on a list
+// of forms. (a) BARE IDENTIFIER: the identifier of a variable the guard expands (HOME, EXPANDED_NAMES) appearing anywhere
+// in the command outside a `$`-expansion makes that expansion unreadable for the whole command, and a bare `cd` or a `cd
+// ~` after it leaves the directory unknown (bareExpandedNames); no list of assignment forms. (b) FULLY PARSED OR REFUSED:
+// every wrapper in PREFIXES is parsed against its own option table (WRAPPER_OPT) or the command refuses naming the option
+// (unknown, abbreviated, glued to a letter the table lacks, or filled in by the shell), the words after it judged by their
+// own project; a nested chdir composes (`env -C a env -C b` enters a, then b under a); `env -S`/`--split-string` and
+// sudo's -e, -i, -s, -R and -h are opaque and refused outright, never recursed; `time -o FILE` is a write of FILE.
+// (c) NON-LITERAL LINK SOURCE: a symbolic link whose source the guard cannot read or place marks the link NAME as mutated,
+// so a later write through it refuses (recordSymlink); class H keeps only a literal source it can place. (d) SHELL
+// OPTIONS, AN ALLOWLIST: an option on `set`, `shopt`, `setopt` or `unsetopt` that is not on the inert lists
+// (INERT_SET_LETTERS, INERT_SET_OPTIONS, INERT_SHOPT: exit status, tracing, history, completion, prompts, job control
+// and syntax choices that move no path, built from the shells' own option lists) leaves the directory unknown from that
+// point (shellOptionChange); every option about cd, pushd, physical paths, links, globbing, brace expansion, aliases,
+// quoting, restricted or POSIX mode is off the lists. (e) ANY DEPTH: the parent-prefix rule finds every tracked root
+// under the literal head at any depth (parentTrackedRoots, breadth-first, PARENT_SCAN_BUDGET). (f) UNKNOWN OPTION REFUSES
+// EVERYWHERE: an option a writer's table does not know refuses on every path the writer is reached through, each
+// candidate operand judged by its own project from any cwd (optionCandidates), and the mutation and symlink recorders
+// mark every candidate. Also from that pass: `chdir` (zsh's and dash's cd, no command in bash) leaves the directory
+// unknown, and coreutils `link` is a hard-link maker (a write target and a family-3 mutation). The costs, each stated and
+// measured in tools/romp-track-bash-guard-corpus.json: a `~/` write beside a mention of HOME, an `env -S` line, a
+// relative write after `shopt -s globstar`, a write through a link whose source is a variable, and a variable-named
+// file in a folder that holds a tracked project at any depth beneath it, each from a cwd in play (the last from any).
+//
+// THE LISTS THAT REMAIN, each with the side its GAP falls on (a missing entry causes a false refusal, or a write):
+//   PREFIXES (the wrapper set): gap = a WRITE (an unlisted wrapper is read as its own command, an unmodelled writer by
+//     the contract), so the set is stated on the four surfaces and the unlisted wrappers the passes found (unshare,
+//     nsenter, script, setarch, setpriv) are on the contract's list.
+//   WRAPPER_OPT (each wrapper's option table): gap = a false refusal (an option not in the table refuses).
+//   COPY_OPT (cp/mv/install/ln): gap = a false refusal (an option not in the table refuses, on every path).
+//   INERT_SET_LETTERS, INERT_SET_OPTIONS, INERT_SHOPT: gap = a false refusal (an option not listed makes the directory
+//     unknown).
+//   EXPANDED_NAMES: gap = a WRITE only if expansionAt ever substitutes a name not listed here; today it substitutes HOME
+//     alone, and the two are one edit apart (the comment at each names the other).
+//   NUMERIC_EXPANSIONS: gap = a false refusal (an expansion not listed is unreadable).
+//   ANSI_C_SHELLS, SHELLS: gap = a false refusal (a shell not listed gets the restricted reading, or is not recursed
+//     and its script's literal targets are judged by the own-project step as words the hook cannot read).
+//   The writer cases (cp, mv, install, ln, link, tee, dd, sponge, truncate, sort, sed, perl, python, node, the shells):
+//     gap = a WRITE, by the contract's allow-by-default for an unmodelled writer, stated below with the list of the ones
+//     the passes found.
+//   The root markers (.obsidian, .git, .trackchanges, store-io's own): gap = a WRITE only if store-io adds a marker;
+//     markerAt mirrors store-io's list and family 5 refuses a nested one.
+//   The sed, perl, truncate and interpreter option lists: gap = an over-count (an unknown option is read as a flag and
+//     the operand after it as a file), the refuse direction.
+//
+// THE CONTRACT. This guard is best-effort against known write forms: it refuses the shell writes it models and, by
+// design, allows anything it does not recognise, so it never blocks ordinary work it cannot read; it is a backstop, not
+// a complete boundary. The allow-by-default for an unmodelled writer is deliberately not flipped, since flipping it would
+// refuse almost all normal work. What it does refuse, while a tracked project is in play, is a write it reads but cannot
+// place: a target it cannot read, a path it cannot check (a stat error other than not-found), an option on a modelled
+// writer or wrapper it does not parse in full, an env -S string, a shell option it does not know to be inert for paths,
+// a link whose source it cannot read, and a `~` or `$HOME` write beside a mention of HOME. These write forms are not
+// modelled and still reach a tracked file: rsync; awk with a redirect inside its program; ed; ex; make; find with -delete
+// or -exec; a git subcommand that writes the working tree (checkout, stash, apply, reset, rm, clean, mv); a computed path
+// inside an interpreter (python3 -c, node -e); a script the shell reads from elsewhere (eval, xargs, a sourced file, trap,
+// a command whose name is an expansion, a script held in a variable); a wrapper outside the guard's set (unshare,
+// nsenter, script, setarch, setpriv); shuf -o; a cd through CDPATH; and a leading opaque expansion from a cwd outside every
+// project. The same paragraph, and this writer list, are on the vendored SKILL.md, hooks/README.md and docs/install.md,
+// pinned identical by a test.
 
 import fs from 'node:fs';
 import os from 'node:os';
@@ -234,7 +290,10 @@ const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh']);
 // each with operand-aware peeling below (a lockfile, a CPU mask, a priority, an option's argument), after the
 // walk-around lens found `setsid cp …`, `flock -x . cp …`, `taskset -c 0 cp …`, `chrt -o 0 cp …` and
 // `numactl -C0 cp …` allowed while `nohup cp …` and `timeout 5 cp …` were refused. A command that is neither
-// modelled nor a known wrapper is read as its own command, as before.
+// modelled nor a known wrapper is read as its own command, as before. The gap of this set falls on the ALLOW side
+// (a wrapper not listed, `unshare`, `nsenter`, `script`, `setarch`, `setpriv`, is read as its own command, an
+// unmodelled writer by the contract), so the set is stated on the four surfaces; each wrapper listed here is then
+// parsed in full against WRAPPER_OPT or refused (the walk-around lens third pass, rule (b), 2026-09-19).
 const PREFIXES = new Set(['sudo', 'command', 'builtin', 'exec', 'nice', 'nohup', 'time', 'env', 'timeout', 'ionice', 'stdbuf', 'setsid', 'flock', 'taskset', 'chrt', 'numactl']);
 const RESERVED = new Set(['do', 'then', 'else', 'elif', 'if', 'while', 'until', '!', '{', '}']);
 // The shells verified (round 3, 2026-09-19, by execution) to read `$'...'` as ANSI-C quoting: bash 5.2 and zsh 5.9,
@@ -977,68 +1036,133 @@ function expandGlob(w, cwd) {
 
 // ── the grammar: which words a segment would write ─────────────────
 
-// The options of each prefix that take the next word as their operand (`sudo -u USER`, `env -u
-// VAR`, `timeout -s KILL 5`, `exec -a NAME`); every other -option is skipped on its own.
-const PREFIX_OPERANDS = {
-  sudo: new Set(['-u', '--user', '-g', '--group', '-h', '--host', '-p', '--prompt', '-C', '--close-from', '-D', '--chdir', '-r', '--role', '-t', '--type', '-T', '--command-timeout', '-U', '--other-user']),
-  env: new Set(['-u', '--unset']),
-  exec: new Set(['-a']),
-  timeout: new Set(['-s', '--signal', '-k', '--kill-after']),
-  nice: new Set(['-n', '--adjustment']),
-  ionice: new Set(['-c', '--class', '-n', '--classdata', '-p', '--pid', '-P', '--pgid', '-u', '--uid']),
-  stdbuf: new Set(['-i', '--input', '-o', '--output', '-e', '--error']),
-  // The wrappers added in round 4: options that take a separate word. flock's lock timeout and exit code, chrt's
-  // deadline parameters, numactl's node and cpu lists (also spelled `-C0` glued or `--physcpubind=0`). setsid and
-  // taskset take no argument-bearing option (setsid is flags only; taskset's -c is a flag, its mask a positional).
-  flock: new Set(['-w', '--timeout', '-E', '--conflict-exit-code']),
-  chrt: new Set(['-T', '--sched-runtime', '-P', '--sched-period', '-D', '--sched-deadline', '-p', '--pid']),
-  numactl: new Set(['-i', '--interleave', '-p', '--preferred', '-P', '--preferred-many', '-C', '--physcpubind', '-N', '--cpunodebind', '-m', '--membind']),
+// Per-wrapper option tables (the walk-around lens third pass, rule (b), 2026-09-19): a wrapper in PREFIXES is parsed
+// IN FULL against its table or the command is refused as unreadable, naming the option. Before, an option the guard
+// did not know was skipped as a flag and an argument-taking option was read only in the spellings a list named, so
+// the next spelling walked around it: `env -Cdocs cp …` (a glued short form) was not a chdir, `env --chd=docs` and
+// `env --c docs` (GNU abbreviations) were skipped, a nested `env -C docs env -C ..` kept the second chdir alone,
+// resolved against the cwd, and `env -S` was read as a shell string when env applies its OWN getopt to the split
+// words (`env -S '-u FOO cp a b'`, `env -S '-C docs cp …'`, `env -S '-- cp …'` each ran a copy the shell reading
+// took for a non-writer). Each table is taken from the wrapper's own `--help` on this box (coreutils 9.x env, nice,
+// nohup, timeout and stdbuf; util-linux ionice, setsid, flock, taskset and chrt; numactl's command-running options;
+// sudo 1.9; GNU time; bash 5.2's `command`, `builtin`, `exec` and `time`): `argShort` letters take a value (glued or
+// the next word, as getopt reads them), `flagShort` letters take none, `argLong` names take a value (`=` or the next
+// word), `flagLong` none, `optLong` a value glued with `=` only. `chdir` names the option pair that runs the command
+// in another directory (env -C, sudo -D), `script` the pair that hands a string to `$SHELL -c` (flock -c, read like
+// `sh -c`), `writes` the pair whose value is a FILE the wrapper writes (GNU time -o), `lead` the count of positional
+// operands before the command (flock's lockfile, taskset's mask, chrt's priority, timeout's duration), `numeric`
+// whether a bare `-N` is an adjustment (nice -19), `dash` whether a lone `-` is a flag (env - cmd). `refuse` names
+// the options the guard reads as OPAQUE and never recurses: env -S/--split-string (env's own splitter: options,
+// assignments, `--` and its own quoting rules over the string; the reviewer's ruling), and sudo's -e (edits files),
+// -i and -s (run a shell over the rest), -R (a chroot moves every path) and -h (help or host, by its argument). A
+// long option is matched exactly: an abbreviation (`--chd`) or an unknown name refuses, with the remedy of the long
+// form the guard knows or the wrapper dropped. The gap of every table falls on the REFUSE side: an option missing
+// from a table is a false refusal, recoverable in one step, never a write that passes.
+const WRAPPER_OPT = {
+  sudo: {
+    argShort: 'CDgprtTUu', flagShort: 'AbBEHKknPSVv',
+    argLong: ['close-from', 'chdir', 'group', 'host', 'prompt', 'role', 'type', 'command-timeout', 'other-user', 'user'],
+    flagLong: ['askpass', 'background', 'bell', 'preserve-env', 'set-home', 'help', 'remove-timestamp', 'reset-timestamp', 'list', 'non-interactive', 'preserve-groups', 'stdin', 'version', 'validate'],
+    optLong: ['preserve-env'], chdir: { short: 'D', long: 'chdir' }, refuse: { short: 'eishR', long: ['edit', 'login', 'shell', 'chroot'] },
+  },
+  env: {
+    argShort: 'uC', flagShort: 'i0v', argLong: ['unset', 'chdir'],
+    flagLong: ['ignore-environment', 'null', 'debug', 'help', 'version', 'list-signal-handling'], optLong: ['block-signal', 'default-signal', 'ignore-signal'],
+    chdir: { short: 'C', long: 'chdir' }, refuse: { short: 'S', long: ['split-string'] }, dash: true,
+  },
+  nice: { argShort: 'n', flagShort: '', argLong: ['adjustment'], flagLong: ['help', 'version'], numeric: true },
+  nohup: { argShort: '', flagShort: '', argLong: [], flagLong: ['help', 'version'] },
+  time: { argShort: 'fo', flagShort: 'apqv', argLong: ['format', 'output'], flagLong: ['append', 'portability', 'quiet', 'verbose', 'help', 'version'], writes: { short: 'o', long: 'output' } },
+  timeout: { argShort: 'ks', flagShort: 'v', argLong: ['kill-after', 'signal'], flagLong: ['preserve-status', 'foreground', 'verbose', 'help', 'version'], lead: 1 },
+  ionice: { argShort: 'cnpPu', flagShort: 'thV', argLong: ['class', 'classdata', 'pid', 'pgid', 'uid'], flagLong: ['ignore', 'help', 'version'] },
+  stdbuf: { argShort: 'ioe', flagShort: '', argLong: ['input', 'output', 'error'], flagLong: ['help', 'version'] },
+  setsid: { argShort: '', flagShort: 'cfwhV', argLong: [], flagLong: ['ctty', 'fork', 'wait', 'help', 'version'] },
+  flock: {
+    argShort: 'wE', flagShort: 'sxunoFhV', argLong: ['timeout', 'conflict-exit-code'],
+    flagLong: ['shared', 'exclusive', 'unlock', 'nonblock', 'close', 'no-fork', 'verbose', 'help', 'version'], lead: 1, script: { short: 'c', long: 'command' },
+  },
+  taskset: { argShort: '', flagShort: 'apchV', argLong: [], flagLong: ['all-tasks', 'pid', 'cpu-list', 'help', 'version'], lead: 1 },
+  chrt: {
+    argShort: 'TPD', flagShort: 'bdfiorRampvhV', argLong: ['sched-runtime', 'sched-period', 'sched-deadline'],
+    flagLong: ['batch', 'deadline', 'fifo', 'idle', 'other', 'rr', 'reset-on-fork', 'all-tasks', 'max', 'pid', 'verbose', 'help', 'version'], lead: 1,
+  },
+  numactl: { argShort: 'ipPCNm', flagShort: 'abl', argLong: ['interleave', 'preferred', 'preferred-many', 'physcpubind', 'cpunodebind', 'membind'], flagLong: ['all', 'balancing', 'localalloc'] },
+  command: { argShort: '', flagShort: 'pvV', argLong: [], flagLong: [] },
+  builtin: { argShort: '', flagShort: '', argLong: [], flagLong: [] },
+  exec: { argShort: 'a', flagShort: 'cl', argLong: [], flagLong: [] },
 };
-const NO_OPERANDS = new Set();
-// Wrappers that carry a positional operand BEFORE the command they run: flock a lockfile, taskset a CPU mask or
-// list, chrt a priority. The count of leading positionals to peel before the inner command (round 4, 2026-09-19).
-const PREFIX_LEAD_OPERANDS = { flock: 1, taskset: 1, chrt: 1 };
 
 // Words of a segment after the command's prefixes (sudo and its options, env with its options and
 // K=V arguments, nice, the round-4 wrappers, ...), leading assignments and reserved words. Returns
-// { name, args }, with `chdir`/`chdirFlag` set when a wrapper runs the command in another directory
-// (`env -C DIR`, `env --chdir=DIR`, `sudo -D DIR`: the inner command's relative paths resolve against
-// DIR, not the cwd, so the caller judges them there rather than dropping the whole command, round 4),
-// or { script, scriptFlag } when a wrapper runs a shell string (`flock … -c 'cmd'`), or null for an
-// empty segment.
+// { name, args, chdirs, writes, wrapped }, with `chdirs` the directories the wrappers run the command
+// in, IN ORDER (`env -C DIR`, `env --chdir=DIR`, `sudo -D DIR`, and a nested `env -C a env -C b`, whose
+// second directory resolves against the first: the caller enters each in turn, so the inner command's
+// relative paths are judged where the kernel runs it, round 4 and the third pass), `writes` the files a
+// wrapper itself writes (`time -o FILE`); { script, scriptFlag } when a wrapper runs a shell string
+// (`flock … -c 'cmd'`); { unknown: { option, wrapper, value, rest } } when a wrapper carries an option
+// its table does not parse in full (the caller refuses, naming it; `value` is a `=value` part, `rest` the
+// words after it, each a candidate the own-project step judges); { opaque: { option, wrapper, script,
+// rest } } for env -S and the sudo options the table refuses outright; or null for an empty segment.
 function commandOf(words) {
   let k = 0;
-  let chdir = null;
-  let chdirFlag = null;
+  const chdirs = [];
+  const writes = [];
   let wrapped = false;   // the walk-around lens second pass (family 6): a wrapper prefix was peeled before the command
   for (;;) {
     while (k < words.length && RESERVED.has(words[k].text)) k++;
     while (k < words.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[k].raw)) k++;
     if (k >= words.length) return null;
     const name = path.basename(words[k].text);
-    if (!PREFIXES.has(name)) return { name, args: words.slice(k + 1), chdir, chdirFlag, wrapped };
+    if (!PREFIXES.has(name)) return { name, args: words.slice(k + 1), chdirs, writes, wrapped };
     wrapped = true;
     k++;
-    const operands = PREFIX_OPERANDS[name] || NO_OPERANDS;
-    let lead = PREFIX_LEAD_OPERANDS[name] || 0;
+    const spec = WRAPPER_OPT[name];
+    let lead = spec.lead || 0;
+    const unknown = (option, value = null) => ({ unknown: { option, wrapper: name, value, rest: words.slice(k + 1) } });
+    const opaque = (option, script) => ({ opaque: { option, wrapper: name, script, rest: words.slice(k + 1) } });
+    // the value of an option at letter `j` of word `k`: the glued rest of the word, else the next word
+    const valueAt = (j) => (j < words[k].text.length - 1 ? sliceWord(words[k], j + 1) : (words[k + 1] || null));
     while (k < words.length) {
-      const t = words[k].text;
+      const w = words[k];
+      const t = w.text;
       if (t === '--') { k++; break; }
-      if (name === 'env' && (t === '-C' || t === '--chdir')) { chdir = words[k + 1] || null; chdirFlag = `env ${t}`; k += 2; continue; }
-      if (name === 'env' && t.startsWith('--chdir=')) { chdir = sliceWord(words[k], 8); chdirFlag = 'env --chdir'; k++; continue; }
-      if (name === 'sudo' && (t === '-D' || t === '--chdir')) { chdir = words[k + 1] || null; chdirFlag = `sudo ${t}`; k += 2; continue; }
-      if (name === 'sudo' && t.startsWith('--chdir=')) { chdir = sliceWord(words[k], 8); chdirFlag = 'sudo --chdir'; k++; continue; }
-      if (name === 'flock' && (t === '-c' || t === '--command')) return { script: words[k + 1] || null, scriptFlag: `flock ${t}` };
-      // env -S STRING / --split-string=STRING splits STRING into a command and runs it, like `sh -c`: read the string,
-      // never skip it as an operand (the walk-around lens second pass, family 1; before, `env -S'cp … <tracked>'` was skipped and the copy passed)
-      if (name === 'env' && (t === '-S' || t === '--split-string')) return { script: words[k + 1] || null, scriptFlag: `env ${t}` };
-      if (name === 'env' && /^-S./.test(t)) return { script: sliceWord(words[k], 2), scriptFlag: 'env -S' };
-      if (name === 'env' && t.startsWith('--split-string=')) return { script: sliceWord(words[k], 15), scriptFlag: 'env --split-string' };
-      if (operands.has(t)) { k += 2; continue; }
-      if (t.startsWith('-') && t.length > 1) { k++; continue; }
-      if (name === 'timeout' && /^[0-9.]+[smhd]?$/.test(t)) { k++; continue; }   // the duration
-      if (lead > 0) { lead--; k++; continue; }   // a leading positional: flock's lockfile, taskset's mask, chrt's priority
-      break;
+      // a word the shell fills in before the command: a lead positional it may stand for (`timeout "$T" cmd`); anything
+      // else could be an option or the command itself, and neither is parsed, so it refuses (the third pass)
+      if (!w.literal) { if (lead > 0) { lead--; k++; continue; } return unknown(w.raw); }
+      if (t === '-') { if (spec.dash) { k++; continue; } break; }
+      if (!t.startsWith('-') || t.length < 2) {
+        if (lead > 0) { lead--; k++; continue; }   // a leading positional: flock's lockfile, taskset's mask, chrt's priority, timeout's duration
+        break;   // the command
+      }
+      if (t.startsWith('--')) {
+        const eq = t.indexOf('=');
+        const nm = eq < 0 ? t.slice(2) : t.slice(2, eq);
+        const value = eq < 0 ? (words[k + 1] || null) : sliceWord(w, eq + 1);
+        const step = eq < 0 ? 2 : 1;
+        if (spec.refuse && spec.refuse.long.includes(nm)) return opaque(`${name} --${nm}`, value);
+        if (spec.chdir && nm === spec.chdir.long) { chdirs.push({ word: value, flag: `${name} --${nm}` }); k += step; continue; }
+        if (spec.script && nm === spec.script.long) return { script: value, scriptFlag: `${name} --${nm}` };
+        if (spec.writes && nm === spec.writes.long) { if (value) writes.push(value); k += step; continue; }
+        if (spec.argLong.includes(nm)) { k += step; continue; }
+        if (spec.optLong && spec.optLong.includes(nm)) { k++; continue; }
+        if (eq < 0 && spec.flagLong.includes(nm)) { k++; continue; }
+        return unknown(t, eq < 0 ? null : value);
+      }
+      if (spec.numeric && /^-\d+$/.test(t)) { k++; continue; }   // nice -19: the adjustment
+      // a short option, alone or in a cluster: flags go on, the first value-taking letter ends the cluster
+      let step = 1;
+      let done = false;
+      for (let j = 1; j < t.length && !done; j++) {
+        const ch = t[j];
+        if (spec.refuse && spec.refuse.short.includes(ch)) return opaque(`${name} -${ch}`, valueAt(j));
+        if (spec.chdir && ch === spec.chdir.short) { chdirs.push({ word: valueAt(j), flag: `${name} -${ch}` }); step = j < t.length - 1 ? 1 : 2; done = true; break; }
+        if (spec.script && ch === spec.script.short) return { script: valueAt(j), scriptFlag: `${name} -${ch}` };
+        if (spec.writes && ch === spec.writes.short) { const v = valueAt(j); if (v) writes.push(v); step = j < t.length - 1 ? 1 : 2; done = true; break; }
+        if (spec.argShort.includes(ch)) { step = j < t.length - 1 ? 1 : 2; done = true; break; }
+        if (spec.flagShort.includes(ch)) continue;
+        return unknown(`-${ch}`);
+      }
+      k += step;
     }
   }
 }
@@ -1152,6 +1276,138 @@ const COPY_OPT = {
   },
 };
 const sliceWord = (a, n) => word(a.text.slice(n), a.literal, a.raw, { glob: a.glob, marks: a.marks && a.marks.slice(n) });
+
+// The words an option the table does not know leaves unplaced (rule (f), the third pass, 2026-09-19): with such an
+// option in the list the walk cannot tell an operand from the option's value, so every operand-looking word, and the
+// `=value` of a long option, is a candidate the caller records as a target it cannot read (judged by its own project
+// from any cwd) or marks as a path the command may have changed.
+function optionCandidates(args) {
+  const out = [];
+  for (const a of args) {
+    const t = a.text;
+    if (t.startsWith('--') && t.includes('=')) { out.push(sliceWord(a, t.indexOf('=') + 1)); continue; }
+    if (t.startsWith('-') && t.length > 1) continue;
+    out.push(a);
+  }
+  return out;
+}
+
+// Rule (d) (the walk-around lens third pass, 2026-09-19, recast by the reviewer as an ALLOWLIST whose gap falls on the
+// safe side): a shell option the command sets or clears changes how the shell reads a later path, a cd or a glob, and
+// the guard models none of that, so an option on `set`, `shopt`, `setopt` or `unsetopt` that is not on the inert list
+// leaves the directory UNKNOWN from that point, and a later literal relative target refuses with the construct named.
+// The second pass listed `set -P`, `set -o physical` and `setopt chase_links`, and zsh's `set -o chaselinks` and
+// `set -o chasedots` walked around the list. The inert lists are built from the shells' own option lists (`set -o`
+// and `shopt` in bash 5.2, `set -o` in zsh 5.9, `set -o` in dash) and hold the options about exit status, tracing,
+// history, completion, prompts, job control, quoting-free syntax choices and the like; every option about cd, pushd,
+// physical paths, links, globbing, brace expansion, aliases, quoting, restricted or privileged mode, POSIX mode or the
+// input source is OFF the lists, so its mention makes the directory unknown. A single letter is inert only when it is
+// inert in BOTH bash and zsh (the Bash tool runs one of the two and the guard does not know which): `-e -u -x -v -n
+// -C -f -a -m -b -k -h -t -E -H` and zsh's `-F -y`; `-P` (bash physical), `-T` (zsh cdablevars), `-w` (zsh chaselinks),
+// `-B` (bash braceexpand), `-J`, `-N`, `-D`, `-G`, `-I` and the rest are not. Names are compared as zsh compares
+// them (case and underscores ignored, a `no` prefix negating), so `set -o pipe_fail`, `setopt NO_NOMATCH` and
+// `shopt -s histappend` read the same as their plain spellings. A gap here (an inert option not listed) is a false
+// refusal, recoverable in one step (drop the option, or spell the target absolutely), never a write that passes.
+const INERT_SET_LETTERS = 'euxvnCfambkhtEHFy';
+const INERT_SET_OPTIONS = new Set([
+  // bash `set -o`, all but braceexpand, physical, posix and privileged
+  'allexport', 'emacs', 'errexit', 'errtrace', 'functrace', 'hashall', 'histexpand', 'history', 'ignoreeof', 'interactivecomments',
+  'keyword', 'monitor', 'noclobber', 'noexec', 'noglob', 'nolog', 'notify', 'nounset', 'onecmd', 'pipefail', 'verbose', 'vi', 'xtrace',
+  // dash `set -o`: the rest of its list is above; `stdin` and `debug` are not inert (the input source, the debug hooks)
+  // zsh `set -o` / setopt: the error, tracing and scoping options
+  'errreturn', 'evallineno', 'localoptions', 'localtraps', 'localloops', 'localpatterns', 'warncreateglobal', 'warnnestedvar', 'typesetsilent',
+  'typesettounset', 'printexitvalue', 'printeightbit', 'continueonerror', 'debugbeforecmd', 'sourcetrace', 'trapsasync', 'singlecommand',
+  // zsh: clobbering, which the guard reads as a write either way
+  'clobber', 'clobberempty', 'appendcreate', 'histallowclobber', 'multios',
+  // zsh: history (banghist is not: history expansion rewrites later words)
+  'appendhistory', 'extendedhistory', 'histexpiredupsfirst', 'histfcntllock', 'histfindnodups', 'histignorealldups', 'histignoredups',
+  'histignorespace', 'histlexwords', 'histnofunctions', 'histnostore', 'histreduceblanks', 'histsavebycopy', 'histsavenodups',
+  'histsubstpattern', 'histverify', 'histbeep', 'incappendhistory', 'incappendhistorytime', 'sharehistory', 'cshjunkiehistory',
+  // zsh: prompts, completion, listing and the line editor (interactive machinery)
+  'promptbang', 'promptcr', 'promptpercent', 'promptsp', 'promptsubst', 'transientrprompt', 'alwayslastprompt', 'alwaystoend', 'autolist',
+  'automenu', 'autoparamkeys', 'autoparamslash', 'autoremoveslash', 'bashautolist', 'completealiases', 'completeinword', 'listambiguous',
+  'listbeep', 'listpacked', 'listrowsfirst', 'listtypes', 'menucomplete', 'recexact', 'correct', 'correctall', 'dvorak', 'singlelinezle',
+  'zle', 'overstrike', 'sunkeyboardhack', 'flowcontrol', 'beep', 'combiningchars', 'multibyte',
+  // zsh: command hashing and job control
+  'hashcmds', 'hashdirs', 'hashexecutablesonly', 'hashlistall', 'pathdirs', 'pathscript', 'autocontinue', 'autoresume', 'bgnice',
+  'checkjobs', 'checkrunningjobs', 'hup', 'longlistjobs', 'mailwarning', 'posixjobs', 'posixtraps', 'posixargzero',
+  // zsh: syntax choices that move no path
+  'bsdecho', 'bashrematch', 'rematchpcre', 'casematch', 'cbases', 'octalzeroes', 'forcefloat', 'cprecedences', 'ksharrays',
+  'kshzerosubscript', 'kshoptionprint', 'kshtypeset', 'kshautoload', 'functionargzero', 'shortloops', 'shortrepeat', 'cshjunkieloops',
+  'cshnullcmd', 'shnullcmd', 'nomatch', 'badpattern', 'numericglobsort', 'markdirs', 'rcs', 'globalrcs', 'login', 'globalexport',
+  'shwordsplit', 'rmstarsilent', 'rmstarwait', 'cdsilent', 'pushdsilent', 'pushdignoredups', 'pushdminus',
+]);
+const INERT_SHOPT = new Set([
+  'assocexpandonce', 'checkhash', 'checkjobs', 'checkwinsize', 'cmdhist', 'compat31', 'compat32', 'compat40', 'compat41', 'compat42',
+  'compat43', 'compat44', 'completefullquote', 'execfail', 'extdebug', 'extquote', 'forcefignore', 'gnuerrfmt', 'histappend', 'histreedit',
+  'histverify', 'hostcomplete', 'huponexit', 'inheriterrexit', 'interactivecomments', 'lithist', 'localvarinherit', 'localvarunset',
+  'loginshell', 'mailwarn', 'noemptycmdcompletion', 'nocasematch', 'noexpandtranslation', 'patsubreplacement', 'progcomp', 'progcompalias',
+  'promptvars', 'shiftverbose', 'varredirclose', 'xpgecho',
+]);
+const normalizeOption = (name) => name.toLowerCase().replace(/[_-]/g, '');
+function inertOption(name, table) {
+  const n = normalizeOption(name);
+  return table.has(n) || (n.startsWith('no') && table.has(n.slice(2)));
+}
+// The reason a `set`/`shopt`/`setopt`/`unsetopt` leaves the directory unknown, or null when every option it names is
+// inert (or it only prints or queries). Positional parameters after `set` are not options (`set -- a b`, `set x y`).
+function shellOptionChange(name, args) {
+  const reason = (w) => `an earlier \`${name} ${w}\` sets a shell option that may make the shell resolve paths physically, or that I do not know to be inert for paths, cd and globbing, so where a later relative path lands is not known`;
+  if (name === 'set') {
+    for (let k = 0; k < args.length; k++) {
+      const w = args[k];
+      const t = w.text;
+      if (t === '--' || t === '-' || t === '+') break;   // positional parameters follow, or `set -` (tracing off)
+      if (!/^[-+]/.test(t)) break;
+      if (!w.literal) return reason(w.raw);
+      for (let j = 1; j < t.length; j++) {
+        const ch = t[j];
+        if (ch === 'o') {
+          const v = args[k + 1];
+          if (!v) return null;   // `set -o` alone lists the options
+          if (!v.literal || !inertOption(v.text, INERT_SET_OPTIONS)) return reason(`${t} ${v.raw}`);
+          k++;
+          break;
+        }
+        if (!INERT_SET_LETTERS.includes(ch)) return reason(t);
+      }
+    }
+    return null;
+  }
+  if (name === 'shopt') {
+    let setO = false;
+    let changes = false;
+    let flags = '';
+    const names = [];
+    for (const w of args) {
+      const t = w.text;
+      if (!w.literal) return reason(w.raw);
+      if (/^-[supqo]+$/.test(t)) { flags += (flags ? ' ' : '') + t; if (t.includes('o')) setO = true; if (t.includes('s') || t.includes('u')) changes = true; continue; }
+      if (t.startsWith('-')) return reason(t);
+      names.push(w);
+    }
+    if (!changes) return null;   // a print or a query changes nothing
+    for (const w of names) if (!inertOption(w.text, setO ? INERT_SET_OPTIONS : INERT_SHOPT)) return reason(`${flags} ${w.raw}`);
+    return null;
+  }
+  // setopt / unsetopt: single letters with - or +, `-o NAME`, and bare option names
+  for (let k = 0; k < args.length; k++) {
+    const w = args[k];
+    const t = w.text;
+    if (!w.literal) return reason(w.raw);
+    if (t === '--') continue;
+    if (/^[-+]/.test(t) && t.length > 1) {
+      for (let j = 1; j < t.length; j++) {
+        const ch = t[j];
+        if (ch === 'o') { const v = args[k + 1]; if (!v) return null; if (!v.literal || !inertOption(v.text, INERT_SET_OPTIONS)) return reason(`${t} ${v.raw}`); k++; break; }
+        if (!INERT_SET_LETTERS.includes(ch)) return reason(t);
+      }
+      continue;
+    }
+    if (!inertOption(t, INERT_SET_OPTIONS)) return reason(w.raw);
+  }
+  return null;
+}
 
 // The operands of a cp/mv/install/ln command, its `-t`/`--target-directory` folder and its
 // `-T`/`--no-target-directory` flag, per the verb's option table. Returns { operands, targetDir,
@@ -1440,28 +1696,38 @@ function shellScript(args, shell) {
 // the literal targets read before it with it (round 3: about 1100 nested `$(` made evaluate's catch
 // return allow on a command whose first word copied onto a tracked file).
 const RECURSION_CAP = 64;
-// The walk-around lens second pass (family 2, 2026-09-19): the guard EXPANDS one variable of the environment, HOME (for `~` and a leading
-// `$HOME`, marked 'h'); a command that assigns HOME before the write named a directory the guard did not read. Round 4
-// caught only `HOME=…` (an inline or leading assignment word); the shells offer more: `HOME+=`, `export`/`declare`/
-// `typeset`/`local`/`readonly HOME`, `read HOME`, `printf -v HOME`, `mapfile`/`readarray HOME`, `env HOME=…`, `getopts
-// … HOME`, `for HOME in …`. Any of them, anywhere in the command, makes an 'h'-marked word unreadable for the rest of
-// it. (PWD, OLDPWD and TMPDIR are named in the same class, but the guard does not expand them, so their `$…` is already
-// a word it cannot read; only HOME carries the 'h' mark an assignment would falsify.)
-const HOME_DECLARERS = /^(export|declare|typeset|local|readonly)$/;
-function assignsHome(segments) {
-  const namesHome = (w) => w && (w.text === 'HOME' || /^HOME\+?=/.test(w.text));
-  for (const s of segments) {
-    const words = s.words;
-    for (let i = 0; i < words.length; i++) {
-      if (/^HOME\+?=/.test(words[i].raw)) return true;   // HOME=…, HOME+=…, an env prefix `HOME=…`, an inline assignment
-      const t = words[i].text;
-      if (HOME_DECLARERS.test(t)) { for (let j = i + 1; j < words.length; j++) if (namesHome(words[j])) return true; }
-      if (t === 'read' || t === 'mapfile' || t === 'readarray' || t === 'getopts') { for (let j = i + 1; j < words.length; j++) if (words[j].text === 'HOME') return true; }
-      if (t === 'printf') { for (let j = i + 1; j + 1 < words.length; j++) if (words[j].text === '-v' && words[j + 1].text === 'HOME') return true; }
-      if (t === 'for' && words[i + 1] && words[i + 1].text === 'HOME') return true;
+// The variables the guard EXPANDS from its own environment: HOME alone (for `~`, a leading `$HOME` and `${HOME}`,
+// the lexer's 'h' mark). PWD, OLDPWD and TMPDIR are in the same class of names a command can reassign, but the guard
+// never expands them, so their `$…` (and `~+`, `~-`) is already a word it cannot read; a name added to expansionAt
+// goes here too, or an assignment to it would go unseen. The walk-around lens third pass (rule (a), 2026-09-19): the
+// second pass listed the assignment FORMS (`HOME=`, `HOME+=`, `export`/`declare`/`typeset`/`local`/`readonly HOME`,
+// `read HOME`, `printf -v HOME`, `mapfile`/`readarray HOME`, `getopts … HOME`, `for HOME in`), and the next spelling
+// walked around the list: a nameref (`declare -n r=HOME; r=<dir>`), `select HOME in …`, the glued `printf -vHOME`.
+// So the rule is keyed on what the guard can SEE, not on a list of forms: the bare identifier of an expanded variable
+// appearing ANYWHERE in the command outside a `$`-expansion (as a word, inside a word such as `r=HOME` or `-vHOME`,
+// quoted or not, or in an arithmetic body) makes that variable's expansion unreadable for the WHOLE command. The
+// cost is a false refusal of a command that only mentions the name (`echo HOME=x; > ~/log`, `grep HOME rc > ~/out`,
+// a path holding the text HOME) beside a `~/` or `$HOME/` write from a tracked cwd, recoverable by spelling the path;
+// the gap is none: there is no form of assignment that does not spell the name.
+const EXPANDED_NAMES = ['HOME'];
+function bareExpandedNames(segments) {
+  const found = new Set();
+  const scan = (text, marks) => {
+    for (const name of EXPANDED_NAMES) {
+      for (let at = text.indexOf(name); at >= 0; at = text.indexOf(name, at + 1)) {
+        // outside an expansion: none of these characters came from one ('x') or from the guard's own home text ('h')
+        if (marks && /[xh]/.test(marks.slice(at, at + name.length))) continue;
+        found.add(name);
+        break;
+      }
     }
+  };
+  for (const s of segments) {
+    for (const w of s.words) scan(w.text, w.marks);
+    for (const r of s.redirects) scan(r.target.text, r.target.marks);
+    for (const a of s.arith) scan(a, null);
   }
-  return false;
+  return found;
 }
 export function extractWriteTargets(command, cwd, shell = null) {
   return extract(command, { dir: cwd || null, unknownDir: !cwd, unknownWhy: cwd ? null : 'no working directory is known for it', shell, depth: 0 });
@@ -1479,12 +1745,14 @@ function extract(command, ctx) {
   const setKnown = (d) => { dir = d; unknownDir = false; unknownWhy = null; };
   // Class D (2026-09-19): a leading `~/`, `$HOME/` or `${HOME}/` expands through os.homedir(), but a
   // command can reassign HOME before the write (`HOME=notes; > $HOME/seed.md` from a tracked project put
-  // the write in a tracked folder while the guard read the real home). Every form of the assignment
-  // (`HOME=...` inline or leading, `export`/`declare`/`typeset`/`local`/`readonly HOME=...`,
-  // `env HOME=... cmd`) lexes a word whose raw starts with `HOME=`; when any segment holds one, the
-  // home the guard read is not the one the shell would use, so a word that expanded it (marked 'h') is a
-  // target the hook cannot read for the rest of the command.
-  const homeAssigned = ctx.homeAssigned || assignsHome(segments);
+  // the write in a tracked folder while the guard read the real home). Since the third pass (rule (a)) the
+  // trigger is the bare identifier HOME anywhere in the command outside an expansion (bareExpandedNames),
+  // not a list of assignment forms; when it appears, the home the guard read may not be the one the shell
+  // uses, so a word that expanded it (marked 'h') is a target the hook cannot read, and a `cd` to such a
+  // word, or a bare `cd`, leaves the directory unknown, for the whole command.
+  const homeAssigned = ctx.homeAssigned || bareExpandedNames(segments).has('HOME');
+  const homeWord = (w) => !!(homeAssigned && w && w.marks && w.marks.includes('h'));
+  const HOME_UNKNOWN = 'the command names HOME outside an expansion, so it may reassign HOME before this runs and `~` and `$HOME` name a directory I cannot read';
   // Class H (2026-09-19): a symlink an `ln -s` with literal operands and an untouched name makes before a later word,
   // resolved as the kernel will resolve it once it exists. `links` maps an absolute link path to the absolute path it
   // points at; foldSegments (in resolveLiteral) follows it as it folds a later literal target, so a `..` after the link
@@ -1503,16 +1771,27 @@ function extract(command, ctx) {
   const markMutated = (abs, verb) => { if (abs) mutated.push({ prefix: abs.replace(/\/+$/, ''), verb }); };
   const underMutated = (abs) => mutated.find((m) => abs === m.prefix || abs.startsWith(m.prefix + '/')) || null;
   // Record the paths a remove, rename or link command touches, resolved against the current dir (the walk-around lens second pass, family 3).
+  // Rule (f) (the third pass, 2026-09-19): an option the writer's table does not know leaves the operands unplaced (which
+  // is the source, which the destination, which an option's value), so every literal candidate word is marked as a
+  // path this command may have changed; before, the recorder returned and a later write under the moved path was read
+  // against the hook-time tree.
   const recordMutations = (name, args, cwd) => {
     if (!cwd) return;
     const abs = (w) => (w && w.literal ? literalPath(w.text, cwd) : null);
+    const markAllCandidates = (verb) => { for (const c of optionCandidates(args)) markMutated(abs(c), verb); };
     if (name === 'rm' || name === 'rmdir' || name === 'unlink' || name === 'shred') {
       for (const a of args) if (!(a.text.startsWith('-') && a.text.length > 1)) markMutated(abs(a), name);
       return;
     }
+    if (name === 'link') {   // coreutils link(1): a hard link at the second operand, the sibling of a hard `ln` (the third pass)
+      const ops = args.filter((a) => !(a.text.startsWith('-') && a.text.length > 1));
+      if (ops.length >= 2) markMutated(abs(ops[1]), 'link');
+      return;
+    }
     if (name === 'mv') {
       const parsed = parseCopyOptions(args, 'mv');
-      if (parsed.unknown || parsed.installDir) return;
+      if (parsed.unknown) { markAllCandidates('mv'); return; }
+      if (parsed.installDir) return;
       const ops = parsed.operands;
       const destDir = parsed.targetDir;
       if (destDir && destDir.literal) { for (const s of ops) { markMutated(abs(s), 'mv'); markMutated(literalPath(path.join(destDir.text, path.basename(s.text)), cwd), 'mv'); } return; }
@@ -1520,12 +1799,14 @@ function extract(command, ctx) {
       return;
     }
     if (name === 'ln') {
-      // a SYMBOLIC ln is class H (recordSymlink resolves the link for a later word); only a HARD link is a mutation
-      // here, since it aliases the source's inode and the hook cannot resolve it after the fact.
+      // a SYMBOLIC ln with literal operands the hook can place is class H (recordSymlink resolves the link for a later
+      // word, and marks the NAME of every other symbolic link, rule (c)); a HARD link is a mutation here, since it
+      // aliases the source's inode and the hook cannot resolve it after the fact.
+      const parsed = parseCopyOptions(args, 'ln');
+      if (parsed.unknown) { markAllCandidates('ln'); return; }
+      if (parsed.installDir) return;
       const symbolic = args.some((a) => a.literal && (a.text === '--symbolic' || (/^-[^-]/.test(a.text) && a.text.includes('s'))));
       if (symbolic) return;
-      const parsed = parseCopyOptions(args, 'ln');
-      if (parsed.unknown || parsed.installDir) return;
       if (parsed.targetDir && parsed.targetDir.literal) { for (const s of parsed.operands) markMutated(literalPath(path.join(parsed.targetDir.text, path.basename(s.text)), cwd), 'ln'); return; }
       const ops = parsed.operands;
       if (ops.length >= 2) markMutated(abs(ops[ops.length - 1]), 'ln');
@@ -1533,45 +1814,60 @@ function extract(command, ctx) {
       return;
     }
     if (name === 'cp') {
-      const linky = args.some((a) => a.literal && ((/^-[^-]/.test(a.text) && (a.text.includes('l') || a.text.includes('s'))) || a.text === '--link' || a.text === '--symbolic-link'));
-      if (!linky) return;
       const parsed = parseCopyOptions(args, 'cp');
-      if (parsed.unknown || parsed.installDir) return;
+      if (parsed.unknown) { markAllCandidates('cp'); return; }
+      const linky = args.some((a) => a.literal && ((/^-[^-]/.test(a.text) && (a.text.includes('l') || a.text.includes('s'))) || a.text === '--link' || a.text === '--symbolic-link'));
+      if (!linky || parsed.installDir) return;
       if (parsed.targetDir && parsed.targetDir.literal) { for (const s of parsed.operands) markMutated(literalPath(path.join(parsed.targetDir.text, path.basename(s.text)), cwd), 'cp -l'); return; }
       const ops = parsed.operands;
       if (ops.length >= 2) markMutated(abs(ops[ops.length - 1]), 'cp -l');
     }
   };
-  // Record the symlinks an `ln -s` makes when both operands are literal, so a later word through the link is
-  // judged as the path it leads to (class H). A non-literal operand, or a link the hook cannot place, records
-  // nothing (the write through it stays whatever the literal rule makes of the un-followed name).
+  // Record the symlinks an `ln -s` makes when the hook can place both the link NAME and a LITERAL source, so a later
+  // word through the link is judged as the path it leads to (class H). Rule (c) (the third pass, 2026-09-19): every
+  // other symbolic link the command makes at a name the hook can place (a source that is not literal, `ln -s "$PWD/docs"
+  // mydocs`, `ln -s $(echo docs) md3`; a source it cannot resolve; a name or source an earlier command mutated) marks
+  // that NAME as mutated, so a later write through it refuses with the reason; before, such a link recorded nothing and
+  // `cp base/report.md mydocs/report.md` was judged as the un-followed name, an untracked file, and overwrote the
+  // tracked one. A link name the hook cannot place is the ln's own unreadable target, refused by copyTargets.
   const recordSymlink = (args, cwd) => {
     if (!cwd) return;
     const symbolic = args.some((a) => a.literal && (a.text === '--symbolic' || (/^-[^-]/.test(a.text) && a.text.includes('s'))));
     if (!symbolic) return;
     const parsed = parseCopyOptions(args, 'ln');
-    if (parsed.unknown || parsed.installDir) return;
-    if (parsed.operands.some((o) => !o.literal)) return;
+    if (parsed.unknown || parsed.installDir) return;   // an unknown option: recordMutations marks every candidate (rule (f))
     // the source is relative to the link's OWN directory, not the cwd (a symlink target is `readlink`-relative): the walk-around lens second pass
     // (family 3) after `ln -s ../docs sub/d` recorded `sub/d -> <cwd>/docs` and a write through it was judged outside.
-    const record = (srcText, dstAbs) => {
+    const record = (src, dstAbs) => {
       if (!dstAbs) return;
-      const srcAbs = path.isAbsolute(srcText) ? srcText : literalPath(srcText, path.dirname(dstAbs));
-      if (!srcAbs) return;
-      if (underMutated(dstAbs) || underMutated(srcAbs)) return;   // the walk-around lens second pass (family 3): a mutated name/source is not a trustworthy link
+      const srcAbs = src.literal ? (path.isAbsolute(src.text) ? src.text : literalPath(src.text, path.dirname(dstAbs))) : null;
+      if (!srcAbs || underMutated(dstAbs) || underMutated(srcAbs)) { markMutated(dstAbs, 'ln -s'); return; }   // rule (c): the name is unknown
       links.set(dstAbs, srcAbs);
     };
-    if (parsed.targetDir && parsed.targetDir.literal) {
-      for (const s of parsed.operands) record(s.text, literalPath(path.join(parsed.targetDir.text, path.basename(s.text)), cwd));
+    if (parsed.targetDir) {
+      if (!parsed.targetDir.literal) return;   // the ln's own target, refused by copyTargets
+      const dirAbs = literalPath(parsed.targetDir.text, cwd);
+      for (const s of parsed.operands) {
+        if (s.literal) record(s, literalPath(path.join(parsed.targetDir.text, path.basename(s.text)), cwd));
+        else markMutated(dirAbs, 'ln -s');   // the link's name is the source's basename, which the hook cannot read: the folder is unknown
+      }
       return;
     }
     if (parsed.operands.length < 2) return;
     const dst = parsed.operands[parsed.operands.length - 1];
+    if (!dst.literal) return;   // the ln's own target, refused by copyTargets
     const dstAbs = literalPath(dst.text, cwd);
     let dstIsDir = false;
     try { dstIsDir = dstAbs != null && fs.statSync(dstAbs).isDirectory(); } catch { /* a new link name */ }
-    if (dstIsDir) { for (const s of parsed.operands.slice(0, -1)) record(s.text, literalPath(path.join(dst.text, path.basename(s.text)), cwd)); return; }
-    if (parsed.operands.length === 2) record(parsed.operands[0].text, dstAbs);
+    if (dstIsDir) {
+      for (const s of parsed.operands.slice(0, -1)) {
+        if (s.literal) record(s, literalPath(path.join(dst.text, path.basename(s.text)), cwd));
+        else markMutated(dstAbs, 'ln -s');
+      }
+      return;
+    }
+    if (parsed.operands.length === 2) record(parsed.operands[0], dstAbs);
+    else markMutated(dstAbs, 'ln -s');   // several sources into a name that is not a directory: ln fails or the name is unknown
   };
   // A write target the hook cannot read (the header). A process substitution (`>(cmd)`) is a pipe and
   // never a file, so it is dropped, not recorded.
@@ -1626,7 +1922,7 @@ function extract(command, ctx) {
   // `$(...)` in this command runs in this command's shell, so it inherits `shell`, and the directory state.
   const recurse = (text, sh = shell) => {
     if (depth >= RECURSION_CAP) { sawOpaqueCommand = true; return; }
-    const sub = extract(text, { dir, unknownDir, unknownWhy, shell: sh, depth: depth + 1, homeAssigned, links, physicalMode, cdFunctions, mutated });
+    const sub = extract(text, { dir, unknownDir, unknownWhy, shell: sh, depth: depth + 1, homeAssigned, links, cdFunctions, mutated });
     targets.push(...sub.targets);
     unresolved.push(...sub.unresolved);
     if (sub.opaque) sawOpaqueCommand = true;
@@ -1641,9 +1937,9 @@ function extract(command, ctx) {
   // Open scopes, innermost last: a subshell frame holds the dir to restore at its `)`; a function
   // frame (`f() { ... }`, a body defined, not run) holds the dir to restore at its closing brace;
   // a compound frame (if, while, until, for, case) records whether a cd ran in its body.
-  // The walk-around lens second pass (family 6): `set -P` / `set -o physical` (bash) or `setopt chase_links` (zsh) makes every later cd resolve
-  // `..` physically, and a function whose body moves the shell moves it when CALLED, which the guard does not follow.
-  let physicalMode = ctx.physicalMode || false;
+  // The walk-around lens second pass (family 6): a function whose body moves the shell moves it when CALLED, which the
+  // guard does not follow. (A shell option that changes how paths resolve, `set -P`, `set -o chaselinks`, is rule (d)
+  // since the third pass: the directory is unknown from the option on, shellOptionChange.)
   const cdFunctions = ctx.cdFunctions || new Set();   // names of functions defined here whose body ran a cd/pushd/popd
   const markFunctionBody = () => {
     for (let j = frames.length - 1; j >= 0; j--) {
@@ -1708,7 +2004,35 @@ function extract(command, ctx) {
     else if (head === 'if' || head === 'while' || head === 'until' || head === 'for' || head === 'case') frames.push({ kind: head, moved: false });
     const cmd = commandOf(seg.words);
     if (!cmd) continue;
-    if ('script' in cmd) {   // `flock … -c 'string'` runs the string through the shell, like `sh -c` (round 4)
+    if (cmd.unknown) {
+      // rule (b) (the third pass, 2026-09-19): a wrapper option its table does not parse in full. The option, its `=value`
+      // and every later word are recorded as targets the hook cannot read, so the own-project step judges each literal
+      // one by its own directory (an absolute path inside a project refuses from any cwd) and the cwd rule the rest;
+      // the command behind the wrapper is not read, since the option may have moved it or taken part of it.
+      const { option, wrapper, value, rest } = cmd.unknown;
+      const why = { kind: 'unknownOption', option, wrapper };
+      cannotRead(word(option, false, option), wrapper, why);
+      if (value) cannotRead(value, wrapper, why);
+      for (const w of rest) cannotRead(w, wrapper, why);
+      continue;
+    }
+    if (cmd.opaque) {
+      // `env -S STRING` and the sudo options the table refuses (rule (b)): the string, or the rest of the line, goes
+      // through a splitter the hook does not read, so nothing behind the option is read as a command. The option, the
+      // string, each word the string would split into and every later word are recorded as targets the hook cannot read,
+      // so a path inside a project refuses from any cwd and the cwd rule decides the rest.
+      const { option, script, rest } = cmd.opaque;
+      const why = { kind: 'opaqueScript', option };
+      cannotRead(word(option, false, option), option, why);
+      if (script) {
+        cannotRead(script, option, why);
+        if (script.literal) for (const s of lex(script.text).segments) for (const w of s.words) cannotRead(w, option, why);
+      }
+      for (const w of rest) cannotRead(w, option, why);
+      sawOpaqueCommand = true;
+      continue;
+    }
+    if ('script' in cmd) {   // `flock … -c 'string'` runs the string through `$SHELL -c`, read like `sh -c` (round 4)
       if (cmd.script && cmd.script.literal) recurse(cmd.script.text);
       else if (cmd.script) sawOpaqueCommand = true;
       continue;
@@ -1717,33 +2041,37 @@ function extract(command, ctx) {
     let { name } = cmd;
     if (/^(python[0-9.]*|pypy[0-9]*)$/.test(name)) name = 'python';
     else if (name === 'nodejs') name = 'node';
-    // `env -C DIR`, `env --chdir=DIR`, `sudo -D DIR`: the inner command's relative operands resolve against DIR, for
-    // this command only (its redirections, processed above, stay in the shell's cwd). A literal DIR is entered like a
-    // `cd`; a non-literal one, or one the command cannot enter, leaves the directory unknown, so the inner relative
-    // targets are refused with the reason rather than dropped (round 4, 2026-09-19: `env -C DIR cp …` dropped the
-    // whole segment and the copy landed on the tracked file).
-    // the walk-around lens second pass (family 6): a `set -P` / `set -o physical` / `setopt chase_links` makes later cds physical
-    if (name === 'set' && args.some((w) => w.text === '-P' || (w.text === '-o' && args.some((x) => x.text === 'physical')))) physicalMode = true;
-    if (name === 'setopt' && args.some((w) => /^(chase_links|chaselinks|chase_dots)$/.test(w.text))) physicalMode = true;
+    // rule (d) (the third pass): a shell option not on the inert allowlist leaves the directory unknown from here
+    if (name === 'set' || name === 'shopt' || name === 'setopt' || name === 'unsetopt') {
+      const why = shellOptionChange(name, args);
+      if (why) { setUnknown(why); movedHere(); }
+    }
     // the walk-around lens second pass (family 6): a call to a function whose body moved the shell moves the cwd, which the guard does not
     // follow into the call, so the directory is unknown from here (the body was modelled as not moving the shell)
     if (cdFunctions.has(name)) setUnknown(`an earlier call of the function \`${name}\` may change the directory, which I do not follow`);
-    const chdirSaved = cmd.chdirFlag ? { dir, unknownDir, unknownWhy } : null;
-    if (cmd.chdir) {
-      const c = cmd.chdir;
-      if (!c.literal) setUnknown(`an earlier \`${cmd.chdirFlag}\` names ${c.raw}, a directory the shell fills in when the command runs`);
-      else {
-        // env's and sudo's chdir is chdir(2), which the kernel resolves (a `..` after a symlink climbs from its real
-        // target), so the operand is folded physically, not lexically (the walk-around lens second pass, family 6: `env -C lnout/.. cp …`).
-        const r = resolveLiteral(c.text, unknownDir ? null : dir);
-        if (r == null) setUnknown(`an earlier \`${cmd.chdirFlag}\` follows a directory I could not read`);
-        else if (r.unresolvable) setUnknown(`an earlier \`${cmd.chdirFlag} ${c.raw}\` follows a directory I cannot resolve`);
-        else if (!enterable(r.path)) { dir = r.path; setUnknown(`an earlier \`${cmd.chdirFlag} ${c.raw}\` names a directory the command cannot enter when I check it`); }
-        else setKnown(r.path);
-      }
-    } else if (cmd.chdirFlag) {
-      setUnknown(`an earlier \`${cmd.chdirFlag}\` names no directory`);
+    // a file a wrapper itself writes (`time -o FILE`): judged in the shell's cwd, and again below once the wrappers'
+    // chdirs are entered, since the guard does not order one wrapper's option against another's chdir (over-counting is
+    // the refuse direction)
+    for (const w of cmd.writes) add(w, 'time -o');
+    // `env -C DIR`, `env --chdir=DIR`, `sudo -D DIR`, and a nested chdir (`env -C a env -C b`, rule (b)): each is entered
+    // in turn, the next resolved against the last, for this command only (its redirections, processed above, stay in
+    // the shell's cwd). A literal DIR is entered like a `cd`; a non-literal one, a `~`/`$HOME` one after a mention of
+    // HOME, or one the command cannot enter, leaves the directory unknown, so the inner relative targets are refused with
+    // the reason rather than dropped (round 4, 2026-09-19: `env -C DIR cp …` dropped the whole segment and the copy
+    // landed on the tracked file). env's and sudo's chdir is chdir(2), which the kernel resolves (a `..` after a symlink
+    // climbs from its real target), so the operand is folded physically, not lexically (family 6: `env -C lnout/.. cp …`).
+    const chdirSaved = cmd.chdirs.length ? { dir, unknownDir, unknownWhy } : null;
+    for (const c of cmd.chdirs) {
+      if (!c.word) { setUnknown(`an earlier \`${c.flag}\` names no directory`); continue; }
+      if (homeWord(c.word)) { setUnknown(`an earlier \`${c.flag} ${c.word.raw}\` goes through HOME, and ${HOME_UNKNOWN}`); continue; }
+      if (!c.word.literal) { setUnknown(`an earlier \`${c.flag}\` names ${c.word.raw}, a directory the shell fills in when the command runs`); continue; }
+      const r = resolveLiteral(c.word.text, unknownDir ? null : dir);
+      if (r == null) setUnknown(`an earlier \`${c.flag}\` follows a directory I could not read`);
+      else if (r.unresolvable) setUnknown(`an earlier \`${c.flag} ${c.word.raw}\` follows a directory I cannot resolve`);
+      else if (!enterable(r.path)) { dir = r.path; setUnknown(`an earlier \`${c.flag} ${c.word.raw}\` names a directory the command cannot enter when I check it`); }
+      else setKnown(r.path);
     }
+    if (chdirSaved) for (const w of cmd.writes) add(w, 'time -o');
     switch (name) {
       case 'cd': case 'pushd': {
         // The walk-around lens second pass (family 6): a `cd` the guard cannot know ran in THIS shell leaves the directory unknown. Whichever
@@ -1755,7 +2083,7 @@ function extract(command, ctx) {
         const opts = args.filter((w) => w.literal && /^-/.test(w.text) && w.text !== '-' && w.text !== '--');
         const rotate = name === 'pushd' && args.some((w) => w.literal && /^[-+]\d+$/.test(w.text));
         const pushdN = name === 'pushd' && opts.some((w) => w.text === '-n');
-        const physical = physicalMode || opts.some((w) => /P/.test(w.text));
+        const physical = opts.some((w) => /P/.test(w.text));
         const unmodeled = opts.some((w) => !/^-[LPe@n]+$/.test(w.text)) && !rotate;
         let block = null;
         if (prevOp === '&&' || prevOp === '||') block = `an earlier \`${name}\` after \`${prevOp}\` may not run, so where it lands is not known (its move depends on the previous status)`;
@@ -1764,15 +2092,17 @@ function extract(command, ctx) {
         else if (cmd.wrapped) block = `an earlier \`${name}\` runs under a wrapper, an external \`${name}\` that does not exist, so the shell does not move`;
         else if (pushdN) block = 'an earlier `pushd -n` pushes a directory without changing to it';
         else if (rotate) block = 'an earlier `pushd` rotates the directory stack, so where it lands is not known';
-        else if (physical) block = `an earlier \`${name}\` resolves \`..\` physically (\`-P\`, \`set -P\`, or an option I do not model), so where it lands is not known`;
+        else if (physical) block = `an earlier \`${name}\` resolves \`..\` physically (\`-P\`, or an option I do not model), so where it lands is not known`;
         else if (unmodeled) block = `an earlier \`${name}\` carries an option I do not model, so where it lands is not known`;
         let a = args.find((w) => !w.text.startsWith('-') || w.text === '-');
         if (a && a.glob) {   // cd docs/*: one match is the directory; several, or none, leave it unknown
           const m = expandGlob(a, unknownDir ? null : dir);
           a = m && m.length === 1 ? m[0] : word(a.text, false, a.raw, { marks: a.marks });
         }
-        if (!a) { if (block) setUnknown(block); else setKnown(os.homedir()); }
+        // a bare `cd`, or a `cd ~/x`, goes to HOME: a directory the guard cannot read once the command names HOME (rule (a))
+        if (!a) { if (block) setUnknown(block); else if (homeAssigned) setUnknown(`an earlier bare \`${name}\` goes to HOME, and ${HOME_UNKNOWN}`); else setKnown(os.homedir()); }
         else if (a.text === '-') setUnknown(`an earlier \`${name} -\` returns to a directory this command did not set`);
+        else if (homeWord(a)) setUnknown(`an earlier \`${name} ${a.raw}\` goes through HOME, and ${HOME_UNKNOWN}`);
         else if (!a.literal) setUnknown(`an earlier \`${name}\` names ${a.raw}, a directory the shell fills in when the command runs`);
         else {
           const to = resolveAgainst(a.text, unknownDir ? null : dir);
@@ -1791,6 +2121,9 @@ function extract(command, ctx) {
         break;
       }
       case 'popd': setUnknown('an earlier `popd` returns to a directory this command did not set'); movedHere(); break;
+      // `chdir` is cd's synonym in zsh and dash and no command in bash, and the guard does not know which shell runs the
+      // line (the third pass): a cd it cannot know ran, family 6
+      case 'chdir': setUnknown('an earlier `chdir` moves the shell in zsh and dash and fails in bash, so where the shell is after it is not known'); movedHere(); break;
       case 'cp': case 'mv': case 'install': case 'ln': {
         // copyTargets stats the destination to see whether it is a directory, so a stat error there (the walk-around lens second pass, family 4)
         // is an UnknownPath; attach the verb and the last operand's spelling for the refusal before it propagates.
@@ -1803,11 +2136,23 @@ function extract(command, ctx) {
           }
           throw e;
         }
-        if (r.unknown) cannotRead(word(r.unknown, false, r.unknown), name, { kind: 'unknownOption', option: r.unknown });
-        else {
+        if (r.unknown) {
+          // rule (f) (the third pass, 2026-09-19): the option is refused wherever the writer is reached, and since the
+          // operands cannot be placed, each candidate word is recorded too, so an operand inside a tracked project is
+          // judged by its own project from any cwd (before, `cp --targ <abs docs> <abs src>` from a cwd in no project was
+          // dropped with the option word alone, and the copy landed on the tracked file).
+          const why = { kind: 'unknownOption', option: r.unknown };
+          cannotRead(word(r.unknown, false, r.unknown), name, why);
+          for (const c of optionCandidates(args)) cannotRead(c, name, why);
+        } else {
           for (const w of r.targets) add(w, name);
           if (name === 'ln') recordSymlink(args, unknownDir ? null : dir);   // class H: a symlink for a later word in the same command
         }
+        break;
+      }
+      case 'link': {   // coreutils link(1): one hard link, made at the second operand (the third pass; the sibling of a hard `ln`)
+        const ops = args.filter((a) => !(a.text.startsWith('-') && a.text.length > 1));
+        if (ops.length >= 2) add(ops[1], 'link');
         break;
       }
       case 'tee':
@@ -2344,9 +2689,17 @@ function ownProjectFor(u, memo) {
   return parentTrackedRoots(D, segPrefix, memo);
 }
 
-// The tracked projects that sit directly under `dir` whose name the expansion after `dir` could spell (its literal
-// head `segPrefix` is a prefix of the root's name), as { root, dir, fromEnv, parentOf: [names] }, or null (class E).
-// Bounded by LANDING_SCAN_CAP entries: a directory past it is not scanned (open there, as the outside-folder scans are).
+// The tracked projects that sit UNDER `dir` at ANY depth and whose path the expansion after `dir` could spell (class E;
+// rule (e) of the walk-around lens third pass, 2026-09-19: round 4 listed the direct children only, and `x=f/notes-api;
+// cp <src> ../../$x/docs/report.md` from a cwd in no project spelled two segments and reached a root one level down
+// unseen). The first segment under `dir` must start with the expansion's literal head `segPrefix`; below that the
+// expansion can spell anything. The walk is breadth-first, so a root close to `dir` is found before a deep tree spends
+// the budget; a symbolic link is asked whether it is a root and not descended; a directory the hook cannot list is
+// skipped (this walk judges no path of the write itself, so an error here is not family 4's); it is bounded by
+// PARENT_SCAN_BUDGET entries in all and LANDING_SCAN_CAP per listing, past which the rest is not scanned (open there,
+// as the outside-folder scans are, and stated with the change). Returns { root, dir, fromEnv, parentOf: [absolute
+// roots] }, or null.
+const PARENT_SCAN_BUDGET = 20000;
 function parentTrackedRoots(dir, segPrefix, memo) {
   const names = readdirOrNull(dir);
   if (!names || names.length > LANDING_SCAN_CAP) return null;
@@ -2354,14 +2707,36 @@ function parentTrackedRoots(dir, segPrefix, memo) {
   const found = [];
   let root = null;
   let fromEnv = false;
-  for (const n of names) {
-    if (segPrefix && !n.startsWith(segPrefix)) continue;   // the expansion cannot spell this name
-    const child = path.join(dir, n);
-    let isDir = false;
-    try { isDir = fs.statSync(child).isDirectory(); } catch { continue; }
-    if (!isDir) continue;
-    const r = env && !outside(child, env) ? env : findVaultRoot(path.join(child, 'x'));
-    if (r && r === child && tracksRefusable(r, memo)) { found.push(n); if (!root) { root = r; fromEnv = env && !outside(child, env); } }
+  let budget = PARENT_SCAN_BUDGET - names.length;
+  const rootAt = (d) => {
+    const r = env && !outside(d, env) ? env : findVaultRoot(path.join(d, 'x'));   // findVaultRoot starts at the parent of the path given
+    return r && r === d && tracksRefusable(r, memo) ? r : null;
+  };
+  const take = (d, r) => { found.push(d); if (!root) { root = r; fromEnv = !!env && !outside(d, env); } };
+  let level = [];
+  for (const n of names) if (!segPrefix || n.startsWith(segPrefix)) level.push(path.join(dir, n));   // the expansion cannot spell the others
+  while (level.length && budget > 0) {
+    const next = [];
+    for (const d of level) {
+      let st;
+      try { st = fs.lstatSync(d); } catch { continue; }
+      if (st.isSymbolicLink()) {
+        let isDir = false;
+        try { isDir = fs.statSync(d).isDirectory(); } catch { continue; }
+        if (isDir) { const r = rootAt(d); if (r) take(d, r); }   // a link to a project counts; a link is not descended
+        continue;
+      }
+      if (!st.isDirectory()) continue;
+      const r = rootAt(d);
+      if (r) { take(d, r); continue; }   // a root's inside is that project's own class F
+      let sub;
+      try { sub = fs.readdirSync(d); } catch { continue; }
+      if (sub.length > LANDING_SCAN_CAP) continue;
+      budget -= sub.length;
+      if (budget <= 0) break;
+      for (const n of sub) next.push(path.join(d, n));
+    }
+    level = next;
   }
   return found.length ? { root, dir, fromEnv, parentOf: found } : null;
 }
@@ -2505,6 +2880,15 @@ export function evaluate(raw) {
         + `accept or reject. Run the \`${u.why.verb}\` in a command of its own, or write a path that does not pass through `
         + `${u.why.prefix}: a tracked file then takes its change through track-edit:\n${TRACK_EDIT}`;
     }
+    if (u.why && u.why.kind === 'unknownOption' && u.why.wrapper) {
+      // rule (b) (the third pass): a wrapper option the guard does not parse in full (unknown, abbreviated, glued to a
+      // letter it does not know, or filled in by the shell), so what the wrapper runs, and where, is not known.
+      return `This command is blocked here: its \`${u.why.wrapper}\` wrapper carries the option ${u.why.option}, which I do not read in `
+        + `that spelling (an option I do not know, an abbreviation, or a form I do not parse), so I cannot tell what the command `
+        + `behind it would write or where, and ${where} tracks files whose changes are recorded for me to accept or reject. `
+        + `Spell the option in the long form I know, or drop the wrapper: outside that project the command then runs as usual, `
+        + `and a tracked file takes its change through track-edit instead:\n${TRACK_EDIT}`;
+    }
     if (u.why && u.why.kind === 'unknownOption') {
       // class A (round 4): an option the writer's table does not know, so the operands cannot be placed and the
       // write target is unreadable. The remedy is the command without the option, or its long form the table knows.
@@ -2513,18 +2897,29 @@ export function evaluate(raw) {
         + `reject. Spell the command without that option, or use the long form I know: outside that project the command then `
         + `runs as usual, and a tracked file takes its change through track-edit instead:\n${TRACK_EDIT}`;
     }
+    if (u.why && u.why.kind === 'opaqueScript') {
+      // rule (b) (the third pass): env -S hands env a string that env's own splitter reads (its options, assignments, `--`
+      // and quoting), and sudo -e/-i/-s/-R/-h run an editor, a shell or a chroot over the rest; neither is read here.
+      return `This command is blocked here: its \`${u.why.option}\` hands the rest of the command to a splitter or a shell of its `
+        + `own, which I do not read, so I cannot tell what runs or which file it would write, and ${where} tracks files whose `
+        + `changes are recorded for me to accept or reject. Spell the command without \`${u.why.option}\`: outside that project it `
+        + `then runs as usual, and a tracked file takes its change through track-edit instead:\n${TRACK_EDIT}`;
+    }
     if (u.why && u.why.kind === 'homeAssigned') {
-      // class D (round 4): the command reassigns HOME before the write, so `$HOME` and `~` name a directory I cannot read
-      // (I read only my own home, and never a variable the command sets). The remedy is to spell the path out.
-      return `This command is blocked here: its ${u.how} names ${u.raw}, but the command reassigns HOME before it runs, so `
-        + `\`$HOME\` and \`~\` no longer name a directory I can read (I read my own home, never a variable the command sets). `
+      // class D (round 4), rule (a) since the third pass: the command names HOME outside an expansion, so it may reassign HOME
+      // before the write and `$HOME` and `~` name a directory I cannot read (I read only my own home, and never a variable the
+      // command sets). The remedy is to spell the path out.
+      return `This command is blocked here: its ${u.how} names ${u.raw}, but the command names HOME outside an expansion (an `
+        + `assignment, a declaration, a nameref, a read or an argument that could reassign it), so it may reassign HOME before this `
+        + `runs and \`$HOME\` and \`~\` no longer name a directory I can read (I read my own home, never a variable the command sets). `
         + `I cannot tell which file the write lands in, and ${where} tracks files whose changes are recorded for me to accept `
         + `or reject. Spell the path out: outside that project the command then runs as usual, and a tracked file takes its `
         + `change through track-edit instead:\n${TRACK_EDIT}`;
     }
     if (hit.parentOf) {
-      // class E (round 4): the literal head of the target sits above tracked projects, and the expansion could name one.
-      const list = hit.parentOf.map((n) => `${hit.dir}/${n}`).join(', ');
+      // class E (round 4; any depth since the third pass): the literal head of the target sits above tracked projects, and
+      // the expansion could spell the path down to one.
+      const list = hit.parentOf.join(', ');
       return `This command is blocked here: its ${u.how} names ${u.raw}, and ${hit.dir} sits above the tracked project`
         + `${hit.parentOf.length > 1 ? 's' : ''} ${list}, whose name${hit.parentOf.length > 1 ? 's' : ''} the shell's expansion could `
         + `fill in when the command runs. I cannot tell which file the write lands in, and those projects track files whose changes `

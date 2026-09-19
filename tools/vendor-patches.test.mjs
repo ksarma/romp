@@ -258,6 +258,16 @@ test('P9 the skill says a shell write whose target is not a literal path is refu
   assert.ok(section.includes('runs `env -C DIR` and `sudo -D DIR` in DIR') && section.includes('reassigns HOME'), 'env -C and the HOME reassignment');
   assert.ok(section.includes('best-effort against known write forms') && section.includes('allows anything it does not recognise'), 'the contract, stated');
   assert.ok(section.includes('These write forms are not modelled and still reach a tracked file: rsync;'), 'the unmodelled-writer list');
+  // the walk-around lens third pass (2026-09-19): the six rules re-keyed on what the guard can see, each named so a
+  // session knows the refusal it meets, and the contract paragraph's two sentences the other surfaces carry
+  const flat = section.replace(/\s+/g, ' ');   // the skill hard-wraps its paragraphs
+  assert.ok(flat.includes('on what the guard can see, not on a list of spellings'), 'the third pass\'s principle');
+  for (const phrase of ['any mention of HOME outside an expansion', 'an option it does not parse in full', '`env -S` is refused outright', 'a link whose source is not literal', 'a shell option it does not know to be inert for paths', 'at any depth beneath it', '`cp --targ`']) {
+    assert.ok(flat.includes(phrase), `the skill states the third-pass rule: ${phrase}`);
+  }
+  assert.ok(flat.includes('The allow-by-default for an unmodelled writer is deliberately not flipped') && flat.includes('What it does refuse, while a tracked project is in play'), 'the contract paragraph in full');
+  const ours = section.slice(section.indexOf('In a project that tracks files, a shell write'), section.indexOf('For ANY change to the file'));
+  assert.ok(ours.length > 0 && !/\u2014/.test(ours), 'no em dash in the paragraphs the patch writes (the skill\'s own text below them keeps its own)');
 });
 
 // ── P8: one writer per sidecar: the CLIs take store-io's lock around their load-to-rename ──

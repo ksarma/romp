@@ -1,4 +1,4 @@
-# Patch 0009 — skill: a shell write whose target is not a literal path is refused in a project that tracks files
+# Patch 0009 - skill: a shell write whose target is not a literal path is refused in a project that tracks files
 # Offered back: no (romp-only)
 # Files: skill/SKILL.md
 #
@@ -22,16 +22,24 @@
 # reassigns HOME, and refuses a variable whose literal head parents or sits under a tracked project; and it
 # states the contract plainly (best-effort against known write forms, allow by default) with the current list of
 # unmodelled writers that pass, the same paragraph the hook header, hooks/README.md and docs/install.md carry.
-# The walk-around lens second pass (2026-09-19) added a second paragraph's worth to the same round-4 paragraph: the
-# six families it closed (a glued option short form and env -S; any HOME assignment form; an in-command rm/mv/link
-# mutation; a stat error refusing from any cwd; a marker nested under the project; and a cd the guard cannot know ran).
-# Other hosts have no Bash-side guard, so this stays romp's. Prose only; pinned by the host's
-# tools/vendor-patches.test.mjs (P9) and the drift test.
+# The walk-around lens second pass (2026-09-19) extended the round-4 paragraph with the six families it closed
+# (a glued option short form; any HOME assignment form; an in-command rm/mv/link mutation; a stat error refusing
+# from any cwd; a marker nested under the project; and a cd the guard cannot know ran). The third pass
+# (2026-09-19) re-keyed six of those rules on what the guard can see, not on a list of spellings, and the
+# paragraph names each so a session knows the refusal it meets: any mention of HOME outside an expansion; a
+# wrapper option the guard does not parse in full, with env -S refused outright; a link whose source is not
+# literal; a shell option not known to be inert for paths; a tracked project at any depth under a variable's
+# literal head; and an unknown writer option refused wherever the writer is reached. The contract paragraph is
+# now the same on all four surfaces, its allow-by-default sentence and its refused-class sentence included, and
+# the writer list names the out-of-model roads the three passes found (a sourced or eval'd script, a wrapper
+# outside the set, shuf -o, a cd through CDPATH). The title line of this patch carries a plain dash since that
+# pass (a line romp writes carries no em dash). Other hosts have no Bash-side guard, so this stays romp's. Prose
+# only; pinned by the host's tools/vendor-patches.test.mjs (P9) and the drift test.
 diff --git a/skill/SKILL.md b/skill/SKILL.md
-index f7d8bc9..8a4b0b2 100644
+index f7d8bc9..a0edec3 100644
 --- a/skill/SKILL.md
 +++ b/skill/SKILL.md
-@@ -59,6 +59,51 @@
+@@ -59,6 +59,81 @@ heredoc included), no `sed -i` or `perl -i`, no python `open(..., 'w')` or node
  the write: its status is 0 when tracking is ON, so `track-config ... && cp ...` runs
  the copy on exactly the file it must not touch.
  
@@ -58,27 +66,57 @@ index f7d8bc9..8a4b0b2 100644
 +refuses a `cp`/`mv`/`install`/`ln` option it does not know, treats `$HOME` and `~`
 +as unreadable once the command reassigns HOME, and refuses a variable or
 +substitution whose literal head is above or under a tracked project. A second pass
-+added six more: the tables accept a glued short form (`sort -oFILE`) and read `env
-+-S` as a shell string; an assignment to HOME in any form (`HOME+=`, `read HOME`,
-+`printf -v HOME`, `export`/`declare`/`local HOME`, `for HOME in`, and the rest)
-+makes `$HOME` and `~` unreadable for the whole command; an earlier `rm`, `mv`, hard
-+`ln`, `cp -l` or `cp -s` that removes, renames or aliases a path makes a later write
-+under it unreadable; a stat or config-read error other than not-found anywhere on a
-+path it checks (a mode-000 folder, `.trackchanges` or project) refuses from any
-+working directory; a `.git` or `.trackchanges` between a tracked project and the
-+file refuses; and a `cd` it cannot know ran in this shell (after `&&`/`||`, in a
++added six more: the tables accept a glued short form (`sort -oFILE`); an
++assignment to HOME in any form (`HOME+=`, `read HOME`, `printf -v HOME`,
++`export`/`declare`/`local HOME`, `for HOME in`, and the rest) makes `$HOME` and `~`
++unreadable for the whole command; an earlier `rm`, `mv`, hard `ln`, `cp -l` or `cp
++-s` that removes, renames or aliases a path makes a later write under it
++unreadable; a stat or config-read error other than not-found anywhere on a path it
++checks (a mode-000 folder, `.trackchanges` or project) refuses from any working
++directory; a `.git` or `.trackchanges` between a tracked project and the file
++refuses; and a `cd` it cannot know ran in this shell (after `&&`/`||`, in a
 +pipeline, backgrounded, under a wrapper, `pushd -n`, a physical `cd -P`, or a call
 +of a function that cd's) leaves the directory unknown, so a later relative write
-+refuses. But it is
-+best-effort against known write forms: it refuses the shell writes it models and,
-+by design, allows anything it does not recognise, so it never blocks ordinary work
-+it cannot read; it is a backstop, not a complete boundary. These write forms are
-+not modelled and still reach a tracked file: rsync; awk with a redirect inside its
-+program; ed; ex; make; find with -delete or -exec; a git subcommand that writes the
-+working tree (checkout, stash, apply, reset, rm, clean, mv); a computed path inside
-+an interpreter (python3 -c, node -e); and a leading opaque expansion from a cwd
-+outside every project. Whichever way you write a tracked file, use `track-edit`, so
-+your change comes back to be accepted or rejected.
++refuses. A third pass re-keyed six of those rules on what the guard can see, not
++on a list of spellings, so the refusal you meet is one of these: any mention of
++HOME outside an expansion (`declare -n r=HOME`, `select HOME in`, `printf -vHOME`,
++`unset HOME`, the word in an argument) makes `~` and `$HOME` unreadable and a bare
++`cd` or `cd ~` unknown; a wrapper (`env`, `sudo`, `nice`, `nohup`, `time`,
++`timeout`, `ionice`, `stdbuf`, `setsid`, `flock`, `taskset`, `chrt`, `numactl`,
++`command`, `builtin`, `exec`) carrying an option it does not parse in full (an
++unknown, abbreviated or non-literal one, `env --chd=docs`) is refused naming the
++option (spell the long form, or drop the wrapper), a glued `env -Cdocs` is a chdir,
++a nested `env -C a env -C b` enters a then b, `env -S` is refused outright and so
++are sudo's `-e`, `-i`, `-s`, `-R` and `-h`, and `time -o FILE` writes FILE; an `ln
++-s` with a link whose source is not literal makes the link name unknown, so a
++later write through it refuses; a `set`, `shopt`, `setopt` or `unsetopt` naming a
++shell option it does not know to be inert for paths (`set -e`, `-u`, `-x`, `-o
++pipefail` and the options about history, completion, prompts and job control pass;
++`set -P`, `set -o chaselinks`, `shopt -s globstar` and anything about cd, links,
++globbing, aliases or quoting do not) leaves the directory unknown, so a later
++relative write refuses (spell the target absolutely); a variable in a path whose
++literal head has a tracked project at any depth beneath it refuses, naming the
++projects; and an option a writer does not know (`cp --targ`) refuses wherever the
++writer is reached, from any working directory. This guard is best-effort against
++known write forms: it refuses the shell writes it models and, by design, allows
++anything it does not recognise, so it never blocks ordinary work it cannot read; it
++is a backstop, not a complete boundary. The allow-by-default for an unmodelled
++writer is deliberately not flipped, since flipping it would refuse almost all
++normal work. What it does refuse, while a tracked project is in play, is a write it
++reads but cannot place: a target it cannot read, a path it cannot check (a stat
++error other than not-found), an option on a modelled writer or wrapper it does not
++parse in full, an env -S string, a shell option it does not know to be inert for
++paths, a link whose source it cannot read, and a `~` or `$HOME` write beside a
++mention of HOME. These write forms are not modelled and still reach a tracked
++file: rsync; awk with a redirect inside its program; ed; ex; make; find with
++-delete or -exec; a git subcommand that writes the working tree (checkout, stash,
++apply, reset, rm, clean, mv); a computed path inside an interpreter (python3 -c,
++node -e); a script the shell reads from elsewhere (eval, xargs, a sourced file,
++trap, a command whose name is an expansion, a script held in a variable); a
++wrapper outside the guard's set (unshare, nsenter, script, setarch, setpriv); shuf
++-o; a cd through CDPATH; and a leading opaque expansion from a cwd outside every
++project. Whichever way you write a tracked file, use `track-edit`, so your change
++comes back to be accepted or rejected.
 +
  For ANY change to the file, use the CLI, NOT the Edit/Write/MultiEdit tools:
  

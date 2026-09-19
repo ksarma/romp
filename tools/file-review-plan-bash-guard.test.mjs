@@ -229,8 +229,9 @@ test('the install guide, the hook\'s README row and the ledger entry say a name 
 test('decision 47 records round 4 and each class is tied to the hook function that implements it', () => {
   assert.ok(d47.includes('Round 4 (2026-09-19, a walk-around lens) closed eight more in-model roads'));
   assert.ok(d47.includes('read a per-writer option table (`COPY_OPT`)') && hook.includes('const COPY_OPT = {') && hook.includes('function parseCopyOptions(args, verb)'));
-  assert.ok(d47.includes('`commandOf` returns its `chdir`') && hook.includes('return { name, args: words.slice(k + 1), chdir, chdirFlag, wrapped };'));
-  assert.ok(d47.includes('the `PREFIXES` set gained `setsid`, `flock`, `taskset`, `chrt` and `numactl`') && hook.includes("'setsid', 'flock', 'taskset', 'chrt', 'numactl'") && hook.includes('const PREFIX_LEAD_OPERANDS = { flock: 1, taskset: 1, chrt: 1 };'));
+  // since the third pass `commandOf` returns the chdirs in order (a nested `env -C` composes) and the wrapper tables live in WRAPPER_OPT
+  assert.ok(d47.includes('`commandOf` returns its `chdir`') && hook.includes('return { name, args: words.slice(k + 1), chdirs, writes, wrapped };'));
+  assert.ok(d47.includes('the `PREFIXES` set gained `setsid`, `flock`, `taskset`, `chrt` and `numactl`') && hook.includes("'setsid', 'flock', 'taskset', 'chrt', 'numactl'") && hook.includes('const WRAPPER_OPT = {'));
   assert.ok(d47.includes('the lexer marks a home expansion \'h\' and `extract` computes `homeAssigned`'));
   assert.ok(hook.includes("const home = (t) => { buf += t; marks += 'h'.repeat(t.length); };") && hook.includes('const homeAssigned = ctx.homeAssigned'));
   assert.ok(d47.includes('`parentTrackedRoots`') && hook.includes('function parentTrackedRoots(dir, segPrefix, memo)'));
@@ -243,7 +244,11 @@ test('the best-effort contract and its unmodelled-writer list are stated identic
   // strip the source's line-comment markers (`//` in the hook) so the paragraph reads the same whether it is a
   // comment, a markdown paragraph or a table cell, then collapse whitespace and case
   const norm = (s) => s.replace(/\/\//g, ' ').replace(/\s+/g, ' ').toLowerCase();
-  const LIST = 'these write forms are not modelled and still reach a tracked file: rsync; awk with a redirect inside its program; ed; ex; make; find with -delete or -exec; a git subcommand that writes the working tree (checkout, stash, apply, reset, rm, clean, mv); a computed path inside an interpreter (python3 -c, node -e); and a leading opaque expansion from a cwd outside every project.';
+  // the whole paragraph, since the third pass (2026-09-19): the contract sentence, the allow-by-default sentence, the
+  // sentence that says what IS refused, and the writer list (which gained the unlisted wrappers, shuf -o, the scripts the
+  // shell reads from elsewhere and a cd through CDPATH the three passes found)
+  const CONTRACT_PARAGRAPH = 'this guard is best-effort against known write forms: it refuses the shell writes it models and, by design, allows anything it does not recognise, so it never blocks ordinary work it cannot read; it is a backstop, not a complete boundary. the allow-by-default for an unmodelled writer is deliberately not flipped, since flipping it would refuse almost all normal work. what it does refuse, while a tracked project is in play, is a write it reads but cannot place: a target it cannot read, a path it cannot check (a stat error other than not-found), an option on a modelled writer or wrapper it does not parse in full, an env -s string, a shell option it does not know to be inert for paths, a link whose source it cannot read, and a `~` or `$home` write beside a mention of home. ';
+  const LIST = 'these write forms are not modelled and still reach a tracked file: rsync; awk with a redirect inside its program; ed; ex; make; find with -delete or -exec; a git subcommand that writes the working tree (checkout, stash, apply, reset, rm, clean, mv); a computed path inside an interpreter (python3 -c, node -e); a script the shell reads from elsewhere (eval, xargs, a sourced file, trap, a command whose name is an expansion, a script held in a variable); a wrapper outside the guard\'s set (unshare, nsenter, script, setarch, setpriv); shuf -o; a cd through cdpath; and a leading opaque expansion from a cwd outside every project.';
   const CONTRACT = 'best-effort against known write forms';
   const surfaces = {
     'hook header': read('hooks', 'romp-track-bash-guard.mjs'),
@@ -256,6 +261,9 @@ test('the best-effort contract and its unmodelled-writer list are stated identic
     assert.ok(n.includes(CONTRACT), `${name} states the check is best-effort against known forms`);
     assert.ok(n.includes(LIST), `${name} carries the identical unmodelled-writer list (a differing list fails here)`);
     assert.ok(n.includes('allows anything it does not recognise') || n.includes('allow') , `${name} says the default is allow`);
+    // the third pass (2026-09-19): the WHOLE paragraph is identical on the four surfaces, the two sentences the hook
+    // header alone carried (the allow-by-default is not flipped; what is refused) included
+    assert.ok(n.includes(CONTRACT_PARAGRAPH + LIST), `${name} carries the identical contract paragraph, the allow-by-default sentence and the refused-class sentence included`);
   }
 });
 
@@ -265,10 +273,11 @@ test('decision 47 records the walk-around lens second pass, each family tied to 
   assert.ok(d47.includes('The\n    walk-around lens second pass (2026-09-19) then closed six families') || d47.includes('walk-around lens second pass (2026-09-19) then closed six families'));
   // (1) option tables and env -S
   assert.ok(d47.includes('a glued short form\n    (`sort -oFILE`)') || d47.includes('a glued short form (`sort -oFILE`)'));
-  assert.ok(d47.includes('`env -S`/`--split-string` runs a shell string') && hook.includes("if (name === 'env' && (t === '-S' || t === '--split-string')) return { script"));
+  // since the third pass env -S is refused outright (WRAPPER_OPT's `refuse`), never read as a shell string
+  assert.ok(d47.includes('`env -S`/`--split-string` runs a shell string') && hook.includes("refuse: { short: 'S', long: ['split-string'] }"));
   assert.ok(/else if \(\/\^-o\.\/\.test\(t\)\) add\(sliceWord\(args\[k\], 2\), 'sort -o'\)/.test(hook), 'sort reads a glued -o');
-  // (2) assignment forms
-  assert.ok(d47.includes('as an lvalue in any form the shells offer') && hook.includes('function assignsHome(segments)'));
+  // (2) assignment forms, since the third pass the bare identifier anywhere (bareExpandedNames)
+  assert.ok(d47.includes('as an lvalue in any form the shells offer') && hook.includes('function bareExpandedNames(segments)'));
   // (3) in-command prefix mutations
   assert.ok(d47.includes('IN-COMMAND PREFIX MUTATIONS') && hook.includes('const recordMutations = (name, args, cwd) =>') && hook.includes('const mutated = ctx.mutated || [];'));
   // (4) stat errors refuse
@@ -279,5 +288,37 @@ test('decision 47 records the walk-around lens second pass, each family tied to 
   // (6) a cd the guard cannot know
   assert.ok(d47.includes('A cd THE GUARD CANNOT KNOW') && hook.includes('function commandOf(words)') && hook.includes('const cdFunctions = ctx.cdFunctions || new Set();'));
   assert.ok(d47.includes('`env -C DIR` resolves its operand\n    physically') || d47.includes('`env -C DIR` resolves its operand physically'));
+  assert.ok(!/\u2014/.test(d47), 'no em dash in decision 47');
+});
+
+// The walk-around lens third pass (2026-09-19): decision 47 records the six rules re-keyed on what the guard can see,
+// each tied to the hook function or table that implements it, and the hook header carries the audit of the lists that
+// remain with the side each list's gap falls on; a rule dropped from the code, or a list added without its gap stated,
+// fails here by name.
+test('decision 47 records the walk-around lens third pass, each rule tied to its hook function, and the hook header audits the lists that remain', () => {
+  assert.ok(d47.includes('The walk-around lens third pass (2026-09-19) re-keyed six rules on what the guard can see'));
+  // (a) the bare identifier
+  assert.ok(d47.includes('BARE IDENTIFIER') && hook.includes('function bareExpandedNames(segments)') && hook.includes("const EXPANDED_NAMES = ['HOME'];"));
+  assert.ok(!hook.includes('function assignsHome(') && !hook.includes('HOME_DECLARERS'), 'the enumeration of assignment forms is gone');
+  // (b) fully parsed or refused
+  assert.ok(d47.includes('FULLY PARSED OR REFUSED') && hook.includes('const WRAPPER_OPT = {') && hook.includes('({ unknown: { option, wrapper: name, value, rest: words.slice(k + 1) } })'));
+  assert.ok(hook.includes("refuse: { short: 'S', long: ['split-string'] }") && hook.includes("kind: 'opaqueScript'"), 'env -S is refused outright');
+  assert.ok(hook.includes('for (const c of cmd.chdirs) {'), 'a nested chdir composes');
+  assert.ok(!hook.includes('PREFIX_OPERANDS') && !hook.includes('PREFIX_LEAD_OPERANDS'), 'the operand lists are gone with the tables');
+  // (c) the non-literal link source
+  assert.ok(d47.includes('NON-LITERAL LINK SOURCE') && hook.includes("markMutated(dstAbs, 'ln -s')"));
+  // (d) the shell-option allowlist
+  assert.ok(d47.includes('SHELL OPTIONS, AN ALLOWLIST') && hook.includes('function shellOptionChange(name, args)') && hook.includes('const INERT_SET_LETTERS = ') && hook.includes('const INERT_SET_OPTIONS = new Set([') && hook.includes('const INERT_SHOPT = new Set(['));
+  assert.ok(!hook.includes('physicalMode'), 'the physical-option enumeration is gone');
+  // (e) any depth
+  assert.ok(d47.includes('ANY DEPTH') && hook.includes('const PARENT_SCAN_BUDGET = ') && hook.includes('function parentTrackedRoots(dir, segPrefix, memo)'));
+  // (f) the unknown option refuses everywhere
+  assert.ok(d47.includes('UNKNOWN OPTION REFUSES EVERYWHERE') && hook.includes('function optionCandidates(args)') && hook.includes("if (parsed.unknown) { markAllCandidates('mv'); return; }"));
+  // the corpus and the lists audit
+  assert.ok(d47.includes('`tools/romp-track-bash-guard-corpus.json`') && fs.existsSync(path.join(REPO, 'tools', 'romp-track-bash-guard-corpus.json')));
+  assert.ok(hook.includes('THE LISTS THAT REMAIN, each with the side its GAP falls on'), 'the hook header audits the lists');
+  for (const list of ['PREFIXES', 'WRAPPER_OPT', 'COPY_OPT', 'INERT_SET_LETTERS', 'EXPANDED_NAMES', 'NUMERIC_EXPANSIONS', 'ANSI_C_SHELLS']) {
+    assert.ok(new RegExp(`//   ${list}[^\\n]*: gap = `).test(hook), `the audit names ${list} with its gap side`);
+  }
   assert.ok(!/\u2014/.test(d47), 'no em dash in decision 47');
 });

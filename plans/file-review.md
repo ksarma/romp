@@ -3567,7 +3567,9 @@ document stands on its own, each with the reasoning it was given.
     as `trackedIn` so the closure is built once per call; a path is judged under the name given and under the real
     path the kernel opens, so a symlink to a tracked file carries no write past it (a `..` after a directory that
     exists climbs from that directory's real path, as the kernel does, round 3, 2026-09-19; a link the same command
-    creates is not resolved, a hook-wide limit stated with the change). The refusal is exit 2 with one
+    creates is resolved only when it is an `ln -s` with literal operands the hook can place and an untouched name,
+    class H; every other same-command link or mutation makes a later write through the name refuse, family 3 and
+    rule (c) of the third pass, below). The refusal is exit 2 with one
     line naming the file and the track-edit command, in the person's voice. What it lets through: a read (cat,
     grep, diff, git, sed without -i) names no target; a command behind eval, xargs or a shell -c it cannot read
     is unresolvable and passes, since a silent block of ordinary work would cost more than a missed write, and
@@ -3629,8 +3631,10 @@ document stands on its own, each with the reasoning it was given.
     outside the project, never the name the shell would give it, which nobody can know before the command runs; a
     folder of more than 2000 entries inside a tracked project refuses a numeric name unscanned, as it does a copy
     (`LANDING_SCAN_CAP`, both sides pinned); a segment that is nothing but an expansion cancelled by a `..`
-    (`<out>/$$/../x.md`) is not narrowed. Two things the rule does not see, stated: a link the same command creates (a
-    PreToolUse hook cannot resolve a link the command has not yet made; a literal path just the same), and an entry
+    (`<out>/$$/../x.md`) is not narrowed. Two things the rule does not see, stated: a link the same command creates
+    under or after the numeric segment (the pid-candidate scan reads only entries that exist when the hook runs; the
+    class-H rewrite that follows a same-command `ln -s` with literal operands runs for a literal target, not for the
+    candidate scan), and an entry
     named by the process id in a folder outside every project that holds more than 2000 entries, which is not listed
     (a fail-closed cap there would refuse every temp log in a large `/tmp` from a tracked cwd; the box's `/tmp` held
     2767 entries when measured). A relative numeric target stays refused even when the write-time directory is known
@@ -3692,6 +3696,39 @@ document stands on its own, each with the reasoning it was given.
     its default on an unrecognised form is allow (deliberately not flipped, since flipping it would refuse almost all
     normal work), the one class flipped to refuse is a path it cannot check (family 4), and the unmodelled writers that
     still reach a tracked file are listed.
+    The walk-around lens third pass (2026-09-19) re-keyed six rules on what the guard can see, after a third attack
+    walked around each enumeration with the next spelling (a nameref and `select HOME in`; a glued `env -Cdocs`, an
+    abbreviated `env --chd=`, a nested `env -C docs env -C ..`, an `env -S` string beginning with env's own option; a
+    non-literal `ln -s` source; zsh's `set -o chaselinks`; a two-segment expansion under a grandparent; `cp --targ`
+    from a cwd in no project). The reviewer's rule, paraphrased: a rule implemented as an enumeration of spellings is
+    a case list, and the next spelling walks around it; a rule is keyed on a token, an unparsed option, a non-literal
+    operand or the presence of a construct. (a) BARE IDENTIFIER: the identifier of a variable the guard expands (HOME,
+    `EXPANDED_NAMES`) anywhere in the command outside a `$`-expansion makes that expansion unreadable for the whole
+    command and a bare `cd` or `cd ~` unknown (`bareExpandedNames`). (b) FULLY PARSED OR REFUSED: every wrapper in
+    `PREFIXES` is parsed against its own option table (`WRAPPER_OPT`) or the command refuses naming the option (an
+    unknown, abbreviated, glued-unknown or non-literal one), the words after it judged by their own project; a nested
+    chdir composes (`commandOf` returns its `chdirs` in order); `env -S`/`--split-string` and sudo's -e, -i, -s, -R and
+    -h are opaque and refused outright, never recursed; `time -o FILE` is a write of FILE. (c) NON-LITERAL LINK SOURCE:
+    a symbolic link whose source the guard cannot read or place marks the link name as mutated, so a later write
+    through it refuses (`recordSymlink`). (d) SHELL OPTIONS, AN ALLOWLIST (the reviewer's recast, 2026-09-19): an option
+    on `set`, `shopt`, `setopt` or `unsetopt` not on the inert lists (`INERT_SET_LETTERS`, `INERT_SET_OPTIONS`,
+    `INERT_SHOPT`, built from the shells' own option lists: exit status, tracing, history, completion, prompts, job
+    control and syntax choices that move no path) leaves the directory unknown from that point (`shellOptionChange`);
+    every option about cd, pushd, physical paths, links, globbing, brace expansion, aliases, quoting, restricted or
+    POSIX mode is off the lists, so its gap is a false refusal. (e) ANY DEPTH: the parent-prefix rule finds every
+    tracked root under the literal head at any depth, breadth-first within `PARENT_SCAN_BUDGET` entries
+    (`parentTrackedRoots`). (f) UNKNOWN OPTION REFUSES EVERYWHERE: an option a writer's table does not know refuses on
+    every path the writer is reached through, each candidate operand judged by its own project from any cwd
+    (`optionCandidates`), and the mutation and symlink recorders mark every candidate. Also from that pass: `chdir`
+    (zsh's and dash's cd, no command in bash) leaves the directory unknown, and coreutils `link` is a hard-link maker.
+    The hook header audits every list that remains for the side its gap falls on. The cost is measured against
+    `tools/romp-track-bash-guard-corpus.json` (164 ordinary developer commands and the 22 recorded false refusals, run
+    at the head before the pass and at this one): no ordinary command newly refuses; the refusals added are a `~/`
+    write beside a mention of HOME, an `env -S` line, a relative write after `shopt -s globstar`, a write through a
+    link whose source is a variable, and a variable-named file in a folder with a tracked project anywhere beneath it,
+    each pinned with its remedy. The contract paragraph is identical on the four surfaces, its allow-by-default
+    sentence and its refused-class sentence included, and its writer list names the out-of-model roads the passes
+    found (a sourced or eval'd script, a wrapper outside the set, shuf -o, a cd through CDPATH).
     Without ROMP_SID it exits 0 before reading stdin (decision 24). Cost: about 60 ms
     per Bash call when no target needs the link closure (a read, a literal target outside any project, an explicit
     hit on the project's tracked list, an empty list); a write to a file inside a tracking project that the list

@@ -1887,7 +1887,7 @@ test('walk-around D: a same-command assignment to HOME makes $HOME and ~ unreada
   // reassignment is allowed where it should be.
   for (const cmd of ['HOME=notes; printf x > $HOME/seed.md', 'HOME=notes; printf x > ~/seed.md', 'export HOME=notes; printf x > $HOME/seed.md', "env HOME=notes bash -c 'printf x > $HOME/seed.md'", 'HOME=notes; printf x > ${HOME}/seed.md']) {
     const reason = evaluate(payload(cmd));
-    assert.ok(reason && /reassigns HOME/.test(reason) && reason.includes(proj), `HOME reassignment refused: ${cmd}: ${reason}`);
+    assert.ok(reason && /names HOME outside an expansion/.test(reason) && reason.includes(proj), `HOME reassignment refused: ${cmd}: ${reason}`);
     assert.ok(!/\u2014/.test(reason), 'no em dash');
   }
   // no reassignment: $HOME expands to the guard's home; a write there passes when it is outside the project
@@ -1990,15 +1990,17 @@ test('walk-around H: a symlink the same command makes redirects a later literal 
 // listed instance refused, its allowed literal/numeric twin, and a real bash run of one instance per family that
 // overwrites the tracked file when run, the pre-fix hook allowing it, and which the hook now refuses).
 
-test('family 1: the option tables accept a glued short form (sort -oFILE), and env -S runs a shell string like flock -c', () => {
+test('family 1: the option tables accept a glued short form (sort -oFILE), and env -S is refused outright as an opaque string (the third pass, superseding the second pass\'s shell reading)', () => {
   // sort's `-o` glued short form yielded no target; env -S / --split-string was skipped as an operand, so the command
-  // it carries was never read. Both refused now; the untracked twin of each is allowed.
-  for (const cmd of ['sort -odocs/report.md base/report.md', "env -S'cp base/report.md docs/report.md'", "env -S 'cp base/report.md docs/report.md'", "env --split-string='cp base/report.md docs/report.md'"]) {
-    assert.ok(evaluate(payload(cmd)) && evaluate(payload(cmd)).includes(report), `refused onto the tracked file: ${cmd}`);
+  // it carries was never read. The second pass read the string as a shell command; the third pass (rule (b)) refuses it
+  // outright, since env applies its OWN getopt to the split words and `env -S '-u FOO cp …'` ran a copy the shell
+  // reading took for a non-writer. So every env -S spelling refuses while the project is in play, the untracked twin too.
+  assert.ok(evaluate(payload('sort -odocs/report.md base/report.md')) && evaluate(payload('sort -odocs/report.md base/report.md')).includes(report), 'sort -oFILE refused onto the tracked file');
+  for (const cmd of ["env -S'cp base/report.md docs/report.md'", "env -S 'cp base/report.md docs/report.md'", "env --split-string='cp base/report.md docs/report.md'", "env -S'cp base/report.md docs/other.md'"]) {
+    const reason = evaluate(payload(cmd));
+    assert.ok(reason && /`env (-S|--split-string)` hands the rest of the command to a splitter/.test(reason) && reason.includes(proj), `env -S refused as opaque: ${cmd}: ${reason}`);
   }
-  for (const cmd of ['sort -odocs/other.md base/report.md', "env -S'cp base/report.md docs/other.md'"]) {
-    assert.equal(evaluate(payload(cmd)), null, `allowed onto the untracked twin: ${cmd}`);
-  }
+  assert.equal(evaluate(payload('sort -odocs/other.md base/report.md')), null, 'sort -oFILE onto the untracked twin is allowed');
   assert.deepEqual(targets('sort -o docs/report.md base/report.md'), [report], 'the separate form still names it');
   const ov = overwrites("env -S'cp base/report.md docs/report.md'", report);
   assert.equal(ov.changed, true, 'env -S overwrites the tracked file in real bash');
@@ -2023,7 +2025,7 @@ test('family 2: an assignment to HOME in any form the shells offer makes $HOME a
   ];
   for (const cmd of forms) {
     const reason = evaluate(payload(cmd));
-    assert.ok(reason && /reassigns HOME/.test(reason) && reason.includes(proj), `HOME assignment refused: ${cmd}: ${reason}`);
+    assert.ok(reason && /names HOME outside an expansion/.test(reason) && reason.includes(proj), `HOME assignment refused: ${cmd}: ${reason}`);
     assert.ok(!/\u2014/.test(reason), 'no em dash');
   }
   // no reassignment: $HOME expands to the guard's home; a write under it outside the project is allowed
@@ -2163,4 +2165,372 @@ test('family 6: a cd the guard cannot know ran in this shell leaves the director
   assert.equal(fs.readFileSync(report, 'utf8'), 'an older copy\n', 'the skipped cd leaves the copy on the tracked file in real bash');
   fs.writeFileSync(report, original);
   assert.equal(runHook('false && cd docs; cp base/report.md docs/report.md').status, 2, 'and the hook refuses it');
+});
+
+// ── the walk-around lens, third pass: the family rules are re-keyed on what the guard can see (2026-09-19) ──
+//
+// A third pass walked around each second-pass enumeration with the next spelling: a nameref and `select HOME in` for
+// the HOME assignment forms; a glued `env -Cdocs`, an abbreviated `env --chd=` and `--c`, a nested `env -C docs env -C
+// ..` and an `env -S` string beginning with env's own option for the wrapper tables; a non-literal `ln -s` source for
+// class H; zsh's `set -o chaselinks` for the physical-cd list; a two-segment expansion under a grandparent for the
+// parent-prefix rule; and `cp --targ` from a cwd in no project for the unknown-option refusal. Each rule below is keyed
+// on what the guard can see (a token, an unparsed option, a non-literal operand, the presence of a construct), never on
+// a list of forms, and is pinned both ways: every listed instance refused, its allowed literal twin allowed, and a real
+// shell run of one instance per rule that overwrites the tracked file when unguarded and which the hook now refuses.
+
+const HOME_RULE = /names HOME outside an expansion/;
+// A second tracked project under a fresh base directory: `<base>/<rel>` with docs/report.md tracked and base/report.md.
+const trackedProjectAt = (base, rel) => {
+  const root = path.join(base, rel);
+  for (const d of ['.trackchanges', 'docs', 'base']) fs.mkdirSync(path.join(root, d), { recursive: true });
+  fs.writeFileSync(path.join(root, '.trackchanges', 'config.json'), JSON.stringify({ v: 2, tracked: ['docs/report.md'] }));
+  fs.writeFileSync(path.join(root, 'docs', 'report.md'), 'tracked prose\n');
+  fs.writeFileSync(path.join(root, 'base', 'report.md'), 'an older copy\n');
+  return root;
+};
+
+test('rule (a) bare identifier: the identifier HOME anywhere in the command outside a $-expansion makes $HOME and ~ unreadable, whatever the form; a command that only reads $HOME is judged as before', () => {
+  fs.writeFileSync(path.join(proj, 'notes', 'n1.md'), 'a tracked note\n');
+  const forms = [
+    `declare -n r=HOME; r=${proj}/notes; printf poison > "$HOME/n1.md"`,                       // a nameref (the third pass, P1)
+    `f() { local -n r=HOME; r=${proj}/notes; }; f; printf poison > "$HOME/n1.md"`,             // a nameref in a function (P2)
+    `select HOME in ${proj}/notes; do break; done <<< 1; printf poison > "$HOME/n1.md"`,       // select, the for the list missed (P18)
+    `printf -vHOME '%s' ${proj}/notes; printf poison > "$HOME/n1.md"`,                          // the glued -v (P3)
+    `declare -n r=HOME; r=${proj}/notes; printf poison > ~/n1.md`,                              // the tilde spelling (P26)
+    'unset HOME; printf poison > "$HOME/n1.md"',                                                 // unset: HOME empty, the write lands in /n1.md or the cwd
+    'typeset HOME; printf poison > ~/n1.md',
+    'export HOME; printf poison > "$HOME/n1.md"',
+    `read 'HOME' <<< ${proj}/notes; printf poison > "$HOME/n1.md"`,                             // the identifier quoted still assigns
+    `(( HOME = 5 )); printf poison > "$HOME/n1.md"`,                                            // an arithmetic body (the header claimed it; now it is scanned)
+    'echo HOME=/etc/skel; printf poison > "$HOME/n1.md"',                                       // the stated cost: a mention that assigns nothing
+  ];
+  for (const cmd of forms) {
+    const reason = evaluate(payload(cmd));
+    assert.ok(reason && HOME_RULE.test(reason) && reason.includes(proj), `HOME named outside an expansion refuses the home write: ${cmd}: ${reason}`);
+    assert.ok(reason.includes('Spell the path out'), 'the remedy');
+    assert.ok(!/\u2014/.test(reason) && !ROMP_NOUNS.test(reason.split(proj).join('<p>')), 'no em dash, no romp noun');
+  }
+  // a bare `cd` or a `cd ~` after a mention of HOME leaves the directory unknown, so a later relative write refuses
+  for (const cmd of [`HOME=${proj}/notes; cd; printf poison > n1.md`, `declare -n r=HOME; r=${proj}/notes; cd ~; printf poison > n1.md`, `HOME=${proj}; env -C ~ cp base/report.md docs/report.md`]) {
+    const reason = evaluate(payload(cmd));
+    assert.ok(reason && /the directory it is relative to is not known/.test(reason) && HOME_RULE.test(reason), `a cd through HOME after its mention: ${cmd}: ${reason}`);
+  }
+  // the twins: a command that only READS $HOME (an expansion, no bare identifier) is judged by the guard's home as before
+  const home = process.env.HOME;
+  const out = outsideDir();
+  process.env.HOME = out;
+  try {
+    for (const cmd of ['echo $HOME; printf x > $HOME/seed.md', 'printf x > ~/seed.md', 'echo "${HOME}"; printf x > "$HOME/seed.md"', 'ls $HOMEDIR; printf x > ~/seed.md', 'cd; printf x > seed.md']) {
+      assert.equal(evaluate(payload(cmd)), null, `reads of $HOME with no bare identifier: allowed: ${cmd}`);
+    }
+  } finally { process.env.HOME = home; fs.rmSync(out, { recursive: true, force: true }); }
+  assert.equal(evaluate(payload('echo HOME=x; printf x > docs/other.md')), null, 'a mention of HOME with no home write changes nothing');
+  assert.equal(evaluate(payload('grep HOME /etc/passwd')), null, 'a read that mentions HOME is a read');
+  // real bash: the nameref reassigns HOME and the write lands on the tracked note; the hook refuses it
+  const n1 = path.join(proj, 'notes', 'n1.md');
+  for (const cmd of [`declare -n r=HOME; r=${proj}/notes; printf poison > "$HOME/n1.md"`, `select HOME in ${proj}/notes; do break; done <<< 1; printf poison > "$HOME/n1.md"`, `printf -vHOME '%s' ${proj}/notes; printf poison > "$HOME/n1.md"`]) {
+    const ov = overwrites(cmd, n1);
+    assert.equal(ov.changed, true, `overwrites the tracked note in real bash: ${cmd}`);
+    assert.equal(runHook(cmd).status, 2, `and the hook refuses it: ${cmd}`);
+  }
+});
+
+test('rule (b) fully parsed or refused: a wrapper option outside its table refuses naming it (glued to a letter it does not know, abbreviated, unknown, non-literal), a nested env -C composes, env -S is opaque and refused outright, and every known spelling still peels to the write', () => {
+  const R = outsideDir();
+  try {
+    const refused = [
+      // the third-pass env instances
+      ['env -Cdocs cp ../base/report.md report.md', /^Track-changes is ON for .*docs\/report\.md/, 'the glued -Cdocs is a chdir into docs'],
+      ['env --chd=docs cp ../base/report.md report.md', /`env` wrapper carries the option --chd=docs/, 'an abbreviation refuses'],
+      ['env --c docs cp ../base/report.md report.md', /`env` wrapper carries the option --c,/, 'an abbreviation refuses'],
+      ['env -C docs env -C .. cp base/report.md docs/report.md', /^Track-changes is ON for .*docs\/report\.md/, 'a nested chdir composes: docs, then .. under docs'],
+      ["env -S '-u FOO cp base/report.md docs/report.md'", /`env -S` hands the rest of the command to a splitter/, 'env -S with a leading env option'],
+      ["env -S '-i cp base/report.md docs/report.md'", /`env -S` hands/, ''],
+      ["env -S '-C docs cp ../base/report.md report.md'", /`env -S` hands/, ''],
+      ["env -S '--chdir=docs cp ../base/report.md report.md'", /`env -S` hands/, ''],
+      ["env -S '-- cp base/report.md docs/report.md'", /`env -S` hands/, ''],
+      ["env -C docs -S 'cp ../base/report.md report.md'", /`env -S` hands/, 'a chdir before -S'],
+      ["env -S'cp base/report.md docs/report.md'", /`env -S` hands/, 'glued'],
+      ["env --split-string='cp base/report.md docs/report.md'", /`env --split-string` hands/, ''],
+      ["env -S 'echo hi'", /`env -S` hands/, 'opaque whatever the string, while the project is in play'],
+      // other wrappers, the same rule
+      ['env --frobnicate cp base/report.md docs/other.md', /`env` wrapper carries the option --frobnicate/, 'an unknown option refuses even onto an untracked file'],
+      ['env "$FLAGS" cp base/report.md docs/other.md', /`env` wrapper carries the option "\$FLAGS"/, 'an option the shell fills in'],
+      ['nice -x cp base/report.md docs/other.md', /`nice` wrapper carries the option -x/, ''],
+      ['timeout --preserve-stat 5 cp base/report.md docs/other.md', /`timeout` wrapper carries the option --preserve-stat/, 'an abbreviation'],
+      ['sudo -s cp base/report.md docs/other.md', /`sudo -s` hands the rest of the command/, 'sudo -s runs a shell over the rest'],
+      ['sudo -R / cp base/report.md docs/other.md', /`sudo -R` hands/, 'a chroot moves every path'],
+      ['numactl --show cp base/report.md docs/other.md', /`numactl` wrapper carries the option --show/, 'not a command-running option'],
+    ];
+    for (const [cmd, why, note] of refused) {
+      const reason = evaluate(payload(cmd));
+      assert.ok(reason && why.test(reason), `${note || 'refused'}: ${cmd}: ${reason}`);
+      assert.ok(!/\u2014/.test(reason) && !ROMP_NOUNS.test(reason.split(proj).join('<p>')), 'no em dash, no romp noun');
+    }
+    // every known spelling peels to the inner command, judged as ever: allowed onto the untracked twin
+    const known = [
+      'env -i cp base/report.md docs/other.md', 'env -u FOO cp base/report.md docs/other.md', 'env FOO=1 cp base/report.md docs/other.md', 'env - cp base/report.md docs/other.md',
+      'env -0 -v -i cp base/report.md docs/other.md', 'env --ignore-environment cp base/report.md docs/other.md', 'env --block-signal=INT cp base/report.md docs/other.md',
+      'nice -n 19 cp base/report.md docs/other.md', 'nice -n19 cp base/report.md docs/other.md', 'nice -19 cp base/report.md docs/other.md', 'nice --adjustment=5 cp base/report.md docs/other.md',
+      'timeout 5 cp base/report.md docs/other.md', 'timeout -s KILL 5 cp base/report.md docs/other.md', 'timeout --preserve-status 5 cp base/report.md docs/other.md', 'timeout -k 2 --foreground 5s cp base/report.md docs/other.md',
+      'timeout "$T" cp base/report.md docs/other.md',
+      'sudo -u root cp base/report.md docs/other.md', 'sudo -E -n cp base/report.md docs/other.md', 'sudo --preserve-env=PATH cp base/report.md docs/other.md',
+      'nohup cp base/report.md docs/other.md', 'ionice -c 3 cp base/report.md docs/other.md', 'ionice -c3 -n7 cp base/report.md docs/other.md', 'stdbuf -oL cp base/report.md docs/other.md', 'stdbuf -o L cp base/report.md docs/other.md',
+      'setsid -w cp base/report.md docs/other.md', 'flock -x . cp base/report.md docs/other.md', 'flock -w 5 . cp base/report.md docs/other.md', 'flock -n . -c "cp base/report.md docs/other.md"',
+      'taskset -c 0 cp base/report.md docs/other.md', 'taskset 0x1 cp base/report.md docs/other.md', 'chrt -o 0 cp base/report.md docs/other.md', 'chrt -T 100000 -d 0 cp base/report.md docs/other.md',
+      'numactl --physcpubind=0 cp base/report.md docs/other.md', 'numactl -C 0 cp base/report.md docs/other.md', 'numactl -C0 -l cp base/report.md docs/other.md',
+      'command cp base/report.md docs/other.md', 'command -p cp base/report.md docs/other.md', 'builtin echo x > docs/other.md', 'exec cp base/report.md docs/other.md', 'exec -a cp cp base/report.md docs/other.md',
+      'time -p cp base/report.md docs/other.md', 'time cp base/report.md docs/other.md',
+      'env -C docs env -C .. cp base/report.md docs/other.md', 'env -Cdocs cp ../base/report.md other.md', 'env -C base cp report.md ../docs/other.md',
+      'nice -n 19 setsid -w ionice -c 3 cp base/report.md docs/other.md',
+    ];
+    for (const cmd of known) assert.equal(evaluate(payload(cmd)), null, `a known spelling peels and the untracked write is allowed: ${cmd}`);
+    for (const cmd of ['env -i cp base/report.md docs/report.md', 'nice -n19 cp base/report.md docs/report.md', 'timeout --preserve-status 5 cp base/report.md docs/report.md', 'flock -w 5 . cp base/report.md docs/report.md', 'time -p cp base/report.md docs/report.md', 'sudo --preserve-env=PATH cp base/report.md docs/report.md', 'env - cp base/report.md docs/report.md']) {
+      assert.match(evaluate(payload(cmd)), /^Track-changes is ON for /, `and onto the tracked file it is refused by name: ${cmd}`);
+    }
+    // GNU time -o writes its file: a write target of its own, in the shell's cwd
+    assert.deepEqual(targets('time -o docs/report.md make'), [report], 'time -o FILE is a write');
+    assert.match(evaluate(payload('time --output=docs/report.md make')), /its time -o would write/, 'and refused by name');
+    assert.equal(evaluate(payload('time -o docs/other.md make')), null, 'onto an untracked file it is allowed');
+    // from a cwd in no project: a known wrapper onto an outside file passes; an unknown option beside an absolute path inside
+    // the project refuses (the candidate words are judged by their own project, rule (f)'s direction)
+    fs.writeFileSync(path.join(R, 'a.md'), 'a\n');
+    assert.equal(evaluate(payload(`env -i cp ${R}/a.md ${R}/b.md`, R)), null, 'a known wrapper from a cwd in no project passes');
+    assert.equal(evaluate(payload(`env --frobnicate cp ${R}/a.md ${R}/b.md`, R)), null, 'an unknown option with nothing in play is dropped, as every unreadable word is');
+    assert.ok(/`env` wrapper carries the option --frobnicate/.test(evaluate(payload(`env --frobnicate cp ${R}/a.md ${proj}/docs/other.md`, R)) || ''), 'an unknown option beside a path inside the project refuses from a cwd in none');
+    assert.ok(/`env -S` hands/.test(evaluate(payload(`env -S 'cp ${proj}/base/report.md ${proj}/docs/report.md'`, R)) || ''), 'env -S naming a path inside the project refuses from a cwd in none');
+    // real bash: the glued chdir and the env -S string beginning with env's own option each overwrite the tracked file; the hook refuses both
+    for (const cmd of ['env -Cdocs cp ../base/report.md report.md', "env -S '-u FOO cp base/report.md docs/report.md'", 'env -C docs env -C .. cp base/report.md docs/report.md']) {
+      const ov = overwrites(cmd, report);
+      assert.equal(ov.changed, true, `overwrites the tracked file in real bash: ${cmd}`);
+      assert.equal(runHook(cmd).status, 2, `and the hook refuses it: ${cmd}`);
+    }
+    assert.equal(fs.readFileSync(report, 'utf8'), 'The api session cut tail latency by 40%.\n');
+  } finally { fs.rmSync(R, { recursive: true, force: true }); }
+});
+
+test('rule (c) non-literal link source: an ln -s whose source the guard cannot read marks the link name unknown, so a later write through it refuses with the reason; a literal source keeps class H', () => {
+  fs.writeFileSync(path.join(proj, 'notes', 'n1.md'), 'a tracked note\n');
+  fs.mkdirSync(path.join(proj, 'sub'));
+  const cases = [
+    'ln -s "$PWD/docs" mydocs && cp base/report.md mydocs/report.md',      // the third pass, #59
+    'ln -sf "$PWD/docs" md2 && cp base/report.md md2/report.md',           // N1
+    'ln -s $(echo docs) md3 && cp base/report.md md3/report.md',            // N2
+    'ln -s "$D" md4; echo x > md4/n1.md',
+    'ln -s -t sub "$SRC"; echo x > sub/report.md',                          // the name is the source\'s basename, unreadable: the folder is unknown
+    'ln -s "$A" "$B" sub; echo x > sub/report.md',                          // several sources into a directory
+    'ln -s docs "$L" md5; echo x > md5/report.md',                          // several sources into a name that is no directory
+  ];
+  for (const cmd of cases) {
+    const reason = evaluate(payload(cmd));
+    assert.ok(reason && /an earlier `ln -s` in the same command linked /.test(reason) && reason.includes(proj), `a non-literal link source makes the name unknown: ${cmd}: ${reason}`);
+    assert.ok(reason.includes('Run the `ln -s` in a command of its own'), 'the remedy');
+    assert.ok(!/\u2014/.test(reason) && !ROMP_NOUNS.test(reason.split(proj).join('<p>')), 'no em dash, no romp noun');
+  }
+  // the twins: a literal source is resolved (class H), a link to an untracked folder is allowed, and a write NOT through the link is judged as ever
+  assert.match(evaluate(payload('ln -s docs mydocs && cp base/report.md mydocs/report.md')), /^Track-changes is ON for /, 'a literal source resolves to the tracked file');
+  assert.equal(evaluate(payload('ln -s base mylink && cp base/report.md mylink/other.md')), null, 'a literal link to an untracked folder is allowed');
+  assert.equal(evaluate(payload('ln -s "$PWD/base" mylink2 && cp base/report.md docs/other.md')), null, 'a non-literal link the later write does not pass through changes nothing');
+  assert.equal(evaluate(payload('ln -s $(echo base) md6; cp base/report.md scratch.md')), null, 'the same, another spelling');
+  // real bash: the link to $PWD/docs carries the copy onto the tracked file; the hook refuses it
+  for (const cmd of ['ln -s "$PWD/docs" mydocs && cp base/report.md mydocs/report.md', 'ln -s $(echo docs) md3 && cp base/report.md md3/report.md']) {
+    const ov = overwrites(cmd, report);
+    assert.equal(ov.changed, true, `overwrites the tracked file in real bash: ${cmd}`);
+    for (const l of ['mydocs', 'md3']) fs.rmSync(path.join(proj, l), { force: true });
+    assert.equal(runHook(cmd).status, 2, `and the hook refuses it: ${cmd}`);
+  }
+});
+
+test('rule (d) shell options, an allowlist: an option not known to be inert for paths leaves the directory unknown so a later relative write refuses; set -e, -u, -x, -o pipefail and the rest of the inert list pass', () => {
+  // the fixture of the third pass: a project whose `lnout` links out to a sibling folder, so a physical `cd lnout; cd ..`
+  // lands in the project's parent while the lexical fold lands in the project
+  const B = outsideDir();
+  const na = trackedProjectAt(B, 'notes-api');
+  fs.mkdirSync(path.join(B, 'scratch'));
+  fs.symlinkSync('../scratch', path.join(na, 'lnout'));
+  const naReport = path.join(na, 'docs', 'report.md');
+  try {
+    const physical = 'cd lnout; cd ..; cp notes-api/base/report.md notes-api/docs/report.md';
+    const OPTION = /sets a shell option that may make the shell resolve paths physically/;
+    const UNKNOWN = /the directory it is relative to is not known/;
+    for (const pre of ['set -o chaselinks', 'set -o chasedots', 'set -o CHASE_LINKS', 'set -P', 'set -w', 'set -o physical', 'setopt chaselinks', 'setopt chase_links', 'setopt chasedots', 'unsetopt chaselinks', 'setopt -w', 'shopt -s physical']) {
+      const reason = evaluate(payload(`${pre}; ${physical}`, na));
+      assert.ok(reason && UNKNOWN.test(reason) && OPTION.test(reason) && /physically/.test(reason), `a physical-resolution option refuses the later relative write: ${pre}: ${reason}`);
+      assert.ok(reason.includes(pre.split(' ').slice(0, 2).join(' ')), `the refusal names the construct: ${pre}`);
+      assert.ok(!/\u2014/.test(reason) && !ROMP_NOUNS.test(reason.split(B).join('<b>')), 'no em dash, no romp noun');
+    }
+    // any option NOT on the inert list, whether it touches paths or the guard just does not know it, leaves the directory unknown
+    for (const pre of ['shopt -s globstar', 'shopt -s nullglob', 'shopt -s dotglob', 'shopt -s extglob', 'shopt -s autocd', 'shopt -s cdable_vars', 'shopt -s expand_aliases', 'shopt -s lastpipe', 'shopt -s nocaseglob', 'set -o posix', 'set -B', 'set -o frobnicate', 'set -Z', 'setopt extendedglob', 'setopt nullglob', 'setopt autocd', 'setopt magicequalsubst', 'setopt rcquotes', 'setopt banghist', 'setopt frobnicate', 'set -o "$OPT"', 'setopt $OPTS']) {
+      const reason = evaluate(payload(`${pre}; cp base/report.md docs/other.md`));
+      assert.ok(reason && UNKNOWN.test(reason) && OPTION.test(reason), `an option off the inert list refuses the later relative write: ${pre}: ${reason}`);
+    }
+    // the inert list: each passes, the later untracked relative write allowed and the tracked one refused by name
+    const inert = [
+      'set -e', 'set -u', 'set -x', 'set -v', 'set -n', 'set -C', 'set -f', 'set -a', 'set -m', 'set -b', 'set -k', 'set -h', 'set -t', 'set -E', 'set -H', 'set -F', 'set -y',
+      'set +e', 'set -ex', 'set -eu', 'set -euo pipefail', 'set -o pipefail', 'set -o errexit', 'set -o nounset', 'set -o xtrace', 'set -o verbose', 'set -o noclobber', 'set -o noglob',
+      'set -o errexit -o nounset', 'set +o xtrace', 'set -o pipe_fail', 'set -o', 'set -- a b', 'set -e -- x y', 'set x y', 'set -',
+      'shopt -s histappend', 'shopt -s nocasematch', 'shopt -s checkwinsize', 'shopt -u xpg_echo', 'shopt -s inherit_errexit', 'shopt -so pipefail', 'shopt -q globstar', 'shopt -p', 'shopt', 'shopt globstar',
+      'setopt errexit', 'setopt ERR_EXIT', 'setopt pipefail', 'setopt NO_NOMATCH', 'setopt nonomatch', 'setopt noclobber', 'setopt -e', 'unsetopt xtrace', 'unsetopt beep', 'setopt histignorespace', 'setopt promptsubst', 'setopt',
+    ];
+    for (const pre of inert) {
+      assert.equal(evaluate(payload(`${pre}; cp base/report.md docs/other.md`)), null, `an inert option passes and the untracked relative write is allowed: ${pre}`);
+    }
+    for (const pre of ['set -e', 'set -euo pipefail', 'set -x', 'shopt -s histappend', 'setopt errexit']) {
+      assert.match(evaluate(payload(`${pre}; cp base/report.md docs/report.md`)), /^Track-changes is ON for /, `after an inert option the tracked write is refused by name: ${pre}`);
+    }
+    // an absolute target after an option off the list keeps its verdict: the directory is what is unknown, not the path
+    assert.equal(evaluate(payload(`shopt -s globstar; cp ${proj}/base/report.md ${proj}/docs/other.md`)), null, 'an absolute untracked target after a non-inert option is allowed');
+    assert.match(evaluate(payload(`set -o chaselinks; cp ${proj}/base/report.md ${proj}/docs/report.md`)), /^Track-changes is ON for /, 'an absolute tracked target after it is refused by name');
+    // and from a cwd in no project the relative write after such an option is dropped, as every unreadable word is
+    fs.writeFileSync(path.join(B, 'scratch', 'a.md'), 'a\n');
+    assert.equal(evaluate(payload('shopt -s globstar; cp a.md b.md', path.join(B, 'scratch'))), null, 'from a cwd in no project the later relative write is dropped');
+    // real zsh: `set -o chaselinks` makes `cd lnout; cd ..` land in the parent and the copy on the tracked file; the hook refuses it
+    const ov = overwrites(`set -o chaselinks; ${physical}`, naReport, na, 'zsh');
+    assert.equal(ov.changed, true, 'set -o chaselinks carries the copy onto the tracked file in real zsh');
+    assert.equal(runHook(`set -o chaselinks; ${physical}`, na).status, 2, 'and the hook refuses it');
+    assert.equal(fs.readFileSync(naReport, 'utf8'), 'tracked prose\n');
+  } finally { fs.rmSync(B, { recursive: true, force: true }); }
+});
+
+test('rule (e) any-depth parent prefix: a literal head that is a proper ancestor of a tracked root at any depth refuses when a non-numeric expansion follows, naming the projects beneath; the grandparent and two-segment cases', () => {
+  const R = outsideDir();
+  const na = trackedProjectAt(R, path.join('f', 'notes-api'));
+  const deep = trackedProjectAt(R, path.join('g', 'h', 'web'));
+  const cwd = path.join(R, 'scratch', 'sub');
+  fs.mkdirSync(cwd, { recursive: true });
+  fs.mkdirSync(path.join(R, 'empty', 'dir'), { recursive: true });
+  fs.writeFileSync(path.join(R, 'src.md'), 'src\n');
+  fs.symlinkSync(na, path.join(R, 'lnproj'));
+  try {
+    const refused = [
+      [`cp ${R}/src.md ../../$x/docs/report.md`, cwd, na],                       // the third pass, #201: x spells f/notes-api
+      [`cp ${R}/src.md ../../$x/notes-api/docs/report.md`, cwd, na],             // #202: x spells f
+      [`cp ${R}/src.md ../../f/$x/docs/report.md`, cwd, na],                     // the direct child, as round 4 read it
+      [`printf poison > ${R}/$x/docs/report.md`, cwd, na],                        // an absolute head, the grandparent
+      [`printf poison > ${R}/g/$x/docs/report.md`, cwd, deep],                    // the great-grandparent's child, three levels
+      [`cp ${R}/src.md ../../$x`, cwd, na],                                       // the expansion spells the whole rest
+      [`printf poison > ${R}/n$x/docs/report.md`, cwd, null],                     // a literal head `n`: notes-api is under f, not a direct child, so the head filters the first segment only
+    ];
+    for (const [cmd, at, root] of refused) {
+      const reason = evaluate(payload(cmd, at));
+      if (root === null) { assert.equal(reason, null, `the literal head filters the first segment: ${cmd}`); continue; }
+      assert.ok(reason && reason.includes('sits above the tracked project') && reason.includes(root), `class E at any depth names the project beneath: ${cmd}: ${reason}`);
+      assert.ok(!/\u2014/.test(reason) && !ROMP_NOUNS.test(reason.split(R).join('<r>')), 'no em dash, no romp noun');
+    }
+    const both = evaluate(payload(`printf poison > ${R}/$x/docs/report.md`, cwd));
+    assert.ok(both.includes(na) && both.includes(deep) && both.includes(path.join(R, 'lnproj')), `every root beneath is named, a link to one included: ${both}`);
+    // the twins: a folder with no project beneath, a numeric-only name, a literal name, and a head under no project's ancestor
+    assert.equal(evaluate(payload(`cp ${R}/src.md ${R}/empty/$x.log`, cwd)), null, 'no tracked root under the head: allowed');
+    assert.equal(evaluate(payload(`cp ${R}/src.md ../../empty/$x/report.md`, cwd)), null, 'the same, relative');
+    assert.equal(evaluate(payload(`printf x > ../../$$.log`, cwd)), null, 'a numeric-only expansion is not class E');
+    assert.equal(evaluate(payload(`printf x > ../../plain.log`, cwd)), null, 'a literal name in the grandparent is allowed');
+    assert.equal(evaluate(payload(`printf x > ${R}/scratch/$x.log`, cwd)), null, 'a folder beside the projects with none beneath: allowed');
+    // real bash: the two-segment expansion reaches the root one level down and overwrites the tracked file; the hook refuses it
+    const ov = overwrites(`x=f/notes-api; cp ${R}/src.md ../../$x/docs/report.md`, path.join(na, 'docs', 'report.md'), cwd);
+    assert.equal(ov.changed, true, 'the two-segment expansion overwrites the tracked file in real bash');
+    assert.equal(runHook(`cp ${R}/src.md ../../$x/docs/report.md`, cwd).status, 2, 'and the hook refuses it');
+  } finally { fs.rmSync(R, { recursive: true, force: true }); }
+});
+
+test('rule (f) unknown option refuses everywhere: cp --targ refuses direct, wrapped and in a chain, from a cwd in no project when an operand sits in a tracked project, and the mutation recorders mark every candidate operand', () => {
+  const R = outsideDir();
+  try {
+    const OPTION = /carries the option --targ/;
+    for (const cmd of ['cp --targ docs base/report.md', 'nice cp --targ docs base/report.md', 'true && cp --targ docs base/report.md', 'cp --targ docs base/report.md; echo done', "sh -c 'cp --targ docs base/report.md'", 'flock -x . -c "cp --targ docs base/report.md"', 'mv --targ docs base/report.md', 'ln --targ docs base/report.md', 'install --targ docs base/report.md', 'cp --targ=docs base/report.md', 'cp -Q base/report.md docs/report.md']) {
+      const reason = evaluate(payload(cmd));
+      assert.ok(reason && /carries the option (--targ|-Q)/.test(reason) && reason.includes(proj), `an unknown or abbreviated option refuses on every path: ${cmd}: ${reason}`);
+    }
+    // the third pass, #179: from a cwd in no project, with absolute operands inside the project (the option leaves them
+    // unplaced, so each is judged by its own project)
+    const abs = `cp --targ ${proj}/docs ${proj}/base/report.md`;
+    const reason = evaluate(payload(abs, R));
+    assert.ok(reason && OPTION.test(reason) && reason.includes(proj), `an unknown option beside an operand inside the project refuses from a cwd in none: ${reason}`);
+    assert.ok(/carries the option --targ/.test(evaluate(payload(`cp --targ=${proj}/docs ${R}/a.md`, R)) || ''), 'the =value of a long option is a candidate too');
+    fs.writeFileSync(path.join(R, 'a.md'), 'a\n');
+    assert.equal(evaluate(payload(`cp --targ ${R}/a.md ${R}/b.md`, R)), null, 'an unknown option with every operand outside every project is dropped');
+    assert.equal(evaluate(payload('cp --frobnicate base/report.md docs/report.md', R)), null, 'relative operands from a cwd in no project resolve outside: dropped, as before');
+    // the mutation recorders: an unknown option on mv, ln or cp -l marks every candidate operand, so a later write under one refuses
+    const later = extractWriteTargets('mv --targ docs d2; echo x > docs/x.md', proj).unresolved;
+    assert.ok(later.some((u) => u.why && u.why.kind === 'mutated' && u.why.verb === 'mv' && u.raw === 'docs/x.md'), `the later write under a candidate is unreadable: ${JSON.stringify(later.map((u) => [u.raw, u.why]))}`);
+    const linked = extractWriteTargets('ln -s --targ docs md; echo x > docs/x.md', proj).unresolved;
+    assert.ok(linked.some((u) => u.why && u.why.kind === 'mutated' && u.why.verb === 'ln'), 'the symlink recorder yields to the mutation recorder on an unknown option');
+    assert.ok(!extractWriteTargets('mv -f docs d2; echo x > base/x.md', proj).unresolved.some((u) => u.why && u.why.kind === 'mutated'), 'a known option marks the operands it places, not a write elsewhere');
+    // real bash: the abbreviation resolves to --target-directory and the copy lands on the tracked file; the hook refuses it
+    const ov = overwrites(abs, report, R);
+    assert.equal(ov.changed, true, 'cp --targ overwrites the tracked file in real bash from a cwd in no project');
+    assert.equal(runHook(abs, R).status, 2, 'and the hook refuses it');
+    assert.equal(fs.readFileSync(report, 'utf8'), 'The api session cut tail latency by 40%.\n');
+  } finally { fs.rmSync(R, { recursive: true, force: true }); }
+});
+
+test('the third pass also closed chdir (a cd the guard cannot know) and link (a hard-link maker): each pinned both ways', () => {
+  fs.writeFileSync(path.join(proj, 'notes', 'n1.md'), 'a tracked note\n');
+  const r1 = evaluate(payload('chdir docs; cp ../base/report.md report.md'));
+  assert.ok(r1 && /an earlier `chdir` moves the shell in zsh and dash and fails in bash/.test(r1) && /the directory it is relative to is not known/.test(r1), `chdir leaves the directory unknown: ${r1}`);
+  assert.match(evaluate(payload('chdir docs; cp ../base/report.md ' + report)), /^Track-changes is ON for /, 'an absolute target after chdir keeps its verdict');
+  assert.equal(evaluate(payload('chdir docs; ls')), null, 'a read after chdir is a read');
+  const ovz = overwrites('chdir docs; cp ../base/report.md report.md', report, proj, 'zsh');
+  assert.equal(ovz.changed, true, 'chdir moves the shell in real zsh and the copy lands on the tracked file');
+  assert.equal(runHook('chdir docs; cp ../base/report.md report.md').status, 2);
+  const r2 = evaluate(payload('link docs/report.md hardL.md && cp base/report.md hardL.md'));
+  assert.ok(r2 && /an earlier `link` in the same command linked /.test(r2), `link is a family-3 mutation: ${r2}`);
+  assert.match(evaluate(payload('link base/report.md notes/n2.md')), /^Track-changes is ON for .*notes\/n2\.md/, 'the link name is a write target');
+  assert.equal(evaluate(payload('link base/report.md scratch.md && echo x > docs/other.md')), null, 'a link clear of tracked files, then an untracked write: allowed');
+  const ov = overwrites('link docs/report.md hardL.md && cp base/report.md hardL.md', report);
+  assert.equal(ov.changed, true, 'the hard link carries the copy onto the tracked file in real bash');
+  fs.rmSync(path.join(proj, 'hardL.md'), { force: true });
+  assert.equal(runHook('link docs/report.md hardL.md && cp base/report.md hardL.md').status, 2);
+});
+
+// ── the false-refusal corpus: ordinary developer commands and the known false refusals, pinned both ways ──
+//
+// tools/romp-track-bash-guard-corpus.json lists more than 80 ordinary developer commands (git, tests, builds, reads, cd
+// then a read, `set -e` scripts writing outside tracked folders, /tmp writes, interpreter prints, wrappers, writes to
+// untracked subfolders of a tracked project) and the 22 false refusals the earlier passes recorded, each with the cwd
+// it runs from and the verdict the guard gives at this head. The third pass measured the corpus against the head before
+// it (d296806cc) and this one; the entries that newly refuse are marked `since: third pass` with their remedy, so a
+// later change that widens the cost shows here by name, and every allowed entry stays allowed.
+const CORPUS = JSON.parse(fs.readFileSync(fileURLToPath(new URL('./romp-track-bash-guard-corpus.json', import.meta.url)), 'utf8'));
+
+test('the corpus (tools/romp-track-bash-guard-corpus.json): more than 80 ordinary commands stay allowed, the recorded false refusals keep their verdict, and every entry runs from the cwd it names', () => {
+  const B = outsideDir();
+  // the corpus world: the scratch project of beforeEach with a few more entries, an outside folder beside a second
+  // tracked project (for the class-E entries), and a home folder holding a tracked project two levels down (for the
+  // rule-(e) cost entry)
+  fs.mkdirSync(path.join(proj, 'scratch'));
+  fs.mkdirSync(path.join(proj, 'sub'));
+  fs.writeFileSync(path.join(proj, 'scratch', 'copy.md'), 'c\n');
+  fs.writeFileSync(path.join(proj, 'scratch', 'a.md'), 'a\n');
+  fs.symlinkSync(path.join(proj, 'docs', 'report.md'), path.join(proj, 'lnfile.md'));
+  fs.symlinkSync(path.join(proj, 'nowhere'), path.join(proj, 'dangling'));
+  fs.writeFileSync(path.join(B, 'x.md'), 'x\n');
+  fs.symlinkSync(path.join(B, 'x.md'), path.join(proj, 'notes', 'lnout.md'));
+  trackedProjectAt(B, 'proj2');
+  fs.mkdirSync(path.join(B, 'scratch'));
+  fs.writeFileSync(path.join(B, 'src.md'), 'src\n');
+  const home = path.join(B, 'home');
+  fs.mkdirSync(path.join(home, 'scratch'), { recursive: true });
+  trackedProjectAt(home, path.join('code', 'proj3'));
+  const cwds = { proj, docs: path.join(proj, 'docs'), out: path.join(B, 'scratch'), home };
+  const fill = (s) => s.replace(/<proj>/g, proj).replace(/<out>/g, B).replace(/<home>/g, home);
+  const savedHome = process.env.HOME;
+  process.env.HOME = home;
+  try {
+    assert.ok(CORPUS.length >= 102, `at least 80 ordinary commands and the 22 recorded false refusals: ${CORPUS.length}`);
+    assert.ok(CORPUS.filter((e) => e.kind === 'ordinary').length >= 80, 'at least 80 ordinary commands');
+    assert.equal(CORPUS.filter((e) => e.kind === 'recorded').length, 22, 'the 22 false refusals the earlier passes recorded');
+    const got = {};
+    const want = {};
+    for (const e of CORPUS) {
+      assert.ok(['allow', 'refuse'].includes(e.verdict) && cwds[e.cwd], `a well-formed entry: ${JSON.stringify(e)}`);
+      if (e.verdict === 'refuse') assert.ok(e.remedy, `a refused entry names its remedy: ${e.command}`);
+      const reason = evaluate(payload(fill(e.command), cwds[e.cwd]));
+      got[`${e.cwd}: ${e.command}`] = reason == null ? 'allow' : 'refuse';
+      want[`${e.cwd}: ${e.command}`] = e.verdict;
+      if (reason) assert.ok(!/\u2014/.test(reason) && !ROMP_NOUNS.test(reason.split(proj).join('<p>').split(B).join('<b>')), `no em dash, no romp noun: ${e.command}`);
+    }
+    assert.deepEqual(got, want);
+    const since = CORPUS.filter((e) => e.since === 'third pass');
+    assert.ok(since.every((e) => e.verdict === 'refuse' && e.remedy), 'each entry the third pass added to the cost is refused and names its remedy');
+  } finally { process.env.HOME = savedHome; fs.rmSync(B, { recursive: true, force: true }); }
 });
