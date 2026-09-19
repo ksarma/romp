@@ -123,7 +123,9 @@ it (4 failed, 7 passed); `jd.load_goals` per session in the pass loop reds the w
 `load_goals_shared` in the judge's file (1 failed, 10 passed); the same import-time alias to the writer door reds the writer
 reconciliation, loads two over the hand-offs (5 failed, 6 passed), as does `load_goals(fsid)` at the top of the shared
 door's cache branch (4 failed, 7 passed). The first case, one state per assertion: the looks bump removed (3 failed, 8
-passed); a duplicate bump statement, 4 against 2 on the counter and 2 against 1 in the census (3 failed, 8 passed); a served
+passed); every look ending at the working gate, its test replaced by a constant true, the first pass's walk {0, 0} against
+{1, 1} (review round 3: the battery had folded this line into the walk ceiling's state, whose plant reds the ceiling first); a
+duplicate bump statement, 4 against 2 on the counter and 2 against 1 in the census (3 failed, 8 passed); a served
 bump beside the derive, memo (2, 2) against (0, 2) (2 failed, 9 passed); the shared cache switched off after setUp,
 writerLoads 4 against 0 (1 failed, 10 passed); SID_A's store read once before the first pass, the counters {hit 3, miss 1}
 against {hit 2, miss 2} (1 failed, 10 passed); the memo row never recorded (4 failed, 7 passed); the skip's early return
