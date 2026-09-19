@@ -15,18 +15,29 @@
 # urllib, one POST to the configured receiver). The export cases pin ROMP_KERNEL_PORT at 1, a port
 # nothing answers on, so a case that reads the kernel fails loudly there instead of dialling the live
 # port setup() exports for the curl stub's URL assertions. --from reads no kernel: that a --from case
-# passes on the dead port is the proof. The upload cases point HOME at an empty directory under the
-# test's own tree (the receiver file is read as ~/.config/romp/perf-receiver) and unset
-# ROMP_PERF_RECEIVER, so no setting of the machine running the suite is read, and name a receiver on a
-# loopback port nothing answers on: no request of theirs leaves the machine or reaches anything.
+# passes on the dead port is the proof. Every case runs under a HOME in the test's own tree (setup(): the
+# receiver file is read as ~/.config/romp/perf-receiver and the private-strings list as
+# ~/.config/romp/private-strings.txt, so the export step and the upload step resolve both under the test
+# tree), with ROMP_PERF_RECEIVER, ROMP_PRIVATE_STRINGS and XDG_CONFIG_HOME unset and USER and LOGNAME
+# pinned to tester, so no setting and no machine string of the machine running the suite is read, except
+# its HOSTNAME: the one probe bats cannot pin (the Python harnesses pin it through a child shim). Before
+# this belt the five export and upload cases read the machine's real list and passed only because nothing
+# in the fixture collided with it (2026-09-18). The upload cases name a receiver on a loopback port
+# nothing answers on: no request of theirs leaves the machine or reaches anything.
 
 ROMP_SCRIPT="$(cd "$(dirname "$BATS_TEST_FILENAME")/../bin" && pwd)/romp"
 
 setup() {
     # bin/romp resolves the state directory as ${ROMP_STATE_DIR:-$XDG_STATE_HOME/romp} and the token as
-    # ${ROMP_SERVE_TOKEN:-<state>/serve-token}: a live kernel's exports outrank the redirection below
-    unset ROMP_STATE_DIR ROMP_SERVE_TOKEN ROMP_PERF_RECEIVER
+    # ${ROMP_SERVE_TOKEN:-<state>/serve-token}: a live kernel's exports outrank the redirection below. The export
+    # and upload children resolve ~/.config (the receiver setting, the private-strings list) under HOME, or under
+    # XDG_CONFIG_HOME and ROMP_PRIVATE_STRINGS when those are set, and read USER and LOGNAME as machine strings:
+    # every one is unset, pinned, or under the test tree here, so no case reads this machine's list or setting
+    # (the hostname is the residual bats cannot pin)
+    unset ROMP_STATE_DIR ROMP_SERVE_TOKEN ROMP_PERF_RECEIVER ROMP_PRIVATE_STRINGS XDG_CONFIG_HOME
     TEST_DIR="$(mktemp -d)"
+    export HOME="$TEST_DIR/home"; mkdir -p "$HOME"
+    export USER=tester LOGNAME=tester
     export XDG_STATE_HOME="$TEST_DIR/state"
     mkdir -p "$XDG_STATE_HOME/romp"
     printf 'TESTTOKEN123\n' > "$XDG_STATE_HOME/romp/serve-token"
@@ -485,7 +496,7 @@ PY
 # `romp perf upload FILE [--yes] [--receiver URL]`: the export's companion. Each case first writes a real export
 # from snapshot A with the export verb, so the file the upload checks is one the export wrote.
 _upload_fixture() {
-    export UP_HOME="$TEST_DIR/home"; mkdir -p "$UP_HOME"
+    export UP_HOME="$HOME"                            # setup()'s HOME in the test tree: the receiver file is read beneath it
     export UP_FILE="$TEST_DIR/public.json"
     ROMP_KERNEL_PORT=1 "$ROMP_SCRIPT" perf export --public --from "$SNAP_A" --out "$UP_FILE" >/dev/null
     [ -s "$UP_FILE" ]
