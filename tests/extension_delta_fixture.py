@@ -51,13 +51,23 @@ def fixture():
         _feed([{"itemId": "b", "text": "second"}, {"itemId": "c", "text": "third"}], now=1010),
         _feed([], now=1015),
     ]
+    # A non-str key field (a float message id), in a stream of its own so the entry arrives in a WHOLE frame both receivers
+    # key themselves: the kernel refuses it at the source (_delta_keyer, 2026-09-19), holds no base and sends both pushes
+    # whole. Python spells the field "1.0" and JavaScript "1", so a patch spelled by the kernel would have doubled the
+    # entry on either receiver; the replay asserts neither push is a delta.
+    nonstr = [
+        _bars({S1: turns("web", 1)}, [], [{"id": 1.0, "text": "synthetic message"}], now=1055),
+        _bars({S1: turns("web", 1)}, [], [{"id": 1.0, "text": "synthetic message, edited"}], now=1060),
+    ]
     steps = []
-    for kind, payloads in (("bars", bars), ("feed", feeds)):
+    for kind, payloads in (("bars", bars), ("feed", feeds), ("bars", nonstr)):
         stream = _Stream(kind)
         with mock.patch.object(km, "_DELTA_MAX_FRACTION", 10.0):
             for payload in payloads:
                 frames = stream.push(payload)
                 assert len(frames) == 1
+                if payloads is nonstr:
+                    assert frames[0]["type"] == "bars", frames[0]   # whole, never a delta: the slot cannot be keyed
                 steps.append({"wire": frames[0], "full": payload})
         # Exercise the normal size fallback, which resets this slot's revision to zero.
         if kind == "feed":

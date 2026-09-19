@@ -160,12 +160,23 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   Outline and Waiting on you pages do) then receives `{type:"feedDelta"}` frames: changed cards by `itemId`, removed
   ids, the same for ledgers by `sid`, and the small top-level fields whole under
   `top` when any changed — and an unchanged board sends such a client nothing at
-  all. Every other consumer — the VS Code extension's pipes,
-  federation's remote sockets, an older bundle — stays on the full-frame path,
-  which keeps its 60 s repost of the unchanged frame. `federation.ts` applies a
-  delta onto the last full frame it holds for the host and re-emits a merged full
+  all. A federated dashboard's relay sockets announce it too (`federation.ts`
+  `REMOTE_DIAL_CAPS`, since 2026-09-18; the relay forwards the dial's query
+  whole). A consumer that announces nothing and dials no `delta=1` (a bundle
+  before the cap; a relay dialed by a dashboard bundle before 2026-09-15; the
+  VS Code extension before 2026-09-16) stays on the full-frame path, which
+  keeps its 60 s repost of the unchanged frame; one that dials `delta=1`
+  without the cap is served the feed as view-delta slot patches instead: the
+  VS Code extension's pipes (`client=ext&delta=1` since 2026-09-16, reassembled
+  by their own `ViewDeltas`) and a relay dialed by a dashboard bundle from
+  2026-09-15 to 2026-09-18. `federation.ts` applies a local delta onto
+  the frame the merge reads and a remote host's delta onto the raw frame it
+  holds for that host (`applyRemoteFeedDelta`), and re-emits a merged full
   frame, so every consumer still sees whole `feed` frames; a delta it cannot
-  apply gets a `needFullFeed` and a re-base. A build that carries no `ledgers`
+  apply gets a `needFullFeed` to the kernel that sent it and a re-base. A
+  remote host's view-delta patches (the timeline's bars; the feed from a kernel
+  too old to read the caps term) are reassembled per relay socket
+  (`Conn.viewDeltas`) before the merge. A build that carries no `ledgers`
   says nothing about ledgers: the client keeps the ones it holds, and so does the
   kernel's record of them. Card age colours are computed client-side from `t` on
   a live clock (`age-color.ts`, `feed-age.ts`: the payload's `now` plus the local
