@@ -588,12 +588,19 @@ class ByteIdenticalFrames(unittest.TestCase):
         ps = km._PERF_STATS
         pairs = []
         p1, p2 = self._spy_compares(pairs)
-        before, b0 = km._chat_sig_stats_report(), ps.snapshot()["builds"]["chat"]
+        s0 = ps.snapshot()
+        before, b0 = km._chat_sig_stats_report(), s0["builds"]["chat"]
         with p1, p2, _StatInterceptor(km._CHAT_SIG_TL) as ic:
             _wire, calls, _rows = self._run(km._chat_diff, perf=ps)
         self.assertEqual(calls, [False, True, False, True, False, True], "premise: rebuilt, served, alternating")
-        after, b1 = km._chat_sig_stats_report(), ps.snapshot()["builds"]["chat"]
+        s1 = ps.snapshot()
+        after, b1 = km._chat_sig_stats_report(), s1["builds"]["chat"]
         d = {k: after[k] - before[k] for k in after}
+        rows, n_sigs = self._sig_rows(s0, s1), d["pre"] + d["post"] + d["thread"]
+        print("[live] bare: counted=%d intercepted=%d signatures=%d per_signature=%.1f sig_cpu_ms_per_sig=%s sig_wall_ms_per_sig=%.3f"
+              % (d["stats"], ic.total, n_sigs, (ic.total / n_sigs) if n_sigs else float("nan"),
+                 "n/a" if rows["cpu_ms"] is None else "%.3f" % (rows["cpu_ms"] / n_sigs if n_sigs else float("nan")),
+                 (rows["wall_ms"] / n_sigs) if n_sigs else float("nan")))
         cached, built = self._identities(d, b0, b1)
         self.assertEqual((cached, built), (3, 3))
         self.assertEqual((d["nosig"], d["failedBuilds"], d["targetedBuilds"]), (0, 0, 0))
@@ -861,7 +868,7 @@ class ByteIdenticalFrames(unittest.TestCase):
         real_pins = km._pinned_notes_fp
 
         def pins_and_one_import(sid):
-            if not imports:                              # once, inside the first signature: eight stats through posix.stat
+            if not imports:                              # once, inside the first signature: its stats go through posix.stat
                 sys.path.insert(0, mod_dir)
                 try:
                     imports.append(importlib.import_module(mod_name))
@@ -1036,6 +1043,12 @@ class ByteIdenticalFrames(unittest.TestCase):
         self.assertEqual(d["pre"], len(calls), "one pre-build signature per cycle")
         self.assertEqual(d["post"], b1["built"] - b0["built"], "one post-build signature per build")
         seen = {"stat": ic.stat, "posix": ic.posix_stat, "lstat": ic.lstat, "dirent": ic.dirent, "dirent_by_dir": ic.dirent_by_dir}
+        channels = {"stat": ic.stat, "posix": ic.posix_stat, "lstat": ic.lstat, "dirent": ic.dirent}
+        print("[live] exactness: counted=%d intercepted=%d signatures=%d per_signature=%.1f registry=%d sig_cpu_ms_per_sig=%s "
+              "sig_wall_ms_per_sig=%.3f channels=%r"
+              % (d["stats"], ic.total, n_sigs, (ic.total / n_sigs) if n_sigs else float("nan"), ic.dirent_by_dir.get(str(sdk), 0),
+                 "n/a" if rows["cpu_ms"] is None else "%.3f" % (rows["cpu_ms"] / n_sigs if n_sigs else float("nan")),
+                 (rows["wall_ms"] / n_sigs) if n_sigs else float("nan"), channels))
         self.assertEqual(d["stats"], ic.total, "memos.chatSig.stats equals every stat intercepted inside the %d signatures: %r" % (n_sigs, seen))
         self._identities(d, b0, b1)
         self.assertGreaterEqual(ic.total / n_sigs, 20, "the world is not empty: at least twenty stats per signature (%r)" % (seen,))
@@ -1713,6 +1726,7 @@ class ChatSigHelpers(unittest.TestCase):
                     self.assertIsNotNone(key[0], "the index's mtime: the tree has a git dir")
                     body = len(key[2]) + 2                   # the subdirectories, the tree's mtime, the index's
                     seen = {"stat": ic.stat, "posix": ic.posix_stat, "lstat": ic.lstat, "dirent": ic.dirent}
+                    print("[live] repo_index_key %s %s: counted=%d body=%d intercepted=%r" % (label, memo, n, body, seen))
                     self.assertEqual(n, ic.total, "%s %s memos: the count is what ran, helpers included: %r" % (label, memo, seen))
                     self.assertEqual(ic.dirent, len(key[2]), "the subdirectories' stats are DirEntry stats through _entry_stat")
                     self.assertGreater(n, body, "%s %s memos: the tree memos' stats are in the count beyond the body's own %d: %r"

@@ -3207,29 +3207,43 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   in `tests/test_perf_stats.py` pins it: over 300 sub-millisecond spins some
   mark reads 0, some a whole tick, and the marks' sum tracks the window's
   thread CPU), and only the sum over a window estimates the CPU.
-  The instrumentation's own cost, one run's readings and not a contract:
-  2026-09-19, Python 3.12, a 30-core (60-thread) dev box, microbenchmarks
-  over the loaded kernel taking the best of five, the census over the
-  harness's 38 tabs by four clients, and the harness's six-cycle world for
-  the per-signature stats and CPU (three runs each of the bare and the
-  furnished world). The counts behind the totals (which operation runs how
-  many times per served tab, per rebuilt tab and per push) are derived in
-  the kernel's `stages_cpu_ms` block comment and pinned by
-  `tests/test_kernel_delta_send.py`; this paragraph is the only place the
-  microsecond figures live, and the kernel's comments point here. A
-  `getrusage` read 1.07 us; the `os.stat` and `os.lstat` counting wrappers
-  about half a microsecond per stat (3.14 us against 2.66 bare), times the
-  signature's stats (about 24 per signature in the bare harness world, 71
-  in the furnished one), so about 11.5 us per signature in the bare world;
-  the DirEntry door 0.18 to 0.27 us per stat; the signature scope 2.8 us;
-  the per-tab note 3.0 us and a re-read's note 3.2 us; a count call
-  0.27 us; the census 18.5 us per push at 38 tabs and four clients when the
-  gate walked no tab, 3.9 us when it walked all. About 24 us per served tab
-  per cycle, 46 us per rebuilt tab and 0.92 ms per push at 38 served tabs:
-  about 0.6 percent of the 4.2 ms per-tab signature wall of the design's
-  live window (159.5 ms per cycle over 38 tabs with a dashboard attached),
-  and 2 to 6 percent of the signature's thread CPU as the harness reads it
-  (0.42 to 1.15 ms per signature over 24 to 71 stats).
+  The instrumentation's own cost, one run's readings and not a contract,
+  at head {LIVE:head} (2026-09-19, Python 3.12, a 30-core (60-thread) dev
+  box): the per-term microseconds are what `tests/test_perf_stats.py`'s
+  cost-terms test prints (best of five over the loaded kernel; `-rA` shows
+  the line), the per-signature stats and thread CPU what the six-cycle
+  harness's two worlds print in `tests/test_kernel_delta_send.py`, and the
+  counts behind the totals (which operation runs how many times per served
+  tab, per rebuilt tab and per push) are derived in the kernel's
+  `stages_cpu_ms` block comment and pinned by
+  `test_the_per_tab_counts_the_cost_derivation_uses_hold_by_execution`;
+  this paragraph is the only place the figures live, and the kernel's
+  comments point here. A `getrusage` read {LIVE:bench.getrusage} us; the
+  `os.stat` and `os.lstat` counting wrappers add, per stat,
+  {LIVE:bench.overhead} us ({LIVE:bench.stat_wrapped_open} us with a
+  signature open against {LIVE:bench.stat_bare} us bare) times the
+  signature's stats ({LIVE:bare.stats_per_sig} per signature in the bare
+  harness world, {LIVE:furnished.stats_per_sig} in the furnished one, a
+  figure that moves with the temp root's path depth, one lstat per
+  component of the transcript's realpath); the
+  DirEntry door {LIVE:bench.door_closed} to {LIVE:bench.door_open} us per
+  stat; the signature scope {LIVE:bench.scope} us; the per-tab note
+  {LIVE:bench.note_pre} us and a re-read's note {LIVE:bench.note_compare}
+  us; a count call {LIVE:bench.count} us; the census
+  {LIVE:bench.census_none} us per push at 38 tabs and four clients when the
+  gate walked no tab, {LIVE:bench.census_all} us when it walked all. From
+  those terms, the bare world's stats per signature and the pinned counts:
+  {LIVE:derived.served_tab_us} us per
+  served tab per cycle, {LIVE:derived.rebuilt_tab_us} us per rebuilt tab
+  and {LIVE:derived.push_ms} ms per push at 38 served tabs, which is
+  {LIVE:derived.pct_live_wall} percent of the per-tab signature wall in the
+  chat-signature design note's live window (159.5 ms per cycle over 38 tabs
+  with a dashboard attached, the r60 window of 2026-09-18: a reading
+  outside this repo, not this instrumentation's measurement) and
+  {LIVE:derived.pct_cpu_low} to {LIVE:derived.pct_cpu_high} percent of the
+  signature's thread CPU as the harness reads it
+  ({LIVE:bare.cpu_ms_per_sig} to {LIVE:furnished.cpu_ms_per_sig} ms per
+  signature).
   Empty where the platform has no per-thread rusage (macOS): an empty
   block means no clock, not no CPU.
 - `builds`: `chat`, `feed`, `timeline`, each with `cached`, `built`, `ms`.
@@ -4148,11 +4162,17 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   by the read counters and the bytes column), the fstat inside `scandir()`
   on the directory it opens, a `DirEntry` predicate (`is_dir`, `is_file`,
   `is_symlink`) on a symlink entry or on a filesystem that reports no
-  d_type, and the stats of the git children a cold cwd memo forks, made in
-  another process. A test intercepts `os.stat`, `os.lstat` and `DirEntry.stat`
-  in-process around real signatures over a real state root and asserts the
-  counter equals the interception count; at the previous head the counter
-  saw about 7 of 23 stats per signature. `namesReads` counts raw
+  d_type, and the stats made in another process by any git child a
+  signature forks (`tests/test_chat_build_sig_inputs.py` spies the forks
+  inside a signature and pins the set: today the cold cwd memo's `rev-parse`
+  and `remote get-url`, and the repo file index's `ls-files` whenever the
+  repo-index key moved; a fork's wall lands on the row of the part that
+  forked it, the tail's `ls-files` on `push.chat.sig.deps`, and its CPU on
+  no row, since `RUSAGE_THREAD` excludes a child). A test intercepts
+  `os.stat`, `os.lstat` and `DirEntry.stat` in-process around real
+  signatures over a real state root and asserts the counter equals the
+  interception count, over a world furnished so every channel runs
+  (`tests/test_kernel_delta_send.py`). `namesReads` counts raw
   names-registry reads inside a signature; `switchReads`, reads of the
   user-todos switch file; `regReads`, registry file reads by the SDK
   backend's reader. The warm-tab census: `warmEligible`, a tab with a cached

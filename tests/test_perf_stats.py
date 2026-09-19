@@ -2526,6 +2526,84 @@ class GoalIoCounters(unittest.TestCase):
                 ("fresh-4: the wrappers' cost per stat", r"wrappers?[^.]{0,240}per stat|per stat[^.]{0,240}wrappers?")):
             self.assertTrue(re.search(pattern, doc), "%s: no match for %r in docs/reference.md" % (why, pattern))   # not assertRegex: its message would print the whole doc
 
+    @staticmethod
+    def _reference_entry(doc, start):
+        """The reference's text from index `start` to the next top-level entry line (a line beginning "- `")."""
+        end = doc.find("\n- `", start)
+        return doc[start:end if end != -1 else len(doc)]
+
+    def test_the_microsecond_figures_live_in_the_reference_alone(self):
+        """The instrumentation's measured cost is stated in ONE place, the stages_cpu_ms entry of docs/reference.md, and the
+        kernel's copies point there (the 2026-09-19 round-2 rulings on rules-2, tests-4, extra5-3, extra8-2 and extra8-7:
+        three hand-kept copies of one benchmark disagreed on two terms, so reduce the copies rather than reconcile them;
+        1a8b635c1 made the reduction and this pin refuses the next copy). A microsecond figure is `<number> us`; none may
+        stand in the kernel's stages_cpu_ms block comment (its header line to the `try:` that imports resource), in
+        _stat_counting_install's docstring, in the memos.chatSig block comment (its header to class _ChatSigLocal) or in
+        the _PerfStats docstring's stages_cpu_ms and memos rows (the chatSig row is inside the latter); the reference's
+        stages_cpu_ms entry carries at least ten and its memos.chatSig paragraph none. A figure is a number followed by
+        us, a micro sign with s, or microsecond(s), with or without a space (the round-3 review pasted `0.25us` and `0.25
+        microseconds` past the first pattern). The figures themselves are not pinned: InstrumentationCostTerms below
+        recomputes them and prints the line the entry is filled from."""
+        us = re.compile(r"\b\d+(\.\d+)?\s*(us|µs|μs|microseconds?)\b")
+        lines = Path(km.__file__).read_text(encoding="utf-8").splitlines()
+
+        def block(header, ends):
+            i = next(n for n, ln in enumerate(lines) if ln.startswith(header))
+            j = next(n for n in range(i + 1, len(lines)) if ends(lines[n]))
+            return "\n".join(lines[i:j])
+        regions = (("the kernel's stages_cpu_ms block comment", block("# ── stages_cpu_ms", lambda ln: ln == "try:")),
+                   ("_stat_counting_install's docstring", km._stat_counting_install.__doc__),
+                   ("the kernel's memos.chatSig block comment", block("# ── memos.chatSig", lambda ln: ln.startswith("class _ChatSigLocal"))),
+                   ("the _PerfStats docstring's stages_cpu_ms row", _doc_row(km._PerfStats.__doc__, "stages_cpu_ms")),
+                   ("the _PerfStats docstring's memos row (chatSig inside it)", _doc_row(km._PerfStats.__doc__, "memos")))
+        for where, text in regions:
+            self.assertGreater(len(text), 200, "premise: %s was found" % where)
+            found = [m.group(0) for m in us.finditer(" ".join(text.split()))]
+            self.assertEqual(found, [], "%s states a microsecond figure %r: the stages_cpu_ms entry of docs/reference.md is the only home"
+                             % (where, found))
+        doc = Path(HERE).parent.joinpath("docs", "reference.md").read_text(encoding="utf-8")
+        cpu_entry = " ".join(self._reference_entry(doc, doc.index("- `stages_cpu_ms`:")).split())
+        n = sum(1 for _ in us.finditer(cpu_entry))
+        self.assertGreaterEqual(n, 10, "the reference's stages_cpu_ms entry carries the cost terms: %d microsecond figures found" % n)
+        memos = doc.index("- `memos`:")
+        sig_entry = " ".join(self._reference_entry(doc, doc.index("`chatSig`", memos)).split())
+        found = [m.group(0) for m in us.finditer(sig_entry)]
+        self.assertEqual(found, [], "the reference's memos.chatSig paragraph states a microsecond figure %r" % (found,))
+
+    def test_the_per_push_denominator_rule_lives_in_the_reference_alone_and_the_kernel_copies_point_there(self):
+        """correctness-1 (the 2026-09-19 round-2 review): the sentence saying which memos.chatSig keys are a delta over
+        pushes stood in three copies and was wrong in all three (two exceptions where there are six). The rule is stated
+        once now, in the memos.chatSig entry of docs/reference.md (the sibling doc pins hold its text), and the kernel's
+        two copies, the memos.chatSig block comment and the _PerfStats docstring's memos row, point there. This pin refuses
+        the next copy: neither kernel region may say "delta over pushes" (the round-3 review re-added the old sentence
+        beside the pointer and no pin moved)."""
+        lines = Path(km.__file__).read_text(encoding="utf-8").splitlines()
+        i = next(n for n, ln in enumerate(lines) if ln.startswith("# ── memos.chatSig"))
+        j = next(n for n in range(i + 1, len(lines)) if lines[n].startswith("class _ChatSigLocal"))
+        regions = (("the kernel's memos.chatSig block comment", "\n".join(lines[i:j])),
+                   ("the _PerfStats docstring's memos row", _doc_row(km._PerfStats.__doc__, "memos")))
+        rule = re.compile(r"delta over `?pushes`?")
+        for where, text in regions:
+            self.assertGreater(len(text), 200, "premise: %s was found" % where)
+            self.assertIn("memos.chatSig entry of docs/reference.md", " ".join(text.split()), "%s points at the reference" % where)
+            found = [m.group(0) for m in rule.finditer(" ".join(text.split()))]
+            self.assertEqual(found, [], "%s states the per-push rule %r: the reference's memos.chatSig entry is its only home" % (where, found))
+
+    def test_the_signature_has_the_forty_labels_the_prose_names(self):
+        """The share's denominator is compares times len(_CHAT_SIG_LABELS), written as the literal 40 in the reference's
+        memos.chatSig entry, the kernel's memos.chatSig block comment and the _CHAT_SIG_LABELS derivation beside
+        stages_cpu_ms, the ledger entry, the PR body and InstrumentationCostTerms' docstring below (the round-3 review,
+        2026-09-19: nine copies and no pin). A label added later reds this, which names the copies to update; the
+        reference's entry is checked to carry the literal so the pin and the prose agree."""
+        self.assertEqual(len(km._CHAT_SIG_LABELS), 40,
+                         "the signature has 40 labels: update the literal in docs/reference.md (memos.chatSig), kernel.py (the "
+                         "memos.chatSig block comment's compareIdenticalComponents row and the stages_cpu_ms derivation), the "
+                         "ledger entry, the PR body and InstrumentationCostTerms")
+        doc = Path(HERE).parent.joinpath("docs", "reference.md").read_text(encoding="utf-8")
+        memos = doc.index("- `memos`:")
+        sig_entry = " ".join(self._reference_entry(doc, doc.index("`chatSig`", memos)).split())
+        self.assertIn("40", sig_entry, "the reference's memos.chatSig entry names the label count")
+
     def test_the_stages_cpu_ms_container_sentence_is_carried_whole_by_the_docstring_row_and_the_reference(self):
         """The CPU containers gloss (2026-09-19 review, extra5-3): one sentence in the _PerfStats docstring's stages_cpu_ms row
         and in docs/reference.md, checked phrase by phrase in BOTH copies (the first pin read the reference alone and
@@ -2567,6 +2645,110 @@ class GoalIoCounters(unittest.TestCase):
         self.assertEqual(after["loads"], before["loads"], "two shared loads: no writer-side load counted")
         self.assertEqual((snap["miss"] - snap0["miss"], snap["hit"] - snap0["hit"]), (1, 1),
                          "...the fill and the hit are the shared cache's, on the snapshot")
+
+
+class InstrumentationCostTerms(unittest.TestCase):
+    """What the chat-signature instrumentation costs per operation, MEASURED in one process and PRINTED, never pinned
+    (2026-09-19 round-2 rulings: reduce the copies, recompute what a test can recompute, and have the body quote the
+    test's own live output instead of a hand-copied number). The stages_cpu_ms entry of docs/reference.md is the only
+    in-repo home of the microsecond figures (GoalIoCounters' source pin holds the kernel's copies to pointers) and is
+    filled from the `[live] cost terms` line this test prints (`pytest -rA` shows it) at the head the entry names; a
+    shared box moves the values run to run, so nothing here asserts a value. The assertions are sanity (every term above
+    zero and under a millisecond) and the counts the instrumentation must land while it runs: the wrapped stat, the
+    DirEntry door and the count call each counted exactly the calls made with a signature open. The terms mirror the
+    round-2 microbenchmark (bench.py at 981d9e634), best of five each, in one process over the loaded kernel: one
+    getrusage read (_thread_cpu), os.stat through the counting wrapper with a signature open against the bare builtin
+    (os.stat.__wrapped__) on one existing file, _entry_stat on a cached DirEntry with the signature closed and open, a
+    signature scope's enter and exit, the per-tab note over a 40-component hit, a re-read's note, a count call, and the
+    census at 38 tabs by four clients holding every tab, once for the tabs the gate did not walk (held_live None, the
+    census walks all) and once for tabs it did (True, the census walks none). The iteration counts are sized so the
+    test runs in about a second."""
+
+    N_CHEAP, N_STAT, N_CENSUS = 20000, 4000, 2000
+
+    @staticmethod
+    def _best_of_five(fn, n):
+        best = None
+        for _ in range(5):
+            t0 = time.perf_counter()
+            for _ in range(n):
+                fn()
+            dt = (time.perf_counter() - t0) / n * 1e6
+            best = dt if best is None else min(best, dt)
+        return best
+
+    def test_the_instrumentations_cost_terms_are_measured_in_one_run_and_printed(self):
+        tl = km._CHAT_SIG_TL
+        self.assertTrue(hasattr(os.stat, "__wrapped__"), "premise: the kernel's counting wrapper is on os.stat")
+        saved_active = tl.active
+        with km._CHAT_SIG_STATS_LOCK:
+            saved = dict(km._CHAT_SIG_STATS)
+
+        def restore():                                   # the notes and the census fold into the shared table: put it back
+            tl.active = saved_active
+            tl.stats = tl.namesReads = 0
+            with km._CHAT_SIG_STATS_LOCK:
+                km._CHAT_SIG_STATS.clear()
+                km._CHAT_SIG_STATS.update(saved)
+        self.addCleanup(restore)
+        bench, out = self._best_of_five, {}
+        tl.active = False
+        out["getrusage"] = bench(km._thread_cpu, self.N_CHEAP)
+
+        def scope():
+            with km._chat_sig_scope():
+                pass
+        out["scope"] = bench(scope, self.N_STAT)
+        sig = tuple(object() if i % 3 else (i, "x%d" % i) for i in range(len(km._CHAT_SIG_LABELS)))
+        hit = (sig, None, None)                          # a hit's operands: the same objects at every position
+        tabs = []
+
+        def note_pre():
+            km._chat_sig_note_pre("s", sig, hit, False, None, tabs)
+            if len(tabs) > 1000:
+                tabs.clear()
+        out["note_pre"] = bench(note_pre, self.N_STAT)
+        out["note_compare"] = bench(lambda: km._chat_sig_note_compare(hit, sig), self.N_STAT)
+        p = os.path.realpath(__file__)
+        bare = os.stat.__wrapped__
+        out["stat_bare"] = bench(lambda: bare(p), self.N_STAT)
+        with os.scandir(os.path.dirname(p)) as it:
+            e = next(x for x in it if x.name == os.path.basename(p))
+        e.stat()                                         # cached from here: the door's own cost, not the syscall's
+        out["door_closed"] = bench(lambda: km._entry_stat(e), self.N_CHEAP)
+        sids = ["%08d-1111-2222-3333-444444444444" % i for i in range(38)]
+        clients = [{"skeleton": set(sids), "dlock": threading.RLock(), "active": None} for _ in range(4)]
+        rows_none = [(s, False, True, True, None) for s in sids]
+        rows_all = [(s, False, True, True, True) for s in sids]
+        out["census_none"] = bench(lambda: km._chat_sig_note_census(rows_none, clients, False), self.N_CENSUS)
+        out["census_all"] = bench(lambda: km._chat_sig_note_census(rows_all, clients, False), self.N_CENSUS)
+        tl.active = True                                 # a signature open on this thread: the counted terms
+        try:
+            tl.stats = 0
+            out["stat_wrapped_open"] = bench(lambda: os.stat(p), self.N_STAT)
+            self.assertEqual(tl.stats, 5 * self.N_STAT, "the wrapper counted exactly the stats made with the signature open")
+            tl.stats = 0
+            out["door_open"] = bench(lambda: km._entry_stat(e), self.N_CHEAP)
+            self.assertEqual(tl.stats, 5 * self.N_CHEAP, "the door counted exactly the entry stats made")
+            tl.namesReads = 0
+            out["count"] = bench(lambda: km._chat_sig_count("namesReads"), self.N_CHEAP)
+            self.assertEqual(tl.namesReads, 5 * self.N_CHEAP, "the count call landed every call made")
+        finally:
+            tl.active = False
+            tl.stats = tl.namesReads = 0
+        for k, v in out.items():
+            self.assertGreater(v, 0.0, k)
+            self.assertLess(v, 1000.0, "%s: %.3f us is not a per-call figure" % (k, v))
+        try:
+            r = subprocess.run(["git", "-C", str(Path(HERE).parent), "rev-parse", "--short", "HEAD"], capture_output=True, text=True, timeout=10)
+            head = r.stdout.strip() if r.returncode == 0 and r.stdout.strip() else "unknown"
+        except (OSError, subprocess.SubprocessError):
+            head = "unknown"
+        py = sys.version.split()[0] + ("" if getattr(sys, "_is_gil_enabled", lambda: True)() else "t")
+        print("[live] cost terms head=%s python=%s: getrusage=%.3f stat_wrapped_open=%.3f stat_bare=%.3f door_closed=%.3f door_open=%.3f "
+              "scope=%.3f note_pre=%.3f note_compare=%.3f count=%.3f census_none=%.3f census_all=%.3f (us, best of five)"
+              % (head, py, out["getrusage"], out["stat_wrapped_open"], out["stat_bare"], out["door_closed"], out["door_open"], out["scope"],
+                 out["note_pre"], out["note_compare"], out["count"], out["census_none"], out["census_all"]))
 
 
 class JudgeCpu(unittest.TestCase):

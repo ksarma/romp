@@ -608,8 +608,9 @@ _CHAT_SIG_DEPS = ("taskout", "pathlink", "postal")
 
 # ── stages_cpu_ms: a stage's CPU beside its wall (stage 1 of the chat-signature design, 2026-09-18) ────────────────
 # stage() records wall time, so a seam over a stat storm holds the GIL waits and the syscall waits of every other thread
-# with it, and the pusher's stage wall exceeded its own thread CPU by 157 ms per cycle on the second-boot readings with no way
-# to say which stage carried the wait. getrusage(RUSAGE_THREAD) splits the calling thread's CPU into user and system;
+# with it, and the pusher's stage wall exceeded its own thread CPU by 157 ms per cycle in the chat-signature design note's
+# second-boot readings of 2026-09-18 (a reading outside this repo) with no way to say which stage carried the wait.
+# getrusage(RUSAGE_THREAD) splits the calling thread's CPU into user and system;
 # the chat seams and the push and jobs containers read it at their open and close and hand stage() the delta. What
 # the instrumentation executes, by regime, is derived here and pinned by tests; what each term costs in microseconds
 # is stated ONCE, in the stages_cpu_ms entry of docs/reference.md (one dated run's readings, not a contract), so no
@@ -37954,8 +37955,8 @@ def _chat_postal_relevant(ev):
 #                        session with a comments store, per push and per HTTP comments frame, a raising one
 #                        included): the third caller of _chat_build_sig, and the reads below count inside its
 #                        signatures too, so a per-signature figure divides by pre + post + thread, never by
-#                        pre + post alone (a board with open threads read thirty-one stats per signature for
-#                        thirty before this row, 2026-09-18 review)
+#                        pre + post alone, which over-reads the per-signature figure by the thread signatures'
+#                        share (2026-09-18 review)
 #   nosig                pre-build signatures that raised or found no transcript path: the tab built, never cached
 #   waited               tabs served after waiting for another thread's build of the same tab (the single flight)
 #   compares             cache reads that met a cached entry with a signature in hand: the pre-flight read of every
@@ -37991,10 +37992,13 @@ def _chat_postal_relevant(ev):
 #                        stat): the fstat inside open() (part of a read, counted by the read counters and the bytes
 #                        column), the fstat inside scandir() on the directory it opens, a DirEntry predicate
 #                        (is_dir, is_file, is_symlink) on a symlink entry or on a filesystem that reports no
-#                        d_type, and the stats of the git children a cold cwd memo forks (rev-parse, remote
-#                        get-url), made in another process. The round-2 review's strace over 74 harness signatures
-#                        found 229 such fd fstats (158 open()'s, 63 scandir's, 8 on pipes to git children) beside
-#                        5,779 counted path stats, every one of the latter in the count. Per signature:
+#                        d_type, and the stats made in another process by any git child a signature forks (the set
+#                        is pinned by execution in tests/test_chat_build_sig_inputs.py; a fork's wall lands on the
+#                        row of the part that forked it, its CPU on no row, since RUSAGE_THREAD excludes a child).
+#                        A strace over the harness's signatures (a review probe recorded by commit bb911423d,
+#                        2026-09-19, with no command kept) found fd fstats from open(), scandir() and the pipes to git
+#                        children beside the counted path stats, every path stat in the count: a reading, not
+#                        recomputed by a test. Per signature:
 #                        stats / (pre + post + thread), and the same denominator for the three read counts
 #   namesReads           raw names-registry file reads inside a signature (_sdk_transcript_path, _names_parts
 #                        with no snapshot)
@@ -38032,8 +38036,9 @@ class _ChatSigLocal(threading.local):
 def _stat_counting_install():
     """Once per process: os.stat and os.lstat wrapped so every stat made on a thread while its chat signature is open
     counts on the thread-local (memos.chatSig.stats), whichever module makes it. The same wrapper objects go on the os
-    module and the posix module (importlib's path finder calls posix.stat directly: eight stats per fresh import,
-    verified) and, on Python 3.10, on pathlib._NormalAccessor, which bound os.stat at pathlib's import so Path.stat,
+    module and the posix module (importlib's path finder calls posix.stat directly, so a fresh import's stats reach
+    no os-module wrapper; the exactness test's posix channel pins that they are counted) and, on Python 3.10, on
+    pathlib._NormalAccessor, which bound os.stat at pathlib's import so Path.stat,
     Path.exists and Path.is_dir bypassed an os-module wrapper there (verified on 3.10; with the accessor patched
     3.10, 3.12 and 3.13 count alike: Path.stat 1, Path.exists 1, Path.is_dir 1). The thread-local lives on the wrapper
     (_romp_sig_counting), so a second load of this module in one process (the test suite loads the kernel many times
