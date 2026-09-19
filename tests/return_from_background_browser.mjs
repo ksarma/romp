@@ -383,6 +383,15 @@ try {
     out.frames = page.frames().map((f) => { try { return new URL(f.url()).pathname; } catch (e) { return f.url(); } });
   } else if (cfg.tapPane) {
     const prefetchBeforeTap = out.dials.filter((d) => d.app === "chat").reduce((n, d) => n + (d.needFull || []).filter((w) => w === "prefetch").length, 0);
+    // THE FIRST TAP'S WITNESS (review round 3, tests-1): the pane DOCUMENT's own load, stamped by a listener armed on the frame element BEFORE
+    // the tap (a listener armed after the click can miss a fast origin's load), once the document is not the initial about:blank; re-armed
+    // before an abort leg's re-tap, so the stamp is the loaded document's on every leg
+    const armDocLoad = () => page.evaluate((p) => {
+      const w = window; w.__labDocLoad = null;
+      const f = document.getElementById("f-" + p);
+      f.addEventListener("load", () => { let url = null; try { url = f.contentDocument ? f.contentDocument.URL : null; } catch (e) { url = "ERR"; } if (w.__labDocLoad === null && url && url !== "about:blank") w.__labDocLoad = { t: Date.now(), url }; }, { once: false });
+    }, cfg.tapPane);
+    await armDocLoad();
     out.t.tap = now();
     if (cfg.abortPane) {
       // HIGH 2 (review round 1, 2026-09-19): the tapped pane's document fetch FAILS at the first tap (the route aborts the navigation).
@@ -430,6 +439,7 @@ try {
       }
       out.abort = { ms: failedSeen ? now() - out.t.tap : -1, mode: "abort", tabsToReach, tabTrail, ...(failedSeen || {}) };
       await page.unroute(isAbortUrl, aborter);
+      await armDocLoad();   // the re-tap's document is the one whose load is stamped
       out.t.retap = now();
       await page.click("#mtabs button[data-pane=" + cfg.tapPane + "]");   // the re-tap: the shell promotes the re-parked pane again, as a first tap would
     } else {
@@ -455,6 +465,23 @@ try {
       await sleep(50);
     }
     out.loadingClearedMs = cleared ? now() - (out.t.retap || out.t.tap) : -1;
+    const docLoad = await page.evaluate(() => window.__labDocLoad || null);
+    out.docLoadMs = docLoad ? docLoad.t - (out.t.retap || out.t.tap) : -1;   // the document's own load event, from the tap that loaded it
+    out.docLoadUrl = docLoad ? docLoad.url : null;
+    // the pane PAINTED (tests-1): its own loader retired (#pane-spin.gone; the Files page carries none, null) and its app element has
+    // children (fleet: #fleet-list, the sessions; waiting: #waiting-list, the rows or the empty line; files: #files-empty, the recent rows'
+    // title), polled to a deadline from the tap that loaded it
+    const paintEl = { fleet: "fleet-list", waiting: "waiting-list", files: "files-empty", timeline: "host" }[cfg.tapPane] || null;
+    const paneFrame = () => page.frames().find((fr) => { try { return new URL(fr.url()).pathname === "/" + cfg.tapPane; } catch (e) { return false; } });
+    const paintDeadline = now() + 15000;
+    let painted = null;
+    while (now() < paintDeadline) {
+      const fr = paneFrame();
+      painted = fr ? await fr.evaluate((id) => { const sp = document.getElementById("pane-spin"), el = id ? document.getElementById(id) : null; return { spinGone: sp ? sp.classList.contains("gone") : null, el: id, count: el ? el.childElementCount : -1 }; }, paintEl).catch(() => null) : null;
+      if (painted && painted.count > 0 && painted.spinGone !== false) break;
+      await sleep(100);
+    }
+    out.painted = painted ? { ...painted, ms: painted.count > 0 && painted.spinGone !== false ? now() - (out.t.retap || out.t.tap) : -1 } : null;
     out.loaderSeen = await page.evaluate(() => window.__labLoaderSeen || null);   // what the observer saw the moment the loader went up
     out.srcAfterTap = await page.evaluate(() => Object.fromEntries(Array.from(document.querySelectorAll("iframe[id^=f-]")).map((f) => [f.id.slice(2), f.getAttribute("src")])));
     out.loadingAfterTap = await page.evaluate(() => ({ body: document.body.classList.contains("pane-loading"), failed: document.body.classList.contains("pane-failed"), panes: Array.from(document.querySelectorAll(".pane.loading")).map((d) => d.id), failedPanes: Array.from(document.querySelectorAll(".pane.failed")).map((d) => d.id),

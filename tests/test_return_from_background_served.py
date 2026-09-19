@@ -620,6 +620,18 @@ class ReturnFromBackground(unittest.TestCase):
             self.assertIn("panes", la, where + "the loading state was read after the tap: %r" % (la,))
             self.assertNotIn(tap + "-pane", la.get("panes") or [], where + "its document loaded, so its .pane no longer carries the loading class: %r" % (la,))
             self.assertFalse(la.get("body"), where + "…and the shell's loader is down: %r" % (la,))
+            # THE FIRST TAP'S WITNESS (review round 3, tests-1): the headline road in a real engine. Before this every browser leg that tapped a
+            # lazy pane aborted its first fetch, so a lazy pane was witnessed only as a second promotion after a failure. Now every tap leg reads
+            # the pane DOCUMENT's own load event (a listener armed before the tap that loaded it), the loader's retirement AT that load (never
+            # the 30 s backstop), and the pane PAINTED (its own loader retired, its app element with children); the no-abort legs (Waiting and
+            # Files in Chromium, the Outline in WebKit) witness the FIRST tap with no route in the way, the abort legs the re-tap's load
+            self.assertGreaterEqual(r.get("docLoadMs", -1), 0, where + "the pane's document fired its own load event after the tap that loaded it: %r" % (r.get("docLoadMs"),))
+            self.assertTrue(str(r.get("docLoadUrl") or "").endswith("/" + tap), where + "…for the pane's page: %r" % (r.get("docLoadUrl"),))
+            self.assertLessEqual(r.get("loadingClearedMs"), r.get("docLoadMs") + 250, where + "the loading state retired at the document's load (within a read's slack), not later: cleared %r ms, load %r ms" % (r.get("loadingClearedMs"), r.get("docLoadMs")))
+            pt = r.get("painted") or {}
+            self.assertGreaterEqual(pt.get("ms", -1), 0, where + "the pane painted within the wait: %r" % (pt,))
+            self.assertGreater(pt.get("count", -1), 0, where + "…its app element (%s) has children: %r" % (pt.get("el"), pt))
+            self.assertNotEqual(pt.get("spinGone"), False, where + "…and its own loader retired (or the page carries none, the Files pane): %r" % (pt,))
             if shell == "phone" and tap in LAZY_PHONE:
                 # ui-2 (review round 1): the shell's loader PAINTS, read by an observer armed before the tap the moment body.pane-loading
                 # was added: display flex, a box of some height, above the tab bar, with the romp loader inside it
@@ -820,6 +832,12 @@ class ReturnFromBackground(unittest.TestCase):
 
     def test_webkit_phone_hung_12s(self):
         self._leg("phone", "hung", 12, engine="webkit", tap="fleet", abort=True)
+
+    # tests-1 (review round 3, 2026-09-19): the headline road on Safari's engine with NO abort: the Outline (the smallest bundle, and the one
+    # pane every other tap leg aborted at its first fetch) loads on its FIRST tap: the document's load, the loader's retirement at it, the socket
+    # up, the pane painted, then the park at the return (D2) on the same pane
+    def test_webkit_phone_hung_12s_tab_tap_fleet_first_tap(self):
+        self._leg("phone", "hung", 12, engine="webkit", tap="fleet")
 
 
 if __name__ == "__main__":

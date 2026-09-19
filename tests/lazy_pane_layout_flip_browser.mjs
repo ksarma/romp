@@ -10,6 +10,10 @@
 //      the phone and 300 ms later the window widens, so the phone-armed load listener judges the failure on the DESKTOP: the url goes
 //      back under data-src and the pane is promoted once more, the real document loads, exactly one pane-load-failed row is filed and
 //      nothing promotes a third time (the token).
+//   C  as B, and the desktop's re-promotion FAILS too (the first two requests are aborted, the third would pass): the desktop promotion
+//      arms no listener, so the browser's own error page stands with the url under data-src and nothing promotes a third time; without
+//      the token minted per promotion the phone-armed listener would judge that second failure too and the promote-fail loop would run
+//      until the route passed (extra7-2's refuter executed it).
 // Prints one RESULT: JSON line (cfg.resultPath gets the same object). cfg.healthz names the LAB port and is asserted before any request;
 // a live kernel is never touched. Chromium alone: WebKit's failure detector is the 30 s backstop (no load event), which would cost 30 s a
 // case for the same shell lines. Synthetic sessions only.
@@ -111,7 +115,8 @@ try {
     out.phoneAgain = await readPane();
   } else {
     let held = 0;
-    const gate = async (route) => { if (held === 0) { held = 1; await sleep(cfg.holdMs || 1500); out.t.abort = now(); try { await route.abort(); } catch (e) { /* gone */ } } else { held++; await route.continue(); } };
+    const abortN = cfg.case === "C" ? 2 : 1;   // C: the desktop's re-promotion fails too
+    const gate = async (route) => { if (held === 0) { held = 1; await sleep(cfg.holdMs || 1500); out.t.abort = now(); try { await route.abort(); } catch (e) { /* gone */ } } else if (held < abortN) { held++; try { await route.abort(); } catch (e) { /* gone */ } } else { held++; await route.continue(); } };
     await page.route(isWaiting, gate);
     out.t.tap = now();
     await page.click("#mtabs button[data-pane=waiting]");
@@ -121,9 +126,11 @@ try {
     await page.setViewportSize({ width: 1200, height: 800 });
     await sleep(200);
     out.flippedLoading = await readPane();   // the desktop, the phone's promotion still standing (lazyFlip refuses a pane with a src)
-    const desk = await until((r) => r.sets >= 2 && r.src === "/waiting" && r.url && r.url.endsWith("/waiting") && r.spinGone === true && r.head === true, 25000);
+    const desk = cfg.case === "C"
+      ? await until((r) => r.sets >= 2 && r.src === "/waiting" && r.dataSrc === "/waiting" && out.requests.length >= 2, 25000)   // C: the second promotion reached the wire (and fails there)
+      : await until((r) => r.sets >= 2 && r.src === "/waiting" && r.url && r.url.endsWith("/waiting") && r.spinGone === true && r.head === true, 25000);
     out.desktop = { ...desk.r, ms: desk.ok ? desk.ms : -1 };
-    await sleep(1500);   // room for a third promotion, were one to come (the loop the token closes)
+    await sleep(cfg.case === "C" ? 3000 : 1500);   // room for a third promotion, were one to come (the loop the token closes; C leaves time for two more round trips)
     out.after = await readPane();
     await page.unroute(isWaiting, gate);
     out.routeHeld = held;

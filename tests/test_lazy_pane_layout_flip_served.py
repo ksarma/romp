@@ -151,6 +151,23 @@ class LazyPaneLayoutFlip(unittest.TestCase):
         self.assertEqual([x for x in r["rows"] if x["what"] == "pane-load-failed"], [{"what": "pane-load-failed", "pane": "waiting", "via": "load", "n": 1}], "one failure row via load, the desktop-judged one: %r" % (r["rows"],))
         self.assertEqual(r["errors"], [], "no page errors")
 
+    def test_C_when_the_desktop_re_promotion_fails_too_the_browsers_page_stands_and_nothing_promotes_a_third_time(self):
+        # extra7-2's refuter: with the token minted on the phone alone, the phone-armed listener also judged the desktop's second failure and the
+        # promote-fail cycle ran until the route passed. The desktop promotion arms no listener and no backstop, so a second failure there shows
+        # the browser's own page (as before this change) with the url under data-src; the token minted per promotion keeps the phone's listener
+        # inert over it, so exactly two document requests reach the wire and two src sets happen, whatever the route would do to a third.
+        r = self._drive("C")
+        d = r["desktop"]
+        self.assertGreaterEqual(d.get("ms", -1), 0, "the desktop's re-promotion reached the wire within the wait: %r" % (d,))
+        self.assertEqual((d["src"], d["lazy"], d["dataSrc"], d["divFailed"], d["bodyFailed"]), ("/waiting", None, "/waiting", False, False), "the desktop-judged failure: the url under data-src, promoted again, no failed state: %r" % (d,))
+        a = r["after"]
+        self.assertEqual((a["sets"], a["src"], a["dataSrc"], a["divFailed"], a["divLoading"]), (2, "/waiting", "/waiting", False, False), "three seconds on: two promotions and no third (the phone's listener is inert on its stale token over the desktop's re-promotion; without the per-promotion mint it judged the second failure and promoted again): %r" % (a,))
+        self.assertIsNone(a["url"], "the browser's own error page stands in the frame (cross-origin, no readable document), as a desktop failure always did: %r" % (a,))
+        self.assertEqual(len(r["requests"]), 2, "two document requests reached the wire, both aborted; no third: %r" % (r["requests"],))
+        self.assertEqual(r["routeHeld"], 2, "the route saw exactly the two: %r" % (r["routeHeld"],))
+        self.assertEqual([x for x in r["rows"] if x["what"] == "pane-load-failed"], [{"what": "pane-load-failed", "pane": "waiting", "via": "load", "n": 1}], "one failure row: the phone-armed detector's; the desktop's own failure is the browser's page, unsaid: %r" % (r["rows"],))
+        self.assertEqual(r["errors"], [], "no page errors")
+
 
 if __name__ == "__main__":
     unittest.main()
