@@ -69837,6 +69837,18 @@ function fit(){try{var vv=window.visualViewport;
 var coarse=window.matchMedia&&matchMedia('(pointer: coarse)').matches;
 var h=(!coarse||!vv)?window.innerHeight:Math.round(vv.height*(vv.scale||1));
 if(h)document.documentElement.style.setProperty('--app-h',h+'px');
+// [fork] D1 (2026-09-19): the visual viewport's PAN. iOS reveals a focused input by moving the visual viewport down the
+// layout viewport (offsetTop > 0; no document scroll for the scrollTo below to undo) while the layout viewport keeps its
+// height, so a body sized to vv.height sat at layout y 0..vv.height while the visible band ran offsetTop..offsetTop+vv.height,
+// and the bottom offsetTop pixels of the screen showed bare page background under the composer (the user 2026-09-18 and
+// 2026-09-19, iPhone, installed app: an empty band about 80 CSS px tall between the composer and the keyboard's accessory
+// bar). Publish the pan as --app-top; the mobile body rule (position:fixed;top:var(--app-top)) moves the shell down into the
+// visible band. Coarse-guarded like --app-h (a desktop writes 0; its body is never fixed). A PINCH pans too (iOS zooms
+// through user-scalable=no), with no keyboard behind it: at a scale above 1 the last value holds, so a zoom never
+// re-lays the shell (the pinch-aware note above). The visual viewport's scroll event, where a pan lands, is already
+// bound below, so no new listener.
+if(!coarse||!vv)document.documentElement.style.setProperty('--app-top','0px');
+else if((vv.scale||1)<=1.01)document.documentElement.style.setProperty('--app-top',Math.round(vv.offsetTop||0)+'px');
 // iOS ignores interactive-widget and reveals a focused input by SCROLLING this overflow:hidden page
 // (a UA scroll bypasses the clamp) — the shell then sits a keyboard-height up until dragged back
 // (the user 2026-09-02). The layout must never scroll: undo any stray offset on the same events.
@@ -69851,6 +69863,21 @@ barfit();}catch(e){}}
 // keyboard is open when the visual viewport is much shorter than the layout viewport (event: vv resize).
 // Measured by fit() itself since 2026-09-08: the two vars describe ONE geometry and went stale together.
 function kbOpen(){var vv=window.visualViewport;return vv?(window.innerHeight-vv.height*(vv.scale||1)>120):false;}
+// [fork] D1 (2026-09-19): the reservation is for a bar the user can SEE. Upstream's reading above (the visual viewport far
+// shorter than the layout viewport) misses a keyboard that shrinks the LAYOUT viewport too (an engine honouring
+// interactive-widget=resizes-content: innerHeight, vv.height and --app-h agree) while the fixed bar is still outside the
+// visible band; .col then reserved a bar-tall strip that rendered as an empty band above the keyboard. Read the geometry
+// instead of inferring it: the bar is hidden when its box starts at or below the visible band's bottom edge, offsetTop +
+// vv.height in layout coordinates (getBoundingClientRect is layout-viewport-relative, for a fixed box too). A bar the
+// engine keeps ABOVE the keyboard (Android Chrome under resizes-content: innerHeight shrinks and fixed bottom:0 rides the
+// shrunken bottom) is visible by this reading, so its strip stays reserved and the bar never covers the composer; the
+// focused-field and shrunken-innerHeight readings considered instead would have collapsed it there. A pinch (scale above
+// 1) keeps upstream's verdict: user-scalable=no leaves none on a phone, and a desktop trackpad zoom must not re-lay the
+// shell (the pinch-aware note over fit()). Rebound rather than edited: barfit() calls kbOpen by name.
+var kbOpenVV=kbOpen;
+kbOpen=function(){if(kbOpenVV())return true;var vv=window.visualViewport,bar=document.getElementById('mtabs');
+if(!vv||!bar||typeof bar.getBoundingClientRect!=='function'||(vv.scale||1)>1.01)return false;
+return bar.getBoundingClientRect().top>=(vv.offsetTop||0)+vv.height;};
 function barfit(){try{var bar=document.getElementById('mtabs');if(!bar)return;
 document.documentElement.style.setProperty('--mtabs-h',(kbOpen()?0:(bar.offsetHeight||0))+'px');}catch(e){}}
 // ONE fit per animation frame, however many events a keyboard slide or a resume fires: rAF is the
@@ -72327,6 +72354,15 @@ def _landing():
             # never scrolls (panes scroll inside their iframes).
             "html,body{height:100vh;height:var(--app-h,100dvh);overflow:hidden}"
             "body{display:flex;flex-direction:column;height:100vh;height:var(--app-h,100dvh)}"
+            # [fork] D1 (2026-09-19): the body is FIXED at the visual viewport's pan (--app-top, which fit() publishes from
+            # visualViewport.offsetTop). iOS pans the visual viewport down the layout viewport to reveal the focused composer
+            # while the layout viewport keeps its height; a body sized to vv.height at layout y 0 then left the bottom
+            # offsetTop pixels of the visible band showing bare background under the composer. With the pan as its top edge
+            # the body covers exactly the visible band. The height chain of the rule above; no transform, filter or contain,
+            # so the shell's fixed panels (#mtabs, #rnet-back, #rerr-back, #rbell-pop, #ru-back, #romp-boot) keep the
+            # viewport as their containing block and stay glued to the true bottom. This block only: the desktop body
+            # stays in flow, its viewport never pans.
+            "body{position:fixed;left:0;right:0;top:var(--app-top,0px);height:var(--app-h,100dvh)}"
             # padding-right is a DESKTOP-only strip: one pane fills the screen here, and a 3px sliver of
             # backdrop down the edge would read as a rendering fault rather than as slack. The desktop
             # rule's longhand survives this block unless it is named, so name it.

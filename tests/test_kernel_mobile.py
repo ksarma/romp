@@ -472,12 +472,15 @@ global.matchMedia = () => ({ matches: true });                 // a coarse point
 global.requestAnimationFrame = (f) => { RAF.push(f); return RAF.length; };
 global.setInterval = () => 0;   // D3 (2026-09-18): the shell socket's watchdog tick; a no-op here so node exits (ShellLinkProbe drives its own)
 global.addEventListener = on(WIN);
-global.visualViewport = { height: 844, scale: 1, addEventListener: on(VV) };
+global.visualViewport = { height: 844, scale: 1, offsetTop: 0, addEventListener: on(VV) };   // offsetTop: the pan (D1, 2026-09-19)
 const pane = (id) => ({ id, classList: { toggle() {} }, contentDocument: {},
   contentWindow: { addEventListener: on(id === 'f-chat' ? CHAT : {}) },
   addEventListener: (k) => { if (k === 'load') LOADS.push(id); } });
 const PANES = { 'f-chat': pane('f-chat'), 'f-fleet': pane('f-fleet'), 'f-feed': pane('f-feed'), 'f-timeline': pane('f-timeline') };
-const BAR = { offsetHeight: 44, querySelectorAll: () => [] };
+// the bar's BOX (D1, 2026-09-19): a fixed bottom:0 bar sits at the layout viewport's bottom, innerHeight - its height, unless a
+// scenario leaves it elsewhere (BAR.top: an engine that shrank innerHeight but kept the bar at the old bottom)
+const BAR = { offsetHeight: 44, querySelectorAll: () => [], top: null,
+  getBoundingClientRect() { const top = BAR.top === null ? global.innerHeight - BAR.offsetHeight : BAR.top; return { top, bottom: top + BAR.offsetHeight, left: 0, right: 390 }; } };
 global.document = {
   visibilityState: 'visible',
   addEventListener: on(DOC),
@@ -535,6 +538,31 @@ out.each = each;
 // a page offset the UA forced (iOS's input reveal) is undone on the same frame
 global.scrollY = 120; let scrolled = null; global.scrollTo = (x, y) => { scrolled = [x, y]; global.scrollY = 0; };
 fire(VV, 'scroll'); flush(); out.scrollReset = scrolled;
+// D1 (2026-09-19), the PAN: iOS moves the visual viewport down the layout viewport to reveal the focused composer while
+// innerHeight stands still; vv.height shrinks, offsetTop grows, and the visual viewport's scroll event is where the pan lands
+const appTop = () => PROPS['--app-top'];
+out.restTop = appTop();
+visualViewport.height = 460; visualViewport.offsetTop = 83; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+out.pan = { appTop: appTop(), appH: appH(), barH: barH() };
+// the keyboard goes: the visual viewport grows back and the pan with it
+visualViewport.height = 844; visualViewport.offsetTop = 0; fire(VV, 'resize'); flush();
+out.panDown = { appTop: appTop(), appH: appH(), barH: barH() };
+// a keyboard that shrinks the LAYOUT viewport too (an engine honouring interactive-widget=resizes-content): innerHeight,
+// vv.height and --app-h agree, so the height difference says no keyboard. The reservation follows the bar's BOX: left at
+// the old bottom, below the visible band, the bar is hidden and reserves nothing; riding the shrunken bottom (Android
+// Chrome) it shows above the keyboard and keeps its strip, so it never covers the composer
+global.innerHeight = 460; visualViewport.height = 460; visualViewport.offsetTop = 0; BAR.top = 800; fire(WIN, 'resize'); flush();
+out.shrunkHidden = { appH: appH(), barH: barH(), appTop: appTop() };
+BAR.top = null; fire(WIN, 'resize'); flush();   // fixed bottom:0 at innerHeight 460: the box starts at 416, inside the band
+out.shrunkVisible = { appH: appH(), barH: barH() };
+global.innerHeight = 844; visualViewport.height = 844; fire(WIN, 'resize'); flush();
+out.shrunkBack = { appH: appH(), barH: barH() };
+// a PINCH (scale above 1) pans and shortens the visual viewport with no keyboard behind it: --app-h holds (upstream's
+// scale arithmetic), the pan is not published, and the bar's strip stays reserved though its box is outside the zoomed band
+visualViewport.scale = 2; visualViewport.height = 422; visualViewport.offsetTop = 200; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+out.pinch = { appTop: appTop(), appH: appH(), barH: barH() };
+visualViewport.scale = 1; visualViewport.height = 844; visualViewport.offsetTop = 0; fire(VV, 'resize'); flush();
+out.pinchBack = { appTop: appTop(), appH: appH(), barH: barH() };
 console.log(JSON.stringify(out));
 """
 
@@ -604,6 +632,30 @@ class MobileFitExecutes(unittest.TestCase):
 
     def test_a_ua_forced_page_offset_is_undone_on_the_same_frame(self):
         self.assertEqual(self.out["scrollReset"], [0, 0])
+
+    # D1 (2026-09-19): the empty band between the composer and the keyboard on the installed iPhone app (the user
+    # 2026-09-18 and 2026-09-19, with a screenshot). Two causes, both closed: the visual viewport's PAN, which fit() now
+    # publishes as --app-top for the mobile body rule to sit at; and the bar's reservation surviving a keyboard that
+    # shrinks the layout viewport too, which kbOpen now reads from the bar's own box against the visible band.
+    def test_the_visual_viewports_pan_is_published_for_the_body_to_sit_at(self):
+        self.assertEqual(self.out["restTop"], "0px", "no pan at rest")
+        self.assertEqual(self.out["pan"], {"appTop": "83px", "appH": "460px", "barH": "0px"})
+        self.assertEqual(self.out["panDown"], {"appTop": "0px", "appH": "844px", "barH": "44px"})
+
+    def test_a_keyboard_that_shrinks_the_layout_viewport_collapses_the_reservation_only_for_a_hidden_bar(self):
+        # innerHeight, vv.height and --app-h agree (an engine honouring resizes-content), so the height difference is
+        # 0: the bar's box decides. Left below the visible band it is hidden and reserves nothing (the empty band);
+        # riding the shrunken bottom it is visible above the keyboard and keeps its strip (Android Chrome today), so
+        # the fixed bar never lands on the composer
+        self.assertEqual(self.out["shrunkHidden"], {"appH": "460px", "barH": "0px", "appTop": "0px"})
+        self.assertEqual(self.out["shrunkVisible"], {"appH": "460px", "barH": "44px"})
+        self.assertEqual(self.out["shrunkBack"], {"appH": "844px", "barH": "44px"})
+
+    def test_a_pinch_publishes_no_pan_and_keeps_the_bars_strip(self):
+        # a zoom pans the visual viewport too (iOS zooms through user-scalable=no) with no keyboard behind it: nothing
+        # about the shell's layout may move under a pinch (the pinch-aware fit, 2026-08-19)
+        self.assertEqual(self.out["pinch"], {"appTop": "0px", "appH": "844px", "barH": "44px"})
+        self.assertEqual(self.out["pinchBack"], {"appTop": "0px", "appH": "844px", "barH": "44px"})
 
 
 # A node stand-in for the installed phone app with a REAL class list: the shell's mobile script and

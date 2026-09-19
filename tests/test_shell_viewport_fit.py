@@ -66,6 +66,25 @@ class OneHeightBasis(unittest.TestCase):
         self.assertIn("body.picker-open iframe.lifted{display:block;position:fixed;left:0;right:0;top:0;"
                       "height:var(--app-h,100dvh);z-index:200;background:transparent}", self.html)
 
+    def test_the_mobile_body_sits_at_the_visual_viewports_pan(self):
+        # D1 (2026-09-19): inside the mobile media block, and only there, the body is FIXED at --app-top (the pan fit()
+        # publishes) with the same height chain as the flex body rule before it, so under an iOS keyboard pan the body
+        # covers exactly the visible band and no bare background shows between the composer and the keyboard. No
+        # transform, filter or contain on the body: the shell's fixed panels keep the viewport as their containing block.
+        html = self.html
+        rule = "body{position:fixed;left:0;right:0;top:var(--app-top,0px);height:var(--app-h,100dvh)}"
+        self.assertEqual(html.count(rule), 1)
+        mobile_at = html.index("@media " + km._MOBILE_MQ + "{")
+        self.assertLess(mobile_at, html.index(rule), "the fixed body is a mobile rule")
+        self.assertLess(html.index("body{display:flex;flex-direction:column;height:100vh;height:var(--app-h,100dvh)}"), html.index(rule),
+                        "after the flex body rule it extends")
+        # the desktop body stays in flow: the only position:fixed body rule is the one inside the mobile block, and the
+        # desktop html,body chain (test_the_shell_height_chain_applies_at_every_width) carries no top or position
+        self.assertEqual(html.count("body{position:fixed"), 1)
+        self.assertNotIn("--app-top", html[:mobile_at], "no --app-top consumer before the mobile block (the writer is the script after it)")
+        for prop in ("transform", "filter", "contain:", "will-change", "perspective"):
+            self.assertNotIn(prop, rule)
+
     def test_an_unpainted_pane_is_dark_not_white(self):
         # a pane whose document has not painted is a white rectangle in a dark frame (Firefox shows it
         # plainly) — which is exactly what "a white strip at the bottom" looks like
@@ -84,6 +103,30 @@ class RefitsWhenTheVisibleHeightChanges(unittest.TestCase):
         self.assertIn("var coarse=window.matchMedia&&matchMedia('(pointer: coarse)').matches;", self.js)
         self.assertIn("var h=(!coarse||!vv)?window.innerHeight:Math.round(vv.height*(vv.scale||1));", self.js)
         self.assertIn("setProperty('--app-h',h+'px')", self.js)
+        # D1 (2026-09-19): the visual viewport's PAN rides beside the height. iOS reveals a focused input by moving the
+        # visual viewport down the layout viewport (offsetTop > 0) with no document scroll to undo, so a body sized to
+        # vv.height at layout y 0 left the bottom offsetTop pixels of the screen bare under the composer. fit() publishes
+        # the pan as --app-top under the same coarse guard (a desktop writes 0), holding the last value under a pinch
+        # (scale above 1: a zoom pans too, and a zoom never re-lays the shell). Behaviour: test_kernel_mobile.MobileFitExecutes.
+        self.assertIn("if(!coarse||!vv)document.documentElement.style.setProperty('--app-top','0px');", self.js)
+        self.assertIn("else if((vv.scale||1)<=1.01)document.documentElement.style.setProperty('--app-top',Math.round(vv.offsetTop||0)+'px');", self.js)
+        # the write sits inside fit(), after the --app-h write and before the stray-scroll reset, so one frame publishes both
+        self.assertLess(self.js.index("setProperty('--app-h',h+'px')"), self.js.index("setProperty('--app-top'"))
+        self.assertLess(self.js.index("setProperty('--app-top'"), self.js.index("if(window.scrollY||document.documentElement.scrollTop)window.scrollTo(0,0);"))
+
+    def test_the_bars_reservation_follows_the_bars_own_box(self):
+        # D1 (2026-09-19): upstream's kbOpen (the visual viewport far shorter than the layout viewport) stands, rebound
+        # rather than edited because barfit() calls it by name, and widened by the bar's geometry: hidden when its box
+        # starts at or below the visible band's bottom edge (offsetTop + vv.height, layout coordinates). A bar an engine
+        # keeps above the keyboard stays visible by this reading and keeps its strip, so it never covers the composer.
+        self.assertIn("function kbOpen(){var vv=window.visualViewport;return vv?(window.innerHeight-vv.height*(vv.scale||1)>120):false;}", self.js)
+        self.assertIn("var kbOpenVV=kbOpen;\nkbOpen=function(){if(kbOpenVV())return true;var vv=window.visualViewport,bar=document.getElementById('mtabs');\n"
+                      "if(!vv||!bar||typeof bar.getBoundingClientRect!=='function'||(vv.scale||1)>1.01)return false;\n"
+                      "return bar.getBoundingClientRect().top>=(vv.offsetTop||0)+vv.height;};", self.js)
+        # barfit() still reads kbOpen by name, so the rebinding is what it sees
+        self.assertIn("setProperty('--mtabs-h',(kbOpen()?0:(bar.offsetHeight||0))+'px')", self.js)
+        self.assertLess(self.js.index("kbOpen=function(){"), self.js.index("fit();window.addEventListener('resize',refit)"),
+                        "rebound before the boot fit, so the first paint already reads the widened kbOpen")
 
     def test_it_refits_on_the_events_ios_actually_changes_the_height_on(self):
         # iOS collapses its toolbars AS YOU SCROLL, with no window resize; the visual viewport's own
