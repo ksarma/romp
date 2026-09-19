@@ -54893,6 +54893,18 @@ FEED_BY_ROWS = frozenset({"userTodosOn", "dismissedCount", "showDismissed", "can
 # object. Each is one statement, repeated in these words in docs/reference.md's memos.feedComposition entry and in the
 # ledger entry, and tests/test_feed_composition.py holds the three texts equal, so a residual found or closed later
 # changes all three or fails there.
+# How a recovery is counted, for the next search (the closing check of 2026-09-19, whose search ran over the published
+# block on five families of the test module's synthetic boards, and the re-measurement after it): a withheld value
+# counts as recovered only where a published leaf, or an arithmetic combination of published leaves, equals it on
+# every board of a family across which the value MOVES; a match on boards where the value is constant is a
+# coincidence of two figures (the check's first run reported dozens, one of them a 24-byte row equal to another
+# 24-byte row), and a search that counts them reports leaks that are not there and buries the ones that are. A
+# suspected new recovery is retired by showing the reader already had the figure: on the cold kernel's first push
+# with one whole-frame feed client, one Outline delta client and one chat tab (a two-card fixture), the ledgers attach
+# is 315 bytes (the one ledger row, 300, plus its key and separators), and a reader reaches it down two roads that
+# share no leaf: the full send count times `wire.bytes` plus the clock splice minus sends.full.feed.bytes (3 times
+# 5603 minus 16494), and twice pusher.clients.byApp.fleet.bytes minus pusher.clients.byApp.feed.bytes (2 times 5607
+# minus 10899), the base's own counters, so `wire.bytes` restates a recovery the base allowed and adds none.
 FEED_COMPOSITION_RESIDUALS = (
     "On a board with no session, no open todo, no tag, no notice, no cleared id, no judge-limit latch, an empty "
     "stored session order and a clean tags read, `other` is a constant plus the hostname's length and the digit width "
