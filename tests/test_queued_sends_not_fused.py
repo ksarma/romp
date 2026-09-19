@@ -318,10 +318,17 @@ class OneFedTextAtATime(unittest.TestCase):
         handled before it pushes its own. A uuid pushed twice in one test, to any client, is refused here,
         loudly: the record _handled reads is keyed on the uuid, so a repeat would let the first frame's record
         satisfy a wait for the second while its handler still runs (the vacuity this class exists to remove,
-        back silently). The frame classes' defaults (_AssistantMessage's "a1", _RateLimitEvent's "rl1") are
-        the way a repeat happens without anyone typing one: every pushed frame carries a uuid of _uid()'s
-        minting, and this check is what holds that (review round 1, 2026-09-19)."""
+        back silently). A repeat arises from a frame class's default uuid (_AssistantMessage's "a1",
+        _RateLimitEvent's "rl1"), not from a typed duplicate: every pushed frame carries a uuid of _uid()'s
+        minting, and this check is what holds that (review round 1, 2026-09-19). A frame WITHOUT a uuid is
+        refused too, _EOF apart (the stream's end, a sentinel no handler sees): the record and client.pushed
+        are keyed on the uuid, so a uuid-less frame is invisible to _handled and to the precondition _probe
+        waits on (every earlier frame of the client handled), and its None record would satisfy a wait for
+        any other uuid-less frame (review round 2, 2026-09-19)."""
         uid = getattr(frame, "uuid", None)
+        if uid is None and frame is not _EOF:
+            self.fail("frame %r pushed without a uuid: _handled and _probe cannot see it (every frame but _EOF "
+                      "carries a uuid of _uid()'s minting)" % (frame,))
         if uid is not None:
             if uid in self._pushed:
                 self.fail("uuid %r was already pushed in this test (to client %d now): every pushed frame needs a "
@@ -346,9 +353,11 @@ class OneFedTextAtATime(unittest.TestCase):
             handler returned can see the writes before that step and pass with the kernel broken (the
             review's mutation, 2026-09-19: a take check that releases on every turn frame plus a BLOCKING
             15 ms in the receive loop after the handler returned, a time.sleep that holds the loop thread,
-            and the splice case stayed green with a bare _handled; an await of the same length leaves the
-            loop free, the feeder's step runs at once, and the case reds either way, so the form of the
-            injection, not its figure, is what the reproduction needs);
+            and the splice case stayed green with a bare _handled and red with _reacted, at the splice read
+            but not only there, since the wrong release can also land on a turn frame before the assistant
+            frame; an await of the same length leaves the loop free, the feeder's step runs at once, and the
+            case reds either way, so the form of the injection, not its figure, is what the reproduction
+            needs);
           * the feeder's evaluation of an enqueue made BEFORE the frame was pushed, unless the drain was
             parked at its queue when the frame's put ran: an earlier frame pushed and not yet handled makes
             asyncio.Queue.get() return this frame without yielding, in the same drain step, ahead of the
@@ -405,7 +414,10 @@ class OneFedTextAtATime(unittest.TestCase):
             # visible. The parked case lifts its park on this event, not on how the wait is made (a poll count
             # was the pin until review round 1, 2026-09-19, and an equally correct non-polling wait deadlocked
             # against it); inside the predicate so a reversion that drops the read-back cannot leave the
-            # publish behind, which would make that case pass with the arm unread
+            # publish behind, which would make that case pass with the arm unread. The read-back is this
+            # predicate's return value, so the one edit that keeps the publish without the read is a predicate
+            # returning a constant; the parked case reds under that too, but by the enqueue landing inside the
+            # park's 5 ms poll ahead of the event check, a margin and not a pin (review round 2, 2026-09-19)
             waiting.set()
             return s._move_settle_expected
         self._wait(visible, "the move arm is set")
@@ -529,8 +541,10 @@ class OneFedTextAtATime(unittest.TestCase):
         # The park is bounded by gate.wait's own 10 s, and tearDown's join(timeout=10) would sit out that same
         # 10 s with the thread alive and rmtree running under it: so the gate is opened on the failure path
         # BEFORE tearDown, by the finally below, and again at the top of tearDown (self._gates). A cleanup runs
-        # after tearDown, so it can shorten neither; it stays as the backstop for a park that outlives the join
-        # (measured with the park raised to 30 s in review round 1, 2026-09-19), and it protects nothing else.
+        # after tearDown, so it can shorten neither. Review round 1 (2026-09-19) measured a CLEANUP-ONLY opener
+        # with the park raised to 30 s leaving the thread parked past the join; with the finally and the tearDown
+        # list both opening this gate that state is not reachable here, and the cleanup stays as the ruled
+        # backstop for a park that outlives the join, protecting nothing else.
         self.addCleanup(gate.set)
         real_on = s._on_message
         frame = _SystemMessage("status", {"task_id": "t-1", "status": "running"}, uuid=self._uid())
