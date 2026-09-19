@@ -521,6 +521,9 @@ def restore_env(name, prior):
 #     made by something that escaped every window (import-time code, or a leak from before the fixture
 #     was armed) and is reported ONCE per worker, at the first test that meets it, worded as inherited,
 #     with no remedy addressed to that test; every later test that inherits the same object is quiet.
+#     The report is computed at the setup and raised after the test's own teardown, beside its own verdict
+#     if it has one, so the test runs and its own transition is still judged (the first form failed the
+#     setup, and one test per worker lost its run whenever a leak escaped every window).
 # Every object a verdict names (own, boundary, inherited) goes on a module-level list of STRONG
 # references (_SDK_NAMED; identity membership, strong so an id is never reused by a later object), which
 # is what makes "once" and the boundary's quiet-on-a-named-object rule work; under xdist that is once per
@@ -687,6 +690,24 @@ def _sdk_singleton_text(be):
     return "%s over %s" % (name, "no state_dir" if state_dir is None else state_dir)
 
 
+_SDK_INHERITED_TAIL = ("This test did not make it: %s, outside every window the singleton fixtures judge; reported once per "
+                       "worker, at the first test that meets it, after that test's own teardown (so the test runs and its own "
+                       "transition is judged too), and the tests after it that inherit the same object are not accused.")
+
+
+def _sdk_inherited(before):
+    """The once-per-worker report on a singleton state no window made, or None: a real backend over a directory that is
+    gone."""
+    be = before.be
+    if not _sdk_is_real(be) or _sdk_named(be):
+        return None
+    if before.isdir is False:
+        return ("starts under the kernel's backend singleton (km._sdk_backend) over a directory that no longer exists: %s. %s"
+                % (_sdk_singleton_text(be),
+                   _SDK_INHERITED_TAIL % "an earlier test, a class or module setup or teardown, or import-time code did"))
+    return None
+
+
 def _sdk_remedy(after, ref):
     """The sandbox road's remedy when the value left is the kernel's own class over a root that is not the reference
     or is not a directory; the object road's otherwise."""
@@ -771,23 +792,24 @@ def _sdk_judge_scope(start, last, end, windows):
 @pytest.fixture(autouse=True)
 def _sdk_singleton_restored(request):
     before = _sdk_read()
-    if _sdk_is_real(before.be) and before.isdir is False and not _sdk_named(before.be):
-        _sdk_name(before.be)
-        pytest.fail("%s starts under the kernel's backend singleton (km._sdk_backend) over a directory that no longer "
-                    "exists: %s. This test did not make it: an earlier test, a class or module setup or teardown, or "
-                    "import-time code did, outside every window the singleton fixtures judge; reported once per worker, "
-                    "at the first test that meets it, and the tests after it that inherit the same object are not "
-                    "accused." % (request.node.nodeid, _sdk_singleton_text(before.be)), pytrace=False)
+    inherited = _sdk_inherited(before)
+    if inherited is not None:
+        _sdk_name(before.be)               # named now, so the tests after this one that inherit the object are quiet
     yield
     after = _sdk_read()
     verdict = _sdk_judge(before, after, before.jd_state)     # the root the test inherited: the one value it could not have made
     if after.be is not before.be:
         _SDK_WINDOWS.append(_SdkWindow(_SDK_READS, before.be, after.be,
                                        after.jd_state if after.marker is not before.marker else before.jd_state))
-    if verdict is None:
+    if verdict is None and inherited is None:
         return
-    _sdk_name(after.be)
-    pytest.fail("%s %s. Fix: %s" % (request.node.nodeid, verdict[0], verdict[1]), pytrace=False)
+    lines = []
+    if inherited is not None:
+        lines.append("%s %s" % (request.node.nodeid, inherited))
+    if verdict is not None:
+        _sdk_name(after.be)
+        lines.append("%s %s. Fix: %s" % (request.node.nodeid, verdict[0], verdict[1]))
+    pytest.fail("\n".join(lines), pytrace=False)
 
 
 def _sdk_boundary(request, start, reads_at_start):

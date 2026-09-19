@@ -581,8 +581,8 @@ def verdict(out, cls, method):
 
 
 def inherited(out, cls, method):
-    """The text of the inherited report at `cls.method`'s setup (the object named, and the sentence saying this test
-    did not make it), or None."""
+    """The text of the inherited report on `cls.method` (the object named, and the sentence saying this test did not
+    make it), or None."""
     m = re.search(r"::%s::%s %s: ([^\n]*)" % (re.escape(cls), re.escape(method), re.escape(INHERITED)), out)
     return m.group(1) if m else None
 
@@ -630,11 +630,17 @@ class _NestedRun:
         self.assertNotIn(REMEDY_A, fix, fix)
         return clause
 
-    def assertInheritedAtSetup(self, cls, method):
-        self.assertEqual(outcomes(self.out).get("%s.%s" % (cls, method)), {"ERROR"}, "an error at setup, no call: %s" % self.out)
+    def assertInherited(self, cls, method, own=False):
+        """The inherited report lands on `cls.method` after its teardown, the body having run (PASSED, then ERROR); with
+        `own`, the test's own verdict is expected beside it, else none."""
+        self.assertEqual(outcomes(self.out).get("%s.%s" % (cls, method)), {"PASSED", "ERROR"},
+                         "the body runs, and the report is the teardown's: %s" % self.out)
         text = inherited(self.out, cls, method)
         self.assertIsNotNone(text, self.out)
-        self.assertIsNone(verdict(self.out, cls, method), "no own-leak verdict on the inheriting test: %s" % self.out)
+        if own:
+            self.assertIsNotNone(verdict(self.out, cls, method), "the test's own verdict is judged too: %s" % self.out)
+        else:
+            self.assertIsNone(verdict(self.out, cls, method), "no own-leak verdict on the inheriting test: %s" % self.out)
         self.assertNotIn("Fix:", text, "no remedy is addressed to the test that inherited: %s" % text)
         self.assertIn("This test did not make it", text)
         return text
@@ -782,10 +788,11 @@ class ImportTimeLeakIsInheritedOnce(_NestedRun, unittest.TestCase):
     SCRATCH = SCRATCH_E
     ERRORS = 2
 
-    def test_the_first_test_to_meet_the_state_reports_it_as_inherited_at_setup(self):
-        text = self.assertInheritedAtSetup("Cases", "test_a_does_nothing_and_is_the_first_to_meet_the_state")
+    def test_the_first_test_to_meet_the_state_reports_it_as_inherited_after_its_body_ran(self):
+        text = self.assertInherited("Cases", "test_a_does_nothing_and_is_the_first_to_meet_the_state")
         self.assertTrue(text.startswith("SdkBackend over "), text)
         self.assertIn("import-time code", text)
+        self.assertIn("after that test's own teardown", text)
 
     def test_the_next_test_under_the_same_object_is_quiet(self):
         self.assertRatchetPassed("Cases", "test_b_does_nothing")
