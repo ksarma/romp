@@ -517,6 +517,20 @@ class _Corner(unittest.TestCase):
     def _unknown_slot_rows(self):
         return [r.get("data") for r in self.hub_diag_rows if r.get("surface") == "federation" and (r.get("data") or {}).get("ev") == "delta-unknown-slot"]
 
+    def _unkeyable_seed_rows(self):
+        return [r.get("data") for r in self.hub_diag_rows if r.get("surface") == "federation" and (r.get("data") or {}).get("ev") == "delta-unkeyable-seed"]
+
+    def _assert_the_refused_bars_seed_is_said_once(self):
+        """A remote whose whole bars frame the receiver cannot key (its judging a flat list: every kernel before T278c)
+        seeds no base, and that refusal is said exactly once per conn per slot: one hostconn row from the timeline page's
+        conn (the one page that receives bars), naming the host and the slot, however many whole frames the drive
+        refused (the seed's, the ready's re-base, the resync's answers, the idle slot's reposts) and however many
+        patches resynced. The feed frame of the same vintage keys asks as the table does, so no row names the feed."""
+        self._control()
+        self.assertEqual(self._unkeyable_seed_rows(), [{"host": HOST, "ev": "delta-unkeyable-seed", "why": "bars"}],
+                         "the refused bars seed is said once, by the timeline page's conn; rows by kind: %r"
+                         % (sorted({(r.get("surface"), r.get("what"), (r.get("data") or {}).get("ev")) for r in self.hub_diag_rows}),))
+
     def _control(self):
         self._driver_ran()
         control = [r for r in self.hub_diag_rows if self._is_page_federation_row(r)]
@@ -664,7 +678,9 @@ class CornerNewLocalV1Remote(_Corner):
     judging as a flat list the receiver cannot key (view-deltas.ts, its header), so the receiver seeds no base for it:
     each bars patch (the append's, then the idle slot's clock-only one a minute later) is answered by a needSlot on
     the relay socket, the receiver's own resync, and that kernel re-sends the whole bars frame, which is the repair;
-    the bar shows through it. Nothing is filed for a resync (the whole frame it earns is the repair)."""
+    the bar shows through it. Nothing is filed for a resync (the whole frame it earns is the repair); the refused SEED
+    is said once per conn per slot (a hostconn row, ev delta-unkeyable-seed, why bars, from the timeline page's conn),
+    the one row that names why that host's bars cross whole."""
     change = "transcript"
     wait_ms = 20000
     wait_delta_ms = 80000
@@ -709,6 +725,9 @@ class CornerNewLocalV1Remote(_Corner):
                          "one needSlot for the bars slot per patch, on the relay socket: asks %r, frames %r" % (asks, kinds))
         self.assertEqual(self._sends("timeline", "local", "needSlot"), [])
 
+    def test_the_refused_bars_seed_is_said_once(self):
+        self._assert_the_refused_bars_seed_is_said_once()
+
     def test_nothing_dropped(self):
         self._assert_nothing_dropped()
         for app in ("fleet", "feed"):
@@ -717,10 +736,12 @@ class CornerNewLocalV1Remote(_Corner):
 
 class CornerNewLocalV0Remote(_Corner):
     """New local, a remote from before the delta protocol (ROMP_CORNER_V0_REMOTE_ROOT, e.g. 8a4d48f10): whole frames
-    only, feed and bars, applied by the unchanged arms with no row and nothing asked. The wire pays a whole frame per
-    change and per minute, the pre-delta cost. The change is a transcript append (rounds 2 and 3 filed a todo, whose
-    visible side that vintage has none of: it serves the feed payload to no Waiting client and minted no rolled-up
-    todo card on the feed page); its visible side is the bar on the hub's timeline, asserted."""
+    only, feed and bars, applied by the unchanged arms with nothing asked and no row but one: that vintage's bars frame
+    keys judging as a flat list too, so the receiver refuses it as a base and says so once (a hostconn row,
+    delta-unkeyable-seed), a refusal that costs nothing here since a pre-delta kernel sends no patch. The wire pays a
+    whole frame per change and per minute, the pre-delta cost. The change is a transcript append (rounds 2 and 3 filed
+    a todo, whose visible side that vintage has none of: it serves the feed payload to no Waiting client and minted no
+    rolled-up todo card on the feed page); its visible side is the bar on the hub's timeline, asserted."""
     change = "transcript"
     apps = ("fleet", "feed", "timeline")
 
@@ -746,6 +767,9 @@ class CornerNewLocalV0Remote(_Corner):
 
     def test_the_timeline_shows_the_appended_bar(self):
         self._assert_bar_drawn()
+
+    def test_the_refused_bars_seed_is_said_once(self):
+        self._assert_the_refused_bars_seed_is_said_once()
 
     def test_nothing_dropped(self):
         self._assert_nothing_dropped()

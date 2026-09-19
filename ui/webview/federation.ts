@@ -925,6 +925,7 @@ interface Conn {
   readyAcked?: boolean; // the remote answered this page's `ready` with a `caps` frame at least once (the shim's readyAcked): the redial gate's latch that the remote served this page whole and holds its sessions
   dialedReconnect?: boolean; // the CURRENT socket was dialed with reconnect=1, so its open must post NO `ready`: the redial's dial term IS the handshake, and a `ready` would make the remote's ready reset pop `reconnect` and serve the whole board (the shim posts no ready on a redial for the same reason)
   deferred?: boolean; // a dial connect() put off because the pane's LOCAL socket is down (window.__rompLocalUp false): set with the one dial-deferred row per down spell, cleared by the dial that finally runs
+  saidDelta?: Set<string>; // the delta breadcrumbs this conn has filed, as ev:slot (delta-unkeyable-seed, delta-unknown-slot): said once per conn per slot (sayDeltaOnce), since both conditions last the conn's life and a row per frame would be a row a minute per host; the conn's, so a redial keeps it and a detach ends it
   // KERNEL_SETTING messages (newest per type) and the pane's own BOOKKEEPING (newest per key, see
   // BOOKKEEPING) that arrived while this host's socket was down — flushed on the socket's open event
   // (sendRemote/flushPending). Bounded by construction: one entry per setting type, per bookkeeping
@@ -1856,9 +1857,32 @@ export class FederationManager {
   }
 
   /** The view-delta receiver for one of `host`'s sockets (Conn.viewDeltas): a patch it cannot apply asks THIS host's
-   *  kernel for the whole slot, routed by host through sendRemote so the ask rides the conn's CURRENT socket. */
+   *  kernel for the whole slot, routed by host through sendRemote so the ask rides the conn's CURRENT socket. A full
+   *  frame the receiver refuses as a base (a collection its table cannot key: a kernel before T278c keying judging as a
+   *  flat list, or a future collection keyed by another table) is said once per conn per slot, at the refusal: a
+   *  hostconn row under the keys the family already has (ev delta-unkeyable-seed, why the slot) and a console line,
+   *  the one row that names why every patch from that host crosses whole (view-deltas.ts, its header). Never per
+   *  patch (the resync is the receiver's own, and the whole frame it earns is the repair) and never per re-sent whole
+   *  frame (an idle slot reposts one about every 60 s). */
   private mintReceiver(host: string): ViewDeltas {
-    return new ViewDeltas((slot) => this.sendRemote(host, { type: "needSlot", slot }));
+    return new ViewDeltas(
+      (slot) => this.sendRemote(host, { type: "needSlot", slot }),
+      (slot, why) => {
+        const c = this.conns.get(host);   // the conn whose receiver is running: inboundNow reads it off the live conn
+        if (!c || !this.sayDeltaOnce(c, "delta-unkeyable-seed", slot)) return;
+        try { console.error("federation: a whole " + slot + " frame from " + host + " keys a collection this side cannot (" + why + "): no base is held for it, so every " + slot + " patch from that kernel is asked for whole"); } catch (e) { /* nothing to report to */ }
+        this.diag("hostconn", { host, ev: "delta-unkeyable-seed", why: slot });
+      });
+  }
+
+  /** Whether a delta breadcrumb (`ev`, about `slot`) is new to this conn, and latch it: the first call per conn per slot
+   *  answers true, every later one false (Conn.saidDelta). */
+  private sayDeltaOnce(conn: Conn, ev: string, slot: string): boolean {
+    const key = ev + ":" + slot;
+    const said = (conn.saidDelta ||= new Set<string>());
+    if (said.has(key)) return false;
+    said.add(key);
+    return true;
   }
 
   // The remote socket's URL, carrying THIS page's own dial terms for its app so a federated pane is served

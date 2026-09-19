@@ -6,13 +6,18 @@
 // its timeline bars as patches, and the kernel's inline shim reassembles only its own LOCAL socket's frames).
 // One instance belongs to one socket. Consumers continue receiving complete frames.
 // A collection this table cannot key seeds no base (2026-09-19), the kernel's own rule for the shape (_delta_split:
-// unkeyable means the whole frame, never zero entries). The one producer is a kernel before T278c (328e46c26,
-// 2026-09-09: upstream kernels from a750f860d, 2026-09-03, and fork main from its 2026-09-05 fold until it folded
-// T278c), whose bars frame keys judging as a FLAT list (bykeys:sid,t,judge,t1) and ships its own key list (_keys).
-// Seeded, its first judging patch assembled to the patched entries alone, per lane and in the old entry shape, and a
-// lane's marks collapsed between full frames; unseeded, every patch from it recovers (needSlot) and the slot crosses
-// whole per change, the pre-delta cost, rendered from the flat list (federation.ts judgingToWire). Its feed frame
-// keys asks as this table does and seeds as any other.
+// unkeyable means the whole frame, never zero entries). Produced by a kernel from a750f860d (2026-09-03, the slot
+// protocol) to T278c (328e46c26, 2026-09-09; upstream kernels in that window, and fork main from its 2026-09-05 fold
+// until it folded T278c), whose bars frame keys judging as a FLAT list (bykeys:sid,t,judge,t1) and ships its own key
+// list (_keys); a kernel before the slot protocol sends the same flat list in whole frames and no patch; and a future
+// collection keyed by another table takes the same road. Seeded, the first judging patch assembled to the patched
+// entries alone, per lane and in the old entry shape, and a lane's marks collapsed between full frames; unseeded,
+// every patch from it recovers (needSlot) and the slot crosses whole per change, the pre-delta cost, rendered from the
+// flat list (federation.ts judgingToWire). Its feed frame keys asks as this table does and seeds as any other. The
+// refusal is the one silent shape whose repair never repairs (a bad base or a malformed patch files nothing either,
+// but the whole frame they earn seeds), so it is reported through the OPTIONAL second callback at the moment the seed
+// is refused, never per patch: federation.ts says it once per conn per slot (a hostconn row and a console line); the
+// extension's pipe has no diagnostics road and passes none.
 type Slot = "feed" | "bars";
 type Frame = Record<string, any>;
 type Collection = { order: string[]; items: Map<string, any> };
@@ -89,7 +94,9 @@ function stringKeys(value: any): string[] {
 
 export class ViewDeltas {
   private bases = new Map<Slot, Base>();
-  constructor(private needSlot: (slot: string) => void) {}
+  /** `needSlot` asks the sending kernel for a slot whole; `unkeyable`, optional, hears of a full frame refused as a base
+   *  (the slot, and the table's reason: kind and container, no frame content), at the refusal and never per patch. */
+  constructor(private needSlot: (slot: string) => void, private unkeyable?: (slot: string, why: string) => void) {}
 
   private recover(slot: string): null {
     const known = slotOf(slot);
@@ -109,8 +116,10 @@ export class ViewDeltas {
       } catch (e) {
         if (!(e instanceof Unkeyable)) throw e;
         // the header's rule: no base for a frame this table cannot key, so the next patch recovers (needSlot) and
-        // that kernel serves the slot whole again; the frame itself continues whole, as every full frame does
+        // that kernel serves the slot whole again; the frame itself continues whole, as every full frame does. Said
+        // here, at the refusal (the one place the standing cost is attributable), to a consumer that listens
         this.bases.delete(full);
+        this.unkeyable?.(full, (e as Error).message);
         return msg;
       }
       this.bases.set(full, { rev: 0, msg, maps });

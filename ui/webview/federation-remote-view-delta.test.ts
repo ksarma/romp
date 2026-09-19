@@ -344,46 +344,104 @@ test("two hosts with the same bare lane: a patch from one host reassembles onto 
 });
 
 // ── a kernel before T278c (2026-09-19) ──────────────────────────────────────────────────────────────────────────────
-// A remote kernel from before 328e46c26 (T278c, 2026-09-09: upstream kernels from a750f860d, 2026-09-03; fork main from
-// its 2026-09-05 fold until it folded T278c) keys the bars frame's judging as a FLAT list (bykeys:sid,t,judge,t1) and
-// ships its own key list (_keys). This receiver's table says dictlist:k and cannot key that list, and the kernel's rule
-// for a collection its kind cannot key is the whole frame, never zero entries (_delta_split); the receiver follows it and
-// seeds no base. Seeded instead, the first judging patch assembled to the patched entries alone, per lane and in the old
-// entry shape, and the lane's marks collapsed between full frames. The whole frame renders through judgingToWire, which
-// converts the flat list; every patch from that kernel recovers, so its bars cross whole per change, the pre-delta cost.
+// A remote kernel from a750f860d (2026-09-03, the slot protocol) to 328e46c26 (T278c, 2026-09-09; upstream kernels in
+// that window, and fork main from its 2026-09-05 fold until it folded T278c) keys the bars frame's judging as a FLAT
+// list (bykeys:sid,t,judge,t1) and ships its own key list (_keys). This receiver's table says dictlist:k and cannot key
+// that list, and the kernel's rule for a collection its kind cannot key is the whole frame, never zero entries
+// (_delta_split); the receiver follows it and seeds no base. Seeded instead, the first judging patch assembled to the
+// patched entries alone, per lane and in the old entry shape, and the lane's marks collapsed between full frames. The
+// whole frame renders through judgingToWire, which converts the flat list; every patch from that kernel recovers, so its
+// bars cross whole per change, the pre-delta cost. A future collection keyed by another table takes the same road. The
+// refused seed is the one silent shape whose repair never repairs (a bad base or a malformed patch files nothing either,
+// but the whole frame they earn seeds), so it is said ONCE per conn per slot: a hostconn row under the family's keys
+// (ev delta-unkeyable-seed, why the slot) and a console line, at the refusal, never per patch and never per re-sent
+// whole frame (an idle slot reposts one about every 60 s).
 const oldJudging = (t: number, judge: string, t1: number | null) => ({ sid: SID_A, t, judge, t1, kind: "run", text: "judged" });
 const oldKey = (e: any) => SID_A + SEP + e.t + SEP + e.judge + SEP + e.t1;   // bykeys:sid,t,judge,t1, joined by the unit separator
+const oldFull = (sid: string, judging: any[]) =>
+  ({ type: "bars", turns: { [sid]: [bar("seg-1", 1000, 1005, "first")] }, judging, messages: [], now: 500, warming: false,
+     _keys: { turns: [sid + SEP + "seg-1"], judging: judging.map(oldKey), messages: [] } });
+const unkeyableRows = (sent: any[]) =>
+  sent.filter((x) => x && x.type === "clientDiag" && x.what === "hostconn" && x.data && x.data.ev === "delta-unkeyable-seed").map((x) => x.data);
+// console.error, counted for the test's span (the sibling unknown-slot arm prints its line; this one is counted too)
+async function countingConsoleErrors(fn: (errors: string[]) => void | Promise<void>): Promise<void> {
+  const errors: string[] = [];
+  const real = console.error;
+  console.error = (...args: any[]) => { errors.push(args.map(String).join(" ")); };
+  try { await fn(errors); } finally { console.error = real; }
+}
 
-test("a bars full frame from a kernel before T278c (judging a flat list, its own _keys) seeds no base: the frame renders whole through judgingToWire, and its patch asks that kernel for the whole slot", async () => {
-  await withManager("timeline", ({ fm, emitted, sent }) => {
+test("a bars full frame from a kernel before T278c (judging a flat list, its own _keys) seeds no base: the frame renders whole through judgingToWire, its patch asks that kernel for the whole slot, and the refused seed is said once", async () => {
+  await withManager("timeline", ({ fm, emitted, sent }) => countingConsoleErrors((errors) => {
     seedLocalTimeline(fm);
     fm.openRemote(HOST, true);
     const ws = last(FakeWS.made);
     ws.open();
     const e1 = oldJudging(1001, "unblocker", 1002);
-    const full = { type: "bars", turns: { [SID_A]: [bar("seg-1", 1000, 1005, "first")] }, judging: [e1], messages: [], now: 500, warming: false,
-                   _keys: { turns: [SID_A + SEP + "seg-1"], judging: [oldKey(e1)], messages: [] } };
+    const full = oldFull(SID_A, [e1]);
     ws.frame(full);
     let m = last(barsOf(emitted));
     assert.deepEqual(ids(m.turns[HOST + ":" + SID_A]), ["seg-1"], "the full frame merges as any other");
     assert.deepEqual(m.judging[HOST + ":" + SID_A].map((c: any) => c.j), ["unblocker"], "the flat list rendered compact through judgingToWire, under the prefixed lane");
+    assert.deepEqual(unkeyableRows(sent), [{ host: HOST, ev: "delta-unkeyable-seed", why: "bars" }],
+      "the refused seed is said at the refusal: one hostconn row under the family's keys, naming the host and the slot (the one row that attributes the standing cost: every patch from this kernel crosses whole)");
+    assert.equal(errors.length, 1, "and once on the console: " + errors.join(" | "));
+    assert.match(errors[0], /TESTHOST/);
+    assert.match(errors[0], /bars/);
     const before = barsOf(emitted).length;
     const e2 = oldJudging(1011, "planner", null);
     ws.frame({ type: "delta", slot: "bars", base: 0, rev: 1, coll: { judging: { set: { [oldKey(e2)]: e2 } } }, rest: { now: 515 } });
     assert.deepEqual(ws.sent, [{ type: "needSlot", slot: "bars" }], "the patch is not applied onto a frame this receiver could not key: that kernel is asked for the whole slot on this conn");
     assert.equal(barsOf(emitted).length, before, "nothing emitted for the patch");
     assert.deepEqual(localAsks(sent), [], "the local kernel is not asked");
+    assert.equal(unkeyableRows(sent).length, 1, "the patch's resync files nothing: the row is the seed's");
     // the whole slot the ask earns, as that kernel sends it: the flat list grown by the entry, keys and all
     ws.frame({ ...full, judging: [e1, e2], now: 515, _keys: { ...full._keys, judging: [oldKey(e1), oldKey(e2)] } });
     m = last(barsOf(emitted));
     assert.deepEqual(m.judging[HOST + ":" + SID_A].map((c: any) => c.j), ["unblocker", "planner"],
       "both marks, compact, from the whole frame (a seeded base would have assembled the patched entry alone, in the old shape, under the lane)");
     assert.deepEqual(ids(m.turns[HOST + ":" + SID_A]), ["seg-1"]);
+    assert.equal(unkeyableRows(sent).length, 1, "the re-sent whole frame is refused again and said no more: latched per conn per slot");
     ws.frame({ type: "delta", slot: "bars", base: 0, rev: 1, coll: { judging: { set: {} } }, rest: { now: 520 } });
     assert.deepEqual(ws.sent, [{ type: "needSlot", slot: "bars" }, { type: "needSlot", slot: "bars" }], "every patch from that kernel recovers: the slot crosses whole per change");
     assert.deepEqual(localAsks(sent), []);
+    assert.equal(unkeyableRows(sent).length, 1);
+    assert.equal(errors.length, 1, "one console line for the whole exchange");
     fm.conns.get(HOST).closed = true;
-  });
+  }));
+});
+
+test("two hosts before T278c: the refused seed is said once per host (per conn, per slot), and a redial on a conn keeps its latch", async () => {
+  await withManager("timeline", ({ fm, emitted, sent }) => countingConsoleErrors((errors) => {
+    seedLocalTimeline(fm);
+    const HOST_B = "TESTHOSTB";
+    const full = oldFull(SID_A, [oldJudging(1001, "unblocker", 1002)]);
+    fm.openRemote(HOST, true);
+    const wsA = last(FakeWS.made);
+    wsA.open();
+    wsA.frame(full);
+    fm.openRemote(HOST_B, true);
+    const wsB = last(FakeWS.made);
+    wsB.open();
+    wsB.frame(full);
+    assert.deepEqual(unkeyableRows(sent), [{ host: HOST, ev: "delta-unkeyable-seed", why: "bars" }, { host: HOST_B, ev: "delta-unkeyable-seed", why: "bars" }], "one row per host");
+    wsA.frame(full); wsB.frame(full);   // the idle slot's reposts: refused again, said no more
+    assert.equal(unkeyableRows(sent).length, 2);
+    // a redial on A's conn (the watchdog's abandon-and-dial) mints a fresh receiver, and the fresh receiver refuses the
+    // same seed; the latch is the CONN's, not the receiver's, so the redialed socket's refusal is not said again
+    const conn = fm.conns.get(HOST);
+    clock += REMOTE_STALE_MS + 1000;
+    fm.watchdog(clock);
+    const wsA2 = last(FakeWS.made);
+    assert.notEqual(wsA2, wsA, "A redialed");
+    assert.equal(fm.conns.get(HOST), conn, "on the same conn");
+    wsA2.open();
+    wsA2.frame(full);
+    assert.equal(unkeyableRows(sent).length, 2, "the redialed socket's refusal is not said again: the vintage did not change with the socket");
+    assert.equal(errors.length, 2, "two console lines, one per host");
+    assert.deepEqual(ids(last(barsOf(emitted)).turns[HOST_B + ":" + SID_A]), ["seg-1"], "both hosts' frames rendered whole throughout");
+    fm.conns.get(HOST).closed = true; fm.conns.get(HOST_B).closed = true;
+  }));
 });
 
 test("the same vintage's feed full frame keys asks as this table does and seeds as any other: its patch applies and nothing is asked", async () => {
@@ -399,6 +457,7 @@ test("the same vintage's feed full frame keys asks as this table does and seeds 
     assert.deepEqual(last(feedsOf(emitted)).asks.map((a: any) => a.itemId).sort(), [SID_L + ":g1", SID_A + ":g1", SID_A + ":g2"].sort());
     assert.deepEqual(ws.sent, [], "nothing asked of the remote");
     assert.deepEqual(localAsks(sent), []);
+    assert.deepEqual(unkeyableRows(sent), [], "its feed frame seeded: nothing to say");
     fm.conns.get(HOST).closed = true;
   });
 });
