@@ -610,22 +610,25 @@ _CHAT_SIG_DEPS = ("taskout", "pathlink", "postal")
 # stage() records wall time, so a seam over a stat storm holds the GIL waits and the syscall waits of every other thread
 # with it, and the pusher's stage wall exceeded its own thread CPU by 157 ms per cycle on the second-boot readings with no way
 # to say which stage carried the wait. getrusage(RUSAGE_THREAD) splits the calling thread's CPU into user and system;
-# the chat seams and the push and jobs containers read it at their open and close and hand stage() the delta. The
-# instrumentation's own cost, by regime and term (microbenchmarks over the loaded kernel on 3.12, best of five,
-# 2026-09-19): a getrusage read 0.94 us, six per served tab per cycle (the signature seam's pair, the deps sub-seam's
-# pair inside it, the send seam's pair) and ten on a rebuild (the build seam's pair and the post-build signature's),
-# about 230 reads per cycle at 38 tabs; the os.stat and os.lstat counting wrappers add about half a microsecond per
-# stat (2.96 us wrapped against 2.50 bare) times the signature's stats, about 23 in the bare harness world, so about
-# 11 us per signature, and _entry_stat 0.15 to 0.25 us per DirEntry stat; _chat_sig_scope's enter and exit 2.3 us per
-# signature; _chat_sig_note_pre's lock hold and 40-component zip 2.5 us per tab and _chat_sig_note_compare 2.7 us per
-# re-read; the _chat_sig_count calls 0.24 us each, at most three per signature; the census 18.5 us per push at 38 tabs
-# and four clients when the gate walked no tab, 3.7 us when it walked all. So about 22 us per served tab per cycle,
-# about 41 us per rebuild cycle (two signatures, a claim re-read, ten reads) and about 0.85 ms per push at 38 served
-# tabs: about 0.55 percent of the 4 ms per-tab signature wall read live with a dashboard attached, and 2 to 5 percent
-# of the signature's thread CPU as the harness reads it (0.4 to 1.2 ms per signature over 24 to 71 stats, three runs
-# each; the live CPU share is read once this deploys, since the running kernel carries no CPU rows yet). RUSAGE_THREAD
-# is Linux; where the platform lacks it (macOS) _thread_cpu answers None, every stage records its wall alone, and the
-# snapshot serves stages_cpu_ms EMPTY rather than zeros that would read as "no CPU".
+# the chat seams and the push and jobs containers read it at their open and close and hand stage() the delta. What
+# the instrumentation executes, by regime, is derived here and pinned by tests; what each term costs in microseconds
+# is stated ONCE, in the stages_cpu_ms entry of docs/reference.md (one dated run's readings, not a contract), so no
+# figure is maintained by hand in two places. Per served tab per cycle: six getrusage reads (the signature seam's
+# pair, the deps sub-seam's pair inside it and the send seam's pair), one signature scope (_chat_sig_scope's enter and
+# exit), one per-tab note (_chat_sig_note_pre: a lock hold and a zip over the 40 components) whose pre-flight read is
+# the tab's one compare, one os.stat or os.lstat wrapper call per stat the signature makes (_entry_stat for a
+# DirEntry's) and a _chat_sig_count call per counted raw read (namesReads, switchReads). Per rebuilt tab: ten reads
+# (the build seam's pair and the post-build signature's pair more), two scopes, the note and one claim re-read
+# (_chat_sig_note_compare: the second compare), and the stats twice. Per push: the chat container's pair of reads and
+# one census (_chat_sig_note_census) over the tabs the gate did not walk. tests/test_kernel_delta_send.py pins these
+# counts over one tab through six cycles, rebuilt and served alternately: the scopes, notes, compares and clock reads
+# per cycle kind (12 reads on a rebuilt cycle, 8 on a served one, the container's pair included) in
+# test_the_per_tab_counts_the_cost_derivation_uses_hold_by_execution, the reads again by a fake clock in
+# test_the_chat_seams_record_their_thread_cpu_from_a_bounded_number_of_rusage_reads, and the census once per push in
+# test_the_census_reads_each_clients_skeleton_set_once_per_push_not_once_per_tab. The live CPU share is read once
+# this deploys, since the running kernel carries no CPU rows yet. RUSAGE_THREAD is Linux; where the platform lacks it
+# (macOS) _thread_cpu answers None, every stage records its wall alone, and the snapshot serves stages_cpu_ms EMPTY
+# rather than zeros that would read as "no CPU".
 try:
     import resource
     _RUSAGE_THREAD = getattr(resource, "RUSAGE_THREAD", None)
@@ -875,8 +878,9 @@ class _PerfStats:
                                    a context switch), not the instant of the read, split into user and
                                    sys by the tick counts, so a mark over a sub-millisecond stage reads
                                    0 on the marks no update fell in and a whole tick on the others
-                                   (0.3 ms spins read 0 in 111 of 200 trials at HZ=1000, 2026-09-19;
-                                   tests/test_perf_stats.py pins the zeros and the window sum), and
+                                   (tests/test_perf_stats.py pins it on the real clock: over 300
+                                   sub-millisecond spins some mark reads 0, some a whole tick, and
+                                   the marks' sum tracks the window's thread CPU), and
                                    only the sum over a window estimates the CPU. EMPTY where the platform has no
                                    per-thread rusage (macOS): an empty block means no clock, not no CPU.
                                    A row takes the CPU of a mark whose wall went to the flat stages_ms
@@ -37761,9 +37765,8 @@ def _stat_counting_install():
     (_romp_sig_counting), so a second load of this module in one process (the test suite loads the kernel many times
     per worker) finds the wrapper installed, reuses its thread-local and installs nothing: the chain stays one deep
     (os.stat.__wrapped__ is the builtin) and every load shares one accumulator. Returns the thread-local. A
-    DirEntry.stat reaches no wrapper (C); _entry_stat is its door. Cost: about half a microsecond per stat
-    process-wide (0.44 us with no signature open on the thread, 0.61 us inside one) against a bare stat of about
-    2.4 us, and 0.15 to 0.24 us per DirEntry stat through _entry_stat (measured on 3.12, 2026-09-19)."""
+    DirEntry.stat reaches no wrapper (C); _entry_stat is its door. What a wrapped stat and a stat through the door
+    cost is stated once, in the stages_cpu_ms entry of docs/reference.md."""
     tl = getattr(os.stat, "_romp_sig_counting", None)
     if tl is not None:
         return tl

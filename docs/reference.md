@@ -3191,21 +3191,33 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   runtime as of its last scheduler update (a tick, 1 ms at HZ=1000, or a
   context switch), not the instant of the read, split into user and sys by
   the tick counts, so a mark over a sub-millisecond stage reads 0 on the
-  marks no update fell in and a whole tick on the others (0.3 ms spins
-  read 0 in 111 of 200 trials at HZ=1000), and only the sum over a window
-  estimates the CPU. The instrumentation's own cost, measured on 3.12: a
-  `getrusage` read about 0.94 us, six per served tab per cycle and ten on a
-  rebuild (about 230 per cycle at 38 tabs); the `os.stat` and `os.lstat`
-  counting wrappers add about half a microsecond per stat, times the
-  signature's stats (about 23 in the bare harness world, so about 11 us per
-  signature), and the DirEntry door 0.15 to 0.25 us per stat; the signature
-  scope 2.3 us, the per-tab note 2.5 us, a re-read's note 2.7 us, the count
-  calls 0.24 us each; the census 18.5 us per push at 38 tabs and four
-  clients when the gate walked no tab. About 22 us per served tab per
-  cycle, 41 us per rebuild cycle and 0.85 ms per push at 38 served tabs:
-  about 0.55 percent of the 4 ms per-tab signature wall read live, and 2 to
-  5 percent of the signature's thread CPU as the harness reads it (0.4 to
-  1.2 ms per signature over 24 to 71 stats).
+  marks no update fell in and a whole tick on the others (a real-clock test
+  in `tests/test_perf_stats.py` pins it: over 300 sub-millisecond spins some
+  mark reads 0, some a whole tick, and the marks' sum tracks the window's
+  thread CPU), and only the sum over a window estimates the CPU.
+  The instrumentation's own cost, one run's readings and not a contract:
+  2026-09-19, Python 3.12, a 30-core (60-thread) dev box, microbenchmarks
+  over the loaded kernel taking the best of five, the census over the
+  harness's 38 tabs by four clients, and the harness's six-cycle world for
+  the per-signature stats and CPU (three runs each of the bare and the
+  furnished world). The counts behind the totals (which operation runs how
+  many times per served tab, per rebuilt tab and per push) are derived in
+  the kernel's `stages_cpu_ms` block comment and pinned by
+  `tests/test_kernel_delta_send.py`; this paragraph is the only place the
+  microsecond figures live, and the kernel's comments point here. A
+  `getrusage` read 1.07 us; the `os.stat` and `os.lstat` counting wrappers
+  about half a microsecond per stat (3.14 us against 2.66 bare), times the
+  signature's stats (about 24 per signature in the bare harness world, 71
+  in the furnished one), so about 11.5 us per signature in the bare world;
+  the DirEntry door 0.18 to 0.27 us per stat; the signature scope 2.8 us;
+  the per-tab note 3.0 us and a re-read's note 3.2 us; a count call
+  0.27 us; the census 18.5 us per push at 38 tabs and four clients when the
+  gate walked no tab, 3.9 us when it walked all. About 24 us per served tab
+  per cycle, 46 us per rebuilt tab and 0.92 ms per push at 38 served tabs:
+  about 0.6 percent of the 4.2 ms per-tab signature wall of the design's
+  live window (159.5 ms per cycle over 38 tabs with a dashboard attached),
+  and 2 to 6 percent of the signature's thread CPU as the harness reads it
+  (0.42 to 1.15 ms per signature over 24 to 71 stats).
   Empty where the platform has no per-thread rusage (macOS): an empty
   block means no clock, not no CPU.
 - `builds`: `chat`, `feed`, `timeline`, each with `cached`, `built`, `ms`.
