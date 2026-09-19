@@ -66002,8 +66002,10 @@ try{window.__rompPaneToggle&&window.__rompPaneToggle('feed',true);}catch(e){}
 // [fork] review round 3 (2026-09-19, extra9-1): the jump SHOWS the pane on the phone too (the browseFiles relay's precedent in
 // _LANDING_SETTINGS_JS): show() runs the feed's synchronous show hook, so its held board is painted and its panes word posted in
 // this click's task, BEFORE the revealCard message below, and the feed finds the card at the tap; nothing parks on this road.
-// On the desktop the tab switch is inert (the grid ignores the tab classes), as it is for the browseFiles relay.
-try{window.__rompMobileTab&&window.__rompMobileTab('feed');}catch(e){}
+// Gated on the phone layout (review round 4, 2026-09-19, correctness-3 and regression-3; the viewFile relay's shape in _LANDING_SETTINGS_JS):
+// the desktop grid shows the feed pane already, and show() there would still persist romp-mobile-tab and set body data-tab, so the switch
+// would buy nothing and write the remembered phone tab from a desktop click; before this the call ran on every layout.
+try{if(window.__rompMobileOn&&window.__rompMobileOn())window.__rompMobileTab&&window.__rompMobileTab('feed');}catch(e){}
 var f=document.getElementById('f-feed');
 try{f&&f.contentWindow&&f.contentWindow.postMessage({romp:'revealCard',itemId:n.tgt.itemId||'',sid:n.tgt.sid||'',gesture:true},'*');}catch(e){}});}
 row.appendChild(tx);row.appendChild(tm);row.appendChild(del);list.appendChild(row);})(NOTES[i],i);
