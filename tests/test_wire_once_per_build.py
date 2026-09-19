@@ -163,10 +163,11 @@ class OneEncodePerBuild(unittest.TestCase):
             self.assertEqual([f["type"] for f in legacy["frames"]], ["feed"]); self.assertNotIn("_keys", legacy["frames"][0])
             self.assertEqual([f["type"] for f in tl["frames"]], ["data", "bars"]); self.assertNotIn("_keys", tl["frames"][1], "no full carries a key list (T278c)")
             self.assertEqual(_delta(km._wire_stats, s0), {"feed_cards_miss": 1, "feed_body": 1, "bars_body": 1, "split_miss": 4,
-                                                          "entries_walked": 7, "entries_encoded": 7, "feed_slot_split": 1},
+                                                          "entries_walked": 2, "entries_encoded": 2, "feed_slot_split": 1},
                              "one whole frame each, shared by the keyed full and the legacy client; the cards encoded once; "
                              "four collections split, walking the five cards and the two bars and encoding every one (a first "
-                             "split holds no memo); the cap-less delta client took the feed's slot path once")
+                             "split holds no memo), the two bars counted and the cards not (the feed's split counts no entry: "
+                             "its count is the card count); the cap-less delta client took the feed's slot path once")
             self.assertEqual(km._feed_wire[4], km._feed_sig(km._feed_wire[5]), "the feed's signature is its per-card pass's tuple")
             self.assertEqual(km._bars_wire[4], km._parts_sig(km._bars_wire[5]), "the bars' is the split's tuple")
             self.assertEqual(legacy["sent"][("feed",)][0], km._feed_wire[4])
@@ -185,8 +186,9 @@ class OneEncodePerBuild(unittest.TestCase):
             km._push([cap, dfeed, tl])
             self.assertEqual(sum(splits.values()), 4); self.assertEqual(dict(calls), {"parts": 1})
             self.assertEqual(_delta(km._wire_stats, s0), {"feed_cards_miss": 1, "split_miss": 4,
-                                                          "entries_walked": 8, "entries_encoded": 8, "feed_slot_split": 1},
-                             "a new asks list and new collection objects: every pass ran, over five new cards and three new bars")
+                                                          "entries_walked": 3, "entries_encoded": 3, "feed_slot_split": 1},
+                             "a new asks list and new collection objects: every pass ran, over five new cards and three new "
+                             "bars; the bars count")
             self.assertEqual(cap["frames"][-1]["type"], "feedDelta")
             self.assertEqual([a["itemId"] for a in cap["frames"][-1]["asks"]], ["%s:g2" % SID])
             self.assertEqual(dfeed["frames"][-1]["type"], "delta")
@@ -281,7 +283,9 @@ class OneEncodePerBuild(unittest.TestCase):
         (a memoized dead lane) walks them all and encodes none, and the difference is what the per-entry memo saved.
         feed_slot_split counts feed sends through the view-delta slot path, the one path that re-encodes every card
         per build: the cap-less ?delta=1 client alone, never the cap client (the feed's own deltas) or a whole-frame
-        client, once per send while it is connected."""
+        client, once per send while it is connected. The feed's split itself counts no entry (the review's third
+        round, 2026-09-19: its entries are the cards, and the count stood beside memos.feedComposition's card sums;
+        the next test holds the counters flat across card counts)."""
         w = _World(self, feed=_feed(n=3), timeline=_timeline(nbars=4))
         cap, dfeed, legacy, tl = _client("feed", caps=(km.FEED_DELTA_CAP,)), _client("feed"), _client("feed", delta=False), _client("timeline")
         s0 = dict(km._wire_stats)
@@ -293,7 +297,8 @@ class OneEncodePerBuild(unittest.TestCase):
         km._push([cap, dfeed, legacy, tl])                        # the cap-less delta client joins: its slot path splits the cards
         d = _delta(km._wire_stats, s0)
         self.assertEqual(d.get("feed_slot_split"), 1, "one feed send through the slot path: %r" % d)
-        self.assertEqual((d["entries_walked"], d["entries_encoded"]), (3, 3), "the three cards")
+        self.assertNotIn("entries_walked", d, "the three cards are walked and not counted (fails before: 3): %r" % d)
+        self.assertNotIn("entries_encoded", d, "nor counted as encoded (fails before: 3): %r" % d)
         s0 = dict(km._wire_stats)
         km._push([cap, dfeed, legacy, tl])                        # a repeat cycle: the identity cache serves the split, the path is still taken
         self.assertEqual(_delta(km._wire_stats, s0), {"feed_slot_split": 1})
@@ -413,7 +418,7 @@ class ALedgersOnlyRefillEncodesNoCard(unittest.TestCase):
             s0 = dict(km._wire_stats)
             p1 = km._delta_parts("feed", first)
             self.assertEqual(dict(splits), {"byid:itemId": 1})
-            self.assertEqual(_delta(km._wire_stats, s0), {"split_miss": 1, "entries_walked": 6, "entries_encoded": 6})
+            self.assertEqual(_delta(km._wire_stats, s0), {"split_miss": 1}, "the feed's six cards are walked and not counted")
             splits.clear(); s0 = dict(km._wire_stats)
             p2 = km._delta_parts("feed", refill)
             self.assertEqual(dict(splits), {}, "the asks list is the same object: no card encoded")
@@ -426,8 +431,11 @@ class ALedgersOnlyRefillEncodesNoCard(unittest.TestCase):
             splits.clear(); s0 = dict(km._wire_stats)
             p3 = km._delta_parts("feed", rebuilt)
             self.assertEqual(dict(splits), {"byid:itemId": 1})
-            self.assertEqual(_delta(km._wire_stats, s0), {"split_miss": 1, "entries_walked": 6},
-                             "the same six card objects in a new list: walked, and every string served from the per-entry memo")
+            self.assertEqual(_delta(km._wire_stats, s0), {"split_miss": 1},
+                             "the same six card objects in a new list: walked (uncounted), and every string served from the "
+                             "per-entry memo, which the pairs' identity says below since the counters no longer do")
+            for key, pair in p3[0]["asks"][0].items():
+                self.assertIs(pair, p1[0]["asks"][0][key], "%s: the memo's own pair, no encode" % key)
             self.assertEqual(km._parts_sig(p3), km._parts_sig(p2), "equal cards in a new list: an equal signature")
             self.assertIs(km._delta_split_memo[("feed", "asks")][0], rebuilt["asks"])
             splits.clear(); s0 = dict(km._wire_stats)
@@ -443,10 +451,9 @@ class ALedgersOnlyRefillEncodesNoCard(unittest.TestCase):
             s0 = dict(km._wire_stats)
             km._push([board])                                     # an app="fleet" client: the cycle attaches ledgers to the copy
             self.assertEqual(dict(splits), {"byid:itemId": 1}); self.assertEqual(km._feed_wire[1], [])
-            self.assertEqual(_delta(km._wire_stats, s0), {"feed_cards_miss": 1, "feed_body": 1, "split_miss": 1,
-                                                          "entries_walked": 5, "entries_encoded": 5, "feed_slot_split": 1},
-                             "the feed's per-card pass and the slot path's split, each once, over the five cards; the Outline "
-                             "client took the slot path")
+            self.assertEqual(_delta(km._wire_stats, s0), {"feed_cards_miss": 1, "feed_body": 1, "split_miss": 1, "feed_slot_split": 1},
+                             "the feed's per-card pass and the slot path's split, each once, over the five cards (uncounted "
+                             "as entries); the Outline client took the slot path")
             splits.clear(); s0 = dict(km._wire_stats)
             km._push([dfeed])                                     # the same build without the attach: the wire tuple misses on its ledgers
             self.assertEqual(dict(splits), {}, "the refill served the cards from the memo")
@@ -459,8 +466,38 @@ class ALedgersOnlyRefillEncodesNoCard(unittest.TestCase):
             splits.clear(); s0 = dict(km._wire_stats)
             km._push([dfeed])
             self.assertEqual(dict(splits), {"byid:itemId": 1})
-            self.assertEqual(_delta(km._wire_stats, s0), {"feed_cards_miss": 1, "split_miss": 1,
-                                                          "entries_walked": 5, "entries_encoded": 5, "feed_slot_split": 1})
+            self.assertEqual(_delta(km._wire_stats, s0), {"feed_cards_miss": 1, "split_miss": 1, "feed_slot_split": 1})
+
+    def test_the_feeds_split_counts_no_entry_so_no_wire_counter_is_the_card_count(self):
+        """The review's third round (2026-09-19): with a ?delta=1 feed-slot client that did not announce the feed delta
+        capability (the VS Code extension's pipes, federation's remote sockets) entries_walked and entries_encoded moved
+        with the card count, one per card per build (fails before: 1, 2, 3 for boards of one, two and three cards, and
+        entries_walked over split_miss the count exactly with no timeline delta client), a count memos.feedComposition's
+        `cards` sum must not stand beside: a count beside a sum discloses the single-object case. The feed's split
+        counts none of its entries now (_delta_split's count flag, passed by _delta_parts), so every memos.wire
+        counter's delta over a push is the same for one, two and three cards, on app=feed and on app=fleet, with and
+        without a timeline client, whose two bars still count; feed_slot_split still says the path was taken."""
+        for app in ("feed", "fleet"):
+            for with_tl in (False, True):
+                deltas = []
+                for n in (1, 2, 3):
+                    _World(self, feed=_feed(n=n), timeline=_timeline(nbars=2))
+                    clients = [_client(app)] + ([_client("timeline")] if with_tl else [])
+                    s0 = dict(km._wire_stats)
+                    km._push(clients)
+                    d = _delta(km._wire_stats, s0)
+                    self.assertEqual([f["type"] for f in clients[0]["frames"]], ["feed"], (app, n))
+                    self.assertEqual(len(clients[0]["frames"][0]["asks"]), n, "the client received the %d cards" % n)
+                    self.assertEqual(d.get("feed_slot_split"), 1, "%s, %d cards: the slot path once: %r" % (app, n, d))
+                    deltas.append(d)
+                self.assertEqual(deltas[0], deltas[1], "%s (timeline %s): one card against two: %r" % (app, with_tl, deltas))
+                self.assertEqual(deltas[1], deltas[2], "%s (timeline %s): two cards against three: %r" % (app, with_tl, deltas))
+                if with_tl:
+                    self.assertEqual((deltas[0]["entries_walked"], deltas[0]["entries_encoded"]), (2, 2),
+                                     "the two bars count whatever the card count: %r" % deltas)
+                else:
+                    self.assertNotIn("entries_walked", deltas[0], deltas)
+                    self.assertNotIn("entries_encoded", deltas[0], deltas)
 
     def test_a_bars_payload_around_unchanged_collections_splits_no_bar(self):
         # the same path for the bars: a new bars dict around the SAME turns/judging/messages objects (a warming flip, or

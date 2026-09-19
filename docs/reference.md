@@ -3509,7 +3509,16 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   build: a `?delta=1` feed client that did not announce the feed delta
   capability. The counter is cumulative since kernel start, like the rest of
   the block: nonzero means such a client has connected since start, and a
-  value that rises between two snapshots means one is connected now).
+  value that rises between two snapshots means one is connected now). The
+  feed's split through that path is walked and memoized like the bars' but
+  counts none of its entries under `entries_walked` or `entries_encoded`:
+  its entries are the cards, one each, so the two counters were the card
+  count per build (`entries_walked` over `split_miss`, exact with no
+  timeline delta client) while such a client was connected, and
+  `memos.feedComposition` publishes sums over the cards that must not stand
+  beside their count (that entry says why). The bars' entries count as
+  before; the per-card cost of the feed's slot path is measured nowhere on
+  `/perf`.
   `intrMarks` is the interrupt-marks
   memo behind the interrupt tick, the nudge tick and the feed's badge, one
   entry per (session, parse family) keyed on the parse object's identity and

@@ -816,9 +816,10 @@ class _PerfStats:
                                    the whole dump for their signature), default_str (values no
                                    wire encoder could serialize as JSON and shipped as str(), one
                                    per encode; _wire_default says each type once on stderr),
-                                   entries_walked / entries_encoded (the entries _delta_split
+                                   entries_walked / entries_encoded (the bars entries _delta_split
                                    visited and the ones it json-encoded rather than served from
-                                   its per-entry memo, 2026-09-18) and feed_slot_split (feed sends
+                                   its per-entry memo, 2026-09-18; the feed's split counts none of
+                                   its entries, which are the cards) and feed_slot_split (feed sends
                                    through the view-delta slot path: a ?delta=1 feed client without
                                    FEED_DELTA_CAP, whose split re-encodes every card per build);
                                    intrMarks (the _interrupt_marks memo) -> hit / miss / evict and
@@ -53521,15 +53522,22 @@ def _dedup_sig(msg, s):
 # push both split, and whichever sender thread first materializes a _LazyWire bumps its counter, so a bare `+= 1`
 # here would be a read-modify-write across threads (the tests assert exact counts). /perf reports them under
 # memos.wire. Three read the per-entry work itself (stage 1 of the incremental-push design, 2026-09-18):
-# entries_walked (entries a _delta_split visited: every entry of every collection it split, a rebuild's new
-# collection object walks them all, an unchanged collection object is served from _delta_split_memo and walks
-# none), entries_encoded (those it json-encoded: the walked entries the per-entry memo did not hold as the same
-# object, so walked minus encoded is what the memo saved) and feed_slot_split (feed sends through the view-delta
-# SLOT path, _send_slot_delta with no parts handed down, counted per send whether a frame crossed or the dedup
-# held it: a ?delta=1 feed client without FEED_DELTA_CAP, whose _delta_parts("feed") encodes every card again
-# per build. Cumulative since kernel start like every counter here: nonzero means such a client has connected
-# since start, a value rising between two snapshots means one is connected now, and it stays at zero from the
-# first restart after stage 3 retires that path).
+# entries_walked (entries a _delta_split visited for the BARS: every entry of every bars collection it split, a
+# rebuild's new collection object walks them all, an unchanged collection object is served from _delta_split_memo
+# and walks none), entries_encoded (those it json-encoded: the walked entries the per-entry memo did not hold as
+# the same object, so walked minus encoded is what the memo saved) and feed_slot_split (feed sends through the
+# view-delta SLOT path, _send_slot_delta with no parts handed down, counted per send whether a frame crossed or
+# the dedup held it: a ?delta=1 feed client without FEED_DELTA_CAP, whose _delta_parts("feed") encodes every
+# card again per build. Cumulative since kernel start like every counter here: nonzero means such a client has
+# connected since start, a value rising between two snapshots means one is connected now, and it stays at zero
+# from the first restart after stage 3 retires that path). The feed's split through that path is walked and
+# memoized like the bars' but adds NOTHING to entries_walked and entries_encoded (_delta_parts passes count=False;
+# the review's third round, 2026-09-19): its entries are the cards, one each, so the two counters were the card
+# count per build (entries_walked over split_miss, exact with no timeline delta client connected) while such a
+# client was connected, the VS Code extension's pipes and federation's remote sockets among them, and
+# memos.feedComposition publishes sums over the cards that must not stand beside their count (a count beside a
+# sum discloses the single-object case: the FEED_BY_FOLDED comment). feed_slot_split still says the path was
+# taken; the per-card cost of that path is measured nowhere on /perf now, and stage 3 retires the path.
 _wire_stats = {"feed_cards_hit": 0, "feed_cards_miss": 0, "split_hit": 0, "split_miss": 0, "feed_body": 0,
                "bars_body": 0, "feed_sig_fallback": 0, "feed_first": 0, "bars_sig_fallback": 0, "default_str": 0,
                "entries_walked": 0, "entries_encoded": 0, "feed_slot_split": 0}
@@ -54194,7 +54202,7 @@ _delta_entry_memo = {}   # (frame type, collection) -> {id(entry): (entry, json)
 #                          object the builder reused (a memoized dead lane's bar dicts) is not encoded again
 
 
-def _delta_split(kind, value, memo_key=None):
+def _delta_split(kind, value, memo_key=None, count=True):
     """Entries of one collection as {key: (object, json)} plus the key order, per the kind table above. A
     list item that cannot be keyed, or a duplicate key, takes a positional key ('#n') — exact, since the
     shim rebuilds in key order, just less delta-friendly. With `memo_key`, an entry that is the SAME OBJECT
@@ -54207,7 +54215,11 @@ def _delta_split(kind, value, memo_key=None):
     (CPython never untracks it, unlike a tuple of scalars), and a split's pairs live until the next build,
     long enough to be promoted to the oldest generation, whose collection walks every tracked object the
     kernel holds (2026-09-16: two fresh pairs per bar per build, ~35k a build at ~1,000 builds an hour, were
-    the largest single stream feeding those collections; with the memo the encode was saved, the tuples were not)."""
+    the largest single stream feeding those collections; with the memo the encode was saved, the tuples were not).
+    `count` False walks, encodes and memoizes exactly the same and adds nothing to memos.wire's entries_walked and
+    entries_encoded: _delta_parts passes it for the feed, whose one collection is the cards, so the counters were
+    the card count per build beside memos.feedComposition's card sums (the _wire_stats comment says why that is
+    a disclosure; the review's third round, 2026-09-19). The bars' splits count as before."""
     ents, order = {}, []
     enc = json.JSONEncoder(default=_wire_default_in("_delta_split")).encode   # one encoder for the thousand entries, not one each
     key = _delta_keyer(kind)                            # …and the kind parsed once, not per item
@@ -54258,11 +54270,12 @@ def _delta_split(kind, value, memo_key=None):
         if cur is not None:
             _delta_entry_memo[memo_key] = cur
     finally:
-        with _WIRE_STATS_LOCK:                         # the pair under ONE acquisition: walked minus encoded is what the memo
-            _wire_stats["entries_walked"] += len(order)   #  saved, and a /perf copy (taken under this lock, _wire_stats_report)
-            _wire_stats["entries_encoded"] += encoded     #  must never read walked ahead of encoded; in a finally, so a split
-            #                                              that raised mid-walk still counts every entry it visited (one `put`
-            #                                              each) and every one it encoded
+        if count:                                      # the bars; the feed's split counts none of its entries (the docstring)
+            with _WIRE_STATS_LOCK:                     # the pair under ONE acquisition: walked minus encoded is what the memo
+                _wire_stats["entries_walked"] += len(order)   #  saved, and a /perf copy (taken under this lock, _wire_stats_report)
+                _wire_stats["entries_encoded"] += encoded     #  must never read walked ahead of encoded; in a finally, so a split
+                #                                              that raised mid-walk still counts every entry it visited (one `put`
+                #                                              each) and every one it encoded
     return ents, order
 
 
@@ -54285,7 +54298,9 @@ def _delta_parts(ftype, payload):
                 continue
             _wire_bump("split_miss")
             try:
-                colls[name] = _delta_split(kind, value, memo_key=(ftype, name))
+                # the feed's entries are the cards: walked and memoized, counted under no served key (the _wire_stats
+                # comment: their count beside memos.feedComposition's card sums disclosed the single-card case)
+                colls[name] = _delta_split(kind, value, memo_key=(ftype, name), count=(ftype != "feed"))
             except ValueError as e:
                 raise ValueError("%s: %s" % (name, e)) from None     # name the collection for the log line
             _delta_split_memo[(ftype, name)] = (value, colls[name])
@@ -54828,7 +54843,14 @@ _FEED_BY_NAMES = frozenset(FEED_FRAME_FIELDS) | frozenset(_FEED_FRAME_LISTS)
 # beside the sums; report() withholds both from the published tables, last and lifetime alike, because a count
 # published beside a sum discloses the single-object case: a sum over one object is that object's measurement, and
 # the count says when, so a sum is an aggregate only while its N is unpublished, here or anywhere else in the
-# export. The card count is published nowhere else on /perf, so `cards` stands as an aggregate. The ledger count is
+# export. The card count is published nowhere else on /perf, so `cards` stands as an aggregate; until this round
+# it was recoverable from memos.wire: the feed's view-delta split, the path a ?delta=1 client without the feed
+# delta capability takes (the VS Code extension's pipes, federation's remote sockets), counted one entry per card
+# per build under entries_walked and entries_encoded, so entries_walked over split_miss was the card count while
+# such a client and no timeline delta client was connected, and on a one-card board `cards` was that card's whole
+# string beside a count the reader had. That split counts no entries now (_delta_split's count flag, passed by
+# _delta_parts; feed_slot_split still says the path was taken), and a test holds every memos.wire counter equal
+# across boards of one, two and three cards under such a client. The ledger count is
 # the chat tab count (one ledger row per built or provisional tab), and /perf publishes that count whatever this
 # block does: heap.builtChat.tabs, caches.built_chat.entries, memos.chatLedger.entries and the length of
 # builds.chat.bySession are each the tab count on a steady board. So withholding ledgerCount hides nothing, and on
