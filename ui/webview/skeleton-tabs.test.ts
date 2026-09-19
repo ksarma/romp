@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import { newSkeletonState, applyTabOrderSkeleton, onStatus, holdStatus, onFull, onDismiss, onSocketUp, nextPrefetch,
-         renderKind, gateOnFrame, gateOnStrip, type SkeletonState } from "./skeleton-tabs";
+         renderKind, gateOnFrame, gateOnStrip, gateOnShow, type SkeletonState } from "./skeleton-tabs";
 
 const A = "11111111-2222-3333-4444-aaaaaaaaaaaa";
 const B = "11111111-2222-3333-4444-bbbbbbbbbbbb";
@@ -245,4 +245,50 @@ test("T6: a return on the phone: the new socket closes the gate, the redial's st
   assert.equal(nextPrefetch(st, A, none, false, all), null, "no background ask on the redial before A's full");
   assert.equal(gateOnFrame(st, A, [A]), true, "A's full applied on the new socket");
   assert.equal(nextPrefetch(st, A, none, false, all), B, "and the chain re-downloads the other tabs (the owner's decision on returns is pending; this pins today's default)");
+});
+
+test("F4 and F7 (review round 1, 2026-09-19): a want on another host is not this chain's to wait for; the local strip opens the gate, on the boot dial and after a local-only redial", () => {
+  const R = "TESTHOST:11111111-2222-3333-4444-eeeeeeeeeeee";   // the stored tab lives on another kernel: its full comes over that host's relay socket
+  const st = newSkeletonState();
+  applyTabOrderSkeleton(st, [B, C], [B, C]);   // the local kernel's own dial: every local transcript tab is a skeleton (the hint names no local sid)
+  assert.equal(gateOnStrip(st, [B, C], R), true, "a stored remote tab: the local strip says no full is coming from this kernel, so the chain starts (as before this change; the remote's full rides its relay)");
+  assert.equal(nextPrefetch(st, null, none, false, all), B);
+  // the merged strip under federation lists the remote tab too (emitMergedOrder folds every host's slice into the local emission): the want's HOST decides, not the listing
+  const st2 = newSkeletonState();
+  applyTabOrderSkeleton(st2, [B, C], [R, B, C]);
+  assert.equal(gateOnStrip(st2, [R, B, C], R), true, "listed or not, a remote want opens the gate on the local strip");
+  // a local-only redial while the shown tab is remote (the watchdog's redial of the pane socket with the relays alive): the socket flip closes the gate, the redial's strip reopens it
+  const st3 = newSkeletonState();
+  applyTabOrderSkeleton(st3, [B, C], [R, B, C]);
+  gateOnStrip(st3, [R, B, C], R);
+  onFull(st3, B); onFull(st3, C);
+  onSocketUp(st3);
+  assert.equal(st3.gate, false, "the local socket's flip closes the gate whatever the shown tab's host");
+  assert.equal(applyTabOrderSkeleton(st3, [B, C], [R, B, C]), true, "the redial re-skeletons every local tab");
+  assert.equal(nextPrefetch(st3, R, none, false, all), null, "closed until the strip");
+  assert.equal(gateOnStrip(st3, [R, B, C], R), true, "the redial's local strip reopens it: no local full is coming for a remote shown tab (before this fix the gate stayed closed for the socket's life)");
+  assert.equal(nextPrefetch(st3, R, none, false, all), B, "the chain reloads the local tabs");
+  // a LOCAL want listed by the strip still waits for its frame (T2 unchanged)
+  const st4 = newSkeletonState();
+  applyTabOrderSkeleton(st4, [B, C], [A, B, C]);
+  assert.equal(gateOnStrip(st4, [A, B, C], A), false);
+});
+
+test("F8 (review round 1, 2026-09-19): a tap onto a tab already whole on this socket opens the gate (gateOnShow); a tab not yet loaded on this socket does not", () => {
+  const Y = "11111111-2222-3333-4444-ffffffffffff";   // a transcript-less session, never a skeleton, served whole ahead of the stored tab's full
+  const st = newSkeletonState();
+  applyTabOrderSkeleton(st, [B, C], [A, B, C, Y]);
+  assert.equal(gateOnStrip(st, [A, B, C, Y], A), false, "the strip lists the stored tab A: wait for its frame");
+  onFull(st, Y);
+  assert.equal(gateOnFrame(st, Y, [A, null]), false, "Y's full is not the shown tab's");
+  assert.equal(nextPrefetch(st, null, none, false, all), null);
+  assert.equal(gateOnShow(st, Y), true, "the user taps Y, whole on this socket: the visible tab has its frame, the chain may start (before this fix it waited for A's full, or Y's re-post about 60 s later)");
+  assert.equal(nextPrefetch(st, Y, none, false, all), B);
+  assert.equal(gateOnShow(st, Y), false, "an open gate reports no second opening");
+  const st2 = newSkeletonState();
+  applyTabOrderSkeleton(st2, [B, C], [A, B, C]);
+  assert.equal(gateOnShow(st2, C), false, "a tap onto a skeleton (not loaded on this socket) opens nothing here: the click road asks for it and its full opens the gate");
+  assert.equal(st2.gate, false);
+  onSocketUp(st2);
+  assert.equal(gateOnShow(st2, A), false, "after a redial nothing is loaded on the new socket yet: the stale session map is never the key");
 });

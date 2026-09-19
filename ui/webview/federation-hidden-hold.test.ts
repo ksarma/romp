@@ -394,7 +394,7 @@ test("source pins: every pane that gates publishes the shim's word from the gate
   // the chat page (round 3): no gate, the same word, from chat-visibility.ts, installed once on the page's body
   const CHATVIS = read("ui", "webview", "chat-visibility.ts");
   assert.match(RENDER, /^import \{ watchChatVisibility, browserChatVisibilityDeps \} from "\.\/chat-visibility";/m, "render.ts imports the chat's publisher");
-  assert.match(RENDER, /^watchChatVisibility\(document\.body, browserChatVisibilityDeps\(\)\);/m, "installed at top level, over the page's body (the element the shell's display:none takes the box from)");
+  assert.match(RENDER, /^watchChatVisibility\(document\.body, browserChatVisibilityDeps\(\), schedulePrebuild\);/m, "installed at top level, over the page's body (the element the shell's display:none takes the box from); the third argument is the idle prefetch's re-arm on the pane's show (stage 0, review round 1)");
   assert.equal(RENDER.split("watchChatVisibility(").length - 1, 1, "once");
   // render.ts READS the word in its own hidden probe (upstream's text: the shim's union mirrored for the skeleton
   // prefetch); it never WRITES it, and chat-visibility.ts never names it

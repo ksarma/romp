@@ -51,7 +51,7 @@ import { CHIP_LABEL, chipWords, statusChip, type ChipState } from "./status-chip
 import { isClearCmd, openTopTitles, clearConfirmDetail, endConfirmDetail, RENAME_SUBLINE, END_SESSION_STANDING } from "./clear-confirm";
 import { prebuildPlan, type ViewState } from "./prebuild";
 import { historyMarks, historyBands, windowSpans, HIST_H, HIST_GAP } from "./glow-history";
-import { newSkeletonState, applyTabOrderSkeleton, onStatus, holdStatus, onFull, onDismiss, onSocketUp, nextPrefetch, renderKind, gateOnFrame, gateOnStrip } from "./skeleton-tabs";
+import { newSkeletonState, applyTabOrderSkeleton, onStatus, holdStatus, onFull, onDismiss, onSocketUp, nextPrefetch, renderKind, gateOnFrame, gateOnStrip, gateOnShow } from "./skeleton-tabs";
 import { reconcileTabOrder, adoptArrival } from "./tab-order";
 import { writeViewOrder } from "./view-order";
 import { planStrip, readTabGroups, writeTabGroups, setSectionCollapsed, sectionRef, isPinned, setPinned, isHidden, setHidden, prunePinned, reachableFrom, headWords,
@@ -6100,10 +6100,12 @@ function applyTabOrder(o: any, tabs?: any, report?: OrderReport, live?: any) {
   if (back && heldHere(back) && restoreIfShown(back)) { /* focus is back on the tab the pane named; nothing more to paint here. Only a tab this column holds (the chat split): another column's session is its owner's to restore, and no record of it is this column's to keep */ }
   else if (!activeId) showActive();   // the strip changed under an unfocused pane (it may have emptied), or the tab it names is listed but hidden: the body's line and the box's placeholder follow it (the review's low)
   // The idle prefetch's start gate, the strip half (stage 0, 2026-09-18; skeleton-tabs.ts gateOnStrip): the local kernel's
-  // strip that lists no tab this pane shows or awaits as active (the stored tab ended while the page was away, or none is
-  // stored) is the event that says no full is coming for one, so the chain may start on it; a strip that lists it leaves the
-  // gate to that tab's first frame (upsert). Only the local strip: a re-emission is empty on a fresh page and says nothing.
-  // Ahead of the render below (schedulePrebuild queues one idle pass, so the order costs nothing).
+  // strip that lists no LOCAL tab this pane shows or awaits as active (the stored tab ended while the page was away, none is
+  // stored, or the stored tab is another host's, whose full comes over that host's relay socket and is not this chain's to
+  // wait for) is the event that says no full is coming for one from this kernel, so the chain may start on it; a strip that
+  // lists a local want leaves the gate to that tab's first frame (upsert). Only the local strip: a re-emission is empty on a
+  // fresh page and says nothing. On every layout (the gate reads none). Ahead of the render below (schedulePrebuild queues
+  // one idle pass, so the order costs nothing).
   if (localStrip(report) && gateOnStrip(skeletonTabs, kernelOrder, activeId || wantActive)) schedulePrebuild();
   // The board has been heard on this socket ONLY when this frame is the local kernel's own strip (tab-order.ts localStrip):
   // a synthetic re-emission is re-served from the manager's store, EMPTY on a fresh page (order []), and another host's
@@ -14125,6 +14127,7 @@ function silentActivate(id: string): void {
   noteMru(id);                 // enter the recency stack, as setActive opens (round two, low c)
   if (activeId === id) return;
   activeId = id;
+  if (gateOnShow(skeletonTabs, id)) schedulePrebuild();   // a whole tab adopted as active: the visible tab has its frame, so the idle chain may start (the start gate, stage 0)
   loadComposerFor(id, true);   // the tab's own draft
   persistActive(id);           // the column's blob, so the next dial carries the shown tab
   renderTabs();                // mark the shown tab active in this column's strip
@@ -18910,6 +18913,7 @@ function setActive(id: string, anchor?: string, anchorT?: number, anchorKind?: s
     clearSeek();
   }
   activeId = id;
+  gateOnShow(skeletonTabs, id);   // a tap onto a tab already whole on this socket opens the idle chain's start gate (stage 0); the tail's arm below runs it
   vanishedId = null; vanishedWhy = null; vanishedName = ""; wantActive = null; wantActiveGone = null; vanishedByDecline = false;   // any activation ends the unfocused state (T357)
   persistActive(id);   // the name rides beside the id: after a reload the unfocused body names the awaited tab before its host relays (T357)
   renderTabs();
@@ -20232,9 +20236,11 @@ listenForFrames(perfFrameHandler("chat", (m) => vscodeApi?.postMessage(m), (e: M
   // replace: a key the shell stopped naming must not linger as on.
   if (m.romp === "panes") {
     if (m.on && typeof m.on === "object") {
+      const wasChatOff = panesOn.chat === false;   // the shell's last word said this pane was off screen (a phone tab other than Chat)
       const on: Record<string, boolean> = {};
       for (const k of Object.keys(m.on)) on[k] = m.on[k] === true;
       panesOn = on;
+      if (wasChatOff && on.chat === true) schedulePrebuild();   // the shell shows the chat tab: the idle chain re-arms on the word too (the belt beside the visibility flip's hook, for a browser whose observer does not run over a hidden iframe; runPrebuild re-reads paneHidden() at fire time, so a word ahead of the observer costs one null pass)
     }
     // which panes exist to bring forward (the Files control's setting): whole-set replace as well
     const avail: Record<string, boolean> = {};
@@ -22741,7 +22747,7 @@ setupSettings();
 })();
 // The chat page's hidden word for the kernel's pane shim (chat-visibility.ts): the chat gates no paint, so this
 // is the one place it measures its own visibility. Once, at top level, over the page's body.
-watchChatVisibility(document.body, browserChatVisibilityDeps());
+watchChatVisibility(document.body, browserChatVisibilityDeps(), schedulePrebuild);   // the pane's show (its hidden word flipping true to false) re-arms the idle chain: on the phone the chat can be display:none at boot, where runPrebuild reads paneHidden() and asks nothing (stage 0)
 // right-click a selection in the transcript → Reply (quote it) / Copy
 document.getElementById("content")?.addEventListener("contextmenu", showSelectionMenu);
 // The chat document hosts the viewer itself (openPath), so it boots the viewer's listener with the
