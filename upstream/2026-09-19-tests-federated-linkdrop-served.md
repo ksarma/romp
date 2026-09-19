@@ -3,7 +3,7 @@ title: A served lab drives a remote link dropping and returning mid-session agai
 status: candidate
 where: tests/test_federated_linkdrop_served.py (new: LinkProxy, LinkDropBothNew, LinkDropOldLocal)
 added: 2026-09-19
-pr:
+pr: 857
 tier: docs
 offered:
 closed:
