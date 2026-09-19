@@ -5618,6 +5618,10 @@ let feedShellOn: boolean | undefined;
 function parentMobile(): boolean | undefined {
   try { const p = window.parent as unknown as { __rompMobileOn?: unknown }; return (window.parent !== window && typeof p.__rompMobileOn === "function") ? !!(p.__rompMobileOn as () => unknown)() : undefined; } catch { return undefined; }
 }
+// a bell jump or a notification tap that reached this pane while its first paint was held (the board applied, unpainted): the
+// card's key, revealed by the paint that lands (releasePaint), never a card-gone fallback for a card the model holds (review
+// round 1, 2026-09-19: the lookup over the empty DOM took the fallback and posted openSession for an existing card)
+let pendingRevealKey: string | null = null;
 let paintDirty = false;        // a render was withheld while the pane could not be seen
 let skipFlipOnce = false;      // the release paint snaps: cards that moved while away have no old spot to glide from
 let feedWatching = false;
@@ -5638,6 +5642,21 @@ function releasePaint(): void {
   paintDirty = false;
   skipFlipOnce = true;
   render();
+  // a jump that arrived under the phone's first-paint hold lands on the paint it waited for (the revealCard handler parks it)
+  if (pendingRevealKey !== null && !paintDirty) { const k = pendingRevealKey; pendingRevealKey = null; const t = cardByKey(k); if (t) jumpToCard(t); }
+}
+// Match the key STRUCTURALLY, never an interpolated attribute selector: a crafted push-card value with a quote or bracket
+// would throw a SyntaxError inside querySelector and abort the caller, dropping its fallback too (review find on #940,
+// 2026-09-07). Every [data-key] is stamped by render(): an unpainted board has none.
+function cardByKey(key: string): HTMLElement | null {
+  return (Array.from(document.querySelectorAll("[data-key]")) as HTMLElement[]).find((c) => c.dataset.key === key) || null;
+}
+// scroll the card into view and pulse it accent so the eye lands on the right card (the bell jump and the notification tap)
+function jumpToCard(target: HTMLElement): void {
+  target.scrollIntoView({ block: "center", behavior: "smooth" });
+  target.classList.remove("reveal-pulse"); void target.offsetWidth;   // restart the animation on a repeat jump
+  target.classList.add("reveal-pulse");
+  target.addEventListener("animationend", () => target.classList.remove("reveal-pulse"), { once: true });
 }
 document.addEventListener("visibilitychange", () => { if (!document.hidden) releasePaint(); });
 document.addEventListener("visibilitychange", () => { if (document.hidden) publishPaneHidden(true, feedIntersecting); });   // the hidden arm releases nothing, so the release path never publishes it
@@ -6513,9 +6532,11 @@ function applyFeedPayload(m: any): void {
   render();
   if (!feedAnnounced) {
     feedAnnounced = true;
-    // First content is on screen → tell the shell, the way the timeline does: the boot splash's cue, and the
+    // The first frame has applied → tell the shell, the way the timeline does: the boot splash's cue, and the
     // exact event a notification tap's card reveal waits for — the shell holds its {romp:'revealCard'} until
-    // the feed has cards to scroll to (kernel.py _LANDING_REVEAL_JS). Standalone page: no parent, nothing to say.
+    // the feed has cards to scroll to (kernel.py _LANDING_REVEAL_JS). On the phone's first-paint hold the board is
+    // applied but not yet painted at this point (paint-gate.ts firstPaintHeld); a reveal that lands then is decided
+    // from the model and painted with the pane's show (the revealCard handler). Standalone page: no parent, nothing to say.
     try { if (window.parent && window.parent !== window) window.parent.postMessage({ romp: "ready", app: "feed" }, "*"); } catch { /* no shell */ }
   }
 }
@@ -6556,16 +6577,15 @@ listenForFrames(perfFrameHandler("feed", (m) => vscodeApi?.postMessage(m), (e: M
     if (paintDirty) { feedIntersecting = true; releasePaint(); }
     const key = "a:" + String(m.itemId || "");
     unfoldThreadsFor(new Set([key]));
-    // Match the key STRUCTURALLY, never an interpolated attribute selector: a crafted push-card value
-    // with a quote or bracket would throw a SyntaxError inside querySelector and abort this handler,
-    // dropping the openSession fallback too (review find on #940, 2026-09-07).
-    const target = (Array.from(document.querySelectorAll("[data-key]")) as HTMLElement[])
-      .find((c) => c.dataset.key === key) || null;
+    const target = cardByKey(key);   // the structural match (cardByKey): a crafted key never reaches querySelector's parser
     if (target) {
-      target.scrollIntoView({ block: "center", behavior: "smooth" });
-      target.classList.remove("reveal-pulse"); void target.offsetWidth;   // restart the animation on a repeat jump
-      target.classList.add("reveal-pulse");
-      target.addEventListener("animationend", () => target.classList.remove("reveal-pulse"), { once: true });
+      jumpToCard(target);
+    } else if (paintDirty && asks.some((a) => a.itemId === String(m.itemId || ""))) {
+      // the phone's first-paint hold (paint-gate.ts firstPaintHeld): the release above re-held, so the board is applied but
+      // unpainted and the DOM has no card to find while the model has it. Decided from the model, never from the DOM: no
+      // openSession for a card that exists; the paint that lands (the pane's show word, the panes handler above) reveals it.
+      // The shell's own tab switch, or none, is unchanged: this pane decides only what it says about the card.
+      pendingRevealKey = key;
     } else if (m.sid) {
       frameGesture = !!m.gesture;   // the bell click or the notification tap behind this frame is the reader's gesture (round three)
       try { vscodeApi?.postMessage({ type: "openSession", id: String(m.sid) }); } finally { frameGesture = false; }
