@@ -68369,10 +68369,11 @@ function filesCtlM(){try{var st=JSON.parse(localStorage.getItem('romp:settings')
 // on it is a pane like any other (a return while it is off screen parks it, the shim's D2 rule). The measure of the saving is
 // the pane's absence from the timing rows: a never-tapped pane files none.
 // The loading state (ui/CLAUDE.md, loading states): from the promotion until the iframe's load event the pane's .pane div
-// wears `loading`, and while the SHOWN tab's div wears it the body wears `pane-loading`, which paints the shell's #pane-load,
-// the romp loader over the pane area (the .pane div is display:contents on the phone, so it can host no box of its own: one
-// shell element, painted for the tab in view). Event-based, with a 30 s backstop so it can never trap the user; the pane's own
-// loader (_pane_spin) takes over the instant its document paints, in the same dress, so the hand-over is not visible.
+// carries the `loading` class, and while the SHOWN tab's div carries it the body carries `pane-loading`, which paints the
+// shell's #pane-load, the romp loader over the pane area (the .pane div is display:contents on the phone, so it can host no
+// box of its own: one shell element, painted for the tab in view). Event-based, with a 30 s backstop so it can never trap the
+// user; the pane's own loader (_pane_spin) takes over the instant its document paints, with the same backdrop and loader, so
+// the hand-over is not visible.
 var LAZY='data-lazy-src',LOAD_MS=30000;
 function paneDiv(f){try{var d=f&&f.parentNode;return (d&&d.classList&&typeof d.classList.contains==='function')?d:null;}catch(e){return null;}}
 function paintLoading(){try{var d=paneDiv(F[document.body.getAttribute('data-tab')]);document.body.classList.toggle('pane-loading',!!(d&&d.classList.contains('loading')));}catch(e){}}
@@ -68401,9 +68402,13 @@ window.__rompMobileTab=show;   // the shell's relays bring a pane's tab forward 
 // and no tab switch: the media query's own change event IS that flip, so re-tell the panes on it
 var retell=function(){try{window.__rompPanesTell&&window.__rompPanesTell();}catch(e){}};
 if(MQ){if(MQ.addEventListener)MQ.addEventListener('change',retell);else if(MQ.addListener)MQ.addListener(retell);}
-// [fork] stage 0: the desktop grid shows every pane the rail has on without a tap, so a flip TO the desktop layout promotes
-// every lazy pane left (its own listener on the same media query, beside the re-tell's)
-var lazyFlip=function(){try{if(!mobileOn())for(var lk in F)promote(lk);}catch(e){}};
+// [fork] stage 0: the desktop grid shows every pane the rail has on without a tap, so a flip TO the desktop layout hands
+// every parked pane back to the controller's attribute (data-src) and promotes the ones the gear shows; a pane the gear has
+// off keeps its data-src for the controller's later enable (review round 1, 2026-09-19: parked with no data-src, a pane
+// turned on in the gear after a rotation showed an empty column until a reload). Its own listener on the same media query,
+// beside the re-tell's.
+var lazyFlip=function(){try{if(!mobileOn())for(var lk in F){var lf2=F[lk],lz=null;try{lz=lf2&&lf2.getAttribute(LAZY);}catch(e){}
+if(lz){try{lf2.setAttribute('data-src',lz);lf2.removeAttribute(LAZY);}catch(e){}}promote(lk);}}catch(e){}};
 if(MQ){if(MQ.addEventListener)MQ.addEventListener('change',lazyFlip);else if(MQ.addListener)MQ.addListener(lazyFlip);}
 // A REVEAL un-hides a desktop-toggled-off pane before the mobile tab switch (the user 2026-08-13: a feed
 // click that jumps into a CLOSED chat used to land invisibly — the hidden iframe's WS stays live, so the
@@ -68529,13 +68534,13 @@ shReturnProbe={decision:(!shWs||shWs.readyState!==1)?'redial-closed':'redial-sta
 shFailed=0;shFirstFailT=0;
 shAbandon();shellWS();});
 shellWS();
-// [fork] stage 0: the lazy panes' boot. On the phone every pane's data-src but the chat's (it ships src), the feed's (exempt) and
-// the stored tab's (show(last) below promotes it) is parked under data-lazy-src before the pane controller parses, so its boot
-// promotion leaves them alone, and the feed is promoted here (the gear's word respected). On the desktop the controller's
-// eager boot stands, and the Waiting and Files panes, outside its list, are promoted here. The stored tab is read here as the
-// boot line below reads it (that line is upstream's text; this one runs first).
-try{var lazyTab='chat';try{var ls=localStorage.getItem(KT);if(ls&&F[ls])lazyTab=ls;}catch(e){}
-if(mobileOn()){for(var lk2 in F){var lf=F[lk2];if(!lf||lk2==='chat'||lk2==='feed'||lk2===lazyTab)continue;
+// [fork] stage 0: the lazy panes' boot. On the phone every pane's data-src but the chat's (it ships src) and the feed's (exempt)
+// is parked under data-lazy-src before the pane controller parses, so its boot promotion leaves them alone; the feed is
+// promoted here (the gear's word respected) and the stored tab by show(last) below, which reads the parked attribute too, so
+// an enabled stored tab boots as before while a stored tab the gear has off stays parked (review round 1, 2026-09-19: skipped
+// by the parking, it kept its data-src and a later gear enable loaded it off screen). On the desktop the controller's eager
+// boot stands, and the Waiting and Files panes, outside its list, are promoted here.
+try{if(mobileOn()){for(var lk2 in F){var lf=F[lk2];if(!lf||lk2==='chat'||lk2==='feed')continue;
 var lu=lf.getAttribute('data-src');if(lu&&!lf.getAttribute('src')){lf.setAttribute(LAZY,lu);lf.removeAttribute('data-src');}}
 promote('feed');}
 else{promote('waiting');promote('files');}}catch(e){}
@@ -70861,7 +70866,7 @@ def _landing():
             "#f-timeline{flex:1 1 auto;min-height:0}#f-timeline.m-on{display:block}"
             # the lazy pane loader (stage 0, 2026-09-18): while the shown tab's pane is loading its document the shell paints the
             # romp loader over the pane area, above the pane's iframe and below the tab bar (z 20; the bar stays tappable, the
-            # loader stops at its reserved height), in the pane loader's dress (_pane_spin: the same backdrop, the same loader)
+            # loader stops at its reserved height), with the pane loader's backdrop and loader (_pane_spin), so the hand-over is not visible
             "#pane-load{position:fixed;left:0;right:0;top:0;bottom:var(--mtabs-h,2.6em);z-index:15;align-items:center;justify-content:center;background:#1e1e1e}"
             "body.pane-loading #pane-load{display:flex}"
             "body[data-tab=timeline] .row{display:none}"    # timeline tab active → collapse the chat/feed row so the band fills

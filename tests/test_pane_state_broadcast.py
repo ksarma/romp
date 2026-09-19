@@ -1123,6 +1123,28 @@ console.log(JSON.stringify(out));
 """
 _LAZY_STORED_DRIVER = _LAZY_TOOLS + r"""
 out.boot = { tab: TAB, src: src(), lazy: lazy(), sets: Object.assign({}, SETS), loading: loading(), bodyLoading: BODY_CLS.has('pane-loading') };
+// the promoted iframe's INITIAL about:blank document fires its own load after the promotion (Chromium dispatches it asynchronously):
+// promote()'s guard tells it from the page's load, so the loading state stands until the page itself has loaded (executed: review round 1)
+frames['f-timeline'].contentDocument = { URL: 'about:blank' }; (LOADS.timeline || []).forEach((f) => f());
+out.blankLoad = { loading: loading(), bodyLoading: BODY_CLS.has('pane-loading') };
+frames['f-timeline'].contentDocument = { URL: 'http://TESTHOST:1/timeline' }; (LOADS.timeline || []).forEach((f) => f());
+out.pageLoad = { loading: loading(), bodyLoading: BODY_CLS.has('pane-loading') };
+console.log(JSON.stringify(out));
+"""
+_LAZY_FLIP_DISABLED_DRIVER = _LAZY_TOOLS + r"""
+out.boot = { src: src(), lazy: lazy(), dataSrc: dataSrc(), hidden: hidden() };
+MATCHES = false; MQL.forEach((f) => f({}));   // the rotation to the desktop layout
+out.flipped = { src: src(), lazy: lazy(), dataSrc: dataSrc(), sets: Object.assign({}, SETS), cls: BODY_CLS.has('po-fleet') };
+STORE['romp:settings'] = JSON.stringify({ showFilesControl: true, panes: {} }); STORAGE.forEach((f) => f({ key: 'romp:settings' }));   // the gear turns the Outline on
+out.enabled = { src: src(), lazy: lazy(), sets: Object.assign({}, SETS), cls: BODY_CLS.has('po-fleet'), hidden: hidden() };
+console.log(JSON.stringify(out));
+"""
+_LAZY_STORED_DISABLED_DRIVER = _LAZY_TOOLS + r"""
+out.boot = { tab: TAB, src: src(), lazy: lazy(), dataSrc: dataSrc(), hidden: hidden(), sets: Object.assign({}, SETS) };
+STORE['romp:settings'] = JSON.stringify({ showFilesControl: true, panes: {} }); STORAGE.forEach((f) => f({ key: 'romp:settings' }));   // the gear turns the Sessions band on again
+out.enabled = { tab: TAB, src: src(), lazy: lazy(), hidden: hidden(), sets: Object.assign({}, SETS) };
+window.__rompMobileTab('timeline');
+out.tapped = { tab: TAB, src: src(), lazy: lazy(), sets: Object.assign({}, SETS), loading: loading(), bodyLoading: BODY_CLS.has('pane-loading') };
 console.log(JSON.stringify(out));
 """
 _LAZY_FEED_OFF_DRIVER = _LAZY_TOOLS + r"""
@@ -1172,7 +1194,7 @@ class LazyPanes(unittest.TestCase):
         self.assertEqual(b["dataSrc"], {"chat": None, "feed": "/feed", "files": None, "timeline": None, "fleet": None, "waiting": None},
                          "…so the controller's own promotion line (upstream's text) finds nothing to copy for them; the feed keeps its data-src beside its src, as any promoted pane does (a src is never reassigned)")
         self.assertEqual(b["sets"], {"feed": 1}, "one src set at boot: the feed's")
-        self.assertEqual(b["loading"], ["feed"], "the feed's .pane wears loading until its document loads")
+        self.assertEqual(b["loading"], ["feed"], "the feed's .pane carries the loading class until its document loads")
         self.assertFalse(b["bodyLoading"], "the shown tab (the chat) is not loading: no loader over it")
         self.assertEqual(b["hidden"], {k: False for k in b["hidden"]}, "every tab is a place to go")
         self.assertEqual(b["promote"], "function", "window.__rompPanePromote is the one road")
@@ -1183,7 +1205,7 @@ class LazyPanes(unittest.TestCase):
         self.assertEqual(t["src"]["waiting"], "/waiting", "the tap promotes the pane")
         self.assertIsNone(t["lazy"]["waiting"], "…and consumes the parked attribute")
         self.assertEqual(t["log"], ["src:waiting", "tell"], "the src is set BEFORE the re-tell (a word posted into a document not yet there is dropped; the pane hears it on its load)")
-        self.assertEqual(sorted(t["loading"]), ["feed", "waiting"], "the tapped pane's .pane wears loading")
+        self.assertEqual(sorted(t["loading"]), ["feed", "waiting"], "the tapped pane's .pane carries the loading class")
         self.assertTrue(t["bodyLoading"], "the shown tab is loading: the shell paints its loader (body.pane-loading)")
         self.assertEqual(t["words"][-1], True, "the re-tell says the pane is on screen")
         self.assertEqual(t["timers"], 2, "a 30 s backstop per promotion so far (the feed's and this one)")
@@ -1213,13 +1235,44 @@ class LazyPanes(unittest.TestCase):
         self.assertEqual(self.out["gearCycle"]["sets"], {"feed": 1, "waiting": 1, "fleet": 1, "timeline": 1, "files": 1}, "a gear cycle on a loaded pane reassigns nothing")
 
     def test_the_stored_tab_loads_at_boot_and_wears_the_loader(self):
-        o = _lazy("STORE['romp:settings'] = JSON.stringify({ showFilesControl: true }); STORE['romp-mobile-tab'] = 'timeline';", _LAZY_STORED_DRIVER)["boot"]
+        out = _lazy("STORE['romp:settings'] = JSON.stringify({ showFilesControl: true }); STORE['romp-mobile-tab'] = 'timeline';", _LAZY_STORED_DRIVER)
+        o = out["boot"]
+        self.assertEqual(sorted(out["blankLoad"]["loading"]), ["feed", "timeline"], "the initial about:blank document's own load is not the page's: the loading state stands (promote()'s guard, executed)")
+        self.assertTrue(out["blankLoad"]["bodyLoading"], "…and the loader stays up over the shown tab")
+        self.assertEqual(out["pageLoad"], {"loading": ["feed"], "bodyLoading": False}, "the page's own load ends it")
         self.assertEqual(o["tab"], "timeline")
         self.assertEqual(o["src"], {"chat": "/chat", "feed": "/feed", "files": None, "timeline": "/timeline", "fleet": None, "waiting": None}, "the stored tab is eager; the other three wait for a tap")
         self.assertEqual(o["lazy"], {"chat": None, "feed": None, "files": "/files", "timeline": None, "fleet": "/fleet", "waiting": "/waiting"})
         self.assertEqual(o["sets"], {"feed": 1, "timeline": 1})
         self.assertEqual(sorted(o["loading"]), ["feed", "timeline"])
         self.assertTrue(o["bodyLoading"], "the shown tab is loading its document: the loader is up (under the boot splash at this point)")
+
+    def test_a_gear_disabled_pane_parked_at_a_phone_boot_loads_after_a_flip_to_the_desktop_and_a_gear_enable(self):
+        # F3 (review round 1, 2026-09-19): the flip hands every parked pane back to the controller's attribute; the gear's later
+        # enable then promotes it through the controller's own line. Before: parked with no data-src, the enable showed an empty column.
+        o = _lazy("STORE['romp:settings'] = JSON.stringify({ showFilesControl: true, panes: { fleet: false } }); STORE['romp-mobile-tab'] = 'chat';", _LAZY_FLIP_DISABLED_DRIVER)
+        b = o["boot"]
+        self.assertEqual((b["src"]["fleet"], b["lazy"]["fleet"], b["dataSrc"]["fleet"], b["hidden"]["fleet"]), (None, "/fleet", None, True), "parked at the phone boot, hidden by the gear")
+        f = o["flipped"]
+        self.assertEqual((f["src"]["fleet"], f["lazy"]["fleet"], f["dataSrc"]["fleet"]), (None, None, "/fleet"), "the flip hands the disabled pane back to data-src and promotes it not (the gear's word)")
+        self.assertEqual(f["src"]["waiting"], "/waiting", "…while an enabled parked pane is promoted by the same flip")
+        self.assertFalse(f["cls"])
+        e = o["enabled"]
+        self.assertEqual((e["src"]["fleet"], e["sets"].get("fleet"), e["cls"], e["hidden"]["fleet"]), ("/fleet", 1, True, False), "the gear enable on the desktop loads the pane through the controller's line and shows the column")
+
+    def test_a_stored_tab_the_gear_has_off_stays_parked_so_a_later_enable_does_not_load_it_off_screen(self):
+        # F9 (review round 1, 2026-09-19): the parking no longer skips the stored tab; promote() refuses a disabled pane, so it stays
+        # parked and loads on its first tap like every other lazy pane (before: it kept its data-src and the enable loaded it hidden)
+        o = _lazy("STORE['romp:settings'] = JSON.stringify({ showFilesControl: true, panes: { timeline: false } }); STORE['romp-mobile-tab'] = 'timeline';", _LAZY_STORED_DISABLED_DRIVER)
+        b = o["boot"]
+        self.assertEqual(b["tab"], "chat", "a phone left on the hidden pane's tab goes back to the chat")
+        self.assertEqual((b["src"]["timeline"], b["lazy"]["timeline"], b["dataSrc"]["timeline"], b["hidden"]["timeline"]), (None, "/timeline", None, True), "parked, not loaded")
+        self.assertEqual(b["sets"], {"feed": 1})
+        e = o["enabled"]
+        self.assertEqual((e["src"]["timeline"], e["lazy"]["timeline"], e["hidden"]["timeline"], e["sets"]), (None, "/timeline", False, {"feed": 1}), "the gear enable on the phone unhides the tab and loads nothing off screen")
+        t = o["tapped"]
+        self.assertEqual((t["tab"], t["src"]["timeline"], t["lazy"]["timeline"], t["sets"]), ("timeline", "/timeline", None, {"feed": 1, "timeline": 1}), "its first tap loads it, once")
+        self.assertIn("timeline", t["loading"]); self.assertTrue(t["bodyLoading"])
 
     def test_a_pane_off_in_the_gear_is_never_promoted_and_the_exempt_feed_loads_when_the_gear_turns_it_on(self):
         o = _lazy("STORE['romp:settings'] = JSON.stringify({ showFilesControl: true, panes: { feed: false } }); STORE['romp-mobile-tab'] = 'feed';", _LAZY_FEED_OFF_DRIVER)
