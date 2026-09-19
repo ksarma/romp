@@ -10982,15 +10982,13 @@ class DefaultBillingMovesItsFollowers(unittest.TestCase):
                       "changing the machine default reconnects every session following it that runs on the other side, "
                       "at its next quiet moment (the same pending dots a per-session pick shows), and those sessions "
                       "keep following the default (no pick is written for them).", doc)
-        # the seed and the picker's preselection read the remembered pick as before this change: making them read only the
-        # explicit default changes which account new sessions bill, and is split out into its own PR (the reviewer's round
-        # 2, 2026-09-19; its fresh-5), so the reference says what this branch does
-        self.assertIn("Until the default is set here, the last per-session pick seeds it (as a model or effort pick does); once "
-                      "set here, a per-session pick is about that session alone and moves no default.", doc)
-        self.assertIn("A new session defaults to the last pick made anywhere, and before any pick to the key when a helper is "
-                      "configured.", doc)
-        self.assertNotIn("preselects the machine default", doc)
-        self.assertNotIn("seeds no new session", doc)
+        self.assertIn("the new-session picker preselects the machine default (the explicit one, else the rule that holds), "
+                      "and a session created with no pick of its own follows the machine default, not the last pick.", doc)
+        # round 2 of the review: the older sentence in the same section said the opposite (the last pick made anywhere)
+        self.assertNotIn("defaults to the last pick made anywhere", doc)
+        self.assertNotIn("A remembered key pick on a box", doc)
+        self.assertIn("A new session is preselected on the machine's explicit default when the box can bill it, else on the rule "
+                      "that holds without one: the key when a helper is configured, else the login.", doc)
         # round 1 of the reviewer's review (2026-09-18): the stagger and what a follower keeps through it (correctness-2,
         # kernel-3), the survivor's work at a re-attach (regression-1), the credential romp cannot move (regression-6), the
         # absent chat record (tests-6), and the new-session billing transition plus the seed's semantics (tests-2, fresh-1)
@@ -11032,8 +11030,10 @@ class DefaultBillingMovesItsFollowers(unittest.TestCase):
                       "write of the default.", doc)
         self.assertIn("A follower's move leaves no record in its chat: the pending dots are the only session-side signal and they "
                       "clear at the landing; the kernel log's per-session line is the durable record.", doc)
-        self.assertIn("A session created while a default stands, the explicit one or the last pick's remembered value, is seeded with "
-                      "it as a pick of its own and is not moved by a later change of the default", doc)
+        self.assertIn("a box whose last per-session pick was the login and whose settings carry an apiKeyHelper bills new sessions "
+                      "on the key from this kernel on", doc)
+        self.assertIn("A session created while an explicit default stands is seeded with it as a pick of its own and is not moved "
+                      "by a later change of the default", doc)
 
 
     def test_the_walk_touches_no_session_with_a_pick_of_its_own_even_one_whose_cli_runs_the_other_side(self):
