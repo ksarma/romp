@@ -20,11 +20,14 @@ after tearDownClass or tearDownModule, and the scope whose setup or teardown mad
 landing on the scope's last test with the boundary named. The setup before a test: a singleton found over a gone
 directory that no verdict has named yet was made by something outside every window (import-time code) and is
 reported once per worker, at the first test that meets it, worded as inherited; every later test that inherits
-the same object is quiet. Its one allowance is derived from the transition, never from a list of test names:
-None before and a backend over jd.STATE with that directory present after is a worker's lazy first build under
-the run root, the kernel's own design. WHICH test builds first depends on the run (the xdist scheduler, the
-subset, the module order), so a name list could never be right: the census that found ViewBuilder saw a
-different first builder on each of three workers. A kernel re-execution inside a test replaces the marker
+the same object is quiet. Its allowances are derived from the transition, never from a list of test names:
+None before and, after, the kernel's own class (module romp_sdk_backend, qualname SdkBackend; a look-alike is
+refused) over jd.STATE AS THE TEST FOUND IT, that directory present, is a worker's lazy first build under the root
+the test inherited, the kernel's own design; None before and False after is the kernel's own unavailable outcome.
+WHICH test builds first depends on the run (the xdist scheduler, the subset, the module order), so a name list
+could never be right: the census that found ViewBuilder saw a different first builder on each of three workers.
+The remedy is one per road: the sandbox sentence when the value left is the kernel's class over a root that is
+not the reference or not a directory; put back the object you found otherwise. A kernel re-execution inside a test replaces the marker
 function and resets the singleton, so the before value is stale and only what the test LEFT is judged, against
 jd.STATE as the reload re-bound it: None or False pass, the lazy build over the loader's root passes, and a build
 anywhere else is named with the re-execution wording; the kernel's FIRST load inside a test (no marker before) is
@@ -37,13 +40,16 @@ alphabetically, and each case's `before` is what the previous case left):
     b. ViewBuilder's fixed shape (save km._sdk_backend, sandbox jd.STATE, build, put both back, remove the
        sandbox) passes;
     c. a kernel re-execution inside the test, the singleton reset and rebuilt over jd.STATE, is not judged;
-    d. a rebuild over the SAME root left in place fails: another object under an equal state_dir;
+    d. a rebuild over the SAME root left in place fails: another object under an equal state_dir, said as such
+       (the readers hold the object, not the path), with the object road's remedy;
     e. ViewBuilder's original leak with the sandbox kept fails, naming the change and no gone directory;
     f. removing the directory under the singleton e left (the same object, present before and gone after) fails
        as this test's own transition, with the gone clause;
-    g. ViewBuilder's original leak with the sandbox removed fails, naming the change, the gone directory and the
-       remedy (its before value, f's gone object, was already named, so g starts quietly);
-    h. a test that does nothing under g's gone object passes: inherited, already named, not accused.
+    g. ViewBuilder's original leak with the sandbox removed and a regular FILE written at the path fails, naming
+       the change, the gone clause (a file is not a directory) and the sandbox remedy (its before value, f's gone
+       object, was already named, so g starts quietly);
+    h. a test that does nothing under g's gone object passes: inherited, already named, not accused;
+    i. resetting the singleton to None and leaving it fails with the object road's remedy and no sandbox sentence.
   B, the leak as the worker's first build, and the re-execution road:
     a. None before and, after, a backend over a removed sandbox: the allowance does not cover it;
     b. a kernel re-execution that then builds over a removed sandbox fails with the re-execution wording and the
@@ -78,6 +84,18 @@ alphabetically, and each case's `before` is what the previous case left):
   H and H2, over a head that loads NO kernel at import (the worker's first load happens inside the test):
     H.a loads the kernel, then builds over a kept sandbox and fails with the first-load wording; H2.a loads the
     kernel, then makes the lazy build over the loader's root and passes (the run exits 0).
+  F, the values the slot can be handed that are not the kernel's build over the inherited root:
+    a. a class named SdkBackend defined in the scratch module, over jd.STATE, as the worker's first value: refused
+       by the class check, rendered module-qualified (test_scratch.SdkBackend over ...), the object remedy;
+    b. None left in place of it fails (object remedy); c. the kernel's own unavailable outcome (km._sdk_import_notice
+       made to raise, so _sdk_locked's except branch sets False) passes; d. None left in place of False fails;
+    e. the real lazy build over the run root passes; f. False left in place of the backend fails; g. a
+    SimpleNamespace left fails, rendered as types.SimpleNamespace over no state_dir. Every failing case carries
+    the object remedy and no sandbox sentence.
+  J, the first build over a sandbox with jd.STATE LEFT at the sandbox: the singleton agrees with jd.STATE as left,
+    and the ratchet still fails it, on the root the test inherited; the judge fixture names the STATE leak in the
+    same teardown (two failures on one item render as an exception group in pytest 9), and the outer test reads
+    both texts.
 
 Mutations of the fixture run against this module, each landed and reverted (2026-09-19): the same-object gone
 transition deleted (A.f passes silently); the gone check made absolute again (A.h, E.b and D.Two fail as false
@@ -93,7 +111,12 @@ only the gone check surviving a changed marker (B.c and H.a pass silently); the 
 same-marker road (A.c fails falsely on the stale pre-reload object); a None marker before treated as the same-marker
 road (H2.a fails falsely once the reference is the before read) or as an exemption (H.a passes); the changed road
 compared to jd.STATE before the test (B.d fails falsely); the gone clause dropped from the re-execution wording
-(B.b's clause assertion).
+(B.b's clause assertion); the class check dropped, or reduced to the qualname (F.a's look-alike passes); the
+reference moved to jd.STATE after the test (J.a passes this fixture); the None-to-False allowance removed (F.c
+errors); any False after admitted (F.f passes); a None after treated as nothing left (A.i and F.d pass); the
+sandbox remedy printed on every road (F.a, F.b, F.d, F.f, F.g and A.i assert it absent); the rebuild road rendered
+as before (A.d's text); the allowance gate opened to any before value (A.d passes); identity replaced by equality of
+state_dir (A.d passes); the root comparison dropped (C.a passes).
 """
 import os
 import re
@@ -113,7 +136,10 @@ os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 
 RATCHET = "left the kernel's backend singleton (km._sdk_backend)"
-REMEDY = "save km._sdk_backend before the sandbox and put it back in tearDown"
+REMEDY_A = "save km._sdk_backend before moving jd.STATE and put it back where jd.STATE is restored"
+REMEDY_B = "Put back the object the test found, None or False included, not an equal one"
+SANDBOX = "A test that reaches km._sdk() under a sandboxed jd.STATE"      # the sandbox road's sentence, absent on the object road
+REBUILT = "after another SdkBackend over the same directory (the readers hold the object, not the path)"
 GONE = "whose state_dir is no longer a directory"
 REEXEC = ("re-executed the kernel (or loaded it for the first time) and left the kernel's backend singleton "
           "(km._sdk_backend)")
@@ -197,9 +223,13 @@ SCRATCH_A = SCRATCH_HEAD + textwrap.dedent('''\
             build_over(root)
             jd.STATE = saved
             shutil.rmtree(root)
+            root.write_text("a regular file where the directory was\\n")   # exists, and is not a directory
 
         def test_h_doing_nothing_under_an_inherited_gone_singleton_passes(self):
-            assert not km._sdk_backend.state_dir.exists()     # g's object; g was named for it, so this test is not
+            assert km._sdk_backend.state_dir.is_file()        # g's object; g was named for it, so this test is not
+
+        def test_i_resetting_the_singleton_to_none_fails(self):
+            km._sdk_backend = None                    # the next reader would rebuild over whatever jd.STATE is then
 ''')
 
 SCRATCH_B = SCRATCH_HEAD + textwrap.dedent('''\
@@ -387,6 +417,59 @@ SCRATCH_H2 = SCRATCH_HEAD_LAZY + textwrap.dedent('''\
 ''')
 
 
+SCRATCH_F = SCRATCH_HEAD + textwrap.dedent('''\
+    import types
+
+    class SdkBackend:
+        """A look-alike: the kernel's class name, defined here, with a state_dir over the run root."""
+        def __init__(self, root):
+            self.state_dir = root
+
+    class Cases(unittest.TestCase):
+        def test_a_a_look_alike_over_jd_state_as_the_workers_first_value_fails(self):
+            assert km._sdk_backend is None
+            km._sdk_backend = SdkBackend(jd.STATE)
+
+        def test_b_none_left_in_place_of_the_look_alike_fails(self):
+            km._sdk_backend = None
+
+        def test_c_the_kernels_unavailable_outcome_passes(self):
+            assert km._sdk_backend is None
+            saved = km._sdk_import_notice
+            def unavailable():
+                raise RuntimeError("the SDK will not import (scratch)")
+            km._sdk_import_notice = unavailable
+            try:
+                assert km._sdk() is None               # _sdk_locked's except branch: the slot is False, the caller gets None
+            finally:
+                km._sdk_import_notice = saved
+            assert km._sdk_backend is False
+
+        def test_d_none_left_in_place_of_false_fails(self):
+            assert km._sdk_backend is False
+            km._sdk_backend = None
+
+        def test_e_the_real_lazy_build_over_the_run_root_passes(self):
+            assert km._sdk_backend is None
+            assert km._sdk().state_dir == jd.STATE
+
+        def test_f_false_left_in_place_of_the_backend_fails(self):
+            km._sdk_backend = False
+
+        def test_g_a_simplenamespace_left_fails(self):
+            km._sdk_backend = types.SimpleNamespace()
+''')
+
+SCRATCH_J = SCRATCH_HEAD + textwrap.dedent('''\
+
+    class Cases(unittest.TestCase):
+        def test_a_the_first_build_over_a_sandbox_with_jd_state_left_there_fails(self):
+            assert km._sdk_backend is None
+            jd.STATE = sandbox()                      # LEFT here: the singleton agrees with jd.STATE as left
+            assert km._sdk().state_dir == jd.STATE
+''')
+
+
 def nested_run(text):
     """pytest in a child over one scratch module written to a fresh directory, under this checkout's conftest
     (loaded as a plugin: the module sits outside tests/, where no conftest is discovered), verbose and with the
@@ -464,7 +547,7 @@ class _NestedRun:
         self.assertIsNone(verdict(self.out, cls, method), self.out)
         self.assertIsNone(inherited(self.out, cls, method), self.out)
 
-    def assertRatchetFailed(self, cls, method, remedy=REMEDY):
+    def assertRatchetFailed(self, cls, method, remedy=REMEDY_A):
         got = outcomes(self.out).get("%s.%s" % (cls, method), set())
         self.assertIn("PASSED", got, "the case's own asserts held; the ratchet is the only red: %s" % self.out)
         self.assertIn("ERROR", got, "the ratchet fails the case at its teardown: %s" % self.out)
@@ -473,6 +556,16 @@ class _NestedRun:
         self.assertIsNotNone(found, "the ratchet's message names the case's nodeid: %s" % self.out)
         clause, fix = found
         self.assertIn(remedy, fix, self.out)
+        if remedy == REMEDY_A:
+            self.assertIn(SANDBOX, fix, fix)
+        return clause
+
+    def assertObjectRoad(self, cls, method):
+        """The case fails with the object road's remedy and no sandbox sentence: no sandbox was involved."""
+        clause = self.assertRatchetFailed(cls, method, remedy=REMEDY_B)
+        _, fix = verdict(self.out, cls, method)
+        self.assertNotIn(SANDBOX, fix, "the sandbox sentence is the other road's: %s" % fix)
+        self.assertNotIn(REMEDY_A, fix, fix)
         return clause
 
     def assertInheritedAtSetup(self, cls, method):
@@ -484,7 +577,7 @@ class _NestedRun:
         self.assertIn("This test did not make it", text)
         return text
 
-    def assertBoundaryFailed(self, scope, last, remedy=REMEDY):
+    def assertBoundaryFailed(self, scope, last, remedy=REMEDY_A):
         """The scope's boundary verdict, the error landing on `last` ("<Class>.<method>", the scope's last test)."""
         self.assertEqual(outcomes(self.out).get(last), {"PASSED", "ERROR"}, self.out)
         cls, method = last.split(".")
@@ -508,7 +601,7 @@ class _NestedRun:
 
 class LeakAfterFirstBuild(_NestedRun, unittest.TestCase):
     SCRATCH = SCRATCH_A
-    ERRORS = 4
+    ERRORS = 5
 
     def test_the_lazy_first_build_under_the_run_root_passes(self):
         self.assertRatchetPassed("Cases", "test_a_the_lazy_first_build_under_the_run_root_passes")
@@ -520,11 +613,9 @@ class LeakAfterFirstBuild(_NestedRun, unittest.TestCase):
         self.assertRatchetPassed("Cases", "test_c_a_kernel_reexecution_inside_the_test_is_not_judged")
 
     def test_a_rebuilt_singleton_over_the_same_root_is_a_change(self):
-        text = self.assertRatchetFailed("Cases", "test_d_a_rebuilt_singleton_over_the_same_root_fails")
+        text = self.assertObjectRoad("Cases", "test_d_a_rebuilt_singleton_over_the_same_root_fails")
         self.assertTrue(text.startswith("changed after its teardown: before SdkBackend over "), text)
-        self.assertIn(", after SdkBackend over ", text)
-        before, after = re.findall(r"SdkBackend over ([^\s,]+)", text)
-        self.assertEqual(before, after, "the same root under both objects: identity, not the path, is the check")
+        self.assertTrue(text.endswith(", " + REBUILT), "identity, not the path, is the check, and the text says so: %s" % text)
         self.assertNotIn(GONE, text)
 
     def test_the_leak_with_the_sandbox_kept_names_the_change_and_no_gone_directory(self):
@@ -541,12 +632,17 @@ class LeakAfterFirstBuild(_NestedRun, unittest.TestCase):
     def test_the_leak_with_the_sandbox_removed_names_the_change_the_gone_directory_and_the_remedy(self):
         text = self.assertRatchetFailed("Cases", "test_g_the_leak_with_the_sandbox_removed_fails")
         self.assertTrue(text.startswith("changed after its teardown: before SdkBackend over "), text)
-        self.assertTrue(text.endswith(", " + GONE), text)
+        self.assertTrue(text.endswith(", " + GONE), "a regular file at the path is not a directory: %s" % text)
         self.assertIsNone(inherited(self.out, "Cases", "test_g_the_leak_with_the_sandbox_removed_fails"),
                           "g starts under f's gone object, already named: no inherited report")
 
     def test_doing_nothing_under_an_inherited_gone_singleton_passes(self):
         self.assertRatchetPassed("Cases", "test_h_doing_nothing_under_an_inherited_gone_singleton_passes")
+
+    def test_a_none_left_in_place_of_the_backend_is_the_object_road(self):
+        text = self.assertObjectRoad("Cases", "test_i_resetting_the_singleton_to_none_fails")
+        self.assertTrue(text.startswith("changed after its teardown: before SdkBackend over "), text)
+        self.assertTrue(text.endswith(", after None (not built)"), text)
 
     def test_the_class_and_module_ends_are_quiet_on_the_named_object(self):
         self.assertIsNone(boundary(self.out, "::Cases"), self.out)
@@ -654,6 +750,8 @@ class ClassScopedRoot(_NestedRun, unittest.TestCase):
         text = self.assertBoundaryFailed("::One", "One.test_b_does_nothing")
         self.assertTrue(text.startswith("changed after its teardown: before None (not built), after SdkBackend over "), text)
         self.assertNotIn(GONE, text)
+        _, fix = boundary(self.out, "::One")
+        self.assertIn("setUpClass and tearDownClass when the class moves it", fix)
 
     def test_the_class_level_save_and_restore_is_quiet(self):
         self.assertRatchetPassed("Two", "test_a_builds_over_the_class_root")
@@ -696,6 +794,64 @@ class FirstLoadThenTheLazyBuild(_NestedRun, unittest.TestCase):
 
     def test_the_first_load_then_the_lazy_build_over_the_loaders_root_passes(self):
         self.assertRatchetPassed("Cases", "test_a_the_first_load_then_the_lazy_build_over_the_loaders_root_passes")
+        self.assertIsNone(boundary(self.out, "::Cases"), self.out)
+        self.assertIsNone(boundary(self.out, ""), self.out)
+
+
+class ValuesThatAreNotTheKernelsBuild(_NestedRun, unittest.TestCase):
+    SCRATCH = SCRATCH_F
+    ERRORS = 5
+
+    def test_a_look_alike_over_jd_state_is_refused_by_the_class_check(self):
+        text = self.assertObjectRoad("Cases", "test_a_a_look_alike_over_jd_state_as_the_workers_first_value_fails")
+        self.assertTrue(text.startswith("changed after its teardown: before None (not built), after test_scratch.SdkBackend over "), text)
+        self.assertNotIn(GONE, text)
+
+    def test_none_left_in_place_of_the_look_alike_fails(self):
+        text = self.assertObjectRoad("Cases", "test_b_none_left_in_place_of_the_look_alike_fails")
+        self.assertTrue(text.startswith("changed after its teardown: before test_scratch.SdkBackend over "), text)
+        self.assertTrue(text.endswith(", after None (not built)"), text)
+
+    def test_the_kernels_unavailable_outcome_passes(self):
+        self.assertRatchetPassed("Cases", "test_c_the_kernels_unavailable_outcome_passes")
+
+    def test_none_left_in_place_of_false_fails(self):
+        text = self.assertObjectRoad("Cases", "test_d_none_left_in_place_of_false_fails")
+        self.assertTrue(text.startswith("changed after its teardown: before False"), text)
+        self.assertTrue(text.endswith(", after None (not built)"), text)
+
+    def test_the_real_lazy_build_over_the_run_root_passes(self):
+        self.assertRatchetPassed("Cases", "test_e_the_real_lazy_build_over_the_run_root_passes")
+
+    def test_false_left_in_place_of_the_backend_fails(self):
+        text = self.assertObjectRoad("Cases", "test_f_false_left_in_place_of_the_backend_fails")
+        self.assertTrue(text.startswith("changed after its teardown: before SdkBackend over "), text)
+        self.assertIn(", after False", text)
+
+    def test_a_simplenamespace_left_fails_and_renders_module_qualified(self):
+        text = self.assertObjectRoad("Cases", "test_g_a_simplenamespace_left_fails")
+        self.assertTrue(text.endswith(", after types.SimpleNamespace over no state_dir"), text)
+
+    def test_the_class_and_module_ends_are_quiet_on_the_named_object(self):
+        self.assertIsNone(boundary(self.out, "::Cases"), self.out)
+        self.assertIsNone(boundary(self.out, ""), self.out)
+
+
+class FirstBuildWithJdStateLeftAtTheSandbox(_NestedRun, unittest.TestCase):
+    SCRATCH = SCRATCH_J
+    ERRORS = 1
+    JUDGE_RED = True
+
+    def test_the_ratchet_judges_against_the_root_the_test_inherited_and_the_judge_names_the_state_leak(self):
+        text = self.assertRatchetFailed("Cases", "test_a_the_first_build_over_a_sandbox_with_jd_state_left_there_fails")
+        self.assertTrue(text.startswith("changed after its teardown: before None (not built), after SdkBackend over "), text)
+        self.assertNotIn(GONE, text)
+        self.assertIn(SHARED_STATE, self.out, "the judge fixture names the moved jd.STATE in the same teardown")
+        self.assertIn("romp_judge.STATE changed from", self.out)
+        self.assertRegex(self.out, r"errors while tearing down <TestCaseFunction test_a_\w+> \(2 sub-exceptions\)",
+                         "pytest 9 renders the two teardown failures on the one item as one exception group")
+
+    def test_the_class_and_module_ends_are_quiet_on_the_named_object(self):
         self.assertIsNone(boundary(self.out, "::Cases"), self.out)
         self.assertIsNone(boundary(self.out, ""), self.out)
 

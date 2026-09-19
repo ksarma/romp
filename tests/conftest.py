@@ -526,17 +526,42 @@ def restore_env(name, prior):
 #
 # THE JUDGMENT (_sdk_judge), same marker: the same object is a pass, unless its directory was present at
 # the before read and is not at the after read, the test having removed the directory under the singleton
-# it found. A different value is a leak, with ONE allowance derived from the transition, never from a
-# list of test names: None before and, after, a backend over jd.STATE with that directory present is a
-# worker's lazy first build of the singleton under the run root, the kernel's own design, leaving nothing
-# dangling. WHICH test performs that first build is a property of the run (the xdist scheduler, the subset
-# selected, the module order), not of the test: the census that found ViewBuilder saw three first builders
-# across four workers, a different test on each, so a name list could never be right. A test that installs
-# a fake or a rebuilt backend and puts back the OBJECT it found is quiet; one that puts back an equal
-# backend (the same state_dir, another object) is not, because the readers hold the object, its threads
-# and its registry state, not its path. A reference root that cannot be read (km.jd.STATE unreadable)
-# grants no allowance: the fixture fails and says so (not constructible today, since the kernel always
-# binds jd; unverified defaults to the restricted side).
+# it found. A different value is a leak, with TWO allowances derived from the transition, never from a
+# list of test names. (1) None before and, after, the kernel's own class (type module romp_sdk_backend,
+# qualname SdkBackend: NOT isinstance, which a shared-name reload of sdk_backend.py breaks, since
+# load_source re-executes into the same module name and the class object changes while a backend built
+# before the reload keeps the old one; 11 test modules load romp_sdk_backend under the shared name) whose
+# state_dir equals jd.STATE AT THE TEST'S START and is a directory: the worker's lazy first build of the
+# singleton under the root the test inherited, the kernel's own design, leaving nothing dangling. The
+# reference is the inherited root because it is the one value the test could not have made, and equality
+# proves the build used it: a real backend's state_dir IS the root it was built over, by construction
+# (kernel.py's _sdk_locked constructs sbmod.SdkBackend(jd.STATE, ...) and SdkBackend.__init__ stores
+# Path(state_dir)), so no wrapper on the build is needed to learn the build root (the census's wrapper on
+# _sdk_locked in the module dict changes the marker function's identity and is not a shape for a
+# production fixture). jd.STATE AFTER the test would admit a first build over a sandbox the test left
+# jd.STATE pointed at (the singleton agrees with the state it moved); requiring both before and after
+# would refuse a legitimate first build followed by a STATE move the judge fixture already names. WHICH
+# test performs the first build is a property of the run (the xdist scheduler, the subset selected, the
+# module order), not of the test: the census that found ViewBuilder saw three first builders across four
+# workers, a different test on each, so a name list could never be right. A look-alike over that same
+# root (a test's class named SdkBackend, a SimpleNamespace, a MagicMock) is refused: installed as the
+# worker's first value it would be inherited by every later test, and the class check is what refuses
+# it. (2) None before and False after: the kernel's own unavailable outcome (_sdk_locked's except branch
+# sets False when the backend cannot be built), which the test did not choose. Everything else is a leak:
+# a test that installs a fake or a rebuilt backend and puts back the OBJECT it found is quiet; one that
+# puts back an equal backend (the same state_dir, another object) is not, because the readers hold the
+# object, its threads and its registry state, not its path, and its message says so. A reference root
+# that cannot be read (km.jd.STATE unreadable) grants no allowance: the fixture fails and says so (not
+# constructible today, since the kernel always binds jd; unverified defaults to the restricted side).
+#
+# THE REMEDY, one per road (the message shape is "<who> <clause>. Fix: <remedy>"). The sandbox road, when
+# the value left is the kernel's own class over a root that is not the reference or is not a directory:
+# save km._sdk_backend before moving jd.STATE and put it back where jd.STATE is restored, before the
+# directory is removed (setUp and tearDown, or setUpClass and tearDownClass when the class moves it). The
+# object road, everything else (a None, a False, a fake, a rebuild over the same root): put back the
+# object the test found, None or False included, not an equal one. The first form printed the sandbox
+# remedy on every road, so a test that left a None was told to save the singleton before a sandbox that
+# did not exist.
 #
 # MARKER CHANGED (_sdk_judge_reload): the test re-executed kernel.py into the one module object (a
 # different function in the slot), loaded the shared kernel for the first time in this worker (None, then
@@ -573,9 +598,13 @@ _SDK_LAST = _SdkRead(None, None, None, None, None)     # the last read anywhere 
 _SDK_NAMED = []                                        # strong references to every object a verdict named
 _SDK_REAL = ("romp_sdk_backend", "SdkBackend")
 _SDK_GONE = ", whose state_dir is no longer a directory"
-_SDK_REMEDY = ("A test that reaches km._sdk() under a sandboxed jd.STATE builds the kernel's backend singleton over the "
-               "sandbox, and every later test's backend reads that root after the sandbox is removed: save km._sdk_backend "
-               "before the sandbox and put it back in tearDown, with jd.STATE.")
+_SDK_REMEDY_A = ("A test that reaches km._sdk() under a sandboxed jd.STATE builds the kernel's backend singleton over the "
+                 "sandbox and every later test's backend reads that root: save km._sdk_backend before moving jd.STATE and "
+                 "put it back where jd.STATE is restored, before the directory is removed (setUp and tearDown, or "
+                 "setUpClass and tearDownClass when the class moves it).")
+_SDK_REMEDY_B = ("Put back the object the test found, None or False included, not an equal one: the kernel's readers hold "
+                 "the object, its threads and its registry state, and a None makes the next reader rebuild over whatever "
+                 "jd.STATE is at that moment.")
 
 
 def _sdk_read():
@@ -622,7 +651,17 @@ def _sdk_singleton_text(be):
     if be is False:
         return "False (the build failed)"
     state_dir = getattr(be, "state_dir", None)
-    return "%s over %s" % (type(be).__qualname__, "no state_dir" if state_dir is None else state_dir)
+    t = type(be)
+    name = "SdkBackend" if _sdk_is_real(be) else "%s.%s" % (t.__module__, t.__qualname__)
+    return "%s over %s" % (name, "no state_dir" if state_dir is None else state_dir)
+
+
+def _sdk_remedy(after, ref):
+    """The sandbox road's remedy when the value left is the kernel's own class over a root that is not the reference
+    or is not a directory; the object road's otherwise."""
+    if _sdk_is_real(after.be) and (after.sd != ref or not after.isdir):
+        return _SDK_REMEDY_A
+    return _SDK_REMEDY_B
 
 
 def _sdk_judge(before, after, ref):
@@ -635,17 +674,23 @@ def _sdk_judge(before, after, ref):
     if be1 is be0:
         if before.isdir and after.isdir is False:
             return ("left the kernel's backend singleton (km._sdk_backend) over a directory it removed: %s%s"
-                    % (_sdk_singleton_text(be1), _SDK_GONE), _SDK_REMEDY)
+                    % (_sdk_singleton_text(be1), _SDK_GONE), _sdk_remedy(after, ref))
         return None
     unreadable = ""
-    if be0 is None and after.sd is not None and after.isdir:
-        if ref is None:
-            unreadable = "; the reference root (km.jd.STATE) was unreadable, so the lazy first build could not be allowed"
-        elif after.sd == ref:
+    if be0 is None:
+        if be1 is False:                       # the kernel's own unavailable outcome
             return None
-    return ("left the kernel's backend singleton (km._sdk_backend) changed after its teardown: before %s, after %s%s%s"
-            % (_sdk_singleton_text(be0), _sdk_singleton_text(be1), _SDK_GONE if after.isdir is False else "", unreadable),
-            _SDK_REMEDY)
+        if _sdk_is_real(be1) and after.isdir:
+            if ref is None:
+                unreadable = "; the reference root (km.jd.STATE) was unreadable, so the lazy first build could not be allowed"
+            elif after.sd == ref:
+                return None                    # the lazy first build over the root the test inherited
+    if _sdk_is_real(be0) and _sdk_is_real(be1) and before.sd == after.sd and after.isdir:
+        after_text = "another SdkBackend over the same directory (the readers hold the object, not the path)"
+    else:
+        after_text = _sdk_singleton_text(be1) + (_SDK_GONE if after.isdir is False else "")
+    return ("left the kernel's backend singleton (km._sdk_backend) changed after its teardown: before %s, after %s%s"
+            % (_sdk_singleton_text(be0), after_text, unreadable), _sdk_remedy(after, ref))
 
 
 def _sdk_judge_reload(before, after):
@@ -658,18 +703,18 @@ def _sdk_judge_reload(before, after):
     head = ("re-executed the kernel (or loaded it for the first time) and left the kernel's backend singleton "
             "(km._sdk_backend) ")
     if not _sdk_is_real(be1):
-        return (head + "as a value that is not the kernel's build: %s" % _sdk_singleton_text(be1), _SDK_REMEDY)
+        return (head + "as a value that is not the kernel's build: %s" % _sdk_singleton_text(be1), _SDK_REMEDY_B)
     ref = after.jd_state
     if ref is None:
         return (head + "over %s while the reference root (km.jd.STATE) was unreadable, so the lazy build could not be "
-                "allowed" % _sdk_singleton_text(be1), _SDK_REMEDY)
+                "allowed" % _sdk_singleton_text(be1), _SDK_REMEDY_A)
     if after.sd == ref:
         if after.isdir:
             return None
         return (head + "over jd.STATE, which is no longer a directory: %s%s" % (_sdk_singleton_text(be1), _SDK_GONE),
-                _SDK_REMEDY)
+                _SDK_REMEDY_A)
     return (head + "over a root that is not jd.STATE: %s, jd.STATE %s%s"
-            % (_sdk_singleton_text(be1), ref, _SDK_GONE if after.isdir is False else ""), _SDK_REMEDY)
+            % (_sdk_singleton_text(be1), ref, _SDK_GONE if after.isdir is False else ""), _SDK_REMEDY_A)
 
 
 def _sdk_judge_scope(start, last, end):
@@ -677,14 +722,14 @@ def _sdk_judge_scope(start, last, end):
     if end.be is last.be:
         if last.isdir and end.isdir is False:
             return ("left the kernel's backend singleton (km._sdk_backend) over a directory it removed: %s%s"
-                    % (_sdk_singleton_text(end.be), _SDK_GONE), _SDK_REMEDY)
+                    % (_sdk_singleton_text(end.be), _SDK_GONE), _sdk_remedy(end, start.jd_state))
         if end.be is start.be or _sdk_named(end.be):
             return None
         return _sdk_judge(start, end, start.jd_state)
     if end.be is start.be:
         if start.isdir and end.isdir is False:
             return ("put back the kernel's backend singleton (km._sdk_backend) it found, whose directory is gone: %s%s"
-                    % (_sdk_singleton_text(end.be), _SDK_GONE), _SDK_REMEDY)
+                    % (_sdk_singleton_text(end.be), _SDK_GONE), _sdk_remedy(end, start.jd_state))
         return None
     return _sdk_judge(start, end, start.jd_state)
 
@@ -701,7 +746,7 @@ def _sdk_singleton_restored(request):
                     "accused." % (request.node.nodeid, _sdk_singleton_text(before.be)), pytrace=False)
     yield
     after = _sdk_read()
-    verdict = _sdk_judge(before, after, after.jd_state)
+    verdict = _sdk_judge(before, after, before.jd_state)     # the root the test inherited: the one value it could not have made
     if verdict is None:
         return
     _sdk_name(after.be)
