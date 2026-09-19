@@ -145,7 +145,7 @@ alphabetically, and each case's `before` is what the previous case left):
     Two.a leaves None (accused) and Two.b makes the allowed rebuild (passes alone); Three.a leaves None as the last
     test of a class that started on a real backend; Four.a rebuilds and Four.b leaves False; Five.a leaves None in
     place of False and Five.b rebuilds; Six's setUpClass drops the object it found and Six.a rebuilds (the class is
-    named at its boundary with the rebuild text, the one boundary text in the run); the follower's one test leaves
+    named at its boundary with the rebuild text, the one boundary verdict in the run); the follower's one test leaves
     None as the last test of its module. Six accused tests, no boundary accused of what its tests did, no exception
     group.
   S6, an import-time build over a sandbox that STANDS (jd.STATE restored): a is the first test to meet it and also
@@ -785,7 +785,15 @@ def nested_run(text, follower=None):
     environment is the precedent's (tests/test_tempdir_hygiene.py, RunLeavesNothing): a fresh TMPDIR, the
     parent's pytest variables dropped so the child records its own run, and the bin directory the scratch
     module loads the kernel from. `follower` is the text of a second module written beside the first. Returns
-    (returncode, stdout and stderr)."""
+    (returncode, stdout and stderr).
+
+    The child runs -vv, not -v, so its output has one shape on a box and on CI: pytest's short summary (-rA) repeats
+    each error's message, whole when CI is set in the environment (pytest's running_on_ci) or at -vv, and trimmed to
+    the terminal width otherwise (_get_line_with_reprcrash_message; running_on_ci has no other use in pytest 9). At
+    -v a box saw every verdict once, in the ERRORS section, and CI saw each twice, so a count of occurrences over the
+    output read 1 here and 2 there for the same one boundary verdict (CI red at the round-3 preparation head); the
+    outer tests read the verdicts by the scope or test they name (boundary_scopes, boundary, verdict), never by
+    occurrence, and -vv makes a box run see what CI sees."""
     fresh = tempfile.mkdtemp()
     case = os.path.join(fresh, "case")
     os.makedirs(case)
@@ -800,7 +808,7 @@ def nested_run(text, follower=None):
                 "PYTEST_XDIST_WORKER", "PYTEST_XDIST_WORKER_COUNT", "ROMP_TESTS_SYSTEM_TMPDIR"):
         env.pop(var, None)
     r = subprocess.run([sys.executable, "-m", "pytest", "-p", "tests.conftest", "-p", "no:cacheprovider",
-                        "-v", "-rA", "--tb=short", case],
+                        "-vv", "-rA", "--tb=short", case],
                        cwd=ROOT, env=env, capture_output=True, text=True, timeout=300)
     return r.returncode, r.stdout + r.stderr
 
@@ -881,6 +889,13 @@ def boundary(out, scope, module="test_scratch.py"):
     """The boundary verdict for `scope` ("::One" for a class, "" for the module) as (clause, remedy), or None."""
     m = re.search(r"%s%s%s ([^\n]*?)\. Fix: ([^\n]*)" % (re.escape(module), re.escape(scope), re.escape(BOUNDARY)), out)
     return _split(m) if m else None
+
+
+def boundary_scopes(out):
+    """The scopes the run's boundary verdicts name, as a set ("test_scratch.py::Six" for a class end, "test_scratch2.py"
+    for a module end): the count of verdicts is the size of this set, never the count of the boundary text's
+    occurrences, which the short summary repeats (nested_run)."""
+    return set(re.findall(r"(test_scratch2?\.py(?:::\w+)?)%s " % re.escape(BOUNDARY), out))
 
 
 class _NestedRun:
@@ -1424,7 +1439,8 @@ class BoundaryYieldsToTheTestsOwnWindows(_NestedRun, unittest.TestCase):
             self.assertIsNone(boundary(self.out, scope), "a boundary that did nothing is accused: %s" % self.out)
         self.assertIsNone(boundary(self.out, "::Follow", module="test_scratch2.py"), self.out)
         self.assertIsNone(boundary(self.out, "", module="test_scratch2.py"), self.out)
-        self.assertEqual(self.out.count(BOUNDARY), 1, "the one boundary text in the run is Six's: %s" % self.out)
+        self.assertEqual(boundary_scopes(self.out), {"test_scratch.py::Six"},
+                         "the one boundary verdict in the run is Six's: %s" % self.out)
         self.assertNotIn("sub-exceptions", self.out, "no verdict folds into another's teardown report: %s" % self.out)
 
     def test_a_class_that_dropped_the_object_it_found_before_its_tests_rebuild_stays_the_author(self):
