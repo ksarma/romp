@@ -3396,6 +3396,53 @@ class PusherRecords(unittest.TestCase):
             self.assertAlmostEqual(after["jobs"]["user"] - before["jobs"]["user"], (n - 1) * 1.0, places=6,
                                    msg="the no-client cycle's jobs span every read but its first")
 
+    def test_a_push_whose_cpu_read_failed_leaves_the_jobs_row_without_cpu(self):
+        """kernel-1 (2026-09-19 round-2 review, latent): the jobs container's wall is the function's less the push's
+        unconditionally, but its CPU was reduced by the push's only when the push's own delta was read, so a push whose
+        OPEN rusage read failed left its CPU inside the jobs row beside a wall that excludes it, and the row's documented
+        wait (wall minus user minus sys) could read negative. Under the sibling's fake clock (one ms of user and half a ms
+        of system per read) with _thread_cpu answering None on its SECOND call, the push's open read, without reading: the
+        thread-clock calls are the jobs open (read 1), the push's open (None; _cpu_delta short-circuits, so no push close
+        read), _push_all's own (read 2) and the jobs close (read 3). Fails before the fix with the jobs row moved by 2.0 ms
+        of user and 1.0 ms of system (reads 3 less 1: the push's CPU inside a row whose wall excludes the push); with it the
+        jobs row stands (the CPU follows the wall: no push CPU, no jobs CPU), the push row stands (stage("push", ...,
+        cpu=None)) and both walls moved. The sibling's no-client case stays the widening edge: a cycle with no push still
+        moves the jobs row."""
+        for nm in self.JOBS:
+            setattr(km, nm, lambda *a, **k: None)
+        km._push_all = lambda live_map=None: km._thread_cpu()
+        reads, calls, real_cpu = [], [0], km._thread_cpu
+
+        def fake(who):
+            reads.append(who)
+            return types.SimpleNamespace(ru_utime=0.001 * len(reads), ru_stime=0.0005 * len(reads), ru_maxrss=0)
+
+        def cpu_read():
+            calls[0] += 1
+            if calls[0] == 2:                            # the push's open read fails: None, and no rusage read behind it
+                return None
+            return real_cpu()
+
+        def rows():
+            s = km._PERF_STATS.snapshot()
+            return {k: dict(s["stages_cpu_ms"][k]) for k in ("push", "jobs")}, {k: s["stages_ms"][k] for k in ("push", "jobs")}
+        with mock.patch.object(km, "_RUSAGE_THREAD", 11), mock.patch.object(km.resource, "getrusage", fake), \
+                mock.patch.object(km, "_thread_cpu", cpu_read):
+            cpu0, wall0 = rows()
+            del reads[:]
+            calls[0] = 0
+            km._pusher_cycle_jobs(int(time.time()), {}, True)
+            n_calls, n_reads = calls[0], len(reads)
+            cpu1, wall1 = rows()
+        self.assertEqual((n_calls, n_reads), (4, 3), "premise: four thread-clock calls (jobs open, push open, the stub's, jobs close), three read")
+        self.assertGreater(wall1["push"], wall0["push"], "the push's wall moved")
+        self.assertGreater(wall1["jobs"], wall0["jobs"], "the jobs' wall moved")
+        self.assertEqual(cpu1["push"], cpu0["push"], "the push row stands: its open read failed, so stage() got cpu=None")
+        self.assertEqual(cpu1["jobs"], cpu0["jobs"],
+                         "the jobs row stands: with no push CPU to take out, the span (the push's CPU inside it) is not folded into a row "
+                         "whose wall excludes the push (before the fix: user +%.1f ms, sys +%.1f ms)"
+                         % (cpu1["jobs"]["user"] - cpu0["jobs"]["user"], cpu1["jobs"]["sys"] - cpu0["jobs"]["sys"]))
+
     def test_a_connect_serves_the_build_it_tested_when_the_cache_is_replaced_between_its_reads(self):
         # _cached_timeline tested the cached payload and returned it as two reads of the shared list while the
         # pusher thread assigns _built_timeline[:] on a rebuild; a connect on the handler thread whose two reads

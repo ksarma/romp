@@ -1595,6 +1595,60 @@ class ByteIdenticalFrames(unittest.TestCase):
         for row in rows:
             self.assertEqual(set(row["push.chat.sig"]), {"ms", "bytes", "hydrated"}, "the split's rows carry no CPU column")
 
+    def test_a_deps_tail_whose_cpu_read_failed_leaves_the_static_row_without_cpu_and_the_seam_with_its_own(self):
+        """kernel-1 (the round-2 review, 2026-09-19; latent): a stage's CPU follows its wall exactly, and a row whose CPU
+        cannot follow records its wall alone. The static sub-seam's wall excludes the deps tail's, so when the tail RAN but
+        its CPU read failed (deps_cpu None beside deps_ran True) the static row's CPU is unknown too and it records none,
+        while the seam's own row keeps the CPU it read. Before this, _chat_sig_seam_close handed the static row the WHOLE
+        seam's CPU beside a wall that excluded the tail, so that row's documented wall minus user minus sys read low or
+        negative. Driven under the fake thread clock (one ms of user and half a ms of system per read): a spy on
+        _chat_sig_deps arms a one-shot on its first call, and a wrapper on _cpu_delta, once armed, disarms and answers None
+        WITHOUT reading, so exactly the first pre-build signature's deps close read is dropped: 59 reads over the six
+        cycles, one fewer than the rusage test's 60. That seam is then two reads apart with a deps CPU of None, so over
+        the window: sig 20 (the other five pre-build seams three reads each, the three post-build ones one each), deps 5
+        (the five tails whose read succeeded), static 13 (five at two, three at one), in ms of user, half that in sys.
+        The seam close before the fix read static 15, that seam's 2 folded into static; an over-fix that drops the seam's
+        own CPU too reads sig 18. The wall rows of all three moved on every cycle whatever the CPU read did. The jobs
+        container's twin (a push that ran with no CPU reading leaves the jobs row without CPU) is pinned in
+        tests/test_perf_stats.py, which owns the _pusher_cycle_jobs driver."""
+        ps = km._PERF_STATS
+        reads, fake = self._thread_rusage_fake()
+        drop, tails = [False], [0]
+        real_deps, real_delta = km._chat_sig_deps, km._cpu_delta
+
+        def deps_spy(sid, deps):
+            tails[0] += 1
+            if tails[0] == 1:                            # the first tail: its close read, the next _cpu_delta call, is dropped
+                drop[0] = True
+            return real_deps(sid, deps)
+
+        def delta(c0):
+            if drop[0]:
+                drop[0] = False
+                return None                              # the read that failed: no getrusage call, so the fake clock does not move
+            return real_delta(c0)
+        with mock.patch.object(km, "_RUSAGE_THREAD", 11), mock.patch.object(km.resource, "getrusage", fake), \
+                mock.patch.object(km, "_chat_sig_deps", deps_spy), mock.patch.object(km, "_cpu_delta", delta):
+            s0 = ps.snapshot()
+            del reads[:]
+            _wire, calls, _rows = self._run(km._chat_diff, perf=ps)
+            s1 = ps.snapshot()
+        self.assertEqual(calls, [False, True, False, True, False, True], "premise: rebuilt, served, alternating")
+        self.assertEqual(tails[0], 6, "premise: the tail ran once per cycle, in the pre-build signature")
+        self.assertFalse(drop[0], "premise: the one-shot fired (the first tail's close read was dropped)")
+        self.assertEqual(len(reads), 3 * 12 + 3 * 8 - 1, "one thread read fewer than the rusage test's 60: the dropped deps close")
+        d = {k: {c: s1["stages_cpu_ms"][k][c] - s0["stages_cpu_ms"][k][c] for c in ("user", "sys")}
+             for k in s1["stages_cpu_ms"] if k in s0["stages_cpu_ms"]}
+        for c, per_read in (("user", 1.0), ("sys", 0.5)):
+            self.assertAlmostEqual(d["push.chat.sig"][c], 20 * per_read, places=6,
+                                   msg="%s: the seam keeps its own CPU; the seam with the dropped read is two reads apart" % c)
+            self.assertAlmostEqual(d["push.chat.sig.deps"][c], 5 * per_read, places=6, msg="%s: the five tails whose read succeeded" % c)
+            self.assertAlmostEqual(d["push.chat.sig.static"][c], 13 * per_read, places=6,
+                                   msg="%s: the static row without that seam's CPU (15 before the fix: the whole seam folded in)" % c)
+        for k in ("push.chat.sig", "push.chat.sig.deps", "push.chat.sig.static"):
+            self.assertGreater(s1["stages_ms"].get(k, 0.0) - s0["stages_ms"].get(k, 0.0), 0.0,
+                               "%s: the wall row moved over the six cycles whatever the CPU read did" % k)
+
     def test_the_chat_stage_is_split_into_its_seams(self):
         """Stage 1 of the incremental-push design (2026-09-18): push.chat is a container of three seams in stages_ms
         and in the cycle's split: sig (the tab's signature, every tab past the cold gate every cycle, the post-build one included),

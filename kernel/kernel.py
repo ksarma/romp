@@ -38260,14 +38260,21 @@ def _chat_sig_seam_close(t0, c0):
     through the seam's row. The deps sub-seam is recorded only when the tail ran (a post-build signature, deps=False,
     skips it); the static one always. Bytes read inside the signature land on the static row, the first of the two
     closed since the last byte mark (the seam's reads are the names read and a registry decode, both static
-    components); the deps row records its wall and CPU. The thread-local is cleared here, and _chat_sig_scope zeroes it
-    at every signature's entry, so a signature taken outside a seam never hands a stale tail to the next seam."""
+    components); the deps row records its wall and CPU. The CPU follows the wall exactly, and a row whose CPU cannot
+    follow records its wall alone: a tail that ran but read no CPU leaves the static row, whose wall excludes the tail,
+    without a CPU figure, while the seam's own row keeps the CPU it read. The thread-local is cleared here, and
+    _chat_sig_scope zeroes it at every signature's entry, so a signature taken outside a seam never hands a stale tail
+    to the next seam."""
     dt = time.monotonic() - t0
     cpu = _cpu_delta(c0)
     tl = _CHAT_SIG_TL
     d_dt, d_cpu, ran = getattr(tl, "deps_dt", 0.0), getattr(tl, "deps_cpu", None), getattr(tl, "deps_ran", False)
     tl.deps_dt, tl.deps_cpu, tl.deps_ran = 0.0, None, False
-    s_cpu = (cpu[0] - d_cpu[0], cpu[1] - d_cpu[1]) if (cpu is not None and d_cpu is not None) else cpu
+    # the CPU follows the wall exactly; a row whose CPU cannot follow records its wall alone: a tail that ran with no CPU
+    # reading (d_cpu None, ran True) leaves the static row's CPU unknown too, its wall excluding the tail, while the seam's
+    # own row keeps the CPU it read (the round-2 review, 2026-09-19, kernel-1: before this the static row took the whole
+    # seam's CPU beside a wall that excluded the tail, so its wall minus user minus sys could read negative)
+    s_cpu = (cpu[0] - d_cpu[0], cpu[1] - d_cpu[1]) if (cpu is not None and d_cpu is not None) else (None if ran else cpu)
     _PERF_STATS.stage("push.chat.sig.static", max(0.0, dt - d_dt), cpu=s_cpu)
     if ran:
         _PERF_STATS.stage("push.chat.sig.deps", d_dt, cpu=d_cpu)
@@ -65327,6 +65334,7 @@ def _pusher_cycle_jobs(now, live_map, any_client):
     except Exception:
         sys.stderr.write("checkpoint-cycle: %s\n" % traceback.format_exc())
     _t_push = 0.0
+    _pushed = False                       # whether the push ran: its CPU leaves the jobs row exactly when its wall does (below)
     try:                                  # GET /sessions rows from this cycle's snapshot (plans/sessions-route-from-the-cycle.md):
         _job_stage('sessionsListing', lambda: _sessions_listing_refresh(now, live_map))   # its own try, so a fault in the key or
     except Exception:                     #  the build never skips the parked ops below, and the line names the listing
@@ -65338,6 +65346,7 @@ def _pusher_cycle_jobs(now, live_map, any_client):
     except Exception:                     # FIRST, so a delivered op's echo / retired chip rides this push;
         sys.stderr.write("pending-ops: %s\n" % traceback.format_exc())   # never behind a judge pass (2026-09-03)
     if any_client:
+        _pushed = True
         _t_push = time.monotonic()
         _c_push = _thread_cpu()
         try:
@@ -65373,7 +65382,13 @@ def _pusher_cycle_jobs(now, live_map, any_client):
     except Exception:                     # current frame), sent only when it changed
         sys.stderr.write("api-health-frame: %s\n" % traceback.format_exc())
     _cpu_jobs = _cpu_delta(_c_jobs)
-    if _cpu_jobs is not None and _cpu_push is not None:   # the jobs container is this function minus the push: its CPU too
+    # the jobs container is this function minus the push: its CPU follows its wall exactly, and a row whose CPU cannot
+    # follow records its wall alone (the round-2 review, 2026-09-19, kernel-1). A push that ran with its CPU unknown
+    # (_cpu_push None after a failed read) leaves the jobs row with no CPU figure rather than one holding the push's
+    # beside a wall that excludes it, whose documented wall minus user minus sys would read negative.
+    if _pushed and _cpu_push is None:
+        _cpu_jobs = None
+    elif _cpu_jobs is not None and _cpu_push is not None:
         _cpu_jobs = (_cpu_jobs[0] - _cpu_push[0], _cpu_jobs[1] - _cpu_push[1])
     _PERF_STATS.stage("jobs", (time.monotonic() - _t_jobs) - _t_push, cpu=_cpu_jobs)
 
