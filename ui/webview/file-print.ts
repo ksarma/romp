@@ -5,7 +5,10 @@
 // loading as the browser had it at that instant. This module is the flow in front of window.print():
 //   1. A press (the bar's Print glyph button, Download's shape, or Ctrl/Cmd+P while a file is open and no text field holds the keyboard)
 //      counts the gated placeholders in the body (figure-gate.ts, found by their data-act as the gate finds them: an
-//      author can type the class, never the data attribute). With any, the bar ARMS instead of printing: one line under
+//      author can type the class, never the data attribute) that REACH THE PAPER (`printable`: not inside a closed
+//      <details>, a typed one or a folded callout, outside its summary, and not under a `hidden` attribute; the third
+//      review, 2026-09-19: before this every placeholder was counted and every host it named was loaded, so "with them"
+//      fetched from hosts for pictures the print never showed). With any, the bar ARMS instead of printing: one line under
 //      the title bar names the count and offers "Print with them" and "Print without them"; Escape or a second press
 //      disarms (the update banner's two-click shape: the gate is a privacy choice, so a print never fetches from an
 //      unlisted host unless the person chose it). "With them" loads every host the placeholders name through
@@ -13,7 +16,10 @@
 //      its title names those hosts (the line counts pictures, by contract, and a placeholder naming two hosts says "and 1
 //      more host" in its own label, so the title is where the hosts a press grants are read together). The hosts are read
 //      at the arm and kept: "with them" loads that list and no other, so the title and the loads are one list by
-//      construction. A body repainted under the armed line (the host's `body` report: the changed-on-disk bar's Reload
+//      construction. The gate loads by HOST, so a host one printable placeholder and one folded placeholder share is
+//      restored in both by that one load; a host only folded or hidden placeholders name is never loaded by a print. A
+//      fold the person opens or closes under the armed line (the details' toggle event, heard on the card) is counted
+//      again like a repaint. A body repainted under the armed line (the host's `body` report: the changed-on-disk bar's Reload
 //      landing, a Rendered or Raw pick) is counted again (the driver's `recount`): over placeholders the line stands with
 //      the new count and the title with the new hosts, in place; over none the line goes, since the question it asked is
 //      moot, and the next press prints. Before this the line and the title stood as the press left them while "with
@@ -219,6 +225,26 @@ export function ownsEscape(target: EventTarget | null, scope?: ParentNode | null
   return !!scope && typeof scope.querySelector === "function" && scope.querySelector(OPEN_POPUP_SEL) !== null;
 }
 
+// ── the placeholders that reach the paper ───────────────────────────────────────────────────────────
+/** What the printable test reads of a node: its name, its attributes and its parent (an Element, or a stand-in in a test). */
+export type PrintableNode = { localName: string; parentElement: PrintableNode | null; hasAttribute(name: string): boolean };
+/** Whether `el` reaches the paper: nothing from it up to the root is a closed <details> holding it outside that details'
+ *  own <summary> (the fold's content is not rendered; its summary is), and nothing carries the `hidden` attribute, whatever
+ *  its value (`until-found` included: the browser skips such content until a find or a fragment reveals it). The same
+ *  ancestor walk md-sanitize.ts revealFragmentTarget runs, read rather than applied. Both shapes come from the author: a
+ *  typed <details>, a folded callout (`> [!type]-`, md-config.ts) and `hidden` all pass the sanitizer, where an inline
+ *  `display: none` does not (colorOnlyStyle keeps colour declarations alone), so a picture under that style prints and is
+ *  printable here. A placeholder the flow counts, names in the with-button's title or loads a host for must pass this
+ *  (gates, in the driver): a host is a privacy choice, and a print fetches from one only for a picture that is on the paper. */
+export function printable(el: PrintableNode): boolean {
+  for (let n: PrintableNode | null = el; n; n = n.parentElement) {
+    if (n.hasAttribute("hidden")) return false;
+    const p = n.parentElement;
+    if (p && p.localName === "details" && n.localName !== "summary" && !p.hasAttribute("open")) return false;
+  }
+  return true;
+}
+
 // ── the pictures and the wait ────────────────────────────────────────────────────────────────────────
 /** What the wait needs of a picture: an <img>, or a probe Image standing in for a poster or an svg <image>. */
 export type Picture = {
@@ -357,8 +383,10 @@ export function installFilePrint(host: PrintHost): { button: HTMLButtonElement; 
   let waitEnds = 0;                            // when the running wait's deadline falls (Date.now()): a re-aim keeps it and never extends it
   let closed = false;
 
-  const gates = (): HTMLElement[] => Array.from(host.body.querySelectorAll('[data-act="' + GATE_ACT + '"]')) as HTMLElement[];
-  /** Every host every placeholder names, once each, in the order the placeholders name them. */
+  /** The body's placeholders that reach the paper (printable): the ones the press counts, the title names and "with them"
+   *  loads a host for. One inside a closed fold or under hidden is left out, since the print never shows it. */
+  const gates = (): HTMLElement[] => (Array.from(host.body.querySelectorAll('[data-act="' + GATE_ACT + '"]')) as HTMLElement[]).filter(printable);
+  /** Every host every printable placeholder names, once each, in the order the placeholders name them. */
   const gatedHosts = (): string[] => {
     const hosts = new Set<string>();
     for (const g of gates()) for (const h of (g.getAttribute("data-fv-hosts") || "").split(" ")) if (h) hosts.add(h);
@@ -487,7 +515,9 @@ export function installFilePrint(host: PrintHost): { button: HTMLButtonElement; 
       case "activate": {
         // every host the armed line's title names, through the gate's own load path: loadGatedHost is what the placeholder's
         // click runs (file-view.ts loadGate), and a placeholder naming two hosts takes two clicks, so both hosts are loaded.
-        // The list is the arm's (re-read at each recount), never the body's at the click: the title and the loads are one list
+        // The list is the arm's (re-read at each recount), never the body's at the click: the title and the loads are one list.
+        // The gate restores by host (regateFigures), so a folded placeholder naming a host a printable one also names is
+        // restored by the same load; a host no printable placeholder names is not in the list and stays gated
         const hosts = armedHosts;
         for (const h of hosts) loadGatedHost(h, doc);
         feed({ kind: "prepare", pending: beginWait() });
@@ -526,6 +556,11 @@ export function installFilePrint(host: PrintHost): { button: HTMLButtonElement; 
   };
   host.card.addEventListener("click", onGateAct);
   host.card.addEventListener("keydown", onGateAct);
+  /** A fold opened or closed while the bar is armed (a typed <details>, a folded callout): the placeholders that reach the
+   *  paper changed, so they are counted again, as after a repaint. The details' toggle event does not bubble, so the card
+   *  hears it in the capture phase. */
+  const onToggle = (): void => { if (state.phase === "armed") feed({ kind: "recount", gated: gates().length }); };
+  host.card.addEventListener("toggle", onToggle, true);
   const onKey = (e: KeyboardEvent): void => {
     if (e.key === "Escape") {
       if (e.cancelBubble) return;                // a listener ahead of this one on the document stopped the key: it is that control's (the text-size flyout's dismiss, file-view.ts wireZoomDismiss, a capture listener wired before this per-open one, which closes the flyout and stops the event; stopPropagation stops no listener on the same node, and the flag, the DOM standard's alias for the stop propagation flag, is how a later one reads the claim). The bar stays armed for the next Escape

@@ -7808,8 +7808,9 @@ the sheets stay byte-equal, and the print block, which hides every `.fileview > 
 paper) reading "1 picture from another host is not loaded." or "N pictures from other hosts are not loaded.", with
 **Print with them** and **Print without them**; a second press or Escape disarms. The press arms rather than prints, a
 two-click shape, for decision 8's reason: the gate is a privacy choice, so a print never fetches from a host outside the
-list unless the person chose it. "With them" calls `loadGatedHost` for every host every placeholder names, the function
-the placeholder's own click runs, so the requests are the ones a click on each placeholder makes. Each word button
+list unless the person chose it. "With them" calls `loadGatedHost` for every host every printable placeholder names
+(the rule below), the function the placeholder's own click runs, so the requests are the ones a click on each placeholder
+makes. Each word button
 carries a title. "Print with them"'s names the hosts the press grants, once each in the order the placeholders name them
 (`withTitle`; "Load the pictures from a.test and b.test, then print" over two hosts, "those hosts" with none known): the
 line counts pictures, and a placeholder naming two hosts says "and 1 more host" in its own label, so the title is the
@@ -7825,7 +7826,23 @@ review, 2026-09-19). A placeholder the person activates by hand under the armed 
 it: the viewer's own gate handlers on the body, `loadGate` and `gateKeys`) is counted again the same way: the driver
 hears the activation on the card in the bubble phase (`onGateAct`), after the body's handler restored the picture, so
 the count and the title follow the one just loaded, and the last one gone disarms; before this the count stood as the
-press left it until a repaint (the review's consolidation, 2026-09-19). A word button of the line that holds the
+press left it until a repaint (the review's consolidation, 2026-09-19). Only a placeholder that reaches the paper is
+counted, named and loaded (`printable`, the third review, 2026-09-19): one inside a closed `<details>`, a typed one or a
+folded callout (`> [!type]-`, md-config.ts), outside that details' own summary, or under a `hidden` attribute whatever
+its value, is left out of the count, of the title and of the hosts "with them" loads, since the print never shows it; a
+picture under an inline `display: none` is printable, since the sanitizer strips that style (md-sanitize.ts
+`colorOnlyStyle` keeps colour declarations alone) and the picture prints. Before this every placeholder in the body was
+counted and every host it named was loaded, so a print fetched from hosts for pictures that were not on the paper (a
+probe over five hosts, one picture each in the open body, a closed typed details, a folded callout, a hidden div and a
+display:none div: all five hosts asked, two pictures printed; after the rule, two hosts asked, the same two pictures). A
+fold the person opens or closes under the armed line is counted again (the details' `toggle` event, which does not
+bubble, heard on the card in the capture phase), as a repaint is. Two things about that load the owner should know. The
+gate loads by host: `loadGatedHost` adds the host to the document's `loadedHosts` and `regateFigures` restores every
+placeholder waiting on it, so a host one printable placeholder and one folded placeholder share is restored in both by
+the one load, while a host only folded or hidden placeholders name is never loaded by a print. And a host "with them"
+loads is granted for the rest of the page exactly as a click on the placeholder grants it: `loadedHosts` is per
+document (decision 8's page-life ruling, `allowedFigureHosts`), so a file opened later in the same page loads that
+host's figures with no placeholder. A word button of the line that holds the
 keyboard when the line goes hands it to the Print button, the trigger, as the Outline popover's Escape does for its
 button, never to the document's body, where the browser's fixup would drop it; not at the close, where the card goes
 with the line. Then the wait, `settlePictures` over `collectPictures`: every `<img>` in the body to `complete` (its load
@@ -7913,8 +7930,9 @@ itself, or opens in a new tab to print from when the browser cannot print it in 
 what the printed page leaves out is unchanged and still true: the print line is a `.fileview-err` row the block hides.
 
 P6. **Nothing leaves the machine that did not before.** No kernel change, no new route, no server-side render. "With
-them" makes the requests a click on each placeholder makes; the probe asks for a URL a poster or svg image element
-already fetched; a PDF's tab is the URL the modified click already opens.
+them" makes the requests a click on each placeholder makes, and only for a placeholder that reaches the paper (P2's
+printable rule): a host only a folded or hidden placeholder names is not asked; the probe asks for a URL a poster or svg
+image element already fetched; a PDF's tab is the URL the modified click already opens.
 
 P7. **Print is disabled until the body is in.** The flow starts in a `disabled` phase and the button wears the `disabled`
 attribute, `aria-disabled` and the sheets' disabled dress (`.fileview-btn:disabled`, the dress Save wears while a save is in
@@ -7996,8 +8014,15 @@ that entry lists under _Avoid_ (a review finding, 2026-09-19).
   counting pictures as before.
 - ui/webview/file-print-armed-browser.test.ts, under node first (the machine's `recount` event; `ownsEscape` over
   stand-ins: the keyboard inside a menu or a dialog, an open popup's trigger anywhere in the scope whatever the target,
-  not an aria-expanded alone, not a scope with none), then headless Chromium over the real viewer, for what the second
-  review found: (A) a Reload landing under the armed line is counted again (the same line reads the new count and the
+  not an aria-expanded alone, not a scope with none; `printable` over stand-in trees: the open body, a closed details
+  outside and inside its own summary, an open one, a closed one inside an open one and the reverse, hidden on the
+  element or on an ancestor), then headless Chromium over the real viewer, for what the second and third reviews found:
+  (C) five gated pictures on five hosts (the open body, a closed typed details, a folded callout, a hidden div, a
+  display:none div whose style the sanitizer strips): the armed line counts two and the title names their two hosts, the
+  typed fold opened under the armed line is counted again and closed again is not, "Print with them" asks exactly those
+  two hosts (FAILS BEFORE: all five were asked) and the three other hosts are never asked, and the PDF Chromium prints
+  holds exactly two pictures, counted as the PDF's image objects over one-colour PNGs;
+  (A) a Reload landing under the armed line is counted again (the same line reads the new count and the
   title names the new hosts, "Print with them" loads those hosts and never a host the title did not name; a landing on a
   new host alone names it alone and the old host is never asked; a landing with no placeholder disarms and the next
   press prints; a Raw pick under the armed line disarms, and Rendered again re-arms nothing until the next press; a
@@ -8045,3 +8070,7 @@ that entry lists under _Avoid_ (a review finding, 2026-09-19).
    and the flow's disarm both act on that one key: stopPropagation stops no listener on the same node, and nothing in
    the DOM marks a pending re-place for the flow to read. Which of the two should yield, by a mark or by an order, is a
    ruling.
+6. The wait and the pictures that never reach the paper. P2's printable rule governs the placeholders alone; the wait
+   (`collectPictures`) reads every `<img>` in the body, a picture inside a closed fold or under hidden among them, since
+   the browser loads those too, so one that never loads holds the print to the deadline for a picture that is not on
+   the paper. Whether the wait should read the same rule is a ruling.

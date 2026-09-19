@@ -11,14 +11,25 @@
 // (B) Escape while the bar is armed is left to a control that owns it: the text-size flyout (a role=group under a trigger
 //     with aria-haspopup, whose dismiss is a document listener that stopPropagation does not keep from the flow's listener
 //     on the same node) closes on one Escape with the bar still armed, from the trigger and from inside the menu; the
-//     Comments composer's Escape cancels the draft with the bar still armed; the next Escape disarms.
-// Under node first: the machine's `recount` event and the ownership predicate over stand-ins. Then headless Chromium over
-// the real viewer through real-viewer-leg.ts, the way file-print-driver-browser.test.ts drives it. Skips loudly without a
-// browser. Synthetic values only: an invented note, /repo/notes-api paths, invented hosts.
+//     Comments composer's Escape cancels the draft with the bar still armed; the next Escape disarms;
+// (C) only a placeholder that reaches the paper is counted, named and loaded (the third review, 2026-09-19): five gated
+//     pictures on five hosts, one in the open body, one in a typed <details> that is closed, one in a folded callout
+//     (`> [!note]-`, md-config.ts: a closed details), one under a `hidden` attribute and one under `style="display:none"`,
+//     which the sanitizer strips (md-sanitize.ts colorOnlyStyle keeps colour declarations alone), so that picture prints.
+//     The armed line counts two, the title names their two hosts, a fold opened under the armed line is counted again
+//     (the details' toggle event) and closed again is not, "Print with them" asks exactly those two hosts, the three hosts
+//     whose pictures never reach the paper are never asked, and the PDF Chromium prints holds exactly two pictures.
+//     Before this every placeholder in the body was counted and every host it named was asked, so "with them" fetched
+//     from three hosts for pictures that were not on the paper.
+// Under node first: the machine's `recount` event, the ownership predicate over stand-ins, and the printable predicate over
+// stand-in trees. Then headless Chromium over the real viewer through real-viewer-leg.ts, the way
+// file-print-driver-browser.test.ts drives it. Skips loudly without a browser. Synthetic values only: an invented note,
+// /repo/notes-api paths, invented hosts.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
+import * as zlib from "node:zlib";
 import { inBrowser, openViewer, openPanel, frames, REPORT, ORIGIN, MT2, type Mode } from "./real-viewer-leg";
-import { step, RESTING, DISABLED, ownsEscape, OWN_ESCAPE_SEL, OPEN_POPUP_SEL, WITHOUT_TITLE, type PrintState } from "./file-print";
+import { step, RESTING, DISABLED, ownsEscape, printable, OWN_ESCAPE_SEL, OPEN_POPUP_SEL, WITHOUT_TITLE, type PrintState, type PrintableNode } from "./file-print";
 
 const SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="8" height="8" fill="black"/></svg>';
 const QUICK = "fig.svg";                       // a local picture the route answers at once
@@ -29,6 +40,29 @@ const ONE_A = "# Figures\n\nA local picture ![](" + QUICK + ") and a remote one 
 const ONE_B = "# Figures\n\nA local picture ![](" + QUICK + ") and a remote one ![](https://" + HOST_B + "/b.svg).\n\nA session swapped the figure.\n";
 const TWO = "# Two placeholders\n\nOne ![](https://" + HOST_A + "/o.svg) and two ![](https://" + HOST_B + "/a.svg).\n\nLast line.\n";
 const PLAIN = "# Plain\n\nOne local picture ![](" + QUICK + ") and text.\n\nLast line.\n";
+// (C): five hosts, one gated picture each, and where each stands in the body
+const HOST_OPEN = "open.test", HOST_TYPED = "typed.test", HOST_CALLOUT = "callout.test", HOST_HIDDEN = "hidden.test", HOST_STYLED = "styled.test";
+const FIVE_HOSTS = [HOST_OPEN, HOST_TYPED, HOST_CALLOUT, HOST_HIDDEN, HOST_STYLED];
+const FIVE = "# Five\n\nOpen ![](https://" + HOST_OPEN + "/o.png)\n\n"
+  + "<details><summary>Typed fold</summary><img src=\"https://" + HOST_TYPED + "/t.png\" alt=\"\"></details>\n\n"
+  + "> [!note]- Folded callout\n> ![](https://" + HOST_CALLOUT + "/c.png)\n\n"
+  + "<div hidden><img src=\"https://" + HOST_HIDDEN + "/h.png\" alt=\"\"></div>\n\n"
+  + "<div style=\"display:none\"><img src=\"https://" + HOST_STYLED + "/s.png\" alt=\"\"></div>\n\nLast line.\n";
+/** A w by h PNG of one solid colour: a raster, which Chromium's PDF names as an image object (an svg prints as paths and is
+ *  not countable there); one colour per host, so the PDF does not fold two pictures into one object. */
+function png(w: number, h: number, rgb: [number, number, number]): Buffer {
+  const chunk = (type: string, data: Buffer): Buffer => {
+    const len = Buffer.alloc(4); len.writeUInt32BE(data.length);
+    const body = Buffer.concat([Buffer.from(type, "ascii"), data]);
+    const crc = Buffer.alloc(4); crc.writeUInt32BE(zlib.crc32(body));
+    return Buffer.concat([len, body, crc]);
+  };
+  const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(w, 0); ihdr.writeUInt32BE(h, 4); ihdr[8] = 8; ihdr[9] = 2;   // 8-bit RGB, no alpha (an alpha channel would add a soft-mask image object per picture)
+  const row = Buffer.concat([Buffer.from([0]), Buffer.from(Array.from({ length: w }, () => rgb).flat())]);
+  return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk("IHDR", ihdr), chunk("IDAT", zlib.deflateSync(Buffer.concat(Array.from({ length: h }, () => row)))), chunk("IEND", Buffer.alloc(0))]);
+}
+/** The pictures a PDF holds: its image objects (the media leg counts pages the same way). */
+const picturesOf = (pdf: Buffer): number => (pdf.toString("latin1").match(/\/Subtype\s*\/Image\b/g) || []).length;
 
 type Bar = { phase: string | null; line: string | null; buttons: string[]; titles: string[]; cardUp: boolean; lines: number; probe: boolean };
 /** The page's record of the print stub's calls, and the bar as it stands (`probe`: the line carries the mark a leg set on it
@@ -59,7 +93,8 @@ const hostsAsked = (requests: string[]): string[] => Array.from(new Set(requests
 
 type Scene = { page: any; errors: string[]; requests: string[] };
 /** The viewer over `note` in `mode`: the quick picture answered from the origin's route, every remote host answered after a
- *  short delay, every request recorded, the probes installed before the open. */
+ *  short delay (the two svg hosts, and the five PNG hosts of (C), each with a colour of its own), every request recorded,
+ *  the probes installed before the open. */
 async function scene(browser: any, mode: Mode, note: string): Promise<Scene> {
   const requests: string[] = [];
   const { page, errors } = await openViewer(browser, mode, 900, 700, {
@@ -68,6 +103,7 @@ async function scene(browser: any, mode: Mode, note: string): Promise<Scene> {
     before: async (pg: any) => {
       pg.on("request", (r: any) => { requests.push(r.url()); });
       for (const h of REMOTE_HOSTS) await pg.route("https://" + h + "/**", async (route: any) => { await new Promise((r) => setTimeout(r, 100)); await route.fulfill({ status: 200, contentType: "image/svg+xml", body: SVG }); });
+      FIVE_HOSTS.forEach((h, i) => { void pg.route("https://" + h + "/**", async (route: any) => { await new Promise((r) => setTimeout(r, 100)); await route.fulfill({ status: 200, contentType: "image/png", body: png(16, 16, [40 * i, 255 - 40 * i, 90]) }); }); });
       await pg.evaluate(PAGE_PROBES);
     },
   });
@@ -124,6 +160,27 @@ test("ownsEscape: the keyboard inside a menu or a dialog; an open popup's trigge
   assert.equal(ownsEscape(null), false);
   assert.equal(ownsEscape(null, null), false);
   assert.ok(!OPEN_POPUP_SEL.startsWith('[aria-expanded'), "the trigger is known by aria-haspopup: the Print button wears aria-expanded alone while armed and must not match");
+});
+
+/** A stand-in node: its name, its attributes and its parent. */
+const node = (localName: string, attrs: string[] = [], parent: PrintableNode | null = null): PrintableNode => ({ localName, parentElement: parent, hasAttribute: (n) => attrs.includes(n) });
+
+test("printable: a placeholder reaches the paper unless a closed details holds it outside its own summary, or an ancestor (or it) carries hidden, whatever its value", () => {
+  const body = node("div");
+  assert.equal(printable(node("span", [], node("p", [], body))), true, "in the open body");
+  const closed = node("details", [], body);
+  assert.equal(printable(node("span", [], node("p", [], closed))), false, "under a closed details: the fold's content is not rendered");
+  assert.equal(printable(node("span", [], node("summary", [], closed))), true, "inside the closed details' own summary, which is shown while the fold is closed");
+  assert.equal(printable(node("span", [], node("em", [], node("summary", [], closed)))), true, "…however deep in the summary");
+  const open = node("details", ["open"], body);
+  assert.equal(printable(node("span", [], node("p", [], open))), true, "under an open details");
+  assert.equal(printable(node("span", [], node("p", [], node("details", [], open)))), false, "a closed details inside an open one folds what it holds");
+  assert.equal(printable(node("span", [], node("p", [], node("details", ["open"], closed)))), false, "an open details inside a closed one is folded with it");
+  assert.equal(printable(node("span", [], node("div", ["hidden"], body))), false, "under a hidden attribute");
+  assert.equal(printable(node("span", [], node("div", ["hidden"], open))), false, "hidden inside an open details");
+  assert.equal(printable(node("span", ["hidden"], body)), false, "hidden on the element itself");
+  assert.equal(printable(node("span", [], node("section", ["hidden"], node("div", [], body)))), false, "hidden two levels up (hidden=until-found among its values: the browser skips the content until a find or a fragment reveals it)");
+  assert.equal(printable(node("span", [], null)), true, "a detached node walks to nothing and counts as printable: the caller reads the body, whose nodes are attached");
 });
 
 // ── (A) a repaint under the armed line ─────────────────────────────────────────────────────────────
@@ -260,6 +317,54 @@ test("(A) a placeholder the person activates by hand under the armed line is cou
       assert.deepEqual(s.errors, [], mode + ": no script error");
       await page.close();
     }
+  });
+});
+
+// ── (C) placeholders that never reach the paper ────────────────────────────────────────────────────
+
+test("(C) five gated pictures on five hosts: only the two that reach the paper are counted and named; a fold opened under the armed line is counted again and closed again is not; Print with them asks exactly their hosts (FAILS BEFORE: all five hosts were asked), the folded and hidden hosts are never asked, and the PDF holds exactly the two pictures", { timeout: 120000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const s = await scene(browser, "pane", FIVE);
+    const { page } = s;
+    await waitGates(page, 5);
+    const placed = await page.evaluate(() => Array.from(document.querySelectorAll('#romp-fileview [data-act="fv-load"]')).map((g) => {
+      const d = g.closest("details"); return (g.getAttribute("data-fv-hosts") || "") + ":" + (g.closest("[hidden]") ? "hidden" : d ? (d.hasAttribute("open") ? "open-details" : "closed-details") : "body") + ":" + ((g.closest("[style]") as HTMLElement | null)?.getAttribute("style") || "-");
+    }));
+    assert.deepEqual(placed, [HOST_OPEN + ":body:-", HOST_TYPED + ":closed-details:-", HOST_CALLOUT + ":closed-details:-", HOST_HIDDEN + ":hidden:-", HOST_STYLED + ":body:-"],
+      "five placeholders: the open one, two in closed details (the typed fold and the folded callout), one under hidden, and one whose display:none the sanitizer stripped (no style attribute survives)");
+    await page.click(PRINT_BTN);
+    let b = await bar(page);
+    assert.equal(b.phase, "armed");
+    assert.equal(b.line, "2 pictures from other hosts are not loaded.", "FAILS BEFORE: the line counted all five placeholders; two reach the paper");
+    assert.deepEqual(b.titles, ["Load the pictures from " + HOST_OPEN + " and " + HOST_STYLED + ", then print", WITHOUT_TITLE], "the title names the two hosts whose pictures print, in the order the body names them");
+    assert.deepEqual(hostsAsked(s.requests), [], "nothing fetched from any host before the choice");
+    // the typed fold opened under the armed line: its placeholder reaches the paper now, so it is counted and its host named; closed again, it is not
+    await markLine(page);
+    await page.click("#romp-fileview .fileview-md details:not(.md-callout) > summary");
+    await page.waitForFunction(() => (document.getElementById("fileview-print-line")?.firstChild?.textContent || "") === "3 pictures from other hosts are not loaded.", null, { timeout: 5000 });
+    b = await bar(page);
+    assert.equal(b.probe, true, "the same row, its words rewritten in place");
+    assert.deepEqual(b.titles, ["Load the pictures from " + HOST_OPEN + ", " + HOST_TYPED + " and " + HOST_STYLED + ", then print", WITHOUT_TITLE], "the opened fold's host joins the title, in the body's order");
+    await page.click("#romp-fileview .fileview-md details:not(.md-callout) > summary");
+    await page.waitForFunction(() => (document.getElementById("fileview-print-line")?.firstChild?.textContent || "") === "2 pictures from other hosts are not loaded.", null, { timeout: 5000 });
+    b = await bar(page);
+    assert.equal(b.phase, "armed"); assert.equal(b.lines, 1);
+    assert.deepEqual(b.titles, ["Load the pictures from " + HOST_OPEN + " and " + HOST_STYLED + ", then print", WITHOUT_TITLE], "closed again, the fold's host leaves the title");
+    assert.deepEqual(hostsAsked(s.requests), [], "the fold's toggling fetched nothing");
+    // with them: the two hosts, and no other
+    await page.click(WITH_BTN);
+    await printsReach(page, 1);
+    const p = await prints(page);
+    assert.equal(p.length, 1); assert.equal(p[0].incomplete, 0, "window.print fired with every <img> complete");
+    assert.equal(p[0].gates, 3, "the three placeholders that never reach the paper still stand: their hosts were not loaded");
+    assert.deepEqual(hostsAsked(s.requests), [HOST_OPEN, HOST_STYLED].sort(), "FAILS BEFORE: all five hosts were asked; exactly the two hosts the title named are");
+    await frames(page, 6);
+    assert.deepEqual(hostsAsked(s.requests), [HOST_OPEN, HOST_STYLED].sort(), "…and nothing reached the folded or hidden hosts afterwards either");
+    assert.equal(picturesOf(await page.pdf({ format: "A4" })), 2, "the PDF holds exactly the two pictures that reach the paper: the open one and the one whose display:none was stripped");
+    await frames(page, 1);
+    assert.equal((await bar(page)).phase, null, "the bar rested");
+    assert.deepEqual(s.errors, [], "no script error");
+    await page.close();
   });
 });
 

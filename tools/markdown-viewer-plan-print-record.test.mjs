@@ -184,6 +184,41 @@ test('P2: a placeholder the person activates by hand under the armed line is cou
   assert.ok(read('ui', 'webview', 'file-print-armed-browser.test.ts').includes('(A) a placeholder the person activates by hand under the armed line is counted again'), 'the armed leg\'s case');
 });
 
+test('P2: only a placeholder that reaches the paper is counted, named and loaded, a fold toggled under the armed line is counted again, and the gate loads by host for the rest of the page', () => {
+  assert.ok(P2.includes('Only a placeholder that reaches the paper is counted, named and loaded (`printable`, the third review, 2026-09-19): one inside a closed `<details>`, a typed one or a folded callout (`> [!type]-`, md-config.ts), outside that details\' own summary, or under a `hidden` attribute whatever its value, is left out of the count, of the title and of the hosts "with them" loads'));
+  // the predicate: the ancestor walk, hidden on any node, a closed details holding the node outside its summary
+  const pred = between(flow, 'export function printable(el: PrintableNode): boolean {', '\n}');
+  assert.ok(pred.includes('if (n.hasAttribute("hidden")) return false;'), 'hidden, whatever its value');
+  assert.ok(pred.includes('if (p && p.localName === "details" && n.localName !== "summary" && !p.hasAttribute("open")) return false;'), 'a closed details, its summary excepted');
+  assert.ok(pred.includes('for (let n: PrintableNode | null = el; n; n = n.parentElement) {'), 'walked to the root');
+  // the driver reads the body\'s placeholders through it, and every count, title and load goes through gates()
+  assert.ok(flow.includes('const gates = (): HTMLElement[] => (Array.from(host.body.querySelectorAll(\'[data-act="\' + GATE_ACT + \'"]\')) as HTMLElement[]).filter(printable);'), 'the placeholders the flow reads are the printable ones');
+  assert.equal([...flow.matchAll(/querySelectorAll\('\[data-act="' \+ GATE_ACT/g)].length, 1, 'one read of the body\'s placeholders, so no count, title or load bypasses the filter');
+  assert.ok(flow.includes('for (const g of gates()) for (const h of (g.getAttribute("data-fv-hosts") || "").split(" ")) if (h) hosts.add(h);'), 'the hosts come from those placeholders');
+  // the sanitizer keeps details and hidden (both shapes come from the author) and strips an inline display: none
+  const sanitize = code(read('ui', 'webview', 'md-sanitize.ts'));
+  assert.ok(sanitize.includes('export const MD_FORBID_ATTR: readonly string[] = ["background", "usemap"];'), 'hidden is not forbidden');
+  assert.ok(!between(sanitize, 'export const MD_FORBID_TAGS: readonly string[] = [', '];').includes('"details"'), 'details is not forbidden');
+  assert.ok(sanitize.includes('const KEPT_PROPERTIES = new Set(["color", "background-color"]);'), 'a style keeps colour declarations alone: display: none goes');
+  assert.ok(P2.includes('a picture under an inline `display: none` is printable, since the sanitizer strips that style (md-sanitize.ts `colorOnlyStyle` keeps colour declarations alone) and the picture prints'));
+  // a fold toggled under the armed line: the details\' toggle event, capture phase on the card, a recount while armed
+  assert.ok(P2.includes('A fold the person opens or closes under the armed line is counted again (the details\' `toggle` event, which does not bubble, heard on the card in the capture phase), as a repaint is.'));
+  assert.ok(flow.includes('const onToggle = (): void => { if (state.phase === "armed") feed({ kind: "recount", gated: gates().length }); };'), 'the toggle recounts while armed');
+  assert.ok(flow.includes('host.card.addEventListener("toggle", onToggle, true);'), 'on the card, capture phase');
+  // the gate loads by host and for the page: the document\'s loaded set, read into the allowed set at every gating
+  const gate = code(read('ui', 'webview', 'figure-gate.ts'));
+  const load = between(gate, 'export function loadGatedHost(host: string, doc: ParentNode = document): void {', '\n}');
+  assert.ok(load.includes('loadedHosts.add(host.toLowerCase());') && load.includes('regateFigures(doc);'), 'the host joins the loaded set and every placeholder waiting on it is re-judged');
+  assert.ok(between(gate, 'export function regateFigures(doc: ParentNode): void {', '\n}').includes('if (!hosts.length) restore(wrap);'), 'a placeholder whose hosts are all loaded is restored, printable or not');
+  assert.ok(between(gate, 'export function allowedFigureHosts(extra: Iterable<string> = []): Set<string> {', '\n}').includes('for (const h of loadedHosts) s.add(h);'), 'the loaded hosts are allowed for the rest of the document');
+  assert.ok(P2.includes('The gate loads by host: `loadGatedHost` adds the host to the document\'s `loadedHosts` and `regateFigures` restores every placeholder waiting on it, so a host one printable placeholder and one folded placeholder share is restored in both by the one load, while a host only folded or hidden placeholders name is never loaded by a print.'));
+  assert.ok(P2.includes('a host "with them" loads is granted for the rest of the page exactly as a click on the placeholder grants it: `loadedHosts` is per document'));
+  // P6 carries the clause, and the armed leg executes the five-host case
+  assert.ok(part('P6. **', 'P7. **').includes('and only for a placeholder that reaches the paper (P2\'s printable rule): a host only a folded or hidden placeholder names is not asked'));
+  assert.ok(read('ui', 'webview', 'file-print-armed-browser.test.ts').includes('(C) only a placeholder that reaches the paper is counted, named and loaded'), 'the armed leg\'s case (C)');
+  assert.ok(OPEN.includes('6. The wait and the pictures that never reach the paper.'), 'the wait\'s reading of every picture is the owner\'s ruling');
+});
+
 test('P2: the wait\'s line carries the viewer\'s loader after its words, under one rule byte-equal in both sheets and pinned by the parity test', () => {
   assert.ok(P2.includes('Beside the words the line carries the viewer\'s loader, the swirl, the wordmark and the three pulsing dots (`.fileview-load`, the markup file-view.ts\'s waits use, hidden from the status\'s announcement), inline on the words\' row under a rule of its own in both sheets, `.fileview-print-line .fileview-load`'));
   const show = between(flow, 'const showLine = (words: string, loading = false): HTMLElement => {', '\n  };');

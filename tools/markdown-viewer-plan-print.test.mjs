@@ -135,7 +135,7 @@ test('P2: the words the section quotes are the module\'s literals, the deadline 
   assert.ok(section.includes('The line reads "Preparing 1 picture…" or "Preparing N pictures…" meanwhile.'));
   assert.ok(flow.includes('export const PRINT_SETTLE_MS = 8000;'), 'the deadline constant');
   assert.ok(section.includes('or at `PRINT_SETTLE_MS`, 8 s, after which the print runs anyway'));
-  assert.ok(section.includes('"With them" calls `loadGatedHost` for every host every placeholder names, the function the placeholder\'s own click runs'));
+  assert.ok(section.includes('"With them" calls `loadGatedHost` for every host every printable placeholder names (the rule below), the function the placeholder\'s own click runs'));
   assert.ok(flow.includes('for (const h of hosts) loadGatedHost(h, doc);'), 'activate loads every named host through the gate\'s own path');
   assert.ok(section.includes('the gate is a privacy choice, so a print never fetches from a host outside the list unless the person chose it'));
   assert.ok(flow.includes('row.className = "fileview-err " + PRINT_LINE_CLASS;'), 'the line is a .fileview-err row');
