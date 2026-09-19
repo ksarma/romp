@@ -4874,7 +4874,8 @@ class Disclosed(unittest.TestCase):
          "/glossary/, served through the kernel's key function and exported plain, give GET /dist/*, GET /media/* and "
          "GET /glossary/*, one row each with count 2 and no second key of the family",
          (("Disclosed.test_the_remote_family_keeps_one_row_per_operation_with_the_host_collapsed",
-           "reds when two bundle, media or glossary names key as two rows in the plain export's http table"),
+           "reds when two bundle, media or glossary names key as two rows at the kernel's table or in the plain export's http "
+           "table"),
           ("test_perf_stats:Collector.test_http_key_is_method_plus_normalized_path",
            "reds when two /dist/ names key differently at the kernel"))),
         ("the remote family collapsed by host alone, the host's name replaced by a star and the route kept, so a kernel attached to a peer "
@@ -4884,8 +4885,8 @@ class Disclosed(unittest.TestCase):
          "and exported plain, carries exactly four remote rows keyed by operation, the two hosts' sessions requests summed under one row, and "
          "no key carrying either host; an older kernel's raw host-bearing keys fold to the same rows",
          (("Disclosed.test_the_remote_family_keeps_one_row_per_operation_with_the_host_collapsed",
-           "reds when the remote operations fold to one row, the family collapsing, or when any key of the plain export's http table "
-           "carries a host name, the host no longer collapsing"),
+           "reds when the remote operations fold to one row, the family collapsing, or when any key of the kernel's own http table "
+           "or of the plain export's carries a host name, the host no longer collapsing at either"),
           ("test_perf_stats:Collector.test_http_keys_outside_the_route_table_fold_to_other",
            "reds when GET /remote/<host>/sessions stops keying as GET /remote/*/sessions at the kernel's key function: the host kept "
            "or the route dropped"),
