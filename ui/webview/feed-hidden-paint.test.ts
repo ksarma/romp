@@ -727,4 +727,10 @@ test("run: feed.ts's own lines take the shell's show hook: the held first frame 
   f.observer(false); f.frame(5);   // the user taps another tab: the observer says hidden; a frame arrives
   assert.equal(f.st.paints, 1, "held: the show override did not outlive the observer's word (D4: its callback clears the flag)");
   assert.equal(f.st.host.__rompPaneHidden, true);
+  f.shown();   // the Feed tab tapped again: the hook lands the paint owed while hidden in the tap's task, before the observer has re-measured (review round 2 closeout: the standing gate over a board WITH content consults the measure, so this is where render()'s gate must read the override, not the observer's variable)
+  assert.equal(f.st.paints, 2, "the re-show paints synchronously through the override over the observer's standing hidden word");
+  assert.equal(f.st.painted, 5, "…the frame that arrived while hidden");
+  assert.deepEqual(f.events, ["romp:firstpaintheld", "romp:firstpaintreleased"], "the loader's events are the first hold's alone");
+  f.observer(true);
+  assert.equal(f.st.paints, 2, "the observer's re-measure owes nothing");
 });
