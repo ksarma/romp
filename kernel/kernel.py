@@ -69833,6 +69833,8 @@ function wid(){try{return sessionStorage.getItem('romp:wid')||'';}catch(e){retur
 // keyboards and collapsing toolbars — where height*scale keeps a mobile pinch from re-fitting too.
 // Every run recomputes from scratch — never adjusts a stored value — so a viewport that grows back
 // (keyboard gone, app back in front) can never leave a stale, shorter --app-h behind.
+// [fork] D1 (2026-09-19): the pan fit() last published, the value its pinch branch holds and clamps (the note inside fit)
+var lastPan=0;
 function fit(){try{var vv=window.visualViewport;
 var coarse=window.matchMedia&&matchMedia('(pointer: coarse)').matches;
 var h=(!coarse||!vv)?window.innerHeight:Math.round(vv.height*(vv.scale||1));
@@ -69843,12 +69845,15 @@ if(h)document.documentElement.style.setProperty('--app-h',h+'px');
 // and the bottom offsetTop pixels of the screen showed bare page background under the composer (the user 2026-09-18 and
 // 2026-09-19, iPhone, installed app: an empty band about 80 CSS px tall between the composer and the keyboard's accessory
 // bar). Publish the pan as --app-top; the mobile body rule (position:fixed;top:var(--app-top)) moves the shell down into the
-// visible band. Coarse-guarded like --app-h (a desktop writes 0; its body is never fixed). A PINCH pans too (iOS zooms
-// through user-scalable=no), with no keyboard behind it: at a scale above 1 the last value holds, so a zoom never
-// re-lays the shell (the pinch-aware note above). The visual viewport's scroll event, where a pan lands, is already
-// bound below, so no new listener.
+// visible band. Coarse-guarded like --app-h (a desktop writes 0; its body is never fixed). A PINCH (scale above 1.01) pans
+// the visual viewport too, with no keyboard behind it, so its offsetTop is never published and the last pan holds (a zoom
+// never re-lays the shell, the pinch-aware note above), CLAMPED to innerHeight - h (round 2, 2026-09-19): the same run
+// recomputes --app-h from the zoomed viewport, so a pan measured under a keyboard that has since gone would otherwise
+// place the body's bottom, the composer row, below the layout viewport until the zoom ended. The visual viewport's scroll
+// event, where a pan lands, is already bound below, so no new listener.
 if(!coarse||!vv)document.documentElement.style.setProperty('--app-top','0px');
-else if((vv.scale||1)<=1.01)document.documentElement.style.setProperty('--app-top',Math.round(vv.offsetTop||0)+'px');
+else if((vv.scale||1)<=1.01)document.documentElement.style.setProperty('--app-top',(lastPan=Math.round(vv.offsetTop||0))+'px');
+else document.documentElement.style.setProperty('--app-top',(lastPan=Math.min(lastPan,Math.max(0,window.innerHeight-h)))+'px');
 // iOS ignores interactive-widget and reveals a focused input by SCROLLING this overflow:hidden page
 // (a UA scroll bypasses the clamp) — the shell then sits a keyboard-height up until dragged back
 // (the user 2026-09-02). The layout must never scroll: undo any stray offset on the same events.

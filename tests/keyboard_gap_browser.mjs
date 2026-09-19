@@ -7,7 +7,8 @@
 // fresh on every run and binds its resize and scroll events on the object it finds at parse, so the fake is what it reads
 // and what it hears. The layout viewport is the browser's own (innerHeight 844 under the shell's viewport meta). Three
 // moves: the keyboard up with iOS's pan (height 508, offsetTop 83, then resize and scroll), the keyboard down (844, 0),
-// and a keyboard with no pan (508, 0). After each the driver waits two animation frames (fit() coalesces to one per frame)
+// and a keyboard with no pan (508, 0); then (round 2) the picker's lift under the pan, a pinch with the keyboard up and the
+// keyboard dismissed under the zoom. After each the driver waits two animation frames (fit() coalesces to one per frame)
 // and reads, in the shell's coordinate space: the composer's bottom (the chat iframe's top plus the composer's bottom inside
 // its same-origin document), the body's box, #mtabs's box, and the three shell variables.
 // Prints one `RESULT:` JSON line; exits 3 when the browser does not launch (the Python side turns that into a skip).
@@ -139,6 +140,12 @@ try {
   out.kbDown = await move(844, 0);       // the keyboard down: the pan is gone with it
   out.kbNoPan = await move(508, 0);      // a keyboard that does not pan (Android under resizes-visual)
   out.settled = await move(844, 0);
+  // round 2 (2026-09-19): a zoom after the pan, and the keyboard dismissed while the zoom holds (the fake's scale is what the
+  // shell reads; the browser's own layout is not zoomed)
+  out.kbUpAgain = await move(508, 83);
+  out.pinchPanned = await move(254, 83, 2);      // pinched with the keyboard up: h = 254 * 2 = 508, the pan holds
+  out.kbDownZoomed = await move(422, 200, 2);    // the keyboard goes while zoomed: h = 844 again, and a held pan would hang the body
+  out.zoomBack = await move(844, 0, 1);
   if (cfg.shots) await page.screenshot({ path: cfg.shots + "-settled.png" }).catch(() => {});
   await result({});
 } catch (e) {

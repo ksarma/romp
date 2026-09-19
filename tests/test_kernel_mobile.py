@@ -579,6 +579,18 @@ visualViewport.scale = 2; visualViewport.height = 422; visualViewport.offsetTop 
 out.pinch = { appTop: appTop(), appH: appH(), barH: barH() };
 visualViewport.scale = 1; visualViewport.height = 844; visualViewport.offsetTop = 0; fire(VV, 'resize'); flush();
 out.pinchBack = { appTop: appTop(), appH: appH(), barH: barH() };
+// round 2 (2026-09-19): a pinch taken WHILE the keyboard is up holds the pan (the hold, from a state where --app-top is NOT
+// already 0px), and a keyboard dismissed while still zoomed cannot leave that pan behind: --app-h returns to the full height
+// on the same run, and a held 83 would place the body at 83..927 in an 844 viewport with the composer row below it, so the
+// held value is clamped to innerHeight - h
+visualViewport.scale = 1; visualViewport.height = 460; visualViewport.offsetTop = 83; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+out.panAgain = { appTop: appTop(), appH: appH(), barH: barH() };
+visualViewport.scale = 2; visualViewport.height = 230; visualViewport.offsetTop = 83; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+out.pinchPanned = { appTop: appTop(), appH: appH(), barH: barH() };
+visualViewport.height = 422; visualViewport.offsetTop = 200; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+out.kbDownZoomed = { appTop: appTop(), appH: appH(), barH: barH() };
+visualViewport.scale = 1; visualViewport.height = 844; visualViewport.offsetTop = 0; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+out.zoomBack = { appTop: appTop(), appH: appH(), barH: barH() };
 console.log(JSON.stringify(out));
 """
 
@@ -672,6 +684,17 @@ class MobileFitExecutes(unittest.TestCase):
         # about the shell's layout may move under a pinch (the pinch-aware fit, 2026-08-19)
         self.assertEqual(self.out["pinch"], {"appTop": "0px", "appH": "844px", "barH": "44px"})
         self.assertEqual(self.out["pinchBack"], {"appTop": "0px", "appH": "844px", "barH": "44px"})
+
+    def test_a_pan_held_through_a_pinch_cannot_outlive_the_height_it_was_measured_with(self):
+        # round 2 (2026-09-19). The hold, from a PANNED state (the pinch pin above starts from --app-top already 0px, which the
+        # opposite stance, zero on a pinch, satisfies identically): zoomed with the keyboard still up, the pan stands and --app-h
+        # keeps upstream's scale arithmetic (230 * 2). Then the keyboard goes while the zoom holds: --app-h returns to the full
+        # height on the same run and the held pan is clamped to innerHeight - h, 0 here, so the body stays inside the layout
+        # viewport. The base tree kept 83px and hung the body's bottom 83 px, the composer row, below the viewport.
+        self.assertEqual(self.out["panAgain"], {"appTop": "83px", "appH": "460px", "barH": "0px"})
+        self.assertEqual(self.out["pinchPanned"], {"appTop": "83px", "appH": "460px", "barH": "0px"}, "the hold, from a pan")
+        self.assertEqual(self.out["kbDownZoomed"], {"appTop": "0px", "appH": "844px", "barH": "44px"}, "the clamp")
+        self.assertEqual(self.out["zoomBack"], {"appTop": "0px", "appH": "844px", "barH": "44px"})
 
 
 # A node stand-in for the installed phone app with a REAL class list: the shell's mobile script and

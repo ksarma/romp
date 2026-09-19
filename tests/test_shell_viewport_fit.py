@@ -157,10 +157,14 @@ class RefitsWhenTheVisibleHeightChanges(unittest.TestCase):
         # D1 (2026-09-19): the visual viewport's PAN rides beside the height. iOS reveals a focused input by moving the
         # visual viewport down the layout viewport (offsetTop > 0) with no document scroll to undo, so a body sized to
         # vv.height at layout y 0 left the bottom offsetTop pixels of the screen bare under the composer. fit() publishes
-        # the pan as --app-top under the same coarse guard (a desktop writes 0), holding the last value under a pinch
-        # (scale above 1: a zoom pans too, and a zoom never re-lays the shell). Behaviour: test_kernel_mobile.MobileFitExecutes.
+        # the pan as --app-top under the same coarse guard (a desktop writes 0). Under a pinch (scale above 1.01) the last pan
+        # holds, a zoom pans too and never re-lays the shell, CLAMPED to the layout viewport less the height the same run
+        # publishes, so a keyboard dismissed while zoomed cannot leave the body hanging below the viewport (round 2,
+        # 2026-09-19). Behaviour: test_kernel_mobile.MobileFitExecutes.
+        self.assertIn("\nvar lastPan=0;\nfunction fit(){", self.js)
         self.assertIn("if(!coarse||!vv)document.documentElement.style.setProperty('--app-top','0px');", self.js)
-        self.assertIn("else if((vv.scale||1)<=1.01)document.documentElement.style.setProperty('--app-top',Math.round(vv.offsetTop||0)+'px');", self.js)
+        self.assertIn("else if((vv.scale||1)<=1.01)document.documentElement.style.setProperty('--app-top',(lastPan=Math.round(vv.offsetTop||0))+'px');\n"
+                      "else document.documentElement.style.setProperty('--app-top',(lastPan=Math.min(lastPan,Math.max(0,window.innerHeight-h)))+'px');", self.js)
         # the write sits inside fit(), after the --app-h write and before the stray-scroll reset, so one frame publishes both
         self.assertLess(self.js.index("setProperty('--app-h',h+'px')"), self.js.index("setProperty('--app-top'"))
         self.assertLess(self.js.index("setProperty('--app-top'"), self.js.index("if(window.scrollY||document.documentElement.scrollTop)window.scrollTo(0,0);"))

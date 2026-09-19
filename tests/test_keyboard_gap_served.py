@@ -150,7 +150,8 @@ class KeyboardGap(unittest.TestCase):
         where = engine + ": "
         rest, up, down, nopan, settled = r["rest"], r["kbUp"], r["kbDown"], r["kbNoPan"], r["settled"]
         # the emulation held: the shell read the fake visual viewport, in a layout viewport of the descriptor's height
-        for name, g in (("rest", rest), ("kbUp", up), ("pickerUp", r["pickerUp"]), ("kbDown", down), ("kbNoPan", nopan)):
+        for name, g in (("rest", rest), ("kbUp", up), ("pickerUp", r["pickerUp"]), ("kbDown", down), ("kbNoPan", nopan),
+                        ("pinchPanned", r["pinchPanned"]), ("kbDownZoomed", r["kbDownZoomed"])):
             self.assertTrue(g["vv"]["fake"], where + name + ": the shell's visualViewport is the fake")
             self.assertIsNone(g["labVVError"], where + name)
             self.assertEqual(g["innerHeight"], LAYOUT_H, where + name + ": the layout viewport is the descriptor's")
@@ -211,6 +212,19 @@ class KeyboardGap(unittest.TestCase):
         self.assertEqual(_px(nopan["mtabsH"]), 0, where + "%r" % (nopan,))
         self.assertAlmostEqual(KB_H - nopan["composerBottom"], rest_gap, delta=1, msg=where + "flush above the band with no pan: %r" % (nopan,))
         self.assertAlmostEqual(settled["composerBottom"], rest["composerBottom"], delta=0.5, msg=where + "%r" % (settled,))
+        # a pinch after the pan, and the keyboard dismissed while zoomed (round 2, 2026-09-19): zoomed with the keyboard up the
+        # pan holds and the body is still the band; with the keyboard gone and the zoom standing, --app-h is the full height
+        # again, and a held pan would place the body at 83..927 with the composer row below the viewport. The held pan is
+        # clamped to the layout viewport less that height, so the body stays inside it and the composer stays reachable.
+        pz, dz, zb = r["pinchPanned"], r["kbDownZoomed"], r["zoomBack"]
+        self.assertEqual(pz["vv"]["scale"], 2, where + "the shell read the zoom: %r" % (pz["vv"],))
+        self.assertEqual((_px(pz["appTop"]), _px(pz["appH"])), (KB_PAN, KB_H), where + "zoomed with the keyboard up, the pan holds: %r" % (pz,))
+        self.assertAlmostEqual(pz["body"]["bottom"], band_bottom, delta=0.5, msg=where + "%r" % (pz,))
+        self.assertEqual(_px(dz["appH"]), LAYOUT_H, where + "%r" % (dz,))
+        self.assertLessEqual(dz["body"]["bottom"], LAYOUT_H + 0.5, where + "the body stays inside the layout viewport with the keyboard gone under a zoom: %r" % (dz,))
+        self.assertLessEqual(dz["composerBottom"], LAYOUT_H - bar_h + 0.5, where + "the composer row is reachable, above the bar's strip: %r" % (dz,))
+        self.assertEqual(_px(dz["appTop"]), 0, where + "the held pan is clamped to the viewport: %r" % (dz,))
+        self.assertAlmostEqual(zb["composerBottom"], rest["composerBottom"], delta=0.5, msg=where + "%r" % (zb,))
         return r
 
     def test_chromium_phone_keyboard_pan_leaves_no_band(self):
