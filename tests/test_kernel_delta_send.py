@@ -1528,8 +1528,11 @@ class ChatSigHelpers(unittest.TestCase):
         open on one thread sees none of another thread's reads (2026-09-19 review, tests-3; both passed every test when
         replaced by objects shared across threads). Event-gated: thread one opens the scope and waits; thread two, outside
         any scope, makes three stats, two registry reads and a names-read count; thread one then makes one stat and one
-        registry read and closes. The fold reads stats 1, regReads 1, namesReads 0 (shared objects read 4, 3, 1). The
-        stats are real calls through the kernel's os.stat wrapper, under the outside interception, whose rule agrees."""
+        registry read and closes. The fold reads stats 1, regReads 1, namesReads 0. A shared kernel accumulator folds every
+        thread's stats while any scope is open, thread two's three and the test process's own background stats included,
+        so it reads well above 1 (12 measured, 2026-09-19); a shared backend counter reads 3; a shared names count reads
+        1. The stats are real calls through the kernel's os.stat wrapper, under the outside interception, whose rule
+        agrees."""
         sb = self._reg_reader()
         td = tempfile.TemporaryDirectory(); self.addCleanup(td.cleanup)
         p = os.path.join(td.name, "f")
