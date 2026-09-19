@@ -1654,8 +1654,24 @@ class RoutingStatements(unittest.TestCase):
         # dead run's leftover (pytest-timeout's os._exit, which CI's --timeout-method=thread uses, a SIGKILL, a scope
         # stop: none of them reaches the plant test's finally); a match git tracks is skipped. Safe ONLY because the
         # lock is one file per checkout: under a per-process lock this could delete a sibling's live plant.
-        with cls._tree_lock(exclusive=True) as root:
-            cls._remove_stale_plants(root)
+        cls._no_repository = None
+        try:
+            with cls._tree_lock(exclusive=True) as root:
+                cls._remove_stale_plants(root)
+        except unittest.SkipTest as skip:
+            # A checkout without git metadata: the lock path's rev-parse skipped. Recorded rather than raised, so only
+            # the tests that read the live tree skip (each through _live_tree, with this reason) and the scratch-repo,
+            # mock and wording tests still run; raised from here it skipped all of them as one line (round 2's fresh-2).
+            cls._no_repository = str(skip)
+
+    _no_repository = None                         # setUpClass's record of the lock path's skip, read by _live_tree
+
+    def _live_tree(self):
+        """The repo root for a test that reads the live checkout, or a skip carrying the lock path's reason when
+        setUpClass found no repository. Called first in such a test; a test that needs no repository never calls it."""
+        if self._no_repository:
+            self.skipTest(self._no_repository)
+        return Path(HERE).parent
 
     @classmethod
     def _remove_stale_plants(cls, root, env=None):
@@ -1691,9 +1707,11 @@ class RoutingStatements(unittest.TestCase):
     def _tree_lock(cls, exclusive):
         """The repo root, held under a file lock that lives in the checkout's git dir (one per linked worktree), shared
         by every process over this tree whatever its TMPDIR, and outside the scanned tree; flock, so a process that
-        dies drops it. A checkout without git metadata skips the whole class at setUpClass, through the lock path's
-        rev-parse: the listing's skip (no git, no repository) in a different place, and the tests here that need no
-        repository of their own (the scratch-repo, mock and wording tests) go with it."""
+        dies drops it. A checkout without git metadata skips the tests that read the live tree, each with the lock
+        path's reason (the listing's skip, no git or no repository, met here first, in setUpClass, and recorded there;
+        pytest reports the skips per test, so no test is lost), while the scratch-repo, mock and wording tests still
+        run. A tree nested inside another repository is not that case and does not skip: rev-parse resolves the
+        enclosing repository's git dir."""
         root = Path(HERE).parent
         lock = cls._lock_path(root)
         # The lock file is permanent and zero bytes: created once, by the first runner, under their umask (0o666 before
@@ -1821,9 +1839,11 @@ class RoutingStatements(unittest.TestCase):
                               "swept" % (rel, key, phrase))
 
     def test_the_files_that_name_a_routed_block_are_the_swept_set(self):
+        self._live_tree()
         self._pin_swept_set(self._places())
 
     def test_no_swept_file_carries_a_retired_wording(self):
+        self._live_tree()
         self._pin_no_retired_wording(self._places())
 
     def test_the_file_set_is_read_from_the_tree_not_listed(self):
@@ -1832,6 +1852,7 @@ class RoutingStatements(unittest.TestCase):
         test under the exclusive lock, the plant removed in a finally, its name unique to this process. A plant a killed
         run left behind is removed by setUpClass before any test here scans, so a plant-named file in plans/ is a test
         artifact, never content."""
+        self._live_tree()
         with self._tree_lock(exclusive=True) as root:
             clean = self._scan(root)
             self._pin_swept_set(clean); self._pin_no_retired_wording(clean)                          # green without the plant
@@ -1871,6 +1892,7 @@ class RoutingStatements(unittest.TestCase):
         removed by the healer setUpClass runs, and the tree scans green after it. The healer's placement is pinned on
         setUpClass's source: inside the plant test it would heal only from the second run, since the wording pin sorts
         first and reads the leftover (round 1's refuters measured '1 failed, 3 passed' there, '4 passed' here)."""
+        self._live_tree()
         with self._tree_lock(exclusive=True) as root:
             stale = root / "plans" / "routing-sweep-plant-1-stale0000.md"
             try:
@@ -1987,6 +2009,49 @@ class RoutingStatements(unittest.TestCase):
         self.assertIn("dubious ownership", message, "the failure carries git's words")
         self.assertIn("exited 128", message, "and the exit code")
 
+    def test_the_lock_path_skips_for_a_missing_repository_only(self):
+        """The lock path's own skip road, pinned directly (round 2's fresh-2): a tree with no repository skips, through
+        _git_bytes; a dubious-ownership 128 fails with git's words, never a skip, since setUpClass records a skip as
+        'no repository' and would otherwise let a broken checkout pass its live-tree tests as skipped. The mock
+        replaces the only subprocess call _lock_path makes, so nothing is locked."""
+        root = Path(HERE).parent
+
+        def completed(stderr):
+            return subprocess.CompletedProcess(args=["git"], returncode=128, stdout=b"", stderr=stderr)
+        with mock.patch.object(subprocess, "run",
+                               return_value=completed(b"fatal: not a git repository (or any of the parent directories): .git")):
+            with self.assertRaises(unittest.SkipTest):
+                RoutingStatements._lock_path(root)
+        with mock.patch.object(subprocess, "run",
+                               return_value=completed(b"fatal: detected dubious ownership in repository at '/a/checkout'")):
+            try:
+                RoutingStatements._lock_path(root)
+            except unittest.SkipTest as skip:
+                self.fail("the lock path skipped instead of failing: %s" % skip)
+            except AssertionError as failed:
+                message = str(failed)
+            else:
+                self.fail("the lock path resolved instead of failing")
+        self.assertIn("dubious ownership", message, "the failure carries git's words")
+        self.assertIn("exited 128", message, "and the exit code")
+
+    def test_setupclass_records_a_missing_repository_instead_of_skipping_the_class(self):
+        """setUpClass turns the lock path's SkipTest into a record, _no_repository, that _live_tree reads: raised from
+        setUpClass it skipped all of the class as one line, the tests that need no repository included (round 2's
+        fresh-2). The record is restored FIRST, before the call, so a failure here cannot leave the class marked. A skip
+        that escapes setUpClass is caught and FAILED here: raised inside a test it would read as this test skipping,
+        the skipping-pin shape (the precedent's index_failure)."""
+        self.addCleanup(setattr, RoutingStatements, "_no_repository", None)
+        with mock.patch.object(RoutingStatements, "_lock_path", side_effect=unittest.SkipTest("no repo")):
+            try:
+                RoutingStatements.setUpClass()
+            except unittest.SkipTest as skip:
+                self.fail("setUpClass raised the skip instead of recording it: %s" % skip)
+        self.assertEqual(RoutingStatements._no_repository, "no repo", "the skip's reason is recorded on the class")
+        with self.assertRaises(unittest.SkipTest) as skipped:
+            self._live_tree()
+        self.assertEqual(str(skipped.exception), "no repo", "and a live-tree test skips with it")
+
     def test_the_lock_is_one_file_for_every_process_of_this_tree(self):
         """A second process over this checkout with its own TMPDIR and no record of this run's system temp dir (the
         two-sweep-slots case a run-keyed lock misses) computes the same lock path, and its exclusive hold is seen here:
@@ -1994,7 +2059,7 @@ class RoutingStatements(unittest.TestCase):
         and gets in after. Event based: the child says when it holds and is told when to release; the one timed step is
         the 0.5 s bound on the negative check that the waiter is still blocked, which a working lock cannot fail and a
         missing one fails at once."""
-        root = Path(HERE).parent
+        root = self._live_tree()
         holder = ("import sys\n"
                   "from tests.test_perf_stats import RoutingStatements as R\n"
                   "with R._tree_lock(exclusive=True) as root:\n"
@@ -2044,7 +2109,7 @@ class RoutingStatements(unittest.TestCase):
         repository, and a lock path built from that landed the lock in the hook's git dir, so two processes over one
         checkout stopped sharing an inode (round 2's fresh-4, round 1's high on a new road). Both directions are run:
         the ambient call moves, the lock path does not."""
-        root = Path(HERE).parent
+        root = self._live_tree()
         d, env = _scratch_repo(self)
         before = RoutingStatements._lock_path(root)
         with mock.patch.dict(os.environ, {"GIT_DIR": str(d / ".git")}):
@@ -2059,7 +2124,7 @@ class RoutingStatements(unittest.TestCase):
         in both modes on a lock file of mode 0o444, where the first version's open(lock, "a+") raised PermissionError
         and errored the class (round 2's fresh-3). The chmod touches the lock file in the git dir, outside the scanned
         tree, and is restored by addCleanup; a kill in the window leaves 0o444, which the open tolerates."""
-        root = Path(HERE).parent
+        root = self._live_tree()
         lock = self._lock_path(root)
         mode = stat.S_IMODE(os.stat(lock).st_mode)
         self.addCleanup(os.chmod, lock, mode)
@@ -2076,6 +2141,7 @@ class RoutingStatements(unittest.TestCase):
         """The composition, not its halves: _places reads the tree INSIDE its shared hold. The lock test above pins the
         key and the primitive, and a _places that took the shared lock, dropped it and then scanned left every test here
         green (round 2's two-direction sweep), with the sibling-scan red the lock exists to prevent open again."""
+        self._live_tree()
         if not os.path.exists("/proc/locks"):
             self.skipTest("/proc/locks is how a process's own flocks are read")
         seen = []
@@ -2093,6 +2159,7 @@ class RoutingStatements(unittest.TestCase):
         block satisfies it (round 2's two-direction sweep); that is the placement the setUpClass comment warns could
         delete a sibling's live plant. The healer is patched with a probe that records, from /proc/locks, the flock
         modes this process holds on the lock file when it is called, so no plant is touched."""
+        self._live_tree()
         if not os.path.exists("/proc/locks"):
             self.skipTest("/proc/locks is how a process's own flocks are read")
         seen = []
@@ -2141,7 +2208,7 @@ class RoutingStatements(unittest.TestCase):
         checkout's index, 3109 paths at 0ec2eb9ff, each skipped at the open, so the pins stayed green over a listing that
         was not the scratch repo's), and a global config whose excludes hide the scratch file, which the ambient
         environment honours and the scrubbed one, with no global config, does not."""
-        root = Path(HERE).parent
+        root = self._live_tree()
         git_dir = os.fsdecode(_git_bytes(root, "rev-parse", "--absolute-git-dir").strip())
         hostile = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, hostile, ignore_errors=True)
