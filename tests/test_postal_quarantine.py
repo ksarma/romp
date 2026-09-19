@@ -441,6 +441,130 @@ class QuarantineDecide(unittest.TestCase):
             f.unlink()
 
 
+class HeldMailStoreUnlistable(unittest.TestCase):
+    """The bus side of the fold investigation's F3 (2026-09-19): quarantine_list and _hold_rows enumerated the held-mail
+    directory with Path.glob, which on Python 3.12 swallows a PermissionError and yields nothing, so their `except
+    OSError` never ran for that fault and a directory that could not be listed read as an empty one, nothing said, while every
+    hold sat undelivered. Now the listing is os.listdir (_json_files): quarantine_list raises QuarantineUnreadable and
+    GET /quarantine answers it as a 503 with the reason (the /inbox shape), the gossip summary answers nothing and says
+    so, the fault is said once per episode in the log and never as a bell row (the kernel's own reader of the directory
+    files that one), and a clean listing re-arms the episode. Synthetic: a placeholder mid, an invented body."""
+
+    HOLD = {"mid": "11111111-2222-3333-4444-555555550301", "to": "web", "toId": "sess-web", "frm": "api",
+            "frmId": "id-api", "body": "invented held text", "kind": "coordinate", "origin": "TESTHOST",
+            "via": "TESTHOST", "at": 1700000000}
+
+    def setUp(self):
+        if hasattr(os, "geteuid") and os.geteuid() == 0:
+            self.skipTest("root lists a mode-000 directory; the fault cannot be staged")
+        self._prior_seam = os.environ.get("ROMP_SESSIONS_FILE")
+        os.environ["ROMP_SESSIONS_FILE"] = _SESS
+        ps.QUARANTINE.mkdir(parents=True, exist_ok=True)
+        for f in ps.QUARANTINE.glob("*"):
+            f.unlink()
+        (ps.QUARANTINE / (self.HOLD["mid"] + ".json")).write_text(json.dumps(self.HOLD))
+        self._saved = (ps._log, ps._kernel_post)
+        self.logged, self.told = [], []
+        ps._log = lambda line: self.logged.append(line)
+        ps._kernel_post = lambda path, body, timeout=2: self.told.append((path, body)) or {"ok": True}
+        getattr(ps, "_UNLISTABLE_SAID", {}).clear()   # getattr: absent before the fix, where the run must reach the assertions
+        self.addCleanup(self._restore)
+
+    def _restore(self):
+        try:
+            os.chmod(ps.QUARANTINE, 0o755)
+        except OSError:
+            pass
+        ps._log, ps._kernel_post = self._saved
+        getattr(ps, "_UNLISTABLE_SAID", {}).clear()
+        restore_env("ROMP_SESSIONS_FILE", self._prior_seam)
+
+    def _said(self):
+        return [l for l in self.logged if "held mail" in l and "cannot be listed" in l]
+
+    def test_a_directory_that_cannot_be_listed_is_a_named_fault_never_nothing_held(self):
+        os.chmod(ps.QUARANTINE, 0)
+        try:
+            answer = ps.quarantine_list()
+        except Exception as e:
+            answer = e
+        self.assertNotEqual(answer, [], "an unlistable directory must never read as nothing held")
+        self.assertIsInstance(answer, ps.QuarantineUnreadable)
+        self.assertIn("cannot be listed", str(answer))
+        self.assertEqual(len(self._said()), 1, self.logged)
+        self.assertIn("errno %d" % errno.EACCES, self._said()[0], "the log names the errno")
+        with self.assertRaises(ps.QuarantineUnreadable):
+            ps.quarantine_list()
+        self.assertEqual(len(self._said()), 1, "said once per episode, not per call")
+        self.assertEqual([p for p, _ in self.told], [], "no bell row from the bus: the kernel's reader of this directory files it")
+        os.chmod(ps.QUARANTINE, 0o755)
+        self.assertEqual([h["mid"] for h in ps.quarantine_list()], [self.HOLD["mid"]], "the hold was there the whole time")
+        self.assertTrue((ps.QUARANTINE / (self.HOLD["mid"] + ".json")).is_file(), "a directory fault moves nothing aside")
+        os.chmod(ps.QUARANTINE, 0)
+        with self.assertRaises(ps.QuarantineUnreadable):
+            ps.quarantine_list()
+        self.assertEqual(len(self._said()), 2, "a clean listing ended the episode; the next fault is a new one")
+
+    def test_the_route_answers_the_fault_as_a_503_with_the_reason(self):
+        import threading
+        import urllib.error
+        import urllib.request
+        from http.server import ThreadingHTTPServer
+        srv = ThreadingHTTPServer(("127.0.0.1", 0), ps.Handler)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.server_close)
+        self.addCleanup(srv.shutdown)
+
+        def get():
+            req = urllib.request.Request("http://127.0.0.1:%d/quarantine" % srv.server_address[1],
+                                         headers={"X-Romp-Token": ps.SERVE_TOKEN})
+            try:
+                with urllib.request.urlopen(req, timeout=10) as r:
+                    return r.status, json.loads(r.read().decode())
+            except urllib.error.HTTPError as e:
+                return e.code, json.loads(e.read().decode() or "{}")
+
+        os.chmod(ps.QUARANTINE, 0)
+        code, body = get()
+        self.assertEqual(code, 503, "a fault the client can show, never a 200 with nothing held: %r" % (body,))
+        self.assertEqual(body["held"], [])
+        self.assertIn("cannot be listed", body["unreadable"])
+        self.assertEqual(body["error"], body["unreadable"])
+        os.chmod(ps.QUARANTINE, 0o755)
+        code, body = get()
+        self.assertEqual((code, [h["mid"] for h in body["held"]]), (200, [self.HOLD["mid"]]))
+
+    def test_the_gossip_summary_says_the_fault_once_and_the_exchange_payload_still_builds(self):
+        os.chmod(ps.QUARANTINE, 0)
+        self.assertEqual(ps._hold_rows(), [])
+        self.assertEqual(len(self._said()), 1, self.logged)
+        self.assertIsInstance(ps.holds_payload("TESTHOST"), list)      # the exchange payload never raises over it
+        with self.assertRaises(ps.QuarantineUnreadable):
+            ps.quarantine_list()
+        self.assertEqual(len(self._said()), 1, "one episode across both readers of the one directory")
+        self.assertEqual([p for p, _ in self.told], [])
+        os.chmod(ps.QUARANTINE, 0o755)
+        self.assertEqual([r["mid"] for r in ps._hold_rows()], [self.HOLD["mid"]])
+
+    def test_an_absent_directory_is_nothing_held_and_no_fault(self):
+        for f in ps.QUARANTINE.glob("*"):
+            f.unlink()
+        ps.QUARANTINE.rmdir()
+        self.assertEqual(ps.quarantine_list(), [])
+        self.assertEqual(ps._hold_rows(), [])
+        self.assertEqual(self._said(), [])
+
+    def test_the_stores_are_listed_never_globbed(self):
+        import inspect
+        for fn in (ps.quarantine_list, ps._hold_rows, ps._list_json_records):
+            src = inspect.getsource(fn)
+            self.assertIn("_json_files(", src, fn.__name__)
+            self.assertNotIn(".glob(", src, fn.__name__)
+        lister = inspect.getsource(ps._json_files)
+        self.assertIn("os.listdir(", lister)
+        self.assertNotIn(".glob(", lister)
+
+
 class PeerUpdateTrust(unittest.TestCase):
     def test_default_and_keep_last_known(self):
         ps.PEERS.clear()

@@ -871,6 +871,39 @@ def _aside_name(f):
         aside = f.with_name("%s.corrupt-%s-%d" % (f.name, stamp, n))
     return aside
 
+_UNLISTABLE_SAID = {}   # store directory -> the fault text its open episode was said with (a clean listing ends it)
+
+def _json_files(d):
+    """The `*.json` files under `d`, sorted by name, or [] for a directory that does not exist. Listed with os.listdir,
+    never Path.glob: on Python 3.12 the glob swallows a PermissionError and yields nothing, so a store that could not
+    be listed read as an empty one, the `except OSError` around every glob here never running for that fault (the bus
+    side of the fold investigation's F3, 2026-09-19). Any listing fault but an absent directory raises to the caller, which
+    answers it its own way; a fault the caller can name is never an empty store."""
+    try:
+        names = os.listdir(d)
+    except FileNotFoundError:
+        return []
+    return [d / n for n in sorted(names) if n.endswith(".json")]
+
+def _say_unlistable_once(d, exc, where, bell):
+    """A store directory a listing could not read, said once per fault EPISODE: keyed on the directory and the fault
+    text, so a poll loop (every exchange, every GET) that meets the same fault again says nothing more, and a listing
+    that succeeds (_listable_again) re-arms it, the way the kernel's _note_hold_dir_fault keys _state_fault_seen. With
+    `bell` the text is a bell row on the dashboard through _refused_notice (which writes the log line too); without it
+    the log alone, for a store whose fault another reader already puts on the board."""
+    text = ("%s: the store cannot be listed (errno %s: %s); nothing there is served until it can be read again, and "
+            "nothing was moved or dropped" % (where, exc.errno, exc.strerror or exc))
+    if _UNLISTABLE_SAID.get(str(d)) == text:
+        return
+    _UNLISTABLE_SAID[str(d)] = text
+    if bell:
+        _refused_notice(text)
+    else:
+        _log(text)
+
+def _listable_again(d):
+    _UNLISTABLE_SAID.pop(str(d), None)
+
 def _mail_unreadable(f, sid, exc):
     """One inbox file in new/ that cannot be read (EACCES, EIO): moved ASIDE, once, to
     `<mailbox>/<name>.corrupt-<utc stamp>`, beside new/, so no listing (read_box, the sweeps,
@@ -2878,7 +2911,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(dict(res, error=res["unreadable"]), 503)
             return self._send(res)
         if u.path == "/quarantine":                # held inbound mail from directed peers (kernel reads the
-            return self._send({"held": quarantine_list()})   # dir directly for cards; this is for introspection/tests
+            try:                                   # dir directly for cards; this is for introspection/tests
+                return self._send({"held": quarantine_list()})
+            except QuarantineUnreadable as e:
+                # a fault the client can show (the /inbox shape), never an empty list where every hold sits undelivered
+                return self._send({"error": str(e), "unreadable": str(e), "held": []}, 503)
         self._send({"error": "not found"}, 404)
 
     def do_POST(self):
@@ -3776,16 +3813,21 @@ def _hold_rows():
     Bounded — past 20 the COUNT is the story and the holder's own dashboard has the rest."""
     out = []
     try:
-        for f in sorted(QUARANTINE.glob("*.json")):
-            try:
-                m = json.loads(f.read_text())
-            except Exception:
-                continue
-            out.append({"mid": m.get("mid"), "frm": m.get("frm") or "?", "to": m.get("to") or "?",
-                        "origin": m.get("origin") or "", "at": m.get("at") or 0,
-                        "gist": " ".join(str(m.get("body") or "").split())[:90]})
-    except OSError:
-        pass
+        files = _json_files(QUARANTINE)
+    except OSError as e:
+        # said in the log once per episode; the bell row is the kernel's, whose own reader of this directory files
+        # one (_note_hold_dir_fault). A summary never ends the exchange it rides in, so no raise and no rows.
+        _say_unlistable_once(QUARANTINE, e, "held mail", bell=False)
+        return out
+    _listable_again(QUARANTINE)
+    for f in files:
+        try:
+            m = json.loads(f.read_text())
+        except Exception:
+            continue
+        out.append({"mid": m.get("mid"), "frm": m.get("frm") or "?", "to": m.get("to") or "?",
+                    "origin": m.get("origin") or "", "at": m.get("at") or 0,
+                    "gist": " ".join(str(m.get("body") or "").split())[:90]})
     return out[:20]
 
 def holds_payload(exclude_host):
@@ -4087,12 +4129,23 @@ def _list_json_records(d, where, close_ledger_for=None):
     record aside is that message's terminal event — without a row the sender's receipt reads
     "pending (not read yet)" forever. A terminal `bounced` row (WHY_OUTBOX_UNREADABLE) is appended
     best-effort after the move; the quarantine itself never depends on the row landing. The move is
-    said on stderr and as one bell row on the dashboard (_refused_notice)."""
+    said on stderr and as one bell row on the dashboard (_refused_notice).
+
+    A DIRECTORY that cannot be listed (EACCES, EIO) is one bell row and one log line per fault episode, naming the
+    store and the errno (_say_unlistable_once), and the listing answers no records; nothing is moved, closed or
+    marked, so the records stand for the listing that can read them, and the caller is never raised out of: the
+    callers are the exchange's request and response (outbox_list, readbox_list), whose acks, bounces, reads and
+    presence had nothing to do with this store, and build_exchange_request runs outside _peer_exchange_once's
+    guards, so a raise would end the host's exchange over one store. Before this the listing was a Path.glob, which
+    on Python 3.12 swallows the PermissionError and yields nothing, so the `except OSError` here did not run for
+    that fault and an unlistable store read as an empty one with nothing said anywhere (2026-09-19)."""
     out = []
     try:
-        files = sorted(d.glob("*.json"))
-    except OSError:
+        files = _json_files(d)
+    except OSError as e:
+        _say_unlistable_once(d, e, where, bell=True)
         return out
+    _listable_again(d)
     for f in files:
         st = None
         try:
@@ -4530,17 +4583,32 @@ def _quarantine_put(origin, m, to_id, via="", wire_id=None):
             _refused_notice(text + "; the sender holds the text and re-relays until the store can be written")
         return False
 
+class QuarantineUnreadable(Exception):
+    """The held-mail directory exists and cannot be listed. quarantine_list raises it and GET /quarantine answers it as a
+    fault the client can show (a 503 with the reason and an `unreadable` field beside an empty `held`), the shape
+    /inbox gives an inbox that cannot be listed (InboxUnreadable), never an empty list where every hold sits
+    undelivered. The bus says it once per episode in its log; the bell row is the kernel's, whose own reader of this
+    directory files one (_note_hold_dir_fault), so one fault is one row on the board (2026-09-19)."""
+
+
 def quarantine_list():
-    """All held messages, newest first — the kernel's card source + the approve/deny UI."""
-    out = []
+    """All held messages, newest first: the approve/deny UI's and the tests' list (the kernel reads the directory itself
+    for its cards). Raises QuarantineUnreadable when the directory exists and cannot be listed, said once per episode
+    in the log; an absent directory is nothing held. The listing is os.listdir through _json_files, never Path.glob,
+    which on Python 3.12 swallowed the PermissionError before the old `except OSError` could see it, so an unlistable
+    directory read as nothing held with nothing said (2026-09-19)."""
     try:
-        for f in QUARANTINE.glob("*.json"):
-            try:
-                out.append(json.loads(f.read_text()))
-            except (OSError, ValueError):
-                continue
-    except OSError:
-        return []
+        files = _json_files(QUARANTINE)
+    except OSError as e:
+        _say_unlistable_once(QUARANTINE, e, "held mail", bell=False)
+        raise QuarantineUnreadable("held mail cannot be listed (%s: %s)" % (type(e).__name__, str(e)[:120])) from None
+    _listable_again(QUARANTINE)
+    out = []
+    for f in files:
+        try:
+            out.append(json.loads(f.read_text()))
+        except (OSError, ValueError):
+            continue
     out.sort(key=lambda r: r.get("at") or 0, reverse=True)
     return out
 

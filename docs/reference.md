@@ -448,7 +448,10 @@ not write, a file it could not read, a write a restart found unfinished) as
 back as a note still reads `undeliverable, returned to you`. A message file the bus cannot read, in a
 recipient's inbox or in the cross-host outbox, is moved aside once (see the
 state files below), its sender's receipt reads refused, and the dashboard's
-error center says so under the `refused` kind.
+error center says so under the `refused` kind. A cross-host store the bus
+cannot list at all (an outbox or readbox directory) is said the same way, once
+per fault spell, and the mail parked there stands until the directory can be
+read again.
 
 ## Configuration
 

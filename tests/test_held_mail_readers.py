@@ -112,7 +112,12 @@ class ClearAllLeavesHolds(unittest.TestCase):
     click hid every held message server-side, and the badge with it, while the files sat undelivered (the manager's
     reproduction, 2026-09-19: eight cards to none, eight files still held). The rule, not a list: a hold is decided,
     never dismissed, so _quarantine_cards reads no ledger, and every Clear door is covered without being named. Driven
-    through the real handler (Handler._dispatch_ws), as the sibling trust tests drive the decision."""
+    through the real handler (Handler._dispatch_ws), as the sibling trust tests drive the decision.
+
+    Fails before: over a git archive of bc88256e8 (kernel/, bin/, postal/, cli/ and tests/ with the conftest) with this
+    module copied in, all three cases fail on the defect itself, each at the assertion that the hold's card stands after
+    the click (the first with 'Lists differ: [] != [quarantine:qc-hold-1]', the other two with '0 != 1'); _qcards meets
+    the reader's older (now, cleared) signature there, so none fails on the signature. Green here."""
 
     def setUp(self):
         self.r = _Root()
@@ -146,8 +151,8 @@ class ClearAllLeavesHolds(unittest.TestCase):
         self.assertEqual(held[0]["blocked"]["state"], "quarantine")
         self.assertEqual(km._needs_you_count(after), 1, "the badge still counts the decision")
         self.assertTrue(self.hold.exists(), "the held file is untouched: nothing was delivered or dropped")
-        self.assertIn("quarantine:qc-hold-1", km._cleared_ids(),
-                      "the door still wrote the id (it is not filtered there); the reader makes the row inert")
+        self.assertNotIn("quarantine:qc-hold-1", km._cleared_ids(),
+                         "the ledger takes no hold id: _clear_all declines it at the write, and the reader would make the row inert anyway")
         self.assertEqual([m for m in self.sent if m.get("type") == "err"], [], "no refusal: the clear landed")
 
     def test_a_later_undo_of_that_clear_does_not_double_the_hold(self):

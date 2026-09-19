@@ -2,6 +2,7 @@
 """Peer-bus mode stage 1 (plans/postal-peer-buses.md): every machine runs its OWN bus — the
 client-only special case is retired under the flag — and the kernel feeds the bus a peer table
 over POST /peer on tunnel transitions. Synthetic only."""
+import errno
 import json
 import os
 import tempfile
@@ -1380,6 +1381,80 @@ class StoreFaultsAreLoud(_LoudBus):
         self.assertEqual((len([m for m in self.logged if "px-locked.json" in m]), len(self._notices())), (1, 1),
                          "the second pass moves nothing and says nothing")
         self.assertIn("refused", pm.format_receipts([pm._sent_receipts(_SND)[-1]]))
+
+
+class StoreDirectoriesThatCannotBeListedAreLoud(_LoudBus):
+    """The bus side of the fold investigation's F3 (2026-09-19): _list_json_records enumerated a store with Path.glob,
+    which on Python 3.12 swallows a PermissionError and yields nothing, so its `except OSError` never ran for that fault
+    and an outbox or readbox that could not be listed read as an empty one, nothing said, while the parked mail sat. Now the
+    listing is os.listdir (_json_files): a directory fault is one bell row and one log line per episode, naming the
+    store and the errno; the listing answers no records and never raises (the exchange's acks, bounces, reads and
+    presence had nothing to do with the store); nothing is moved aside or closed in the ledger; a clean listing
+    re-arms the episode."""
+
+    def setUp(self):
+        super().setUp()
+        if hasattr(os, "geteuid") and os.geteuid() == 0:
+            self.skipTest("root lists a mode-000 directory; the fault cannot be staged")
+        getattr(pm, "_UNLISTABLE_SAID", {}).clear()   # getattr: absent before the fix, where the run must reach the assertions
+        self._locked = []
+
+    def tearDown(self):
+        for d in self._locked:
+            try:
+                os.chmod(d, 0o755)
+            except OSError:
+                pass
+        getattr(pm, "_UNLISTABLE_SAID", {}).clear()
+        super().tearDown()
+
+    def _lock(self, d):
+        self._locked.append(d)
+        os.chmod(d, 0)
+
+    def _said(self):
+        return [m for m in self.logged if "cannot be listed" in m]
+
+    def test_an_outbox_that_cannot_be_listed_is_said_once_per_episode_and_its_mail_stands(self):
+        pm.outbox_put("srv", {"mid": "px-parked", "to": "beta", "frm": "alpha", "frm_id": _SND, "body": "hi"})
+        d = pm.OUTBOX / "srv"
+        self._lock(d)
+        self.assertEqual(pm.outbox_list("srv"), [], "no record can be served, and none is invented")
+        self.assertEqual(len(self._notices()), 1, "one bell row: %r" % (self.told,))
+        self.assertIn("outbox srv", self._notices()[0])
+        self.assertIn("cannot be listed", self._notices()[0])
+        self.assertIn("errno %d" % errno.EACCES, self._notices()[0])
+        self.assertEqual(len(self._said()), 1, self.logged)
+        self.assertEqual(pm.outbox_list("srv"), [])
+        self.assertEqual((len(self._notices()), len(self._said())), (1, 1), "the second pass says nothing more")
+        os.chmod(d, 0o755)
+        self.assertEqual([r["mid"] for r in pm.outbox_list("srv")], ["px-parked"], "the record stood the whole time")
+        self.assertEqual([p.name for p in d.iterdir()], ["px-parked.json"], "nothing was moved aside")
+        self.assertEqual([r for r in self._rows() if r.get("ev") == "bounced"], [], "no ledger row was closed")
+        self._lock(d)
+        self.assertEqual(pm.outbox_list("srv"), [])
+        self.assertEqual(len(self._notices()), 2, "a clean listing ended the episode; the next fault is a new one")
+
+    def test_a_readbox_that_cannot_be_listed_is_said_the_same_way(self):
+        pm.readbox_put("srv", {"mid": "rx-1", "unread": False})
+        d = pm.READBOX / "srv"
+        self._lock(d)
+        self.assertEqual(pm.readbox_list("srv"), [])
+        self.assertEqual(len(self._notices()), 1, self.told)
+        self.assertIn("readbox srv", self._notices()[0])
+        self.assertIn("cannot be listed", self._notices()[0])
+        os.chmod(d, 0o755)
+        self.assertEqual([r["mid"] for r in pm.readbox_list("srv")], ["rx-1"])
+        self.assertEqual([p.name for p in d.iterdir()], ["rx-1.json"])
+
+    def test_the_exchange_request_still_builds_over_stores_that_cannot_be_listed(self):
+        pm.outbox_put("srv", {"mid": "px-parked", "to": "beta", "frm": "alpha", "frm_id": _SND, "body": "hi"})
+        pm.readbox_put("srv", {"mid": "rx-1", "unread": False})
+        self._lock(pm.OUTBOX / "srv")
+        self._lock(pm.READBOX / "srv")
+        req = pm.build_exchange_request("srv", wait=False)      # never raised out of over a store it cannot read
+        self.assertEqual((req["relays"], req["reads"]), ([], []))
+        self.assertEqual(sorted(n.split(":")[0] for n in self._notices()), ["outbox srv", "readbox srv"], "each store once")
 
 
 class BusStartSweepsUnfinishedWrites(_LoudBus):

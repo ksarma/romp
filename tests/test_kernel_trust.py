@@ -7,6 +7,7 @@ message from a directed peer as a needs-you feed card.
 Synthetic only — hermetic temp STATE, placeholder hostnames/mids, invented notes-domain sessions.
 """
 import http.client
+import inspect
 import json
 import os
 import tempfile
@@ -32,6 +33,18 @@ def _row(host, **extra):
          "proc": None, "status": "up", "detail": "", "sids": [], "trust": "directed"}
     r.update(extra)
     return r
+
+
+def _qcards(now):
+    """The reader at HEAD takes (now). A fails-before run of this module over the commit before the held-mail readers
+    change (bc88256e8) meets the older (now, cleared) signature and is handed what build_feed handed it there, the
+    cleared ledger's ids, so that run fails on the reader's defect (a hold whose id the ledger holds is skipped) and
+    not on the dropped argument. The empty set would not do for that: the old reader hid only what its argument held,
+    so the flipped pin below would pass over the old tree with set(); tests/test_held_mail_readers.py's shim of the
+    same name passes set() because its F1 assertion goes through build_feed, which passed the real ids itself."""
+    if len(inspect.signature(km._quarantine_cards).parameters) == 1:
+        return km._quarantine_cards(now)
+    return km._quarantine_cards(now, km._cleared_ids())
 
 
 class SetTrust(unittest.TestCase):
@@ -171,7 +184,7 @@ class QuarantineCards(unittest.TestCase):
 
     def test_builds_a_needs_you_card(self):
         self._write_held("qc-1")
-        cards = km._quarantine_cards(2000)
+        cards = _qcards(2000)
         self.assertEqual(len(cards), 1)
         c = cards[0]
         self.assertEqual(c["itemId"], "quarantine:qc-1")
@@ -186,7 +199,7 @@ class QuarantineCards(unittest.TestCase):
         """The card reads "New message" under the RECIPIENT session's name, with the bus-style 90-char
         gist for the one-line body (the user 2026-07-26 — the full body lives in the decision modal)."""
         self._write_held("qc-4", body="  ship   the\nparser fix  " + "x" * 200)
-        c = km._quarantine_cards(2000)[0]
+        c = _qcards(2000)[0]
         self.assertEqual(c["text"], "New message")
         gist = c["blocked"]["gist"]
         self.assertTrue(gist.startswith("ship the parser fix"), gist)
@@ -197,7 +210,7 @@ class QuarantineCards(unittest.TestCase):
         the recipient's host, which for a locally-held message is THIS machine — a local sid has no host
         prefix, so the payload has to name it or the receiving end cannot be named at all."""
         self._write_held("qc-5")
-        c = km._quarantine_cards(2000)[0]
+        c = _qcards(2000)[0]
         b = c["blocked"]
         for k in ("origin", "frm", "to", "body", "gist"):
             self.assertIn(k, b, "the card names %s" % k)
@@ -206,7 +219,6 @@ class QuarantineCards(unittest.TestCase):
         self.assertEqual(c["name"], b["to"], "the card sits under the recipient session")
 
     def test_the_feed_payload_names_this_machine(self):
-        import inspect
         self.assertIn('"selfHost": _self_host(),', inspect.getsource(km.build_feed))
 
     def test_a_hold_is_decided_never_dismissed_so_no_ledger_hides_it(self):
@@ -216,18 +228,25 @@ class QuarantineCards(unittest.TestCase):
         only when the bus removes the file on Approve or Deny. The handler-driven case (Clear-all over a hold and an
         ordinary card, then Undo, then the decision) is tests/test_held_mail_readers.py's."""
         self._write_held("qc-2")
-        with (km.jd.STATE / "cleared.jsonl").open("a") as f:
+        ledger = km.jd.STATE / "cleared.jsonl"
+
+        def _forget_the_row():
+            # a cleanup, not a tail: the module's tests share one STATE root, so a pin that fails above must still
+            # take its row and the memo with it, or the ledger holds quarantine:qc-2 for every test after it
+            ledger.unlink(missing_ok=True)
+            km._CLEARED_MEMO["slot"] = None
+
+        self.addCleanup(_forget_the_row)
+        with ledger.open("a") as f:
             f.write(json.dumps({"id": "quarantine:qc-2", "t": 1500.0, "op": "clear"}) + "\n")
         km._CLEARED_MEMO["slot"] = None
         self.assertIn("quarantine:qc-2", km._cleared_ids(), "the ledger holds the id (some door wrote it)")
-        cards = km._quarantine_cards(2000)
+        cards = _qcards(2000)
         self.assertEqual([c["itemId"] for c in cards], ["quarantine:qc-2"], "and the card stands regardless")
-        (km.jd.STATE / "cleared.jsonl").unlink()
-        km._CLEARED_MEMO["slot"] = None
 
     def test_no_dir_is_empty(self):
         # nothing held → no cards, no crash
-        self.assertEqual(km._quarantine_cards(2000), [])
+        self.assertEqual(_qcards(2000), [])
 
 
 class QuarantineRefusal(unittest.TestCase):

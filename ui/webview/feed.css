@@ -1144,8 +1144,10 @@ body { display: flex; flex-direction: column; position: relative; }   /* column 
 .fdismiss.fq:disabled { opacity: 0.55; cursor: default; }
 .fdismiss.fq-ok { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 60%, transparent); }
 /* ^ the edge is the accent at 0.6 through the sheet's tint idiom (.fb-row.active, .fileview-editor:focus), so the
-   light theme's clay reaches it: written as the dark literal rgba(156, 210, 255, 0.6), the button computed
-   orange text inside a blue edge there (2026-09-19; button-vocab.test.ts resolves the rule under both blocks). */
+   light theme's clay reaches it. Written as the dark literal rgba(156, 210, 255, 0.6), the edge matched the text
+   only in the dark theme (both rgb(156, 210, 255)); in the light theme the button computed the clay text
+   rgb(194, 65, 12) inside that blue edge (headless Chromium, 2026-09-19; button-vocab.test.ts resolves the rule
+   under both blocks). */
 .fdismiss.fq-ok:hover:not(:disabled) { color: var(--accent-fg); background: var(--accent); border-color: var(--accent); }
 .fdismiss.fq-no { color: #e5484d; border-color: rgba(229, 72, 77, 0.6); }
 .fdismiss.fq-no:hover:not(:disabled) { color: #fff; background: #e5484d; border-color: #e5484d; }
