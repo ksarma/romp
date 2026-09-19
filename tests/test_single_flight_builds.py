@@ -344,6 +344,7 @@ class ChatTabSingleFlight(unittest.TestCase):
                 self.builds.append(sid)
             time.sleep(0.2); raise RuntimeError("read failed")
         km.build_session = boom
+        cs0 = km._chat_sig_stats_report()
         with mock.patch.object(km, "CHAT_INFLIGHT_WAIT_S", 5.0), mock.patch.object(km.sys, "stderr", mock.Mock()):
             t0 = time.monotonic()
             go = threading.Event()
@@ -356,6 +357,13 @@ class ChatTabSingleFlight(unittest.TestCase):
             dt = time.monotonic() - t0
         self.assertLess(dt, 4.0, "the waiter was released by the failing builder, not by the bound: %.1f s" % dt)
         self.assertEqual(km._CHAT_INFLIGHT, {}, "no claim left behind")
+        # memos.chatSig.waited counts a tab SERVED after a wait (2026-09-19 review, the two-direction lens): a waiter released by
+        # a failing builder found nothing usable, claimed and built (and raised) itself, so waited stays 0 while every build
+        # that raised counts under failedBuilds; a waited bumped on every wait reads 2 here
+        d = {k: v - cs0[k] for k, v in km._chat_sig_stats_report().items()}
+        self.assertEqual(d["waited"], 0, "released, not served: %r" % (d,))
+        self.assertEqual(d["failedBuilds"], len(self.builds), "every build raised: %r" % (d,))
+        self.assertEqual((d["pre"], d["compares"]), (len(self.builds), 0), "a signature per visit; no read met an entry on the cold cache")
 
 
 if __name__ == "__main__":

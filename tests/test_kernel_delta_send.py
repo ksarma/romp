@@ -716,6 +716,55 @@ class ByteIdenticalFrames(unittest.TestCase):
         self.assertEqual((d["pre"], d["post"], d["nosig"], d["failedBuilds"], d["targetedBuilds"]), (6, 0, 6, 6, 0))
         self.assertEqual(d["post"] - (built - d["targetedBuilds"] - d["nosig"]), 6, "the stated excess: the failed builds whose signature was None")
 
+    def test_the_identities_hold_when_the_targeted_pushs_build_raises(self):
+        """Window (5) (2026-09-19 review, extra5-1): a targeted push whose build_session raises. _push_session_now records
+        build_chat and bumps targetedBuilds only after build_session returned, both inside its try, so a raising targeted
+        build counts under neither builds.chat built nor targetedBuilds, and not under failedBuilds either, which is the
+        push loop's fault branch alone; the identities hold on the loop's own numbers: cached 3, built 3, pre 6, post 3,
+        targetedBuilds 0, failedBuilds 0. Bumping failedBuilds on the targeted push's failure road too reads pre 6 != 7;
+        bumping targetedBuilds before build_session reads 6 != 5. Neither mutation reds windows (1) to (4)."""
+        c = self._connected()
+        raising = []
+
+        def build(frame):
+            if raising:
+                raise RuntimeError("synthetic targeted build failure")
+            return dict(frame)
+
+        def between(i):
+            if i == 5:
+                raising.append(True)
+                try:
+                    km._push_session_now(self.SID)
+                finally:
+                    del raising[:]
+        with mock.patch.object(km, "_clients", [c]):
+            d, b0, b1, calls = self._window(build=build, between=between, tolerate=("push-session-now",))
+        self.assertEqual(calls, [False, True, False, True, False, True], "the loop's cycles are unchanged")
+        cached, built = self._identities(d, b0, b1)
+        self.assertEqual((cached, built), (3, 3), "the raising targeted build is under neither")
+        self.assertEqual((d["pre"], d["post"], d["targetedBuilds"], d["failedBuilds"], d["nosig"]), (6, 3, 0, 0, 0))
+        self.assertEqual([f for f in c["_frames"] if f["type"] == "session"], [], "no frame from the raising targeted build")
+
+    def test_post_counts_a_rebuild_whose_post_build_signature_raised(self):
+        """The wider-direction pin for post (2026-09-19 review, the two-direction lens): post counts every rebuild that had
+        a pre-build signature, one whose post-build signature RAISED included (the loop bumps post after the try that takes
+        it), and such a build is never cached, so the tab rebuilds every cycle. With _chat_build_sig raising on its
+        deps=False call alone (the post-build one) and every build succeeding: six rebuilds, pre 6, post 6, built 6,
+        cached 0, no nosig and no failedBuilds, and the identities hold. Counting post only when the post-build signature
+        was taken reads 0 here, and the post identity 0 != 6."""
+        real = km._chat_build_sig
+
+        def sig(*a, **kw):
+            if kw.get("deps") is False:
+                raise RuntimeError("synthetic post-build signature failure")
+            return real(*a, **kw)
+        with mock.patch.object(km, "_chat_build_sig", sig):
+            d, b0, b1, _calls = self._window()
+        cached, built = self._identities(d, b0, b1)
+        self.assertEqual((cached, built), (0, 6), "never cached: the tab is rebuilt every cycle")
+        self.assertEqual((d["pre"], d["post"], d["nosig"], d["failedBuilds"], d["targetedBuilds"]), (6, 6, 0, 0, 0))
+
     def test_stats_counts_every_stat_a_signature_makes_by_execution(self):
         """The exactness test (2026-09-19 review, regression-1: the first cut's per-site count saw 7 of about 23 stats per
         signature and named a closed exclusion list that omitted six paths). memos.chatSig.stats must equal, over a real

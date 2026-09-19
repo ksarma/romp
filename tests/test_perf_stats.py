@@ -2442,6 +2442,7 @@ class GoalIoCounters(unittest.TestCase):
                 ("regression-5: the share's denominator, compares * len(_CHAT_SIG_LABELS)", r"`?compares`? \* len\("),
                 ("regression-5: counted at every position", r"whether or not the tuple compare reached it"),
                 ("extra5-1: which nosig the identity means", r"background builds only"),
+                ("extra5-1: the pre identity's two terms", r"less `?targetedBuilds`? plus `?failedBuilds`?"),
                 ("extra5-1: the bound when builds raised", r"at most `?failedBuilds`?"),
                 ("regression-4: the census drops the gate's live-row clause", r"without the gate's live-row clause"),
                 ("extra5-3: push.chat.sig's CPU row is exactly its two sub-seams", r"(exactly|the sum of) `?push\.chat\.sig\.static`? (plus|and) `?push\.chat\.sig\.deps`?"),

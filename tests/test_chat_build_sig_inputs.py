@@ -1534,6 +1534,7 @@ class Pusher(unittest.TestCase):
                 km._chat_build_sig({"sid": SID_B, "name": "api", "path": str(self.tx[SID_B]), "anchor": SID_B}, None,
                                    int(time.time()), live_map={})
             d2 = {k: v - b0[k] for k, v in km._chat_sig_stats_report().items()}
+            self.assertFalse(km._CHAT_SIG_TL.active, "the scope closed on the raise: a stat after it on this thread counts on no signature")
             self.assertGreaterEqual(d2["stats"], 2, "the transcript and the states file were stat'ed before the watch component raised")
             self.assertEqual((d2["pre"], d2["post"], d2["nosig"]), (0, 0, 0), "a signature outside the push loop is not a loop count")
             self.assertEqual(self.built.count(SID_A), 1, "the other tab is served")

@@ -3817,8 +3817,9 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   raising one included) and the post-build ones; `failedBuilds` counts the
   chat builds that raised past a pre-build signature, which count under
   neither `builds.chat` `cached` nor `built`; `targetedBuilds` counts the
-  targeted push's builds (the backend's one-session push at a connect
-  handshake), which take no signature and which `builds.chat` labels
+  targeted push's builds (`_push_session_now`, which a create, a fork, a
+  comment promotion and the backend's connect handshake run), which take
+  no signature and which `builds.chat` labels
   `targeted` under `bg_miss` only when the tab is unwatched. Two identities
   follow. Over any window `pre` equals `builds.chat` `cached` plus `built`
   less `targetedBuilds` plus `failedBuilds`. Over a window with
@@ -3870,9 +3871,12 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   backend's reader. The warm-tab census: `warmEligible`, a tab with a cached
   build that no connected chat client watches, every connected chat client
   holds as a skeleton, with a transcript and no plain Sessions pane
-  connected (the cold gate's predicate less two of its clauses, the
-  not-yet-built one and the live-row one, so an upper bound on what a
-  warm-tab gate shaped like the cold gate would skip); `warmBlockedByOutline`,
+  connected (the cold gate's predicate with its not-yet-built clause
+  negated, a cached build, and without the gate's live-row clause: the gate
+  skips only a tab whose liveness row exists, while the census counts a tab
+  with none too; so an upper bound on what a cold-gate-shaped warm gate
+  would skip, the excess being tabs with no live row, a dead session
+  reopened read-only); `warmBlockedByOutline`,
   the same tab with a plain Sessions pane connected; and `heldBody`, a tab
   some connected chat client holds as a body, the watched tab included.
   `pushes` counts the pushes that ran the chat tab loop, a connecting page's
