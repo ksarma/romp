@@ -237,6 +237,25 @@ const RECORDED: Divergence[] = [
   // (before decision 52 both sides read `ma6 y6`: the annotation-xml was the parser's integration point and the b HTML inside it)
   { name: "an HTML element closed inside an annotation-xml with the html encoding, the annotation-xml itself not closed: the b breaks out", src: "ma6 <math><annotation-xml encoding=\"text/html\"><b>x</b></math> y6\n", dom: "ma6 x y6", reader: "ma6 y6",
     why: "the parser breaks out of foreign content at the `<b>` and shows its text; the reader drops the math whole and reads on, the recorded class" },
+  // the class that entry belongs to, since decision 52 (the review of PR 804, round 1): an integration point of an INLINE `<math>` left
+  // open (`<mtext>`, `<mi>`, `<mo>`, `<mn>` or `<ms>`, or an `<annotation-xml>` with the html or the xhtml encoding) is literal text now,
+  // so a CLOSED HTML element after it whose start tag is on the parser's foreign-content breakout list stands in the math's foreign
+  // content with no integration point around it: the parser breaks out of the math at it and shows its text, and the reader drops the
+  // math whole (executed in Chromium for `<b>`, `<i>`, `<em>`, `<strong>`, `<span>`, `<code>`, `<sub>`, `<sup>`, `<small>`, `<big>`,
+  // `<tt>`, `<u>`, `<s>`, `<strike>`, `<nobr>`, `<var>`, `<ruby>`, `<div>`, `<p>`, `<h2>`, `<pre>`, `<blockquote>`, `<center>`,
+  // `<menu>`, `<listing>`, a `<ul>`, an `<ol>`, a `<dl>` and a `<table>`, each with its end tag: the DOM `ma7 x y7`, the reader
+  // `ma7 y7`, no paint mark). Not in the class: a closed element whose start tag is not on that list (`<kbd>`, `<a>`, `<abbr>`,
+  // `<mark>`, `<q>`, `<cite>`, `<dfn>`, `<samp>`, `<ins>`, `<del>`, `<label>`, `<time>`, `<button>`, `<section>` and their kind)
+  // goes with the dropped math on both sides (the sanitized paragraph `ma7  y7`, two marks); the same shape inside an inline `<svg>`
+  // (`sv1 <svg><title><b>x</b></svg> y1` reads `sv1 <title>x y1` on both sides), since the divergence needs the sanitizer's
+  // whole-math drop; and a `<math>` inside an html block, whose tags the rule does not read (the `<mtext>` stays the parser's
+  // integration point and the `<b>` HTML inside it, `ma7 y7` on both sides). Before decision 52 every member agreed: the integration
+  // point was the parser's element and the closed element HTML inside it, `ma5 y5` and `ma7 y7` on both sides with two paint marks
+  // over the PR's base tree (c25a2b319). Two representatives; anchor-map-html-rules.test.ts pins the reader's side of the first.
+  { name: "an mtext and a first p left open inside an inline math, then `<p>b</p>` closed: the closed p breaks out of the math", src: "ma5 <math><mtext><p>a<p>b</p></math> y5\n", dom: "ma5 b y5", reader: "ma5 y5",
+    why: "the mtext and the first p, with no end tags of their own, are literal text inside the math; the closed `<p>b</p>` stands in the math's foreign content with no integration point around it, so the parser breaks out at it and shows `b`, where the reader drops the math whole (before decision 52: `ma5 y5` on both sides)" },
+  { name: "an mtext left open inside an inline math, then a closed b: the b breaks out of the math", src: "ma7 <math><mtext><b>x</b></math> y7\n", dom: "ma7 x y7", reader: "ma7 y7",
+    why: "the same class: the closed `<b>` stands in the math's foreign content with no integration point around it, and the parser breaks out at it and shows `x`, where the reader drops the math whole (before decision 52: `ma7 y7` on both sides)" },
 ];
 
 /** marked with the viewer's configuration, the real md-sanitize.ts and the real anchor-map.ts, bundled for a page: __probe
@@ -244,14 +263,12 @@ const RECORDED: Divergence[] = [
 function bundleProbe(): string {
   const esbuild = requireCjs("esbuild");
   const contents = [
-    'import { marked } from "marked";',
     'import { applyMdConfig } from "./md-config";',
     'import { sanitizeMd } from "./md-sanitize";',
-    'import { literalizeUnclosedTags } from "./md-literal-tags";',
+    'import { viewerHtml } from "./file-view";',
     'import { stripMarkupMapped, renderedQuote, paintRendered } from "./anchor-map";',
     "applyMdConfig();",
-    // mdBlock's parse (file-view.ts): marked's lexer, the literal-tags rule (md-literal-tags.ts, decision 52), marked's parser, then the sanitizer
-    "const viewerHtml = (src: string): string => { const opts = { ...marked.defaults }; const tokens = marked.lexer(src, opts); literalizeUnclosedTags(tokens); return marked.parser(tokens, opts); };",
+    // mdBlock's parse (file-view.ts viewerHtml: marked's lexer, the literal-tags rule of md-literal-tags.ts, marked's parser), then the sanitizer
     "(window as any).__probe = (src: string, quotes: Array<{ from: string; to?: string }>) => {",
     "  const render = () => { const box = document.createElement('div'); box.className = 'fileview-md';",
     "    box.replaceChildren(...Array.from(sanitizeMd(viewerHtml(src)).childNodes)); document.body.append(box); return box; };",

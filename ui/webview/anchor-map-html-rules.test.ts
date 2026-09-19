@@ -11,7 +11,7 @@
 // tree the round reviewed, unless its comment says it is a control. Non-ASCII characters are written as escapes throughout.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { marked } from "marked";
+import { viewerHtml } from "./file-view";   // the viewer's parse (mdBlock's recipe: marked's lexer, the literal-tags rule of md-literal-tags.ts, the per-call walk, its parser), the stand-in's too
 import { applyMdConfig } from "./md-config";
 import { viewerWalkTokens } from "./file-view-links";
 import { stripMarkupMapped, renderedQuote } from "./anchor-map";
@@ -118,7 +118,7 @@ test("the tokens inside an inline `<textarea>` render as the viewer rendered THI
   assert.ok(needle.endsWith("<a href=\"./notes.md:7\">x</a>"), "a same-directory link target in the form the viewer gives it: " + needle);
   // the oracle: the viewer's own render of the document (file-view.ts's parse with the file kind's walk), the textarea's content
   // with its references decoded as the parser decodes RCDATA
-  const html = marked.parse(SRC, { walkTokens: (t) => { viewerWalkTokens(t as { type: string; href?: string | null }); } }) as string;
+  const html = viewerHtml(SRC, (t) => { viewerWalkTokens(t as { type: string; href?: string | null }); });
   const m = /<textarea>([\s\S]*?)<\/textarea>/.exec(html);
   assert.ok(m, "the render holds the textarea");
   assert.equal(needle, norm(m![1].replace(/&amp;/g, "&")), "the needle is the viewer's rendering of the tokens inside");
@@ -274,7 +274,16 @@ test("every HTML integration point of a foreign root is read as the `<foreignObj
     assert.equal(quote(src, "y2"), "y2", what + ": the tail shows");
   }
   assert.equal(shown("Intro.\n\n<div>ma4 <math><annotation-xml encoding=\"text/html\"><b>x</math> y4</div>\n\npara\n"), "Intro. ma4 para", "an html block: the block's rest is the annotation's (the parser swallows the later blocks too, which the reader does not mirror; recorded, as test 8's html block)");
-  assert.equal(shown("ma5 <math><mtext><p>a<p>b</p></math> y5\n"), "ma5 y5", "the implied ends are read inside a MathML text element too");
+  // the reader's side alone of a divergence RECORDED in anchor-map-html-text-browser.test.ts: the `<mtext>` and the first `<p>`, with no
+  // end tags of their own, are literal text inside the math and the closed `<p>b</p>` goes with the dropped math, `ma5 y5`; the DOM shows
+  // `ma5 b y5`, since the closed `<p>` stands in the math's foreign content with no integration point around it and the parser breaks out
+  // of the math at it. The class, recorded there with two representatives: an integration point of an inline `<math>` left open
+  // (`<mtext>`, `<mi>`, `<mo>`, `<mn>` or `<ms>`, or an `<annotation-xml>` with the html or the xhtml encoding), then a closed HTML
+  // element whose start tag is on the parser's foreign-content breakout list (`<b>`, `<i>`, `<em>`, `<strong>`, `<span>`, `<code>`,
+  // `<sub>`, `<sup>`, `<div>`, `<p>`, a heading, a list, a table and the rest of that list); a closed `<kbd>`, `<a>`, `<abbr>`, `<mark>`
+  // or `<q>` is no breakout tag and both sides agree. Before decision 52 the mtext was the parser's element and the ps HTML inside it,
+  // `ma5 y5` on both sides (the line's former message, about the implied ends inside a MathML text element, described that world)
+  assert.equal(shown("ma5 <math><mtext><p>a<p>b</p></math> y5\n"), "ma5 y5", "the reader's text alone: the mtext and the first p literal text inside the dropped math, the closed `<p>b</p>` dropped with it (the DOM shows `ma5 b y5`, the closed p breaking out of the math: recorded in anchor-map-html-text-browser.test.ts, RECORDED)");
   // an svg's title and desc: a closed HTML element's text goes with it, the title's own stays; a start tag left open is text
   assert.equal(shown("Intro <svg><title><b>x</svg> y\n"), "Intro <title><b>x y", "a title and a b with no end tags: both literal text, svg text in the DOM, and the svg closes");
   assert.equal(shown("Intro <svg><desc><b>x</svg> y\n"), "Intro <desc><b>x y", "the same with a desc");

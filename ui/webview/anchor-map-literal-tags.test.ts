@@ -22,7 +22,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { marked } from "marked";
 import { applyMdConfig } from "./md-config";
-import { literalizeUnclosedTags } from "./md-literal-tags";
+import { viewerHtml as viewerRecipe } from "./file-view";   // the viewer's parse (mdBlock's recipe), behind the switch below
 import { mapRenderedSelection, mapRawSelection, paintRendered, paintChangesRendered, unpaintChanges, renderedBlockIndex, sourceBlockSpans, type SelLike, type MapResult } from "./anchor-map";
 import { hideEdges } from "../test-dom-shim";
 
@@ -30,21 +30,22 @@ applyMdConfig();
 const UI = path.resolve(process.cwd(), "..", "ui", "webview");
 const VIEW = fs.readFileSync(path.join(UI, "file-view.ts"), "utf8");
 const MD_BLOCK = VIEW.split("function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {")[1].split("\n}\n")[0];
-/** The call as mdBlock's own statement: a whole line at the function's indent, nothing before it on the line and at most a
+/** The body of mdBlock's parse: the exported recipe (file-view.ts viewerHtml, since decision 52's review), which mdBlock hands its walk. */
+const VIEWER_HTML = VIEW.split("export function viewerHtml(text: string, walk?: (token: Token) => void): string {")[1].split("\n}\n")[0];
+/** The call as the recipe's own statement: a whole line at the function's indent, nothing before it on the line and at most a
  *  trailing `//` comment after it. A `// literalizeUnclosedTags(tokens);` has the comment marker before it and does not match;
  *  a substring test would (the header). */
 const RULE_CALL_LINE = /^ {2}literalizeUnclosedTags\(tokens\);(?: +\/\/[^\n]*)?$/m;
-/** Whether the mdBlock body `src` runs the rule on its tokens: the recipe the rendering below follows. */
+/** Whether the recipe body `src` runs the rule on its tokens: mdBlock's parse is that body. */
 const mdBlockRunsRule = (src: string): boolean => RULE_CALL_LINE.test(src);
-const VIEWER_RUNS_RULE = mdBlockRunsRule(MD_BLOCK);
-/** marked's HTML for `text` as mdBlock renders it at this revision: its lexer, the rule and its parser when mdBlock runs the rule,
- *  marked.parse alone when it does not (the base tree), so this file's assertions read the defect there and the fix here. */
+/** mdBlock's dirty HTML as the recipe's call, a statement at the function's own indent. */
+const MDBLOCK_CALL_LINE = /^ {2}const dirty = viewerHtml\(text, /m;
+const VIEWER_RUNS_RULE = MDBLOCK_CALL_LINE.test(MD_BLOCK) && mdBlockRunsRule(VIEWER_HTML);
+/** marked's HTML for `text` as mdBlock renders it at this revision: the exported recipe when mdBlock parses through it and it runs
+ *  the rule, marked.parse alone when not (the base tree), so this file's assertions read the defect there and the fix here. */
 function viewerHtml(text: string): string {
   if (!VIEWER_RUNS_RULE) return marked.parse(text) as string;
-  const opts = { ...marked.defaults };
-  const tokens = marked.lexer(text, opts);
-  literalizeUnclosedTags(tokens);
-  return marked.parser(tokens, opts);
+  return viewerRecipe(text);
 }
 
 // ── a DOM stand-in: the structural surface anchor-map.ts walks, plus an HTML fragment parser (the cells test's, with the quirks) ──
@@ -292,12 +293,46 @@ test("closed tags keep their HTML: `<b>x</b>` renders bold, `<span class=\"a\">y
   mapsEach(box, src, ["Press", "bold", "spanned", "here.", "Ctrl", "Closing words."], "closed tags");
 });
 
-test("void and self-closing tags are unchanged in the output and in the map: `<br>`, `<img src=...>`, `<x/>`, `<wbr>`, `<input>`, `<hr>` inline: the viewer's HTML is marked.parse's for the same input, and the prose around them maps", () => {
+test("void and self-closing tags are unchanged in the output and in the map: `<br>`, `<img src=...>`, `<x/>`, `<wbr>`, `<input>`, `<hr>` inline: the viewer's HTML is marked.parse's for the same input, and the prose around them maps (`<x/>` is an unknown name, harmless either way; the self-closing spelling of a known name is recorded below)", () => {
   const src = "First line<br>second line.\n\nA picture <img src=\"figs/plot.png\" alt=\"p\"> beside it.\n\nA custom <x/> tag and a <wbr> break and <input type=\"checkbox\"> a box.\n\nClosing words.\n";
   assert.equal(viewerHtml(src), marked.parse(src), "the viewer's HTML is marked.parse's");
   const box = buildRendered(src);
   assert.deepEqual(kids(box), ["P", "P", "P", "P"]);
   mapsEach(box, src, ["First line", "second line.", "A picture", "beside it.", "A custom", "tag and a", "a box.", "Closing words."], "void and self-closing");
+});
+
+// ── decision 52's deliberate exclusion, RECORDED: the self-closing spelling stays HTML, and the parser opens it ──────────────
+/** The stand-in's element shape: the tag, then its element children in brackets. */
+const shapeOf = (el: FakeElement): string => el.tagName + (elems(el).length ? "[" + elems(el).map(shapeOf).join(",") + "]" : "");
+const SC_TAIL = "\n\n## Second heading t2\n\nPara after the heading t3.\n\nClosing words t4.\n";
+const SC_PASSAGES = ["rest of the line t1", "Second heading t2", "Para after the heading t3", "Closing words t4"];
+
+test("RECORDED, decision 52's deliberate exclusion: a start tag written with the self-closing flag stays HTML (md-literal-tags.ts isSelfClosingTag: the viewer's HTML is marked.parse's), and the parser ignores the flag on an HTML element and opens it, so `<div/>` in prose closes the paragraph and holds its rest and every later block (DIV[P,H2,P,P]), `(<table/>__widths.csv)` opens a table inside the paragraph with every later block foster-parented before it (P[P,H2,P,P,TABLE]), and `<title/>` takes the rest of the note as its text, dropped with the element: every later passage is refused with the mismatch sentence, or is not on the page, where the bare spelling of each is literal text and every block maps; `<x/>`, the control, is an unknown name popped with its paragraph, and every block maps. `<b/>` is recorded in the browser leg alone (anchor-map-literal-tags-browser.test.ts): the browser's active formatting elements reopen the `<b>` after the paragraph as a wrapper around every later block (P[B], B[H2,P,P]), which this stand-in does not model (it pops the `<b>` with its `<p>` and shows every block mapping, the false comfort the `<x/>` case above gave for the self-closing spelling as a whole)", () => {
+  const mismatches = SC_PASSAGES.map((n) => JSON.stringify(n) + ": " + MISMATCH).join("; ");
+  const absent = SC_PASSAGES.map((n) => JSON.stringify(n) + ": not in the rendered text").join("; ");
+  const cases: Array<[string, string, string]> = [
+    ["Lead <div/> rest of the line t1.", "P DIV[P,H2,P,P]", mismatches],
+    ["Lead (<table/>__widths.csv) rest of the line t1.", "P[P,H2,P,P,TABLE]", mismatches],
+    ["Lead <title/> rest of the line t1.", "P", absent],
+  ];
+  for (const [lead, shape, refused] of cases) {
+    const src = lead + SC_TAIL;
+    assert.equal(viewerHtml(src), marked.parse(src), lead + ": the viewer's HTML is marked.parse's, the tag left HTML");
+    const box = buildRendered(src);
+    assert.equal(elems(box).map(shapeOf).join(" "), shape, lead + ": the shape");
+    assert.equal(refusals(verdicts(box, src, SC_PASSAGES)), refused, lead + ": every later passage refused or absent");
+  }
+  assert.equal(norm(buildRendered("Lead <title/> rest of the line t1." + SC_TAIL).textContent), "Lead", "`<title/>`: the page's whole text");
+  for (const lead of ["Lead <div> rest of the line t1.", "Lead (<table>__widths.csv) rest of the line t1.", "Lead <title> rest of the line t1."]) {
+    const src = lead + SC_TAIL;
+    const box = buildRendered(src);
+    assert.equal(kids(box).join(" "), "P H2 P P", lead + ": the bare spelling, one element per block");
+    mapsEach(box, src, SC_PASSAGES, lead + ": the bare spelling");
+  }
+  const x = "Lead <x/> rest of the line t1." + SC_TAIL;
+  const control = buildRendered(x);
+  assert.equal(kids(control).join(" "), "P H2 P P", "`<x/>`: one element per block");
+  mapsEach(control, x, SC_PASSAGES, "`<x/>`, the control");
 });
 
 test("an unclosed formatting tag renders as text and maps: `<b>rest of line`, `<i>`, `<a href=...>`; nothing after it is bolded, italicised or linked", () => {
@@ -367,18 +402,20 @@ test("a comment (`<!-- x -->`), a stray `</div>` and a declaration are untouched
 });
 
 // ── the switch itself ──────────────────────────────────────────────────────────────────────────────────────────────────────
-test("the switch reads mdBlock's call as a statement line: at this revision mdBlock runs the rule, and the same body with the call commented out (`// literalizeUnclosedTags(tokens);`) or with the line deleted reads as no call, so the rendering above would follow marked.parse alone and the verdicts go red with the viewer's (before: a substring test that the commented line satisfied, so every test here stayed green over the file's own re-render while the viewer no longer converted anything)", () => {
-  assert.equal(VIEWER_RUNS_RULE, true, "mdBlock calls the rule at this revision (false over the base tree, where mdBlock parsed with marked.parse alone)");
-  assert.equal((MD_BLOCK.match(/literalizeUnclosedTags\(/g) || []).length, 1, "one call in mdBlock, so the variants below take it out whole");
-  const commented = MD_BLOCK.replace(RULE_CALL_LINE, "  // literalizeUnclosedTags(tokens);");
-  const deleted = MD_BLOCK.replace(/^ {2}literalizeUnclosedTags\(tokens\);\n/m, "");
-  assert.notEqual(commented, MD_BLOCK, "the commented variant differs from the source");
-  assert.notEqual(deleted, MD_BLOCK, "the deleted variant differs from the source");
+test("the switch reads the recipe's call as a statement line: at this revision mdBlock parses through the exported viewerHtml and that body runs the rule, and the same body with the call commented out (`// literalizeUnclosedTags(tokens);`) or with the line deleted reads as no call, so the rendering above would follow marked.parse alone and the verdicts go red with the viewer's (before: a substring test that the commented line satisfied, so every test here stayed green over the file's own re-render while the viewer no longer converted anything)", () => {
+  assert.equal(VIEWER_RUNS_RULE, true, "mdBlock parses through the recipe and the recipe calls the rule at this revision (false over the base tree, where mdBlock parsed with marked.parse alone)");
+  assert.match(MD_BLOCK, MDBLOCK_CALL_LINE, "mdBlock's dirty HTML is the recipe's, its walk handed over");
+  assert.equal((MD_BLOCK.match(/literalizeUnclosedTags\(/g) || []).length, 0, "no call of its own in mdBlock: the recipe holds it");
+  assert.equal((VIEWER_HTML.match(/literalizeUnclosedTags\(/g) || []).length, 1, "one call in the recipe, so the variants below take it out whole");
+  const commented = VIEWER_HTML.replace(RULE_CALL_LINE, "  // literalizeUnclosedTags(tokens);");
+  const deleted = VIEWER_HTML.replace(/^ {2}literalizeUnclosedTags\(tokens\);\n/m, "");
+  assert.notEqual(commented, VIEWER_HTML, "the commented variant differs from the source");
+  assert.notEqual(deleted, VIEWER_HTML, "the deleted variant differs from the source");
   assert.ok(commented.includes("literalizeUnclosedTags(tokens);"), "the commented variant still holds the substring the old switch read");
   assert.equal(mdBlockRunsRule(commented), false, "a commented-out call is no call");
   assert.equal(mdBlockRunsRule(deleted), false, "a deleted call is no call");
-  const trailing = MD_BLOCK.replace(RULE_CALL_LINE, "  literalizeUnclosedTags(tokens); // the rule");
+  const trailing = VIEWER_HTML.replace(RULE_CALL_LINE, "  literalizeUnclosedTags(tokens); // the rule");
   assert.equal(mdBlockRunsRule(trailing), true, "a statement with a trailing comment is a call");
   assert.equal(mdBlockRunsRule("  literalizeUnclosedTags(tokens);"), true, "the bare statement line");
-  assert.equal(mdBlockRunsRule("    literalizeUnclosedTags(tokens);"), false, "a call nested deeper than the function's own level is not mdBlock's own step");
+  assert.equal(mdBlockRunsRule("    literalizeUnclosedTags(tokens);"), false, "a call nested deeper than the function's own level is not the recipe's own step");
 });

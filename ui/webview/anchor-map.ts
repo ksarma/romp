@@ -2110,9 +2110,16 @@ function walkedBlocks(table: SourceTable): Walked[] {
     // the `open` array (the start tags the block's inline html leaves open) is discarded: since decision 52 (md-literal-tags.ts,
     // run on this lex in placeTokens) an inline start tag with no end tag in its block is a text token, so the scan meets none
     // but an unclosed `<image>`, the alias the rule leaves HTML as it leaves `<img>` and VOID_TAGS lacks, which opens no element
-    // (the parser rewrites it to the void `img`), and the parser opens no element around the later blocks (before, `<b>` with
-    // no closer became a top-level wrapper around every later block, a shape the pairing did not model; the fix shape then
-    // recorded, Block.leaves, is moot)
+    // in HTML content (the parser rewrites it to the void `img`; inside an inline svg the `image` element is closed by `</svg>`
+    // and every block still maps), or a start tag written inside an html comment (`<!-- an aside <b> -->`: TAG_RE reads the
+    // comment's raw, the rule's scan does not), which the parser reads as part of the comment; neither opens an element around
+    // the later blocks. The SELF-CLOSING spelling of such a tag still does: the rule leaves it HTML (isSelfClosingTag) and the
+    // scan reads it as a leaf, but the parser ignores the flag on an HTML element and opens it, so `<b/>` in prose is a wrapper
+    // around every later block (P[B], B[H2,P,P]: the tag's paragraph maps and every later block is refused with the mismatch
+    // sentence), `<div/>` a div holding them, `<table/>` one paragraph holding them, and `<title/>` takes the rest of the note
+    // as its text, which the sanitizer drops (anchor-map-literal-tags-browser.test.ts records each); the pairing does not model
+    // that wrapper, so the fix shape recorded for it, Block.leaves, is NOT moot (before decision 52 the bare `<b>` with no closer
+    // made the same wrapper; the rule removed it for that spelling alone)
     if (!isHtml) blockEnds([t], t.type === "text", [], ends);   // a top-level `text` token renders as a paragraph (tagOf)
     const scan = isHtml ? topTags(t.raw) : null;
     const tags = scan ? scan.tags : null;

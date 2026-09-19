@@ -9,9 +9,11 @@
 // sanitizer dropped it, so nothing after the tag was on the page); closed tags, void tags and the self-closing syntax render as
 // before; a selection over any passage after the tags maps to its own source through the real DOM; a comment on the literal
 // `<table>` characters paints through the panel's own pass and a tracked change over them through the painter; the Raw view maps
-// the same characters to the same range. One page, one browser: the box's browser cap. Skips LOUDLY without a playwright browser
-// (CI installs none), as the other browser legs do. Synthetic values only: an invented note in the notes-api demo domain, an
-// invented file name, the placeholder sid.
+// the same characters to the same range. The second test RECORDS decision 52's deliberate exclusion, the self-closing spelling,
+// which the rule leaves HTML and the browser opens (`<b/>`, `<div/>`, `<table/>`, `<title/>`), with `<x/>` as the harmless control.
+// One browser at a time, one page at a time in it: the box's browser cap. Skips LOUDLY without a playwright browser (CI installs
+// none), as the other browser legs do. Synthetic values only: an invented note in the notes-api demo domain, an invented file
+// name, the placeholder sid.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as path from "node:path";
@@ -194,5 +196,61 @@ test("in a browser, the real viewer and panel on the Files pane: the paragraph h
     assert.deepEqual({ ok: rawTag.ok, range: rawTag.range, quote: rawTag.quote }, { ok: true, range: TABLE_RANGE, quote: "<table>" }, "Raw and Rendered agree on the tag's range");
     assert.deepEqual(errors, [], "no page errors");
     await page.close();
+  });
+});
+
+// ── decision 52's deliberate exclusion, RECORDED: the self-closing spelling stays HTML, and the browser opens it ───────────────
+const MISMATCH = "This selection touches a block whose rendered text does not match the file; comment on it from the Raw view.";
+/** A recorded case: the tag as written in the note's second paragraph; the top-level shape the real pane shows (an element's tag,
+ *  its element children in brackets, the top-level elements joined by blanks); each passage's verdict in LATER's order, joined by
+ *  blanks (`maps` at its own source offsets, `mismatch` refused with the mismatch sentence, `absent` not in the rendered text); the
+ *  page's whole text where the rest of the note is gone; and what the browser did. */
+type Recorded = { tag: string; shape: string; verdicts: string; text?: string; what: string };
+const LATER = ["rest of the line t1", "Second heading t2", "Para after the heading t3", "Closing words t4"];
+const noteWith = (tag: string): string => ["# Report", "", `Lead ${tag} rest of the line t1.`, "", "## Second heading t2", "", "Para after the heading t3.", "", "Closing words t4.", ""].join("\n");
+/** The rule leaves a start tag written with the self-closing flag as HTML (md-literal-tags.ts isSelfClosingTag; decision 52 excludes
+ *  it on purpose), and the browser ignores the flag on an HTML element and opens it, so the shapes the rule removes for the bare
+ *  spelling stand for the slashed one. `<x/>` is the control: an unknown name the parser pops with its paragraph and the sanitizer
+ *  removes, so every block maps, which is why the `<x/>` case of the first test proves nothing about these (the review of PR 804,
+ *  round 1). The node suite (anchor-map-literal-tags.test.ts) records `<div/>`, `<table/>` and `<title/>` over its stand-in and
+ *  leaves `<b/>` to this leg: the stand-in pops the `<b>` with its `<p>`, where the browser's active formatting elements reopen it
+ *  after the paragraph around every later block. Each shape and verdict here is the same over the PR's base tree (c25a2b319): the
+ *  exclusion keeps the behaviour that was there. */
+const RECORDED: Recorded[] = [
+  { tag: "<b/>", shape: "H1 P[B] B[H2,P,P]", verdicts: "maps mismatch mismatch mismatch",
+    what: "the `<b>` opened in the paragraph is reopened after it as a wrapper around every later block, so the tag's paragraph maps and the heading and the two paragraphs after it are refused with the mismatch sentence" },
+  { tag: "<div/>", shape: "H1 P DIV[P,H2,P,P]", verdicts: "mismatch mismatch mismatch mismatch",
+    what: "the `<div>` closes the paragraph and holds its rest, the empty `<p>` the stray `</p>` mints, and every later block, so every passage is refused with the mismatch sentence" },
+  { tag: "(<table/>__widths.csv)", shape: "H1 P[P,H2,P,P,TABLE]", verdicts: "mismatch mismatch mismatch mismatch",
+    what: "the `<table>` opens inside the paragraph, closing nothing in quirks mode, and every later block is foster-parented before it inside that one paragraph, so every passage is refused with the mismatch sentence" },
+  { tag: "<title/>", shape: "H1 P", verdicts: "absent absent absent absent", text: "Report Lead",
+    what: "the `<title>` takes the rest of the note as its text and the sanitizer drops it, so the paragraph's rest, the heading and both paragraphs are not on the page" },
+  { tag: "<x/>", shape: "H1 P H2 P P", verdicts: "maps maps maps maps",
+    what: "the control: an unknown name, popped with its paragraph and removed by the sanitizer, so every block stands at the top level and maps" },
+];
+
+test("RECORDED, decision 52's deliberate exclusion, in the real pane: a start tag written with the self-closing flag stays HTML and the browser opens it, so `<b/>` in prose wraps every later block, `<div/>` holds them in a div, `<table/>` in the tag's own paragraph, and `<title/>` takes the rest of the note, every later passage refused with the mismatch sentence or absent from the page; `<x/>`, the control, leaves every block at the top level and mapping (the bare spelling of each is the first test's: literal text, every block mapped)", { timeout: 240000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const probe = probeBundle();
+    for (const rec of RECORDED) {
+      await t.test(`recorded: ${rec.tag}: ${rec.what}`, async () => {
+        const note = noteWith(rec.tag);
+        const { page, errors } = await openViewer(browser, "pane", 900, 700, { docs: { [REPORT]: note } });
+        await page.addScriptTag({ content: probe });
+        const dom = await page.evaluate(() => {
+          const md = document.querySelector(".fileview-md") as HTMLElement;
+          const shape = (el: Element): string => { const kids = Array.from(el.children); return el.tagName + (kids.length ? "[" + kids.map(shape).join(",") + "]" : ""); };
+          return { shape: Array.from(md.children).map(shape).join(" "), text: (md.textContent || "").replace(/\s+/g, " ").trim() };
+        });
+        assert.equal(dom.shape, rec.shape, "the top-level shape of the real DOM (an element's tag, its element children in brackets)");
+        if (rec.text !== undefined) assert.equal(dom.text, rec.text, "the page's whole text");
+        const mapped = await mapPassages(page, ".fileview-md", LATER, note, false);
+        const got = mapped.map((m) => !m.found ? "absent" : m.ok ? "maps" : m.reason === MISMATCH ? "mismatch" : "refused: " + m.reason);
+        assert.equal(got.join(" "), rec.verdicts, "each passage's verdict, in order: " + LATER.join(", "));
+        for (const m of mapped) if (m.ok) { const start = note.indexOf(m.needle); assert.deepEqual(m.range, { start, end: start + m.needle.length }, JSON.stringify(m.needle) + ": its own source offsets"); assert.equal(m.quote, m.needle); }
+        assert.deepEqual(errors, [], "no page errors");
+        await page.close();
+      });
+    }
   });
 });
