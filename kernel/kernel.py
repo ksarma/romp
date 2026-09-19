@@ -493,6 +493,124 @@ _GC_HOOK_SAID = [False]   # whether a failure inside the gc.callbacks hook has b
 #                           rest counted only, since the hook runs at every collection and a line per failure would be the noise
 
 
+# The collector's third threshold, raised once at boot (_raise_gc_gen2_threshold, 2026-09-19). CPython runs a FULL
+# collection at a generation-1 trigger only when counts[2] exceeds thresholds[2] AND the objects promoted since the last
+# full collection exceed a quarter of the long-lived total; counts[2] rises by one per generation-1 collection and resets
+# at a full one. A production kernel at 6.8 h up read counts [188, 5, 175] against thresholds [700, 10, 10]: at 175
+# against 10 the count gate was permanently open and the quarter rule alone timed full collections, 701 of them in 6.8 h
+# (103 an hour, one every 35 s, mean 2.97 s, max 5.70 s, 8.5% of a core, every pause holding the interpreter lock so
+# every page and request stalled with it). The default below is the measured generation-1 rate (136,738 in 24,480 s,
+# 5.6 a second) times the shortest gap wanted between full collections (180 s), 1,006, rounded to 1,000: the collector's
+# own generation-1 count, not a clock, then keeps full collections at least 1,001 generation-1 collections apart, which
+# at that rate is at least 179 s, at most 20 an hour against 103, at most about 60 s of pause an hour against 306; the
+# length of each pause is unchanged (a full collection walks the same long-lived population either way). Thresholds 0
+# and 1 stay as CPython sets them (700, 10 through 3.12; 2000, 10 from 3.13). The knob: unset or empty applies the
+# default; 0 leaves CPython's own thresholds (the off switch, silent); a positive integer applies that value; anything
+# else is said once on stderr and the default applied. The reason lines are keyed in _GC_THRESHOLD_SAID so each is said
+# exactly once per process and two different reasons (a malformed knob and a declining interpreter) both get their line.
+GC_GEN2_THRESHOLD_KNOB = "ROMP_GC_GEN2_THRESHOLD"
+GC_GEN2_THRESHOLD_DEFAULT = 1000
+_GC_THRESHOLD_SAID = set()   # the reason keys _gc_threshold_say has written: "knob", "interpreter", "readback", "error"
+
+
+def _gc_threshold_say(key, what):
+    """One stderr line per reason key per process, prefixed like main's other boot lines; the write sits in its own guard
+    (gc_event's shape) so a failing stderr never raises into the boot."""
+    if key in _GC_THRESHOLD_SAID:
+        return
+    _GC_THRESHOLD_SAID.add(key)
+    try:
+        sys.stderr.write("romp-kernel: gc gen2 threshold: %s\n" % what)
+    except Exception:
+        pass
+
+
+def _gc_gen2_threshold_reason(impl=None, version=None, abiflags=None):
+    """None where the third threshold is the generation-2 count trigger, else a short reason not to touch it. A pure
+    function of the interpreter's build facts (defaults: this interpreter's), so a test can table it.
+
+    Measured 2026-09-19 with one probe per interpreter: gc.set_threshold(700, 10, 1000) read back, then a churn of nested
+    dicts kept in a window so each survives two young collections, counting automatic collections per generation from
+    gc.callbacks under (700, 10, 10) and under (700, 10, 1000):
+    - CPython 3.10, 3.11, 3.12, 3.13, 3.14.5 and 3.14.6 (GIL builds): the value reads back; under 10 the churn ran 12 full
+      collections per 132 generation-1 ones, under 1000 none (counts[2] stopped at 133). The third threshold binds the
+      full-collection rate. Applied. (3.13 raised threshold 0 to 2000; the first two are read, never assumed.)
+    - CPython 3.14.0 to 3.14.4: the incremental collector. The third value is not stored (set reads back 0) and every
+      automatic collection reports as generation 1; the 3.14 gc documentation says threshold2 is ignored in 3.14 and
+      restored in 3.14.5. Declined.
+    - CPython 3.14.6 free-threaded ("t" in sys.abiflags, Py_GIL_DISABLED): the value reads back but the collector is not
+      generational; the churn ran one or two automatic collections, all reported as generation 0, under either setting,
+      and identically with the GIL re-enabled by PYTHON_GIL=1, so the gate reads the BUILD fact, never the runtime GIL
+      state. Declined.
+    - Not CPython, or a CPython outside 3.10 to 3.14: unmeasured, declined (the restricted side; a visible line, not a
+      silent degrade)."""
+    impl = sys.implementation.name if impl is None else impl
+    version = tuple(sys.version_info[:3]) if version is None else tuple(version)[:3]
+    abiflags = getattr(sys, "abiflags", "") if abiflags is None else abiflags
+    if impl != "cpython":
+        return "not CPython (%s): the third threshold's meaning there is unmeasured" % impl
+    if "t" in abiflags:
+        return "free-threaded build: its collector is not generational, so the third threshold is stored and never consulted"
+    if (3, 14, 0) <= version <= (3, 14, 4):
+        return "incremental collector: CPython 3.14.0 to 3.14.4 ignore the third threshold (it reads back as 0)"
+    if not ((3, 10) <= version[:2] <= (3, 14)):
+        return "CPython %d.%d is outside the measured range 3.10 to 3.14" % tuple(version[:2])
+    return None
+
+
+def _gc_gen2_threshold_knob():
+    """The third threshold to apply, read from the environment at the call (_notice_memo_bound's shape, with two
+    departures the knob needs): unset or empty is GC_GEN2_THRESHOLD_DEFAULT; an integer from 0 to 2**31 - 1 (the C int
+    gc.set_threshold takes) is itself, 0 meaning leave CPython's own thresholds; a negative or larger integer, or anything
+    int() rejects, is said once on stderr naming the knob and the raw value, and the default returned (the neighbours
+    fall to their default silently; this one says so)."""
+    raw = os.environ.get(GC_GEN2_THRESHOLD_KNOB, "")
+    if not raw:
+        return GC_GEN2_THRESHOLD_DEFAULT
+    try:
+        n = int(raw)
+    except ValueError:
+        n = -1
+    if 0 <= n <= 0x7FFFFFFF:
+        return n
+    _gc_threshold_say("knob", "%s=%r is not a non-negative integer the collector can hold; using %d"
+                      % (GC_GEN2_THRESHOLD_KNOB, raw, GC_GEN2_THRESHOLD_DEFAULT))
+    return GC_GEN2_THRESHOLD_DEFAULT
+
+
+def _raise_gc_gen2_threshold():
+    """The boot step: set the collector's third threshold to the knob's value, leaving the first two as found, and read it
+    back. The mechanism and the figures are in the comment above GC_GEN2_THRESHOLD_KNOB; the event that spaces full
+    collections after this is the collector's own generation-1 count (nothing here or in the collector reads a clock).
+    Idempotent by construction: every call reads thresholds 0 and 1 and sets [t0, t1, n], so a second call sets the same
+    tuple. Returns the tuple set, or None when nothing was set: the knob is 0 (silent, the off switch), the interpreter's
+    third threshold is not the generation-2 trigger (_gc_gen2_threshold_reason, said once with the thresholds left in
+    place), the value did not read back (said once; the shape of an unknown collector), or the step raised (said once).
+    Never raises: it runs in main before the credentials check and the loops, and a collector quirk must not stop the
+    kernel. Called from main alone, so a test process, which loads this module under a private name and never runs main,
+    keeps its own collector's thresholds unless a test calls this on purpose (install_gc_hook is kept out the same way)."""
+    try:
+        n = _gc_gen2_threshold_knob()
+        if n == 0:
+            return None
+        reason = _gc_gen2_threshold_reason()
+        if reason:
+            _gc_threshold_say("interpreter", "not applied on %s %s%s: %s; thresholds left at %s"
+                              % (sys.implementation.name, ".".join(str(v) for v in sys.version_info[:3]),
+                                 getattr(sys, "abiflags", ""), reason, list(gc.get_threshold())))
+            return None
+        t0, t1, _ = gc.get_threshold()
+        gc.set_threshold(t0, t1, n)
+        back = gc.get_threshold()
+        if back[2] != n:
+            _gc_threshold_say("readback", "set %d but the collector reads back %s; not applied" % (n, list(back)))
+            return None
+        return (t0, t1, n)
+    except Exception as e:
+        _gc_threshold_say("error", "%s: %s; thresholds left as found" % (type(e).__name__, e))
+        return None
+
+
 def _heap_stats():
     """Where the kernel's resident memory sits at the moment of the read, the snapshot's `heap` block (the lag investigation,
     2026-09-15). The snapshot carried VmRSS and cumulative counters (bytes read, atoms built, bodies hydrated since boot), so a
@@ -78576,6 +78694,10 @@ def main():
     signal.signal(signal.SIGTERM, _graceful_term)             # drain, don't die mid-flight (see _graceful_term)
     _PERF_STATS.install_gc_hook()                             # the collector's pauses on /perf (2026-09-16): before the boot warm and
     #                                                           the loops, so the boot's own full collections count (see gc_event)
+    _raise_gc_gen2_threshold()                                # full collections spaced by the collector's own gen1 count, not a
+    #                                                           clock (ROMP_GC_GEN2_THRESHOLD, default 1000; the comment at the knob
+    #                                                           has the figures): read it back in /perf's heap.gc.thresholds and
+    #                                                           gc.gen.2.collections over uptime_s
     # romp holds no API key (credentials.py, 2026-09-08). A retired provider line in service.env, the marker
     # beside it, or a key in this process's environment stops the kernel HERE, before the bundler, the
     # postal bus or the SDK backend spawn anything that could inherit it. RuntimeError: the
