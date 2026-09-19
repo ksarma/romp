@@ -978,6 +978,14 @@ class SyntheticBuild(unittest.TestCase):
         self.assertEqual(set(last3["by"]), {f for f in km.FEED_BY_ROWS if f in off} | OFF_LISTS | {"other"})
         self.assertEqual(last3["by"], _published(by3))
         self.assertEqual(sum(last3["by"].values()), last3["rest"])
+        # the feed row on the off frame (correctness-2): the cards, `other` and the flag rows it reads, which is the
+        # frame minus the switch minus the four federation lists the pane does not read, not the frame minus the switch
+        # as on a built frame; the reference states both forms
+        flags3 = sum(last3["by"][f] for f in ("dismissedCount", "showDismissed", "canUndoClear", "off") if f in last3["by"])
+        self.assertEqual(last3["apps"]["feed"]["projected"], last3["cards"] + last3["by"]["other"] + flags3)
+        self.assertEqual(last3["apps"]["feed"]["projected"],
+                         last3["frame"] - last3["by"]["userTodosOn"] - sum(last3["by"][n] for n in OFF_LISTS))
+        self.assertNotEqual(last3["apps"]["feed"]["projected"], last3["frame"] - last3["by"]["userTodosOn"])
         for f in ("working", "awaiting", "stateUnknown", "order", "sessions", "userTodoRows", "userTodos",
                   "clearNotices", "sdkNotices", "syncNotices"):
             self.assertIn(f, off)
@@ -1083,11 +1091,14 @@ class SyntheticBuild(unittest.TestCase):
             leds = km._FEED_COMP.last["ledgers"]
             self.assertEqual(km._FEED_COMP.last["rest"], len(parts[3]))
             self.assertEqual(last["rest"], len(parts[3]) + leds, "the published rest carries the ledgers")
-            # an empty remainder's two braces are not yet charged to a row (corrected in the arithmetic commit)
-            self.assertEqual(sum(last["by"].values()), last["rest"] if extra else last["rest"] - 2)
+            # rest == sum(by) for every remainder, the empty one included (fails before: its two braces were charged
+            # to no row, so the empty remainder gave rest 2 against a table summing to 0)
+            self.assertEqual(sum(last["by"].values()), last["rest"], extra)
+            self.assertEqual(km._FEED_COMP.last["by"], {"other": len(parts[3])} if not extra
+                             else km._FEED_COMP.last["by"], "the stored table charges the braces under `other`")
             # none of these keys is a frame field: each is counted under `other` and never stands as a row (fails
             # before: the table's keys were the frame dict's keys at runtime, and this pin blessed them)
-            self.assertEqual(last["by"], {"other": last["rest"]} if extra else {"other": leds}, extra)
+            self.assertEqual(last["by"], {"other": last["rest"]}, extra)
         # a value json cannot encode meets the wire default once, as before, and its str() bytes are in the field's
         # row, which for a key outside the checked-in names is `other`, beside the folded fields' bytes
         base = _feed(n=2)
@@ -1119,6 +1130,35 @@ class SyntheticBuild(unittest.TestCase):
             json.dumps(_rest_of(mixed), sort_keys=True)
         with self.assertRaises(TypeError):
             km._feed_parts(mixed)
+
+    def test_an_empty_remainder_charges_its_braces_so_rest_is_the_sum_of_the_rows_in_last_and_lifetime(self):
+        """correctness-3 and regression-3 of the second round: a frame whose remainder has no field (unreachable from
+        the builders, which always emit fields) gave rest 2, the braces, against a published table summing to 0, and
+        a lifetime table that carried the two-byte skew for the life of the process. The braces now go under `other`
+        (fails before), so rest == sum(by) holds in last and in lifetime whatever the order of the passes: an empty
+        remainder with ledgers, one without, then a populated frame, on one accumulator, checked after each pass."""
+        empty = _feed(n=2)
+        for k in list(_rest_of(empty)):
+            del empty[k]
+        bare = dict(empty)
+        del bare["ledgers"]
+        comp = km._FeedComposition()
+        total = 0
+        for frame in (empty, bare, _populated(), empty):
+            _fresh_pass(frame, comp)
+            rep = _report(comp)
+            last, life = rep["last"], rep["lifetime"]
+            total += last["rest"]
+            self.assertEqual(sum(last["by"].values()), last["rest"], "last")
+            self.assertEqual(sum(life["by"].values()), life["rest"], "lifetime")
+            self.assertEqual(life["rest"], total)
+            self.assertEqual(last["frame"], last["cards"] + last["rest"])
+            self.assertEqual(life["frame"], life["cards"] + life["rest"])
+        self.assertEqual(comp.last["rest"], 2, "the empty remainder is its two braces")
+        self.assertEqual(comp.last["by"], {"other": 2})
+        _, _, by_p = _expected(_populated())
+        self.assertEqual(comp.life["by"]["other"], 2 + 2 + 2 + by_p.get("other", 0), "three empty passes' braces and the populated pass's rogue bytes")
+        self.assertEqual(comp.life["rest"], 2 + 2 + sum(by_p.values()) + 2)
 
     def test_a_build_encodes_each_part_once_and_a_refill_encodes_no_card(self):
         """Every encode of a pass, counted at json.JSONEncoder.encode (json.dumps with any argument constructs an

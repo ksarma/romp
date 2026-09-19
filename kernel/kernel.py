@@ -55160,7 +55160,11 @@ def _feed_parts(feed):
     # json.JSONEncoder per pass, whose encode() is what json.dumps runs with the same arguments (a fresh encoder per
     # field was about forty percent of the per-field overhead). The table is keyed by the checked-in names
     # (_FEED_BY_NAMES): a key outside them is counted under `other`, so a runtime key never stands as a row. A key
-    # that is not a str (never the frame's case) takes the whole encode as before, under that one name.
+    # that is not a str (never the frame's case) takes the whole encode as before, under that one name. The four
+    # bytes charged per field are its `: ` and either its `, ` or its share of the brace pair, so the rows sum to
+    # the string's length for any remainder with a field; an empty remainder's two braces go under `other`, so
+    # rest == sum(by) holds there too (unreachable from the builders, which always emit fields, but the lifetime
+    # sums would otherwise carry a two-byte skew for the life of the process: the review's third round).
     if all(isinstance(k, str) for k in rest):
         enc = json.JSONEncoder(sort_keys=True, default=dflt).encode
         pairs = [(enc(k), enc(rest[k])) for k in sorted(rest)]
@@ -55169,6 +55173,8 @@ def _feed_parts(feed):
         for k, (kj, s) in zip(sorted(rest), pairs):
             name = k if k in _FEED_BY_NAMES else "other"
             by[name] = by.get(name, 0) + len(kj) + 4 + len(s)
+        if not by:
+            by = {"other": len(rest_ms)}                     # the braces of an empty remainder
     else:
         rest_ms = json.dumps(rest, sort_keys=True, default=dflt)
         by = {"other": len(rest_ms)}
