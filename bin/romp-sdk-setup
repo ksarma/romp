@@ -296,7 +296,12 @@ fi
 # site whose module and dist-info disagree (a checkout or vendored copy ahead of the venv on the import path)
 # was reported ready here, at the pin, and then refused or flagged at every host launch. The metadata is still
 # read, as a SECOND check with its own words: a venv whose own record names another version is not ready even
-# when the module that imports happens to be the pin.
+# when the module that imports happens to be the pin. One implementation is not one interpreter (extra7-2, round 4
+# of the review, 2026-09-19): this step runs under the venv's python, a host under the kernel's, and
+# bin/romp-session-host adds the venv's site only when claude_agent_sdk is not already importable, so an SDK on
+# the kernel interpreter's own site is what every host reads and this step never sees. The class of "ready here,
+# refused at every launch" is narrowed by this check, not closed; reading under the kernel's interpreter is its
+# own change.
 ROMP_SDK_VENV="$VENV" ROMP_SDK_PIN="$SDK_VERSION" ROMP_SDK_PIN_SOURCE="$SDK_PIN_SOURCE" "$VENV/bin/python" - <<'PY'
 import importlib.metadata, importlib.util, os, sys
 src = os.environ["ROMP_SDK_PIN_SOURCE"]
@@ -330,9 +335,18 @@ if meta is not None and meta != have:
     # the second check: the module is the pin, the venv's own record is not; the host would run, on a copy that is not this venv's install
     print("romp-sdk-setup: claude_agent_sdk %s imports (from %s), the pinned version, but the venv's package metadata says %s: the module that runs is not the one pip installed here. pip's output above says why the venv holds %s; fix that and re-run." % (have, where, meta, meta), file=sys.stderr)
     sys.exit(1)
+# The provenance, per branch, by the rule installed_sdk_version applies (a non-empty string __version__ on the
+# module wins, else the metadata; round 4 of the review, 2026-09-19: one sentence served both branches and on
+# the metadata branch named the module's file as the source of a version it had just said the module does not
+# carry). The module branch names the module's file. The metadata branch names the site that holds the
+# distribution's record, and the module's file under its own label, since that file is where a shadowing copy shows.
 mv = getattr(m, "__version__", None)
-source = ("the module's __version__" if isinstance(mv, str) and mv else "the package metadata, since the module exports no __version__")
-print("romp-sdk-setup: claude-agent-sdk %s ready (python %s), the version kernel/session_host.py is written against, read as the session host reads it (%s, from %s)" % (have, pyver, source, where))
+if isinstance(mv, str) and mv:
+    source = "the module's __version__, from %s" % where
+else:
+    site = str(importlib.metadata.distribution(host.SDK_DIST).locate_file(""))     # the record's own directory
+    source = "the package metadata for %s under %s, since the module at %s exports no usable __version__" % (host.SDK_DIST, site, where)
+print("romp-sdk-setup: claude-agent-sdk %s ready (python %s), the version kernel/session_host.py is written against, read as the session host reads it (%s)" % (have, pyver, source))
 try:
     import cryptography
     print("romp-sdk-setup: cryptography %s ready (phone and browser notifications)" % cryptography.__version__)

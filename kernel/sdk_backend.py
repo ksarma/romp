@@ -12447,9 +12447,11 @@ class SdkBackend:
             # same file (a stale kernel-held lease keeps the directory, and with it the log, across launches). Its
             # reach is the refused roads below and nothing else (extra6-1, round 3 of the review, 2026-09-19): the
             # served road, _file_host_log_rows at the hello and the exit, reads from an identity-keyed line position
-            # and not from this mark, so over a surviving log it still files a previous host's rows as the new host's,
-            # except the rows a refused launch filed itself (_record_refused_launch_position). Bounding that road on
-            # the mark is its own change, by the reviewer's ruling.
+            # and not from this mark. Over a surviving log with no refused launch since, it files a previous host's
+            # rows as the new host's; after a refused launch it starts past host.log's WHOLE line count at the
+            # refusal (_record_refused_launch_position), so a previous host's row no road had filed vanishes
+            # (round 4, 2026-09-19). Bounding that road on the mark is the queued served-road change, by the
+            # reviewer's ruling.
             mark = ht.host_log_mark(self.state_dir, sess.sid)
             proc = self._spawn_host(sess, spec_path, secrets)
             deadline = time.time() + ht.SOCKET_WAIT_S
@@ -12472,12 +12474,14 @@ class SdkBackend:
                     # error centre, the ledger and the restart counts stayed at zero while the benign case (an
                     # untested version whose internals resolve) got host.sdk-untested. Gated on the event, not on the
                     # reason text (a host that died without a row gets a row too), and never host.spawn-failed here.
-                    # The one event is counted once because this road also records how far into host.log it filed
-                    # (_record_refused_launch_position; regression-1, round 3 of the review, 2026-09-19): until then
-                    # the served road, which starts a host it has not seen at line zero, re-filed this launch's
+                    # The one event is counted once because this road also records host.log's line count at the
+                    # refusal (_record_refused_launch_position; regression-1, round 3 of the review, 2026-09-19): until
+                    # then the served road, which starts a host it has not seen at line zero, re-filed this launch's
                     # cli-spawn-failed row as host.spawn-failed when a later host served over a log that survived
-                    # (a stale kernel-held lease keeps the directory). A retry that is refused again is its own launch
-                    # and its own row. This is the EXITED road; the deadline road below files its own kind.
+                    # (a stale kernel-held lease keeps the directory). That count is the whole file's, so it also
+                    # skips a previous host's rows in the same file (the reach is stated at that function). A retry
+                    # that is refused again is its own launch and its own row. This is the EXITED road; the deadline
+                    # road below files its own kind.
                     problem_row(self.state_dir, "the session host for %s %s" % (sess.name, said), "host.exited-before-socket",
                                 sid=sess.sid, name=sess.name, log=self._log, code=proc.returncode)
                     self._record_refused_launch_position(sess)
@@ -12770,16 +12774,25 @@ class SdkBackend:
                 self._file_sdk_untested_row(sess, row)
 
     def _record_refused_launch_position(self, sess) -> None:
-        """How far into host.log a refused launch filed, as `hostLogPos: {host: HOST_LOG_POS_REFUSED, pos: <lines>}`
-        (regression-1, round 3 of the review, 2026-09-19). The refused roads file the launch's own rows (the
-        untested-version fact, the refusal itself) and the served road, _file_host_log_rows, starts a host identity
-        it has not seen at line zero, so over a host.log that survived the refusal (a stale kernel-held lease keeps
-        the directory) the next host that served re-filed the refused launch's cli-spawn-failed row as
-        host.spawn-failed: one event, two error-centre rows. The served road honours this position for the next host
-        whatever its identity; every road that clears the directory drops hostLogPos with it (_host_orphan_recover,
-        _host_ended), so the position never outlives the file it counts. A line count because that is the unit the
-        served road keeps; the byte watermark the refused reads use is the proper bound for that road and is its own
-        change (the reviewer's ruling on extra6-1)."""
+        """host.log's WHOLE line count at a refused launch, as `hostLogPos: {host: HOST_LOG_POS_REFUSED, pos: <lines>}`
+        (regression-1, round 3 of the review, 2026-09-19; the reach corrected in round 4). The refused roads file the
+        launch's own rows (the untested-version fact, the refusal itself) and the served road, _file_host_log_rows,
+        starts a host identity it has not seen at line zero, so over a host.log that survived the refusal (a stale
+        kernel-held lease keeps the directory) the next host that served re-filed the refused launch's
+        cli-spawn-failed row as host.spawn-failed: one event, two error-centre rows. The served road honours this
+        position for the next host whatever its identity; every road that clears the directory drops hostLogPos with
+        it (_host_orphan_recover, _host_ended), so the position never outlives the file it counts.
+
+        What the count reaches (correctness-1, round 4 of the review, 2026-09-19): every line present at the refusal,
+        not only the rows this launch filed. A previous host's row in the same file that no road had filed (a
+        reader-behind, an end-forced from a host of an earlier kernel life) sits below this position too, so after a
+        refused launch no road files it: on the tree before this position existed the next serving host filed it as
+        its own, misattributed; now it VANISHES, and the error centre's silence about that host means nothing. A
+        prefix position cannot both keep the rows before the spawn watermark and skip the rows after it (the refuters
+        executed both spellings: a position derived from the byte mark re-files the refusal's rows, and one counting
+        the lines up to the mark reds the refused-launch case), so the fix is the queued served-road change, which
+        bounds that road on the watermark; until then tests/test_session_host_sdk_pin.py pins the drop as the head's
+        behaviour so it cannot change unseen. A line count because that is the unit the served road keeps."""
         p = _ht().host_dir(self.state_dir, sess.sid) / "host.log"
         try:
             lines = len(p.read_text().splitlines())
@@ -12793,14 +12806,17 @@ class SdkBackend:
     def _file_host_log_rows(self, sess) -> None:
         """host.log lines not yet filed become problem rows. The position is kept in the registry beside hostAck
         (`hostLogPos: {host, pos}`, keyed by the host's identity), so a restart never re-files a row and a new
-        host's log starts from zero, unless a refused launch recorded how far it filed (HOST_LOG_POS_REFUSED,
-        _record_refused_launch_position): then the next host, whatever its identity, starts past those rows.
+        host's log starts from zero, unless a refused launch recorded host.log's line count at the refusal
+        (HOST_LOG_POS_REFUSED, _record_refused_launch_position): then the next host, whatever its identity, starts
+        past every line that was in the file then.
 
-        The reach of that bound, stated plainly (extra6-1, round 3 of the review, 2026-09-19): rows a refused launch
-        filed itself. Any other row a previous host left in a host.log that survived its launch (a stale kernel-held
-        lease keeps the directory) is still read from line zero and filed as this host's; the spawn watermark the
-        refused roads read past (host_log_mark, in bytes) does not reach this road. Bounding it there is its own
-        change, by the reviewer's ruling."""
+        The reach of that bound, stated plainly (extra6-1, round 3 of the review; corrected in round 4, 2026-09-19):
+        every line present at the refusal, the refused launch's own rows and any earlier host's alike. So over a
+        host.log that survived a previous launch (a stale kernel-held lease keeps the directory) a previous host's
+        row that no road had filed is dropped by this road once a refused launch followed it, and filed as this
+        host's when none did; the spawn watermark the refused roads read past (host_log_mark, in bytes) does not
+        reach this road. Both are pinned as the head's behaviour in tests/test_session_host_sdk_pin.py; the queued
+        served-road change, by the reviewer's ruling, is where this road is bounded on the watermark."""
         p = _ht().host_dir(self.state_dir, sess.sid) / "host.log"
         try:
             lines = p.read_text().splitlines()

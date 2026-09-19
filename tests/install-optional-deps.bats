@@ -866,13 +866,42 @@ EOF
     [[ "$output" == *"romp-sdk-setup: done"* ]]
 }
 
+# extra8-3 (round 4 of the review, 2026-09-19): the verify heredoc loads kernel/session_host.py through
+# ROMP_SDK_PIN_SOURCE, the path the script resolved from its own location, and no executing case held that: a
+# cwd-relative literal in its place left every case green, because bats runs from the checkout root, where the
+# literal resolves, and the case above drains the heredoc unread. This leg runs the script through a symlink from
+# ANOTHER directory with a venv whose python executes the heredoc, and asserts the named ready line, not exit 0
+# alone, so unrelated path handling cannot pass it.
+@test "romp-sdk-setup: run through a symlink from outside the checkout, the executed verify step still loads kernel/session_host.py and reports ready" {
+    pin="$(sed -n 's/^SDK_TESTED_VERSION = "\([^"]*\)".*$/\1/p' "$ROMP_DIR/kernel/session_host.py" | head -1)"
+    _fake_sdk_site "$TEST_DIR/site" "$pin"
+    _verifying_venv_python "$STUB/python3.12"
+    mkdir -p "$TEST_DIR/linkbin" "$TEST_DIR/elsewhere"
+    ln -s "$ROMP_DIR/bin/romp-sdk-setup" "$TEST_DIR/linkbin/romp-sdk-setup"
+    [ ! -e "$TEST_DIR/elsewhere/kernel/session_host.py" ]              # the precondition: nothing relative resolves from here
+
+    cd "$TEST_DIR/elsewhere"
+    PATH="$(bare_path)" ROMP_PYTHON="$STUB/python3.12" FAKE_SDK_SITE="$TEST_DIR/site" run "$TEST_DIR/linkbin/romp-sdk-setup"
+
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"claude-agent-sdk $pin ready ("* ]]
+    [[ "$output" == *"read as the session host reads it (the module's __version__, from $TEST_DIR/site/claude_agent_sdk/__init__.py)"* ]]
+    [[ "$output" != *"Traceback"* ]]
+    [[ "$output" == *"romp-sdk-setup: done"* ]]
+}
+
 # tests-1 (round 1 of the review, 2026-09-18): the verify step's comparison of what the venv holds against the pin was
 # pinned only by a grep of the script's own source, so the comparison and its exit could be deleted with the suite
 # green. These two cases EXECUTE it: the venv's stub python hands the verify heredoc to a real interpreter with a fake
 # claude_agent_sdk site (dist-info and all) on its path, at another version and at the pin.
-_fake_sdk_site() {   # $1 dir, $2 the version its dist-info declares, $3 the module's own __version__ when it differs (round 3)
+_fake_sdk_site() {   # $1 dir, $2 the version its dist-info declares, $3 the module's own __version__ when it differs (round 3),
+                     # or the literal NONE for a module that exports no __version__ at all (round 4; an empty $3 falls back to $2)
     mkdir -p "$1/claude_agent_sdk" "$1/claude_agent_sdk-$2.dist-info"
-    printf '__version__ = "%s"\n' "${3:-$2}" > "$1/claude_agent_sdk/__init__.py"
+    if [ "${3:-}" = "NONE" ]; then
+        printf '# a package whose module carries no version: the host reads the metadata\n' > "$1/claude_agent_sdk/__init__.py"
+    else
+        printf '__version__ = "%s"\n' "${3:-$2}" > "$1/claude_agent_sdk/__init__.py"
+    fi
     printf 'Metadata-Version: 2.1\nName: claude-agent-sdk\nVersion: %s\n' "$2" > "$1/claude_agent_sdk-$2.dist-info/METADATA"
 }
 
@@ -1014,6 +1043,29 @@ PY
     [[ "$output" == *"read as the session host reads it (the module's __version__, from $TEST_DIR/site/claude_agent_sdk/__init__.py)"* ]]
     FAKE_SDK_SITE="$TEST_DIR/site" run _host_reads
     [ "$output" = "$pin" ]                                              # both readers: the pin
+}
+
+# correctness-2 and six duplicates (round 4 of the review, 2026-09-19): the ready line's source clause had two branches
+# and only the module branch was executed by a case; the metadata branch printed a sentence that contradicted itself,
+# naming the module's file as the source of a version it had just said the module does not carry, and collapsing the
+# clause to the module constant left every case green. The provenance is rendered per branch now, and this leg
+# executes the metadata one: a dist-info at the pin over a module that exports no __version__.
+@test "romp-sdk-setup: over a module with no __version__ the ready line names the package metadata under the venv's site as the source, and the host's reader returns the pin" {
+    pin="$(sed -n 's/^SDK_TESTED_VERSION = "\([^"]*\)".*$/\1/p' "$ROMP_DIR/kernel/session_host.py" | head -1)"
+    _fake_sdk_site "$TEST_DIR/metasite" "$pin" NONE                     # the dist-info says the pin; the module says nothing
+    [ "$(grep -c '__version__ =' "$TEST_DIR/metasite/claude_agent_sdk/__init__.py")" = "0" ]   # the fixture's own precondition
+    _verifying_venv_python "$STUB/python3.12"
+
+    PATH="$(bare_path)" ROMP_PYTHON="$STUB/python3.12" FAKE_SDK_SITE="$TEST_DIR/metasite" run "$ROMP_DIR/bin/romp-sdk-setup"
+
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"claude-agent-sdk $pin ready ("* ]]
+    [[ "$output" == *"read as the session host reads it (the package metadata for claude-agent-sdk under $TEST_DIR/metasite, since the module at $TEST_DIR/metasite/claude_agent_sdk/__init__.py exports no usable __version__)"* ]]
+    [[ "$output" != *"the module's __version__"* ]]                     # not the module branch's wording
+    [[ "$output" == *"romp-sdk-setup: done"* ]]
+    FAKE_SDK_SITE="$TEST_DIR/metasite" run _host_reads
+    [ "$status" -eq 0 ]
+    [ "$output" = "$pin" ]                                              # the host's own reader over the same venv: the pin, from the metadata
 }
 
 # The mutation pass after round 3 (2026-09-19): the verify step's refusal of an SDK that imports but says no version

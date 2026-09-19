@@ -485,16 +485,23 @@ class HostProcess(unittest.TestCase):
         with open(hd / "host.log", "a") as f:
             f.write(json.dumps({"t": 2, "kind": "cli-spawn-failed", "error": "FileNotFoundError"}) + "\nnot json\n")
         self.assertEqual(ht.host_exit_reason(d, SID), "FileNotFoundError")
-        # tests-4 (round 3 of the review, 2026-09-19): a line that parses as JSON but is not an object (null, a list,
-        # a number) is skipped like the unparseable one, never handed to the reverse scan's row.get. Placed BEFORE the
-        # later failing row so the scan must step over them to reach it; the guard's absence raises here.
+        # tests-4 (round 3 of the review, 2026-09-19; the mechanism corrected in round 4): a line that parses as JSON
+        # but is not an object (null, a list, a number) is skipped by host_log_rows like the unparseable one, so
+        # host_exit_reason never sees one at this head; that is what the guard buys. The three lines sit BEFORE the
+        # later failing row as fixture context only: the scan runs in REVERSE and returns at that row, the last line,
+        # so it never reaches them, and the 'later' assertion below holds with the guard dropped too. The guard is
+        # pinned by two legs, each independent (execution stops at the first failure, so the second is reached only
+        # with the first removed): the row reader's kinds list (with the guard dropped to a bare append, a TypeError
+        # in this case's own comprehension, `r["kind"]` on a None row), and a non-object LAST line (an AttributeError
+        # from the scan's own `.get`; a non-object reaches that `.get` only after the row the scan returns at, or
+        # when no row returns at all, or, for a cli-spawn-failed row, in the composer's walk over the rows before it).
         with open(hd / "host.log", "a") as f:
             f.write("null\n[1, 2]\n42\n" + json.dumps({"t": 3, "kind": "host-crashed", "error": "later"}) + "\n")
         self.assertEqual(ht.host_exit_reason(d, SID), "later", "the last such row wins")
         self.assertEqual([r["kind"] for r in ht.host_log_rows(d, SID)], ["host-started", "cli-spawn-failed", "host-crashed"],
                          "the row reader returns objects only")
         (hd / "host.log").write_text(json.dumps({"t": 1, "kind": "cli-spawn-failed", "error": "OSError"}) + "\nnull\n")
-        self.assertEqual(ht.host_exit_reason(d, SID), "OSError", "a non-object LAST line is stepped over too")
+        self.assertEqual(ht.host_exit_reason(d, SID), "OSError", "a non-object LAST line, the first the reverse scan meets, is skipped too")
 
     # The mutation pass after round 3 (2026-09-19): the composer's guard on the error field (`or not row.get("error")`)
     # was held by no case, so with it dropped the suite stayed green. A failing-kind row that carries no error, an
@@ -1256,8 +1263,9 @@ class HostProcess(unittest.TestCase):
     # regression-1 (round 3 of the review, 2026-09-19): a refused launch was reported twice over a surviving log,
     # host.exited-before-socket at the refusal and then host.spawn-failed for the SAME cli-spawn-failed row at the
     # next host's hello, because the served road starts an identity it has not seen at line zero and the refused roads
-    # recorded no position. Now they record how far they filed (hostLogPos under HOST_LOG_POS_REFUSED) and the served
-    # road starts the next host, whatever its identity, past it. Red on the tree before the fix.
+    # recorded no position. Now they record host.log's line count at the refusal (hostLogPos under
+    # HOST_LOG_POS_REFUSED) and the served road starts the next host, whatever its identity, past it. Red on the tree
+    # before the fix. The count is the whole file's; what that does to a previous host's unfiled row is the next case's.
     def test_a_refused_launchs_rows_are_not_filed_again_when_a_later_host_serves_over_the_surviving_log(self):
         d, events = self._stale_lease_root()
         be1 = self._backend(d, [])
@@ -1282,7 +1290,7 @@ class HostProcess(unittest.TestCase):
         self.assertEqual(len(events()), 3, "no line is filed twice")
         kept = (sb.read_reg(Path(d), SID) or {})["hostLogPos"]
         self.assertEqual(kept, {"host": "77:s77", "pos": 4}, "the position now belongs to the served host")
-        # the mechanism: both refused roads record the position they filed up to, under a host that is no identity
+        # the mechanism: both refused roads record the file's line count at the refusal, under a host that is no identity
         d2, events2 = self._stale_lease_root()
         be3 = self._backend(d2, [])
         self._launch(be3, self._sess(), self._exiting([{"t": 1, "kind": "host-started"}, {"t": 2, "kind": "cli-spawn-failed", "error": "OSError"}]))
@@ -1296,6 +1304,45 @@ class HostProcess(unittest.TestCase):
             f.write(json.dumps({"t": 4, "kind": "end-forced", "cliPid": 5}) + "\n")
         be3._file_host_log_rows(types.SimpleNamespace(sid=SID, name="web", _host=types.SimpleNamespace(hello={"host": {"pid": 77, "start": "s77"}})))
         self.assertEqual([r["kind"] for r in events2()], ["host.exited-before-socket", "host.never-served-socket", "host.end-forced"])
+
+    # correctness-1 (round 4 of the review, 2026-09-19): the position a refused launch records is host.log's WHOLE line
+    # count, not the extent of what the refusal filed, so the served road's bound also skips a previous host's row
+    # that no road had filed. THIS CASE PINS THE RESIDUAL, NOT THE WANTED BEHAVIOUR: after a refused launch such a
+    # row (a reader-behind, an end-forced from a host of an earlier kernel life, kept under the stale lease) is filed
+    # by no road and vanishes; on the round-3 base, before the position existed, the next serving host filed it as
+    # its own, misattributed. A single prefix position cannot keep the rows before the spawn watermark and skip the
+    # rows after it (the refuters executed both spellings), so the behaviour is fixed in the queued served-road
+    # change, and this case changes with it; until then it catches a silent change of the drop. The control beside
+    # it, the same seed with no refusal, is what makes the drop the refusal's doing.
+    def test_the_pinned_residual_a_previous_hosts_unfiled_row_vanishes_after_a_refused_launch(self):
+        seed = [{"t": 1, "kind": "host-started"}, {"t": 2, "kind": "reader-behind"}, {"t": 3, "kind": "end-forced", "cliPid": 9}]
+        d, events = self._stale_lease_root()
+        hd = ht.host_dir(d, SID); hd.mkdir(parents=True)
+        (hd / "host.log").write_text("".join(json.dumps(r) + "\n" for r in seed))
+        self._launch(self._backend(d, []), self._sess(),
+                     self._exiting([{"t": 4, "kind": "host-started"}, {"t": 5, "kind": "cli-spawn-failed", "error": "OSError"}]))
+        self.assertEqual([r["kind"] for r in events()], ["host.exited-before-socket"], "the refusal files its own row and none of the previous host's")
+        self.assertEqual((sb.read_reg(Path(d), SID) or {})["hostLogPos"], {"host": sb.HOST_LOG_POS_REFUSED, "pos": 5},
+                         "the recorded position is the whole file's line count: the three seeded lines and this launch's two")
+        served = types.SimpleNamespace(sid=SID, name="web", _host=types.SimpleNamespace(hello={"host": {"pid": 88, "start": "s88"}}))
+        be2 = self._backend(d, [])                            # the next kernel life: a host serves over the surviving log
+        be2._file_host_log_rows(served)
+        kinds = [r["kind"] for r in events()]
+        self.assertEqual(kinds, ["host.exited-before-socket"], "the residual: the seeded reader-behind and end-forced rows are filed by no road")
+        self.assertNotIn("host.spawn-failed", kinds, "and the refusal is still counted once")
+        # the served host's OWN row of the same kind is filed, so the drop is the bound's doing and not the kind's
+        with open(hd / "host.log", "a") as f:
+            f.write(json.dumps({"t": 6, "kind": "reader-behind"}) + "\n")
+        be2._file_host_log_rows(served)
+        self.assertEqual([r["kind"] for r in events()], ["host.exited-before-socket", "host.reader-behind"])
+        self.assertEqual((sb.read_reg(Path(d), SID) or {})["hostLogPos"], {"host": "88:s88", "pos": 6})
+        # the control: the same seed and no refused launch before the serving host; the served road files both rows,
+        # under the new host's name (the other half of the residual, stated in round 3)
+        d2, events2 = self._stale_lease_root()
+        hd2 = ht.host_dir(d2, SID); hd2.mkdir(parents=True)
+        (hd2 / "host.log").write_text("".join(json.dumps(r) + "\n" for r in seed))
+        self._backend(d2, [])._file_host_log_rows(served)
+        self.assertEqual([r["kind"] for r in events2()], ["host.reader-behind", "host.end-forced"], "without the refusal the rows are filed")
 
     # tests-3 and extra8-2 (round 3 of the review, 2026-09-19): the memo's key is the (installed, tested) pair and NOT
     # the sid, so a second SESSION under the same pair files no row and gets the plain kernel-log line; the comment, the
