@@ -1534,19 +1534,39 @@ class TheAgreementCheckSpansSetUp(unittest.TestCase):
 
 
 class TheCountersOneSite(unittest.TestCase):
+    def _the_named_def(self, label, obj, name):
+        """The object a census is about to scan is the def named `name`, by the name inspect.unwrap reaches and by the def its
+        source parses to (ruling 3 of the reviewer's rulings on the pre-emption, for the replaced-helpers census; review round 4,
+        correctness-3, for the walk census and the gate scan, which read km._auto_nudge_session and km._nudge_look_gated with no
+        identity line: the gate decorator's wraps dropped red the walk census's site count 0 against 1, a true red with a false cause,
+        and a decorator without wraps on the factory with a load in the gate's body left the gate scan green, reading the wrapper).
+        inspect follows __wrapped__ only through functools.wraps, so behind a decorator without it a census reads the wrapper's source
+        and answers no site for a body it never read."""
+        first = ast.parse(textwrap.dedent(inspect.getsource(obj))).body[0]
+        self.assertEqual((inspect.unwrap(obj).__name__, type(first).__name__, getattr(first, "name", None)), (name, "FunctionDef", name),
+                         "%s: the object the census scans is the named helper itself, by the name inspect.unwrap reaches and by the def "
+                         "its source parses to; inspect follows __wrapped__ only through functools.wraps, so behind a decorator without it "
+                         "the census would read the wrapper's source and answer no site for a body it never read: unwrap reaches %r and "
+                         "the source's first statement is a %s named %r"
+                         % (label, inspect.unwrap(obj).__name__, type(first).__name__, getattr(first, "name", None)))
+
     def test_the_walk_has_one_shared_load_site_and_the_counter_is_bumped_beside_it(self):
         """A census over the look's own source (the gate decorator unwraps): one shared load by either spelling of the shared
         door (`jd.load_goals_shared` is a prefix of both), read from the AST (_loader_sites: a name in code is a site, a
         mention in a comment, a docstring or a string is not), the counter bumped on the line after it so the two cannot
         drift, and the gate around the look reads no store (a skipped look needs no data), scanned by the same rule. The bump
         is read as a statement too, an augmented `+= 1` on `_NUDGE_WALK_STATS["loads"]`, never as a line of text (review round
-        2, correctness-3: a comment quoting the statement counted as a second bump)."""
+        2, correctness-3: a comment quoting the statement counted as a second bump). Each object is first checked to be the
+        named def (_the_named_def; review round 4, correctness-3): the look behind its gate decorator, whose wraps dropped red the
+        site count with the opposite cause, and the gate factory, whose scan read a decorator's wrapper and answered no site."""
+        self._the_named_def("_auto_nudge_session", km._auto_nudge_session, "_auto_nudge_session")
         at = [i for i, _ln in _loader_sites(km._auto_nudge_session, "jd.load_goals_shared")]
         self.assertEqual(len(at), 1, "one shared load in the walk's look, by either spelling of the shared door: a second call site is "
                                      "a second load per look (condition 7, the walk's bound)")
         bump = _bump_sites(km._auto_nudge_session)
         self.assertEqual(len(bump), 1, "the counter is bumped once, by one `_NUDGE_WALK_STATS[\"loads\"] += 1` statement")
         self.assertEqual(bump[0], at[0] + 1, "on the line after the load")
+        self._the_named_def("_nudge_look_gated", km._nudge_look_gated, "_nudge_look_gated")
         gated = [ln.strip() for _i, ln in _loader_sites(km._nudge_look_gated, "load_goals")]
         self.assertEqual(gated, [], "the gate around the look reads no store: a skipped look loads through neither mechanism: %s" % "; ".join(gated))
         self.assertIn("loads", km._NUDGE_WALK_STATS, "the counter is a key of the served block")
@@ -1645,14 +1665,7 @@ class TheCountersOneSite(unittest.TestCase):
                    + [("Sessions.backend_for", km.Sessions.backend_for)])
         self.assertEqual(len(targets), 21, "the census covers every replaced callable")
         for label, obj in targets:
-            name = label.split(".")[-1]
-            first = ast.parse(textwrap.dedent(inspect.getsource(obj))).body[0]
-            self.assertEqual((inspect.unwrap(obj).__name__, type(first).__name__, getattr(first, "name", None)), (name, "FunctionDef", name),
-                             "%s: the object the census scans is the named helper itself, by the name inspect.unwrap reaches and by the def "
-                             "its source parses to; inspect follows __wrapped__ only through functools.wraps, so behind a decorator without it "
-                             "the census would read the wrapper's source and answer no site for a body it never read: unwrap reaches %r and "
-                             "the source's first statement is a %s named %r"
-                             % (label, inspect.unwrap(obj).__name__, type(first).__name__, getattr(first, "name", None)))
+            self._the_named_def(label, obj, label.split(".")[-1])
             hits = [ln.strip() for _i, ln in _loader_sites(obj, "load_goals")]
             self.assertEqual(hits, [], "%s: a loader planted in a replaced helper never runs under the fixture, so this scan is the only "
                                        "witness for its body: %s" % (label, "; ".join(hits)))
