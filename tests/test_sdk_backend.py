@@ -10119,29 +10119,37 @@ class DefaultBillingMovesItsFollowers(unittest.TestCase):
         self.assertTrue(any("the pending login pick is withdrawn" in str(m) for m in self.logs), self.logs)
         self.assertFalse(s._relaunch_bounded, "a pick makes the next relaunch its own, and a pick's draws no slot")
 
-    def test_the_uncontrolled_key_branch_withdraws_a_standing_ask_and_a_pick_after_it_is_not_swallowed(self):
+    def test_the_uncontrolled_key_branch_withdraws_a_standing_ask_at_a_default_write_and_a_pick_after_it_is_not_swallowed(self):
         # finding 1 (round 2 of the review): the branch logged and returned with any standing ask left standing: the dots
         # never cleared, every construction carried the flag, and set_auth read the pending as "already applying" with no
-        # arm behind it, so a pick was written and never applied. Driven as the landing drives the step (label None),
-        # in the shape the narrowed guard fires on (the launch composed the login; the CLI bills a project key), with an
-        # ask standing from an earlier arm
+        # arm behind it, so a pick was written and never applied. RE-POINTED by the reviewer's round 3 pre-check (2026-09-19;
+        # its fourth item): until then this test hand-set auth_live key beside _launched_auth login and drove the step as an
+        # ATTACH landing, a shape no landing produces (an attach stamps _launched_auth from the same report, so the two are
+        # equal there, and the init road stamps the report before it runs the step), and the body claimed the withdrawal
+        # fired at an attach. The shape the code reaches is a DEFAULT WRITE (the walk) after a launch that composed a stored
+        # login landed and the CLI's init then reported a key (a helper-less box: a credential in the CLI's own
+        # environment), with an ask standing that the launch's landing made for a default that moved during the spawn (the
+        # composed login was another stored login, so the landing did not serve it); the write withdraws that ask
         with mock.patch.object(sb.SdkBackend, "key_state", return_value="missing"):
             rec = self._record("Work")
+            other = self._record("Side")
             s = self._sess()
-            s.auth_live = "key"; s._launched_auth = "login"
-            s._auth_pending = "login"; self.be._update_reg(s.sid, authPending=True)
+            s.auth_live = "key"                                            # the init's report, after the launch below landed
+            s._launched_auth = "login"; s._launched_login = other["id"]    # the launch composed a stored login
+            s._auth_pending, s._auth_pending_login = "login", rec["id"]    # the ask its landing made for the default that moved
+            self.be._update_reg(s.sid, authPending=True)
             s._relaunch_bounded = True
             s._note_reconnect_ask("auth")
             asked = []
             real_req = s.request_reconnect
             s.request_reconnect = lambda *a, **k: asked.append(1)
-            self.be._follow_default(s, landing="attach")             # the landing's form of the step (round 3: `landing` names it)
+            self.assertTrue(self.be.set_auth_default("login"))             # the next default write: the walk runs the step
             self.assertEqual(asked, [], "a relaunch cannot change what that CLI bills")
             self.assertEqual(s._auth_pending, "", "the standing ask is withdrawn: nothing could serve it")
             self.assertFalse(self._reg(s).get("authPending")); self.assertFalse(s._relaunch_bounded)
             self.assertNotIn("auth", s._reconnect_surfaces)
             self.assertEqual([str(m) for m in self.logs if "does not control" in str(m)],
-                             ["auth (web): attached to this session's surviving CLI, but this session's CLI bills a key romp does "
+                             ["auth (web): the machine default is now login, but this session's CLI bills a key romp does "
                               "not control " + self.UNCONTROLLED + "; the pending login reconnect is withdrawn"])
             del self.logs[:]
             s.request_reconnect = real_req
@@ -10774,16 +10782,24 @@ class DefaultBillingMovesItsFollowers(unittest.TestCase):
         # the reviewer's round 2 (2026-09-19): the CLI's turn-end report decides a seeded row (correctness-2), the standing
         # rule and the retry road (regression-1), the two residuals disclosed together (kernel-2 and the subagent gap), and
         # the line's cadence bounded to the write event (fresh-4)
+        # the round 3 pre-check (2026-09-19): the report's verdicts per type (its second item, the shared predicate), the
+        # adoption of a task the report names (its third), the no-report hold (its S5) and the stand-down road (its first)
         self.assertIn("the CLI's own turn-end report at the first turn after it, the task list its Stop hook carries, confirms each "
-                      "task still running and retires the rest, and a turn that ends without that report drops what nothing spoke "
-                      "for, said in the log as a drop without an authoritative read", doc)
+                      "task it lists as running, retires a shell it omits (the one task type the report is known to enumerate "
+                      "completely: a probe on 2026-08-28, and a read of the bundled CLI's producer on 2026-09-19 that found the list "
+                      "type-agnostic on that build; one probe per type widens it), keeps a monitor, an agent or a workflow run it "
+                      "omits until the CLI's own stream ends it, and counts a running task it names that the kernel never saw; a "
+                      "turn that ends without that report holds what nothing spoke for, said in the log", doc)
+        self.assertNotIn("drops what nothing spoke for", doc)
         self.assertIn("Nothing here ends work on an inference that it ended: a task is torn down, or reported to the session as cut "
-                      "off, only on the CLI's own report, and a retry after a handshake that timed out against a surviving CLI "
-                      "retires nothing.", doc)
-        self.assertIn("Two gaps are disclosed, not closed: a recorded task whose closing record never reaches the kernel, on a "
-                      "session that then takes no turn from any source, holds the ask, the pending dots and a stoppable-task row "
-                      "until a turn ends; and a subagent known only to the SubagentStart hook has no registry record and is not "
-                      "counted, so a survivor whose only live work is such a subagent can be reconnected over it.", doc)
+                      "off, only on the CLI's own report; a retry after a handshake that timed out against a surviving CLI retires "
+                      "nothing, and a stand-down after four such timeouts holds the tasks and the registry's record for the next "
+                      "attach.", doc)
+        self.assertIn("Two gaps are disclosed, not closed: a recorded task whose closing record never reaches the kernel holds the "
+                      "ask, the pending dots and a stoppable-task row until the CLI's own report or stream speaks for it (for a task "
+                      "other than a shell, until its end frame, across turns and restarts); and a subagent known only to the "
+                      "SubagentStart hook has no registry record and is not counted, so a survivor whose only live work is such a "
+                      "subagent can be reconnected over it.", doc)
         self.assertIn("what the authoritative read of a surviving CLI's live work is at the re-attach, for background tasks, Task "
                       "agents, Workflow runs and hook-only subagents alike", doc)
         self.assertIn("A follower whose CLI bills a credential in the CLI's own environment that romp's per-session settings layer "
@@ -12829,29 +12845,33 @@ class SettingsPickThroughTheLoopUnderAHost(SettingsPickThroughTheLoop):
         self.assertIsNone(s.snapshot()["pickHeld"])
         self.assertEqual(s.snapshot()["effort"], "low")
 
-    def _survivor_with_a_carried_ask(self, first_handshake_times_out=False):
+    def _survivor_with_a_carried_ask(self, first_handshake_times_out=False, handshake_timeouts=None, bg_tasks=None):
         """The reg a kernel restart leaves for a follower asked to move (authPending), whose hosted CLI survived on the key
-        with one background task the previous kernel mirrored (bgTasks), the CLI's identity named (spawnedAtCli); the first
-        connect is the boot re-attach to that CLI (the hello names the same identity), later connects spawn as the class does.
-        `first_handshake_times_out`: the first attach's initialize times out after its hello (the loop's retry road), and the
-        retry attaches to the SAME surviving CLI; connects after that spawn."""
+        with one background task the previous kernel mirrored (bgTasks; a shell in the task registry's own spelling,
+        local_bash, the task_started frame's task_type; `bg_tasks` replaces the list), the CLI's identity named
+        (spawnedAtCli); the first connect is the boot re-attach to that CLI (the hello names the same identity), later
+        connects spawn as the class does. `handshake_timeouts`: how many attaches in a row reach the host and time out after
+        their hello (the loop's retry road up to three; the fourth is the stand-down), each against the SAME surviving CLI;
+        `first_handshake_times_out` is the one-timeout spelling. The attach after the last timeout reaches that CLI and
+        completes; connects after it spawn."""
+        timeouts = int(handshake_timeouts) if handshake_timeouts is not None else (1 if first_handshake_times_out else 0)
+        rows = bg_tasks if bg_tasks is not None else [{"taskId": "t-1", "type": "local_bash", "desc": "a long sweep",
+                                                        "since": int(time.time()) - 600, "toolUseId": "tu-1", "lastTool": ""}]
         sb.write_sdk_default(self.be.state_dir, auth="login", authExplicit=True)
         reg = sb.read_reg(self.be.state_dir, self.SID)
-        reg.update(authPending=True, apiKeyAuth=True, spawnedAtCli="4301:c1",
-                   bgTasks=[{"taskId": "t-1", "type": "bash", "desc": "a long sweep", "since": int(time.time()) - 600,
-                             "toolUseId": "tu-1", "lastTool": ""}])
+        reg.update(authPending=True, apiKeyAuth=True, spawnedAtCli="4301:c1", bgTasks=rows)
         sb.write_reg(self.be.state_dir, self.SID, reg)
         self.s = sb.SdkSession(self.be, dict(reg))
         self.be.sessions[self.SID] = self.s
         be, spawn_for = self.be, self.be._host_transport_for
 
         async def attach_first(sess, opts, msg_classes):
-            if len(self.hosted) >= (2 if first_handshake_times_out else 1):
+            if len(self.hosted) >= timeouts + 1:
                 return await spawn_for(sess, opts, msg_classes)     # every later connect spawns a fresh host and CLI
             hello = {"host": {"pid": 7001, "start": "h1", "version": "test"},
                      "cli": {"pid": 4301, "start": "c1", "fsid": self.FSID, "spawnedAt": 1700000001, "login": ""},
                      "journal": {"next": 0}, "parked": [], "inflight": 0}
-            cls = self._TimedOutAttach if (first_handshake_times_out and not self.hosted) else self._Transport
+            cls = self._TimedOutAttach if len(self.hosted) < timeouts else self._Transport
             t = cls(hello, lambda h, sess=sess: be._on_host_hello(sess, h))
             sess._host_is_attach = True
             sess._host = t
@@ -12902,33 +12922,47 @@ class SettingsPickThroughTheLoopUnderAHost(SettingsPickThroughTheLoop):
         self._wait(lambda: s._auth_pending == "" and not (sb.read_reg(self.be.state_dir, self.SID) or {}).get("authPending"),
                    "the landing served the carried ask")
 
-    def test_a_seeded_row_no_frame_and_no_turn_end_report_spoke_for_is_dropped_at_the_first_settle_and_the_hold_releases(self):
+    def test_a_seeded_row_no_frame_and_no_turn_end_report_spoke_for_is_held_at_the_first_settle_and_the_hold_stands(self):
         """The reconcile half of the reviewer's regression-1, narrowed by the reviewer's round 2 (2026-09-19; its correctness-2)
-        to the turn NO Stop-hook report reached the kernel for (an interrupted turn skips the hook; the harness fires no hook
-        here): a mirror row nothing ever ends (a stale write, a task that ended while no kernel heard) cannot hold the ask
-        forever, so unconfirmed through the first turn after the attach the row is dropped at that settle, said in the log AS
-        a drop without an authoritative read, the reg mirror rewritten, and the settle arms. No death notice, since nothing
-        says the task died (the PR's own negative assertion, re-pinned: with a report the row is decided at the hook, the
-        two tests below)."""
+        to the turn NO Stop-hook report reached the kernel for (the harness fires no hook here), and turned from a drop into a
+        hold by the round 3 pre-check (its S5): round 2 dropped the undecided row at that settle, said as a drop without an
+        authoritative read, and released the hold, so the next arm ended the surviving CLI with the task inside it and the
+        session was told nothing, a destroy on no report at all, reachable by an ordinary gesture. The rule's third clause:
+        when no report is available, hold and say so. The row stays counted and seeded, the mirror stands, the settle arms
+        nothing, one line per no-report settle says which no-report shape this was, and the CLI's own word (a frame, or the
+        next turn's report) decides it. No death notice, since nothing says the task died."""
         self._helper()
         s = self._survivor_with_a_carried_ask()
         c1 = self._connect()
         t1 = self.hosted[0]
         self.assertEqual(s._live_work_counts(), (0, 1)); self.assertFalse(s._reconnect); self.assertEqual(t1.sent, [])
         self._turn(c1, apiKeySource="apiKeyHelper")               # the first turn after the attach: no frame and no report spoke for t-1
-        self._wait(lambda: len(self._Client.instances) == 2 and self._Client.instances[1] is s.client and s._launching is None,
-                   "the settle dropped the undecided row, armed, and the relaunch landed")
-        self._settled("the landing")
-        self.assertTrue(any("had no frame and no turn-end report through the first turn after the attach; no longer counted as live, "
-                            "dropped without an authoritative read (nothing says it ended), and the hold releases" in l for l in self.lines),
+        self._wait(lambda: s.inflight == 0 and getattr(s, "_settled_msg", None) is not None, "the first turn after the attach settled")
+        self._settled("the first settle")
+        self.assertTrue(any("1 background task the reg named for the surviving CLI had no frame and no turn-end report through this turn "
+                            "(no Stop hook report reached this kernel for the turn); still counted as live, held (nothing says it ended), "
+                            "and the hold stands until the CLI's own stream or its turn-end report decides it" in l for l in self.lines),
                         self.lines[-10:])
-        self.assertFalse(any("the CLI's turn-end report" in l for l in self.lines), "no report arrived: the settle's drop, said as such")
-        self.assertEqual(t1.sent, ["end"])
-        self.assertEqual(s._live_work_counts(), (0, 0))
-        self.assertEqual((sb.read_reg(self.be.state_dir, self.SID) or {}).get("bgTasks"), [], "the mirror is rewritten at the reconcile")
+        self.assertFalse(any("without an authoritative read" in l or "the CLI's turn-end report" in l for l in self.lines), self.lines)
+        self.assertEqual(t1.sent, [], "the host is not asked to end its CLI"); self.assertEqual(len(self._Client.instances), 1)
+        self.assertEqual(s._live_work_counts(), (0, 1)); self.assertEqual(s._seeded_tasks, {"t-1"})
+        self.assertTrue(s._reconnect_held_for_work); self.assertFalse(s._reconnect)
+        self.assertEqual([t.get("taskId") for t in (sb.read_reg(self.be.state_dir, self.SID) or {}).get("bgTasks") or []], ["t-1"],
+                         "the mirror stands")
         self.assertFalse(any("cut off when the claude process" in str(p) for p in s.pending()), "no death notice: nothing says the task died")
-        self.assertFalse(any("cut off when the claude process" in w for c in self._Client.instances for w in c.writes))
+        # a second no-report turn holds again and says so again; then the CLI's own end frame pops the row and the settle arms
+        self._turn(c1, apiKeySource="apiKeyHelper")
+        self._wait(lambda: sum(1 for l in self.lines if "had no frame and no turn-end report through this turn" in l) == 2, "the second hold line")
+        self.assertEqual(t1.sent, []); self.assertEqual(s._live_work_counts(), (0, 1))
+        self._push(c1, self._Sys("task_notification", {"task_id": "t-1", "status": "completed"}, self._uid()))
+        self._wait(lambda: s._live_work_counts() == (0, 0), "the end frame popped the seeded row")
+        self._turn(c1, apiKeySource="apiKeyHelper")
+        self._wait(lambda: len(self._Client.instances) == 2 and self._Client.instances[1] is s.client and s._launching is None,
+                   "the settle found the sets empty, armed, and the relaunch landed")
+        self._settled("the landing")
+        self.assertEqual(t1.sent, ["end"], "the reconnect's teardown ended the host's CLI, after the work")
         self.assertEqual(s._launched_auth, "login")
+        self.assertFalse(any("cut off when the claude process" in w for c in self._Client.instances for w in c.writes))
 
     def test_the_first_turns_report_confirms_a_seeded_shell_no_frame_spoke_for_and_the_hold_stands(self):
         # the reviewer's correctness-2 (round 2, 2026-09-19), against the case a refuter showed is the ordinary one: a
@@ -12964,11 +12998,17 @@ class SettingsPickThroughTheLoopUnderAHost(SettingsPickThroughTheLoop):
                    or any("cut off when the claude process" in w and "a long sweep" in w for w in c1.writes), "the notice names the confirmed task")
         self.assertEqual(s._live_work_counts(), (0, 0))
 
-    def test_the_first_turns_report_that_lists_no_seeded_row_retires_it_on_the_clis_own_answer_with_no_notice(self):
-        # the other half of correctness-2: a seeded row the CLI's report does not list as running is retired on that
-        # answer (it ended while no kernel heard, or the mirror row was stale), at the hook and not at the settle, with no
-        # death notice (the CLI reports no death, only no such task), the mirror rewritten, and the hold released at the
-        # settle that follows
+    def test_the_first_turns_report_that_lists_no_seeded_row_retires_it_and_counts_the_task_the_report_names(self):
+        # the other half of correctness-2: a seeded SHELL row the CLI's report does not list is retired on that answer (it
+        # ended while no kernel heard, or the mirror row was stale), at the hook and not at the settle, with no death notice
+        # (the CLI reports no death, only no such task), the mirror rewritten. AND THE MIRROR OF THAT (the reviewer's round 3
+        # pre-check, 2026-09-19; its third item): the same report names t-9 as running, a task the live set never held (a
+        # lost opening record), and until this round the reconcile read the report for retirement only, so the settle found
+        # the sets empty and ended the surviving CLI with t-9 inside it, against the CLI's own report in the same hook. Until
+        # this round THIS TEST PINNED THAT SIDE: it asserted (0, 0) after the hook and t1.sent == ["end"] at the settle, so
+        # the defect stood as the expected outcome, and the absence rule's over-reach (its second item) stayed invisible
+        # behind a pin on the wrong side of the rule. A running task the report names is counted as live from the report,
+        # with its type and description; the settle holds; the CLI's own end frame releases it
         self._helper()
         s = self._survivor_with_a_carried_ask()
         c1 = self._connect()
@@ -12976,20 +13016,32 @@ class SettingsPickThroughTheLoopUnderAHost(SettingsPickThroughTheLoop):
         self.assertEqual(s._live_work_counts(), (0, 1))
         asyncio.run(s._stop_hook({"background_tasks": [{"id": "t-9", "type": "shell", "status": "running",
                                                         "description": "another task", "command": "sleep 5"}]}, None, None))
-        self.assertEqual(s._live_work_counts(), (0, 0), "retired at the hook, on the CLI's own answer")
+        self.assertEqual(sorted(s._bg_tasks), ["t-9"], "t-1 retired at the hook on the CLI's own answer; t-9 counted from it")
+        self.assertEqual(s._live_work_counts(), (0, 1))
         self.assertEqual(s._seeded_tasks, set())
-        self.assertEqual((sb.read_reg(self.be.state_dir, self.SID) or {}).get("bgTasks"), [], "the mirror is rewritten at the hook")
+        self.assertEqual((s._bg_tasks["t-9"]["type"], s._bg_tasks["t-9"]["desc"]), ("shell", "another task"))
+        self.assertEqual([t.get("taskId") for t in (sb.read_reg(self.be.state_dir, self.SID) or {}).get("bgTasks") or []], ["t-9"],
+                         "the mirror is rewritten at the hook: the retired row gone, the adopted one in")
         self.assertTrue(any("the CLI's turn-end report lists 1 background task the reg named for the surviving CLI as not running; "
-                            "no longer counted as live, and no notice, since the CLI reports no death" in l for l in self.lines),
-                        self.lines[-6:])
+                            "no longer counted as live, and no notice, since the CLI reports no death; names 1 running background task "
+                            "the live set never held; counted as live from the report" in l for l in self.lines), self.lines[-6:])
+        self._turn(c1, apiKeySource="apiKeyHelper")
+        self._wait(lambda: s.inflight == 0 and getattr(s, "_settled_msg", None) is not None, "the first turn after the attach settled")
+        self._settled("the first settle")
+        self.assertEqual(t1.sent, [], "the settle holds: the CLI said t-9 runs"); self.assertEqual(len(self._Client.instances), 1)
+        self.assertTrue(s._reconnect_held_for_work); self.assertFalse(s._reconnect)
+        self.assertFalse(any("cut off when the claude process" in str(p) for p in s.pending()), "no death notice: the CLI reported no death")
+        self.assertFalse(any("without an authoritative read" in l or "had no frame and no turn-end report" in l for l in self.lines),
+                         "the report decided: nothing was left for the settle to hold")
+        # the CLI's own stream ends t-9; the delivery turn's settle arms and the teardown follows the work
+        self._push(c1, self._Sys("task_notification", {"task_id": "t-9", "status": "completed"}, self._uid()))
+        self._wait(lambda: s._live_work_counts() == (0, 0), "the end frame popped the adopted row")
         self._turn(c1, apiKeySource="apiKeyHelper")
         self._wait(lambda: len(self._Client.instances) == 2 and self._Client.instances[1] is s.client and s._launching is None,
                    "the settle found the sets empty, armed, and the relaunch landed")
         self._settled("the landing")
         self.assertEqual(t1.sent, ["end"])
-        self.assertFalse(any("cut off when the claude process" in str(p) for p in s.pending()), "no death notice: the CLI reported no death")
         self.assertFalse(any("cut off when the claude process" in w for c in self._Client.instances for w in c.writes))
-        self.assertFalse(any("without an authoritative read" in l for l in self.lines), "the settle found nothing seeded to drop")
         self.assertEqual(s._launched_auth, "login")
 
     def test_a_handshake_that_times_out_against_the_surviving_cli_retires_none_of_its_work_at_the_retry(self):
@@ -13031,6 +13083,164 @@ class SettingsPickThroughTheLoopUnderAHost(SettingsPickThroughTheLoop):
         self._settled("the first settle")
         self.assertEqual(s._live_work_counts(), (0, 1)); self.assertTrue(s._reconnect_held_for_work); self.assertFalse(s._reconnect)
         self.assertEqual([t.sent for t in self.hosted], [[], []]); self.assertEqual(len(self._Client.instances), 2)
+
+    def test_a_stand_down_after_four_handshake_timeouts_holds_the_survivors_work_and_the_next_attach_counts_it_again(self):
+        # the reviewer's round 3 pre-check (2026-09-19; its first item): a sixth road of the standing rule. Four attaches
+        # reached the host and none completed, so the loop stood the session down (_host_stand_down: detached, the thread
+        # ends) with the CLI alive under its host and the survivor's task seeded from the reg at the first hello. The
+        # session-gone path's task block checked `ended` alone: it queued a death notice ("cut off when the claude process
+        # ... ended") into the reg's queue for a task still running in a CLI still alive and wiped the reg's bgTasks
+        # mirror; the user's next send attached again, the seed read an empty mirror, the carried ask armed unheld at the
+        # landing and the surviving CLI was torn down with the task inside it, one turn after the session was told it had
+        # died. A stand-down is not a report that the work ended: the block holds a detached session's rows, the mirror
+        # stands, one line says so, and the next attach counts the task again so the ask holds
+        self._helper()
+        s = self._survivor_with_a_carried_ask(handshake_timeouts=4)
+        s.start()
+        self._wait(lambda: not s.thread.is_alive(), "the stand-down ended the thread")
+        self.assertEqual(len(self.hosted), 4, "four attaches, each to the same surviving CLI")
+        self.assertTrue(all(isinstance(t, self._TimedOutAttach) for t in self.hosted))
+        self.assertEqual([t.sent for t in self.hosted], [[], [], [], []], "no attach asked the host to end its CLI")
+        self.assertTrue(s.detached, "stood down: the host keeps the CLI"); self.assertEqual(s._host_attach_retries, 0)
+        self.assertTrue(any("attach did not complete (TimeoutError); retry 4" in l for l in self.lines), self.lines[-12:])
+        self.assertTrue(any("could not complete an attach to its live session host after 4 tries" in l for l in self.lines), self.lines[-12:])
+        reg = sb.read_reg(self.be.state_dir, self.SID) or {}
+        self.assertEqual([t.get("taskId") for t in reg.get("bgTasks") or []], ["t-1"], "the mirror stands: nothing reported the work ended")
+        self.assertFalse(any("cut off when the claude process" in (sb._queue_text(e) or "") for e in reg.get("queue") or []),
+                         "no death notice for a task running in a live CLI")
+        self.assertTrue(reg.get("authPending"), "the carried ask stands in the reg")
+        self.assertTrue(any("session gone (web): detached from a live CLI with 1 background task counted; no notice and the reg's mirror "
+                            "stands, since nothing reported that the work ended; the next attach counts it again" in l for l in self.lines),
+                        self.lines[-12:])
+        self.assertNotIn(self.SID, self.be.sessions, "the stood-down object left the roster; the next send builds a successor")
+        self.assertEqual(sum(1 for l in self.lines if "counted as live from the attach" in l), 1, "seeded once, at the first hello")
+        # the user's next send builds a successor object that attaches to the same CLI (the fifth connect here reaches it
+        # and completes); the seed reads the standing mirror and the carried ask holds for the task
+        s2 = sb.SdkSession(self.be, dict(sb.read_reg(self.be.state_dir, self.SID)))
+        self.be.sessions[self.SID] = s2
+        self.s = s2                                   # tearDown joins the live object
+        s2.start()
+        self._wait(lambda: len(self.hosted) == 5 and s2.client is not None and s2._launched_effort is not None, "the successor's attach landed")
+        self._settled("the successor's landing")
+        t5 = self.hosted[4]
+        self.assertFalse(isinstance(t5, self._TimedOutAttach)); self.assertEqual(t5.sent, [])
+        self.assertEqual(s2._live_work_counts(), (0, 1), "the survivor's task is counted again from the standing mirror")
+        self.assertEqual(s2._seeded_tasks, {"t-1"})
+        self.assertEqual(sum(1 for l in self.lines if "counted as live from the attach" in l), 2, "seeded again, at the successor's hello")
+        self.assertEqual(s2._launched_auth, "key", "the attach stamped the CLI's report")
+        self.assertEqual(s2._auth_pending, "login", "the carried ask, made again at the landing")
+        self.assertTrue(s2._reconnect_when_idle and s2._reconnect_held_for_work, "held for the survivor's work")
+        self.assertFalse(s2._reconnect, "not armed: the guard read the seeded row")
+        self.assertFalse(any("cut off when the claude process" in str(p) for p in s2.pending()))
+        self.assertFalse(any("cut off when the claude process" in w for c in self._Client.instances for w in c.writes))
+
+    def test_the_first_turns_report_that_omits_a_seeded_row_retires_a_shell_and_holds_a_monitor_an_agent_and_a_workflow(self):
+        # the reviewer's round 3 pre-check (2026-09-19; its second item), the rule sharpened: trust a report's presence
+        # always, its absence only for the task types the reporter is known to enumerate completely. The reconcile retired
+        # a seeded row of ANY type on its absence from the report, while the launch ledger's reconcile in the same hook, on
+        # the same payload, trusts absence for shells alone (its probe note); the two disagreed about one payload. One
+        # predicate now decides both (report_absence_decides, shells alone, with the evidence and the unknowns recorded
+        # there): the omitted shell is retired on the CLI's own answer; the omitted monitor, Task agent and Workflow run
+        # are held as ordinary live rows, counted until the CLI's own stream ends them, and the settle holds the carried
+        # ask for them
+        self._helper()
+        since = int(time.time()) - 600
+        rows = [{"taskId": "t-1", "type": "local_bash", "desc": "a long sweep", "since": since, "toolUseId": "tu-1", "lastTool": ""},
+                {"taskId": "t-2", "type": "monitor_mcp", "desc": "watch the queue", "since": since, "toolUseId": "tu-2", "lastTool": ""},
+                {"taskId": "t-3", "type": "local_agent", "desc": "a reviewer agent", "since": since, "toolUseId": "tu-3", "lastTool": ""},
+                {"taskId": "t-4", "type": "local_workflow", "desc": "a fan-out run", "since": since, "toolUseId": "tu-4", "lastTool": ""}]
+        s = self._survivor_with_a_carried_ask(bg_tasks=rows)
+        c1 = self._connect()
+        t1 = self.hosted[0]
+        self.assertEqual(s._live_work_counts(), (0, 4)); self.assertEqual(s._seeded_tasks, {"t-1", "t-2", "t-3", "t-4"})
+        asyncio.run(s._stop_hook({"background_tasks": []}, None, None))    # the CLI's report names none of them
+        self.assertEqual(s._seeded_tasks, set(), "the report is the seed's one question, answered per type")
+        self.assertEqual(sorted(s._bg_tasks), ["t-2", "t-3", "t-4"], "the shell is retired on the omission; the rest are held")
+        self.assertEqual(s._live_work_counts(), (0, 3))
+        self.assertEqual([t.get("taskId") for t in (sb.read_reg(self.be.state_dir, self.SID) or {}).get("bgTasks") or []],
+                         ["t-2", "t-3", "t-4"], "the mirror keeps the held rows")
+        line = [l for l in self.lines if "the CLI's turn-end report lists 1 background task" in l]
+        self.assertEqual(len(line), 1, self.lines[-6:])
+        self.assertIn("lists 1 background task the reg named for the surviving CLI as not running; no longer counted as live, and no "
+                      "notice, since the CLI reports no death; omits 3 background tasks the reg named for the surviving CLI of a type the "
+                      "report is not known to enumerate completely (local_agent, local_workflow, monitor_mcp); still counted as live and "
+                      "held until the CLI's own stream ends them, since the omission is no report about them", line[0])
+        self._turn(c1, apiKeySource="apiKeyHelper")
+        self._wait(lambda: s.inflight == 0 and getattr(s, "_settled_msg", None) is not None, "the first turn after the attach settled")
+        self._settled("the first settle")
+        self.assertEqual(s._live_work_counts(), (0, 3)); self.assertTrue(s._reconnect_held_for_work); self.assertFalse(s._reconnect)
+        self.assertEqual(t1.sent, [], "the host is not asked to end its CLI: three tasks the report did not speak about run inside it")
+        self.assertEqual(len(self._Client.instances), 1)
+        self.assertFalse(any("cut off when the claude process" in str(p) for p in s.pending()))
+        self.assertFalse(any("had no frame and no turn-end report" in l for l in self.lines), "the report arrived: the settle holds nothing of its own")
+        # the CLI's own stream ends the held rows; the settle that finds the sets empty arms
+        for tid in ("t-2", "t-3", "t-4"):
+            self._push(c1, self._Sys("task_notification", {"task_id": tid, "status": "completed"}, self._uid()))
+        self._wait(lambda: s._live_work_counts() == (0, 0), "the end frames popped the held rows")
+        self._turn(c1, apiKeySource="apiKeyHelper")
+        self._wait(lambda: len(self._Client.instances) == 2 and self._Client.instances[1] is s.client and s._launching is None,
+                   "the relaunch landed")
+        self._settled("the landing")
+        self.assertEqual(t1.sent, ["end"], "the reconnect's teardown ended the host's CLI, after the work")
+
+    def test_a_raised_awaiting_clear_in_the_stop_hook_cannot_turn_a_report_into_a_no_report(self):
+        # the reviewer's round 3 pre-check (2026-09-19; its S5, the hook guard first): the Stop hook's first statement was a
+        # bare append_awaiting, so a state directory that refused the write raised out of the hook before the report was
+        # read; the seeded rows never met the report that listed them and the settle dropped them, a destructive action on
+        # an inference manufactured by an unrelated bookkeeping failure. The report is taken from the payload first, the
+        # bookkeeping failure is said loudly where it happens, one row, and the report still reaches the reconcile
+        self._helper()
+        s = self._survivor_with_a_carried_ask()
+        c1 = self._connect()
+        t1 = self.hosted[0]
+        self.assertEqual(s._seeded_tasks, {"t-1"})
+        with mock.patch.object(sb, "append_awaiting", side_effect=OSError("read-only state directory")):
+            out = asyncio.run(s._stop_hook({"background_tasks": [{"id": "t-1", "type": "shell", "status": "running",
+                                                                  "description": "a long sweep", "command": "sleep 600"}]}, None, None))
+        self.assertEqual(out, {}, "the hook completed")
+        self.assertEqual(s._seeded_tasks, set(), "the report reached the reconcile and confirmed the row")
+        self.assertEqual(s._live_work_counts(), (0, 1))
+        self.assertEqual([l for l in self.lines if "the awaiting overlay clear failed" in l],
+                         ["stop hook (web): the awaiting overlay clear failed: OSError: read-only state directory"], self.lines[-6:])
+        self.assertTrue(any("the CLI's turn-end report confirms 1 background task" in l for l in self.lines), self.lines[-6:])
+        self._turn(c1, apiKeySource="apiKeyHelper")
+        self._wait(lambda: s.inflight == 0 and getattr(s, "_settled_msg", None) is not None, "the first turn after the attach settled")
+        self._settled("the first settle")
+        self.assertEqual(s._live_work_counts(), (0, 1)); self.assertEqual(t1.sent, []); self.assertTrue(s._reconnect_held_for_work)
+        self.assertFalse(any("had no frame and no turn-end report" in l or "without an authoritative read" in l for l in self.lines))
+
+    def test_a_stop_hook_payload_without_the_list_is_a_no_report_and_the_seeded_row_holds_at_the_settle(self):
+        # the reviewer's round 3 pre-check (2026-09-19; its S5): a payload whose background_tasks is missing or malformed is
+        # a NO-REPORT, never an empty report. Until this round the hook skipped the reconcile and the settle then dropped the
+        # seeded row as undecided, releasing the hold and ending the surviving CLI with the task inside it; the row holds
+        # now, and the settle's line says which no-report shape this was
+        self._helper()
+        s = self._survivor_with_a_carried_ask()
+        c1 = self._connect()
+        t1 = self.hosted[0]
+        asyncio.run(s._stop_hook({"session_crons": []}, None, None))                 # a Stop payload with no task list
+        self.assertEqual(s._seeded_tasks, {"t-1"}, "no report: the row stays the reconcile's")
+        asyncio.run(s._stop_hook({"background_tasks": "not a list"}, None, None))    # a malformed one is no report either
+        self.assertEqual(s._seeded_tasks, {"t-1"})
+        self._turn(c1, apiKeySource="apiKeyHelper")
+        self._wait(lambda: s.inflight == 0 and getattr(s, "_settled_msg", None) is not None, "the first turn after the attach settled")
+        self._settled("the first settle")
+        self.assertEqual(s._live_work_counts(), (0, 1), "held, not dropped")
+        self.assertEqual(s._seeded_tasks, {"t-1"}, "still the reconcile's: the next report decides it")
+        self.assertTrue(s._reconnect_held_for_work); self.assertFalse(s._reconnect)
+        self.assertEqual(t1.sent, [], "the host is not asked to end its CLI"); self.assertEqual(len(self._Client.instances), 1)
+        self.assertEqual([t.get("taskId") for t in (sb.read_reg(self.be.state_dir, self.SID) or {}).get("bgTasks") or []], ["t-1"],
+                         "the mirror stands")
+        self.assertTrue(any("1 background task the reg named for the surviving CLI had no frame and no turn-end report through this turn "
+                            "(the turn's Stop hook carried no background_tasks list); still counted as live, held (nothing says it ended), "
+                            "and the hold stands until the CLI's own stream or its turn-end report decides it" in l for l in self.lines),
+                        self.lines[-6:])
+        self.assertFalse(any("without an authoritative read" in l for l in self.lines), "no drop")
+        self.assertFalse(any("cut off when the claude process" in str(p) for p in s.pending()))
+        # the next turn's report decides it: confirmed, and the hold stands
+        asyncio.run(s._stop_hook({"background_tasks": [{"id": "t-1", "type": "shell", "status": "running",
+                                                        "description": "a long sweep", "command": "sleep 600"}]}, None, None))
+        self.assertEqual(s._seeded_tasks, set()); self.assertEqual(s._live_work_counts(), (0, 1))
 
     def test_a_follower_step_that_fails_at_the_attach_landing_leaves_the_connect_up_and_files_one_row(self):
         # the reviewer's kernel-1 (round 2, 2026-09-19): the landing was the one caller of the follower's step with no guard,

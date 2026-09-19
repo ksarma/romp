@@ -658,18 +658,25 @@ answered by the CLI it still has and the relaunch takes the next quiet moment
 after it. A follower that carried its ask across a kernel restart holds it
 for the background work its surviving CLI still runs (counted from the
 registry's record at the re-attach; the CLI's own turn-end report at the first
-turn after it, the task list its Stop hook carries, confirms each task still
-running and retires the rest, and a turn that ends without that report drops
-what nothing spoke for, said in the log as a drop without an authoritative
-read). Nothing here ends work on an inference that it ended: a task is torn
-down, or reported to the session as cut off, only on the CLI's own report, and
-a retry after a handshake that timed out against a surviving CLI retires
-nothing. Two gaps are disclosed, not closed: a recorded task whose closing
-record never reaches the kernel, on a session that then takes no turn from any
-source, holds the ask, the pending dots and a stoppable-task row until a turn
-ends; and a subagent known only to the SubagentStart hook has no registry
-record and is not counted, so a survivor whose only live work is such a
-subagent can be reconnected over it. Both wait on one design question, what
+turn after it, the task list its Stop hook carries, confirms each task it lists
+as running, retires a shell it omits (the one task type the report is known to
+enumerate completely: a probe on 2026-08-28, and a read of the bundled CLI's
+producer on 2026-09-19 that found the list type-agnostic on that build; one
+probe per type widens it), keeps a monitor, an agent or a workflow run it
+omits until the CLI's own stream ends it, and counts a running task it names
+that the kernel never saw; a turn that ends without that report holds what
+nothing spoke for, said in the log). Nothing here ends work on an inference
+that it ended: a task is torn down, or reported to the session as cut off,
+only on the CLI's own report; a retry after a handshake that timed out against
+a surviving CLI retires nothing, and a stand-down after four such timeouts
+holds the tasks and the registry's record for the next attach. Two gaps are
+disclosed, not closed: a recorded task whose closing record never reaches the
+kernel holds the ask, the pending dots and a stoppable-task row until the CLI's
+own report or stream speaks for it (for a task other than a shell, until its
+end frame, across turns and restarts); and a subagent known only to the
+SubagentStart hook has no registry record and is not counted, so a survivor
+whose only live work is such a subagent can be reconnected over it. Both wait
+on one design question, what
 the authoritative read of a surviving CLI's live work is at the re-attach, for
 background tasks, Task agents, Workflow runs and hook-only subagents alike. A
 follower whose CLI bills a credential in the CLI's own environment that romp's
