@@ -1,0 +1,1052 @@
+#!/usr/bin/env python3
+"""Fold ruling A condition 7 as the reviewer ruled it on 2026-09-19 after jobs stage 1 (fork PR 784), stated PER MECHANISM:
+the condition bounds two loaders of a session's goal store on the walk's road, the look's decision read and the placement
+gate's currency check, each on its own. The WALK takes at most one shared goal-store load per alive session per pass:
+exactly one when its look reaches the store, zero when the look is skipped or ends at a state gate before the store read.
+The PLACEMENT GATE's post-derivation currency check is a SEPARATE load, at most one per DERIVED session, counted apart. Two
+bounds, each attributable to its caller. Other readers of the same store run on the same pass under their own rules and
+outside both bounds; the reference's `jobs` block (docs/reference.md) names them with their bounds and their callers on the
+toggle-off pass, and the Docs case pins that text and this pointer (one home for the clause: review round 2 found it in four
+hand-kept copies, two of them pinned by nothing). The rule was first written as one call count;
+a total is falsified by any new legitimate reader of the store, where a
+named mechanism adds a clause, so the counts below never sum the two. Stage 1 made the wake-only look record a memo row and skip on the
+ten-file key, and the first wording of its amendment kept the walk's ceiling (at most one) and dropped the floor; the ruling
+restored the floor, so this pin holds both.
+
+The walk's load is its one decision read, `jd.load_goals_shared_or_fault(sid)` in `_auto_nudge_session`, the read ruling
+A counted (its wording: every alive session walked wake-only with exactly one load_goals_shared_or_fault and zero plain
+load_goals in the decision path). Three witnesses count it. By execution: a recorder stands on `jd.load_goals_shared`, the
+one door both of the judge's boundary wrappers reach (`load_goals_shared_or_fault` hands the name to `_or_fault`, which
+resolves it from the judge's globals at call time, so every spelling of the shared read arrives at this door), and a
+second recorder on `jd.load_goals`, the writer's door. Each records the call with its caller's function, file and line,
+stepping over the judge's boundary frames by code identity (never by name) and only while a wrapper's frame sits at its
+pass-through call (the line read from the wrapper's source at setUp), so a load written anywhere in a wrapper's body other
+than its hand-off line is named for the wrapper in the judge's file, while one written on the hand-off line itself is
+named for the kernel caller of that call and counted under that caller's mechanism, the walk's for the look's read and the
+gate's for its currency check, or the writer list for a call through load_goals_or_fault (the step-over is line-granular:
+review round 2; the walk's ceiling is the line that fires first, since the look's read precedes the gate's on a pass: review
+round 3), and calls through to the real loader, so nothing about the shared cache is stubbed. A call from the look's body or from its gate wrapper (`_nudge_look_gated`'s
+inner function, the same mechanism) is the walk's, a call from `_nudge_placement_gate` is the gate's, a call from
+`_awaiting_wake_outcomes` is the wake sweep's (the store's third reader on the pass, bounded below), and any other caller
+during a pass fails the test, named by function, file and line. The writer door has its own assertion on every pass: the
+writer recorder's list must be empty after the tick, each entry named by function, file and line, kept apart from the
+shared door's assertion (one filter over both lists would accept a writer-door load whose caller is the walk); that
+assertion is _pass's, so the list is empty on every return and the cases read the door's own counter instead, goal_io
+loads as `writerLoads`, against the hand-offs each pass expects (review round 2: seven case-level reads of the list could
+not fail); a call
+through `load_goals_or_fault` is named for its kernel caller, never for the judge's `_or_fault`, and a load written inside
+`_or_fault` or either outer wrapper, off its hand-off line, is named for that wrapper (on the hand-off line it is named
+for the kernel caller of that call and counted under that caller's mechanism). The claim has three limits. The door: a third loader that reaches the store through the judge's loaders during the pass is caught and named;
+a reader below those loaders (the judge's own file reader and parser) is outside the recorders and outside the claim. The
+road: the execution witness covers every caller the fixture actually executes; the helpers in REPLACED_KM and REPLACED_JD
+and Sessions.backend_for run as stubs, so a loader inside their real bodies is outside the recorders and is caught by the
+source census in TheCountersOneSite instead, one level deep (the helper's own source); setUp checks that it rebinds
+exactly the listed names, so the census reads the fixture's list and not a hand-kept copy of it, and the check spans the
+whole setUp: its snapshots are setUp's first statements and its comparison the last, and the judge names the rebind moves are
+the diff across the rebind call alone, read against a second judge snapshot taken at the rebind, so a stub placed before the
+rebind is not filed as the rebind's (review round 3: read against the first snapshot, a judge stub between it and the rebind
+was subtracted and escaped); a stub installed before setUp, or on a judge directory or path name the rebind also moves, is
+outside it. The window: each pass, the
+`_auto_nudge_tick` call (the records are cleared before it and read after it), so a load elsewhere in the process (a
+builder, a handler, the perf snapshot the test reads after its last pass) is outside the window and is not this test's
+claim. By the store's own counters, a witness keyed on the store rather than on a list of doors, one per door. The shared
+door: every call that reaches the shared cache's branch and returns moves exactly one of hit, miss, compare_miss, absent
+and fallback in `jd.shared_store_stats()` (a call whose open or read raises moves none, and reds as a recorded call that
+took no read), so per pass the delta of those five must equal the walk's, the gate's and the sweep's recorded calls
+together. The writer door: every `load_goals` call bumps `loads` in `jd.goal_io_stats()` at the loader's
+first line, and the shared door hands a read to `load_goals` on exactly the absent, fallback, corrupt and
+unreadable_journal counters (SHARED_HANDOFF_KEYS), so per pass the delta of `loads` must equal the recorded writer calls
+plus those hand-offs (review round 2: until then the writer door was a recorder on one name, and a `load_goals` through a
+reference bound before the recorder stood, or written inside the shared door's own body where the fallback skip takes it
+for the hand-off, left every witness green). So a load through a door of this judge module onto its cache or its
+counters that the recorders do not wrap, or through a reference to a real door taken before a recorder stood, is noticed
+even though it cannot be named. Outside both witnesses: a reader below the judge's loaders or beside its module, the
+kernel opening and parsing the store file itself, the kernel calling the judge's own file reader (`jd._read_store_json`,
+below the loaders) or a second judge module loaded under another name with a cache and counters of its own (three plants,
+each per session in the pass loop, re-taken at this head one at a time with the kernel, the judge and this module hashed
+before and after each run: every case green, no file changed across a run, and the alias control beside them red). The two
+witnesses answer different questions: the recorders say
+who loaded, the delta says that something did. By the served counter: `memos.nudgeWalk.loads`, bumped at the walk's one call site, must
+move by the walk's count per pass. A skipped look repeats its verdict and writes nothing (the wake-only memo of PR 784),
+so it needs no data: the recorder sees no call from either.
+
+The gate's load is `_nudge_placement_gate`'s currency check after a derivation (upstream's since the 2026-09-09 fold; ruling
+A listed it as open, to be offered upstream, never edited here): at most one call per DERIVED session, none when the gate
+is served or the look skipped. A derive whose parse the cache does not hold checks nothing: `derived` is bumped on every
+non-raising derivation and the currency read sits under `if parse_key is not None`, so the code's invariant is the bound,
+and the equality the cases assert holds here because the harness's parsed_session records every parse in jd._PARSE_CACHE.
+So the first pass and a moved-transcript pass derive and the gate loads once per derived session
+beside the walk's one; a ledger-driven run pass (the ledger is the tenth keyed file) re-evaluates every look with the gate
+served, so the walk loads once and the gate not at all. A look the state gates end before the store read (a working
+session's, say) runs, records, and loads through neither.
+
+The wake sweep, `_awaiting_wake_outcomes`, is the store's third reader on the pass. It runs after the per-session loop,
+in the same pass and outside the toggle guard, and takes one shared load per wake record it owns: a record that is
+wake-set, not failed, moot or answered, not muted, and whose sid the walk did not visit or visited under a wedge gate.
+It keeps no memo, so it reads again every pass, and `memos.nudgeWalk.loads` does not count it. The harness holds it to
+that bound per sid per pass (`owned_records`, the records the seeding helper gave it): the first cases' ledger holds no
+wake record, so the sweep reads nothing there, and TheSweepIsItsOwnBoundedReader drives both of its constituencies: one
+record for an unwalked private sid, with one sweep load on each of two passes, once with a store whose nodes lack the goal
+and once with no store file, where the shared door falls back into load_goals and that fallback is one logical read of
+the shared door's; and one live record for an alive sid whose look the walk leaves on a wedge gate (api-error), where the
+walk and the gate load nothing, the sweep loads once per pass and reaches the failure stamp (replaced by a recorder there,
+since its real body is a writer).
+
+Red in both directions. For every assertion this module makes, a battery at the final head of the fourth review round
+constructs the state in which that line fails and records the first failing line: each state landed on kernel/kernel.py,
+kernel/judge.py, cli/perf_public.py, docs/reference.md or this module and reverted, the module run over its twelve cases
+on 3.12 with the caches cleared (three states on 3.11 as well); the figures below are counts from its log. A plant that
+reds every harness case reads 5 failed, 7 passed; the two pin cases' probe setUps raise the first guard they meet, so a
+setUp plant that changes which guard raises reads 7 failed, 5 passed. setUp: a stand-in left on a door by a peer module
+reds the door check (7 failed, 5 passed); two hand-off calls on `_or_fault`'s one hand-off line red the call-count
+guard, 2 against 1, where before the third round only the per-mechanism counts red, and the second call on its own line,
+or the `loader` parameter renamed so no call matches, reds the line guard (7 failed, 5 passed each); a kernel stub above
+the old snapshot position and a kernel stub inside the seeding helper each red the agreement check naming the stub, and
+the judge-stub pin beside the harness cases, whose probe meets that kernel guard before its own (6 failed, 6 passed
+each); a judge stub without a list entry and a judge stub between the first snapshot and the rebind (review round 3:
+read against the first snapshot, the rebind's diff filed it as the rebind's and it escaped) each red the check naming
+the stub (5 failed, 7 passed each); the backend replacement removed reds the backend assertion (5 failed, 7 passed); a
+stub placed through the hook right after the rebind is refused by name, and with the kernel snapshot back at its old
+position the hook's stub escapes and that pin case reds (1 failed, 11 passed); a stub placed through the hook before the
+rebind is refused by name, and with the rebind's diff read against the first snapshot again it escapes and that pin case
+reds (1 failed, 11 passed). _pass: `jd.load_goals_shared` per session in the pass loop reds the unattributed-caller
+assertion naming `_auto_nudge_pass` with the kernel's real file and the plant's line (5 failed, 7 passed), the sweep's
+read made through a lambda is named for the lambda there (3 failed, 9 passed), and with the boundary set emptied every
+pass with a load is named `_or_fault` there (3 failed, 9 passed); a load per walked sid at the top of
+`_awaiting_wake_outcomes` reds the sweep's bound, 1 against 0 owned records and 2 against 1 in the wedge case (5 failed,
+7 passed), the sweep's read duplicated reds it at 2 against 1 in the three sweep cases, and a foreign-sid load from the
+sweep reds it by sid, the message naming the sweep's records for that sid by function, file and line (3 failed, 9 passed
+each); a foreign-sid load above the gate's currency read reds the foreign assertion naming `_nudge_placement_gate` (3
+failed, 9 passed), and above the walk's read naming `_auto_nudge_session`, with the census (4 failed, 8 passed); a read
+by the look of the OTHER pass session passes the foreign assertion and reds the walk's ceiling, which names the sid and
+the mechanism, with the census (4 failed, 8 passed); a shared read in the gated look before it consults the memo reds
+the walk's ceiling at the first pass, 2 against 1 per session, with the two cases that pin zeros and the gate wrapper's
+census (6 failed, 6 passed); a second shared load written on `_or_fault`'s hand-off line, taken by the look's call and
+the gate's, reds the walk's ceiling first (3 failed, 9 passed); the currency read duplicated after the derive count reds
+the gate's ceiling, 2 against 1 (3 failed, 9 passed); a currency read on the served path reds the general bound alone, 2
+checks against 0 derives (1 failed, 11 passed); a derive counted in the skip branch reds the equality at the first
+skipping pass, 0 against 2 (4 failed, 8 passed), as do the currency read dropped and the fixture's parse left out of
+jd._PARSE_CACHE (3 failed, 9 passed each; at the head before the ceilings moved, those two red the first pass's gate
+assertion); a reference to the real shared door bound at kernel import and called per session in the pass loop reds the
+shared reconciliation, the counters two over the recorded calls (5 failed, 7 passed), a shared counter moved with no
+recorded call reds it on every pass, one over (5 failed, 7 passed), the door's hit bump dropped reds it the other way (4
+failed, 8 passed), and a phantom record appended by the recorder reds the ceilings ahead of it (4 failed, 8 passed);
+`jd.load_goals` per session in the pass loop reds the writer assertion naming `_auto_nudge_pass` (5 failed, 7 passed),
+and with the writer recorder's code-identity skip removed the no-store sweep case reds there naming `load_goals_shared`
+in the judge's file (1 failed, 11 passed); the same import-time alias to the writer door reds the writer reconciliation,
+loads two over the hand-offs (5 failed, 7 passed), as does `load_goals(fsid)` at the top of the shared door's cache
+branch (4 failed, 8 passed). The first case, one state per assertion: the looks bump removed (3 failed, 9 passed); every
+look ending at the working gate, its test replaced by a constant true, the first pass's walk {0, 0} against {1, 1} (3
+failed, 9 passed; review round 3: the battery had folded this line into the walk ceiling's state, whose plant reds the
+ceiling first); a duplicate bump statement, 4 against 2 on the counter and 2 against 1 in the census (3 failed, 9 passed
+each); a served bump beside the derive, memo (2, 2) against (0, 2) (2 failed, 10 passed); the shared cache switched off
+after setUp, writerLoads 4 against 0 (1 failed, 11 passed); SID_A's store read once before the first pass, the counters
+{hit 3, miss 1} against {hit 2, miss 2} (1 failed, 11 passed); the memo row never recorded (4 failed, 8 passed); the
+skip's early return dropped, the skip pass's walk at 1 per session (3 failed, 9 passed); the gate called from the skip
+path on a copy of the memo's store, the skip pass's gate at 1 per session (a contrived plant; 3 failed, 9 passed); the
+skippedParses bump removed (2 failed, 10 passed); a loads bump in the skip branch, 2 on the skip pass (3 failed, 9
+passed); the ledger dropped from the ten keyed files, so its move re-evaluates nothing (2 failed, 10 passed); the walk
+reusing a stale per-sid snapshot, the run pass's walk at 0 (2 failed, 10 passed, the census's adjacency the other); the
+gate memo cleared before the run pass, so it derives (1 failed, 11 passed); a loads bump on the served path, 4 against 2
+(1 failed, 11 passed); the cache switched off before the run pass, so the gate cannot be served and derives (1 failed,
+11 passed); the ledger touched again before the second skip pass, so it runs (1 failed, 11 passed); a loads bump in the
+skip branch conditioned on four parses, so the second skip pass alone (a contrived plant; 2 failed, 10 passed); the
+transcript dropped from the ten keyed files, so the moved transcript skips (1 failed, 11 passed); the working gate
+answering true before the moved-transcript pass, its walk at 0 (1 failed, 11 passed); the parse-key term dropped from
+the gate memo's hit test, so it serves the moved parse (1 failed, 11 passed); SID_A's store re-seeded before that pass,
+a miss in place of a hit, and the cache switched off before it, two fallbacks and two hand-offs (1 failed, 11 passed
+each); a send in the look (3 failed, 9 passed); the served snapshot handing out zero loads, 0 against 5, the counter
+preset to 100 after setUp, 105 against 5, the bump adding a float, and `loads` denied in the public fold (1 failed, 11
+passed each). Four case-level tuples carried the writer door's counter and the store's counters beside the walk's
+counter, on the two skip passes, the run pass and the state-gate case's first pass, and neither element could fail on
+its own there: a counter that moves with no recorded call reds _pass's reconciliation first, and on the run pass a
+non-hit gives the walk a new view object, so the gate derives and its line fires first; those tuples carry the walk's
+counter alone now and _pass holds the rest (review round 3). The state-gate case: the working gate moved below the store
+read (1 failed, 11 passed); a served bump in the working branch (contrived; 1 failed, 11 passed); the loads bump moved
+above the working gate (2 failed, 10 passed, the census the other); the verdict renamed (1 failed, 11 passed);
+`_put_walk_gate` made a no-op, so the second pass skips (2 failed, 10 passed); a read conditioned on a memo row standing
+(contrived; 3 failed, 9 passed); a read in the skip branch (5 failed, 7 passed). The sweep cases: the sweep's ownership
+inverted (3 failed, 9 passed); the recorder using the bare basename, the sweep's read filed under `romp-kernel` (3
+failed, 9 passed); SID_C's store deleted in the store case and written in the no-store case, the hand-off count 1
+against 0 and 0 against 1 (1 failed, 11 passed each); SID_C's store read before the first pass, and the cache cleared
+between the passes (1 failed, 11 passed each); a send in the sweep (3 failed, 9 passed); SID_A's store read before the
+no-store case's first pass, and the ledger touched between its passes (1 failed, 11 passed each); the api-error gate
+moved below the parse, the wedge clause dropped, the cache switched off in the wedge case, the sweep's parse skipped,
+SID_A's store read before its first pass, the cache cleared between its passes, the failure stamp skipped and SID_B's
+walk gate popped (1 failed, 11 passed each), and a read in the api-error branch, with the census (2 failed, 10 passed).
+The censuses: a second read above the walk's own, 2 sites against 1 with the walk's ceiling (4 failed, 8 passed); the
+bump moved one line off the load (1 failed, 11 passed); a call in the gate wrapper (6 failed, 6 passed); `loads` popped
+from the served block (1 failed, 11 passed); a name added to REPLACED_KM, 22 targets against 21 with setUp's check (7
+failed, 5 passed); `jd.load_goals_shared_or_fault` as the first statement of the real `_closer_settled`, and the same
+call inside an f-string on 3.11 (1 failed, 11 passed each; 8 passed on 3.11 at the head before the AST census); the
+loader imported under an alias there, on 3.12 and on 3.11 (1 failed, 11 passed each; review round 3: 11 passed each
+before the census read ast.alias); the census reverted to raw lines, the prose sample counting sites (1 failed, 11
+passed), attributes ignored, one call counting none (2 failed, 10 passed), and aliases ignored, the import sample
+counting none (1 failed, 11 passed); the old tokenize census with the f-string sample on 3.11 (1 failed, 11 passed); a
+comment quoting the bump, and a docstring mention in the gate wrapper, green (12 passed each). The recorder: the
+step-over made unconditional, the in-body call named for the test method (1 failed, 11 passed); `_or_fault` rebound to a
+functools.partial, setUp erroring with inspect's TypeError (7 failed, 5 passed; the loud failure, not an assertion). The
+reference: the class word, a writer's name, the dead-man's bound, `_dead_wait_block`'s callers, the first-two needle and
+the toggle needle dropped from the jobs block, each of the walk entry's four needles and its pointer dropped, this
+module's pointer dropped, and the gloss phrase changed (1 failed, 11 passed each). The assertion texts name the
+mechanism and are in the commit messages.
+
+Drives the real pass (_auto_nudge_tick) over two alive sessions with real transcript files and real goal stores, on the
+suite's fake clock (the pass takes `now`). SYNTHETIC fixtures only; a PRIVATE synthetic sid pair (the goal-store fixture
+rule), their override journals cleaned in the teardown; the state root rebound through jd._rebind_state and `off` written
+into its session-hosts."""
+import ast
+import inspect
+import json
+import os
+import sys
+import tempfile
+import textwrap
+import unittest
+from romp_load import load_source
+from pathlib import Path
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+BIN = os.path.join(os.path.dirname(HERE), "bin")
+os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
+os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
+# Hermetic state BEFORE the loads: they resolve their state root at import time, and only
+# pytest runs conftest's floor (a bare unittest or script run otherwise writes REAL state).
+os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
+os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
+km = load_source("romp_kernel_c7pin", os.path.join(BIN, "romp-kernel"))
+jd = km.jd                                        # the kernel's OWN judge instance: the recorder must land where the walk reads it
+pp = load_source("romp_perf_public", os.path.join(os.path.dirname(HERE), "cli", "perf_public.py"))   # the export's public fold
+
+SID_A = "c7c0a001-5e55-4a11-8b22-000000000001"   # private to this module (the goal-store fixture rule): a plain working top
+SID_B = "c7c0a001-5e55-4a11-8b22-000000000002"   # a stamped top whose dead-man is an hour away (the wake-only branch's other road)
+SID_C = "c7c0a001-5e55-4a11-8b22-000000000003"   # never alive, so never walked: the sid of the wake record the sweep owns
+SIDS = (SID_A, SID_B)
+NOW = 1_787_900_000
+H = 3600
+WALK = ("_auto_nudge_session", "gated")   # the walk's look: its body and its gate wrapper (_nudge_look_gated's inner function)
+GATE = ("_nudge_placement_gate",)         # the placement gate's post-derivation currency check: a second loader, counted apart
+SWEEP = ("_awaiting_wake_outcomes",)      # the wake sweep after the per-session loop: a third reader, one shared load per wake record it owns
+# The shared cache's per-call counters: load_goals_shared bumps exactly one of these per call that reaches the cache's branch
+# (judge.py, the door's body). Not summed: unreadable_journal, corrupt, dup and refuse are second bumps on a fill; evict and
+# poisoned are not calls; entries, bytes and off are gauges.
+SHARED_CALL_KEYS = ("hit", "miss", "compare_miss", "absent", "fallback")
+# The shared door's hand-offs into load_goals: the four counters load_goals_shared bumps right before it returns load_goals(fsid)
+# (judge.py, the door's body: the cache off, no store file, an unreadable journal, bytes that did not parse). Each hand-off is one
+# load_goals call and so one bump of `loads` in jd.goal_io_stats(), the writer door's own counter, which the writer reconciliation
+# in _pass reads. The door's _unread branch bumps unreadable_journal with no hand-off; the door's own comment calls it unreachable
+# while the journal's rows arrive as lines, and reached it would red that reconciliation as a hand-off over the loads.
+SHARED_HANDOFF_KEYS = ("absent", "fallback", "corrupt", "unreadable_journal")
+KERNEL_FILE = os.path.basename(os.path.realpath(km.__file__))   # the kernel's real file: it is loaded from bin/romp-kernel, a symlink
+# The callables the fixture replaces, other than the two recorded doors: the kernel names (the look's gates and the pass's
+# helpers; _pending_ops and _PREV_ALIVE are data, not callables), the judge names, and Sessions.backend_for (replaced by
+# setUp beside them). Their real bodies never run under the fixture, so the source census in TheCountersOneSite is the only
+# witness for a loader inside them. _session_working is not in the list: its real body runs (the event model reads the
+# fixture turns, both ended, as not working, the answer the stub gave), and the state-gate case replaces it for its own world.
+# CASE_KM: names a CASE may replace after setUp for its own world, saved with the rest and restored by the cleanup; setUp
+# leaves them real (the agreement check there). The two writers are the wedge-gate sweep case's: their real bodies load
+# through the writer door at their write moments by design (the reference's jobs block names them among the store's other
+# readers), so the census has nothing to say about them.
+CASE_KM = ("_session_working", "_mark_nudge_failed", "_file_wake_answer")
+REPLACED_KM = ("_alive_sessions", "_wait_for_graph", "_session_flag", "_compacting_now", "_api_error",
+               "_interrupt_suppresses_nudge", "_backend_rewind_pending", "_last_state",
+               "_session_awaiting", "_turn_romp_injected", "_closer_settled", "_revivers_pending",
+               "_pending_ops", "_log_nudge_event", "_push_all", "_mark_views_dirty", "_path_of",
+               "_debt_backstop_tick", "_PREV_ALIVE")
+REPLACED_DATA = ("_pending_ops", "_PREV_ALIVE")
+REPLACED_JD = ("parsed_session", "_segs", "plan_units")
+JUDGE_FILE = os.path.basename(os.path.realpath(jd.__file__))
+_UNSET = object()
+
+
+def _pass_through_lines(fn, callee):
+    """(lines, calls): the line numbers, in `fn`'s file, of its calls to `callee`, and how many such calls there are. The calls
+    are the boundary wrapper's hand-off of the read (`loader(fsid)` in _or_fault, `_or_fault(...)` in the two outer wrappers),
+    read from the source by the AST so a docstring or a comment naming the callee is not one. The lines are absolute (inspect
+    gives the source with its first line's number) and are what _caller steps over at; the count is the guard's (review round
+    2, extra5-2: two hand-off calls written on one line are one line and were passed by a guard whose message said one call)."""
+    src, start = inspect.getsourcelines(fn)
+    tree = ast.parse(textwrap.dedent("".join(src)))
+    calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == callee]
+    return frozenset(start - 1 + node.lineno for node in calls), len(calls)
+
+
+def _loader_sites(obj, needle):
+    """Every place `obj`'s source names a loader whose spelling contains `needle`, read from the AST: (index, line) pairs, one
+    per node, indexed as inspect.getsource(obj).splitlines() is, so a census can check adjacency against a line index. A site
+    is an ast.Name whose id contains the needle, an ast.Attribute whose dotted spelling (the value chain and the attribute,
+    `jd.load_goals_shared_or_fault`) contains it, or an ast.alias whose imported name contains it (`from romp_judge import
+    load_goals_shared as _lgs`: the import line is the site, and the alias's later uses, Names of another spelling, are not;
+    review round 3: over Name and Attribute alone, a loader imported under an alias inside a replaced helper's body was no
+    site), so `jd.load_goals_shared` counts both spellings of the shared door and nothing else, and a mention in a comment, a
+    docstring or any string literal is no node of these kinds and no site: the one rule the source censuses share. By the same
+    rule a loader reached through a string, `getattr(jd, "load_goals_shared")` or an importlib lookup, names it in no node of
+    these kinds and is outside the census. Two calls on one line are two sites. Read from the tree and not from tokenised text
+    (review round 2, correctness-1): the first cut blanked comments and strings token by token, and on 3.10 and 3.11 the
+    tokenizer gives a whole f-string as one STRING token (3.12 and later split it into FSTRING_* parts), so a loader CALL
+    written inside an f-string was blanked with the literal and invisible on two of the five CI interpreters; ast.walk reaches
+    the JoinedStr's FormattedValue and its Call on every interpreter, and reads the f-string's literal text on none."""
+    src = textwrap.dedent(inspect.getsource(obj))
+    lines = src.splitlines()
+    out = []
+    for node in ast.walk(ast.parse(src)):
+        if isinstance(node, ast.Name):
+            spelled = node.id
+        elif isinstance(node, ast.Attribute):
+            parts, v = [node.attr], node.value
+            while isinstance(v, ast.Attribute):
+                parts.append(v.attr)
+                v = v.value
+            parts.append(v.id if isinstance(v, ast.Name) else "...")
+            spelled = ".".join(reversed(parts))
+        elif isinstance(node, ast.alias):
+            spelled = node.name                       # the imported name; the alias itself (`as _lgs`) is a spelling of the census's own
+        else:
+            continue
+        if needle in spelled:
+            out.append((node.lineno - 1, lines[node.lineno - 1]))
+    return sorted(out)
+
+
+def _caller(frame, boundary):
+    """(function, file, line) of the frame that asked for the store: `frame` is the recorder's own, its f_back the immediate
+    caller, and the judge's boundary frames are stepped over by code identity, never by name, so a call through either
+    boundary wrapper is named for the kernel function that made it. `boundary` pairs each wrapper's code object with the
+    lines of its pass-through calls (_pass_through_lines, taken at setUp): a boundary frame is stepped over only while it
+    sits at one of those lines, so a load written anywhere else in a wrapper's own body is named for the wrapper itself,
+    in the judge's file (review round 2: stepped over unconditionally, a load planted inside _or_fault was named for the
+    wrapper's kernel caller, the misnaming that costs more than silence). The file is the basename of the frame's REAL
+    path: the kernel is loaded from bin/romp-kernel, a symlink to kernel/kernel.py, so the bare basename would read
+    romp-kernel."""
+    f = frame.f_back
+    while True:
+        lines = next((ls for c, ls in boundary if f.f_code is c), None)
+        if lines is None or f.f_lineno not in lines:
+            break
+        f = f.f_back
+    return f.f_code.co_name, os.path.basename(os.path.realpath(f.f_code.co_filename)), f.f_lineno
+
+
+class _FakeBackend:
+    def __init__(self):
+        self.sent = []
+
+    def send(self, sid, body):
+        self.sent.append((sid, body))
+
+    def pending_queued(self, sid):
+        return []
+
+
+class _WalkHarness(unittest.TestCase):
+    """The real pass over two synthetic sessions, the toggle off, every seam it moves put back by a cleanup registered
+    before the first rebind (unittest skips tearDown when setUp raises and runs the cleanups regardless)."""
+
+    def setUp(self):
+        before_km, before_jd = dict(vars(km)), dict(vars(jd))   # FIRST: the agreement check at the end of setUp compares against these
+        self.td = tempfile.TemporaryDirectory()
+        self.addCleanup(self.td.cleanup)                  # cleanups run last in, first out: the seams go back, then the dir
+        td = Path(self.td.name)
+        self.saved = {k: getattr(km, k) for k in REPLACED_KM + CASE_KM}   # CASE_KM saved too: a case replaces them after setUp
+        self.saved_jd = {k: getattr(jd, k) for k in REPLACED_JD + ("load_goals", "load_goals_shared")}
+        self.saved_state = jd.STATE
+        self.saved_backend = km.Sessions.backend_for
+        self.shared_off_before = jd._SHARED_OFF[0]
+        self.walk_stats = {k: (dict(v) if isinstance(v, dict) else v) for k, v in km._NUDGE_WALK_STATS.items()}
+        self.gate_stats = dict(km._NUDGE_GATE_STATS)
+        self.seen = dict(km._TICK_SEEN)
+        self.first = ({k: (list(v) if isinstance(v, list) else v) for k, v in km._NUDGE_WALK_FIRST.items()},
+                      km._NUDGE_WALK_FIRST_OPEN[0])
+        self.addCleanup(self._restore)
+        self._before_rebind()                             # a hook: a pin overrides it to place a stub between the first snapshot and the rebind
+        pre_rebind = dict(vars(jd))                       # the judge's globals AT the rebind, so the names it moves are the diff across that
+        jd._rebind_state(td)                              #   one call (STATE and every dir derived from it, never jd.STATE alone) and nothing
+        rebound_by_rebind = {k for k, v in vars(jd).items() if pre_rebind.get(k, _UNSET) is not v}   # rebound before it is filed as the
+        #                                                   rebind's (review round 3: read against the FIRST snapshot, a judge stub placed between
+        #                                                   it and the rebind was subtracted below and escaped). The set is the judge's directory
+        #                                                   and path globals (kernel/judge.py, _rebind_state's global list), subtracted at the
+        #                                                   comparison below, so no hand-kept copy of that list exists
+        self._after_rebind()                              # a hook: a pin overrides it to place a stub right after the rebind
+        jd.GOALDIR.mkdir(parents=True)
+        jd.EPIDIR.mkdir(parents=True)
+        (td / "session-hosts").write_text("off")          # a root this test minted: no session host may start under it
+        km._SESSION_STAMP_CACHE.clear(); km._autonudge_cache.clear()
+        jd._shared_clear(); jd._SHARED_OFF[0] = False      # the shared cache is on for the test and restored after it
+        km._nudge_gate_memo.clear(); km._nudge_deleg_memo.clear()
+        km._TICK_SEEN.clear()
+        for k, v in list(km._NUDGE_WALK_STATS.items()):
+            km._NUDGE_WALK_STATS[k] = {} if isinstance(v, dict) else 0
+        km._NUDGE_WALK_FIRST_OPEN[0] = False
+        self.fb = _FakeBackend()
+        km.Sessions.backend_for = lambda sid: self.fb
+        km._wait_for_graph = lambda now, sids: {}
+        km._session_flag = lambda sid, flag: False
+        km._compacting_now = lambda sid: False
+        km._api_error = lambda path: None
+        # _session_working runs REAL: over the fixture turns (both ended, the last with no idle tail) the event model answers not
+        # working, as the stub did, so the gate costs the fixture nothing and a loader planted in its body is caught by execution
+        km._interrupt_suppresses_nudge = lambda turns, sid="", **k: False
+        km._backend_rewind_pending = lambda sid: False
+        km._last_state = lambda sid: ("", 0)
+        km._session_awaiting = lambda *a, **k: None
+        km._turn_romp_injected = lambda tn: False
+        km._closer_settled = lambda *a: True              # kept stubbed: the fixture store carries no closedTurns, so the real gate ends
+        #                                                   both looks at closer-unsettled before the placement gate (walk 1 and 1, gate 0
+        #                                                   and 0, memo (0, 0)); seeding closer state is a larger fixture change than the
+        #                                                   disclosure, and the source census below scans the real body instead
+        km._revivers_pending = lambda *a, **k: ""
+        km._pending_ops = {}
+        km._log_nudge_event = lambda *a, **k: None
+        km._push_all = lambda *a, **k: None
+        km._mark_views_dirty = lambda *a, **k: None
+        km._debt_backstop_tick = lambda now: None
+        km._PREV_ALIVE = set(SIDS)                        # no death transition pending
+        # the sessions: real transcript files under the state root (the memo's first keyed file; a missing one never skips)
+        self.rows = {}
+        for i, sid in enumerate(SIDS):
+            p = td / (sid + ".jsonl")
+            p.write_text(json.dumps({"type": "user", "uuid": sid[:8], "timestamp": "2026-09-10T00:00:00Z",
+                                     "message": {"role": "user", "content": "x"}}) + "\n")
+            os.utime(p, (NOW - H, NOW - H))
+            self.rows[sid] = {"sid": sid, "path": str(p), "name": ("web", "api")[i], "mtime": NOW - H - 100 * i}
+        km._alive_sessions = lambda now, live: [self.rows[s] for s in SIDS]
+        km._path_of = lambda sid, now=None: self.rows[sid]["path"] if sid in self.rows else ""
+        # the parse: fixture turns recorded in the parse cache under a per-sid generation key, as parsed_session records a
+        # parse (the gate keys its memo on that key while the cached turns object is the one the walk holds; a re-parse
+        # moves the key, so the gate derives again and pays its currency re-read)
+        self.turns = {sid: [{"id": "t1", "ended": True, "end": NOW - 8 * H, "t": NOW - 8 * H - 10, "atoms": []},
+                            {"id": "t2", "ended": True, "end": NOW - 7 * H - 100, "t": NOW - 7 * H - 200, "atoms": []}]
+                      for sid in SIDS}
+        self.parse_gen = dict.fromkeys(SIDS, 0)
+        self.parsed = []
+
+        def _parsed(sid, paths, now):
+            self.parsed.append(sid)
+            sess = {"turns": self.turns[sid]}
+            jd._PARSE_CACHE[sid] = (("fixture", self.parse_gen[sid]), sess)
+            return sess
+        jd.parsed_session = _parsed
+        jd._segs = lambda tn, store: []
+        jd.plan_units = lambda session, store, lazy_text=None: []
+        # the witnesses by execution: recorders on the judge's two doors, each calling through. The shared recorder stands on
+        # the INNER door, jd.load_goals_shared: load_goals_shared_or_fault hands that name to _or_fault, which resolves it from
+        # the judge's globals at call time, so a call by either spelling arrives here (a recorder on the outer door alone
+        # missed the bare spelling, the one _awaiting_wake_outcomes uses: review round 1)
+        real_shared, real_writer = self.saved_jd["load_goals_shared"], self.saved_jd["load_goals"]
+        for fn, name in ((real_shared, "load_goals_shared"), (real_writer, "load_goals")):
+            self.assertEqual((fn.__code__.co_name, os.path.basename(os.path.realpath(fn.__code__.co_filename))), (name, JUDGE_FILE),
+                             "jd.%s is the judge's own door (no stand-in left by a peer module)" % name)
+        # The boundary frames and the shared door's body, by CODE identity, taken from the real functions NOW, before this setUp
+        # replaces a door. Not at import: the judge module is shared by every kernel a worker loads and re-executed into the same
+        # module object by each load (romp_load), so a code object captured when this module was imported is a previous
+        # execution's once a sibling module imports its kernel (the first run beside six siblings failed on exactly that).
+        boundary = []
+        for fn, callee in ((jd._or_fault, "loader"), (jd.load_goals_shared_or_fault, "_or_fault"), (jd.load_goals_or_fault, "_or_fault")):
+            lines, calls = _pass_through_lines(fn, callee)
+            self.assertEqual(len(lines), 1, "%s's hand-off calls sit on one line, the granularity the recorder steps over at: the "
+                                            "wrapper's frame is stepped over only while it sits at that line" % fn.__name__)
+            self.assertEqual(calls, 1, "%s hands the read on at exactly one call: a second call on the same line would be stepped "
+                                       "over too and named for the wrapper's kernel caller" % fn.__name__)
+            boundary.append((fn.__code__, lines))
+        boundary = tuple(boundary)
+        shared_body = real_shared.__code__
+        self.calls, self.writer = [], []
+        self.owned_records = {}                           # sid -> the wake records the sweep owns this test (the seeding helper sets it)
+
+        def _shared(sid):
+            self.calls.append((sid,) + _caller(inspect.currentframe(), boundary))
+            return real_shared(sid)
+
+        def _load(sid):
+            if inspect.currentframe().f_back.f_code is not shared_body:          # the shared door's own fallback into load_goals (the
+                self.writer.append((sid,) + _caller(inspect.currentframe(), boundary))   # cache off, no store file, an unreadable
+            return real_writer(sid)                                              #  journal, corrupt bytes) is one logical read: the shared
+        jd.load_goals_shared = _shared                                           #  recorder recorded its caller, so nothing is recorded here;
+        jd.load_goals = _load                                                    #  the door's own counter counts it as a hand-off (writerLoads)
+        self._toggle(False)
+        self._seed(SID_A, stamped=False)
+        self._seed(SID_B, stamped=True, age=5 * H)
+        # The road limit's list is checked against the fixture, not kept by hand, over the WHOLE setUp: the snapshots are its first
+        # statements and this comparison its last, so this setUp rebinds exactly the names REPLACED_KM and REPLACED_JD list plus the
+        # two recorded doors, with Sessions.backend_for beside them, and a stub placed anywhere in between without a list entry
+        # reds here (a stub without a list entry hides a loader from the execution witness AND from the census that reads the
+        # list). Review round 2, correctness-2 and tests-1: the snapshot sat in the middle of setUp, after the cache clears, and
+        # a stub above it escaped the check, the census and the execution witness (8 passed with a shared load in the stubbed
+        # helper's real body). Review round 3: the judge names the rebind moves were read against the first snapshot, so a judge
+        # stub between that snapshot and the rebind was filed as the rebind's and subtracted; they are read against a snapshot
+        # taken at the rebind itself now (pre_rebind), so a stub anywhere before or after it stays in this comparison. Outside the
+        # window: a stub installed before setUp, and a jd directory or path name the rebind also moves (subtracted below, so a
+        # later stub on one of those names is not seen either).
+        rebound_km = {k for k, v in vars(km).items() if before_km.get(k, _UNSET) is not v}
+        self.assertEqual(rebound_km, set(REPLACED_KM), "setUp replaces exactly the kernel names REPLACED_KM lists, the census's targets: a "
+                                                        "stub without a list entry hides a loader from the execution witness and the census")
+        rebound_jd = {k for k, v in vars(jd).items() if before_jd.get(k, _UNSET) is not v} - rebound_by_rebind
+        self.assertEqual(rebound_jd, set(REPLACED_JD) | {"load_goals", "load_goals_shared"},
+                         "and exactly the judge names REPLACED_JD lists plus the two recorded doors (the names jd._rebind_state moves "
+                         "subtracted)")
+        self.assertIsNot(km.Sessions.backend_for, self.saved_backend, "and Sessions.backend_for, replaced beside them")
+
+    def _before_rebind(self):
+        """A no-op hook, called right before the judge snapshot the rebind's diff is read against: the region between setUp's first
+        snapshot and the rebind, where a judge stub was filed as the rebind's and escaped until review round 3. A pin overrides it
+        to place a stub there and expects setUp to refuse it (TheAgreementCheckSpansSetUp)."""
+
+    def _after_rebind(self):
+        """A no-op hook, called right after jd._rebind_state: the region the agreement check's first snapshot missed (review round
+        2). A pin overrides it to place a stub there and expects setUp to refuse it (TheAgreementCheckSpansSetUp)."""
+
+    def _restore(self):
+        journals = [jd._overrides_dir() / (sid + ".jsonl") for sid in SIDS + (SID_C,)]   # under this test's root, resolved before the rebind back
+        for k, v in self.saved.items():
+            setattr(km, k, v)
+        for k, v in self.saved_jd.items():
+            setattr(jd, k, v)
+        km.Sessions.backend_for = self.saved_backend
+        km._SESSION_STAMP_CACHE.clear(); km._autonudge_cache.clear()
+        jd._shared_clear(); jd._SHARED_OFF[0] = self.shared_off_before
+        km._nudge_gate_memo.clear(); km._nudge_deleg_memo.clear()
+        km._NUDGE_WALK_STATS.clear(); km._NUDGE_WALK_STATS.update(self.walk_stats)
+        km._NUDGE_GATE_STATS.clear(); km._NUDGE_GATE_STATS.update(self.gate_stats)
+        km._TICK_SEEN.clear(); km._TICK_SEEN.update(self.seen)
+        first, open_ = self.first
+        for k, v in first.items():
+            if isinstance(v, list):
+                km._NUDGE_WALK_FIRST[k][:] = v
+            else:
+                km._NUDGE_WALK_FIRST[k] = v
+        km._NUDGE_WALK_FIRST_OPEN[0] = open_
+        for j in journals:
+            try:
+                j.unlink()
+            except OSError:
+                pass
+        jd._rebind_state(self.saved_state)               # the root goes back the way it was found (the parse entries go with it)
+
+    def _toggle(self, enabled):
+        (jd.STATE / "auto-nudge.json").write_text(json.dumps({"enabled": enabled, "nudged": {}}))
+        km._autonudge_cache.clear()
+
+    def _seed(self, sid, stamped, age=5 * H):
+        """A working top under `sid`; with `stamped`, carrying a kind=job awaiting stamp `age` old."""
+        gid = sid + ":g1"
+        at = NOW - age
+        why = "the index rebuild is still running; picking the result up when it lands"
+        top = {"id": gid, "text": "rebuild the notes-api index", "parentId": None,
+               "nodeComplete": False, "blocked": False, "cleared": False, "trail": [], "t": 100, "mt": 100, "log": []}
+        if stamped:
+            top.update({"awaitingWhy": why, "awaitingAt": at, "awaitingKind": "job"})
+            top["log"].append({"ev_t": at, "src": "closer", "kind": "awaiting", "why": why, "awaitKind": "job", "at": at})
+        (jd.GOALDIR / (sid + ".json")).write_text(json.dumps({
+            "rompUuid": sid, "seq": 1, "placements": {}, "status": {gid: "working"}, "nodes": {gid: top}}))
+        km._SESSION_STAMP_CACHE.clear()
+
+    KEYS = ("looks", "parses", "skippedParses", "wakeOnly", "loads")
+
+    def _pass(self, now):
+        """One pass over the two sessions: the walk's counter deltas, the placement gate's (served, derived) deltas, and the
+        shared-loader calls per mechanism and sid (`walk`: the look's decision read; `gate`: the placement gate's currency
+        check; `sweep`: the wake sweep's read per owned record; never a total), the writer loads, and the sids parsed. `walk`
+        and `gate` are keyed on SIDS as the floor, so the cases' zero-assertions keep their keys, plus any other sid a
+        recorded call of theirs names; `sweep` is keyed on every sid seen, since its constituency includes unwalked sids. So
+        every recorded call sits inside one bound, and a shared load by the look or by the gate for a session that is not one
+        of the pass's two is named by function, file, line and sid by its own assertion; a read by either of the OTHER pass
+        session lands in that session's count and is held by the ceilings, which name the sid and the mechanism (review round
+        3: this prose said the two read only the session they look at, which no assertion checks); the sweep's read of an
+        unwalked sid is legitimate and is held to its bound per sid instead. With no owned record (`owned_records` empty, as in the first
+        class) that bound holds the sweep to zero on every pass, which is why those cases assert nothing about it. The
+        walk's per-sid ceiling, the gate's per-sid ceiling, the gate's general bound (checks never exceed derives) and its
+        fixture equality (checks equal derives, because the harness's parsed_session records every parse) are asserted
+        here too, on every pass, ahead of the cases' exact counts: a case pins each pass's dicts exactly, so a ceiling
+        placed after those pins could never be the line that fails. The recorders stand on the judge's two doors,
+        `jd.load_goals_shared` and `jd.load_goals`, and attribute through its boundary frames by code identity, so a shared
+        load from any other function the fixture executes during the pass fails here, named by function, file and line (the
+        helpers the fixture replaces, REPLACED_KM, REPLACED_JD and Sessions.backend_for, are the source census's in
+        TheCountersOneSite, not this witness's), and the sweep is held to its bound per sid; the writer door's list is
+        asserted empty after every pass, separately, each entry named the same way; a reader below the doors is outside the
+        claim. The store's counters are reconciled against the recorded calls per door (`shared`, the delta over
+        SHARED_CALL_KEYS, against every recorded shared call, listed in the message; `writerLoads`, the delta of goal_io
+        loads, against the writer records plus the shared door's hand-offs over SHARED_HANDOFF_KEYS), so a load through a
+        door of the judge module the recorders do not wrap is noticed, unnamed; a reader that bypasses the module is outside
+        both. `calls` carries the shared records (sid, function, file, line) for a case's own assertions."""
+        before = {k: km._NUDGE_WALK_STATS[k] for k in self.KEYS}
+        gate0 = dict(km._NUDGE_GATE_STATS)
+        s0, g0 = jd.shared_store_stats(), jd.goal_io_stats()["loads"]
+        self.calls.clear(); self.writer.clear(); self.parsed.clear()
+        km._auto_nudge_tick(now, {sid: {"state": ""} for sid in SIDS})
+        s1, g1 = jd.shared_store_stats(), jd.goal_io_stats()["loads"]
+        d = {k: km._NUDGE_WALK_STATS[k] - before[k] for k in self.KEYS}
+        d["memo"] = tuple(km._NUDGE_GATE_STATS[k] - gate0[k] for k in ("served", "derived"))
+        # the walk's and the gate's counts: keyed on SIDS as the floor (the cases' zero-assertions keep their keys) plus any other
+        # sid a recorded call of theirs names, so every record of theirs sits inside a bound and the reconciliation below balances;
+        # a record for a sid outside SIDS is then named by the assertion after the sweep's bound (review round 2, fresh-1: keyed on
+        # SIDS alone, a foreign-sid read by the gate landed in no bound and red only the reconciliation, with a false cause)
+        d["walk"] = {sid: sum(1 for s, c, _f, _ln in self.calls if s == sid and c in WALK)
+                     for sid in set(SIDS) | {s for s, c, _f, _ln in self.calls if c in WALK}}
+        d["gate"] = {sid: sum(1 for s, c, _f, _ln in self.calls if s == sid and c in GATE)
+                     for sid in set(SIDS) | {s for s, c, _f, _ln in self.calls if c in GATE}}
+        d["sweep"] = {}                                   # over every sid seen: the sweep's constituency includes unwalked sids
+        for s, c, _f, _ln in self.calls:
+            if c in SWEEP:
+                d["sweep"][s] = d["sweep"].get(s, 0) + 1
+        others = ["%s (%s:%d, sid ..%s)" % (c, f, ln, s[-4:]) for s, c, f, ln in self.calls if c not in WALK + GATE + SWEEP]
+        self.assertEqual(others, [], "a shared load from a caller that is neither the walk, the placement gate nor the wake sweep, "
+                                     "by function, file and line: %s" % "; ".join(others))
+        for sid, n in sorted(d["sweep"].items()):
+            recs = "; ".join("%s (%s:%d)" % (c, f, ln) for s, c, f, ln in self.calls if s == sid and c in SWEEP)
+            self.assertLessEqual(n, self.owned_records.get(sid, 0),
+                                 "sid ..%s: the sweep takes at most one shared load per wake record it owns per pass (a record that is "
+                                 "wake-set, not failed, moot or answered, not muted, and whose sid the walk did not visit or visited "
+                                 "under a wedge gate), none for a sid with no owned record; it runs after the per-session loop in the "
+                                 "same pass and memos.nudgeWalk.loads does not count it; its records for this sid: %s" % (sid[-4:], recs))
+        foreign = ["%s (%s:%d, sid ..%s)" % (c, f, ln, s[-4:]) for s, c, f, ln in self.calls if c in WALK + GATE and s not in SIDS]
+        self.assertEqual(foreign, [], "a shared load by the look or the placement gate for a session that is not one of this pass's two, by "
+                                      "function, file, line and sid (a read of the other pass session lands in its count and is the ceilings' "
+                                      "below): %s" % "; ".join(foreign))
+        # the ceilings and the gate's equality, here ahead of the cases' exact per-pass counts: a case pins each pass's dicts and
+        # memo exactly, so a ceiling placed after those pins could never be the line that fails (review round 2, regression-1: the
+        # three ceilings sat after the first case's five passes and no state reached them red), and the equality placed there
+        # could fail only through a plant conditioned on the pass history; here each fires on the first pass that violates it
+        for sid, n in sorted(d["walk"].items()):
+            self.assertLessEqual(n, 1, "pass at %d, sid ..%s: the walk takes at most one shared load per alive session per pass "
+                                       "(condition 7, the walk's bound)" % (now, sid[-4:]))
+        for sid, n in sorted(d["gate"].items()):
+            self.assertLessEqual(n, 1, "pass at %d, sid ..%s: the placement gate checks at most once per derived session (condition 7, "
+                                       "the gate's bound)" % (now, sid[-4:]))
+        self.assertLessEqual(sum(d["gate"].values()), d["memo"][1],
+                             "pass at %d: the gate's checks never exceed its derives (condition 7, the gate's bound; a derive without a "
+                             "cached parse checks nothing)" % now)
+        self.assertEqual(sum(d["gate"].values()), d["memo"][1],
+                         "pass at %d: equal here because the harness's parsed_session records every parse in jd._PARSE_CACHE, so every "
+                         "derive holds its parse and checks once; the gate's rule is the bound above" % now)
+        d["shared"] = {k: s1[k] - s0[k] for k in SHARED_CALL_KEYS if s1[k] != s0[k]}
+        records = ["%s (%s:%d, sid ..%s)" % (c, f, ln, s[-4:]) for s, c, f, ln in self.calls]
+        self.assertEqual(sum(d["shared"].values()), sum(d["walk"].values()) + sum(d["gate"].values()) + sum(d["sweep"].values()),
+                         "the shared cache's five call counters (hit, miss, compare_miss, absent, fallback) moved %d times this pass and the "
+                         "recorder on jd.load_goals_shared saw %d calls; the two must agree, since every call that reaches the cache's "
+                         "branch and returns moves exactly one of them. This line knows the two figures and not the cause: counters %r; "
+                         "recorded calls: %s. Among the possibilities: a load through a door of the judge module the recorders do not "
+                         "wrap, a load through a reference to the real door taken before a recorder stood, a recorded call whose open or "
+                         "read raised, a record appended without a call through"
+                         % (sum(d["shared"].values()), len(self.calls), d["shared"], "; ".join(records) or "none"))
+        d["calls"] = list(self.calls)
+        writer = ["%s (%s:%d, sid ..%s)" % (c, f, ln, s[-4:]) for s, c, f, ln in self.writer]
+        self.assertEqual(writer, [], "zero plain load_goals from any caller during the pass, the whole tick (condition 7 in ruling A's "
+                                     "wording says the decision path; this window is wider), by function, file and line; the shared door's "
+                                     "own fallback into load_goals is the shared door's read, skipped by code identity and counted under "
+                                     "goal_io loads as a hand-off, never here: %s" % "; ".join(writer))
+        handoffs = sum(s1[k] - s0[k] for k in SHARED_HANDOFF_KEYS)
+        self.assertEqual(g1 - g0, handoffs,
+                         "the writer door's own counter, goal_io loads, moves once per load_goals call (the loader's first line), and the "
+                         "shared door hands a read to load_goals on exactly the absent, fallback, corrupt and unreadable_journal counters; "
+                         "the recorded writer calls are zero here (the assertion above), so the delta must equal those hand-offs alone; a "
+                         "difference is a writer-door load the recorder did not see, through a reference to the real door taken before it "
+                         "stood or written inside the shared door's own body (the fallback skip takes it for the hand-off): loads %d against "
+                         "hand-offs %d" % (g1 - g0, handoffs))
+        d["writerLoads"] = g1 - g0                        # the writer door's own counter; the recorder's list is asserted empty above, so
+        #                                                   it is not returned (a case-level read of it could never fail: review round 2)
+        d["parsedSids"] = sorted(self.parsed)
+        return d
+
+    def _row(self, sid):
+        return km._TICK_SEEN.get(("auto-nudge", sid))
+
+
+class OneSharedLoadPerAliveSessionPerPass(_WalkHarness):
+    def test_exactly_one_on_a_run_and_zero_on_a_skip_by_execution_and_by_the_served_counter(self):
+        # (a) the first pass: no memo on record, so every look runs, and every placement gate derives
+        p1 = self._pass(NOW)
+        self.assertEqual((p1["looks"], p1["parses"], p1["skippedParses"], p1["wakeOnly"]), (2, 2, 0, 2), p1)
+        self.assertEqual(p1["walk"], {SID_A: 1, SID_B: 1},
+                         "the walk takes exactly one shared load per alive session when its look reaches the store (condition 7, the walk's bound)")
+        self.assertEqual(p1["loads"], 2, "memos.nudgeWalk.loads moves by the walk's count: one per look that reached the store")
+        self.assertEqual((p1["gate"], p1["memo"]), ({SID_A: 1, SID_B: 1}, (0, 2)),
+                         "the placement gate's currency check loads at most once per derived session; here every gate derived with its parse "
+                         "cached, so each checked once (condition 7, the gate's bound)")
+        self.assertEqual(p1["writerLoads"], 0, "no hand-off: every read of this pass hits or fills, so the shared door hands nothing to "
+                                               "load_goals and the writer door's own counter, goal_io loads, stays (the writer list itself is "
+                                               "_pass's assertion, empty on every return)")
+        self.assertEqual(p1["shared"], {"hit": 2, "miss": 2}, "the store's counters: each walk read fills (a miss), each gate check hits")
+        for sid in SIDS:
+            self.assertIsNotNone(self._row(sid), "a wake-mode memo row stands for %s" % sid[-4:])
+        # (b) nothing changed: every look skips, and a skipped look repeats its verdict and needs no data
+        p2 = self._pass(NOW + 5)
+        self.assertEqual(p2["walk"], {SID_A: 0, SID_B: 0},
+                         "the walk takes no shared load on a skipped look: zero per alive session (condition 7, the walk's bound)")
+        self.assertEqual(p2["gate"], {SID_A: 0, SID_B: 0},
+                         "the placement gate makes no currency check on a skipped look: it is never reached (condition 7, the gate's bound)")
+        self.assertEqual((p2["looks"], p2["skippedParses"], p2["parses"]), (2, 2, 0), p2)
+        self.assertEqual(p2["loads"], 0, "and the counter does not move (the store's counters and the writer door's are _pass's here: with the "
+                                         "walk, the gate and the sweep at zero, a counter that moved with no recorded call reds the reconciliation "
+                                         "there first)")
+        # (a) again with the gate SERVED: the ledger is the tenth keyed file, so its move re-evaluates every session once while
+        # the parse and the store stand; the walk loads once per session and the gate not at all
+        os.utime(jd.STATE / "auto-nudge.json", (NOW + 8, NOW + 8))
+        p3 = self._pass(NOW + 10)
+        self.assertEqual((p3["looks"], p3["parses"], p3["skippedParses"]), (2, 2, 0), p3)
+        self.assertEqual(p3["walk"], {SID_A: 1, SID_B: 1},
+                         "the walk takes exactly one shared load per alive session when its look reaches the store (condition 7, the walk's bound)")
+        self.assertEqual((p3["gate"], p3["memo"]), ({SID_A: 0, SID_B: 0}, (2, 0)),
+                         "the placement gate is served and makes no currency check (condition 7, the gate's bound)")
+        self.assertEqual(p3["loads"], 2, "the counter moves by the walk's two (that both reads hit and the door handed nothing to load_goals is the "
+                                         "gate's line above: a non-hit gives the walk a new view object, so the gate derives; and _pass's "
+                                         "reconciliations)")
+        # (b) again
+        p4 = self._pass(NOW + 15)
+        self.assertEqual((p4["walk"], p4["gate"]), ({SID_A: 0, SID_B: 0}, {SID_A: 0, SID_B: 0}),
+                         "the walk takes no shared load on a skipped look, and the placement gate is never reached (condition 7, both bounds)")
+        self.assertEqual((p4["skippedParses"], p4["loads"]), (2, 0), "skipped again, and the counter stays")
+        # one session's transcript moves: its look runs and derives (the parse key moved), the other's skips; per session
+        pa = Path(self.rows[SID_A]["path"])
+        pa.write_text(pa.read_text() + json.dumps({"type": "user", "uuid": "aaaaaaaa", "timestamp": "2026-09-10T00:01:00Z",
+                                                   "message": {"role": "user", "content": "y"}}) + "\n")
+        os.utime(pa, (NOW + 18, NOW + 18))
+        self.parse_gen[SID_A] += 1
+        p5 = self._pass(NOW + 20)
+        self.assertEqual((p5["parsedSids"], p5["parses"], p5["skippedParses"]), ([SID_A], 1, 1), p5)
+        self.assertEqual(p5["walk"], {SID_A: 1, SID_B: 0},
+                         "the walk, per session: one load for the look that reached the store, none for the one that skipped (condition 7, the walk's bound)")
+        self.assertEqual((p5["gate"], p5["memo"]), ({SID_A: 1, SID_B: 0}, (0, 1)),
+                         "the placement gate, per session: the moved parse derives once and checks once, the skipped session not at all "
+                         "(condition 7, the gate's bound: at most one check per derive; equal here because the harness caches every parse)")
+        self.assertEqual((p5["loads"], p5["writerLoads"], p5["shared"]), (1, 0, {"hit": 2}), "the walk's one and the gate's one, both hits, no hand-off")
+        # the walk's and the gate's ceilings, the gate's general bound and its equality are _pass's, on every pass (see there); with
+        # no owned record the sweep's bound in _pass holds the sweep to zero on every pass, so this case asserts nothing about it
+        self.assertEqual(self.fb.sent, [], "nudges off: nothing injected")
+        served = km._PERF_STATS.snapshot()["memos"]["nudgeWalk"]
+        self.assertEqual(served["loads"], km._NUDGE_WALK_STATS["loads"], "served under memos.nudgeWalk.loads")
+        self.assertEqual(served["loads"], 5, "the five loads the five passes made, cumulative")
+        self.assertIs(type(served["loads"]), int, "the served key carries nothing but an integer count")
+        block = {"memos": {"nudgeWalk": {"loads": served["loads"]}}}
+        self.assertEqual(pp.fold(block), block, "and the export's public fold keeps it as it is: neither denied, coarsened nor folded to other")
+
+    def test_a_look_the_state_gates_end_before_its_store_read_takes_no_load(self):
+        """The walk's exactly-one is for a look that reaches the store. A look a state gate ends earlier (here `working`: the
+        session is still working by the event model) runs, parses, records a file-keyed row and loads through neither
+        mechanism: the walk never reaches its read and the placement gate is never called; the counter stays. Its verdict
+        is journaled as a walk gate, a write into the ledger that moves every session's key once, so the skip comes on the
+        third pass, with no load on the second either."""
+        km._session_working = lambda turns: True
+        p1 = self._pass(NOW)
+        self.assertEqual((p1["looks"], p1["parses"], p1["skippedParses"]), (2, 2, 0), p1)
+        self.assertEqual(p1["walk"], {SID_A: 0, SID_B: 0},
+                         "the walk takes no load on a look a state gate ends before the store read (condition 7, the walk's bound)")
+        self.assertEqual((p1["gate"], p1["memo"]), ({SID_A: 0, SID_B: 0}, (0, 0)),
+                         "and the placement gate, never reached, checks nothing (condition 7, the gate's bound)")
+        self.assertEqual(p1["loads"], 0, "and the counter does not move (the store's and the writer door's counters are _pass's here: with the walk, "
+                                         "the gate and the sweep at zero, a counter move reds the reconciliation first)")
+        for sid in SIDS:
+            self.assertEqual(self._row(sid)[-1], "working", "the verdict recorded, file-keyed, for %s" % sid[-4:])
+        p2 = self._pass(NOW + 5)
+        self.assertEqual((p2["looks"], p2["parses"], p2["skippedParses"]), (2, 2, 0),
+                         "the first pass journaled each verdict as a walk gate (_put_walk_gate, a write-on-change into the ledger, the "
+                         "tenth keyed file), so the second pass re-evaluates every session once")
+        self.assertEqual((p2["walk"], p2["gate"], p2["loads"]), ({SID_A: 0, SID_B: 0}, {SID_A: 0, SID_B: 0}, 0), "and loads through neither")
+        p3 = self._pass(NOW + 10)
+        self.assertEqual((p3["skippedParses"], p3["walk"], p3["gate"], p3["loads"]), (2, {SID_A: 0, SID_B: 0}, {SID_A: 0, SID_B: 0}, 0),
+                         "the gate rows stand: skipped, and still no load through either")
+        # no owned record, so the sweep's bound in _pass holds the sweep to zero on every pass: nothing to assert about it here
+
+
+class TheSweepIsItsOwnBoundedReader(_WalkHarness):
+    """The wake sweep reads the store once per wake record it owns per pass, keeps no memo, and is counted apart from the
+    walk and the gate. Its records come from two constituencies, and a case drives each. The first two cases drive the
+    UNWALKED one: one wake record for SID_C, a sid that is never alive (so never walked: the sweep's original constituency),
+    goes into the ledger before the first pass; the two alive sessions run their first pass as in the first case, and the
+    sweep takes exactly one shared load for SID_C on that pass and again on the skip pass. With a store whose nodes lack
+    the goal, the read is followed by the inert-record continue (no parse, no writer load, nothing sent). With no store
+    file, the shared door falls back into load_goals: one logical read, recorded once by the shared recorder as the
+    sweep's and never as a writer call. The third case drives the WEDGE-GATED one: a live record for SID_A, an alive sid
+    whose look the walk visits and leaves on a wedge gate (api-error), the recipe round 1's refuters probed; past its read
+    that sweep reaches the failure stamp, whose real body loads through the writer door, so the case replaces the two
+    writers it can reach with recorders and asserts the stamp was reached (see the case)."""
+
+    def _seed_wake_record(self, sid=SID_C, store_file=True):
+        """One owned wake record for `sid` in the ledger (the toggle stays off). For SID_C, never alive, its store too:
+        with `store_file`, a store whose nodes lack the goal; without, no file at all. An alive sid keeps the store
+        setUp seeded (a working top g1, the record's goal)."""
+        (jd.STATE / "auto-nudge.json").write_text(json.dumps({"enabled": False, "nudged": {
+            sid + ":g1": {"wake": True, "at": NOW - 2 * H, "count": 1, "lastTurnId": "t1"}}}))
+        km._autonudge_cache.clear()
+        self.owned_records = {sid: 1}
+        if sid == SID_C and store_file:
+            (jd.GOALDIR / (SID_C + ".json")).write_text(json.dumps(
+                {"rompUuid": SID_C, "seq": 1, "placements": {}, "status": {}, "nodes": {}}))
+
+    def _one_sweep_load(self, p, name, handoffs):
+        """`handoffs`: the load_goals calls the shared door hands off this pass, read from the door's own counter (goal_io loads,
+        `writerLoads`): 1 with no store file (the absent hand-off), 0 with a store whose nodes lack the goal (the read fills or
+        hits). The writer recorder's list is _pass's assertion and is empty on every return, so the count is the case-level
+        witness that the fallback went through load_goals exactly as the door's own hand-off and the record was inert past it."""
+        self.assertEqual(p["sweep"], {SID_C: 1},
+                         "%s: the sweep takes exactly one shared load for the one record it owns, and none for the walk's sids" % name)
+        self.assertEqual([f for _s, c, f, _ln in p["calls"] if c in SWEEP], [KERNEL_FILE],
+                         "%s: the sweep's read is recorded in the kernel's real file (the function is the filter's own, held by _pass's caller "
+                         "assertion, and the count by the line above, so the file is the one element that can fail here)" % name)
+        self.assertEqual(p["writerLoads"], handoffs,
+                         "%s: the shared door's fallback into load_goals is the shared door's own read, counted once under goal_io loads as a "
+                         "hand-off and never as a writer call; %d hand-off(s) expected this pass, and the record is inert past the read" % (name, handoffs))
+
+    def test_a_store_whose_nodes_lack_the_goal(self):
+        self._seed_wake_record(store_file=True)
+        p1 = self._pass(NOW)
+        self.assertEqual((p1["walk"], p1["gate"], p1["memo"], p1["loads"]), ({SID_A: 1, SID_B: 1}, {SID_A: 1, SID_B: 1}, (0, 2), 2),
+                         "the walk and the gate as on any first pass: the record is SID_C's, a sid neither look is about, and the "
+                         "counter counts the walk alone (the gate's rule is at most one check per derive; equal here because the harness "
+                         "caches every parse)")
+        self._one_sweep_load(p1, "p1", handoffs=0)        # the read fills: nothing handed to load_goals
+        self.assertEqual(p1["shared"], {"hit": 2, "miss": 3}, "the walk's two fills and the sweep's one, the gate's two hits")
+        p2 = self._pass(NOW + 5)
+        self.assertEqual((p2["walk"], p2["gate"], p2["loads"]), ({SID_A: 0, SID_B: 0}, {SID_A: 0, SID_B: 0}, 0),
+                         "the looks skip: nothing of theirs moved")
+        self._one_sweep_load(p2, "p2", handoffs=0)        # the sweep keeps no memo: one read per owned record per pass
+        self.assertEqual(p2["shared"], {"hit": 1}, "the sweep's read alone, a hit on the store it filled last pass")
+        self.assertEqual(self.fb.sent, [], "nothing sent: the node is gone, so the record is inert and the sweep continues past it")
+
+    def test_no_store_file(self):
+        self._seed_wake_record(store_file=False)
+        p1 = self._pass(NOW)
+        self._one_sweep_load(p1, "p1", handoffs=1)        # no store file: the door hands the read to load_goals, once
+        self.assertEqual(p1["shared"], {"hit": 2, "miss": 2, "absent": 1}, "the sweep's read is the absent case: one call, one counter")
+        p2 = self._pass(NOW + 5)
+        self._one_sweep_load(p2, "p2", handoffs=1)
+        self.assertEqual(p2["shared"], {"absent": 1})
+        self.assertEqual(self.fb.sent, [], "nothing sent: the fresh store has no node for the record")
+
+    def test_a_wedge_gated_alive_sid_the_walk_visited(self):
+        """The sweep's other constituency: a live wake record for SID_A, an alive sid the walk visits and leaves on a WEDGE
+        gate. _api_error answers with text, so every look ends at "api-error" before its parse and its store read, and the
+        walk journals that gate (a wedge gate has no session-produced ending event while a wake is dead, so the sweep acts
+        on the record now rather than leaving it with the walk). The walk and the gate load nothing on either pass, and the
+        sweep takes exactly one shared load for SID_A per pass, recorded as _awaiting_wake_outcomes's in the kernel's file.
+        Past the read this sweep reaches the failure stamp (_nudge_response_ready over the fixture turns: no response
+        segment and a record without armAtoms, so resp is None). _mark_nudge_failed's real body loads through the writer
+        door twice at its write moment and stamps the record failed, which the sweep then no longer owns; so this case
+        replaces it, and _file_wake_answer (the answered leg's writer), with recorders (CASE_KM, restored by the cleanup),
+        asserts the stamp was reached for the record with wake=True on each pass, and the record stays live so the sweep
+        reads it again on the second pass. The two writers are among the store's other readers the reference's jobs block
+        names, loading by design at their write moments; the census is about helpers that should read nothing."""
+        km._api_error = lambda path: "API Error: 529 overloaded"
+        reached = []
+        km._mark_nudge_failed = lambda gid, ev_t=None, wake=False: reached.append(("failed", gid, wake)) or None
+        km._file_wake_answer = lambda sid, gid, now: reached.append(("answered", gid)) or False
+        self._seed_wake_record(sid=SID_A)
+        gid = SID_A + ":g1"
+        p1 = self._pass(NOW)
+        p2 = self._pass(NOW + 5)
+        for name, p in (("p1", p1), ("p2", p2)):
+            self.assertEqual((p["looks"], p["parses"], p["skippedParses"], p["wakeOnly"]), (2, 0, 0, 2),
+                             "%s: every look runs and ends at the wedge gate before its parse, so nothing is recorded to skip" % name)
+            self.assertEqual((p["walk"], p["gate"], p["memo"], p["loads"]), ({SID_A: 0, SID_B: 0}, {SID_A: 0, SID_B: 0}, (0, 0), 0),
+                             "%s: a look the wedge gate ends before its store read loads through neither mechanism, and the counter "
+                             "stays (condition 7, both bounds)" % name)
+            self.assertEqual(p["sweep"], {SID_A: 1}, "%s: the sweep takes exactly one shared load for the wedge-held record of an alive sid "
+                                                       "the walk visited, and none for SID_B, which owns no record" % name)
+            self.assertEqual([f for _s, c, f, _ln in p["calls"] if c in SWEEP], [KERNEL_FILE],
+                             "%s: the sweep's read is recorded in the kernel's real file (the function is the filter's own, held by _pass's caller "
+                             "assertion, and the count by the line above, so the file is the one element that can fail here)" % name)
+            self.assertEqual(p["writerLoads"], 0, "%s: the stamp is a recorder here and the sweep's read fills or hits, so the writer door's "
+                                                  "counter stays: no writer load, no hand-off" % name)
+            self.assertEqual(p["parsedSids"], [SID_A], "%s: the sweep parses the record's session once past its read" % name)
+        self.assertEqual(p1["shared"], {"miss": 1}, "p1: the sweep's read fills SID_A's store, which no look read")
+        self.assertEqual(p2["shared"], {"hit": 1}, "p2: the sweep keeps no memo, so it reads again: a hit on its own fill")
+        self.assertEqual(reached, [("failed", gid, True)] * 2,
+                         "the sweep reached the failure stamp for the record, wake=True, once per pass, and the answered leg's writer never")
+        gates = km._auto_nudge_data().get("walkGates", {})
+        self.assertEqual({s[-4:]: g.get("gate") for s, g in gates.items()}, {"0001": "api-error", "0002": "api-error"},
+                         "the walk journaled the wedge gate for both sids: the class of gate whose records the sweep owns")
+        self.assertEqual(self.fb.sent, [], "nothing sent")
+
+
+class TheRecorderNamesTheAsker(unittest.TestCase):
+    def test_a_load_inside_a_stand_in_wrapper_is_named_for_the_wrapper_and_its_hand_off_for_the_caller(self):
+        """_caller's contract over a stand-in, not the composition of the real boundary set (setUp's guard over the judge's three
+        wrappers holds that): a boundary frame is stepped over only while it sits at its pass-through call. `wrapper` is the
+        stand-in, two body lines: a call to `other`, off the hand-off line, and the hand-off `return loader()`; both callees
+        record their asker through _caller with `wrapper` as the one boundary. The load written in the wrapper's own body is
+        named for the wrapper, in this file; the hand-off is named for this method, the wrapper's caller. The (function, file)
+        pairs are asserted and not the lines, so a reformatting of this body changes nothing (review round 2, tests-2: the
+        conditional step-over landed with no case that failed without it; stepped over unconditionally, the in-body call is
+        named for this method as well, which is the red this case gives)."""
+        seen = []
+
+        def wrapper(loader):
+            other()                                       # a load written in the wrapper's own body, off the hand-off line
+            return loader()                               # the hand-off: the one line the recorder steps over
+
+        boundary = ((wrapper.__code__, _pass_through_lines(wrapper, "loader")[0]),)
+
+        def other():
+            seen.append(("in the body",) + _caller(inspect.currentframe(), boundary))
+
+        def loader():
+            seen.append(("the hand-off",) + _caller(inspect.currentframe(), boundary))
+
+        wrapper(loader)
+        here = os.path.basename(os.path.realpath(__file__))
+        self.assertEqual([(what, fn, f) for what, fn, f, _ln in seen],
+                         [("in the body", "wrapper", here), ("the hand-off", self._testMethodName, here)],
+                         "a load inside a stand-in wrapper's body is named for the wrapper, its hand-off for the wrapper's caller: %r" % seen)
+
+
+class TheAgreementCheckSpansSetUp(unittest.TestCase):
+    def test_a_stub_placed_right_after_the_rebind_is_refused(self):
+        """The agreement check covers the whole setUp (review round 2, correctness-2 and tests-1: with the snapshot taken after the
+        cache clears, a stub above it for a name outside both lists escaped the check, the census and the execution witness). A
+        throwaway harness subclass places a stub in the region the old snapshot missed, right after the rebind, through the
+        _after_rebind hook, on a CASE_KM name so the cleanup puts the real one back; its setUp must raise the agreement check's
+        AssertionError naming the stub. The cleanups run whether or not it raised, as unittest's would."""
+        class _Probe(_WalkHarness):
+            def _after_rebind(self):
+                km._session_working = lambda turns: False
+
+        probe = _Probe(methodName="setUp")
+        try:
+            with self.assertRaises(AssertionError) as cm:
+                probe.setUp()
+        finally:
+            probe.doCleanups()
+        self.assertIn("_session_working", str(cm.exception), "the check names the stub placed right after the rebind")
+
+    def test_a_stub_placed_between_the_first_snapshot_and_the_rebind_is_refused(self):
+        """The judge half of the check reads the names jd._rebind_state moves as the diff across that call alone, against a snapshot
+        taken at the rebind (review round 3: read against setUp's first snapshot, a judge stub placed between that snapshot and the
+        rebind was filed as the rebind's, subtracted, and escaped the check with the module green). A throwaway harness subclass
+        places a new-identity pass-through on a judge name outside both lists there, through the _before_rebind hook, restoring the
+        real one by its own cleanup; setUp must raise the agreement check's AssertionError naming it."""
+        class _Probe(_WalkHarness):
+            def _before_rebind(self):
+                real = jd._journal_key
+                self.addCleanup(setattr, jd, "_journal_key", real)
+                jd._journal_key = lambda fsid: real(fsid)
+
+        probe = _Probe(methodName="setUp")
+        try:
+            with self.assertRaises(AssertionError) as cm:
+                probe.setUp()
+        finally:
+            probe.doCleanups()
+        self.assertIn("_journal_key", str(cm.exception), "the check names the stub placed between the first snapshot and the rebind")
+
+
+class TheCountersOneSite(unittest.TestCase):
+    def test_the_walk_has_one_shared_load_site_and_the_counter_is_bumped_beside_it(self):
+        """A census over the look's own source (the gate decorator unwraps): one shared load by either spelling of the shared
+        door (`jd.load_goals_shared` is a prefix of both), read from the AST (_loader_sites: a name in code is a site, a
+        mention in a comment, a docstring or a string is not), the counter bumped on the line after it so the two cannot
+        drift, and the gate around the look reads no store (a skipped look needs no data), scanned by the same rule. The bump
+        is read as a statement too, an augmented `+= 1` on `_NUDGE_WALK_STATS["loads"]`, never as a line of text (review round
+        2, correctness-3: a comment quoting the statement counted as a second bump)."""
+        at = [i for i, _ln in _loader_sites(km._auto_nudge_session, "jd.load_goals_shared")]
+        self.assertEqual(len(at), 1, "one shared load in the walk's look, by either spelling of the shared door: a second call site is "
+                                     "a second load per look (condition 7, the walk's bound)")
+        tree = ast.parse(textwrap.dedent(inspect.getsource(km._auto_nudge_session)))
+        bump = [n.lineno - 1 for n in ast.walk(tree)
+                if isinstance(n, ast.AugAssign) and isinstance(n.op, ast.Add) and isinstance(n.target, ast.Subscript)
+                and isinstance(n.target.value, ast.Name) and n.target.value.id == "_NUDGE_WALK_STATS"
+                and isinstance(n.target.slice, ast.Constant) and n.target.slice.value == "loads"]
+        self.assertEqual(len(bump), 1, "the counter is bumped once, by one `_NUDGE_WALK_STATS[\"loads\"] += 1` statement")
+        self.assertEqual(bump[0], at[0] + 1, "on the line after the load")
+        gated = [ln.strip() for _i, ln in _loader_sites(km._nudge_look_gated, "load_goals")]
+        self.assertEqual(gated, [], "the gate around the look reads no store: a skipped look loads through neither mechanism: %s" % "; ".join(gated))
+        self.assertIn("loads", km._NUDGE_WALK_STATS, "the counter is a key of the served block")
+
+    def test_the_replaced_helpers_sources_load_no_store(self):
+        """The road limit as a check: the fixture replaces the callables in REPLACED_KM (less the two data names), REPLACED_JD
+        and Sessions.backend_for, so a loader planted in any of their real bodies never runs under the harness and the
+        execution witness cannot see it; this scan of each real source for either door's name (by the AST, _loader_sites, on
+        every interpreter) is the only witness for those bodies. One level deep, the helper's own source: _session_awaiting reaches two bare-door
+        readers (_owned_yield_why and _session_stamp_read) only under stamp=True, which the walk's call does not pass, so
+        the walk's road does not reach them; a helper the fixture does not replace is covered by execution instead."""
+        targets = ([(k, getattr(km, k)) for k in REPLACED_KM if k not in REPLACED_DATA]
+                   + [("jd." + k, getattr(jd, k)) for k in REPLACED_JD]
+                   + [("Sessions.backend_for", km.Sessions.backend_for)])
+        self.assertEqual(len(targets), 21, "the census covers every replaced callable")
+        for label, obj in targets:
+            hits = [ln.strip() for _i, ln in _loader_sites(obj, "load_goals")]
+            self.assertEqual(hits, [], "%s: a loader planted in a replaced helper never runs under the fixture, so this scan is the only "
+                                       "witness for its body: %s" % (label, "; ".join(hits)))
+
+    def test_the_census_reads_code_not_prose_and_sees_a_call_inside_an_f_string_on_every_interpreter(self):
+        """The rule the censuses share, exercised (review round 2, tests-3: no scanned source carried a mention of a loader, so
+        the rule was held by no assertion), over four local samples that are never called (inspect reads them; no store is
+        touched, no recorder window entered and the import never runs): the loader named in a docstring, a string literal and a
+        comment and nowhere in code is no site; one call is one site; one call inside an f-string is one site on every
+        interpreter (correctness-1: the tokenizer gives 3.10 and 3.11 one STRING token for a whole f-string and 3.12 and later
+        its FSTRING_* parts, and a census over blanked tokens read the call on the later ones only; the AST census does not
+        consult the tokenizer); a loader imported under an alias is one site, the import line, and the alias's call is not
+        (review round 3: over Name and Attribute alone, an import alias inside a replaced helper's real body was no site and the
+        module stayed green)."""
+        def mentions_only(sid):
+            """The look's read is jd.load_goals_shared_or_fault(sid), named here and in no code line of this body."""
+            note = "jd.load_goals_shared_or_fault(sid) in a string literal"   # jd.load_goals_shared_or_fault(sid) in a comment
+            return note
+
+        def one_call(sid):
+            store, fault = jd.load_goals_shared_or_fault(sid)
+            return store, fault
+
+        def in_fstring(sid):
+            return f"{jd.load_goals_shared_or_fault(sid)}"
+
+        def under_an_alias(sid):
+            from romp_judge import load_goals_shared as _lgs      # the import is the site; the call below is a Name of another spelling
+            return _lgs(sid)
+
+        self.assertEqual(_loader_sites(mentions_only, "load_goals"), [],
+                         "a loader named in a docstring, a string literal or a comment is not a site")
+        self.assertEqual(len(_loader_sites(one_call, "load_goals")), 1, "one call is one site: %r" % _loader_sites(one_call, "load_goals"))
+        self.assertEqual(len(_loader_sites(in_fstring, "load_goals")), 1,
+                         "a call inside an f-string is one site on every interpreter, this one %s: %r"
+                         % (sys.version.split()[0], _loader_sites(in_fstring, "load_goals")))
+        alias_sites = _loader_sites(under_an_alias, "load_goals")
+        self.assertEqual([ln.split()[0] for _i, ln in alias_sites], ["from"],
+                         "a loader imported under an alias is one site, the import line, and the alias's call is not: %r" % alias_sites)
+
+
+class Docs(unittest.TestCase):
+    def test_the_reference_states_condition_7_in_the_jobs_paragraph_and_names_the_counter(self):
+        """The reference's `jobs` block is the one home of the other-readers clause (review round 2, regression-2 and fresh-4:
+        the clause stood in four hand-kept copies, two of them pinned by nothing, and said the three writers are reached from
+        the look's wake legs and from the sweep, which is false of _dead_wait_block on the toggle-off pass). This case pins the
+        home's wording, with each writer's callers, and the two pointers a test can read: the memos.nudgeWalk entry's and this
+        module's own docstring's. The ledger entry (upstream/) carries the same pointer by hand and is not read here: the
+        directory is fork-only infrastructure and this module is part of the offer the entry records, so a read of it would red
+        upstream or need a skip, and a skipping pin pins nothing."""
+        doc = Path(HERE).parent.joinpath("docs", "reference.md").read_text()
+        jobs = doc[doc.index("- `jobs`: the jobs thread"):]
+        jobs = " ".join(jobs[:jobs.index("\n- `caches`:")].split())   # the paragraph is wrapped: one space between words
+        for words in ("bounds two loaders", "the look's decision read and the placement gate's currency check",
+                      "the walk takes at most one shared goal-store load per alive session per pass",
+                      "exactly one when its look reaches the store",
+                      "zero when the look is skipped or ends at a state gate before the store read",
+                      "the placement gate's post-derivation currency check is a second load", "not an exception to the walk's bound",
+                      "at most one per derived session, counted apart by the test rather than by a served counter",
+                      "`memos.nudgeWalk.loads`", "tests/test_nudge_walk_one_load_per_pass.py",
+                      "readers of the same store run on the same pass under their own rules and outside both bounds, among them",
+                      "`_wake_goal`", "at most one per stamped top whose dead-man is due, per look",
+                      "the writers' own loads at their write moments", "`_mark_nudge_failed`", "`_file_wake_answer`", "`_dead_wait_block`",
+                      "the first two reached from the look's wake legs and from the wake sweep", "from the look's dormant-owner branch",
+                      "only with the toggle on",
+                      "`_awaiting_wake_outcomes`", "runs after the walk in the same pass, not on it"):
+            self.assertIn(words, jobs, "the jobs paragraph states condition 7 per mechanism, scoped to the two loaders it bounds, names "
+                                       "the store's other readers on the pass as a class with its members, their bounds and each writer's "
+                                       "callers on the toggle-off pass, the counter and this test: %r" % words)
+        walk = " ".join(doc[doc.index("`nudgeWalk` is the auto-nudge walk's"):].split())   # wrapped: normalise before slicing
+        walk = walk[:walk.index("a memo row is the ten files' stat")]
+        self.assertIn("`loads`", walk, "memos.nudgeWalk.loads is named in the walk's entry")
+        self.assertIn("bounds two loaders", walk, "and the entry scopes the condition to the two loaders it bounds")
+        self.assertIn("a second loader with a bound of its own", walk, "and the entry names the gate's check as the second loader")
+        self.assertIn("counted by the test and by no served counter", walk, "and says what counts it")
+        self.assertIn("the store's other readers on the pass are named with their bounds in the `jobs` block above", walk,
+                      "and the entry points at the jobs block for the store's other readers instead of carrying a copy of the clause")
+        mine = " ".join(sys.modules[__name__].__doc__.split())
+        self.assertIn("the reference's `jobs` block (docs/reference.md) names them with their bounds and their callers on the toggle-off pass",
+                      mine, "this module's own docstring points at the jobs block for the store's other readers instead of carrying a copy")
+        gloss = km._PerfStats.__doc__
+        field = gloss[gloss.index("nudgeWalk (the auto-nudge walk's"):]
+        field = " ".join(field[:field.index("nudgeGate")].split())   # wrapped too
+        self.assertIn("loads (the walk's shared goal-store reads", field, "the _PerfStats field docstring names the counter")
+
+
+if __name__ == "__main__":
+    unittest.main()
