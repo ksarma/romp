@@ -82,6 +82,10 @@ LOADER_SKIP = ("romp_load.py", "conftest.py", "__init__.py", "credential_pattern
 # The ports the suite floors poison to a dead value (never popped: to every reader an absent variable
 # means the live default), in tests/conftest.py for pytest and tests/__init__.py for unittest runs.
 DEAD_PORTS = ("ROMP_MANAGER_PORT", "ROMP_KERNEL_PORT", "ROMP_SERVE_PORT")
+# Names floored to a value that is not a port, with the value (round 4 of the install-rewrite review, 2026-09-19): the kernel's
+# registry id is floored to the primary's in BOTH files and re-asserted by conftest's autouse fixture, as the ports are; round 2
+# put it in conftest.py alone, so a bare unittest run under a profile kernel stayed red where pytest was green.
+FLOORED_NAMES = (("ROMP_KERNEL_ID", "main"),)
 
 
 def _is_environ_attr(node):
@@ -305,6 +309,10 @@ class StateIsolationOrder(unittest.TestCase):
                 self.assertTrue(any(_sets_env_to(stmt, var, "1") for stmt in bodies[fn]),
                                 '%s must set os.environ["%s"] = "1" at module level: absent means the live default'
                                 % (fn, var))
+            for var, val in FLOORED_NAMES:
+                self.assertTrue(any(_sets_env_to(stmt, var, val) for stmt in bodies[fn]),
+                                '%s must set os.environ["%s"] = "%s" at module level: the other entry point floors it, and a '
+                                "floor in one twin protects one road while looking like two" % (fn, var, val))
         fixtures = [node for node in bodies["conftest.py"]
                     if isinstance(node, ast.FunctionDef) and _is_autouse_fixture(node)]
         self.assertTrue(fixtures, "conftest.py has no autouse fixtures at all")
@@ -312,6 +320,9 @@ class StateIsolationOrder(unittest.TestCase):
             self.assertTrue(any(any(_sets_env_to(stmt, var, "1") for stmt in fx.body) for fx in fixtures),
                             'no autouse fixture in conftest.py re-asserts os.environ["%s"] = "1": one test '
                             "module's import-time write would otherwise hold for every test after it" % var)
+        for var, val in FLOORED_NAMES:
+            self.assertTrue(any(any(_sets_env_to(stmt, var, val) for stmt in fx.body) for fx in fixtures),
+                            'no autouse fixture in conftest.py re-asserts os.environ["%s"] = "%s"' % (var, val))
 
 
 class DeadPortsHoldPerTest(unittest.TestCase):

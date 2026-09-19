@@ -1129,8 +1129,11 @@ rewrite bakes nothing from the shell that ran it: it keeps the unit's own
 `ExecStart`, `ROMP_DIR`, `PATH`, `service.env` path and instance lines, adds
 none the unit did not carry, refreshes only the release's lines, and refuses
 (exit 5, its own code, naming both values and which of the two fixes applies:
-a shell without the value, or the installed clone) when a value in the
-deploying environment differs from the unit's line. What the unit does not
+a shell without the value, or the installed clone) when a compared value
+differs: `ExecStart` and `ROMP_DIR` against the deploying clone, an instance
+variable and (when the deploying shell set it) the `service.env` path against
+the deploying environment; `PATH` is kept and never compared, since every
+shell carries one. What the unit does not
 carry is read as the service reads it, never as the deploying shell resolves
 it: a unit with no `PATH` line gets none, the `service.env` path is compared
 only when the deploying shell set `ROMP_SERVICE_ENV_FILE` or
@@ -1142,7 +1145,7 @@ readers follow: a form they cannot read whole is refused (exit 5, nothing
 written, the form and the remedy named), and a value they accept is written
 back in a form systemd or launchd reads as the same value; the paragraph on
 the service below says which forms are refused.
-`romp-service install` is the way to change them.
+`romp-service install` is the way to change the values the unit bakes in.
 
 ### The manager's control port
 
@@ -1577,24 +1580,48 @@ move the log paths to the deploying shell's `$HOME`. Every value the plist
 carries is XML-escaped once on write and decoded once on read, the named
 entities and the numeric character references (`&#38;`, `&#x26;`) alike, so
 a path with `&`, `<`, `>` or `"` compares equal to the shell that installed
-it and is unchanged by any number of rewrites. On Linux the unit is read the
-way systemd reads it, once, as a whole: blanks around the `=` are stripped
-(`Environment = X=y` is a line), only `[Service]` counts, an `Environment=`
-value is word-split and unquoted as systemd.syntax(7) describes (either
-quote character, the `\\`, `\"`, `\'`, `\s`, `\n`, `\t` and `\r` escapes,
-`%%` a literal `%`), a bare value with whitespace is its first word and the
-rest dropped as systemd drops it, and a later assignment of a name replaces
-an earlier one; the compare reads what systemd hands the manager, so the
-update child's own environment is never refused over the file's spelling. A
-form the reader cannot read whole is refused, exit 5, nothing written, with
-the line, the form and the remedy named: a line ending in a backslash (a
-continuation), a specifier (`%h`, `%d` and the like outside a doubled `%%`;
-the remedy is the absolute path), an unbalanced quote or an escape the
-reader does not decode, a second assignment on a line that assigns a value
-the rewrite keeps (one assignment a line), a second `ExecStart=` or
-`EnvironmentFile=` line, an `ExecStart` whose command carries a prefix
-character or whose arguments are not `up` alone, and a kept line under a
-section systemd does not read it in. Every value the rewrite or the install
+it and is unchanged by any number of rewrites. On Linux the unit FILE is read
+the way systemd reads it, once, as a whole; drop-ins under
+`romp-manager.service.d` are not read, and when any exist the rewrite says so
+on stderr at exit 0, since the identity check and its agree line speak for
+the file alone (a drop-in survives the rewrite byte for byte). A line ends at
+LF or CRLF; a comment (`#` or `;` first) is skipped before the continuation
+test; blanks around the line and the `=` are stripped, systemd's set (space,
+tab, CR), so `Environment = X=y` is a line and a form-feed-indented one is an
+unknown key; only `[Service]` counts; an `Environment=` value is word-split
+and unquoted as systemd.syntax(7) describes (either quote character, the C
+escapes systemd decodes: `\\`, `\"`, `\'`, `\s`, `\n`, `\t`, `\r`, `\a`,
+`\b`, `\f`, `\v`, `\xNN`, `\NNN`, `\uNNNN`, `\UNNNNNNNN`; `%%` a literal
+`%`), a bare value with whitespace is its first word and the rest dropped as
+systemd drops it, a later assignment of a name replaces an earlier one, and
+an `EnvironmentFile=` path that is not absolute is no file, as systemd reads
+it; the compare reads what systemd hands the manager, so the update child's
+own environment is never refused over the file's spelling. A form the reader
+cannot read whole is refused, exit 5, nothing written, with the line, the
+form and the remedy named: a carriage return anywhere but before the LF, or a
+NUL byte (line ends systemd reads and bash's `read` does not, so a CR-only
+unit read as one line); a line ending in a backslash (a continuation); a
+line that is not UTF-8, and a section header systemd refuses (`[Instal`,
+`[Service]x`, a quote or a control character in the name), on which systemd
+loads nothing from the file; a specifier (`%h`, `%d` and the like outside a
+doubled `%%`; the remedy is the absolute path) in a value the writer
+re-encodes, where a `PATH` line is replayed as written and its specifier is
+systemd's to expand; an unbalanced quote or an escape systemd refuses (it
+drops the item and the rest of the line, the items before it standing); an
+eight-bit or surrogate escape, which systemd decodes into raw bytes it then
+judges as UTF-8, a reading this reader does not model; a kept value ending in
+a newline, which every read loses through a command substitution; a second
+assignment on a line that assigns a value the rewrite keeps (one assignment a
+line); a second `ExecStart=` or `EnvironmentFile=` line; an `ExecStart` whose
+command carries a prefix character or whose arguments are not `up` alone; and
+a kept line under a section systemd does not read it in. One case is named
+here rather than closed: a unit file with no `ExecStart` line beside a
+drop-in that supplies one without resetting it first; the rewrite writes this
+clone's command into the file, as it does for any file with no line, and
+systemd then refuses the merged unit as having two `ExecStart=` settings.
+Closing it needs the drop-in read, and reading drop-ins through this reader
+would refuse the drop-in that resets `ExecStart` through a shell wrapper,
+which a live box carries. Every value the rewrite or the install
 writes that systemd word-splits, `ExecStart`'s command, `ROMP_DIR`, the
 instance variables and the `service.env` override, goes through one writer:
 a plain value bare, a value with whitespace, a double quote, a single quote,
@@ -1602,11 +1629,13 @@ a backslash or a `%` in systemd's quoted form (`Environment="KEY=..."`, the
 backslash and the quote escaped, `%` doubled), so systemd reads the value
 whole where a bare one ends at the first space or drops the line at an
 apostrophe; `EnvironmentFile=`'s path has its `%` doubled and nothing else,
-which is how systemd reads that line. An empty assignment
-(`Environment=PATH=`, an instance line set to nothing, an empty
-`<string></string>` entry) is a value, the variable set to the empty string:
-it is kept as written, never dropped as an absent line, and a deploying shell
-that carries a value for that variable differs from it and is refused. An
+which is how systemd reads that line, and the line keeps its own `-` prefix,
+so a mandatory line stays mandatory. An empty assignment
+(`Environment=CLAUDE_CONFIG_DIR=`, an instance line set to nothing,
+`Environment=PATH=`, an empty `<string></string>` entry) is a value, the
+variable set to the empty string: it is kept as written, never dropped as an
+absent line, and for a compared variable a deploying shell that carries a
+value differs from it and is refused (`PATH` is kept, never compared). An
 `ExecStart` command path with a quote, a backslash or a control character is
 refused on install and on rewrite (exit 5, nothing written), since systemd
 itself refuses such an executable name and the unit would never start; the

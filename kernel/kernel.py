@@ -12487,9 +12487,22 @@ def _update_check():
         # without a restart (_run_update), and a marker written after the spawn could land after that removal, so
         # the order here is what makes the child's removal exact. Not written while another update holds the latch:
         # the launch is refused before anything runs, and the write would replace the in-flight update's marker.
+        # The write is guarded (round 4 of the review, 2026-09-19, kernel-1): unguarded and ahead of the launch, a state
+        # root that could not be written aborted the whole pass with the discovery slot already latched on the tag, so
+        # the release was never attempted again for this kernel's life and nothing said so. A marker that cannot be
+        # written costs the once-only guarantee alone, which the pre-marker ordering already accepted; the launch goes
+        # on and the Log carries the reason (kind refused, the standard _set_update_mode uses for a state-root write).
+        # `wrote` guards the take-back too, so a refusal never removes a marker an older tag's pass left.
         marker = jd.STATE / "update-attempted.json"
+        wrote = False
         if _UPDATE_STATE[0] != "running":
-            _atomic_write(marker, json.dumps({"tag": latest, "t": int(time.time())}))
+            try:
+                _atomic_write(marker, json.dumps({"tag": latest, "t": int(time.time())}))
+                wrote = True
+            except OSError as e:
+                _sync_notice("the once-only marker for the automatic update to %s (%s under the state root) could not be "
+                             "written: %s; the update runs anyway, and a run that does not land may be tried again at the "
+                             "next check" % (latest, marker.name, _errno_text(e)), ok=False, kind="refused")
         if not _run_update(latest):
             # a refused launch is not an attempt: nothing ran, so the once-only marker is not
             # kept (a marker standing for a launch that never happened spent the version's one
@@ -12499,7 +12512,7 @@ def _update_check():
             # Unless the refusal is that ANOTHER update is still in flight (review find, 2026-09-08):
             # its tag is what /update-check reports as pending, nothing about it changed, so the slot
             # goes back to it; the newer release is found again once the latch is free.
-            if _UPDATE_STATE[0] != "running":
+            if wrote:
                 try:
                     marker.unlink()
                 except OSError:
@@ -73873,45 +73886,46 @@ class Handler(BaseHTTPRequestHandler):
                 # the main-drift converge the banner offered: its kind from the snapshot above, whose target the
                 # click's id was checked against (so a "pull" is never paired with an empty target)
                 kind = "pull" if d0 else "restart"
-                if kind:
-                    # one converge at a time (review round 5 of the confirm step, 2026-09-10): the flag is
-                    # taken here, before the thread starts and the running push goes out, so a poll landing
-                    # between the ack and the thread's entry already reads running; a click while a converge
-                    # runs (another window's, or the auto converge) hears converging like the first and starts
-                    # no second thread and writes no second audit row. The thread clears the flag on every
-                    # exit; a start that raises gives it back here, or every later poll would read running,
-                    # and gives back the outcome the take cleared (review round 7, 2026-09-10), or a window
-                    # still waiting on that outcome would poll the wait's neither state for good. The take
-                    # itself hands back what it cleared, read under the one lock hold (review round 8): a
-                    # separate read before the take saw an older slot when an auto converge ended between the
-                    # two lines, and the give-back then lost the newer outcome or reinstated the older one
-                    taken, out0 = _main_converge_begin()
-                    if not taken:
-                        return self._send(200, json.dumps({"ok": True, "state": "converging"}), "application/json")
-                    _audit_restart_request("main-converge", tag=d0 or d1,
-                                           addr=str(self.client_address[0]), via="update-confirmed")
-                    # same ack-time port resolution as /restart: the daemon thread's env read could
-                    # otherwise land after this response, on a value the caller has already restored;
-                    # the running push reads the same value (no manager: the banner words the wait so)
-                    mp = os.environ.get("ROMP_MANAGER_PORT")
-                    try:
-                        threading.Thread(target=_run_main_update, args=(kind, True),
-                                         kwargs={"manager_port": mp, "target": d0 or d1},
-                                         daemon=True).start()
-                    except Exception as e:
-                        # the give-back, under the lock every writer of the slot holds: only while nothing
-                        # newer was latched between the take and here (an auto converge ending: the slot is
-                        # then not None) and no tag child is running (the tag door's start, _run_update,
-                        # cleared the slot for the child it launched; a restore behind that child would be
-                        # served as a stale ending once the child's report is consumed: review round 8)
-                        with _MAIN_CONVERGE_LOCK:
-                            if _MAIN_CONVERGE_OUTCOME[0] is None and _UPDATE_STATE[0] != "running":
-                                _MAIN_CONVERGE_OUTCOME[0] = out0
-                            _main_converge_end()
-                        return self._send(500, "romp could not start the converge: %s" % e, "text/plain")
-                    _send_to_app("shell", _running_push(mp))
+                # the kind is never empty (round 3 named it from the snapshot, whose target the click's id was checked against),
+                # so the guard that stood here and the second 409 after it were unreachable (round 4, kernel-2); the one 409
+                # for nothing known is the one above, before the offer is compared
+                # one converge at a time (review round 5 of the confirm step, 2026-09-10): the flag is
+                # taken here, before the thread starts and the running push goes out, so a poll landing
+                # between the ack and the thread's entry already reads running; a click while a converge
+                # runs (another window's, or the auto converge) hears converging like the first and starts
+                # no second thread and writes no second audit row. The thread clears the flag on every
+                # exit; a start that raises gives it back here, or every later poll would read running,
+                # and gives back the outcome the take cleared (review round 7, 2026-09-10), or a window
+                # still waiting on that outcome would poll the wait's neither state for good. The take
+                # itself hands back what it cleared, read under the one lock hold (review round 8): a
+                # separate read before the take saw an older slot when an auto converge ended between the
+                # two lines, and the give-back then lost the newer outcome or reinstated the older one
+                taken, out0 = _main_converge_begin()
+                if not taken:
                     return self._send(200, json.dumps({"ok": True, "state": "converging"}), "application/json")
-                return self._send(409, "no newer release or main commit known to this kernel", "text/plain")
+                _audit_restart_request("main-converge", tag=d0 or d1,
+                                       addr=str(self.client_address[0]), via="update-confirmed")
+                # same ack-time port resolution as /restart: the daemon thread's env read could
+                # otherwise land after this response, on a value the caller has already restored;
+                # the running push reads the same value (no manager: the banner words the wait so)
+                mp = os.environ.get("ROMP_MANAGER_PORT")
+                try:
+                    threading.Thread(target=_run_main_update, args=(kind, True),
+                                     kwargs={"manager_port": mp, "target": d0 or d1},
+                                     daemon=True).start()
+                except Exception as e:
+                    # the give-back, under the lock every writer of the slot holds: only while nothing
+                    # newer was latched between the take and here (an auto converge ending: the slot is
+                    # then not None) and no tag child is running (the tag door's start, _run_update,
+                    # cleared the slot for the child it launched; a restore behind that child would be
+                    # served as a stale ending once the child's report is consumed: review round 8)
+                    with _MAIN_CONVERGE_LOCK:
+                        if _MAIN_CONVERGE_OUTCOME[0] is None and _UPDATE_STATE[0] != "running":
+                            _MAIN_CONVERGE_OUTCOME[0] = out0
+                        _main_converge_end()
+                    return self._send(500, "romp could not start the converge: %s" % e, "text/plain")
+                _send_to_app("shell", _running_push(mp))
+                return self._send(200, json.dumps({"ok": True, "state": "converging"}), "application/json")
             if u.path == "/notify-all":
                 # the master bell's toggle (the user 2026-08-09). Kernel-authoritative: the click
                 # posts here first, and only a 200 flips the bell — the device push subscription is

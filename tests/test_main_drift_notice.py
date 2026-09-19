@@ -535,6 +535,12 @@ class DriftWiring(unittest.TestCase):
                    'nothing was started. The "')
         primary = 'primary = _is_primary_kernel()'
         kind_line = 'kind = "pull" if d0 else "restart"'
+        # round 4 of the install-rewrite review (2026-09-19, kernel-2): the kind is never empty since round 3, so the `if kind:`
+        # guard that followed this line and the second 409 at the route's end were unreachable, and the comment above them
+        # said the opposite; one 409 for nothing known stands, before the offer is compared
+        self.assertEqual(route.count("no newer release or main commit known to this kernel"), 1,
+                         "the nothing-known 409 is answered once, before the offer is compared")
+        self.assertNotIn("if kind:", route, "the kind is never empty: a guard on it is dead code")
         target = '"target": d0 or d1'
         for line, why in ((offer_read, "the client's offer is read as a claim to check, not as an instruction"),
                           (slot, "the release the kernel itself found"),

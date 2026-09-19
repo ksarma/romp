@@ -313,6 +313,7 @@ PY
 _svc_stub() {   # write a fake romp-service to $1; behavior toggled by ROMP_SVC_RUNNING / ROMP_SVC_FAIL / ROMP_SVC_REWRITE_FAIL
                 # (exit 1, a reload that failed) / ROMP_SVC_REWRITE_REFUSE (exit 5, the identity refusal, with romp-service's
                 # own two lines) / ROMP_SVC_INSTALL_REFUSE (the same refusal on the install road, the marked update child's) /
+                # ROMP_SVC_INSTALL_REFUSE_PATH (exit 5 on the install road for a manager path systemd refuses: no identity was read) /
                 # ROMP_SVC_NOT_INSTALLED (status says not installed AND running; rewrite exits 3) /
                 # ROMP_SVC_MINT_PORT (install writes that port into the state root's serve-port record beside a
                 # serve-token, as the kernel the started service brings up does moments after it loads)
@@ -326,6 +327,8 @@ case "$1" in
   install) [[ -n "${ROMP_SVC_FAIL:-}" ]] && { echo "romp-service: bootstrap lost the drain-race" >&2; exit 1; }
            [[ -n "${ROMP_SVC_INSTALL_REFUSE:-}" ]] && { echo "romp-service: the login service unit on disk and this environment disagree; nothing was rewritten:" >&2
                                                        echo "  ROMP_STATE_DIR: the file carries /srv/second, this environment carries /srv/other" >&2; exit 5; }
+           [[ -n "${ROMP_SVC_INSTALL_REFUSE_PATH:-}" ]] && { echo "romp-service: the manager's path (/srv/q\"uote/romp-manager) contains a quote, a backslash or a control character, which systemd refuses in an ExecStart= executable name (Executable name contains special characters: the unit would fail to load and never start); nothing was written." >&2
+                                                            echo "  Move the clone to a path without those characters and run romp-service install from it." >&2; exit 5; }
            [[ -n "${ROMP_SVC_HELD:-}" ]] && { echo "romp-service: the agent's manager exited at once because a manager is ALREADY serving on :7432 outside the login service" >&2; exit 3; }
            [[ -n "${ROMP_SVC_MINT_PORT:-}" ]] && { mkdir -p "$ROMP_STATE_DIR"; printf '%s\n' "$ROMP_SVC_MINT_PORT" > "$ROMP_STATE_DIR/serve-port"; printf 'tok123\n' > "$ROMP_STATE_DIR/serve-token"; } ;;
   rewrite) [[ -n "${ROMP_SVC_REWRITE_FAIL:-}" ]] && { echo "romp-service: the unit was written but systemd did NOT reload it" >&2; exit 1; }
@@ -537,7 +540,8 @@ EOF
     printf 'tok123\n' > "$HOME/.local/state/romp/serve-token"            # a token on disk: another manager's, never printed here
     ROMP_SERVICE_BIN="$TEST_DIR/romp-service" run "$ROMP_DIR/install.sh"
     [ "$status" -ne 0 ]
-    [[ "$output" == *"romp-service install refused to change the login service's identity"* ]]
+    [[ "$output" == *"romp-service install refused (the reason is printed above)"* ]]
+    [[ "$output" != *"install refused to change the login service's identity"* ]]                 # round 4: the code is every no-write refusal, so the arm names none
     [[ "$output" == *"nothing was written or loaded"* ]]
     [[ "$output" == *"whatever manager is serving keeps serving"* ]]
     [[ "$output" == *"the login service unit on disk and this environment disagree"* ]]           # romp-service's own lines
@@ -550,6 +554,27 @@ EOF
     [[ "$output" != *"ROMPHOME"* ]]
     [[ "$output" != *"romp url"* ]]
     [[ "$output" != *"tok123"* ]]
+    grep -qx install "$TEST_DIR/svc.log"
+}
+
+@test "install.sh: a service install refused over the manager's path (exit 5 with no identity read) ends the run the same way, pointing at romp-service's reason and claiming nothing about the identity" {
+    # Round 4 of the review (2026-09-19; regression-3): exit 5 on the install road is every refusal that writes nothing, and since the
+    # second pass over the round-3 addendum that includes a manager path systemd refuses as an executable name (and, under the marked
+    # child, a form the reader does not read whole); the arm described every 5 as the identity refusal whose lines "name both values",
+    # which this refusal never does. Worded as the rewrite road's arm is now.
+    unset ROMP_NO_SERVICE
+    _svc_stub "$TEST_DIR/romp-service"
+    export ROMP_SVC_LOG="$TEST_DIR/svc.log" ROMP_SVC_INSTALL_REFUSE_PATH=1
+    ROMP_SERVICE_BIN="$TEST_DIR/romp-service" run "$ROMP_DIR/install.sh"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp-service install refused (the reason is printed above)"* ]]
+    [[ "$output" == *"nothing was written or loaded"* ]]
+    [[ "$output" == *"contains a quote, a backslash or a control character"* ]]                     # romp-service's own reason reaches the operator
+    [[ "$output" != *"identity"* ]]
+    [[ "$output" != *"name both values"* ]]
+    [[ "$output" != *"Retry by hand"* ]]
+    [[ "$output" != *"will be dead"* ]]
+    [[ "$output" != *"ROMPHOME"* ]]
     grep -qx install "$TEST_DIR/svc.log"
 }
 

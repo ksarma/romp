@@ -297,6 +297,39 @@ class UpdateCheck(Fresh):
             km._update_check()
         self.assertFalse((jd.STATE / "update-attempted.json").exists(), "a refused launch is not an attempt")
 
+    def test_a_marker_that_cannot_be_written_does_not_stop_the_launch_and_is_said_in_the_log(self):
+        # round 4 of the install-rewrite review (2026-09-19, kernel-1): the marker's write ran unguarded ahead of the launch, so
+        # a state root that could not be written aborted the pass with the discovery slot latched on the tag; the release was
+        # never attempted again for the kernel's life and nothing said so. The marker costs the once-only guarantee alone.
+        launched = []
+        km._set_update_mode("auto")                   # before the write is made to fail: the mode's own file goes through _atomic_write too
+        with mock.patch.object(km, "_kernel_ver", return_value="v0.6.0"), \
+             mock.patch.object(km, "_latest_release_tag", return_value="v0.7.0"), \
+             mock.patch.object(km, "_atomic_write", side_effect=OSError(28, "No space left on device")), \
+             mock.patch.object(km, "_run_update", side_effect=lambda tag: launched.append(tag) or True), \
+             mock.patch.object(km, "_send_to_app"):
+            km._update_check()
+        self.assertEqual(launched, ["v0.7.0"], "the launch is not stopped by a marker that could not be written")
+        self.assertEqual(km._UPDATE_AVAIL[0], "v0.7.0", "the slot stays latched: the launch happened")
+        self.assertFalse((jd.STATE / "update-attempted.json").exists())
+        ns = [n for n in self.notices() if "update-attempted.json" in n["text"]]
+        self.assertEqual(len(ns), 1, self.notices())
+        self.assertFalse(ns[0]["ok"])
+        self.assertEqual(ns[0].get("kind"), "refused")
+        self.assertIn("v0.7.0", ns[0]["text"])
+        self.assertIn("No space left on device", ns[0]["text"])
+        # a refused launch after a write that failed removes no marker: there is none of this pass's to remove, and an older
+        # tag's is left standing
+        km._UPDATE_AVAIL[0] = ""
+        (jd.STATE / "update-attempted.json").write_text(json.dumps({"tag": "v0.6.5", "t": 1}))
+        with mock.patch.object(km, "_kernel_ver", return_value="v0.6.0"), \
+             mock.patch.object(km, "_latest_release_tag", return_value="v0.7.0"), \
+             mock.patch.object(km, "_atomic_write", side_effect=OSError(28, "No space left on device")), \
+             mock.patch.object(km, "_run_update", return_value=False), \
+             mock.patch.object(km, "_send_to_app"):
+            km._update_check()
+        self.assertEqual(json.loads((jd.STATE / "update-attempted.json").read_text())["tag"], "v0.6.5")
+
     def test_ask_mode_on_a_kernel_that_is_not_the_primary_still_raises_the_banner(self):
         # round 2 of the install-rewrite review (2026-09-18, regression-2 as ruled): the push stays. The banner is a
         # true, standing statement that a newer romp exists, re-derived on every page load; the click's refusal reaches

@@ -388,7 +388,9 @@ if [[ -z "${ROMP_NO_SERVICE:-}" ]]; then
         # loaded definition is not this release's, and that is the silent state this step exists to end.
         # The rewrite bakes nothing from this run's environment (round 1 of the review, 2026-09-18): this
         # runs from the kernel's detached update child and from sessions' shells, so the unit keeps its own
-        # ExecStart, ROMP_DIR, PATH and instance lines, and a value here that differs from the unit's is
+        # ExecStart, ROMP_DIR, PATH and instance lines, and a compared value here that differs from the
+        # unit's (an instance variable, the service.env path when this environment sets it; ExecStart and
+        # ROMP_DIR against the clone; PATH is kept and never compared, since every shell carries one) is
         # refused with its own exit code, 5 (round 2 of the review, 2026-09-18), the lines above naming
         # both values and the way through for the class it is: a value this environment carries is fixed
         # by a shell without it, another clone by running from the installed one. romp-service says which,
@@ -399,9 +401,10 @@ if [[ -z "${ROMP_NO_SERVICE:-}" ]]; then
         # 2026-09-19) and, since the addendum to round 3, from a unit or plist in any form romp-service's
         # readers cannot read whole (a hand-split plist entry, a continuation line, a specifier, two
         # assignments on one line), and the same arm handles it: romp-service's lines name the form and
-        # the remedy. The
-        # install road below branches on 5 the same way (round 3): the marked update child's install keeps
-        # an installed file's identity too, so that road refuses with the same code.
+        # the remedy. The install road below branches on 5 the same way (round 3): the marked update
+        # child's install keeps an installed file's identity too, so that road refuses with the same code,
+        # and that code is every no-write refusal there (round 4, 2026-09-19): the identity, a manager path
+        # systemd refuses as an executable name, a form the reader does not read whole.
         # Exit 3 under a running manager (round 2): status says `running` (systemd reports the service
         # active) and `not installed` (no unit at the path romp-service writes), so the loaded unit is
         # somewhere else (a unit deleted while active, a config home this shell does not name). The
@@ -456,8 +459,12 @@ if [[ -z "${ROMP_NO_SERVICE:-}" ]]; then
                 # from this shell, the move the refusal had just prevented. romp-service's own lines above name both
                 # values and the deliberate route (a person's install from the shell and clone that should own the
                 # service); nothing is repeated or guessed here, and the run ends before the closing report and the
-                # tokened link, as the rewrite road's refusal does (the convention above).
-                echo "install.sh: romp-service install refused to change the login service's identity (its lines above name both values and the way through): nothing was written or loaded, the service on disk is untouched, and whatever manager is serving keeps serving; this release's unit did not land." >&2
+                # tokened link, as the rewrite road's refusal does (the convention above). Exit 5 on this road is
+                # every refusal that writes nothing, not the identity alone (round 4 of the review, 2026-09-19): a
+                # manager path systemd refuses as an executable name, and under the marked child a form the reader
+                # does not read whole, come back as 5 too, so this arm is worded as the rewrite road's is, pointing
+                # at romp-service's reason, and claims nothing about which values were named.
+                echo "install.sh: romp-service install refused (the reason is printed above): nothing was written or loaded, the service on disk is untouched, and whatever manager is serving keeps serving; this release's unit did not land." >&2
                 exit 1
             elif [[ "$_svc_rc" -ne 0 ]]; then
                 echo "install.sh: romp-service install FAILED: romp-manager is NOT running; the dashboard will be dead on :$_kport." >&2
