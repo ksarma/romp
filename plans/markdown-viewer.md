@@ -7810,8 +7810,8 @@ second was added rather than print the page or say nothing. That line is a notic
 press drops it or the viewer closes; Escape at rest is the viewer's, whose close takes the line with the card. The
 page's own window.print never runs for a PDF. The Comments panel's PDF pages are out of scope: with the panel open the
 body holds the pdf.js canvases and no frame, so Print opens the /file tab and the PDF prints from there, never the
-annotated canvases (a frame kept under a notice after the panel's chunk failed to load prints itself, since the
-detector finds it); the project's out-of-scope line, the PDF viewer, stands, since nothing in the viewer changed.
+canvases with their comments (a frame kept under a notice after the panel's chunk failed to load prints itself, since
+the detector finds it); the project's out-of-scope line, the PDF viewer, stands, since nothing in the viewer changed.
 Verified in the full Chromium build: the blob frame's window is same-origin, its document reports application/pdf at
 the blob URL, and its print is a function the parent may call and replace. Not verified, since headless Chromium opens
 no print dialog: that the real call prints the PDF's pages. Not run at all: desktop Firefox with pdf.js enabled
@@ -7845,6 +7845,9 @@ the bar's build, and a press while the loader held the body printed the loader p
 tools/markdown-viewer-plan-print.test.mjs holds this section to the tree: every module that listing produces is named
 here, every module named here exists, the sheets carry P3's two rules inside byte-equal print blocks, the flow module
 exists and both viewers call it, and the words quoted here are the module's.
+tools/markdown-viewer-plan-print-vocabulary.test.mjs holds this section's words to CONTEXT.md's File comment entry: what
+the Comments panel draws over a PDF page is called comments here, never `annotation`, which that entry lists under
+_Avoid_ (a review finding, 2026-09-19).
 
 - ui/webview/file-print.test.ts, under node with no DOM: `step` over every phase and event, the words, the chord,
   `settlePictures` over fake pictures and a fake clock (the incomplete pictures alone are waited on; load or error

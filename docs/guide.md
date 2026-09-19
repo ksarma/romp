@@ -125,7 +125,8 @@ aligned table columns as GitHub shows them. Every code block is numbered by line
 `rust`, `go`, `c`, `java`, `sql` or `toml` are highlighted, in addition to the languages the
 chat already knows. **Print** in the file's bar, or **Cmd+P** on a Mac and **Ctrl+P** elsewhere
 while a file is open, prints the file alone, black on white, with its pictures loaded, across as
-many pages as it needs. Pictures from other hosts are loaded for the print only when you choose
+many pages as it needs; in the dashboard that key also opens the command palette, which
+**Escape** closes. Pictures from other hosts are loaded for the print only when you choose
 **Print with them**; a PDF prints itself, or opens in a new tab to print from when the browser
 cannot print it in place.
 
