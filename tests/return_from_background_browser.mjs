@@ -476,7 +476,14 @@ try {
       await sleep(50);
     }
     out.loadingClearedMs = cleared ? now() - (out.t.retap || out.t.tap) : -1;
-    const docLoad = await page.evaluate(() => window.__labDocLoad || null);
+    // the stamps are read once the DOCUMENT has loaded (bounded), not once the loading state is gone: a shell that retires the state
+    // before the load (the defect the retirement assertions refuse) would otherwise have the load stamp read before the event and the
+    // test red on the load's absence instead of on the early retirement. A pane with its document at boot (the chat tap) loads nothing
+    // on the tap, so nothing is waited for
+    const lazyTap = !(out.srcAtBoot || {})[cfg.tapPane];
+    const loadDeadline = now() + (lazyTap ? 15000 : 0);
+    let docLoad = await page.evaluate(() => window.__labDocLoad || null);
+    while (!docLoad && now() < loadDeadline) { await sleep(100); docLoad = await page.evaluate(() => window.__labDocLoad || null); }
     out.docLoadMs = docLoad ? docLoad.t - (out.t.retap || out.t.tap) : -1;   // the document's own load event, from the tap that loaded it
     out.docLoadUrl = docLoad ? docLoad.url : null;
     const retired = await page.evaluate(() => window.__labLoadingRetired || null);
@@ -487,7 +494,7 @@ try {
     // not loaded, by the tap: no element to poll for and nothing to wait 15 s on (painted stays null; the test reads it for a lazy tap alone)
     const paintEl = { fleet: "fleet-list", waiting: "waiting-list", files: "files-empty", timeline: "host" }[cfg.tapPane] || null;
     const paneFrame = () => page.frames().find((fr) => { try { return new URL(fr.url()).pathname === "/" + cfg.tapPane; } catch (e) { return false; } });
-    const paintDeadline = paintEl && !(out.srcAtBoot || {})[cfg.tapPane] ? now() + 15000 : 0;
+    const paintDeadline = paintEl && lazyTap ? now() + 15000 : 0;
     let painted = null;
     while (now() < paintDeadline) {
       const fr = paneFrame();
