@@ -80,7 +80,7 @@ test("each OFF surface refuses loudly, never a silent no-op", () => {
   assert.match(KERNEL, /_USER_TODOS_OFF_ERR = "requests from sessions are turned off on this machine"/);
   assert.ok((KERNEL.match(/self\._send\(409, json\.dumps\(\{"ok": False, "error": _USER_TODOS_OFF_ERR\}\)/g) || []).length >= 2,
     "both POST /usertodo and /usertodo/withdraw answer 409");
-  assert.match(KERNEL, /elif t == "userTodoAnswer"[\s\S]*?if not _user_todos_on\(\):\n\s+client\["send"\]\(json\.dumps\(\{"type": "warn", "text": _USER_TODOS_OFF_WARN\}\)\)/,
+  assert.match(KERNEL, /elif t == "userTodoAnswer"[\s\S]*?if not _user_todos_on\(\):\n\s+client\["send"\]\(json\.dumps\(\{"type": "warn", "text": _USER_TODOS_OFF_WARN, "sid": sid\}\)\)/,
     "userTodoAnswer warns with the switch's own text, ahead of the settled-row gate");
   assert.match(KERNEL, /elif t == "userTodoDismiss"[\s\S]*?"type": "warn", "text": _USER_TODOS_OFF_WARN/, "userTodoDismiss warns");
   assert.match(BUS, /USER_TODOS_SWITCH = STATE\.parent \/ "user-todos-enabled\.json"/);
