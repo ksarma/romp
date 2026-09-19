@@ -53,7 +53,11 @@ claim. By the store's own counters, a witness keyed on the store rather than on 
 door: every call that reaches the shared cache's branch and returns moves exactly one of hit, miss, compare_miss, absent
 and fallback in `jd.shared_store_stats()` (a call whose open or read raises moves none, and reds as a recorded call that
 took no read), so per pass the delta of those five must equal the walk's, the gate's and the sweep's recorded calls
-together. The writer door: every `load_goals` call bumps `loads` in `jd.goal_io_stats()` at the loader's
+together; and the door's second bumps, unreadable_journal, corrupt, dup and refuse (SHARED_SECOND_KEYS), each sit on the fill
+road below the miss or compare_miss bump and return, so per pass their sum never exceeds the fills, miss plus compare_miss
+(the second-bump bound, review round 4: corrupt and unreadable_journal are hand-off keys that are not call keys, so a bump of
+either beside a goal_io loads bump with no call through the door balanced the two reconciliations below and red nothing in
+_pass). The writer door: every `load_goals` call bumps `loads` in `jd.goal_io_stats()` at the loader's
 first line, and the shared door hands a read to `load_goals` on exactly the absent, fallback, corrupt and
 unreadable_journal counters (SHARED_HANDOFF_KEYS), so per pass the delta of `loads` must equal the recorded writer calls
 plus those hand-offs (review round 2: until then the writer door was a recorder on one name, and a `load_goals` through a
@@ -157,11 +161,16 @@ the gate memo's hit test, so it serves the moved parse (1 failed, 11 passed); SI
 a miss in place of a hit, and the cache switched off before it, two fallbacks and two hand-offs (1 failed, 11 passed
 each); a send in the look (3 failed, 9 passed); the served snapshot handing out zero loads, 0 against 5, the counter
 preset to 100 after setUp, 105 against 5, the bump adding a float, and `loads` denied in the public fold (1 failed, 11
-passed each). Four case-level tuples carried the writer door's counter and the store's counters beside the walk's
-counter, on the two skip passes, the run pass and the state-gate case's first pass, and neither element could fail on
-its own there: a counter that moves with no recorded call reds _pass's reconciliation first, and on the run pass a
-non-hit gives the walk a new view object, so the gate derives and its line fires first; those tuples carry the walk's
-counter alone now and _pass holds the rest (review round 3). The state-gate case: the working gate moved below the store
+passed each). Four case-level tuples carried the writer door's counter and the store's call counters beside the walk's
+counter, on the two skip passes, the run pass and the state-gate case's first pass; review round 3 reduced them to the walk's
+counter alone, reasoning that a counter moved with no recorded call reds _pass's reconciliation first and that on the run pass
+a non-hit makes the gate derive and its line fire first. Review round 4 found that reasoning true of the call keys only: a
+corrupt or unreadable_journal bump beside a goal_io loads bump with no call through the door (a hand-off key that is not a
+call key) balanced both reconciliations, and at that head red nothing on the pass it was planted, only the moved-transcript
+tuple two passes later or nothing at all. The round restored the writer door's counter and the store's counters to the first
+skip pass, the run pass and the state-gate case's first pass (the second skip pass's tuple stays on the walk's counter and its
+skipped count) and added the second-bump bound to _pass, where the pair reds on its own pass; the states re-run at this head
+are recorded below. The state-gate case: the working gate moved below the store
 read (1 failed, 11 passed); a served bump in the working branch (contrived; 1 failed, 11 passed); the loads bump moved
 above the working gate (2 failed, 10 passed, the census the other); the verdict renamed (1 failed, 11 passed);
 `_put_walk_gate` made a no-op, so the second pass skips (2 failed, 10 passed); a read conditioned on a memo row standing
@@ -237,6 +246,16 @@ SHARED_CALL_KEYS = ("hit", "miss", "compare_miss", "absent", "fallback")
 # in _pass reads. The door's _unread branch bumps unreadable_journal with no hand-off; the door's own comment calls it unreachable
 # while the journal's rows arrive as lines, and reached it would red that reconciliation as a hand-off over the loads.
 SHARED_HANDOFF_KEYS = ("absent", "fallback", "corrupt", "unreadable_journal")
+# The door's second bumps, read from load_goals_shared's body (judge.py): below the call-key bumps the fill road, entered after the
+# miss or compare_miss bump, bumps at most one of these and returns. unreadable_journal: _journal_read raised OSError (a hand-off to
+# load_goals), or the replayed store carries _unread (no hand-off; the door's comment calls that branch unreachable). corrupt:
+# _disk_parse raised ValueError (a hand-off). dup: a concurrent fill of the same version published first. refuse: the archive key
+# moved under the replay. The fallback, absent and hit returns bump none of them, so per pass their sum never exceeds the fills,
+# miss plus compare_miss: _pass's second-bump bound (review round 4). Two of them, corrupt and unreadable_journal, are hand-off
+# keys that are NOT call keys, so a bump of either beside a goal_io loads bump with no call through the door balanced the shared
+# reconciliation (no call key moved) and the writer one (one hand-off per loads) and red nothing in _pass; the bound is where it
+# reds. The roster and the order are pinned against the door's own source in TheCountersOneSite.
+SHARED_SECOND_KEYS = ("unreadable_journal", "corrupt", "dup", "refuse")
 KERNEL_FILE = os.path.basename(os.path.realpath(km.__file__))   # the kernel's real file: it is loaded from bin/romp-kernel, a symlink
 # The callables the fixture replaces, other than the two recorded doors: the kernel names (the look's gates and the pass's
 # helpers; _pending_ops and _PREV_ALIVE are data, not callables), the judge names, and Sessions.backend_for (replaced by
@@ -567,7 +586,22 @@ class _WalkHarness(unittest.TestCase):
         SHARED_CALL_KEYS, against every recorded shared call, listed in the message; `writerLoads`, the delta of goal_io
         loads, against the writer records plus the shared door's hand-offs over SHARED_HANDOFF_KEYS), so a load through a
         door of the judge module the recorders do not wrap is noticed, unnamed; a reader that bypasses the module is outside
-        both. `calls` carries the shared records (sid, function, file, line) for a case's own assertions."""
+        both. Between the two sits the second-bump bound (review round 4), derived from load_goals_shared's body in judge.py,
+        read top to bottom: `_shared_bump("fallback")` then `return load_goals(fsid)` under `if _SHARED_OFF[0]`;
+        `_shared_bump("absent")` then the same return under `except FileNotFoundError` around the store's open;
+        `_shared_bump("hit")` then `return ent[2]` when the cached entry's keys and bytes both match; `_shared_bump("compare_miss")`
+        when the keys match and the bytes do not, else `_shared_bump("miss")`; and from there the fill road, on which at most one
+        more key is bumped, each followed by its return: `_shared_bump("unreadable_journal")` under `except OSError` around
+        `_journal_read` (then `return load_goals(fsid)`), `_shared_bump("corrupt")` under `except ValueError` around `_disk_parse`
+        (then `return load_goals(fsid)`), `_shared_bump("unreadable_journal")` again under `if store.get("_unread")` (then
+        `return store`), `_SHARED_STATS["dup"] += 1` when a concurrent fill published the same version first (then `return
+        cur[2]`), and `_SHARED_STATS["refuse"] += 1` when `akey1 != akey0` (then `return frozen`). So a call bumps a second key
+        only after its miss or compare_miss bump and bumps at most one, and per pass
+        unreadable_journal + corrupt + dup + refuse <= miss + compare_miss. The bound is what refuses the forged pair: corrupt and
+        unreadable_journal are hand-off keys and not call keys, so a bump of either beside a goal_io loads bump with no call
+        through the door moved no call key (the shared reconciliation balanced) and matched its loads bump with a hand-off (the
+        writer reconciliation balanced), and before the bound red nothing here. `calls` carries the shared records (sid, function,
+        file, line) for a case's own assertions."""
         before = {k: km._NUDGE_WALK_STATS[k] for k in self.KEYS}
         gate0 = dict(km._NUDGE_GATE_STATS)
         s0, g0 = jd.shared_store_stats(), jd.goal_io_stats()["loads"]
@@ -628,6 +662,18 @@ class _WalkHarness(unittest.TestCase):
                          "wrap, a load through a reference to the real door taken before a recorder stood, a recorded call whose open or "
                          "read raised, a record appended without a call through"
                          % (sum(d["shared"].values()), len(self.calls), d["shared"], "; ".join(records) or "none"))
+        # the second-bump bound (review round 4): the derivation from the door's body is in the docstring above
+        second = {k: s1[k] - s0[k] for k in SHARED_SECOND_KEYS if s1[k] != s0[k]}
+        fills = d["shared"].get("miss", 0) + d["shared"].get("compare_miss", 0)
+        self.assertLessEqual(sum(second.values()), fills,
+                             "pass at %d: the shared door's second bumps, unreadable_journal + corrupt + dup + refuse, never exceed its fills, "
+                             "miss + compare_miss: in load_goals_shared's body each sits on the fill road below the miss or compare_miss bump "
+                             "and returns, so a call bumps at most one of them and none without a fill. This pass: second bumps %r, %d in all, "
+                             "against %d fill(s) (miss %d, compare_miss %d); recorded shared calls: %s. A second bump past the fills is a "
+                             "counter moved with no call through the door; corrupt and unreadable_journal are hand-off keys and not call keys, "
+                             "so such a move beside a goal_io loads bump balances the shared and the writer reconciliations and is caught here "
+                             "alone" % (now, second, sum(second.values()), fills, d["shared"].get("miss", 0),
+                                        d["shared"].get("compare_miss", 0), "; ".join(records) or "none"))
         d["calls"] = list(self.calls)
         writer = ["%s (%s:%d, sid ..%s)" % (c, f, ln, s[-4:]) for s, c, f, ln in self.writer]
         self.assertEqual(writer, [], "zero plain load_goals from any caller during the pass, the whole tick (condition 7 in ruling A's "
@@ -675,9 +721,10 @@ class OneSharedLoadPerAliveSessionPerPass(_WalkHarness):
         self.assertEqual(p2["gate"], {SID_A: 0, SID_B: 0},
                          "the placement gate makes no currency check on a skipped look: it is never reached (condition 7, the gate's bound)")
         self.assertEqual((p2["looks"], p2["skippedParses"], p2["parses"]), (2, 2, 0), p2)
-        self.assertEqual(p2["loads"], 0, "and the counter does not move (the store's counters and the writer door's are _pass's here: with the "
-                                         "walk, the gate and the sweep at zero, a counter that moved with no recorded call reds the reconciliation "
-                                         "there first)")
+        self.assertEqual((p2["loads"], p2["writerLoads"], p2["shared"]), (0, 0, {}),
+                         "and neither the counter, the writer door's counter nor the store's call counters move: no read, so no hand-off and no "
+                         "call key (the two elements restored in review round 4; _pass's two reconciliations and its second-bump bound fire "
+                         "first on a counter moved with no call, and this line stands behind them)")
         # (a) again with the gate SERVED: the ledger is the tenth keyed file, so its move re-evaluates every session once while
         # the parse and the store stand; the walk loads once per session and the gate not at all
         os.utime(jd.STATE / "auto-nudge.json", (NOW + 8, NOW + 8))
@@ -687,9 +734,10 @@ class OneSharedLoadPerAliveSessionPerPass(_WalkHarness):
                          "the walk takes exactly one shared load per alive session when its look reaches the store (condition 7, the walk's bound)")
         self.assertEqual((p3["gate"], p3["memo"]), ({SID_A: 0, SID_B: 0}, (2, 0)),
                          "the placement gate is served and makes no currency check (condition 7, the gate's bound)")
-        self.assertEqual(p3["loads"], 2, "the counter moves by the walk's two (that both reads hit and the door handed nothing to load_goals is the "
-                                         "gate's line above: a non-hit gives the walk a new view object, so the gate derives; and _pass's "
-                                         "reconciliations)")
+        self.assertEqual((p3["loads"], p3["writerLoads"], p3["shared"]), (2, 0, {"hit": 2}),
+                         "the counter moves by the walk's two, no hand-off, two hits (that both reads hit is the gate's line above as well: a "
+                         "non-hit gives the walk a new view object, so the gate derives; the two elements restored in review round 4, behind "
+                         "_pass's reconciliations and its second-bump bound)")
         # (b) again
         p4 = self._pass(NOW + 15)
         self.assertEqual((p4["walk"], p4["gate"]), ({SID_A: 0, SID_B: 0}, {SID_A: 0, SID_B: 0}),
@@ -732,8 +780,9 @@ class OneSharedLoadPerAliveSessionPerPass(_WalkHarness):
                          "the walk takes no load on a look a state gate ends before the store read (condition 7, the walk's bound)")
         self.assertEqual((p1["gate"], p1["memo"]), ({SID_A: 0, SID_B: 0}, (0, 0)),
                          "and the placement gate, never reached, checks nothing (condition 7, the gate's bound)")
-        self.assertEqual(p1["loads"], 0, "and the counter does not move (the store's and the writer door's counters are _pass's here: with the walk, "
-                                         "the gate and the sweep at zero, a counter move reds the reconciliation first)")
+        self.assertEqual((p1["loads"], p1["writerLoads"], p1["shared"]), (0, 0, {}),
+                         "no counter, no writer-door counter and no store counter moves: every look ends before any read (the two elements "
+                         "restored in review round 4, behind _pass's reconciliations and its second-bump bound)")
         for sid in SIDS:
             self.assertEqual(self._row(sid)[-1], "working", "the verdict recorded, file-keyed, for %s" % sid[-4:])
         p2 = self._pass(NOW + 5)
@@ -949,6 +998,32 @@ class TheCountersOneSite(unittest.TestCase):
         gated = [ln.strip() for _i, ln in _loader_sites(km._nudge_look_gated, "load_goals")]
         self.assertEqual(gated, [], "the gate around the look reads no store: a skipped look loads through neither mechanism: %s" % "; ".join(gated))
         self.assertIn("loads", km._NUDGE_WALK_STATS, "the counter is a key of the served block")
+
+    def test_the_shared_doors_bump_roster_is_the_reconciliations_and_its_second_bumps_sit_below_the_fills(self):
+        """The second-bump bound in _pass is derived from load_goals_shared's body; this pin reads that body (the AST of the
+        judge's own door, its identity checked as setUp checks it) so the derivation cannot go stale unnoticed: every counter
+        the door bumps, by `_shared_bump("<key>")` or `_SHARED_STATS["<key>"] += 1`, is a call key or a second key and every
+        key of both rosters is bumped there, so a new key in the door reds here before it slips past the reconciliations; and
+        every second-key bump sits below every call-key bump in the body, the structure the bound rests on (the fill road
+        follows the miss or compare_miss bump). Review round 4."""
+        door = jd.load_goals_shared
+        self.assertEqual((door.__code__.co_name, os.path.basename(os.path.realpath(door.__code__.co_filename))), ("load_goals_shared", JUDGE_FILE),
+                         "the door read here is the judge's own (a harness case's recorder is gone by its cleanup)")
+        bumps = []
+        for n in ast.walk(ast.parse(textwrap.dedent(inspect.getsource(door)))):
+            if (isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "_shared_bump" and n.args
+                    and isinstance(n.args[0], ast.Constant)):
+                bumps.append((n.lineno, n.args[0].value))
+            elif (isinstance(n, ast.AugAssign) and isinstance(n.target, ast.Subscript) and isinstance(n.target.value, ast.Name)
+                    and n.target.value.id == "_SHARED_STATS" and isinstance(n.target.slice, ast.Constant)):
+                bumps.append((n.lineno, n.target.slice.value))
+        self.assertEqual({k for _ln, k in bumps}, set(SHARED_CALL_KEYS) | set(SHARED_SECOND_KEYS),
+                         "the keys load_goals_shared bumps are exactly the call keys the shared reconciliation sums and the second keys the "
+                         "second-bump bound sums (a key here and in neither roster is a bump no reconciliation reads; a key in a roster and "
+                         "not here is a bound over a counter the door no longer moves): %r" % sorted(bumps))
+        self.assertLess(max(ln for ln, k in bumps if k in SHARED_CALL_KEYS), min(ln for ln, k in bumps if k in SHARED_SECOND_KEYS),
+                        "every second-key bump sits below every call-key bump in the door's body (the fill road follows the miss or "
+                        "compare_miss bump), the structure the bound in _pass rests on; the bumps by line: %r" % sorted(bumps))
 
     def test_the_replaced_helpers_sources_load_no_store(self):
         """The road limit as a check: the fixture replaces the callables in REPLACED_KM (less the two data names), REPLACED_JD
