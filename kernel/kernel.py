@@ -38229,7 +38229,7 @@ def _chat_sig_seam_close(t0, c0):
 
 
 def _chat_stat_key(path):
-    """(mtime, size) of a file, or None when it is missing — the task-output gate's identity. The stat counts on an
+    """(mtime, size) of a file, or None when it is missing: the task-output gate's identity. The stat counts on an
     open signature through the os.stat wrapper (memos.chatSig.stats), as every stat does."""
     try:
         st = os.stat(path)

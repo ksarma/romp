@@ -9581,7 +9581,7 @@ def _discover_impl(now, window=None, forks=True):
                         if not n.endswith(".jsonl"):
                             continue
                         try:
-                            mt = _entry_stat(e).st_mtime   # DirEntry stat — cached from the scandir where the OS allows
+                            mt = _entry_stat(e).st_mtime   # DirEntry stat, cached from the scandir where the OS allows
                         except OSError:
                             continue
                         cached.append((n[:-6], e.path, mt))   # stem = name without ".jsonl"
