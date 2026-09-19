@@ -516,12 +516,44 @@ class DriftWiring(unittest.TestCase):
         self.assertIn("is ready on disk", src)
 
     def test_the_route_acts_only_on_what_the_kernel_itself_found(self):
+        """POST /update acts on what the kernel's own checks found, the drift snapshot (_MAIN_DRIFT) and the
+        release slot (_UPDATE_AVAIL), never on what the client says. Since round 3 of the install-rewrite review
+        (fork PR 778, 2026-09-19) the click carries the offer the banner showed, {kind, id}, and the route COMPARES
+        it with what the kernel found and refuses a disagreement (409) before the primary check, the release branch
+        and the converge; the converge's kind and target still come from the one snapshot. The pin moved that day
+        from the retired re-derivation line, kind = "pull" if d0 else ("restart" if d1 else ""), which the round
+        replaced with the comparison, to the offer read, the slot reads, the comparison and the refusal, in their
+        order: a route that acted on a client-supplied kind without comparing it would drop, move or rewrite one
+        of these lines."""
         src = inspect.getsource(km)
-        self.assertIn('d0, d1 = _MAIN_DRIFT[0], _MAIN_DRIFT[1]', src,
-                      "one snapshot: a re-read could pair a pull with an emptied target — an unbound move")
-        self.assertIn('kind = "pull" if d0 else ("restart" if d1 else "")', src,
-                      "no version or kind is ever taken from the client")
-        self.assertIn('"target": d0 or d1', src, "the click converges onto the commit the banner named")
+        route = src[src.index('if u.path == "/update":'):src.index('if u.path == "/notify-all":')]
+        offer_read = 'okind = offer.get("kind") if isinstance(offer, dict) else None'
+        slot = 'tag = _UPDATE_AVAIL[0]'
+        snapshot = 'd0, d1 = _MAIN_DRIFT[0], _MAIN_DRIFT[1]'
+        compare = 'if (okind == "release" and oid != tag) or (okind == "main" and oid != (d0 or d1)):'
+        refusal = ('return self._send(409, "the banner offered %s, but this kernel now offers %s; '
+                   'nothing was started. The "')
+        primary = 'primary = _is_primary_kernel()'
+        kind_line = 'kind = "pull" if d0 else "restart"'
+        target = '"target": d0 or d1'
+        for line, why in ((offer_read, "the client's offer is read as a claim to check, not as an instruction"),
+                          (slot, "the release the kernel itself found"),
+                          (snapshot, "the drift the kernel itself found"),
+                          (compare, "the claim is compared with what the kernel found, for both kinds"),
+                          (refusal, "a disagreement is refused naming both, and nothing is started"),
+                          (kind_line, "the converge's kind comes from the snapshot, never from the client"),
+                          (target, "the click converges onto the commit the kernel named")):
+            self.assertIn(line, route, why)
+        self.assertEqual(route.count(snapshot), 1,
+                         "one snapshot: a re-read could pair a pull with an emptied target, an unbound move")
+        order = [offer_read, slot, snapshot, compare, refusal, primary, kind_line, target]
+        self.assertEqual(sorted(order, key=route.index), order,
+                         "the offer is read, the kernel's slots are read, the two are compared and a disagreement "
+                         "refused, all before the primary check, the release branch and the converge")
+        self.assertNotIn('kind = "pull" if d0 else ("restart" if d1 else "")', route,
+                         "the retired re-derivation: the route no longer picks a kind the banner did not show")
+        self.assertNotIn("okind", route[route.index(kind_line):],
+                         "past the comparison the converge leg never reads the client's kind")
 
 
 
