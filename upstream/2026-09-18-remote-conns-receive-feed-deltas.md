@@ -3,7 +3,7 @@ title: Federated remote sockets announce caps=feedDelta and federation applies a
 status: candidate
 where: ui/webview/federation.ts (REMOTE_DIAL_CAPS, remoteDialUrl, inboundNow feedDelta branch, applyRemoteFeedDelta, closeRemote), ui/webview/federation-remote-feed-delta.test.ts, ui/webview/feed-delta.test.ts, tests/test_federated_feed_delta_served.py
 added: 2026-09-18
-pr:
+pr: 815
 tier: fix
 offered:
 closed:
