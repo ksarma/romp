@@ -397,12 +397,14 @@ class ReceiverSetting(unittest.TestCase):
 
 
     def test_a_setting_file_over_the_bound_is_an_address_the_grammar_refuses_naming_the_file_and_never_its_bytes(self):
-        """The setting file is read with a bound (RECEIVER_FILE_MAX + 1 bytes), never whole: a device node, a fifo or a
-        large file at that path costs that much memory and no more, and one over the bound is not truncated to its
-        first line (which would send to whatever address that line spelled) but returned as the empty string with the
-        file as its source, the non-UTF-8 road, so the caller refuses naming the file and nothing of its bytes. A stat
-        would not do: it reports 0 for a device node or a fifo. Fails before: the address on the first line was returned.
-        No device node in the suite: a regression there would exhaust the runner rather than fail a test."""
+        """The setting file is read with a bound (RECEIVER_FILE_MAX + 1 bytes), never whole: a large REGULAR file put there
+        by mistake costs that much memory and no more, and one over the bound is not truncated to its first line (which
+        would send to whatever address that line spelled) but returned as the empty string with the file as its source,
+        the non-UTF-8 road, so the caller refuses naming the file and nothing of its bytes. A stat would not do for the
+        bound: it reports 0 for a device node or a fifo, so the bound is on the read. A fifo or a device node never reaches
+        the read: pp.open_regular refuses anything that is not a regular file before it, on the fstat (the fifo case below
+        pins that road; a device node takes the same S_ISREG branch and has no case of its own in the suite). Fails
+        before: the address on the first line was returned."""
         self.assertEqual(pu.RECEIVER_FILE_MAX, 4096)
         first = "https://r.example\n"
         self._file(first + "x" * (pu.RECEIVER_FILE_MAX + 1 - len(first)))          # one byte over the bound, the address first
