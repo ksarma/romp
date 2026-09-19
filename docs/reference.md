@@ -3879,8 +3879,10 @@ through them).
 you run the verb and confirm it. The receiver's address is configuration, empty
 by default: `--receiver URL`, else the `ROMP_PERF_RECEIVER` environment
 variable, else the file `~/.config/romp/perf-receiver` (one line in a regular
-file; a path that is not a regular file, a fifo among them, is refused as an
-address naming the file, and the verb does not wait on it); with none set the
+file; a path that is there but is not a readable regular file, a fifo, a
+socket or a file you cannot read among them, is refused as an address naming
+the file, never reported as no receiver set, and the verb does not wait on it;
+only an absent file is no receiver); with none set the
 verb refuses and names the three, exit 2. The address must be an `https` URL with a
 host and no userinfo, query or fragment (`http` only for `127.0.0.1` and
 `localhost`, for tests), and it may carry a path, the base the route below is

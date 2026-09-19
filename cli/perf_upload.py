@@ -12,7 +12,8 @@ file ~/.config/romp/perf-receiver (one line, the `romp default-dir` pattern); wi
 naming the three settings, exit 2, so an installation nobody configured sends nowhere. The address must be an
 https URL in printable ASCII with a host and no userinfo, query or fragment (http is allowed for 127.0.0.1 and
 localhost alone, for tests); it may carry a path, the base the route is appended to; anything else, a setting
-file that is not UTF-8 text among it, is refused without echoing the value, exit 2. The receiver is
+file that is not UTF-8 text or that is there but cannot be read among it, is refused without echoing the value, exit 2
+(only an ABSENT file is no receiver). The receiver is
 unauthenticated: no credential exists for it, and the verb reads no token from anywhere and sends none.
 
 The file must exist, be a regular file of at most 1 MiB, parse as strict JSON (no NaN or Infinity literals, no
@@ -160,16 +161,21 @@ class Refusal(Exception):
 # ── the receiver ─────────────────────────────────────────────────────────────────────────────────────────
 def receiver_setting(flag, env=None):
     """(text, source): the address as configured and which setting supplied it, in order --receiver, the
-    environment variable, the file's first non-empty line; (None, None) when none is set. An empty variable
-    is unset. The file is read under HOME, the way `romp default-dir` reads its own. It must be a REGULAR file
-    (pp.open_regular: opened O_NONBLOCK and fstat'ed before any read, since a plain open of a fifo blocks until a
-    writer arrives, before any read a bound could cover, and a fifo at this path hung the verb indefinitely, the
-    upload's second review round, 2026-09-18), and it is read with a bound: at most RECEIVER_FILE_MAX + 1 bytes are
-    taken, so a large file put there by mistake costs that much memory and no more. A file that is not regular (a
-    fifo, a device node), one over the bound (not truncated to its first line, which would send to whatever address
-    that line spelled) and one that is not UTF-8 text all return the empty string with the file as its source: an
-    address the grammar refuses, so the caller's refusal names the file and nothing of its bytes. A size check alone
-    would not do (stat reports 0 for a device node or a fifo), so the bound is on the read and the kind on the fstat."""
+    environment variable, the file's first non-empty line; (None, None) when none is set: no flag, the variable unset
+    or empty, and the file ABSENT (FileNotFoundError: no such path, or a dangling link). The file is read under HOME,
+    the way `romp default-dir` reads its own. It must be a REGULAR file (pp.open_regular: opened O_NONBLOCK and
+    fstat'ed before any read, since a plain open of a fifo blocks until a writer arrives, before any read a bound could
+    cover, and a fifo at this path hung the verb indefinitely, the upload's second review round, 2026-09-18), and it is
+    read with a bound: at most RECEIVER_FILE_MAX + 1 bytes are taken, so a large file put there by mistake costs that
+    much memory and no more. A file that is THERE and is not a readable regular file returns the empty string with the
+    file as its source, an address the grammar refuses, so the caller's refusal names the file and nothing of its bytes
+    and never says no receiver is set for a path that exists: one that is not regular (a fifo, a device node, by the
+    fstat); one whose open or read itself fails (a socket, ENXIO whatever its mode; a file the account cannot read; a
+    parent that is a file; a block device outside the account's group); one over the bound (not truncated to its first
+    line, which would send to whatever address that line spelled); and one that is not UTF-8 text. Until the fourth
+    review round (2026-09-19) every OSError from the open read as absent, and a socket or an unreadable file holding a
+    real address had the verb report that no receiver was set. A size check alone would not do (stat reports 0 for a
+    device node or a fifo), so the bound is on the read and the kind on the fstat."""
     if flag is not None:
         return flag, "--receiver"
     env = os.environ if env is None else env
@@ -178,12 +184,17 @@ def receiver_setting(flag, env=None):
         return value, RECEIVER_VAR
     try:
         fh = pp.open_regular(os.path.expanduser(RECEIVER_FILE))
-        if fh is None:
-            return "", RECEIVER_FILE
+    except FileNotFoundError:
+        return None, None                # absent: the one road that is no receiver
+    except OSError:                      # there and not openable: a socket, an unreadable file, a parent that is a file
+        return "", RECEIVER_FILE
+    if fh is None:
+        return "", RECEIVER_FILE
+    try:
         with fh:
             raw = fh.read(RECEIVER_FILE_MAX + 1)
     except OSError:
-        return None, None
+        return "", RECEIVER_FILE
     if len(raw) > RECEIVER_FILE_MAX:
         return "", RECEIVER_FILE
     try:

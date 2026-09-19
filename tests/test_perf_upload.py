@@ -5,8 +5,9 @@ export's companion, which sends one paste-safe export to the receiver the operat
 What is pinned here, each by execution against the verb's own file run as a child (bin/romp-perf-upload under
 a pinned hostname) or, for the request itself, through bin/romp: the receiver address comes from --receiver,
 else ROMP_PERF_RECEIVER, else ~/.config/romp/perf-receiver (a regular file: a fifo there is refused at once as an
-address the grammar refuses, where an open of it once hung the verb), and with none set the verb refuses naming all
-three; the address must be https with a host and no userinfo, query or fragment (http for 127.0.0.1 and
+address the grammar refuses, where an open of it once hung the verb, and so is a path that is there but cannot be opened,
+a socket or an unreadable file, never reported as no receiver set; only an absent file is), and with none set the verb
+refuses naming all three; the address must be https with a host and no userinfo, query or fragment (http for 127.0.0.1 and
 localhost alone), and a refused address is never echoed; the file must exist, be at most 1 MiB, parse as strict
 JSON (no NaN or Infinity, no repeated key at any depth; a RecursionError out of the parser is the strict-JSON refusal,
 pinned by mocking json.loads) nested at most MAX_DEPTH levels (32, about four times a fresh export's 7; a deeper file is
@@ -413,8 +414,10 @@ class ReceiverSetting(unittest.TestCase):
         the non-UTF-8 road, so the caller refuses naming the file and nothing of its bytes. A stat would not do for the
         bound: it reports 0 for a device node or a fifo, so the bound is on the read. A fifo or a device node never reaches
         the read: pp.open_regular refuses anything that is not a regular file before it, on the fstat (the fifo case below
-        pins that road; a device node takes the same S_ISREG branch and has no case of its own in the suite). Fails
-        before: the address on the first line was returned."""
+        pins that road; a device node this process can open takes the same S_ISREG branch; a socket, whose open is ENXIO
+        whatever its mode, and a block device the account cannot open fail at the open itself and take receiver_setting's
+        OSError road instead, which since the fourth review round reaches the same result, the file named, pinned by the
+        socket and block-device cases below). Fails before: the address on the first line was returned."""
         self.assertEqual(pu.RECEIVER_FILE_MAX, 4096)
         first = "https://r.example\n"
         self._file(first + "x" * (pu.RECEIVER_FILE_MAX + 1 - len(first)))          # one byte over the bound, the address first
@@ -452,6 +455,73 @@ class ReceiverSetting(unittest.TestCase):
         with mock.patch.dict(os.environ, {"HOME": self.home}):           # the unit, after the child proved the open returns
             self.assertEqual(pu.receiver_setting(None, env={}), ("", "~/.config/romp/perf-receiver"),
                              "a fifo is refused as an address, the file named as its source, and nothing of it is read")
+
+
+    def test_a_socket_a_block_device_and_an_unreadable_file_at_the_setting_path_are_refused_naming_the_file_never_as_no_receiver(self):
+        """receiver_setting swallowed every OSError from the open into (None, None), so a path that EXISTED but could not be
+        opened (a unix socket, ENXIO whatever its mode; a regular file the account cannot read, EACCES; a block device outside
+        the account's group, EACCES) had the verb report that no receiver was set and name the three settings, for a file
+        that held a real address (correctness-2 and tests-3, the third review round). The open's failure is now split on
+        errno: absent (FileNotFoundError, a missing path or a dangling link) is still no receiver, and any other OSError is
+        an address the grammar refuses with the file as its source, the result a fifo or a device node reaches through the
+        fstat, so the refusal names the file and never its bytes. Each case as a unit and as a hard-killed child (the setting
+        path is user-named, where a hang was once possible). The block-device case links the setting path to a device the
+        machine has and skips where it has none; whichever of the open (EACCES) and the fstat (S_ISBLK) finds it, the result
+        is the same. The mode-000 case skips under root, which reads the file anyway. Fails before: the socket and the
+        unreadable file returned (None, None) and the child printed that no receiver was set."""
+        d = os.path.join(self.home, ".config", "romp")
+        os.makedirs(d)
+        setting = os.path.join(d, "perf-receiver")
+        xdg, state = _state_root()
+        self.addCleanup(shutil.rmtree, xdg, True)
+        named = ("", "~/.config/romp/perf-receiver")
+        refusal = ("romp perf upload: refused: the receiver address from ~/.config/romp/perf-receiver is not an https URL with a host and no "
+                   "userinfo, query or fragment (http is allowed for 127.0.0.1 and localhost only); nothing sent\n")
+
+        def unit():
+            with mock.patch.dict(os.environ, {"HOME": self.home}):
+                return pu.receiver_setting(None, env={})
+
+        def child(what):
+            try:
+                r = subprocess.run([sys.executable, "-c", CHILD, UPLOAD, os.path.join(xdg, "no-such.json"), "--yes"], capture_output=True,
+                                   text=True, timeout=8, env=_env(state, self.home), stdin=subprocess.DEVNULL)
+            except subprocess.TimeoutExpired:
+                self.fail("the upload child hung on %s at the setting path (killed after 8 s)" % what)
+            self.assertEqual((r.returncode, r.stdout, r.stderr), (2, "", refusal), what)
+            self.assertNotIn("no receiver is set", r.stderr, what)
+            return r
+
+        sock = socket.socket(socket.AF_UNIX)
+        self.addCleanup(sock.close)
+        try:
+            sock.bind(setting)
+        except OSError:                                   # the path is too long for a socket address: bind short and link to it
+            short = tempfile.mkdtemp(dir="/tmp")
+            self.addCleanup(shutil.rmtree, short, True)
+            sock.bind(os.path.join(short, "s"))
+            os.symlink(os.path.join(short, "s"), setting)
+        self.assertEqual(unit(), named, "a socket: the open itself fails (ENXIO) and the file is named")
+        child("a socket")
+        os.unlink(setting)
+        if os.geteuid() != 0:
+            with open(setting, "w") as fh:
+                fh.write("https://receiver.example/\n")
+            os.chmod(setting, 0)
+            self.assertEqual(unit(), named, "a file the account cannot read: present and not an address, the file named")
+            r = child("an unreadable file")
+            self.assertNotIn("receiver.example", r.stdout + r.stderr, "and nothing of what it holds")
+            os.chmod(setting, 0o600)
+            os.unlink(setting)
+        devices = [p for p in ("/dev/loop0", "/dev/sda", "/dev/nvme0n1", "/dev/vda", "/dev/xvda")
+                   if os.path.exists(p) and stat.S_ISBLK(os.stat(p).st_mode)]
+        if devices:
+            os.symlink(devices[0], setting)
+            self.assertEqual(unit(), named, "a block device: by the open (EACCES) or by the fstat (S_ISBLK), the file named either way")
+            child("a block device")
+            os.unlink(setting)
+        os.symlink(os.path.join(self.home, "nowhere"), setting)
+        self.assertEqual(unit(), (None, None), "a dangling link is absent: the one road that is no receiver")
 
 
 class ReceiverAddress(unittest.TestCase):
