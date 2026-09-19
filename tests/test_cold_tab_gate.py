@@ -338,6 +338,95 @@ class ColdTabGate(unittest.TestCase):
         self.assertIn("`coldSkipped`", doc)
 
 
+class CensusOncePerPush(ColdTabGate):
+    """The skeleton question is asked ONCE per tab per push (2026-09-19 review, kernel-3 and correctness-1): the cold gate asks
+    it live for the tabs it walks (a click landing mid-loop must still build its tab in the same push), and the warm-tab
+    census (memos.chatSig) asks it once after the loop for the tabs the gate did not walk. Four tabs with transcripts and
+    four chat pages each holding every tab as a skeleton, over the REAL km._push, with spies on the per-client leaf
+    (_skeleton_held_here), the census helper and the gate's walk: a one-tab harness could not tell a census before the loop
+    from one inside it, nor the gate's walk from the census's (the census once asked about every tab before the loop and
+    the gate asked again about the cold ones, 32 leaf calls per cold push here against 16)."""
+
+    def _four_transcripts(self):
+        with open(self.paths[S4], "w") as f:              # the fixture's S4 has none: give every tab one
+            f.write("x" * 500)
+
+    def _holders(self, n=4):
+        return [self._client(skeleton=set(TAB_ORDER), proto=2, ready=True, handshake=True) for _ in range(n)]
+
+    def _spies(self):
+        leaf, census, by_all = [], [], []
+        real_leaf, real_census, real_by_all = km._skeleton_held_here, km._skeleton_census, km._held_as_skeleton_by_all
+
+        def spy_leaf(c, sid):
+            leaf.append(sid); return real_leaf(c, sid)
+
+        def spy_census(sids, clients):
+            census.append(list(sids)); return real_census(sids, clients)
+
+        def spy_by_all(sid, clients):
+            by_all.append(sid); return real_by_all(sid, clients)
+        patches = (mock.patch.object(km, "_skeleton_held_here", spy_leaf), mock.patch.object(km, "_skeleton_census", spy_census),
+                   mock.patch.object(km, "_held_as_skeleton_by_all", spy_by_all))
+        return (leaf, census, by_all), patches
+
+    def test_a_cold_push_asks_the_gate_alone_and_the_census_about_no_tab(self):
+        self._four_transcripts()
+        holders = self._holders()
+        km._clients[:] = holders
+        (leaf, census, by_all), (p1, p2, p3) = self._spies()
+        before = km._chat_sig_stats_report()
+        with p1, p2, p3:
+            km._push(holders)
+        after = km._chat_sig_stats_report()
+        self.assertEqual(self.built, [], "every tab cold, unwatched and held by all four pages: none built")
+        self.assertEqual(self._skipped(), 4)
+        self.assertEqual(sorted(by_all), sorted(TAB_ORDER), "the gate asked once per tab, live")
+        self.assertEqual(census, [[]], "one census per push, over the tabs the gate did not walk: none on a cold push")
+        self.assertEqual(len(leaf), 4 * 4, "the leaf ran tabs x clients times, the gate's 16 alone (the census's 16 more before the change)")
+        self.assertEqual(after["pushes"] - before["pushes"], 1, "memos.chatSig.pushes: one per push, whatever the tab count")
+        self.assertEqual(after["warmEligible"] - before["warmEligible"], 0, "a cold tab is not warm")
+
+    def test_a_warm_push_asks_the_census_alone_once_over_every_tab(self):
+        self._four_transcripts()
+        fresh = self._client(active=S1, ready=True, proto=2)   # the same render floor as the holders below: the cached signatures hold
+        km._clients[:] = [fresh]
+        km._push([fresh])                                    # warms _built_chat for every tab
+        self.assertEqual(sorted(self.built), sorted(TAB_ORDER))
+        del self.built[:]
+        holders = self._holders()
+        km._clients[:] = holders
+        (leaf, census, by_all), (p1, p2, p3) = self._spies()
+        before = km._chat_sig_stats_report()
+        with p1, p2, p3:
+            km._push(holders)
+        after = km._chat_sig_stats_report()
+        self.assertEqual(self.built, [], "every tab served from the cache")
+        self.assertEqual(by_all, [], "the gate walked nothing: every tab is built")
+        self.assertEqual(census, [TAB_ORDER], "one census per push, over every tab the gate did not walk, in build order")
+        self.assertEqual(len(leaf), 4 * 4, "the census's 4 x 4 (a census inside the loop would run once per tab: 4 calls, 64 leaf reads)")
+        self.assertEqual(after["pushes"] - before["pushes"], 1)
+        self.assertEqual(after["warmEligible"] - before["warmEligible"], 4, "four cached tabs, unwatched, held by every page, with transcripts")
+
+    def test_a_skeleton_released_by_an_earlier_tabs_build_is_built_in_the_same_push(self):
+        """The live gate (the refiner's probe C): the page's click lands during the loop, as a side effect of an earlier tab's
+        build here (the activeTab handler's shape: the set changes, no push). S4 has no transcript and is built first; its
+        build releases S2's skeleton; S2, next in build order, must be built in the SAME push. A gate fed from a census
+        taken at the push's start would still skip it."""
+        c = self._client(skeleton={S1, S2, S3}, proto=2, ready=True, handshake=True)
+        km._clients[:] = [c]
+        real_build = km.build_session
+
+        def build(sid, now, live_map=None, **kw):
+            if sid == S4:
+                km._release_skeleton(c, S2)
+            return real_build(sid, now, live_map, **kw)
+        km.build_session = build
+        km._push([c])
+        self.assertEqual(self.built, [S4, S2], "S4 first (no transcript), then S2 in the same push: the gate reads the set live")
+        self.assertEqual(self._skipped(), 2, "S1 and S3 stay skipped")
+
+
 class ProvisionalLegsMatchBuilt(unittest.TestCase):
     """Round three (the medium): over constructed legs, the provisional status equals the REAL built status on every key the
     skeleton chip painter reads (tab-widgets.ts and render.ts: the state, the five on-you flags, faded, ctx, ctxColor and
