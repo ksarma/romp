@@ -512,6 +512,7 @@ class ClientDiagAllowlistTest(unittest.TestCase):
                 ("hostconn", {"host": host, "ev": "close", "code": 1006, "clean": False, "detached": False}),
                 ("hostconn", {"host": host, "ev": "detach", "pendingDropped": 2}),
                 ("hostconn", {"host": host, "ev": "moot", "pendingDropped": ["needFull", "needFull"]}),   # the held asks the ready's connect push answers, dropped before the flush, by type (2026-09-18)
+                ("hostconn", {"host": host, "ev": "delta-unknown-slot", "why": "lanes"}),   # a remote patch for a slot the conn's receiver has no table for (2026-09-19)
                 ("feedDelta-nobase", {"host": host, "buildId": "b1"}),
                 ("feedmerge", {"counts": {host: 4}}),
                 ("sendqueue", {"host": host, "msgType": "prompt", "gt": 2, "rs": 0, "superseded": True}),

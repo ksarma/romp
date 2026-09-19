@@ -162,11 +162,14 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   `top` when any changed — and an unchanged board sends such a client nothing at
   all. A federated dashboard's relay sockets announce it too (`federation.ts`
   `REMOTE_DIAL_CAPS`, since 2026-09-18; the relay forwards the dial's query
-  whole). Every other consumer, the VS Code extension's pipes and an older
-  bundle, stays on the full-frame path, which keeps its 60 s repost of the
-  unchanged frame; a relay dialed by an older dashboard bundle announces
-  nothing and, dialing `delta=1` (since 2026-09-15), is served the feed as
-  view-delta slot patches instead. `federation.ts` applies a local delta onto
+  whole). A consumer that announces nothing and dials no `delta=1` (a bundle
+  before the cap; a relay dialed by a dashboard bundle before 2026-09-15; the
+  VS Code extension before 2026-09-16) stays on the full-frame path, which
+  keeps its 60 s repost of the unchanged frame; one that dials `delta=1`
+  without the cap is served the feed as view-delta slot patches instead: the
+  VS Code extension's pipes (`client=ext&delta=1` since 2026-09-16, reassembled
+  by their own `ViewDeltas`) and a relay dialed by a dashboard bundle from
+  2026-09-15 to 2026-09-18. `federation.ts` applies a local delta onto
   the frame the merge reads and a remote host's delta onto the raw frame it
   holds for that host (`applyRemoteFeedDelta`), and re-emits a merged full
   frame, so every consumer still sees whole `feed` frames; a delta it cannot

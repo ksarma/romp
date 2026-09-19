@@ -1,7 +1,8 @@
 // A federated feed-riding pane's REMOTE sockets take the feed as feedDelta frames (2026-09-18). Before this
 // the relay dial announced no caps, so a remote kernel served its feed on the view-delta slot path
-// ({type:"delta", slot:"feed"}), which nothing on this side decodes: the shim reassembles view deltas on its
-// LOCAL socket alone, and federation.ts applied a feedDelta for the local host only. The merged board froze
+// ({type:"delta", slot:"feed"}), which nothing on this side decoded then: the shim reassembled view deltas on its
+// LOCAL socket alone (each remote conn carries a receiver since the fold, federation-remote-view-delta.test.ts),
+// and federation.ts applied a feedDelta for the local host only. The merged board froze
 // on the remote's first full frame; fleet.ts filed a `delta-unapplied` row per dropped frame and posted a
 // needSlot the LOCAL kernel could not answer (86 rows in 2.4 minutes on the user's phone). Now remoteDialUrl
 // announces REMOTE_DIAL_CAPS on every remote dial, and a remote host's feedDelta applies onto the raw frame

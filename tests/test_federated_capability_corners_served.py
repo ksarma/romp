@@ -7,11 +7,16 @@ host); one that ignores the cap but honours delta=1 sends {type:"delta", slot:"f
 Conn.viewDeltas); one that ignores both sends whole {type:"feed"} frames (applied as before). An OLD hub bundle (main
 before PR 815) dials delta=1 without caps and decodes no patch, so the same remote's rows freeze on its pages after
 the first full frame: the Outline files a delta-unapplied row per dropped patch and posts a needSlot to the LOCAL
-kernel, the feed and Waiting panes drop them silently. No kernel change repairs that corner; the hub's bundle does,
-so the hub box updates, the page reloads, and no remote needs a change for either slot.
+kernel, the feed and Waiting panes drop them silently. PR 815 changes no kernel, so it repairs that corner through the
+hub's bundle alone: the hub box updates and the page reloads, and no remote needs a change for either slot. A remote-side
+guard would also cover an old hub during a mixed-build window (the remote kernel reads relay=1 at accept, _dial_kind, and
+picks the feed's protocol by the cap alone, so whole feed frames to a relay socket that announces no cap is a
+one-condition change); it is not taken here: the old hub's timeline decodes no bars patch either, so a guard that covered
+it whole would cost a whole bars frame per change on every old hub, and the hub's bundle is the one place both slots
+are decoded.
 
-Each class is one corner: two hermetic kernels (a hub owning no session, a checked-in TESTHOST owning "api" and
-"worker"), the hub's Waiting, Outline and feed pages in one Chromium, every socket's dial URL, inbound frame types
+Each class is one corner: two hermetic kernels (a hub owning no session, a checked-in TESTHOST owning eight sessions,
+"api", "worker" and EXTRA's six), the hub's Waiting, Outline and feed pages in one Chromium, every socket's dial URL, inbound frame types
 and outbound asks (needSlot, needFullFeed) recorded, then ONE change on the remote after every relay socket holds its
 full frame. The change is a notice card (POST /notice, an asks-only change: the slot path's delta for it is one card
 against the whole frame, under the size guard, so a caps-ignoring kernel emits a real patch; a todo changes the
@@ -62,8 +67,8 @@ import test_federated_dial_terms_served as _dial   # noqa: E402  the two-kernel 
 SID_R0 = "11111111-2222-4333-8444-000000000701"   # "api" on TESTHOST: the session the change is filed for
 SID_R1 = "11111111-2222-4333-8444-000000000702"   # "worker" on TESTHOST
 # six more sessions on TESTHOST (the notes-api demo's other names), so the remote's full frame is several times a one-card
-# patch: the slot path's size guard (_DELTA_MAX_FRACTION, 0.6) sends a whole frame when the patch is not worth it, and on
-# a two-session board one notice card is
+# patch: the slot path's size guard (_DELTA_MAX_FRACTION, 0.6) sends a whole frame when the patch is not worth it, and
+# eight sessions keep one notice card well under it (896 B against an 18.5 KB full frame in the recorded drives)
 EXTRA = [("11111111-2222-4333-8444-0000000007%02d" % n, name, n)
          for n, name in ((3, "web"), (4, "tests"), (5, "docs"), (6, "deploy"), (7, "search"), (8, "index"))]
 HOST = "TESTHOST"
@@ -564,7 +569,7 @@ class CornerNewLocalOldRemote(CornerCapsIgnoredStandIn):
     def _knobs(cls):
         cls.remote_root = _root_knob("ROMP_CORNER_OLD_REMOTE_ROOT")
         if not cls.remote_root:
-            raise unittest.SkipTest("ROMP_CORNER_OLD_REMOTE_ROOT unset: the old-remote corner needs a checkout of a caps-ignoring kernel")
+            raise unittest.SkipTest("optional: ROMP_CORNER_OLD_REMOTE_ROOT unset: the old-remote corner needs a checkout of a caps-ignoring kernel")
 
     def test_dials_carry_no_caps(self):
         self._assert_dials(caps=True)   # announced, and ignored by the remote: the frames below say so
@@ -580,8 +585,11 @@ class CornerNewLocalOldRemote(CornerCapsIgnoredStandIn):
 class CornerNewLocalV1Remote(_Corner):
     """New local, an old remote with the slot path and neither /notice nor /usertodo (ROMP_CORNER_V1_REMOTE_ROOT, e.g.
     2b9db2bee). The change is a transcript append, which lands in the remainder and crosses as a whole frame (the
-    guard); the patch is the 60 s clock-only one an idle slot emits, reassembled without a row. A user sees the rows
-    current; nothing is dropped."""
+    guard); the patch is the 60 s clock-only one an idle slot emits, reassembled without a row. The visible side is not
+    observed here (the driver waits for the frame, not for a row); the frames, the rows and the asks are the corner's
+    claim: nothing dropped, no row, nothing asked of either kernel. That vintage keys the bars frame's judging as a flat
+    list the receiver cannot key, so its BARS would cross whole per change (view-deltas.ts, its header); this lab opens
+    no timeline page."""
     change = "transcript"
     wait_ms = 15000
     wait_delta_ms = 80000
@@ -591,7 +599,7 @@ class CornerNewLocalV1Remote(_Corner):
     def _knobs(cls):
         cls.remote_root = _root_knob("ROMP_CORNER_V1_REMOTE_ROOT")
         if not cls.remote_root:
-            raise unittest.SkipTest("ROMP_CORNER_V1_REMOTE_ROOT unset")
+            raise unittest.SkipTest("optional: ROMP_CORNER_V1_REMOTE_ROOT unset")
 
     def test_dials(self):
         self._assert_dials(caps=True)
@@ -612,8 +620,10 @@ class CornerNewLocalV1Remote(_Corner):
 
 class CornerNewLocalV0Remote(_Corner):
     """New local, a remote from before the delta protocol (ROMP_CORNER_V0_REMOTE_ROOT, e.g. 8a4d48f10): whole frames
-    only, applied as before; the change is a todo (that vintage serves /usertodo). A user sees the rows move; the wire
-    pays a whole frame per change and per minute, the pre-delta cost."""
+    only, applied by the unchanged feed arm with no row; the change is a todo (that vintage serves /usertodo). The wire
+    pays a whole frame per change and per minute, the pre-delta cost. The visible side is recorded, not asserted, and in
+    the recorded drive nothing visible was seen (todoSeen, todoCardSeen): that vintage serves the feed payload to no
+    Waiting client, and it minted no rolled-up todo card on the feed page within the wait."""
     change = "todo"
     apps = ("fleet", "feed")
 
@@ -621,20 +631,21 @@ class CornerNewLocalV0Remote(_Corner):
     def _knobs(cls):
         cls.remote_root = _root_knob("ROMP_CORNER_V0_REMOTE_ROOT")
         if not cls.remote_root:
-            raise unittest.SkipTest("ROMP_CORNER_V0_REMOTE_ROOT unset")
+            raise unittest.SkipTest("optional: ROMP_CORNER_V0_REMOTE_ROOT unset")
 
     def test_dials(self):
         self._assert_dials(caps=True)
 
-    def test_whole_frames_only_and_the_todo_shows(self):
+    def test_whole_frames_only(self):
         self._assert_change_posted()
         for app in self.apps:
             self._after_full(app)
             after = self._after_change(app)
             self.assertIn(("feed", ""), after, "a whole feed frame reached the %s relay socket after the change: %r" % (app, self._kinds(app)))
             self.assertEqual([k for k in self._kinds(app) if k[0] in ("delta", "feedDelta")], [], "never a patch or a feedDelta on the %s relay socket: %r" % (app, self._kinds(app)))
-        # the visible side is recorded, not asserted: that vintage serves the feed payload to no Waiting client, and whether it
-        # mints the feed page's rolled-up todo card is its own affair; the frames above are the corner's claim
+        # the visible side is recorded (todoSeen, todoCardSeen in the report), not asserted: that vintage serves the feed
+        # payload to no Waiting client, and whether it mints the feed page's rolled-up todo card is its own affair (the
+        # recorded drive saw none); the frames above are the corner's claim
 
     def test_nothing_dropped(self):
         self._assert_nothing_dropped()
@@ -648,15 +659,17 @@ class CornerOldLocal(_Corner):
     resyncs its own slot, never the remote's), the feed and Waiting panes drop the patches silently. The remote's own
     whole-frame fallbacks (the size guard, a redial, a change that moves the remainder) catch the board up now and
     then, which is why the card is a completed one here (a needs-you card's state flip sends such a frame a cycle
-    later and the old page shows the card 1.8 s late instead of never). No change on the remote repairs
-    this corner: the hub reloads its page onto the new bundle. This is the production state of a dashboard served by
-    a box that has not taken PR 815, and the record of the phone's 86 rows in 2.4 minutes."""
+    later and the old page shows the card 1.8 s late instead of never). PR 815 changes no kernel, so it repairs this
+    corner through the hub's bundle alone: the hub reloads its page onto the new bundle. A remote-side guard (whole
+    feed frames to a relay socket that announces no cap; the module docstring says why it is not taken here) would
+    also cover the old hub's feed during a mixed-build window, not its timeline. This is the production state of a
+    dashboard served by a box that has not taken PR 815, and the record of the phone's 86 rows in 2.4 minutes."""
 
     @classmethod
     def _knobs(cls):
         cls.hub_root = _root_knob("ROMP_CORNER_OLD_HUB_ROOT")
         if not cls.hub_root:
-            raise unittest.SkipTest("ROMP_CORNER_OLD_HUB_ROOT unset: the old-local corner needs a checkout of the bundle before PR 815, built")
+            raise unittest.SkipTest("optional: ROMP_CORNER_OLD_HUB_ROOT unset: the old-local corner needs a checkout of the bundle before PR 815, built")
 
     def test_dials_carry_no_caps(self):
         self._assert_dials(caps=False)
@@ -691,7 +704,7 @@ class CornerBothOld(CornerOldLocal):
         cls.hub_root = _root_knob("ROMP_CORNER_OLD_HUB_ROOT")
         cls.remote_root = _root_knob("ROMP_CORNER_OLD_REMOTE_ROOT")
         if not (cls.hub_root and cls.remote_root):
-            raise unittest.SkipTest("ROMP_CORNER_OLD_HUB_ROOT and ROMP_CORNER_OLD_REMOTE_ROOT both needed")
+            raise unittest.SkipTest("optional: ROMP_CORNER_OLD_HUB_ROOT and ROMP_CORNER_OLD_REMOTE_ROOT both needed")
 
 
 if __name__ == "__main__":

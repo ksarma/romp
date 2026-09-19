@@ -55014,12 +55014,15 @@ def _send_chat(c, m, ms, change_from, led_changed):
 # now gets a {type:"feedDelta"} instead: the cards that changed (by itemId), the itemIds that left, the same
 # for ledgers (by sid), and the small top-level fields whole when any of them changed. Nothing changed →
 # nothing sent, exactly as before. A client that has not announced, or has not yet received a full frame on
-# this socket, gets the full {type:"feed"} frame — the legacy path, kept for every consumer that reads it
-# (the VS Code extension's pipes, older bundles). Federation's remote sockets announce the cap since 2026-09-18
-# (federation.ts REMOTE_DIAL_CAPS; the relay forwards the dial's query whole, so the cap is read at accept like a
-# page's). A relay dialed by an older dashboard bundle announces nothing and, since it dials ?delta=1 (8fe70da07,
-# 2026-09-15), is served through the view-delta SLOT path (_send_slot: a 97-byte clock patch on an idle board),
-# not this whole-frame path and its 60 s repost, which only a relay predating that dial still takes. Full frames
+# this socket, gets the full {type:"feed"} frame: the legacy path, kept for the consumers that dial without
+# ?delta=1 too (a bundle before the cap, its local socket; a relay dialed by a dashboard bundle before 2026-09-15;
+# the VS Code extension before 2026-09-16), with its 60 s repost of the unchanged frame. Federation's remote
+# sockets announce the cap since 2026-09-18 (federation.ts REMOTE_DIAL_CAPS; the relay forwards the dial's query
+# whole, so the cap is read at accept like a page's). A client that dials ?delta=1 and no cap is served through the
+# view-delta SLOT path instead (_send_slot: a keyed full frame, then patches; a clock-only patch of about 100 bytes
+# on an idle board), not this path or its repost: the VS Code extension's pipes (client=ext&delta=1 since
+# 2026-09-16, reassembled by their own ViewDeltas) and a relay dialed by a dashboard bundle from 2026-09-15 to
+# 2026-09-18. Full frames
 # still carry each card's `trgb`; deltas never do (an older bundle reads it, a delta client colours from `t`).
 #
 # The parts below are computed ONCE per build and shared by every client (the 2026-08-10 CPU discipline):
@@ -55354,8 +55357,9 @@ def _send_feed_now(c):
     actually goes out: a frame the per-client dedup swallowed changes nothing the client holds.
 
     Two delta protocols meet here as in _push. A page that announced `?delta=1` but not FEED_DELTA_CAP (a
-    pre-2026-09-05 Outline tab, since the page announces the cap; any ?delta=1 page without it; a relay dialed
-    by a dashboard bundle before federation.ts announced the cap on its remote dial, 2026-09-18)
+    pre-2026-09-05 Outline tab, since the page announces the cap; any ?delta=1 page without it; the VS Code
+    extension's pipes, client=ext&delta=1 since 2026-09-16; a relay dialed by a dashboard bundle before
+    federation.ts announced the cap on its remote dial, 2026-09-18)
     takes the view-delta slot path, so it is served THROUGH _send_slot: the frame goes out
     keyed and becomes the slot's held base (dstate["feed"]), and the connect push that follows it (_push_one,
     for the ledgers only that push attaches) finds the base and sends a delta. Served through _send_client
@@ -76110,12 +76114,13 @@ class Handler(BaseHTTPRequestHandler):
         # Waiting on you pages — see _shim's `caps`); READY_GATE_CAP is the hold below. Announced on the URL
         # rather than in a first message because it has to be known before the first frame (the `ready`-time
         # frame is the delta stream's base) and it has to survive every reconnect without the bundle
-        # re-announcing. Anything that does not announce keeps receiving the full {type:"feed"} frame it always
-        # did: the VS Code extension's pipes (its Outline pipe among them) and an older bundle. Federation's remote
-        # sockets announce it too since 2026-09-18 (federation.ts REMOTE_DIAL_CAPS; the relay forwards the dial's
-        # query whole, so it is read here like a page's); a relay dialed by an older dashboard bundle announces
-        # nothing and, dialing ?delta=1 since 2026-09-15, is served the feed as view-delta slot patches
-        # (_send_slot) rather than whole frames.
+        # re-announcing. A client that announces nothing and dials no ?delta=1 keeps receiving the full {type:"feed"}
+        # frame it always did (a bundle before the cap; a relay dialed by a dashboard bundle before 2026-09-15; the
+        # VS Code extension before 2026-09-16); one that dials ?delta=1 without the cap is served the feed as
+        # view-delta slot patches instead (_send_slot): the VS Code extension's pipes (client=ext&delta=1 since
+        # 2026-09-16, its Outline pipe among them, reassembled by their own ViewDeltas) and a relay dialed by a
+        # dashboard bundle from 2026-09-15 to 2026-09-18. Federation's remote sockets announce it since 2026-09-18
+        # (federation.ts REMOTE_DIAL_CAPS; the relay forwards the dial's query whole, so it is read here like a page's).
         caps = (q.get("caps") or [""])[0]
         reconnect = (q.get("reconnect") or [""])[0] == "1"   # the shim's own statement: this page opened a socket before and its bundle has said ready, with no ready waiting in its queue
         skeleton = (q.get("skeleton") or [""])[0] == "1" and app == "chat"   # the shell's statement (the chat split, 2026-09-11): a later column, a VIEW of the one session its active hint names; a chat socket's alone (round two of PR 1661: the term is meaningless for a feed or a timeline client)
