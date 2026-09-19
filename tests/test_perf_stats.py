@@ -5087,6 +5087,32 @@ class Disclosed(unittest.TestCase):
         return text[start:text.index("so two uploads from one kernel remain linkable by design", start)]
 
     @staticmethod
+    def _sentences(text):
+        """The text's sentences, the way a reader counts them: a piece ends at a '.', '!' or '?' that is followed by
+        whitespace and then a capital letter or a backtick, and never inside backticks (`push.relay`, `hydrated.capBytes`)
+        or inside parentheses (a parenthetical that is a sentence of its own stays in its host); a dot followed by a digit
+        or a lowercase letter (2.33, 1.8e308, predates-parses.perSession) ends nothing. Each piece keeps the whitespace after
+        its end mark, so the pieces concatenate to the input and a walk over them is a walk over the text. The test named
+        for the one-sentence fact pins this splitter on planted inputs and on the paragraph."""
+        pieces, start, depth, code = [], 0, 0, False
+        for i, ch in enumerate(text):
+            if ch == "`":
+                code = not code
+            elif code:
+                continue
+            elif ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth = max(0, depth - 1)
+            elif ch in ".!?" and depth == 0:
+                m = re.compile(r"\s+(?=[A-Z`])").match(text, i + 1)
+                if m:
+                    pieces.append(text[start:m.end()])
+                    start = m.end()
+        pieces.append(text[start:])
+        return pieces
+
+    @staticmethod
     def _served_collector():
         """A fresh collector whose http table has served every route the usage block counts once: every POST route of the
         register (pp.HTTP_ROUTES, the kernel's own) that is not the kernel's housekeeping (pe.ACTION_SKIP) and every pane
@@ -5680,6 +5706,42 @@ class Disclosed(unittest.TestCase):
                             "a listed clause the grammar does not find: %r" % words)
         self.assertTrue(re.search(self.CLAUSE_MARKERS[1], "one per route"), "per, the word alone, is a marker")
         self.assertFalse(re.search(self.CLAUSE_MARKERS[1], "per-process and per-machine"), "the hyphenated per- is not")
+
+    def test_the_disclosure_paragraph_is_one_sentence_so_the_coverage_table_is_the_unit(self):
+        """The reviewer's re-check of the second closing check (2026-09-19) asked for the paragraph's SENTENCES enumerated
+        mechanically and each classified, so that a new or reworded sentence reds whatever its wording. Executed first: the
+        whole paragraph, from "What does travel" to the end mark, is ONE sentence (4575 characters on 2026-09-19 with no
+        sentence end at depth zero outside backticks), so a per-sentence table would have one row and classify nothing;
+        the classification therefore lives in COVERAGE, a table of spans, and this test records the fact that makes the
+        span the unit. The count is the splitter's, derived and shown in the message, never typed: a second sentence
+        planted in the paragraph reds here with the count and the sentence's opening. The splitter itself is pinned on
+        planted inputs: two plain sentences are two; a dotted name in backticks, a sentence-shaped mark inside backticks, a
+        sentence inside a parenthetical, a decimal, an exponent and a lowercase letter after the mark are no cut; a
+        parenthesis inside backticks opens nothing; a backticked token or a closing parenthesis before the mark, and a
+        backtick after the whitespace, are cuts. Fails on: a second sentence in the paragraph; a splitter that cuts inside
+        backticks or parentheses, or one that misses a cut after a backtick (executed: the backtick state removed from the
+        splitter reds on the sentence-shaped mark inside backticks, the case the dotted names alone did not decide)."""
+        para = self._paragraph()
+        sentences = self._sentences(para)
+        self.assertEqual("".join(sentences), para, "the pieces are the text, nothing dropped and nothing added")
+        self.assertEqual(len(sentences), 1, "the disclosure paragraph is %d sentences, not one, and the coverage table is built on "
+                         "one; the sentences past the first begin: %r" % (len(sentences), [s[:100] for s in sentences[1:]]))
+        self.assertEqual(sentences, [para], "the one sentence is the paragraph")
+        split = self._sentences
+        self.assertEqual(len(split("The first sentence ends. The second follows.")), 2, "two plain sentences")
+        self.assertEqual(len(split("Really? Yes! Then a third.")), 3, "the three end marks")
+        self.assertEqual(len(split("the `push.relay` route and `hydrated.capBytes`, both names, one sentence.")), 1, "dots inside backticks cut nothing")
+        self.assertEqual(len(split("the row `other. Past` the cap, one sentence.")), 1, "a sentence-shaped mark inside backticks cuts nothing")
+        self.assertEqual(len(split("the call `snapshot(` opens no parenthesis. Then a second.")), 2, "a parenthesis inside backticks opens nothing")
+        self.assertEqual(len(split("One sentence (an aside. Another aside) to its end.")), 1, "a sentence inside a parenthetical stays in its host")
+        self.assertEqual(len(split("an integer past about 1.8e308) and glibc before 2.33, musl among them.")), 1, "a decimal, an exponent, an unbalanced close")
+        self.assertEqual(len(split("predates-parses.perSession for a snapshot saved. Before the count.")), 2, "a dotted bare name cuts nothing; the mark after it does")
+        self.assertEqual(len(split("the `usage` block. Next comes more.")), 2, "a backticked token before the mark, a cut")
+        self.assertEqual(len(split("plus `rss_peak_kb` (the peak resident size). Every leaf under `heap` follows.")), 2, "a closing parenthesis before the mark, a cut")
+        self.assertEqual(len(split("see e.g. the thing, i.e. lowercase after the dot.")), 1, "a lowercase letter after the mark is no cut")
+        self.assertEqual(len(split("ends here. `usage` starts the next.")), 2, "a backtick after the whitespace is a cut")
+        self.assertEqual(split("A. B. C."), ["A. ", "B. ", "C."], "each piece keeps the whitespace after its mark")
+        self.assertEqual(split(""), [""], "no text is one empty piece, so a join is always the input")
 
 if __name__ == "__main__":
     unittest.main()
