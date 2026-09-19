@@ -1007,14 +1007,20 @@ side by side in the interface and message each other like any other pair.
 
 The kernel is the program that runs your agents, watches their work, and serves
 the user interface at `127.0.0.1:29855`. You run it on your own machine, with no
-hosted service in between. Everything Romp stores stays local. The traffic that
-leaves your machine is `claude` itself, both the agents' own model calls and the
-LLM calls in Romp's judge pipeline, and, only when you run it and confirm it,
-`romp perf upload`, which sends a paste-safe copy of the kernel's performance
-counters (the file `romp perf export --public` writes, naming no session, path,
-host or user) to a receiver you configure yourself (none ships, so nothing can
-be sent until you set one); see
-[Kernel performance counters](reference.md#kernel-performance-counters).
+hosted service in between. Everything Romp stores stays local, and the
+performance counters leave your machine by one road: only when you run it and
+confirm it, `romp perf upload` sends a paste-safe copy of them (the file
+`romp perf export --public` writes, naming no session, path, host or user) to a
+receiver you configure yourself (none ships, so nothing can be sent until you
+set one); see
+[Kernel performance counters](reference.md#kernel-performance-counters). Other
+parts of Romp make requests of their own: the agents' and the judge pipeline's
+model calls go through `claude`, and the kernel fetches and posts for some of
+its features. That list is derived from the code, not kept by hand:
+`tests/test_outbound_requests_census.py` enumerates every request site under
+`kernel/`, `cli/`, `bin/` and `postal/` and fails on one it does not name, and
+[Requests Romp makes on its own](reference.md#requests-romp-makes-on-its-own)
+in the reference lists what it finds today.
 
 The kernel runs as a login service, so it is up whenever you are logged in. To
 stop it on purpose, run `romp down`: it gives the agents a few seconds to
