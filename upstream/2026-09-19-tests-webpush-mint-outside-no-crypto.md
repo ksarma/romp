@@ -3,7 +3,7 @@ title: The webpush no-crypto tests mint their subscription keys before hiding th
 status: candidate
 where: tests/test_kernel_webpush.py (SubscribeRoutes.test_subscribe_without_crypto_is_a_loud_500, test_a_package_installed_since_is_found_on_the_next_tap_without_a_restart; the _no_crypto docstring)
 added: 2026-09-19
-pr:
+pr: 823
 tier: docs
 offered:
 closed:
