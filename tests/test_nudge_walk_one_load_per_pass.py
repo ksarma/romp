@@ -337,8 +337,10 @@ suite's fake clock (the pass takes `now`). SYNTHETIC fixtures only; a PRIVATE sy
 rule), their override journals cleaned in the teardown; the state root rebound through jd._rebind_state and `off` written
 into its session-hosts."""
 import ast
+import contextlib
 import importlib.util
 import inspect
+import io
 import json
 import os
 import re
@@ -386,13 +388,26 @@ SHARED_HANDOFF_KEYS = ("absent", "fallback", "corrupt", "unreadable_journal")
 # load_goals), or the replayed store carries _unread (no hand-off; the door's comment calls that branch unreachable). corrupt:
 # _disk_parse raised ValueError (a hand-off). dup: a concurrent fill of the same version published first. refuse: the archive key
 # moved under the replay. The fallback, absent and hit returns bump none of them, so per pass their sum never exceeds the fills,
-# miss plus compare_miss: _pass's second-bump bound (ruling 1 of the reviewer's rulings on the pre-emption). Two of them, corrupt
+# the call keys whose bump falls through into the fill road (SHARED_FILL_KEYS below, miss and compare_miss): _pass's second-bump
+# bound (ruling 1 of the reviewer's rulings on the pre-emption). The bound rests on three premises about the body, each pinned
+# against the door's own source by the roster pin in TheCountersOneSite and by nothing here: the keys the door bumps are the two
+# rosters exactly; every second-key bump sits below every call-key bump; and a call bumps AT MOST ONE second key, since the
+# innermost statement list holding each second-key bump holds no other and ends in a return or a raise (review round 4, tests-2,
+# regression-2 and extra4-1: the pin read the first two, and the third was held by reading the body). The third is pinned by
+# execution as well: a store whose bytes do not parse, read once through the door, bumps miss once, corrupt once and hands off
+# once (TheDoorBumpsAtMostOneSecondKeyPerCall). Two of them, corrupt
 # and unreadable_journal, are hand-off
 # keys that are NOT call keys, so a bump of either beside a goal_io loads bump with no call through the door balanced the shared
 # reconciliation (no call key moved) and the writer one (one hand-off per loads) and red nothing in _pass; the bound is where it
 # reds on a pass with no fill, and the cases' writerLoads elements where one such pair rides beside each fill (the bound admits
-# second == fills). The roster and the order are pinned against the door's own source in TheCountersOneSite.
+# second == fills).
 SHARED_SECOND_KEYS = ("unreadable_journal", "corrupt", "dup", "refuse")
+# The fill road's entry keys: the call keys whose bump falls through into the fill (the statement list holding it does not end in
+# a return or a raise), so the fills a pass made are their sum, the bound's right-hand side in _pass. The roster pin derives them
+# from the door's AST and asserts them equal to this tuple, so a call key that starts falling through, or one of these that stops,
+# reds there (review round 4, tests-2: _pass named the two by hand, and a new fill key left the module green with the bound summing
+# the wrong keys).
+SHARED_FILL_KEYS = ("miss", "compare_miss")
 KERNEL_FILE = os.path.basename(os.path.realpath(km.__file__))   # the kernel's real file: it is loaded from bin/romp-kernel, a symlink
 # The callables the fixture replaces, other than the two recorded doors: the kernel names (the look's gates and the pass's
 # helpers; _pending_ops and _PREV_ALIVE are data, not callables), the judge names, and Sessions.backend_for (replaced by
@@ -1039,7 +1054,12 @@ class _WalkHarness(unittest.TestCase):
         `return store`), `_SHARED_STATS["dup"] += 1` when a concurrent fill published the same version first (then `return
         cur[2]`), and `_SHARED_STATS["refuse"] += 1` when `akey1 != akey0` (then `return frozen`). So a call bumps a second key
         only after its miss or compare_miss bump and bumps at most one, and per pass
-        unreadable_journal + corrupt + dup + refuse <= miss + compare_miss. The bound is what refuses the forged pair: corrupt and
+        unreadable_journal + corrupt + dup + refuse <= miss + compare_miss. The three premises of that reading, the rosters, the
+        order and the at-most-one, are pinned against the door's AST by the roster pin in TheCountersOneSite (the third as the
+        innermost statement list holding each second-key bump holding exactly one and ending in a return or a raise), the at-most-one
+        by execution as well in TheDoorBumpsAtMostOneSecondKeyPerCall, and the fill keys the right-hand side sums are derived there
+        from the same AST and asserted equal to SHARED_FILL_KEYS, which this method sums (review round 4, tests-2, regression-2 and
+        extra4-1: the two named by hand here, and the at-most-one held by nothing). The bound is what refuses the forged pair: corrupt and
         unreadable_journal are hand-off keys and not call keys, so a bump of either beside a goal_io loads bump with no call
         through the door moved no call key (the shared reconciliation balanced) and matched its loads bump with a hand-off (the
         writer reconciliation balanced), and before the bound red nothing here. The bound refuses the pair on a pass with no fill,
@@ -1112,17 +1132,17 @@ class _WalkHarness(unittest.TestCase):
         # the second-bump bound (ruling 1 of the reviewer's rulings on the pre-emption): the derivation from the door's body is in
         # the docstring above
         second = {k: s1[k] - s0[k] for k in SHARED_SECOND_KEYS if s1[k] != s0[k]}
-        fills = d["shared"].get("miss", 0) + d["shared"].get("compare_miss", 0)
+        fills = sum(d["shared"].get(k, 0) for k in SHARED_FILL_KEYS)   # the fill road's entry keys, derived from the door's AST by the roster pin
         self.assertLessEqual(sum(second.values()), fills,
                              "pass at %d: the shared door's second bumps, unreadable_journal + corrupt + dup + refuse, never exceed its fills, "
                              "miss + compare_miss: in load_goals_shared's body each sits on the fill road below the miss or compare_miss bump "
                              "and returns, so a call bumps at most one of them and none without a fill. This pass: second bumps %r, %d in all, "
-                             "against %d fill(s) (miss %d, compare_miss %d); recorded shared calls: %s. A second bump past the fills is a "
+                             "against %d fill(s) (%s); recorded shared calls: %s. A second bump past the fills is a "
                              "counter moved with no call through the door; corrupt and unreadable_journal are hand-off keys and not call keys, "
                              "so such a move beside a goal_io loads bump balances the shared and the writer reconciliations and is caught here "
                              "alone on a pass with no fill (on a pass with fills, one such pair per fill passes this bound and the case's "
-                             "writerLoads element catches it)" % (now, second, sum(second.values()), fills, d["shared"].get("miss", 0),
-                                        d["shared"].get("compare_miss", 0), "; ".join(records) or "none"))
+                             "writerLoads element catches it)" % (now, second, sum(second.values()), fills,
+                                        ", ".join("%s %d" % (k, d["shared"].get(k, 0)) for k in SHARED_FILL_KEYS), "; ".join(records) or "none"))
         d["calls"] = list(self.calls)
         writer = ["%s (%s:%d, sid ..%s)" % (c, f, ln, s[-4:]) for s, c, f, ln in self.writer]
         self.assertEqual(writer, [], "zero plain load_goals from any caller during the pass, the whole tick (condition 7 in ruling A's "
@@ -1373,6 +1393,56 @@ class TheSweepIsItsOwnBoundedReader(_WalkHarness):
         self.assertEqual(self.fb.sent, [], "nothing sent")
 
 
+class TheDoorBumpsAtMostOneSecondKeyPerCall(_WalkHarness):
+    """The at-most-one premise of the second-bump bound by execution (review round 4, tests-2, regression-2 and extra4-1; the
+    roster pin in TheCountersOneSite holds it by AST): one call of the door on a fill road that takes a second bump, and the
+    second bump it takes is exactly one. The road is the corrupt one: a store whose bytes do not parse, written for SID_C (never
+    alive, so never walked, and no store of its own but the one a case writes), read once through jd.load_goals_shared directly,
+    under the harness's recorders (setUp stands them) and outside any pass (no tick runs, so the read is this method's and the
+    recorder names it so). The door bumps miss (no entry stood), then corrupt (_disk_parse raised) and hands the read to
+    load_goals, which quarantines the bytes (one stderr line, captured here, and one store-quarantined row under the rebound
+    judge-errors file) and answers the fresh store; one goal_io loads bump is the hand-off, and the writer recorder records
+    nothing (the hand-off is skipped by code identity). The roads not driven: unreadable_journal needs an OSError out of the
+    journal's open (a directory at the path reads as no journal, and a mode change is unreliable under root); dup and refuse need
+    a concurrent fill, or an archive write between the door's two archive-key reads, hooks on judge names this harness does not
+    own. A second second bump on the corrupt road spelled outside the two spellings the roster pin reads
+    (`_SHARED_STATS.__setitem__`, say) reds this case's second-key line and not the pin."""
+
+    def test_a_corrupt_store_read_once_through_the_door_bumps_miss_once_corrupt_once_and_hands_off_once(self):
+        path = jd.GOALDIR / (SID_C + ".json")
+        path.write_text("{not json")
+        s0, g0 = jd.shared_store_stats(), jd.goal_io_stats()["loads"]
+        self.calls.clear(); self.writer.clear()
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            store = jd.load_goals_shared(SID_C)
+        s1, g1 = jd.shared_store_stats(), jd.goal_io_stats()["loads"]
+        calls = {k: s1[k] - s0[k] for k in SHARED_CALL_KEYS if s1[k] != s0[k]}
+        second = {k: s1[k] - s0[k] for k in SHARED_SECOND_KEYS if s1[k] != s0[k]}
+        self.assertEqual([(c, f) for _s, c, f, _ln in self.calls], [(self._testMethodName, os.path.basename(os.path.realpath(__file__)))],
+                         "one call through the door, this method's, recorded by the shared recorder in this file: %r" % self.calls)
+        self.assertEqual(calls, {"miss": 1}, "the one call moved one call key, miss: no entry stood for the path, so the read entered the fill "
+                                             "road; the call counters' delta: %r" % calls)
+        self.assertEqual(second, {"corrupt": 1},
+                         "and exactly one second key, corrupt, once: the bytes did not parse, and the door left the fill road right after that "
+                         "bump (the at-most-one premise of the bound's derivation, witnessed per call; the roster pin's AST clause reads two "
+                         "bump spellings, and this line reads the counters, so a second bump spelled another way reds here); the second keys' "
+                         "delta: %r" % second)
+        self.assertEqual(g1 - g0, 1, "the corrupt bump is a hand-off: one load_goals call, one goal_io loads bump, the quarantine and the fresh "
+                                     "store answered by it; loads delta %d" % (g1 - g0))
+        self.assertEqual(self.writer, [], "the hand-off is the shared door's own read, skipped by code identity, so the writer recorder recorded "
+                                          "nothing: %r" % self.writer)
+        self.assertEqual((store.get("rompUuid"), store.get("nodes")), (SID_C, {}),
+                         "the fresh store came back: the bytes were moved aside and nothing was cached for the path")
+        self.assertFalse(path.exists(), "the unparseable file was moved aside, so the path reads as absent now")
+        aside = [p.name for p in jd.GOALDIR.iterdir() if p.name.startswith(SID_C + ".json.corrupt-")]
+        self.assertEqual(len(aside), 1, "one sidecar holds the bytes: %r" % aside)
+        self.assertIn("could not be parsed", err.getvalue(), "the quarantine's one stderr line, captured: %r" % err.getvalue())
+        rows = [json.loads(ln) for ln in jd.ERRORS.read_text().splitlines()]
+        self.assertEqual([(r["err"], r["fsid"]) for r in rows], [("store-quarantined", SID_C)],
+                         "and its one store-quarantined row under the rebound judge-errors file: %r" % rows)
+
+
 class TheRecorderNamesTheAsker(unittest.TestCase):
     def test_a_load_inside_a_stand_in_wrapper_is_named_for_the_wrapper_and_its_hand_off_for_the_caller(self):
         """_caller's contract over a stand-in, not the composition of the real boundary set (setUp's guard over the judge's three
@@ -1465,23 +1535,42 @@ class TheCountersOneSite(unittest.TestCase):
 
     def test_the_shared_doors_bump_roster_is_the_reconciliations_and_its_second_bumps_sit_below_the_fills(self):
         """The second-bump bound in _pass is derived from load_goals_shared's body; this pin reads that body (the AST of the
-        judge's own door, its identity checked as setUp checks it) so the derivation cannot go stale unnoticed: every counter
-        the door bumps, by `_shared_bump("<key>")` or `_SHARED_STATS["<key>"] += 1`, is a call key or a second key and every
-        key of both rosters is bumped there, so a new key in the door reds here before it slips past the reconciliations; and
-        every second-key bump sits below every call-key bump in the body, the structure the bound rests on (the fill road
-        follows the miss or compare_miss bump). Added in the consolidation pass beside ruling 1's bound, the fixer's addition beyond
-        the ruling's letter."""
+        judge's own door, its identity checked as setUp checks it) so the derivation cannot go stale unnoticed, in three clauses,
+        one per premise the bound rests on. The rosters: every counter the door bumps, by `_shared_bump("<key>")` or
+        `_SHARED_STATS["<key>"] += 1`, is a call key or a second key and every key of both rosters is bumped there, so a new key
+        in the door reds here before it slips past the reconciliations. The order: every second-key bump sits below every call-key
+        bump in the body (the fill road follows the miss or compare_miss bump). The at-most-one: for every second-key bump, the
+        innermost statement list holding it (a body, an orelse, a finalbody or a handler's body; a Try's handlers are ExceptHandler
+        nodes and not statements, so no region is read twice) holds exactly one second-key bump over the full subtrees of its
+        statements (a bump nested under an If in a later statement counts) and ends in a Return or a Raise, so no path through the
+        door bumps two; the clean door has a cleanup call between a bump and its return, so the predicate is the list's last
+        statement and not the bump's next. From the same lists the fill road's entry keys are derived: the call keys whose list does
+        not end in a Return or a Raise fall through into the fill, and they must be SHARED_FILL_KEYS, which _pass sums as the bound's
+        right-hand side, so a call key that starts falling through, or one of these that stops, reds here rather than leaving _pass
+        summing the wrong keys. Review round 4, tests-2, regression-2 and extra4-1: the pin read the rosters and the order, the
+        at-most-one was held by reading the body, and a second second-key bump on one road or a new fill key left the module green
+        with the bound no longer following from the body. The at-most-one is pinned by execution as well, one call on the corrupt
+        road, in TheDoorBumpsAtMostOneSecondKeyPerCall. Added in the consolidation pass beside ruling 1's bound, the fixer's addition
+        beyond the ruling's letter."""
         door = jd.load_goals_shared
         self.assertEqual((door.__code__.co_name, os.path.basename(os.path.realpath(door.__code__.co_filename))), ("load_goals_shared", JUDGE_FILE),
                          "the door read here is the judge's own (a harness case's recorder is gone by its cleanup)")
-        bumps = []
-        for n in _walk(ast.parse(textwrap.dedent(inspect.getsource(door)))):
-            if (isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "_shared_bump" and n.args
-                    and isinstance(n.args[0], ast.Constant)):
-                bumps.append((n.lineno, n.args[0].value))
-            elif (isinstance(n, ast.AugAssign) and isinstance(n.target, ast.Subscript) and isinstance(n.target.value, ast.Name)
+        tree = ast.parse(textwrap.dedent(inspect.getsource(door)))
+
+        def bump_key(n):
+            """The key a bump node moves, `_shared_bump("<key>")` or `_SHARED_STATS["<key>"] += ...`; None for any other node."""
+            if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "_shared_bump" and n.args and isinstance(n.args[0], ast.Constant):
+                return n.args[0].value
+            if (isinstance(n, ast.AugAssign) and isinstance(n.target, ast.Subscript) and isinstance(n.target.value, ast.Name)
                     and n.target.value.id == "_SHARED_STATS" and isinstance(n.target.slice, ast.Constant)):
-                bumps.append((n.lineno, n.target.slice.value))
+                return n.target.slice.value
+            return None
+
+        def stmt_key(s):
+            """The key a bump STATEMENT moves: an Expr whose value is the _shared_bump call, or the AugAssign itself."""
+            return bump_key(s.value if isinstance(s, ast.Expr) else s)
+
+        bumps = [(n.lineno, bump_key(n)) for n in _walk(tree) if bump_key(n) is not None]
         self.assertEqual({k for _ln, k in bumps}, set(SHARED_CALL_KEYS) | set(SHARED_SECOND_KEYS),
                          "the keys load_goals_shared bumps are exactly the call keys the shared reconciliation sums and the second keys the "
                          "second-bump bound sums (a key here and in neither roster is a bump no reconciliation reads; a key in a roster and "
@@ -1489,6 +1578,38 @@ class TheCountersOneSite(unittest.TestCase):
         self.assertLess(max(ln for ln, k in bumps if k in SHARED_CALL_KEYS), min(ln for ln, k in bumps if k in SHARED_SECOND_KEYS),
                         "every second-key bump sits below every call-key bump in the door's body (the fill road follows the miss or "
                         "compare_miss bump), the structure the bound in _pass rests on; the bumps by line: %r" % sorted(bumps))
+        # the at-most-one, over every statement list of the door: each list-valued field whose members are all statements (a body, an
+        # orelse, a finalbody, a handler's body; Try.handlers holds ExceptHandler nodes, so no try region is collected twice)
+        blocks = [val for node in _walk(tree) for _field, val in ast.iter_fields(node)
+                  if isinstance(val, list) and val and all(isinstance(s, ast.stmt) for s in val)]
+        holding, fill_entries = 0, set()
+        for blk in blocks:
+            direct = [k for k in (stmt_key(s) for s in blk) if k is not None]
+            if any(k in SHARED_SECOND_KEYS for k in direct):
+                holding += 1
+                deep = [(x.lineno, bump_key(x)) for s in blk for x in _walk(s) if bump_key(x) is not None]
+                second = [(ln, k) for ln, k in deep if k in SHARED_SECOND_KEYS]
+                self.assertEqual(len(second), 1,
+                                 "the statement list holding the second-key bump at line %d holds exactly one second-key bump over the full "
+                                 "subtrees of its statements, so no path through it bumps two (a call bumps at most one second key, the premise "
+                                 "the bound's derivation rests on; two here and the bound no longer follows from the body): %r"
+                                 % (second[0][0], second))
+                self.assertIsInstance(blk[-1], (ast.Return, ast.Raise),
+                                      "and ends in a Return or a Raise, so the path leaves the door after its one second bump (the clean door "
+                                      "has a cleanup call between the bump and its return, which is why the predicate is the list's last "
+                                      "statement and not the bump's next); the list holding the bump at line %d ends in a %s"
+                                      % (second[0][0], type(blk[-1]).__name__))
+            if any(k in SHARED_CALL_KEYS for k in direct) and not isinstance(blk[-1], (ast.Return, ast.Raise)):
+                fill_entries.update(k for k in direct if k in SHARED_CALL_KEYS)
+        self.assertEqual(holding, sum(1 for _ln, k in bumps if k in SHARED_SECOND_KEYS),
+                         "every second-key bump is a statement of some list (an Expr of the call, or the AugAssign) and each list read above "
+                         "held one, so the clause read every bump: %d list(s) against %d bump(s), by line %r"
+                         % (holding, sum(1 for _ln, k in bumps if k in SHARED_SECOND_KEYS), sorted(bumps)))
+        self.assertEqual(fill_entries, set(SHARED_FILL_KEYS),
+                         "the fill road's entry keys, the call keys whose bump falls through into the fill (the statement list holding it does "
+                         "not end in a Return or a Raise), are SHARED_FILL_KEYS, the keys _pass sums as the bound's right-hand side: derived "
+                         "%r against %r (a call key that starts falling through, or one of these that stops, changes the bound's derivation "
+                         "and the tuple with it)" % (sorted(fill_entries), sorted(SHARED_FILL_KEYS)))
 
     def test_the_replaced_helpers_sources_load_no_store(self):
         """The road limit as a check: the fixture replaces the callables in REPLACED_KM (less the two data names), REPLACED_JD
