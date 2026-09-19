@@ -483,7 +483,8 @@ class _PickSdk:
 
 
 class HostProcess(unittest.TestCase):
-    """Each test starts one host on the fake CLI in a private state root and kills everything after."""
+    """Each test starts one host on the fake CLI in a private state root and kills everything after (one exception: the
+    never-lands pin on _journal_landed writes the journal directory itself and starts no host)."""
 
     def setUp(self):
         self.state = tempfile.mkdtemp()
@@ -559,14 +560,40 @@ class HostProcess(unittest.TestCase):
         """The journal once the writer has landed `n` records: the host forwards a record to the kernel at once and
         journals it on its own writer task, so a frame on the socket says nothing about the disk yet (the writer may
         lag by design, and a slow runner's disk shows it: the macOS cell read three records where the socket had four,
-        2026-09-16). The event waited on is the n-th record on disk, never a fixed pause."""
+        2026-09-16). The event waited on is the n-th record on disk, never a fixed pause.
+
+        On the deadline the wait FAILS, naming what it saw (2026-09-19, the reviewer's ruling on the journal-fault
+        test's wait: a read that cannot tell a late landing from one that never happens must not report never). It used
+        to return the short list silently, so a record that never landed failed the caller's assertion as a numbering
+        mismatch, `[0] != [0, 2]`, fifteen seconds later: the very message the wait exists to eliminate. The failure now
+        reads as the writer's, with the count waited for, the count found, the offsets found and the timeout in
+        seconds. `timeout` is that deadline, so a test can pin the failure quickly (the never-lands test below, at 0.3 s).
+        Shared by the turn test, the lagging-writer test and the journal-fault test, whose deadlines now fail this way."""
         d = os.path.join(self.state, "hosts", SID)
         deadline = time.time() + timeout
         journal = list(sh.read_journal_dir(d))
         while time.time() < deadline and len(journal) < n:                # loop-ok: the event is the writer's n-th record on disk
             time.sleep(0.005)
             journal = list(sh.read_journal_dir(d))
+        if len(journal) < n:
+            self.fail("the journal writer never landed %d records within %g s: %d found, at offsets %r"
+                      % (n, timeout, len(journal), [o for o, _ in journal]))
         return journal
+
+    def test_the_journal_wait_fails_naming_what_it_saw_when_the_records_never_land(self):
+        """_journal_landed against its refusable input: a journal directory that never reaches the waited count (one
+        record on disk and no host to land another). On the deadline the helper fails, and the message carries the four
+        facts that tell a writer fault from a numbering mismatch: the count waited for, the count found, the offsets
+        found and the timeout in seconds. Red on the helper before 2026-09-19, which returned the one record silently."""
+        j = sh.Journal(os.path.join(self.state, "hosts", SID))
+        j.append({"type": "assistant", "n": 0}); j.close()
+        t0 = time.time()
+        with self.assertRaises(AssertionError) as cm:
+            self._journal_landed(2, timeout=0.3)
+        self.assertLess(time.time() - t0, 10, "the deadline is the argument, not the 15 s default")
+        msg = str(cm.exception)
+        for fact in ("never landed 2 records", "1 found", "offsets [0]", "within 0.3 s"):
+            self.assertIn(fact, msg, "the failure names " + fact)
 
     def test_the_lease_and_the_hello_carry_the_clis_spawn_time_once_and_the_specs_login(self):
         """The host is the authority for when ITS CLI spawned: the lease's spawnedAt is stamped once at the spawn and stands
