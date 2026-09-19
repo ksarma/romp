@@ -114,9 +114,9 @@ class TheGuideSaysSo(unittest.TestCase):
 
 
 class TheViewerDoesIt(unittest.TestCase):
-    """Each clause against the source that keeps it, so a walk that stops positioning cells or lines, a rule that refuses
-    a selection across cells again, a reworded refusal, a dropped block rule or a class the two modules no longer agree on
-    fails here beside the prose."""
+    """Each clause against the source that keeps it, so a walk that stops positioning cells or lines, the one-cell rule's
+    names or its sentence coming back, a reworded refusal, a dropped block rule or a class the two modules no longer agree
+    on fails here beside the prose."""
 
     def setUp(self):
         self.am = _read("ui", "webview", "anchor-map.ts")
@@ -137,7 +137,9 @@ class TheViewerDoesIt(unittest.TestCase):
         # sentence, cellsRule counting a table's cells by source span, coveredCells for a covered formula's table, the pass's
         # call per table) is gone from the selection map; a selection across cells maps as any selection over more than one
         # block does, its anchor the source from its first positioned character to its last, widened by a formula it covered
-        # whole at either end, the quote that slice
+        # whole at either end, the quote that slice; anchor-map-cells.test.ts holds the anchoring itself (its FAILS-BEFORE
+        # case: two body cells anchor to `GET /notes | 120 ms`, the pipe inside the quote); a refusal written under a new
+        # name and sentence passes this source pin and fails there
         head = _header_comment(self.am)
         self.assertIn("a selection across several cells of one table maps to its span", head)
         self.assertNotIn("a selection spanning two cells of a table is refused with the reason named", head, "the header's sentence before decision 53")
@@ -145,9 +147,10 @@ class TheViewerDoesIt(unittest.TestCase):
         self.assertNotIn("spans more than one cell", self.am, "no refusal names a count of cells")
         for gone in ("const ONE_CELL", "const cellsRule", "const coveredCells", "const coveredOnly"):
             self.assertNotIn(gone, self.am, "%s, the one-cell rule's, is gone" % gone)
-        self.assertIn("const { start, end } = widened(nOf(idx, idx.blocks[bs].pos[ks]), nOf(idx, idx.blocks[be].pos[ke - 1]) + 1);", self.am,
+        sel = self.am[self.am.index("export function mapRenderedSelection("):]   # the Rendered map: mapRawSelection carries the same return line
+        self.assertIn("const { start, end } = widened(nOf(idx, idx.blocks[bs].pos[ks]), nOf(idx, idx.blocks[be].pos[ke - 1]) + 1);", sel,
                       "the anchor: the first positioned character through the last, widened by a formula covered whole at either end")
-        self.assertIn("return { ok: true, range: { start, end }, quote: source.slice(start, end) };", self.am, "the quote is that slice of the source")
+        self.assertIn("return { ok: true, range: { start, end }, quote: source.slice(start, end) };", sel, "the quote is that slice of the source")
 
     def test_a_formula_touched_from_rendered_is_refused_in_the_same_shape(self):
         self.assertIn('const FORMULA_TOUCHED = "%s";' % FORMULA_TOUCHED, self.am)

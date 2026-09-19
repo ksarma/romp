@@ -141,7 +141,7 @@ test("the converted text is escaped as marked's inline text tokenizer escapes te
   assert.equal(JSON.stringify(tokens), once, "a second pass changes nothing");
 });
 
-test("source: one rule, two callers. file-view.ts viewerHtml, mdBlock's parse, runs the lexer, the rule, the caller's walk and the parser at the function's own level, over a copy of the singleton's defaults as marked.parse copies them, and mdBlock hands it the walkTokens it ran inside marked.parse, unchanged and in the same order; anchor-map.ts placeTokens runs the rule on the line after Lexer.lex; md-config.ts registers nothing for it and the chat's md() (render.ts) still parses with marked.parse; the module imports marked's types alone", () => {
+test("source: one rule, two callers. file-view.ts viewerHtml, mdBlock's parse, runs the lexer, the rule, the caller's walk and the parser at the function's own level, over a copy of the singleton's defaults as marked.parse copies them, and mdBlock hands it the walkTokens it ran inside marked.parse, unchanged and in the same order; anchor-map.ts placeTokens runs the rule on the lex line, right after Lexer.lex; md-config.ts registers nothing for it and the chat's md() (render.ts) still parses with marked.parse; the module imports marked's types alone", () => {
   const VIEW = read("file-view.ts"), MAP = read("anchor-map.ts"), CONFIG = read("md-config.ts"), RENDER = read("render.ts"), MOD = read("md-literal-tags.ts"), CHAT = read("chat-md.ts");
   assert.match(VIEW, /^import \{ literalizeUnclosedTags \} from "\.\/md-literal-tags";/m, "the viewer imports the rule");
   const recipe = VIEW.split("export function viewerHtml(text: string, walk?: (token: Token) => void): string {")[1].split("\n}\n")[0];

@@ -69,7 +69,9 @@ RULE = ("A tag opened in a line of prose and not closed in the same paragraph, h
 LOSS = ("A `<title>`, `<script>`, `<style>` or `<iframe>` that stays HTML takes everything after it out of the Rendered view, "
         "up to an end tag of its name, or the end of the file when there is none: a browser reads `<title/>` as `<title>`, so "
         "the tag written with the slash mid-sentence does this, and so does the tag first on its line; a `<textarea>` in "
-        "either place shows that stretch as unformatted characters instead.")
+        "either place shows that stretch as unformatted characters instead: after the tag first on its line the file's own "
+        "text, and after the tag written with the slash mid-sentence the HTML the viewer built from the rest of its paragraph "
+        "and the blocks after it, tags such as `</p>` and `<h2>` among the characters.")
 QUALIFICATION = ("Inside an inline `svg` or `math`, a child tag left open (`<svg><title>icon</svg>`, say) disappears from the "
                  "Rendered view: the same rule makes it text, but the text lands inside the drawing, which the browser draws "
                  "without it, or inside the `math`, which the viewer drops whole, so a comment on it goes through the Raw "

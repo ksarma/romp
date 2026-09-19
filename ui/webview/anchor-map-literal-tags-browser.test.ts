@@ -10,7 +10,8 @@
 // before; a selection over any passage after the tags maps to its own source through the real DOM; a comment on the literal
 // `<table>` characters paints through the panel's own pass and a tracked change over them through the painter; the Raw view maps
 // the same characters to the same range. The second test RECORDS decision 52's deliberate exclusion, the self-closing spelling,
-// which the rule leaves HTML and the browser opens (`<b/>`, `<div/>`, `<table/>`, `<title/>`), with `<x/>` as the harmless control.
+// which the rule leaves HTML and the browser opens (`<b/>`, `<div/>`, `<table/>`, `<title/>`, `<textarea/>`), with `<x/>` as the
+// harmless control.
 // One browser at a time, one page at a time in it: the box's browser cap. Skips LOUDLY without a playwright browser (CI installs
 // none), as the other browser legs do. Synthetic values only: an invented note in the notes-api demo domain, an invented file
 // name, the placeholder sid.
@@ -225,11 +226,13 @@ const RECORDED: Recorded[] = [
     what: "the `<table>` opens inside the paragraph, closing nothing in quirks mode, and every later block is foster-parented before it inside that one paragraph, so every passage is refused with the mismatch sentence" },
   { tag: "<title/>", shape: "H1 P", verdicts: "absent absent absent absent", text: "Report Lead",
     what: "the `<title>` takes the rest of the note as its text and the sanitizer drops it, so the paragraph's rest, the heading and both paragraphs are not on the page" },
+  { tag: "<textarea/>", shape: "H1 P", verdicts: "mismatch mismatch mismatch mismatch", text: "Report Lead rest of the line t1.</p> <h2>Second heading t2</h2> <p>Para after the heading t3.</p> <p>Closing words t4.</p>",
+    what: "the `<textarea>` takes the rest of the viewer's HTML as its text, the rest of its own paragraph and every later block, up to an end tag of its name or the document's end, and the sanitizer drops the element and keeps the text, so that HTML shows as characters, its tags included, and every passage is refused with the mismatch sentence" },
   { tag: "<x/>", shape: "H1 P H2 P P", verdicts: "maps maps maps maps",
     what: "the control: an unknown name, popped with its paragraph and removed by the sanitizer, so every block stands at the top level and maps" },
 ];
 
-test("RECORDED, decision 52's deliberate exclusion, in the real pane: a start tag written with the self-closing flag stays HTML and the browser opens it, so `<b/>` in prose wraps every later block, `<div/>` holds them in a div, `<table/>` in the tag's own paragraph, and `<title/>` takes the rest of the note, every later passage refused with the mismatch sentence or absent from the page; `<x/>`, the control, leaves every block at the top level and mapping (the bare spelling of each is the first test's: literal text, every block mapped)", { timeout: 240000 }, async (t) => {
+test("RECORDED, decision 52's deliberate exclusion, in the real pane: a start tag written with the self-closing flag stays HTML and the browser opens it, so `<b/>` in prose wraps every later block, `<div/>` holds them in a div, `<table/>` in the tag's own paragraph, `<title/>` takes the rest of the note, and `<textarea/>` shows the rest of the viewer's HTML as characters, every later passage refused with the mismatch sentence or absent from the page; `<x/>`, the control, leaves every block at the top level and mapping (the bare spelling of each is the first test's: literal text, every block mapped)", { timeout: 240000 }, async (t) => {
   await inBrowser(t, async (browser) => {
     const probe = probeBundle();
     for (const rec of RECORDED) {

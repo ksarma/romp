@@ -37,6 +37,9 @@ test('decision 52 records the scope of the unrewound lexer state as the rest of 
   assert.ok(d52.includes("marked's inline lexer state is not rewound between blocks: one Lexer lexes every block's inline run in turn, so a flag one block sets stays set for the rest of the document."));
   assert.ok(d52.includes('After an unclosed `<kbd>`, `<pre>`, `<code>` or `<script>` it lexes the remaining text of that block and of every later block unescaped (`inRawBlock`), until an end tag of any of those four names (a stray `</code>` closes an open `<kbd>`) or the document\'s end'));
   assert.ok(d52.includes('After an unclosed `<a` it autolinks no bare URL in that block or any later one (`inLink`), until an `</a>`.'));
+  assert.ok(d52.includes("Under the flag marked's inline tag rule still reads a tag-shaped run (`<c>`, `<c a=\"b\">`, `<y z>`, `<y then d>`) as an `html` token"), 'the tag-shaped run under the flag');
+  assert.ok(d52.includes("A `<` before a letter that the tag rule does not read as a tag (`<b=c>`, `<b/x>`, `<y z t2.` with no `>` after it in its block) is unescaped text"), 'the run the tag rule rejects');
+  assert.ok(!d52.includes("a later block with a `<` before a letter then loses the text"), 'the over-broad clause is gone');
   assert.ok(!d52.includes("lexes the block's remaining text"), 'the block-scoped wording is gone');
   assert.ok(!d52.includes(String.fromCharCode(0x2014)), 'no em dash');
 });
@@ -72,6 +75,14 @@ test('an end tag of any of the four names clears the flag and escaping resumes; 
   assert.deepEqual(kept, ['Open [html:<kbd>]here.', 'Stray [html:</b>] then a & b <y.'], 'a </b> clears nothing');
 });
 
+test('under the flag marked\'s inline tag rule still reads a tag-shaped run as an html token (the rule\'s input, converted when its block holds no end tag); a run it does not read as a tag is unescaped text; a closed pair is html on both ends', { skip: SKIP }, async () => {
+  const { Lexer } = await import(pathToFileURL(MARKED).href);
+  const paras = Lexer.lex('Open <kbd>here.\n\nStill raw a & b <c> and <b=c> d and <b/x> e.\n\nPair <c>x</c> t.\n').filter((t) => t.type === 'paragraph');
+  const shape = (t) => `${t.type}:${t.raw}` + (t.type === 'text' ? (t.text === t.raw ? ' (text=raw)' : ` (text=${t.text})`) : t.type === 'html' && t.inRawBlock ? ' (inRawBlock)' : '');
+  assert.deepEqual(paras[1].tokens.map(shape), ['text:Still raw a & b  (text=raw)', 'html:<c> (inRawBlock)', 'text: and <b=c> d and <b/x> e. (text=raw)'], 'the tag-shaped `<c>` is an html token under the flag; `<b=c>` and `<b/x>` are unescaped text');
+  assert.deepEqual(paras[2].tokens.map(shape), ['text:Pair  (text=raw)', 'html:<c> (inRawBlock)', 'text:x (text=raw)', 'html:</c> (inRawBlock)', 'text: t. (text=raw)'], 'the closed pair: html on both ends');
+});
+
 test('an unclosed <a leaves no bare URL autolinked in any later block until an </a>', { skip: SKIP }, async () => {
   const { Lexer } = await import(pathToFileURL(MARKED).href);
   const types = (src) => Lexer.lex(src).filter((t) => t.type === 'paragraph').map((t) => t.tokens.map((x) => x.type).join(','));
@@ -99,7 +110,7 @@ test('the webview module of this stem holds the scope to the installed marked wh
   assert.ok(twin.includes('marked.lexer(src, opts)') && twin.includes('{ ...marked.defaults }'), "mdBlock's lex: marked.lexer over a copy of the defaults");
   assert.ok(twin.includes('Lexer.lex(src)'), "placeTokens' lex: the static Lexer.lex");
   assert.ok(twin.includes('literalizeUnclosedTags(tokens)'), 'the rule runs after each lex');
-  for (const s of ['["kbd", "pre", "code", "script"]', 'Stray </code>', 'Stray </b>', '<a href="x">', 'Stray </a>', 'https://example.test/b']) {
+  for (const s of ['["kbd", "pre", "code", "script"]', 'Stray </code>', 'Stray </b>', '<a href="x">', 'Stray </a>', 'https://example.test/b', '<c> and <b=c>', 'Pair <c>x</c>']) {
     assert.ok(twin.includes(s), `the module holds the ${s} case`);
   }
   assert.ok(!twin.includes('skip:'), 'no leg of it skips');

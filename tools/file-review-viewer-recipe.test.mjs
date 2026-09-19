@@ -6,14 +6,18 @@
 // 2026-09-19, regression-3): thirteen test modules under ui/webview held a copy of those steps (one inside a browser probe's
 // bundled source), three of them with the wikilink stamp as a walk the others lacked, and twenty-six more parsed their stand-in's
 // HTML with marked.parse alone (twenty node stand-ins filled through the shim's parseHTML, one oracle and one fence walk that
-// handed marked.parse a walkTokens, one browser stamp, three browser probes' pages), which since the rule renders
+// handed marked.parse a walkTokens, one browser stamp, three browser probes' pages; and three more, in two file-comments
+// modules, filled a fileview-md div through the shim's innerHTML setter, a spelling that count's grep missed, converted in
+// the same review's round 2), which since the rule renders
 // a block holding an inline start tag with no end tag as the viewer does not (`We recommend <b>shipping the cache.` is
 // `<p>We recommend <b>shipping the cache.</b></p>` and a line feed from marked.parse, `<p>We recommend &lt;b&gt;shipping the cache.</p>`
 // and a line feed from the viewer), so a fixture of that shape could pass green over a DOM the viewer cannot build. This module holds the recipe to
 // file-view.ts and every ui/webview test module to the recipe by grep, so a later stand-in cannot drift back: none calls
-// marked's parser itself (`marked.parser(`, the tail of any copy of the steps), none fills a node stand-in from `marked.parse(`
-// through the shim's `parseHTML(` but the one contrast anchor-map-cells-formulas.test.ts draws with the tree the viewer built
-// before the rule, and every module that calls `viewerHtml(` imports it from file-view.ts. Source reads only, no marked (the
+// marked's parser itself (`marked.parser(`, the tail of any copy of the steps); no module holding a node stand-in (a
+// `parseHTML(` shim, or an `innerHTML` setter over it) has a `marked.parse(` line but an assert's, the output compared and not
+// filled, or one of two named lines: the contrast anchor-map-cells-formulas.test.ts draws with the tree the viewer built before
+// the rule, and md-config-footnote-paint.test.ts's HTML-string oracle; so a stand-in filled from marked.parse in one statement
+// or two goes red; and every module that calls `viewerHtml(` imports it from file-view.ts. Source reads only, no marked (the
 // CI shell job runs no npm ci), so this module runs wherever node does. Run: node --test tools/file-review-viewer-recipe.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -57,26 +61,35 @@ test('file-view.ts exports viewerHtml, the five statements in order and nothing 
   assert.ok(view.includes('import { marked, type Token, type Tokens } from "marked";'), 'the walk\'s parameter type comes from marked');
 });
 
-test('no ui/webview test module holds a copy of the recipe or fills its Rendered stand-in from marked.parse alone, and every one that calls viewerHtml imports it from file-view.ts', () => {
-  // the one node stand-in built from marked.parse on purpose: the tree the viewer built before the rule, drawn as the contrast
-  // in one test of that suite, named here so a second one cannot land unread
-  const ALONE_ON_PURPOSE = { 'anchor-map-cells-formulas.test.ts': 'function buildParsedAlone(text: string): FakeElement {' };
+test('no ui/webview test module holds a copy of the recipe, none that holds a node stand-in parses with marked.parse but as an assert\'s oracle or at two named lines, and every one that calls viewerHtml imports it from file-view.ts', () => {
+  // marked.parse in a module that holds a node stand-in, at the lines named here and nowhere else (an assert's own line is an
+  // oracle compared, not a fill, and passes on its own): the contrast anchor-map-cells-formulas.test.ts draws with the tree the
+  // viewer built before the rule, and an HTML-string oracle md-config-footnote-paint.test.ts assigns for the next line's assert
+  const NAMED = {
+    'anchor-map-cells-formulas.test.ts': ['  for (const n of parseHTML(doc, marked.parse(text) as string)) box.appendChild(n);'],
+    'md-config-footnote-paint.test.ts': ['  const html = marked.parse(doc("x[^1]\\n\\n[^1]: **a** *b*")) as string;'],
+  };
+  for (const [f, lines] of Object.entries(NAMED)) for (const l of lines) assert.ok(read(...WEB, f).includes(l), `${f}: the named line is still there`);
   const parserCalls = [], bare = [], unimported = [], callers = [];
   for (const f of testModules()) {
     const src = read(...WEB, f);
     if (src.includes('marked.parser(') || src.includes('Parser.parse(')) parserCalls.push(f);
-    const fills = src.match(/parseHTML\(\w+, marked\.parse\(/g) || [];
-    if (f in ALONE_ON_PURPOSE) {
-      assert.equal(fills.length, 1, `${f}: the one contrast fill, no other`);
-      assert.ok(src.includes(ALONE_ON_PURPOSE[f]), `${f}: the contrast is the named builder`);
-    } else if (fills.length) bare.push(f);
+    if (/^function parseHTML\(/m.test(src) || src.includes('set innerHTML(')) {
+      src.split('\n').forEach((line, i) => {
+        if (!line.includes('marked.parse(') || line.trim().startsWith('//')) return;
+        if (/\bassert\./.test(line)) return;
+        if ((NAMED[f] || []).includes(line)) return;
+        bare.push(`${f}:${i + 1}`);
+      });
+    }
+    if (f === 'anchor-map-cells-formulas.test.ts') assert.ok(src.includes('function buildParsedAlone(text: string): FakeElement {'), `${f}: the contrast is the named builder`);
     if (/\bviewerHtml\((?!text: string, walk)/.test(src)) {   // a call, not a source pin quoting the export's signature
       callers.push(f);
       if (!/from "\.\/file-view"/.test(src)) unimported.push(f);
     }
   }
   assert.deepEqual(parserCalls, [], 'no test module calls marked\'s parser itself: the recipe is file-view.ts viewerHtml');
-  assert.deepEqual(bare, [], 'no node stand-in is filled from marked.parse alone: it renders through viewerHtml');
+  assert.deepEqual(bare, [], 'no node stand-in parses with marked.parse, in one statement or two: it renders through viewerHtml');
   assert.deepEqual(unimported, [], 'every module that calls viewerHtml imports it from file-view.ts (a browser probe in its bundled source)');
   assert.ok(callers.length >= 36, 'the recipe reaches the suites: ' + callers.length);
   for (const f of ['anchor-map.test.ts', 'anchor-map-cells.test.ts', 'anchor-map-literal-tags.test.ts', 'anchor-map-boundary-points.test.ts', 'anchor-map-pairing-r6.test.ts', 'md-config-paint-trim.test.ts', 'file-view-place.test.ts', 'md-literal-tags.test.ts', 'anchor-map-html-text-browser.test.ts']) assert.ok(callers.includes(f), `${f} renders through the recipe`);

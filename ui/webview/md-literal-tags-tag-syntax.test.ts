@@ -60,7 +60,7 @@ test("FAILS BEFORE: a start tag whose unquoted attribute value ends in `/` is an
   }
 });
 
-test("FAILS BEFORE: an `image` start tag with no end tag stays HTML like `<img>` (the parser rewrites it to `img`, a void element, so the picture renders as it did), in a paragraph, upper case, a heading, a list item and a table cell, closed, and inside an inline `<svg>`; the void list itself is still HTML's fourteen; `keygen`, `basefont` and `bgsound` left open are text, the record's preference for a tag the sanitizer would drop unseen", () => {
+test("FAILS BEFORE: an `image` start tag with no end tag stays HTML like `<img>` (in HTML content the parser rewrites it to `img`, a void element, so the picture renders as it did; inside an inline `<svg>` it is the svg's own `image` element, closed at `</svg>`), in a paragraph, upper case, a heading, a list item, a table cell and inside an inline `<svg>`; closed by its own end tag it is HTML on both ends whatever the alias rule does, the control; the void list itself is still HTML's fourteen; `keygen`, `basefont` and `bgsound` left open are text, the record's preference for a tag the sanitizer would drop unseen", () => {
   const TAG = "<image src=\"a.png\" alt=\"p\">";
   const SRC = `See ${TAG} here.\n`;
   assert.deepEqual(tags(SRC), ["html:" + TAG], "the alias is HTML");
@@ -79,9 +79,12 @@ test("FAILS BEFORE: an `image` start tag with no end tag stays HTML like `<img>`
   const CLOSED = `See ${TAG}</image> here.\n`;
   assert.deepEqual(tags(CLOSED), ["html:" + TAG, "html:</image>"], "closed: HTML on both ends, the end tag a stray");
   assert.equal(viewerHtml(CLOSED), marked.parse(CLOSED));
-  const SVG = "Icon <svg><image href=\"a.png\"></image></svg> tail.\n";
-  assert.deepEqual(tags(SVG), ["html:<svg>", "html:<image href=\"a.png\">", "html:</image>", "html:</svg>"], "an svg's image with its own end tag: HTML throughout");
+  const SVG = "Icon <svg><image href=\"a.png\"></svg> tail.\n";
+  assert.deepEqual(tags(SVG), ["html:<svg>", "html:<image href=\"a.png\">", "html:</svg>"], "inside an inline svg with no end tag of its own: the alias is left HTML there too (the browser keeps the svg's own image element and closes it at `</svg>`)");
   assert.equal(viewerHtml(SVG), marked.parse(SVG));
+  const SVG_CLOSED = "Icon <svg><image href=\"a.png\"></image></svg> tail.\n";
+  assert.deepEqual(tags(SVG_CLOSED), ["html:<svg>", "html:<image href=\"a.png\">", "html:</image>", "html:</svg>"], "the control: closed by its own end tag, HTML on both ends whatever the alias rule does");
+  assert.equal(viewerHtml(SVG_CLOSED), marked.parse(SVG_CLOSED));
   assert.equal(VOID_ELEMENTS.has("IMAGE"), false, "the void list, the map's VOID_TAGS, is HTML's own set");
   assert.equal(VOID_ELEMENTS.size, 14);
   for (const name of ["keygen", "basefont", "bgsound"]) {

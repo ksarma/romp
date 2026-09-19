@@ -92,3 +92,13 @@ test("both lexes see one token tree: the same paragraph and heading text for eve
     assert.deepEqual(types(viewerLex(src)), types(mapLex(src)), JSON.stringify(src) + ": the same token types");
   }
 });
+
+test("under the flag marked's inline tag rule still reads a tag-shaped run as an html token, so both lexes convert an unclosed one (`<c>`) and leave a closed pair (`<c>x</c>`) html, while a run it does not read as a tag (`<b=c>`, `<b/x>`) is unescaped text; the viewer's parser writes each as lexed", () => {
+  const SRC = "Open <kbd>here.\n\nStill raw a & b <c> and <b=c> d and <b/x> e.\n\nPair <c>x</c> t.\n";
+  for (const [name, lex] of LEXES) {
+    assert.deepEqual(inlineText(lex(SRC)), ["Open &lt;kbd&gt;here.", "Still raw a & b &lt;c&gt; and <b=c> d and <b/x> e.", "Pair [html:<c>]x[html:</c>] t."], `${name}: the unclosed <c> converted and escaped, the closed pair html, the rest unescaped`);
+  }
+  const html = viewerHtml(SRC);
+  assert.ok(html.includes("<p>Still raw a & b &lt;c&gt; and <b=c> d and <b/x> e.</p>"), "the converted tag escaped, the rest written as lexed (the browser then reads `<b=c>` and `<b/x>` as tags, the loss the record names): " + html);
+  assert.ok(html.includes("<p>Pair <c>x</c> t.</p>"), "the closed pair stays HTML: " + html);
+});

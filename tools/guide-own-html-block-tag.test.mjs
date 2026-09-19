@@ -10,7 +10,8 @@
 // review found the guide overstating the rule for that placement (round 2); the guide now says where the rule stops, and,
 // since the whole review's first round, which tags take the rest of the file with them when they stay HTML: `<title>`,
 // `<script>`, `<style>` and `<iframe>` written with the slash (the rule leaves the self-closing syntax HTML) or first on the
-// line, while `<textarea>` so placed shows the rest as characters. This module holds each clause of the account to the
+// line, while `<textarea>` so placed shows the rest as characters (the file's text first on its line, the viewer's HTML
+// mid-sentence). This module holds each clause of the account to the
 // installed marked (vscode-extension/node_modules, the copy the viewer bundles), by lexing synthetic documents, and to the two
 // code paths the account rests on. The lexer legs skip where marked is not installed, which is every CI run of tools/*.test.mjs
 // (the shell job runs no npm ci); ui/webview/guide-own-html-block-tag.test.ts runs the same legs through the viewer's own
@@ -39,7 +40,7 @@ const RULE = 'A tag opened in a line of prose and not closed in the same paragra
 const BLOCK = 'A tag the viewer reads as an HTML block rather than as prose is HTML as before too: a tag first on its line, after a list marker or a `>` included, whose name is on CommonMark\'s HTML-block list (`<table>`, `<div>`, `<p>` and `<pre>` are on it; `<span>`, `<b>` and an invented name are not), or a tag alone on a line where a paragraph would begin.';
 const PLACEHOLDER = 'The same placeholder typed first on its line is therefore read as HTML: the browser shows no `<table>`, and a comment on the passage goes through the Raw view.';
 const CHAT = 'A chat message is not read this way.';
-const LOSS = 'A `<title>`, `<script>`, `<style>` or `<iframe>` that stays HTML takes everything after it out of the Rendered view, up to an end tag of its name, or the end of the file when there is none: a browser reads `<title/>` as `<title>`, so the tag written with the slash mid-sentence does this, and so does the tag first on its line; a `<textarea>` in either place shows that stretch as unformatted characters instead.';
+const LOSS = 'A `<title>`, `<script>`, `<style>` or `<iframe>` that stays HTML takes everything after it out of the Rendered view, up to an end tag of its name, or the end of the file when there is none: a browser reads `<title/>` as `<title>`, so the tag written with the slash mid-sentence does this, and so does the tag first on its line; a `<textarea>` in either place shows that stretch as unformatted characters instead: after the tag first on its line the file\'s own text, and after the tag written with the slash mid-sentence the HTML the viewer built from the rest of its paragraph and the blocks after it, tags such as `</p>` and `<h2>` among the characters.';
 
 function ownHtmlParagraph() {
   const guide = read('docs', 'guide.md');

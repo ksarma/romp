@@ -5,8 +5,10 @@
 // paragraph's element and the next heading, paragraph and table were parsed into it, so the anchor map (anchor-map.ts), which
 // predicted no text for an inline tag and pairs blocks with top-level elements one for one, refused that paragraph as not
 // matching the file and every block after it met the element three places on (150 of 189 blocks of one note). An inline
-// `<title>`, `<script>`, `<style>`, `<textarea>`, `<xmp>`, `<iframe>`, `<plaintext>` or `<template>` start tag took the rest
-// of the note as its text, which the sanitizer then dropped or showed as raw text.
+// `<title>`, `<script>`, `<style>`, `<xmp>`, `<iframe>` or `<plaintext>` start tag took the rest of the note as its text,
+// which the sanitizer then dropped; a `<textarea>` start tag took it as its text too, which the sanitizer showed as raw
+// characters, the element dropped; a `<template>` start tag took it into the template's content, which the sanitizer keeps
+// and the browser renders nowhere (plans/file-review.md, decision 52, each shape run over the base tree).
 //
 // The rule: an inline `html` token that is a START tag of a non-void element, with no matching end tag later in the SAME
 // block's inline tokens, becomes a `text` token in place. Its raw is kept, so the map places it where the lexer found it; its

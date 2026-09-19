@@ -985,7 +985,8 @@ to a whitespace-tolerant match of its quote stripped of inline markup, and a com
 be painted has a card whose Reveal switches to Raw and scrolls to the passage.
 A highlight or a change mark over an anchor that spans several cells of a table is one mark per cell
 over the cell's own text, none over the pipes between them (decision 53: the exact path's
-`wrapBetween` skips the whitespace between the cells' boxes), and one over an inline tag rendered as
+`wrapBetween` gathers the highlight units between the two ends and `wrapRuns` skips the
+whitespace-only text between the cells' boxes), and one over an inline tag rendered as
 literal text wraps the tag's characters (decision 52).
 
 Images and PDFs. A figure embedded in a markdown file is commented on through its embed line: in
@@ -3274,10 +3275,11 @@ sentence to the guide and the module), that a tag first on its line, which markd
 as before, the same placeholder included, and that a `<title>`, `<script>`, `<style>` or `<iframe>` that stays HTML,
 written with the slash mid-sentence or first on its line, takes everything after it out of the Rendered view up to
 an end tag of its name or the end of the file, a `<textarea>` so placed showing that stretch as unformatted
-characters (`tools/guide-own-html-block-tag.test.mjs` holds those clauses to the guide, the installed marked's lexer
-and the map, `ui/webview/guide-own-html-block-tag.test.ts` the lexer legs under the viewer's configuration in CI, and
-`tests/test_guide_files_own_html_foreign_tag.py` the paragraph's sentences in their order and the rule's two
-exclusions at the source).
+characters, the file's own text after the tag first on its line and the HTML the viewer built from the rest after the
+tag written with the slash, its tags among the characters (`tools/guide-own-html-block-tag.test.mjs` holds those
+clauses to the guide, the installed marked's lexer and the map, `ui/webview/guide-own-html-block-tag.test.ts` the
+lexer legs under the viewer's configuration in CI, and `tests/test_guide_files_own_html_foreign_tag.py` the
+paragraph's sentences in their order and the rule's two exclusions at the source).
 `docs/reference.md`, under install-time switches, notes the
 User todos switch as a prerequisite for the todo path and the node requirement on the owning
 kernel; `docs/install.md` names the tooling the installer links into `~/.claude/`. With Slice 4,
@@ -3958,8 +3960,8 @@ document stands on its own, each with the reasoning it was given.
     walk, unchanged and in the same order) and marked's parser, over a copy of the singleton's defaults as
     marked.parse copies them, on THIS parse's tokens alone. Nothing is registered on the singleton (no marked.use,
     no renderer hook; the module imports marked's types alone), so the chat's `md()` (render.ts, still marked.parse)
-    and md-config.ts are untouched and the feed renders as before. The map's `placeTokens` (anchor-map.ts) runs the
-    rule on the line after `Lexer.lex`, before anything reads the tree, so the text walk, `tagOf`, `topTags`,
+    and md-config.ts are untouched and the feed renders as before. The map's `placeTokens` (anchor-map.ts) runs the rule
+    on the lex line, after `Lexer.lex` and before anything reads the tree, so the text walk, `tagOf`, `topTags`,
     `blockEnds` and the pairing never meet the converted token as html; the `open` array `blockEnds` collected (the
     formatting tags a paragraph left open, whose wrapper element the pairing did not model, recorded under Slice 5
     of plans/markdown-viewer.md with the `Block.leaves` fix shape and routed to Slice 8, which did not build it) can
@@ -3985,9 +3987,18 @@ document stands on its own, each with the reasoning it was given.
     state is not rewound between blocks: one Lexer lexes every block's inline run in turn, so a flag one block sets
     stays set for the rest of the document. After an unclosed `<kbd>`, `<pre>`, `<code>` or `<script>` it lexes the
     remaining text of that block and of every later block unescaped (`inRawBlock`), until an end tag of any of those
-    four names (a stray `</code>` closes an open `<kbd>`) or the document's end; a later block with a `<` before a
-    letter then loses the text from that `<` to the next `>` in the rendered view, where the browser's parser reads
-    a tag, and is refused with the mismatch sentence. After an unclosed `<a` it autolinks no bare URL in that block
+    four names (a stray `</code>` closes an open `<kbd>`) or the document's end. Under the flag marked's inline tag rule
+    still reads a tag-shaped run (`<c>`, `<c a="b">`, `<y z>`, `<y then d>`) as an `html` token, so the rule and the
+    parser treat it as in any block: with no end tag in its block it is converted and its characters show and map;
+    closed (`<c>x</c>`) it stays HTML. A `<` before a letter that the tag rule does not read as a tag (`<b=c>`, `<b/x>`,
+    `<y z t2.` with no `>` after it in its block) is unescaped text, and the browser's parser reads a tag from that `<`
+    to the next `>`, the block's own end tag when the block's text has none: those characters are gone from the rendered
+    view and the block is refused with the mismatch sentence. What else the parser makes of it depends on the name it
+    read: `<b=c>` and `<y/x>` leave no element on the page and the next block maps; `<b/x>` (read as `<b x="">`) and
+    `<div/x>` open an element that holds every later block, the wrapper the self-closing spelling opens above, and those
+    blocks are refused when two or more stand in it (one alone inside a formatting element still maps, as it does after
+    `<b/>`; after `<div/x>` it is refused); a heading whose own end tag was read as the `>` stays open, and the next
+    block is parsed into it and refused too. After an unclosed `<a` it autolinks no bare URL in that block
     or any later one (`inLink`), until an `</a>`. Both as before: the rule runs after the lex and changes no lexer
     state, and main's path lexes the same. Left too, found in the review's consolidation pass (2026-09-18): a heading
     holding such a tag (`## Results <b>`) takes its id from its rendered text, the tag's characters included
@@ -4004,10 +4015,18 @@ document stands on its own, each with the reasoning it was given.
     element under the sanitizer's `user-content-` prefix, so the note's own `[jump](#spot)` landed on it (the link's
     title `Go to spot`); it is characters now, so that link is dead, with the title `No heading or anchor named
     “spot” in this document` (`linkMarkdownAnchors` in file-view-links.ts finds no target), where the open `<a>` before
-    also wrapped every later block, so a selection in the last paragraph could not be matched to the file, the shape
-    the rule exists to stop. Untouched, landing before and after: a closed tag (`<a name="x"></a>`, the README idiom,
-    mid-prose or on its own line) and a tag alone on its line (`<a name="line">`), which is an HTML block the rule
-    does not read. A fix would give the converted token's id or name an element to land on, a second reading of a tag
+    also stayed open past its paragraph: the browser's parser reopened the `a` after it and kept it open until the block
+    holding the note's next `<a>` or `</a>` tag, or to the end of the note when none followed, and the map, which pairs
+    blocks with top-level elements one for one (above), lost the count unless the reopened `a` held exactly one block (a
+    paragraph, a heading, a list, a table, a fenced code block or a blockquote between the tag's paragraph and the link:
+    every block mapped). With no later `<a>` it wrapped every later block, a heading, a list and a table included, and a
+    selection in any of them was refused with the mismatch sentence; with the `[jump](#spot)` link in the next paragraph
+    the link's own `<a>` closed it holding nothing but a line feed, an extra top-level element, so a selection in that
+    paragraph or in any after it was refused, in the last with `The selection could not be matched to the file text.`:
+    the shape the rule exists to stop. Untouched, landing before and after: a closed tag (`<a name="x"></a>`, the README
+    idiom, mid-prose or on its own line) and a tag alone on its line (`<a name="line">`), which is an HTML block the
+    rule does not read. A fix would give the converted token's id or name an element to land on, a second reading of a
+    tag
     the rule made text; the user decides whether it is worth one, as for the slug
     (`tools/file-review-plan-inlinetag-records.test.mjs` holds this clause, and runs the rule over both spellings
     where marked is installed). Two consequences the build found and kept: inside an inline `<svg>` or
@@ -4047,15 +4066,17 @@ document stands on its own, each with the reasoning it was given.
     and call the function, mdBlock's three steps in order, the map's call on the lex line, one void list,
     md-config.ts and the chat's modules untouched, the module importing marked's types alone);
     `ui/webview/anchor-map-literal-tags.test.ts` (the map over a DOM stand-in that models the quirks-mode table
-    nesting, foster parenting, the RCDATA elements and the sanitizer's drops; two FAILS-BEFORE cases, red over the
-    base at the mismatch sentence for four passages and at the blocks lost after an unclosed `<title>`; the closed,
-    void, self-closing, matching, heading, list item, cell, offsets and untouched-shape cases; and the RECORDED
-    self-closing spelling of a known name, `<div/>`, `<table/>` and `<title/>` over the stand-in, the bare spelling of
-    each mapping); `ui/webview/anchor-map-literal-tags-browser.test.ts` (the real pane and panel in Chromium: one
-    top-level element per block, every passage mapped through a real Selection, a comment on the literal `<table>`
-    painted through the panel and a change through the painter, the Raw view's range equal; and the RECORDED
-    self-closing spelling in the real pane, `<b/>`, `<div/>`, `<table/>` and `<title/>` with `<x/>` as the control,
-    each shape and verdict the same over the base tree). The suites whose pins the rule changed
+    nesting, foster parenting, the RCDATA elements and the sanitizer's drops; two FAILS-BEFORE cases, red with the rule
+    absent (literalizeUnclosedTags a no-op, or its call removed from viewerHtml) at the mismatch sentence for four
+    passages and at the blocks lost after an unclosed `<title>`; the closed, void, self-closing, matching, heading, list
+    item, cell, offsets and untouched-shape cases; the RECORDED self-closing spelling of a known name, `<div/>`,
+    `<table/>` and `<title/>` over the stand-in, the bare spelling of each mapping; and the RECORDED `<hr>` inline, the
+    one void tag whose start tag closes an open `<p>`, with `<br>` as the control);
+    `ui/webview/anchor-map-literal-tags-browser.test.ts` (the real pane and panel in Chromium: one top-level element per
+    block, every passage mapped through a real Selection, a comment on the literal `<table>` painted through the panel
+    and a change through the painter, the Raw view's range equal; and the RECORDED self-closing spelling in the real
+    pane, `<b/>`, `<div/>`, `<table/>`, `<title/>` and `<textarea/>` with `<x/>` as the control, each shape and verdict
+    the same over the base tree). The suites whose pins the rule changed
     follow it: `ui/webview/anchor-map-html-rules.test.ts`, `ui/webview/anchor-map-html-text.test.ts` and
     `ui/webview/anchor-map-html-text-browser.test.ts` (the foreign-content shapes above, the breakout class RECORDED
     with its two representatives),

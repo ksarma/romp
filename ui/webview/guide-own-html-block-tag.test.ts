@@ -5,7 +5,8 @@
 // paragraph would begin, is a block `html` token, which owns no inline run, so the rule leaves it as lexed and the raw tag reaches
 // the browser; a tag that opens a heading or a table cell is not first on its line and stays the rule's input. The guide also
 // names the tags that take the rest of the file with them when they stay HTML (`<title>`, `<script>`, `<style>`, `<iframe>`;
-// `<textarea>` shows it as characters): first on its line each is a block html token, and written with the slash mid-sentence each
+// `<textarea>` shows it as characters, the file's text first on its line, the viewer's HTML mid-sentence): first on its line each
+// is a block html token, and written with the slash mid-sentence each
 // is an inline html token the rule leaves html (isSelfClosingTag). The lexer legs here hold those clauses through the viewer's own
 // configuration (md-config.ts applyMdConfig, then mdBlock's lex and placeTokens' lex as file-review-plan-inlinetag-rawblock.test.ts
 // runs them), each placement lexed both ways and the rule run over the tokens after.
