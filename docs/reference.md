@@ -3824,24 +3824,38 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   reads such a frame, so the test's pin against the bundles skips the row.
   Two residuals remain, stated here in the words of the kernel's
   `FEED_COMPOSITION_RESIDUALS` and of the ledger entry (a test holds the
-  three equal). First: On a board with no session, no open todo, no tag and
-  no notice `other` is a constant plus the hostname's length and the digit
-  width of `views.seq`, which the frame's whole length on `push.send` and
-  the served body has always carried; with a session it is the sum of that
-  session's name and id, its ledger row when the ledgers are attached, the
-  pips, the tag names and the notices, and no published number or difference
-  of published numbers is one of those alone. Second, for the user's ruling:
-  The card figures are aggregates over the cards, whose count is withheld
-  and published nowhere else on /perf: `cards` is the whole per-card strings,
-  and the two card-field estimates (the Outline's row minus `other` and
+  three equal). First: On a board with no session, no open todo, no tag, no
+  notice, no cleared id, no judge-limit latch, an empty stored session order
+  and a clean tags read, `other` is a constant plus the hostname's length
+  and the digit width of `views.seq`, which the frame's whole length on
+  `push.send` and the served body has always carried; with a session it is
+  the sum of that session's name and id, its ledger row when the ledgers are
+  attached, the pips, the tag names and the notices, and no published number
+  or difference of published numbers is one of those alone; two blocks
+  served across a change differ by what changed, as the frame's length on
+  `push.send` always did. Second, for the user's ruling: The card figures
+  are aggregates over the cards, whose count is withheld and published
+  nowhere else on /perf (the feed's view-delta split, the path a ?delta=1
+  client without the feed delta capability takes, counted one entry per card
+  per build under memos.wire until the review's third round and counts none
+  now): `cards` is the whole per-card strings, and the two card-field
+  estimates (the Outline's `cardFields`, which is its row minus `other` and
   `off`; the `phoneFace` row) are sums of a few fields' lengths over the
-  cards, so on a board with one card `cards` is that card's string and the
-  Outline's estimate its title, name, summary and background lengths, and on
-  a board with one active card the `phoneFace` row is a constant plus that
-  card's title length. A reader bounds the count from the size of `cards` (a
-  card's fixed keys are several hundred bytes), from the `phoneFace` row's
-  group rows (61 bytes per session holding fewer than ten cards, so the
-  number of sessions with a card is exact when no card is active) and from
+  cards, so on a board with one card `cards` is that card's string and
+  `cardFields` its title, name, summary, background and blockSummary lengths
+  plus a constant and the digit width of its id, and on a board with one
+  active card the `phoneFace` row is a constant plus that card's title
+  length, the constant fixed by the column's spelling and the width of `t`.
+  The `phoneFace` row moves for a card's title and for none of the other
+  texts a person writes (a summary, a background, a session name, a note),
+  so a title step is told from every other step; and a session's name rides
+  in each of its cards and in the folded fields, so two blocks served across
+  a one-character rename move `cards` by that session's card count and
+  `other` by the number of folded fields carrying the name. A reader bounds
+  the count from the size of `cards` (a card's fixed keys are several
+  hundred bytes), from the `phoneFace` row's group rows (61 bytes per
+  session holding fewer than ten cards, so the number of sessions with a
+  card is exact when no card is active) and, while `wire.exact` is 1, from
   `wire.bytes` minus `frame` (the key names, the separators and one tint per
   card and per tree node, about twenty bytes each), so a board whose one
   card has no tree shows as one card.

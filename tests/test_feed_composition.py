@@ -1812,11 +1812,13 @@ class PublishedTable(unittest.TestCase):
             for needle in ("the folded fields as one", "credited with all of `other`", "report",
                            "difference of published numbers", "hostname", "`phoneFace`", "title",
                            "withheld", "single-object case", "chat tab count", "builtChat.tabs", "Two residuals remain",
-                           "lifetime", "sharing a build", "`cardFields`"):
+                           "lifetime", "sharing a build", "`cardFields`", "blockSummary", "`wire.exact`",
+                           "judge-limit latch", "memos.wire"):
                 self.assertIn(needle, flat, "%s: %r" % (text, needle))
             for stale in ("tells the reader nothing", "forty percent under", "`cardCount`", "`ledgerCount`",
                           "three parts", "Two residuals.", "Three residuals", "minus `ledgers`",
-                          "`lifetime` sums every counted pass", "in `last` and in `lifetime`", "as lifetime sums and the last pass"):
+                          "`lifetime` sums every counted pass", "in `last` and in `lifetime`", "as lifetime sums and the last pass",
+                          "title, name, summary and background lengths", "no tag and no notice `other`"):
                 self.assertNotIn(stale, flat, "%s: %r" % (text, stale))
             self.assertNotIn("\u2014", phrase, text)
             self.assertNotIn("\u2013", phrase, text)
@@ -1836,6 +1838,122 @@ class PublishedTable(unittest.TestCase):
         self.assertIn("`frame` is `cards` plus `rest`", flats["the reference"])
         self.assertIn("rows drawn from a fixed list", flats["the reference"])
         self.assertIn("`other` is present on every non-empty published table", flats["the reference"])
+
+    def test_the_first_residuals_empty_board_condition_names_every_field_that_varies_there(self):
+        """Residual 1 says `other` is a constant plus the hostname's length and the digit width of views.seq on a board
+        that meets its condition. The lens that re-derived the residual count from the code (the third round) found
+        three fields the condition did not name and that vary on an otherwise empty board: clearedForeign (with no
+        session every cleared id is foreign), judgeLimit (a dict while the latch is down) and order (a stale stored
+        session order), plus the views fault marker that rides in place of the views blob. Pinned: on a board that
+        meets the whole condition, two boards differing in the hostname's length and the digit width of views.seq
+        differ in `other` by exactly those; and each named condition, violated alone, moves `other` (so the sentence
+        needs every clause it has; fails before on the wording: the old sentence named four of the eight)."""
+        def board(**over):
+            f = _feed(n=0, asks=[], ledgers=[], order=[], working=[], awaiting=[], stateUnknown=[], bgServices={},
+                      sessions=[], userTodos={}, userTodoRows=[], views={"seq": 3, "tags": {}}, dismissedCount=0,
+                      canUndoClear=False, syncNotices=[], clearNotices=[], sdkNotices=[], clearedForeign=[],
+                      judgeLimit=None, selfHost="TESTHOST")
+            f.update(over)
+            return f
+        base = board()
+        _, _, by = _expected(base)
+        other = _report(_fresh_pass(base))["last"]["by"]["other"]
+        self.assertEqual(other, sum(v for k, v in by.items() if k in km.FEED_BY_FOLDED))
+        longer = _report(_fresh_pass(board(selfHost="TESTHOSTXY", views={"seq": 300, "tags": {}})))["last"]["by"]["other"]
+        self.assertEqual(longer - other, 2 + 2, "the hostname's two characters and the seq's two digits, nothing else")
+        violations = {
+            "a cleared id": board(clearedForeign=[SID_B + ":g1"]),
+            "the judge-limit latch": board(judgeLimit={"loginSessions": [], "billingUnknown": []}),
+            "a stored session order": board(order=[SID]),
+            "a tags read fault": dict((k, v) for k, v in board(viewsFault="tags unavailable: synthetic").items() if k != "views"),
+            "a session": board(sessions=[{"sid": SID, "name": "web", "color": None, "githubRepo": None}]),
+            "an open todo": board(userTodos={SID: 1}),
+            "a tag": board(views={"seq": 3, "tags": {"backend": []}}),
+            "a notice": board(syncNotices=[{"sig": "s1", "text": "pulled 3 commits"}]),
+        }
+        for what, frame in violations.items():
+            moved = _report(_fresh_pass(frame))["last"]["by"]["other"]
+            self.assertNotEqual(moved, other, "%s moves `other` on an otherwise empty board, so the condition names it" % what)
+        for clause in ("no session", "no open todo", "no tag", "no notice", "no cleared id", "no judge-limit latch",
+                       "an empty stored session order", "a clean tags read"):
+            self.assertIn(clause, km.FEED_COMPOSITION_RESIDUALS[0], clause)
+
+    def test_the_second_residuals_figures_hold_by_execution(self):
+        """Residual 2's stated figures, each by execution (the perturbation lens of the third round, re-scoped to the
+        folded fields, produced the two the sentence did not state; the residual-count lens the blockSummary field
+        and the wire.exact condition). On a one-card board with its card active: `cards` is that card's string;
+        `cardFields` moves by one for a one-character step in the title, the name, the summary, the background and
+        the blockSummary and not for a tree node's title; the `phoneFace` row moves for the title and for none of the
+        summary, the background, the name, a tree title, a ledger note or the hostname. On the populated fixture a
+        one-character rename of a session at every site moves `cards` by that session's card count and `other` by
+        the number of folded fields carrying the name. And `wire.bytes` minus `frame` is zero while `wire.exact` is
+        0 (the estimate is the frame figure) and the tints, keys and separators once a whole frame went."""
+        card = _card(0, blockSummary="k" * 10)
+        base = _feed(n=1, asks=[card], ledgers=[_ledger(tops=1)])
+        last = _report(_fresh_pass(base))["last"]
+        self.assertEqual(last["cards"], len(json.dumps(km._strip_trgb(card))), "one card: `cards` is its string")
+        self.assertEqual(last["apps"]["fleet"]["cardFields"],
+                         km._ask_fields_est([card], km._FEED_APP_ASK_FIELDS["fleet"]))
+
+        def stepped(**over):
+            c = copy.deepcopy(card)
+            for k, v in over.items():
+                if k == "tree":
+                    c["tree"][0]["text"] += "x"
+                else:
+                    c[k] = c[k] + "x"
+            return c
+
+        def deltas(frame):
+            l = _report(_fresh_pass(frame))["last"]
+            return (l["cards"] - last["cards"], l["apps"]["fleet"]["cardFields"] - last["apps"]["fleet"]["cardFields"],
+                    l["apps"]["phoneFace"]["projected"] - last["apps"]["phoneFace"]["projected"],
+                    l["by"]["other"] - last["by"]["other"])
+        moves = {"title": ("text", (1, 1, 1, 0)), "summary": ("summary", (1, 1, 0, 0)),
+                 "background": ("background", (1, 1, 0, 0)), "name": ("name", (1, 1, 0, 0)),
+                 "blockSummary": ("blockSummary", (1, 1, 0, 0)), "tree title": ("tree", (1, 0, 0, 0))}
+        for what, (field, expect) in moves.items():
+            self.assertEqual(deltas(dict(base, asks=[stepped(**{field: True})])), expect,
+                             "%s: (cards, cardFields, phoneFace, other)" % what)
+        self.assertEqual(deltas(dict(base, selfHost="TESTHOSTX")), (0, 0, 0, 1), "the hostname")
+        note = dict(base, ledgers=[dict(_ledger(tops=1), ledger={"tops": ["t" * 2000], "workingNote": "n"})])
+        self.assertEqual(deltas(note)[2], 0, "a ledger note never moves the phone face")
+        self.assertGreater(deltas(note)[3], 0)
+        # the rename: the populated fixture's session `web` at every site it appears
+        pop = _populated()
+        sites = 0
+        for a in pop["asks"]:
+            a["name"] += "x"
+        for l in pop["ledgers"]:
+            if l["name"] == "web":
+                l["name"] += "x"; sites += 1
+        for s in pop["sessions"]:
+            if s["name"] == "web":
+                s["name"] += "x"; sites += 1
+        pop["working"] = [n + "x" if n == "web" else n for n in pop["working"]]; sites += 1
+        for r in pop["userTodoRows"]:
+            if r["name"] == "web":
+                r["name"] += "x"; sites += 1
+        pop["bgServices"] = {"webx": pop["bgServices"]["web"]}; sites += 1
+        pop["judgeLimit"]["loginSessions"][0]["name"] += "x"; sites += 1
+        before, after = _report(_fresh_pass(_populated()))["last"], _report(_fresh_pass(pop))["last"]
+        n_cards = sum(1 for a in _populated()["asks"] if a["name"] == "web")
+        self.assertEqual(n_cards, 4)
+        self.assertEqual(after["cards"] - before["cards"], n_cards, "`cards` moves by the session's card count")
+        self.assertEqual(after["by"]["other"] - before["by"]["other"], sites, "`other` by the folded sites carrying the name")
+        self.assertEqual(after["frame"] - before["frame"], n_cards + sites)
+        # wire.bytes minus frame: a bound on the tint count only while the body is exact
+        comp = _fresh_pass(base)
+        parts = km._feed_parts(base)
+        lazy = km._LazyWire(lambda: km._feed_body(base), km._feed_est(parts), "feed_body")
+        with mock.patch.object(km, "_feed_wire", (base, base["ledgers"], base, lazy, km._feed_sig(parts), parts)):
+            rep = comp.report()
+            self.assertEqual((rep["wire"]["exact"], rep["wire"]["bytes"] - rep["last"]["frame"]), (0, 0),
+                             "while the body is the estimate the difference is zero: no bound")
+            lazy.text()
+            rep = comp.report()
+            self.assertEqual(rep["wire"]["exact"], 1)
+            self.assertGreater(rep["wire"]["bytes"] - rep["last"]["frame"], 0, "exact: the keys, separators and tints")
 
     def test_the_perf_stats_docstring_row_names_every_key_of_the_last_pass(self):
         """The _PerfStats docstring's feedComposition row (the served snapshot's own reference) names every key of `last`
