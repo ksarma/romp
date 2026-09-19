@@ -127,8 +127,9 @@ chat already knows. **Print** in the file's bar, or **Cmd+P** on a Mac and **Ctr
 while a file is open, prints the file alone, black on white, with its pictures loaded, across as
 many pages as it needs; in the dashboard that key opens the command palette instead (**Escape**
 closes it), so print from the bar there. Pictures from other hosts are loaded for the print only
-when you choose **Print with them**; a PDF prints itself, or opens in a new tab to print from
-when the browser cannot print it in place.
+when you choose **Print with them**; if a picture has not loaded after a few seconds, you are
+asked whether to print anyway or keep waiting; a PDF prints itself, or opens in a new tab to
+print from when the browser cannot print it in place.
 
 **Opening a PDF.** A PDF the session mentions, or one you click in the file browser, opens
 inside the dashboard like an image: the chat's PDF card opens it full-view, a path or a

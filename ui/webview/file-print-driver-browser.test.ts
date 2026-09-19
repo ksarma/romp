@@ -14,7 +14,8 @@
 //     (the reopened card's first Escape closes it, which a leaked armed listener would swallow), and the chord after
 //     several opens presses once;
 // (5) a press and the chord during the wait change nothing over the driver, and the deadline stays the press's (a driver
-//     that restarted the wait at the second press would print later);
+//     that restarted the wait at the second press would ask later): at the deadline the bar asks, with the parked picture
+//     still loading, and "Print anyway" prints once;
 // (6) a <video poster> and an svg <image href> in the real DOM (the sanitizer's profile, rewriteFigureSrcs's attributes):
 //     the press waits on both through the probes and prints once after both land, with no request to another host;
 // (7) Escape from inside the Outline popover while the bar is armed closes the popover and puts the keyboard back on its
@@ -28,7 +29,7 @@ import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { inBrowser, openViewer, frames, REPORT, ROOT, ORIGIN, SID, MT2, UI, requireCjs, type Mode } from "./real-viewer-leg";
-import { isPrintKeys, isPrintChord, withTitle, WITHOUT_TITLE, OWN_ESCAPE_SEL } from "./file-print";
+import { isPrintKeys, isPrintChord, withTitle, WITHOUT_TITLE, OWN_ESCAPE_SEL, ANYWAY_WORDS, KEEP_WORDS, ANYWAY_TITLE, KEEP_TITLE } from "./file-print";
 import { DEFAULT_CHORDS } from "./commands";
 
 const SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="8" height="8" fill="black"/></svg>';
@@ -408,7 +409,7 @@ test("(4) a close during the wait: the parked picture landing after it prints no
 
 // ── (5) a press during the wait ────────────────────────────────────────────────────────────────────
 
-test("(5) a press and the chord during the wait change nothing over the driver: the phase and the line stand, the chord is prevented, and the print comes at the press's deadline, not a deadline restarted at the second press", { timeout: 120000 }, async (t) => {
+test("(5) a press and the chord during the wait change nothing over the driver: the phase and the line stand, the chord is prevented, and the ask comes at the press's deadline, not a deadline restarted at the second press; Print anyway then prints once, the parked picture still loading", { timeout: 120000 }, async (t) => {
   await inBrowser(t, async (browser) => {
     const s = await scene(browser, "pane", GATED_NOTE, { held: [SLOW] });
     const { page } = s;
@@ -428,12 +429,18 @@ test("(5) a press and the chord during the wait change nothing over the driver: 
     const k = await chords(page);
     assert.equal(k.length, 1); assert.equal(k[0].prevented, true, "the chord during the wait is still prevented");
     assert.equal((await prints(page)).length, 0, "no print before the deadline");
-    await printsReach(page, 1, 5000);
+    await page.waitForFunction(() => (document.getElementById("fileview-print-line")?.firstChild?.textContent || "") === "1 picture has not loaded.", null, { timeout: 5000 });
+    const t2 = await nowOnPage(page);
+    assert.ok(t2 - t0 >= 1400 && t2 - t0 < 2400, "the ask came at the press's deadline (" + Math.round(t2 - t0) + " ms after the choice)");
+    assert.ok(t2 - t1 < 1300, "…not at a deadline restarted at the second press (" + Math.round(t2 - t1) + " ms after it; a restart would read about 1500)");
+    b = await bar(page);
+    assert.equal(b.phase, "stalled"); assert.equal(b.lines, 1);
+    assert.deepEqual(b.buttons, [ANYWAY_WORDS, KEEP_WORDS], "the ask's two choices"); assert.deepEqual(b.titles, [ANYWAY_TITLE, KEEP_TITLE], "each with its title");
+    assert.equal((await prints(page)).length, 0, "nothing printed at the deadline: the bar asked");
+    await page.click('#fileview-print-line button:has-text("' + ANYWAY_WORDS + '")');
     const p = await prints(page);
-    assert.equal(p.length, 1, "exactly one print");
-    assert.ok(p[0].t - t0 >= 1400 && p[0].t - t0 < 2400, "the print came at the press's deadline (" + Math.round(p[0].t - t0) + " ms after the choice)");
-    assert.ok(p[0].t - t1 < 1300, "…not at a deadline restarted at the second press (" + Math.round(p[0].t - t1) + " ms after it; a restart would read about 1500)");
-    assert.equal(p[0].gates, 1); assert.equal(p[0].incomplete.length, 1, "the parked picture is still loading at the deadline");
+    assert.equal(p.length, 1, "exactly one print, at the answer");
+    assert.equal(p[0].gates, 1); assert.equal(p[0].incomplete.length, 1, "the parked picture is still loading at the print: Print anyway prints it as the browser has it");
     await frames(page, 1);
     b = await bar(page);
     assert.equal(b.phase, null, "the bar rested");

@@ -14,8 +14,13 @@
 // flow and the browser's raw print is prevented (a window keydown listener reads defaultPrevented after the viewer's
 // capture-phase listener); with no file open, or with a text field focused, the key is untouched and nothing prints. (3)
 // a note with no placeholder and its pictures complete prints on one click, in the click's own task, with no line shown;
-// the Raw view (a code view, no pictures) the same. (4) the deadline: a picture whose route never answers prints after
-// the deadline, shortened through the module's test seam (FV.setPrintSettleMs), with the picture still incomplete. (5) the
+// the Raw view (a code view, no pictures) the same. (4) the deadline asks: a picture whose route never answers brings, at
+// the deadline (shortened through the module's test seam, FV.setPrintSettleMs), a line saying it has not loaded with
+// "Print anyway" and "Keep waiting", and no print; "Print anyway" prints once with the picture as the browser has it;
+// "Keep waiting" waits on the load and error events alone, with no timer, and prints once the picture lands, every <img>
+// complete; Escape or a second press under the ask, and Escape during that open-ended wait, print nothing and leave the
+// card up (the third review, 2026-09-19: before this the print ran at the deadline and the picture printed as an empty box
+// with nothing said). (5) the
 // URL kind: a document from a link with a picture on another host arms the same way. (6) the body not in (P7): a file
 // whose answer is parked (the page's fetch stub wrapped to hold the report's GET until the test releases it) shows the
 // loader, and Print is disabled over it: a forced click, a programmatic click and the chord print nothing, the chord still
@@ -268,29 +273,108 @@ test("case 3: no placeholder and every picture complete: one click prints at onc
   });
 });
 
-test("case 4: the deadline. A picture whose route never answers prints after the deadline (shortened through the test seam), still incomplete; the seam restored, the constant is 8 s", { timeout: 120000 }, async (t) => {
+const STALLED_ONE = "1 picture has not loaded.";
+const PRINT_BTN = "#romp-fileview .fileview-print";
+const WITHOUT_BTN = '#fileview-print-line button:has-text("Print without them")';
+const ANYWAY_BTN = '#fileview-print-line button:has-text("Print anyway")';
+const KEEP_BTN = '#fileview-print-line button:has-text("Keep waiting")';
+/** The line's words (its first text node) read `words`. */
+const lineReads = (page: any, words: string): Promise<unknown> => page.waitForFunction((w: string) => (document.getElementById("fileview-print-line")?.firstChild?.textContent || "") === w, words, { timeout: 5000 });
+/** A shortened deadline, a press and "Print without them" over the parked picture, and the ask at the deadline. */
+async function askAtDeadline(s: Scene): Promise<number> {
+  await s.page.evaluate(() => { (window as any).FV.setPrintSettleMs(300); });
+  await s.page.click(PRINT_BTN);
+  const t0 = await s.page.evaluate(() => performance.now());
+  await s.page.click(WITHOUT_BTN);
+  assert.equal((await bar(s.page)).line, "Preparing 1 picture…", "the wait over the parked picture");
+  await s.page.waitForFunction((w: string) => (window as any).__prints.length > 0 || (document.getElementById("fileview-print-line")?.firstChild?.textContent || "") === w, STALLED_ONE, { timeout: 5000 });   // the deadline: the ask, or (before the fix) the print
+  assert.equal((await prints(s.page)).length, 0, "FAILS BEFORE: window.print ran at the deadline with the picture incomplete; the bar asks instead");
+  await lineReads(s.page, STALLED_ONE);
+  return t0;
+}
+
+test("case 4: the deadline asks. A picture whose route never answers: at the deadline (shortened through the test seam) the line says it has not loaded, with Print anyway and Keep waiting, and window.print is NOT called (FAILS BEFORE: the print ran at the deadline, the picture incomplete); Print anyway prints once as the browser has it; Keep waiting sets no timer and prints once the picture lands, every <img> complete; Escape or a second press under the ask, and Escape during the open-ended wait, print nothing and leave the card up; the seam restored, the constant is 8 s", { timeout: 120000 }, async (t) => {
   await inBrowser(t, async (browser) => {
-    const s = await scene(browser, "pane", GATED_NOTE);
-    const { page } = s;
+    // a: the ask, then Print anyway
+    let s = await scene(browser, "pane", GATED_NOTE);
+    let { page } = s;
     await gatedSettled(s);
-    const constant = await page.evaluate(() => (window as any).FV.printSettleMs());
-    assert.equal(constant, 8000, "the deadline in the product");
-    await page.evaluate(() => { (window as any).FV.setPrintSettleMs(300); });
-    await page.click("#romp-fileview .fileview-print");
-    const t0 = await page.evaluate(() => performance.now());
-    await page.click('#fileview-print-line button:has-text("Print without them")');
-    assert.equal((await bar(page)).line, "Preparing 1 picture…");
-    await printsReach(page, 1, 5000);
-    const p = await prints(page);
-    assert.equal(p.length, 1);
-    assert.equal(p[0].incomplete, 1, "the held picture is still loading at the print: it prints as the browser has it");
-    assert.equal(p[0].gates, 1);
-    assert.ok(p[0].t - t0 >= 280, "the print came after the shortened deadline (" + Math.round(p[0].t - t0) + " ms after the choice)");
-    assert.ok(p[0].t - t0 < 4000, "…and well before the product's 8 s (" + Math.round(p[0].t - t0) + " ms)");
-    assert.equal((await bar(page)).phase, null, "the bar rested");
+    assert.equal(await page.evaluate(() => (window as any).FV.printSettleMs()), 8000, "the deadline in the product");
+    const t0 = await askAtDeadline(s);
+    const t1 = await page.evaluate(() => performance.now());
+    assert.ok(t1 - t0 >= 280 && t1 - t0 < 4000, "the ask came at the shortened deadline (" + Math.round(t1 - t0) + " ms after the choice)");
+    let b = await bar(page);
+    assert.equal(b.phase, "stalled", "FAILS BEFORE: the bar rested after printing at the deadline");
+    assert.equal(b.busy, false, "nothing is awaited under the ask"); assert.equal(b.on, true); assert.equal(b.expanded, "true", "the button opened the line, as while armed");
+    assert.deepEqual(b.buttons, ["Print anyway", "Keep waiting"], "the two choices");
+    assert.equal((await loaderFacts(page)).present, false, "no loader under the ask");
+    assert.equal((await prints(page)).length, 0, "FAILS BEFORE: window.print ran at the deadline; nothing prints until the person answers");
+    await frames(page, 6);
+    assert.equal((await prints(page)).length, 0, "…and nothing later: no timer stands under the ask");
+    await page.click(ANYWAY_BTN);
+    let p = await prints(page);
+    assert.equal(p.length, 1, "Print anyway printed at once, in the click's own task");
+    assert.equal(p[0].incomplete, 1, "the held picture is still loading at the print: it prints as the browser has it, as the person chose");
+    assert.equal(p[0].gates, 1); assert.equal(p[0].line, false, "the ask went before the print");
+    await frames(page, 1);
+    b = await bar(page);
+    assert.equal(b.phase, null, "the bar rested"); assert.equal(b.line, null); assert.equal(b.on, false);
+    assert.equal(s.heldCount(), 1, "the held request is still parked: nothing released it");
     await page.evaluate(() => { (window as any).FV.setPrintSettleMs(null); });
     assert.equal(await page.evaluate(() => (window as any).FV.printSettleMs()), 8000, "the seam restored");
-    assert.equal(s.heldCount(), 1, "the held request is still parked: nothing released it");
+    assert.deepEqual(s.errors, [], "no script error");
+    await page.close();
+    // b: Keep waiting: the wait's line and loader are back, no timer, the print at the picture's load
+    s = await scene(browser, "pane", GATED_NOTE);
+    page = s.page;
+    await gatedSettled(s);
+    await askAtDeadline(s);
+    await page.click(KEEP_BTN);
+    b = await bar(page);
+    assert.equal(b.phase, "preparing", "Keep waiting: the wait again"); assert.equal(b.line, "Preparing 1 picture…"); assert.equal(b.busy, true); assert.deepEqual(b.buttons, []);
+    assert.equal((await loaderFacts(page)).present, true, "the wait's loader is back on the line");
+    await page.evaluate((k: number) => new Promise<void>((r) => setTimeout(r, k)), 1000);   // a timer, since the absence of one is what is measured: three of the seam's deadlines
+    assert.equal((await prints(page)).length, 0, "no print 1 s past the answer: Keep waiting set no deadline");
+    b = await bar(page);
+    assert.equal(b.phase, "preparing", "still waiting"); assert.equal(b.line, "Preparing 1 picture…");
+    await s.release();
+    await printsReach(page, 1);
+    p = await prints(page);
+    assert.equal(p.length, 1, "one print, at the picture's load");
+    assert.equal(p[0].incomplete, 0, "window.print fired with every <img> complete"); assert.equal(p[0].gates, 1); assert.equal(p[0].line, false);
+    await frames(page, 1);
+    assert.equal((await bar(page)).phase, null, "the bar rested");
+    await page.evaluate(() => { (window as any).FV.setPrintSettleMs(null); });
+    assert.deepEqual(s.errors, [], "no script error");
+    await page.close();
+    // c: Escape under the ask; a second press under the ask; Escape during the open-ended wait: nothing prints, the card stays up
+    s = await scene(browser, "pane", GATED_NOTE);
+    page = s.page;
+    await gatedSettled(s);
+    await askAtDeadline(s);
+    await page.keyboard.press("Escape");
+    await frames(page, 1);
+    b = await bar(page);
+    assert.equal(b.phase, null, "Escape under the ask disarmed"); assert.equal(b.line, null); assert.equal(b.cardUp, true, "…and the card stays up");
+    assert.equal((await prints(page)).length, 0);
+    await askAtDeadline(s);
+    await page.click(PRINT_BTN);
+    b = await bar(page);
+    assert.equal(b.phase, null, "a second press under the ask disarmed"); assert.equal(b.line, null); assert.equal(b.cardUp, true);
+    assert.equal((await prints(page)).length, 0);
+    await askAtDeadline(s);
+    await page.click(KEEP_BTN);
+    assert.equal((await bar(page)).phase, "preparing");
+    await page.keyboard.press("Escape");
+    await frames(page, 1);
+    b = await bar(page);
+    assert.equal(b.phase, null, "Escape during the open-ended wait cancelled it"); assert.equal(b.line, null); assert.equal(b.cardUp, true, "…and the card stays up: the wait was the bar's to cancel");
+    assert.equal(s.heldCount(), 1, "the picture's request is still parked");
+    await s.release();
+    await frames(page, 6);
+    assert.equal((await prints(page)).length, 0, "the picture landing after the cancel prints nothing");
+    await page.evaluate(() => { (window as any).FV.setPrintSettleMs(null); });
+    assert.equal(await page.evaluate(() => (window as any).FV.printSettleMs()), 8000, "the seam restored");
     assert.deepEqual(s.errors, [], "no script error");
     await page.close();
   });

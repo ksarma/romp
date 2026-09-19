@@ -69,7 +69,7 @@ const RULE_IMG = '.fileview-img { max-width: 100%; max-height: 100vh; border-rad
 test('the section states the ask, what existed, seven decisions, the tests and the open points, in that order, with no em dash', () => {
   const marks = ['The user asked (2026-09-19) for a print from the viewer that carries the file\'s pictures', '**What existed.**', '**Decisions.**',
     'P1. **A Print glyph button in the viewer bar, beside Download and in its shape, and Ctrl/Cmd+P runs the same flow.**',
-    'P2. **Over gated placeholders the bar arms instead of printing; then every picture is awaited, 8 s at most; then window.print.**',
+    'P2. **Over gated placeholders the bar arms instead of printing; then every picture is awaited, with an ask after 8 s if one is still loading; then window.print.**',
     'P3. **A picture opened directly prints fitted to the page.**',
     'P4. **A PDF prints itself: the frame\'s own print when the frame holds the document, else the /file URL in a new tab and a line saying so.**',
     'P5. **The guide\'s printing sentence.**',
@@ -134,7 +134,7 @@ test('P2: the words the section quotes are the module\'s literals, the deadline 
   assert.ok(flow.includes('return n === 1 ? "Preparing 1 picture…" : "Preparing " + n + " pictures…";'), 'the wait\'s words');
   assert.ok(section.includes('The line reads "Preparing 1 picture…" or "Preparing N pictures…" meanwhile.'));
   assert.ok(flow.includes('export const PRINT_SETTLE_MS = 8000;'), 'the deadline constant');
-  assert.ok(section.includes('or at `PRINT_SETTLE_MS`, 8 s, after which the print runs anyway'));
+  assert.ok(section.includes('or at `PRINT_SETTLE_MS`, 8 s, after which the bar asks instead of printing'));
   assert.ok(section.includes('"With them" calls `loadGatedHost` for every host every printable placeholder names (the rule below), the function the placeholder\'s own click runs'));
   assert.ok(flow.includes('for (const h of hosts) loadGatedHost(h, doc);'), 'activate loads every named host through the gate\'s own path');
   assert.ok(section.includes('the gate is a privacy choice, so a print never fetches from a host outside the list unless the person chose it'));
@@ -203,7 +203,7 @@ test('P5: the guide\'s printing sentence is the one the section describes, insid
   // command palette" read as if the key printed too; in the dashboard the key is the palette's and the bar's button prints);
   // then the gate's sentence with the module's own words; then the PDF's.
   const first = '**Print** in the file\'s bar, or **Cmd+P** on a Mac and **Ctrl+P** elsewhere while a file is open, prints the file alone, black on white, with its pictures loaded, across as many pages as it needs; in the dashboard that key opens the command palette instead (**Escape** closes it), so print from the bar there.';
-  const rest = ' Pictures from other hosts are loaded for the print only when you choose **' + withWords + '**; a PDF prints itself, or opens in a new tab to print from when the browser cannot print it in place.';
+  const rest = ' Pictures from other hosts are loaded for the print only when you choose **' + withWords + '**; if a picture has not loaded after a few seconds, you are asked whether to print anyway or keep waiting; a PDF prints itself, or opens in a new tab to print from when the browser cannot print it in place.';
   assert.ok(para.includes(first + rest), 'the guide\'s printing sentence, whole: ' + JSON.stringify(para));
   assert.ok(!para.includes('as many pages as it needs. Pictures'), 'the sentence before the palette clause is gone');
   assert.ok(!para.includes('also opens the command palette'), 'and the first review\'s wording, which read as a print too, is gone');

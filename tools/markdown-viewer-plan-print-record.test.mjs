@@ -114,7 +114,8 @@ test('P1: while armed a key a listener ahead already stopped, an Escape from a c
   assert.ok(P1.includes('Four Escapes are exceptions, each some control\'s own: the flow leaves it to that control and the bar stays armed for the next Escape.'));
   const escape = between(onKey, 'if (e.key === "Escape") {', 'return;\n    }');
   assert.ok(escape.includes('if (e.cancelBubble) return;'), 'the stopped key first');
-  assert.ok(escape.includes('if (state.phase !== "armed" || ownsEscape(e.target, host.card) || host.typing()) return;'), 'then the three gates, before the disarm');
+  assert.ok(escape.includes('if (!escapable() || ownsEscape(e.target, host.card) || host.typing()) return;'), 'then the phase and the two gates, before the disarm');
+  assert.ok(flow.includes('const escapable = (): boolean => state.phase === "armed" || state.phase === "stalled" || (state.phase === "preparing" && state.untimed === true);'), 'the armed line, the deadline\'s ask and the open-ended wait take Escape; the timed wait and the print leave it to the viewer');
   inOrder(escape, ['if (e.cancelBubble) return;', 'ownsEscape(e.target, host.card) || host.typing()) return;', 'e.preventDefault(); e.stopPropagation();', 'feed({ kind: "escape" });'], 'the Escape branch');
   // (0) the stopped key: the flyout's dismiss, a capture-phase document listener wired at the viewer's init, closes the flyout and stops the key
   assert.ok(P1.includes('They are a key a listener ahead of this one already stopped, read through the event\'s stop flag (`e.cancelBubble`'));
@@ -146,23 +147,59 @@ test('P1: while armed a key a listener ahead already stopped, an Escape from a c
 
 // ── P2: the machine, the wait and the armed line ───────────────────────────────────────────────────
 
-test('P2: the machine\'s phases and events are the record\'s: five phases with disabled, and the body and recount events beside the six', () => {
-  assert.ok(flow.includes('export type PrintPhase = "disabled" | "resting" | "armed" | "preparing" | "printing";'));
-  assert.ok(P2.includes('a pure function over a state (disabled, resting, armed, preparing, printing; the first is P7\'s) and an event (press, escape, choose, prepare, ready, printed, the host\'s body report, P7\'s `body`, and the driver\'s `recount` after a repaint under the armed line)'));
+test('P2: the machine\'s phases and events are the record\'s: six phases with disabled and stalled, and the body, recount, stalled, anyway and keep events beside the six', () => {
+  assert.ok(flow.includes('export type PrintPhase = "disabled" | "resting" | "armed" | "preparing" | "stalled" | "printing";'));
+  assert.ok(P2.includes('a pure function over a state (disabled, resting, armed, preparing, stalled, printing; the first is P7\'s, the fifth the deadline\'s ask) and an event (press, escape, choose, prepare, ready, printed, the host\'s body report, P7\'s `body`, the driver\'s `recount` after a repaint under the armed line, and the ask\'s `stalled`, `anyway` and `keep`)'));
   const events = between(flow, 'export type PrintEvent =', ';\n');
-  for (const k of ['press', 'escape', 'choose', 'prepare', 'ready', 'printed', 'body', 'recount']) assert.ok(events.includes('{ kind: "' + k + '"'), 'the event ' + k);
-  assert.equal([...events.matchAll(/\{ kind: "/g)].length, 8, 'and no other');
+  for (const k of ['press', 'escape', 'choose', 'prepare', 'ready', 'stalled', 'anyway', 'keep', 'printed', 'body', 'recount']) assert.ok(events.includes('{ kind: "' + k + '"'), 'the event ' + k);
+  assert.equal([...events.matchAll(/\{ kind: "/g)].length, 11, 'and no other');
+});
+
+test('P2: the deadline asks instead of printing, Print anyway prints, Keep waiting is an open-ended wait Escape cancels, and a repaint under the ask counts again', () => {
+  assert.ok(P2.includes('after which the bar asks instead of printing (the third review, 2026-09-19): with a picture still loading the flow enters the `stalled` phase and the line reads "1 picture has not loaded." or "N pictures have not loaded." with **Print anyway** and **Keep waiting**'));
+  // the words and the titles are the module\'s
+  assert.ok(flow.includes('return n === 1 ? "1 picture has not loaded." : n + " pictures have not loaded.";'), 'the ask\'s words');
+  assert.ok(flow.includes('export const ANYWAY_WORDS = "Print anyway";') && flow.includes('export const KEEP_WORDS = "Keep waiting";'));
+  assert.ok(flow.includes('export const ANYWAY_TITLE = ') && flow.includes('export const KEEP_TITLE = '), 'the titles the section names');
+  // the wait: a null deadline sets no timer; the deadline feeds stalled with the count still loading, never ready
+  assert.ok(flow.includes('export function settlePictures(pics: Picture[], deadlineMs: number | null, timers: Timers = REAL_TIMERS): Settle {'));
+  assert.ok(flow.includes('else if (deadlineMs !== null) timer = timers.setTimeout(() => end("deadline"), deadlineMs);'), 'no timer under a null deadline');
+  const aim = between(flow, 'const aimWait = (deadlineMs: number | null): number => {', '\n  };');
+  assert.ok(aim.includes('if (why === "deadline") { feed({ kind: "stalled", pending: s.pending() }); return; }'), 'the deadline asks');
+  assert.ok(!aim.includes('if (why === "settled" && left > 0)'), 'the first build\'s deadline path, which fed ready, is gone');
+  inOrder(aim, ['if (why === "deadline") { feed({ kind: "stalled", pending: s.pending() }); return; }', 'const left = timeLeft();', 'if (left === null || left > 0) {', 'feed({ kind: "ready" });'], 'the settle handler');
+  assert.ok(flow.includes('const timeLeft = (): number | null => (state.phase === "preparing" && state.untimed === true ? null : Math.max(0, waitEnds - Date.now()));'), 'the open-ended wait has no deadline');
+  // the machine: the ask over a count, the print over none; the two answers; Escape in the open-ended wait alone
+  assert.ok(flow.includes('pending > 0 ? { state: { phase: "stalled", gated: 0, pending }, act: "stall" } : { state: { phase: "printing", gated: 0, pending: 0 }, act: "print" };'), 'the ask, or the print over none');
+  assert.equal(flow.split('if (ev.kind === "stalled") return ask(ev.pending);').length - 1, 2, 'read during the wait and under the ask (the repaint\'s recount)');
+  assert.ok(flow.includes('if (ev.kind === "escape" && s.untimed === true) return { state: RESTING, act: "disarm" };'), 'Escape cancels the open-ended wait alone');
+  const stalled = between(flow, 'case "stalled":', 'break;');
+  inOrder(stalled, ['if (ev.kind === "press" || ev.kind === "escape") return { state: RESTING, act: "disarm" };', 'if (ev.kind === "anyway") return { state: { phase: "printing", gated: 0, pending: 0 }, act: "print" };', 'if (ev.kind === "keep") return { state: s, act: "resume" };', 'if (ev.kind === "prepare") return begin(ev.pending, true);'], 'the stalled phase');
+  assert.ok(flow.includes('case "resume": feed({ kind: "prepare", pending: aimWait(null) }); return;'), 'Keep waiting aims an open-ended wait at the body as it stands');
+  assert.ok(P2.includes('"Keep waiting" waits on the load and error events alone, with no timer (`settlePictures` under a null deadline; the state carries `untimed`), until every pending picture settles, then prints; Escape cancels that open-ended wait, where the timed wait\'s Escape stays the viewer\'s, which closes the card.'));
+  assert.ok(P2.includes('Nothing listens under the ask: "Keep waiting" reads the body as it stands then, so a picture that landed meanwhile is not waited on again, and with none left loading the print runs at once.'));
+  // the driver: the ask in the armed line\'s shape, rewritten in place under a repaint; the recount under the ask
+  const stall = between(flow, 'case "stall": {', '\n      }');
+  inOrder(stall, ['const words = stalledWords(state.pending);', 'if (line && asked) { line.firstChild!.textContent = words; break; }', 'const row = showLine(words);', 'b.className = "fileview-btn fileview-err-act";', 'asked = true;'], 'the ask\'s line');
+  assert.ok(flow.includes('const recountAsk = (): void => { const n = aimWait(null); dropSettle(); feed({ kind: "stalled", pending: n }); };'), 'a repaint under the ask: counted through the wait\'s collection, the listeners off again');
+  assert.ok(P2.includes('A repaint under the ask counts the new body\'s pictures still loading again (`recountAsk`, through the wait\'s own collection, the listeners taken off again): the line\'s count follows in place, and none loading prints, as a re-aim does.'));
+  assert.ok(flow.includes('const asks = state.phase === "armed" || state.phase === "stalled";') && flow.includes('btn.classList.toggle("on", asks);'), 'the button\'s dress under the ask is the armed one');
+  assert.ok(P2.includes('`.on` and aria-expanded while armed and under the ask'));
+  // the legs
+  assert.ok(read('ui', 'webview', 'file-print-browser.test.ts').includes('(4) the deadline asks: a picture whose route never answers brings'), 'the gated leg\'s case 4');
+  assert.ok(read('ui', 'webview', 'file-print-driver-browser.test.ts').includes('at the deadline the bar asks, with the parked picture'), 'the driver leg\'s case (5)');
+  assert.ok(TESTS.includes('the deadline\'s ask over a picture whose route never answers'));
 });
 
 test('P2: the wait is re-aimed at a repaint and at each settle under the press\'s deadline, and the armed line is recounted at a repaint', () => {
   assert.ok(P2.includes('The wait is aimed at the body as it stands and re-aimed in two cases'));
   assert.ok(P2.includes('Both re-aims run under the deadline the press set, never past it'));
   assert.ok(flow.includes('waitEnds = Date.now() + settleMs;'), 'the press sets the deadline');
-  assert.ok(flow.includes('aimWait(Math.max(0, waitEnds - Date.now()))'), 'a re-aim keeps it');
+  assert.ok(flow.includes('const n = aimWait(timeLeft());') && flow.includes('Math.max(0, waitEnds - Date.now())'), 'a re-aim keeps it (the time left, or none for Keep waiting\'s wait)');
   assert.ok(flow.includes('const more = aimWait(left);'), 'the settle reads the body again under the time left');
   assert.deepEqual([...flow.matchAll(/\bwaitEnds = [^;]*;/g)].map((m) => m[0]), ['waitEnds = 0;', 'waitEnds = Date.now() + settleMs;'], 'the declaration and one writer of the deadline: nothing extends it');
   const bodyIn = between(flow, 'const bodyIn = (present: boolean): void => {', '\n  };');
-  inOrder(bodyIn, ['feed({ kind: "body", in: present });', 'if (!present) return;', 'if (state.phase === "armed") feed({ kind: "recount", gated: gates().length });', 'else if (state.phase === "preparing") reaim();'], 'the host\'s body report');
+  inOrder(bodyIn, ['feed({ kind: "body", in: present });', 'if (!present) return;', 'if (state.phase === "armed") feed({ kind: "recount", gated: gates().length });', 'else if (state.phase === "preparing") reaim();', 'else if (state.phase === "stalled") recountAsk();'], 'the host\'s body report');
   assert.ok(P2.includes('has its placeholders counted again (the driver\'s `recount`): over placeholders the line stands with the new count and the title with the new hosts, rewritten in place, the keyboard where it was; over none the line goes, since the question it asked is moot, and the next press prints'));
   assert.ok(flow.includes('if (ev.kind === "recount") return ev.gated > 0 ? { state: { phase: "armed", gated: ev.gated, pending: 0 }, act: "arm" } : { state: RESTING, act: "disarm" };'), 'the machine: arm again over a count, disarm over none');
   assert.ok(flow.includes('if (line && withBtn) { line.firstChild!.textContent = words; withBtn.title = withWords; break; }'), 'the driver rewrites the standing line in place');
