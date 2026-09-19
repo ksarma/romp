@@ -643,10 +643,13 @@ const wholeExpansion = (seg) => seg.m != null && seg.m.length > 0 && !/[^x]/.tes
 // REAL path of the directory before it when that directory exists and is spelled literally (a link there leads
 // elsewhere, and the kernel follows it before it goes up), lexically when it does not exist yet (a folder the
 // command makes first, or one an expansion names). Returns { segs }, { unresolvable: <prefix> } when a directory
-// before a `..` exists but cannot be resolved (a dangling or looping link, a directory the hook may not search:
-// the kernel could not open the path either), or { emptiable: true } when the `..` would cancel a segment that is
-// nothing but an expansion (the header: such a segment could be empty at run time were the set widened, and the
-// shell would then climb one level higher than the fold; round 3, defence in depth).
+// before a `..` exists but cannot be resolved (a link that loops: the kernel could not open the path either; round
+// 3's mutation pass measured the two other cases this comment once listed, 2026-09-19: a dangling link is followed to
+// where its target would be, as realPathOf resolves one, so it folds, and a directory the hook may not search fails
+// lstatOrNull before this check, an exception evaluate reads as allow, reported with the addendum for a ruling and
+// not changed by it), or { emptiable: true } when the `..` would cancel a segment that is nothing but an expansion
+// (the header: such a segment could be empty at run time were the set widened, and the shell would then climb one
+// level higher than the fold; round 3, defence in depth).
 function foldSegments(segs) {
   const acc = [];
   for (const seg of segs) {

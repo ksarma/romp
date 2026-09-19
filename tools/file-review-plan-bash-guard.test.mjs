@@ -6,7 +6,9 @@
 // Decision 48 records that sessions are asked to commit the comments folder and where the ask lives. A record
 // that names a verb the hook no longer reads, a matcher the installer no longer writes, or a module that is
 // not in the tree costs the next reader the search it was meant to save, so every such claim is checked
-// against the source. Synthetic: only the repo's own text.
+// against the source. The three prose surfaces beside the plan that state the numeric exception's boundary
+// (docs/install.md, the hook's row in hooks/README.md, the ledger entry) are held to the hook's set here too,
+// since round 3's mutation pass (2026-09-19) inverted each and nothing went red. Synthetic: only the repo's own text.
 // Run: node --test tools/file-review-plan-bash-guard.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -196,4 +198,26 @@ test('the Tests and Docs sections name the modules and the doc sentences this sl
   assert.ok(tests.includes('`tests/install-sh.bats`') && tests.includes('the Bash-side guard'));
   assert.ok(docs.includes('With the Bash guard follow-on (2026-09-10)'));
   assert.ok(docs.includes('`tests/test_guide_files_bash_guard.py`') && docs.includes('`tests/test_guide_files_commit_folder.py`'));
+});
+
+// ── the three prose surfaces beside the plan that state the numeric exception's boundary ──
+//
+// docs/install.md, the hook's row in hooks/README.md and the ledger entry for the offer each say, since round 3
+// (2026-09-19), that a name built from `$RANDOM` or `$SECONDS` inside a tracked project is refused, in every shell, and
+// why. The mutation pass over that round inverted each clause and nothing went red: the plan and the skill were pinned,
+// these three were not. Held here to the hook's set, as decision 47's sentence is above; the shapes themselves are run
+// in tools/romp-track-bash-guard.test.mjs (the numeric-set test).
+const installDoc = read('docs', 'install.md').replace(/\s+/g, ' ');
+const ledger = read('upstream', '2026-09-18-track-guard-non-literal-targets.md').replace(/\s+/g, ' ');
+
+test('the install guide, the hook\'s README row and the ledger entry say a name built from $RANDOM or $SECONDS is refused inside a tracked project, in every shell, and the hook\'s numeric set is the process id alone', () => {
+  assert.ok(installDoc.includes('A temp file named only by the shell\'s process id (`$$`), at an absolute path where no tracked file could land'), 'docs/install.md: the exception, as the code allows it');
+  assert.ok(installDoc.includes('still runs; a name built from `$RANDOM` or `$SECONDS` is refused, since a script can reassign those'), 'docs/install.md: the refused names, with the reason');
+  const row = hooksReadme.split('\n').find((l) => l.startsWith('| `romp-track-bash-guard.mjs` |'));
+  assert.ok(row, 'the hook has a row in hooks/README.md');
+  assert.ok(row.includes('a target whose only expansions are `$$` or `${$}`, the shell\'s process id, at an absolute path outside every project in play is allowed, and nothing else is'), 'hooks/README.md: the exception');
+  assert.ok(row.includes('since `$RANDOM`, `$SECONDS` and every other name can be unset or shadowed by the command and then hold a path, so a `log.$RANDOM` inside a tracked project is refused in every shell, a deliberate false refusal recoverable in one step'), 'hooks/README.md: the refused names, with the reason');
+  assert.ok(ledger.includes('a target whose only expansions are `$$` or `${$}`, the shell\'s process id, at an absolute path outside every project in play is allowed, and nothing else is'), 'the ledger entry: the exception');
+  assert.ok(ledger.includes('so a `log.$RANDOM` inside a tracked project is refused in every shell, a deliberate false refusal recoverable in one step'), 'the ledger entry: the refused names');
+  assert.ok(hook.includes("const NUMERIC_EXPANSIONS = ['$$', '${$}'];"), 'the set every clause describes');
 });
