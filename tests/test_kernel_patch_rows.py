@@ -117,7 +117,8 @@ class BuildSessionDiffRows(unittest.TestCase):
         names = td / "names"; names.mkdir()
         (names / SID).write_text("testsess\t%s\t#abcdef\n" % str(cdir))
         self.saved = (jd.NAMES, jd.PROJECTS, jd.GOALDIR, jd.STATE, km.NAMES,
-                      km._live_map, km._read_task_store, km._GLOBAL_CLAUDE_MD)
+                      km._live_map, km._read_task_store, km._GLOBAL_CLAUDE_MD,
+                      km._sdk_backend)      # a build here reaches km._sdk(), which caches the singleton over jd.STATE as it stands
         jd.NAMES, jd.PROJECTS, jd.GOALDIR, jd.STATE = names, proj, td / "goals", td
         km.NAMES = names
         km._GLOBAL_CLAUDE_MD = td / "no-global.md"           # keep a real ~/.claude/CLAUDE.md out of the fixture
@@ -129,7 +130,7 @@ class BuildSessionDiffRows(unittest.TestCase):
 
     def tearDown(self):
         (jd.NAMES, jd.PROJECTS, jd.GOALDIR, jd.STATE, km.NAMES,
-         km._live_map, km._read_task_store, km._GLOBAL_CLAUDE_MD) = self.saved
+         km._live_map, km._read_task_store, km._GLOBAL_CLAUDE_MD, km._sdk_backend) = self.saved
         km._parse_cache.clear()
         self.td.cleanup()
 
