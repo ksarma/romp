@@ -175,12 +175,17 @@ _STACK_FRAME_DIRS = (os.path.dirname(threading.__file__),   # where a sampled fr
 
 
 def _assert_stack_sample(tc, row):
-    """`row` is a stack sample of a live thread: at least one frame, each in _thread_stacks' "function (file:line)" form and
-    naming a file the standard library or this repo ships. No frame is pinned by position or by function (2026-09-19): a
-    thread parked on an Event is sampled at wait, at the lock acquire inside it (Condition.__enter__ on the way into
-    Event.wait), at a helper wait calls (_release_save, _is_owned), or in run before wait, and the innermost-frame pins
-    that stood in four tests here read `wait (` and went red on the free-threaded 3.14 build when the sampler caught
-    __enter__ (3 module runs of 10)."""
+    """`row` is a stack sample of a live thread: at least one frame, each in _thread_stacks' "function (file:line)" form,
+    with a file of that name in one of _STACK_FRAME_DIRS. That is what the check verifies and no more: kernel.py formats
+    a frame's file with os.path.basename, so the check is that a file of that BASENAME exists directly in one of the
+    listed directories (the standard library's top directory, where threading.py lives; this repo's root, its kernel/,
+    bin/, cli/ and tests/), not that the frame came from it. A basename collision passes (a frame from any kernel.py
+    anywhere is taken for this repo's), and a frame in a standard-library subpackage (concurrent/futures/thread.py, say:
+    no thread.py sits directly in any of those directories) would fail it. No frame is pinned by
+    position or by function (2026-09-19): a thread parked on an Event is sampled at wait, at the lock acquire inside it
+    (Condition.__enter__ on the way into Event.wait), at a helper wait calls (_release_save, _is_owned), or in run
+    before wait, and the innermost-frame pins that stood in four tests here read `wait (` and went red on the
+    free-threaded 3.14 build when the sampler caught __enter__ (3 module runs of 10)."""
     tc.assertTrue(row["frames"], row)
     for f in row["frames"]:
         m = _STACK_FRAME.fullmatch(f)
