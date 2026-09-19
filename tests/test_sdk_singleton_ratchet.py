@@ -25,8 +25,10 @@ None before and a backend over jd.STATE with that directory present after is a w
 the run root, the kernel's own design. WHICH test builds first depends on the run (the xdist scheduler, the
 subset, the module order), so a name list could never be right: the census that found ViewBuilder saw a
 different first builder on each of three workers. A kernel re-execution inside a test replaces the marker
-function and resets the singleton, so identities are not compared for that test; a backend present after the
-reload over a path that is no longer a directory is still named.
+function and resets the singleton, so the before value is stale and only what the test LEFT is judged, against
+jd.STATE as the reload re-bound it: None or False pass, the lazy build over the loader's root passes, and a build
+anywhere else is named with the re-execution wording; the kernel's FIRST load inside a test (no marker before) is
+the same road, never an exemption.
 
 The scratch modules, one nested run each, the cases in method order (unittest runs a class's methods
 alphabetically, and each case's `before` is what the previous case left):
@@ -42,10 +44,15 @@ alphabetically, and each case's `before` is what the previous case left):
     g. ViewBuilder's original leak with the sandbox removed fails, naming the change, the gone directory and the
        remedy (its before value, f's gone object, was already named, so g starts quietly);
     h. a test that does nothing under g's gone object passes: inherited, already named, not accused.
-  B, the leak as the worker's first build:
+  B, the leak as the worker's first build, and the re-execution road:
     a. None before and, after, a backend over a removed sandbox: the allowance does not cover it;
-    b. a kernel re-execution that then builds over a removed sandbox: identities are not compared and the
-       gone directory is still named.
+    b. a kernel re-execution that then builds over a removed sandbox fails with the re-execution wording and the
+       gone clause;
+    c. a kernel re-execution that then builds over a KEPT sandbox, jd.STATE restored, fails with the re-execution
+       wording and no gone clause (the road the first form of the fixture exempted);
+    d. XDG_STATE_HOME moved to a fresh root (hosts off), a re-execution so the judge re-binds jd.STATE there, then
+       the lazy build over that root passes: the reference on this road is jd.STATE after the test (last in B,
+       since it moves the child's environment).
   C, the first build over a sandbox that stands:
     a. None before and, after, a backend over a kept sandbox, jd.STATE elsewhere: the allowance does not
        cover it either (it asks for jd.STATE, not for any directory that exists).
@@ -68,6 +75,9 @@ alphabetically, and each case's `before` is what the previous case left):
     a builds over a kept sandbox stored on the module and fails as its own; b passes; tearDownModule removes it
     and the module boundary fails at b's teardown with the module named; the class end is quiet on the named
     object.
+  H and H2, over a head that loads NO kernel at import (the worker's first load happens inside the test):
+    H.a loads the kernel, then builds over a kept sandbox and fails with the first-load wording; H2.a loads the
+    kernel, then makes the lazy build over the loader's root and passes (the run exits 0).
 
 Mutations of the fixture run against this module, each landed and reverted (2026-09-19): the same-object gone
 transition deleted (A.f passes silently); the gone check made absolute again (A.h, E.b and D.Two fail as false
@@ -78,7 +88,12 @@ the boundary comparing its end only to the last read (K.One passes silently); th
 dropped (K.Two errors); os.path.isdir replaced by os.path.exists (D.One's boundary verdict disappears: a file at
 the path exists); the named skip at the boundary dropped (a second report at the class or module end of A, B, C, D, E, K
 and L; where the scope's last case fails on its own, the boundary failure folds into that item's one teardown
-report, so those runs pin it by reading the boundary text, not the count).
+report, so those runs pin it by reading the boundary text, not the count); the old re-execution exemption restored,
+only the gone check surviving a changed marker (B.c and H.a pass silently); the marker ignored, every test on the
+same-marker road (A.c fails falsely on the stale pre-reload object); a None marker before treated as the same-marker
+road (H2.a fails falsely once the reference is the before read) or as an exemption (H.a passes); the changed road
+compared to jd.STATE before the test (B.d fails falsely); the gone clause dropped from the re-execution wording
+(B.b's clause assertion).
 """
 import os
 import re
@@ -100,6 +115,8 @@ os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XD
 RATCHET = "left the kernel's backend singleton (km._sdk_backend)"
 REMEDY = "save km._sdk_backend before the sandbox and put it back in tearDown"
 GONE = "whose state_dir is no longer a directory"
+REEXEC = ("re-executed the kernel (or loaded it for the first time) and left the kernel's backend singleton "
+          "(km._sdk_backend)")
 INHERITED = "starts under the kernel's backend singleton (km._sdk_backend) over a directory that no longer exists"
 BOUNDARY = "'s class or module boundary (tearDownClass, tearDownModule or a class- or module-scoped fixture)"
 SHARED_STATE = "left shared state changed"     # the judge fixture's text: quiet in every case here, so the ratchet's is the only red
@@ -204,6 +221,21 @@ SCRATCH_B = SCRATCH_HEAD + textwrap.dedent('''\
             build_over(root)
             jd.STATE = saved
             shutil.rmtree(root)
+
+        def test_c_a_reexecution_that_builds_over_a_kept_sandbox_fails(self):
+            load_source("romp_kernel", KERNEL)
+            saved = jd.STATE
+            build_over(sandbox())
+            jd.STATE = saved                          # the sandbox stands; the singleton stays over it
+
+        def test_d_a_reexecution_under_a_moved_environment_root_then_the_lazy_build_passes(self):
+            new = Path(tempfile.mkdtemp())            # last in B: this moves the child's environment for good
+            (new / "romp").mkdir()
+            (new / "romp" / "session-hosts").write_text("off\\n")
+            os.environ["XDG_STATE_HOME"] = str(new)
+            load_source("romp_kernel", KERNEL)        # re-executes judge.py too: jd.STATE re-binds from the environment
+            assert jd.STATE == new / "romp" and km._sdk_backend is None
+            assert km._sdk().state_dir == jd.STATE
 ''')
 
 SCRATCH_C = SCRATCH_HEAD + textwrap.dedent('''\
@@ -320,6 +352,38 @@ SCRATCH_L = SCRATCH_HEAD + textwrap.dedent('''\
 
         def test_b_does_nothing(self):
             assert km._sdk_backend.state_dir == _root and _root.is_dir()
+''')
+
+
+SCRATCH_HEAD_LAZY = SCRATCH_HEAD.replace(
+    'km = load_source("romp_kernel", KERNEL)\njd = km.jd\n',
+    'km = jd = None                        # no kernel at import: the worker\'s first load happens inside the test\n'
+    '\n'
+    'def load():\n'
+    '    global km, jd\n'
+    '    km = load_source("romp_kernel", KERNEL)\n'
+    '    jd = km.jd\n')
+assert "def load():" in SCRATCH_HEAD_LAZY and "km = jd = None" in SCRATCH_HEAD_LAZY, SCRATCH_HEAD_LAZY
+
+SCRATCH_H = SCRATCH_HEAD_LAZY + textwrap.dedent('''\
+
+    class Cases(unittest.TestCase):
+        def test_a_the_first_load_then_a_build_over_a_kept_sandbox_fails(self):
+            assert "romp_kernel" not in sys.modules
+            load()
+            saved = jd.STATE
+            jd.STATE = sandbox()
+            km._sdk()                                 # the first build of the worker, over a sandbox that stands
+            jd.STATE = saved
+''')
+
+SCRATCH_H2 = SCRATCH_HEAD_LAZY + textwrap.dedent('''\
+
+    class Cases(unittest.TestCase):
+        def test_a_the_first_load_then_the_lazy_build_over_the_loaders_root_passes(self):
+            assert "romp_kernel" not in sys.modules
+            load()
+            assert km._sdk().state_dir == jd.STATE
 ''')
 
 
@@ -491,17 +555,27 @@ class LeakAfterFirstBuild(_NestedRun, unittest.TestCase):
 
 class LeakAsFirstBuild(_NestedRun, unittest.TestCase):
     SCRATCH = SCRATCH_B
-    ERRORS = 2
+    ERRORS = 3
 
     def test_the_leak_as_the_first_build_is_outside_the_allowance(self):
         text = self.assertRatchetFailed("Cases", "test_a_the_leak_as_the_first_build_fails")
         self.assertTrue(text.startswith("changed after its teardown: before None (not built), after SdkBackend over "), text)
         self.assertTrue(text.endswith(", " + GONE), text)
 
-    def test_a_reexecution_that_builds_over_a_removed_sandbox_is_named_for_the_directory_alone(self):
+    def test_a_reexecution_that_builds_over_a_removed_sandbox_is_named_with_the_gone_clause(self):
         text = self.assertRatchetFailed("Cases", "test_b_a_reexecution_that_builds_over_a_removed_sandbox_fails")
-        self.assertTrue(text.startswith("over a directory that no longer exists: SdkBackend over "), text)
+        self.assertTrue(text.startswith(REEXEC + " over a root that is not jd.STATE: SdkBackend over "), text)
+        self.assertIn(", jd.STATE ", text)
+        self.assertTrue(text.endswith(", " + GONE), text)
         self.assertNotIn("changed", text)
+
+    def test_a_reexecution_that_builds_over_a_kept_sandbox_is_named_by_what_it_left(self):
+        text = self.assertRatchetFailed("Cases", "test_c_a_reexecution_that_builds_over_a_kept_sandbox_fails")
+        self.assertTrue(text.startswith(REEXEC + " over a root that is not jd.STATE: SdkBackend over "), text)
+        self.assertNotIn(GONE, text)
+
+    def test_a_reexecution_under_a_moved_environment_root_then_the_lazy_build_passes(self):
+        self.assertRatchetPassed("Cases", "test_d_a_reexecution_under_a_moved_environment_root_then_the_lazy_build_passes")
 
     def test_the_class_and_module_ends_are_quiet_on_the_named_object(self):
         # The last case fails on its own at teardown, and a boundary failure on the same item would fold into that one
@@ -600,6 +674,30 @@ class ModuleTeardownRemovesTheDirectory(_NestedRun, unittest.TestCase):
         self.assertTrue(text.startswith("over a directory it removed: SdkBackend over "), text)
         self.assertTrue(text.endswith(", " + GONE), text)
         self.assertIsNone(boundary(self.out, "::Cases"), "the class end is quiet on the named object: %s" % self.out)
+
+
+class FirstLoadInsideTheTest(_NestedRun, unittest.TestCase):
+    SCRATCH = SCRATCH_H
+    ERRORS = 1
+
+    def test_the_first_load_then_a_build_over_a_kept_sandbox_is_named_by_what_it_left(self):
+        text = self.assertRatchetFailed("Cases", "test_a_the_first_load_then_a_build_over_a_kept_sandbox_fails")
+        self.assertTrue(text.startswith(REEXEC + " over a root that is not jd.STATE: SdkBackend over "), text)
+        self.assertNotIn(GONE, text)
+
+    def test_the_class_and_module_ends_are_quiet_on_the_named_object(self):
+        self.assertIsNone(boundary(self.out, "::Cases"), self.out)
+        self.assertIsNone(boundary(self.out, ""), self.out)
+
+
+class FirstLoadThenTheLazyBuild(_NestedRun, unittest.TestCase):
+    SCRATCH = SCRATCH_H2
+    ERRORS = 0
+
+    def test_the_first_load_then_the_lazy_build_over_the_loaders_root_passes(self):
+        self.assertRatchetPassed("Cases", "test_a_the_first_load_then_the_lazy_build_over_the_loaders_root_passes")
+        self.assertIsNone(boundary(self.out, "::Cases"), self.out)
+        self.assertIsNone(boundary(self.out, ""), self.out)
 
 
 if __name__ == "__main__":

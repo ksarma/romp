@@ -536,10 +536,25 @@ def restore_env(name, prior):
 # backend (the same state_dir, another object) is not, because the readers hold the object, its threads
 # and its registry state, not its path. A reference root that cannot be read (km.jd.STATE unreadable)
 # grants no allowance: the fixture fails and says so (not constructible today, since the kernel always
-# binds jd; unverified defaults to the restricted side). Marker changed: the test re-executed kernel.py
-# into the one module object, whose module-level `_sdk_backend = None` resets the singleton, so identities
-# are not compared for that test (the judge fixture's rule), while a backend present after the reload
-# whose state_dir is not a directory is still named.
+# binds jd; unverified defaults to the restricted side).
+#
+# MARKER CHANGED (_sdk_judge_reload): the test re-executed kernel.py into the one module object (a
+# different function in the slot), loaded the shared kernel for the first time in this worker (None, then
+# a function), or popped it from sys.modules (a function, then None: the read gives None). The before
+# value is stale by construction (the re-executed module's slot started at None), so only what the test
+# LEFT is judged: None or False pass; the kernel's own class over jd.STATE with that directory present is
+# the lazy build over the loader's root and passes; the kernel's class anywhere else is a build over a
+# root the test made, named with the re-execution wording (and the gone clause when its directory is not
+# one); anything else is a value the test left. The reference on this road is jd.STATE at the AFTER read:
+# the reload re-bound STATE from the environment as it stands, which other modules' import-time writes
+# decide, so the root the test inherited is stale here. A None marker before is a first load, never an
+# exemption: a test that loads the shared kernel itself and then leaves the singleton over a sandbox it
+# keeps is FirstBuildOverAKeptSandbox's leak by another road, and the first form of this fixture let it
+# through (it compared nothing when the marker changed, and the surviving gone check misses a directory
+# that stands). Stated limit: a test that reloads, moves jd.STATE, builds and LEAVES jd.STATE moved passes
+# this fixture, since the singleton agrees with jd.STATE as left; that is a STATE leak, and
+# _shared_state_restored's reload branch shares the limit by design (it compares no values after a
+# re-execution). No test does this today.
 #
 # THE BOUNDARY (_sdk_judge_scope): with S = the scope's start read, L = the last read anywhere before the
 # end and E = the end read: E the same object as L with its directory present at L and gone at E is the
@@ -615,11 +630,8 @@ def _sdk_judge(before, after, ref):
     the caller to frame as "<who> <clause>. Fix: <remedy>". `ref` is the root the lazy-first-build allowance
     compares the after value's state_dir with."""
     be0, be1 = before.be, after.be
-    if after.marker is not before.marker:         # re-executed: the reload reset the slot; only a gone directory is named
-        if after.sd is not None and after.isdir is False:
-            return ("left the kernel's backend singleton (km._sdk_backend) over a directory that no longer exists: %s"
-                    % _sdk_singleton_text(be1), _SDK_REMEDY)
-        return None
+    if after.marker is not before.marker:
+        return _sdk_judge_reload(before, after)
     if be1 is be0:
         if before.isdir and after.isdir is False:
             return ("left the kernel's backend singleton (km._sdk_backend) over a directory it removed: %s%s"
@@ -634,6 +646,30 @@ def _sdk_judge(before, after, ref):
     return ("left the kernel's backend singleton (km._sdk_backend) changed after its teardown: before %s, after %s%s%s"
             % (_sdk_singleton_text(be0), _sdk_singleton_text(be1), _SDK_GONE if after.isdir is False else "", unreadable),
             _SDK_REMEDY)
+
+
+def _sdk_judge_reload(before, after):
+    """The changed-marker road (a re-execution, a first load, or a popped kernel inside the test): the after value
+    alone, judged against jd.STATE as the reload re-bound it (the after read); see the comment above for why the
+    before value and the before reference are stale here."""
+    be1 = after.be
+    if be1 is None or be1 is False:
+        return None
+    head = ("re-executed the kernel (or loaded it for the first time) and left the kernel's backend singleton "
+            "(km._sdk_backend) ")
+    if not _sdk_is_real(be1):
+        return (head + "as a value that is not the kernel's build: %s" % _sdk_singleton_text(be1), _SDK_REMEDY)
+    ref = after.jd_state
+    if ref is None:
+        return (head + "over %s while the reference root (km.jd.STATE) was unreadable, so the lazy build could not be "
+                "allowed" % _sdk_singleton_text(be1), _SDK_REMEDY)
+    if after.sd == ref:
+        if after.isdir:
+            return None
+        return (head + "over jd.STATE, which is no longer a directory: %s%s" % (_sdk_singleton_text(be1), _SDK_GONE),
+                _SDK_REMEDY)
+    return (head + "over a root that is not jd.STATE: %s, jd.STATE %s%s"
+            % (_sdk_singleton_text(be1), ref, _SDK_GONE if after.isdir is False else ""), _SDK_REMEDY)
 
 
 def _sdk_judge_scope(start, last, end):
