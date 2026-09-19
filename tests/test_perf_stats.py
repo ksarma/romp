@@ -1720,7 +1720,7 @@ class RoutingStatements(unittest.TestCase):
         patterns = {key: re.compile(r"\s+".join(re.escape(word) for word in phrase.split())) for key, phrase in RETIRED_WORDINGS.items()}
         for rel, text in sorted(found.items()):
             for key, phrase in sorted(RETIRED_WORDINGS.items()):
-                self.assertIsNone(patterns[key].search(text), "%s carries a wording a review round retired (%s): %r" % (rel, key, phrase))
+                self.assertIsNone(patterns[key].search(text), "%r carries a wording a review round retired (%s): %r" % (rel, key, phrase))
                 #                                                 not assertNotIn: its failure message would print the whole file
 
     def test_the_files_that_name_a_routed_block_are_the_swept_set(self):
@@ -1820,17 +1820,30 @@ class RoutingStatements(unittest.TestCase):
     def test_a_path_whose_name_is_not_utf8_is_read_and_named(self):
         """One listed path whose NAME is not valid UTF-8 (git ls-files -z emits the raw bytes) used to error every test
         here with a UnicodeDecodeError naming an offset into the joined listing and no file. The file is read under its
-        real name, and a pin failure names it, surrogate and all."""
+        real name, and a failure of EITHER pin names it in a %r, surrogate and all, in a message that encodes as strict
+        UTF-8, which is what xdist's transport does to a report: the wording pin's first version formatted the path with
+        %s, so a bad-named file carrying a retired wording put a lone surrogate into its message, and under -n 4 the
+        failure was never reported (UnicodeEncodeError in the worker, INTERNALERROR ending the session in 2 of 5 runs),
+        the shape this test exists to refuse, in the other pin."""
         d, env = _scratch_repo(self)
         name = b"notes-caf\xe9.md"                                                # latin-1 e-acute, not UTF-8
         with open(os.path.join(os.fsencode(str(d)), name), "wb") as fh:
-            fh.write(b"a note naming stagesForeign\n")
+            fh.write(b"a note naming stagesForeign, " + RETIRED_WORDINGS["push-inside-cycle"].replace(" ", "\n  ", 1).encode() + b".\n")
+            #        the retired phrase broken across a line, so the wording pin reds on the file too
         found = self._scan(d, env=env)                                            # must not raise
         rel = os.fsdecode(name)                                                   # 'notes-caf\udce9.md'
         self.assertIn(rel, sorted(found), "the file is read under its real name")
         with self.assertRaises(AssertionError) as swept:
             self._pin_swept_set(found)
-        self.assertIn(repr(rel), str(swept.exception), "the failure names the file, surrogate and all")
+        with self.assertRaises(AssertionError) as worded:
+            self._pin_no_retired_wording(found)
+        for pin, failure in (("swept-set", swept.exception), ("wording", worded.exception)):
+            try:
+                str(failure).encode("utf-8")                                      # strict, as xdist's transport encodes a report
+            except UnicodeEncodeError as e:
+                self.fail("the %s pin's message holds a lone surrogate, so a worker could not report it: %s" % (pin, e))
+            #          str(e) spells the character as an escape, so this message itself encodes
+            self.assertIn(repr(rel), str(failure), "the %s pin names the file, surrogate and all" % pin)
 
     def test_the_scan_skips_for_a_missing_git_or_repository_only(self):
         """The listing's git call follows tests/test_entrypoints_executable.py's _index: git off PATH and a tree with no
