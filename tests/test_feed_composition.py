@@ -1794,8 +1794,11 @@ class PublishedTable(unittest.TestCase):
         rows), the projections' one-atom rule, the withheld counts and the reason (a count beside a sum discloses the
         single-object case; the ledger count is the chat tab count, published elsewhere), and the residuals: each
         sentence of the kernel's FEED_COMPOSITION_RESIDUALS verbatim in both documents, whitespace apart, and no
-        other residual count claimed. The PR body is outside the repository and is read only when ROMP_TESTS_PR_BODY
-        names it (the next test)."""
+        other residual count claimed. The second residual was widened by the closing check of 2026-09-19 to what ONE
+        export discloses about one card (its total, and its tree apart from the rest of the card) and to the four
+        kinds a one-character step is told into across two exports; the needles hold that wording, so the wording
+        before it (the `phoneFace` row alone telling a title step) is red here. The PR body is outside the repository
+        and is read only when ROMP_TESTS_PR_BODY names it (the next test)."""
         ref = open(os.path.join(ROOT, "docs", "reference.md"), encoding="utf-8").read()
         para = ref[ref.index("  `feedComposition` says what the feed frame is made of"):]
         para = para[:para.index("\n- `judge`:")]
@@ -1814,12 +1817,13 @@ class PublishedTable(unittest.TestCase):
                            "difference of published numbers", "hostname", "`phoneFace`", "title",
                            "withheld", "single-object case", "chat tab count", "builtChat.tabs", "Two residuals remain",
                            "lifetime", "sharing a build", "`cardFields`", "blockSummary", "`wire.exact`",
-                           "judge-limit latch", "memos.wire"):
+                           "judge-limit latch", "memos.wire", "four kinds", "its tree plus a constant", "129 bytes"):
                 self.assertIn(needle, flat, "%s: %r" % (text, needle))
             for stale in ("tells the reader nothing", "forty percent under", "`cardCount`", "`ledgerCount`",
                           "three parts", "Two residuals.", "Three residuals", "minus `ledgers`",
                           "`lifetime` sums every counted pass", "in `last` and in `lifetime`", "as lifetime sums and the last pass",
-                          "title, name, summary and background lengths", "no tag and no notice `other`"):
+                          "title, name, summary and background lengths", "no tag and no notice `other`",
+                          "for none of the other texts a person writes"):
                 self.assertNotIn(stale, flat, "%s: %r" % (text, stale))
             self.assertNotIn("\u2014", phrase, text)
             self.assertNotIn("\u2013", phrase, text)
@@ -1888,13 +1892,31 @@ class PublishedTable(unittest.TestCase):
         summary, the background, the name, a tree title, a ledger note or the hostname. On the populated fixture a
         one-character rename of a session at every site moves `cards` by that session's card count and `other` by
         the number of folded fields carrying the name. And `wire.bytes` minus `frame` is zero while `wire.exact` is
-        0 (the estimate is the frame figure) and the tints, keys and separators once a whole frame went."""
+        0 (the estimate is the frame figure) and the tints, keys and separators once a whole frame went. The closing
+        check of 2026-09-19 widened the residual to what ONE export discloses: on this one-card board `cards` minus
+        `cardFields` is the card's tree plus a constant fixed by its other keys (measured here: a 1957-byte card, an
+        852-byte tree, the constant 129 being its `t`, `live`, `turnId`, `column` and `notify` values and the `tree`
+        key), so the tree's size is read from a single export; and over every integer leaf of the block a
+        one-character step has one of four signatures (a title; an Outline field; a tree text; a folded field), the
+        four the residual names, so two exports tell the step's kind. Both pinned below, with the figures the
+        sentence states."""
         card = _card(0, blockSummary="k" * 10)
         base = _feed(n=1, asks=[card], ledgers=[_ledger(tops=1)])
         last = _report(_fresh_pass(base))["last"]
         self.assertEqual(last["cards"], len(json.dumps(km._strip_trgb(card))), "one card: `cards` is its string")
         self.assertEqual(last["apps"]["fleet"]["cardFields"],
                          km._ask_fields_est([card], km._FEED_APP_ASK_FIELDS["fleet"]))
+        # one export, one card: `cards` minus `cardFields` is the tree plus a constant fixed by the card's other keys
+        stripped = km._strip_trgb(card)
+        tree = len(json.dumps(stripped["tree"]))
+        others = {k: v for k, v in stripped.items() if k not in km._FEED_APP_ASK_FIELDS["fleet"] and k != "tree"}
+        self.assertEqual(sorted(others), ["column", "live", "notify", "t", "turnId"])
+        constant = sum(len(json.dumps(k)) + 4 + len(json.dumps(v)) for k, v in others.items()) + len('"tree": ')
+        self.assertEqual((last["cards"], tree, constant), (1957, 852, 129), "the figures the residual states")
+        self.assertEqual(last["cards"] - last["apps"]["fleet"]["cardFields"], tree + constant,
+                         "the tree portion from one export (fails before on the wording: the residual did not say so)")
+        for figure in ("129 bytes", "852 of its 1957 bytes", "four kinds", "its tree plus a constant"):
+            self.assertIn(figure, km.FEED_COMPOSITION_RESIDUALS[1], figure)
 
         def stepped(**over):
             c = copy.deepcopy(card)
@@ -1920,6 +1942,24 @@ class PublishedTable(unittest.TestCase):
         note = dict(base, ledgers=[dict(_ledger(tops=1), ledger={"tops": ["t" * 2000], "workingNote": "n"})])
         self.assertEqual(deltas(note)[2], 0, "a ledger note never moves the phone face")
         self.assertGreater(deltas(note)[3], 0)
+        # the four kinds, over every integer leaf of the published block: the set of moved leaves is one of four, and
+        # the Outline's fields share one
+        before = {p: v for p, v in _leaves(_report(_fresh_pass(base))) if isinstance(v, int)}
+
+        def signature(frame):
+            after = {p: v for p, v in _leaves(_report(_fresh_pass(frame))) if isinstance(v, int)}
+            return frozenset(p for p in after if after[p] != before.get(p))
+        kinds = {"title": signature(dict(base, asks=[stepped(text=True)])),
+                 "Outline field": signature(dict(base, asks=[stepped(summary=True)])),
+                 "tree text": signature(dict(base, asks=[stepped(tree=True)])),
+                 "folded field": signature(dict(base, selfHost="TESTHOSTX"))}
+        self.assertEqual(len(set(kinds.values())), 4, "four kinds: %r" % kinds)
+        for field in ("name", "background", "blockSummary"):
+            self.assertEqual(signature(dict(base, asks=[stepped(**{field: True})])), kinds["Outline field"], field)
+        self.assertEqual(signature(note), kinds["folded field"], "a ledger note is a folded field's step")
+        self.assertEqual(kinds["title"] - kinds["Outline field"], {".last.apps.phoneFace.projected"})
+        self.assertEqual(kinds["Outline field"] - kinds["tree text"], {".last.apps.fleet.cardFields", ".last.apps.fleet.projected"})
+        self.assertTrue(kinds["folded field"].isdisjoint({".last.cards", ".last.apps.fleet.cardFields", ".last.apps.phoneFace.projected"}))
         # the rename: the populated fixture's session `web` at every site it appears
         pop = _populated()
         sites = 0
@@ -1972,7 +2012,8 @@ class PublishedTable(unittest.TestCase):
             self.assertEqual(flat.count(sentence), 1, "the body: residual %d in the kernel's words, once" % (i + 1))
         self.assertEqual(flat.count("Two residuals remain"), 1)
         for stale in ("Three residuals", "except the Outline's row", "lifetime sums and the last pass",
-                      "in `last` and in `lifetime`", "title, name, summary and background lengths", "scoped rather than"):
+                      "in `last` and in `lifetime`", "title, name, summary and background lengths", "scoped rather than",
+                      "for none of the other texts a person writes"):
             self.assertNotIn(stale, flat, stale)
         self.assertNotIn("\u2014", body)
         self.assertNotIn("\u2013", body)

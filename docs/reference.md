@@ -3843,21 +3843,28 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   now): `cards` is the whole per-card strings, and the two card-field
   estimates (the Outline's `cardFields`, which is its row minus `other` and
   `off`; the `phoneFace` row) are sums of a few fields' lengths over the
-  cards, so on a board with one card `cards` is that card's string and
-  `cardFields` its title, name, summary, background and blockSummary lengths
-  plus a constant and the digit width of its id, and on a board with one
-  active card the `phoneFace` row is a constant plus that card's title
-  length, the constant fixed by the column's spelling and the width of `t`.
-  The `phoneFace` row moves for a card's title and for none of the other
-  texts a person writes (a summary, a background, a session name, a note),
-  so a title step is told from every other step; and a session's name rides
-  in each of its cards and in the folded fields, so two blocks served across
-  a one-character rename move `cards` by that session's card count and
-  `other` by the number of folded fields carrying the name. A reader bounds
-  the count from the size of `cards` (a card's fixed keys are several
-  hundred bytes), from the `phoneFace` row's group rows (61 bytes per
-  session holding fewer than ten cards, so the number of sessions with a
-  card is exact when no card is active) and, while `wire.exact` is 1, from
+  cards, so one export of a board with one card discloses that card's total
+  and its tree apart: `cards` is that card's string, `cardFields` its title,
+  name, summary, background and blockSummary lengths plus a constant and the
+  digit width of its id, and `cards` minus `cardFields` its tree plus a
+  constant fixed by its other keys (the `t`, `live`, `turnId`, `column` and
+  `notify` values and the `tree` key: 129 bytes on the test fixture's card,
+  whose tree is 852 of its 1957 bytes), and on a board with one active card
+  the `phoneFace` row is a constant plus that card's title length, the
+  constant fixed by the column's spelling and the width of `t`. Two exports
+  across a one-character step tell the step's kind by which leaves move,
+  four kinds: a title moves `cards`, `cardFields` and the `phoneFace` row;
+  an Outline field (a name, a summary, a background, a blockSummary) moves
+  `cards` and `cardFields`; a tree text moves `cards` alone; a folded field
+  (a session name, a note, the hostname) moves `other` alone; so a title
+  step is told from every other step, and a session's name rides in each of
+  its cards and in the folded fields, so two blocks served across a
+  one-character rename move `cards` by that session's card count and `other`
+  by the number of folded fields carrying the name. A reader bounds the
+  count from the size of `cards` (a card's fixed keys are several hundred
+  bytes), from the `phoneFace` row's group rows (61 bytes per session
+  holding fewer than ten cards, so the number of sessions with a card is
+  exact when no card is active) and, while `wire.exact` is 1, from
   `wire.bytes` minus `frame` (the key names, the separators and one tint per
   card and per tree node, about twenty bytes each), so a board whose one
   card has no tree shows as one card.
