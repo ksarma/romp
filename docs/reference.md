@@ -673,7 +673,11 @@ holds the tasks and the registry's record for the next attach. Two gaps are
 disclosed, not closed: a recorded task whose closing record never reaches the
 kernel holds the ask, the pending dots and a stoppable-task row until the CLI's
 own report or stream speaks for it (for a task other than a shell, until its
-end frame, across turns and restarts); and a subagent known only to the
+end frame, across turns and restarts), and it counts as live background work in
+the box's restart-disruption reading, keeping `/busy` above zero and the update
+banner's confirm step naming the session, so a quiet deploy waits to its
+15-minute backstop (the automatic converge is unaffected, since it counts
+in-flight turns alone); and a subagent known only to the
 SubagentStart hook has no registry record and is not counted, so a survivor
 whose only live work is such a subagent can be reconnected over it. Both wait
 on one design question, what

@@ -4042,6 +4042,63 @@ def report_absence_decides(kind) -> bool:
     every other type and for a row whose type was never learned, whose omission is no report about it."""
     return str(kind or "").strip().lower() in _REPORT_ENUMERATES_COMPLETELY
 
+
+# The CLI's Stop-payload TYPE LABEL -> the task registry DISCRIMINANT every other writer of a _bg_tasks row
+# carries (a stream frame's task_type, the reg mirror's `type`). The inverse of the producer's own label table,
+# read from the bundled CLI 2.1.266 on 2026-09-19: local_bash->shell, local_agent->subagent,
+# local_workflow->workflow, remote_agent->cloud session. `monitor` has no injective inverse (monitor_mcp and
+# monitor_ws BOTH label to it), so it maps to ITSELF, and so does any label the table does not name (the
+# producer's own `?? r.type` fallback already delivers an unknown label as its raw discriminant). An absent or
+# empty label stays "" (a type never learned). Applied wherever a _bg_tasks row is built from a report or from
+# the reg mirror, so a row adopted from a report, or seeded from a mirror an earlier build wrote with the label,
+# reads local_workflow (not "workflow") and its self-heal and _reconcile_workflow_agents run (round 4 of the
+# reviewer's review, 2026-09-19; its correctness-1, with both refuters' riders: normalise at the seed too, and
+# leave monitor unmapped since the inverse is not injective).
+_REPORT_LABEL_TO_DISCRIMINANT = {
+    "shell": "local_bash",
+    "subagent": "local_agent",
+    "workflow": "local_workflow",
+    "cloud session": "remote_agent",
+}
+
+
+def _bg_type_discriminant(label) -> str:
+    """A Stop-payload type LABEL, or a discriminant already, normalised to the registry discriminant (the table
+    above). A discriminant, a `monitor` label and any unrecognised label map to themselves; an absent label to ""."""
+    s = str(label or "")
+    return _REPORT_LABEL_TO_DISCRIMINANT.get(s, s)
+
+
+def _bg_row(*, type, desc, since, toolUseId="", lastTool="") -> dict:
+    """THE ONE CONSTRUCTOR FOR A _bg_tasks ROW built from a report or the reg mirror, and the invariants an
+    ADOPTED row (a task a turn-end report names that the live set lacked) must satisfy so the adoption finishes
+    every join a stream-started row makes (round 4 of the reviewer's review, 2026-09-19; its correctness-1,
+    tests-2, kernel-2 and kernel-4, ruled one mechanism, not four patches):
+      * TYPE carries the registry DISCRIMINANT, never the report's friendly label: the label is normalised here
+        (_bg_type_discriminant). Every other reader keys on the discriminant (_on_task_event's task_type, the wf
+        test `type == "local_workflow"`, kernel.py's _bg_is_agent), so a row typed with the label "workflow"
+        left wf False forever, blocked _on_task_event's self-heal and _reconcile_workflow_agents, leaked the run's
+        agents in _subagents, and held every settings-pick reconnect (this PR's own follower relaunch included)
+        for the kernel's life. An ABSENT type stays "" (a type never learned): UNKNOWN, HELD on an omission, and
+        NEVER decidable by absence (report_absence_decides), the one thing the predicate forbids.
+      * SETS: the row joins _bg_tasks, and _reconcile_seeded_with_report re-arms it into _reported_tasks so a
+        LATER report can rule it (an adopted, a confirmed or a held row is confirmed again, retired on a terminal
+        listing, or held on an omission by the one shared predicate); it never joins _seeded_tasks (that set is
+        rows awaiting their FIRST report, read by the settle), nor _subagents or _wf_agents directly (its agents
+        arrive through the SubagentStart hook and _reconcile_workflow_agents on its own stream, which the
+        discriminant unblocks).
+      * BUSY/RESTART: it is ordinary live background work in _bg_tasks, so _restart_disrupts reads it: it holds
+        /busy above zero and the update banner's restart-disruption confirm count above zero until its end frame
+        or a later report retires it, so a quiet deploy waits to its 15-minute backstop. That is correct, a
+        genuinely live task should hold a deploy (the automatic converge reads would_cut, in-flight turns alone,
+        and is unaffected).
+    Callers: the adoption in _reconcile_seeded_with_report, the seed in _seed_live_work_from_reg, and
+    _on_task_event's entry mint (its task_type is already a discriminant, so the normalisation is a no-op there)."""
+    return {"desc": str(desc or ""), "type": _bg_type_discriminant(type),
+            "since": int(since or 0) or int(time.time()), "toolUseId": str(toolUseId or ""),
+            "lastTool": str(lastTool or "")}
+
+
 # The marker only SDK-driven claude CLIs carry (the kernel drives them over stdin); a tmux session's
 # interactive `claude --resume` never has it, so the orphan reap can never touch a tmux CLI.
 _SDK_CLI_MARK = "--input-format stream-json"
@@ -6028,16 +6085,27 @@ class SdkSession:
         self._seeded_tasks: set = set()              # the ids of _bg_tasks rows SEEDED from the reg's bgTasks mirror at an
         #   attach to a surviving CLI (_seed_live_work_from_reg; round 1 of the reviewer's review, 2026-09-18): the live set
         #   is empty after a kernel restart, so the quiet-arm guard read a survivor's work as none and a carried billing ask
-        #   armed at the attach, tearing the work down. A row leaves this set the moment the CLI's own stream speaks for it
-        #   (a start or progress frame confirms it, an end pops it); the first settle after the attach drops what nothing
-        #   confirmed (_reconcile_seeded_work), so a row nothing ever ends cannot hold an ask forever. Under _sub_lock.
-        #   Since the round 3 pre-check (2026-09-19) a row the CLI's turn-end report OMITS leaves this set too: retired for
-        #   a shell, held as an ordinary live row for any other type (report_absence_decides); and a settle with no report
-        #   holds the rows here instead of dropping them
+        #   armed at the attach, tearing the work down. This set is rows AWAITING THEIR FIRST REPORT: a row leaves it the
+        #   moment the CLI's own stream speaks for it (a start or progress frame confirms it, an end pops it), or the first
+        #   turn-end report decides it (_reconcile_seeded_with_report). The settle after the attach HOLDS what nothing spoke
+        #   for and says so (_reconcile_seeded_work), so a row nothing ever ends holds the ask, never dropped on no report.
+        #   Since the round 3 pre-check (2026-09-19) the report decides per type; since round 4 a row the report SPEAKS FOR
+        #   moves to _reported_tasks rather than leaving for good, so a LATER report can rule it. Under _sub_lock.
+        self._reported_tasks: set = set()            # the ids of _bg_tasks rows a turn-end report has SPOKEN FOR and are
+        #   still live: confirmed (listed running), adopted (listed running, the live set lacked), or held (omitted, a type
+        #   the report is not known to enumerate; round 4 of the reviewer's review, 2026-09-19; its kernel-2 and tests-2).
+        #   The retire loop walks _seeded_tasks | _reported_tasks, so "trust a report's PRESENCE always" keeps holding after
+        #   the first report: a later report retires such a row on a terminal listing or (for a shell) an omission, and holds
+        #   any other type it omits. The settle reads _seeded_tasks alone (a reported row is already decided, so a no-report
+        #   turn does not re-announce it). A row leaves this set when the stream speaks for it (_on_task_event), a teardown
+        #   drops it (_drop_live_work), or a later report retires it. Under _sub_lock.
         self._stop_hook_no_list = False              # the last Stop hook carried no background_tasks list (a no-report turn,
         #   never an empty report); read and cleared by the settle's hold line (_reconcile_seeded_work)
+        self._stop_hook_bad_list = False             # the last Stop hook carried a background_tasks LIST this kernel could
+        #   not read (an entry that is not a dict, or a dict with no id): a no-report too (round 4, 2026-09-19; regression-4),
+        #   its own settle phrase, read and cleared beside _stop_hook_no_list
         self._sub_lock = threading.Lock()            #   hooks mutate on the loop thread; snapshot() reads from the kernel thread
-        #                                                (guards _subagents AND _bg_tasks, and _seeded_tasks)
+        #                                                (guards _subagents AND _bg_tasks, _seeded_tasks and _reported_tasks)
         self._wf_agents: dict[str, set] = {}         # LIVE Workflow runs: task_id -> the agent ids its progress
         #   lists have named (the roster). The CLI fires SubagentStart for every workflow agent but NOT
         #   SubagentStop for every one of them (probe-verified on CLI 2.1.257, 2026-09-02: a workflow agent whose
@@ -7858,6 +7926,28 @@ class SdkSession:
                 self._auth_pending_login = ""
                 self._relaunch_bounded = False
 
+    def _recover_picked_pending_at_init(self) -> None:
+        """THE CLI'S FIRST INIT IS THE CLOSING EVENT for a PICKED session's pending that a cannot-tell attach left
+        standing (round 4 of the reviewer's review, 2026-09-19; its regression-1). _connect_landed's picked branch
+        no longer serves the ask when `_launched_auth is None and attach` (the attach cannot tell what the survivor
+        bills), so a re-pick of the SAME side inside an attach window, which takes set_auth's already-applying branch
+        and arms NO reconnect, had nothing to clear its pending and it latched forever (both refuters reproduced this
+        on the one-line guard). The init is the authoritative statement of what the CLI bills: stamp the side it
+        reports and serve the pending when the CLI already bills the picked side (else it stands for its own
+        reconnect, which the arm still carries). Called only for a picked session (_note_auth_source), guarded there;
+        _launched_auth was stamped None by the attach and auth_live is the fresh report the caller just wrote."""
+        with self._hold_write():
+            if self._launched_auth is None:
+                self._launched_auth = self.auth_live
+            pending_ask = self._auth_pending_target()
+        pending_auth = pending_ask[0]
+        launched_login = getattr(self, "_launched_login", "") or ""
+        running_login = launched_login if self._launched_auth == "login" else ""
+        if pending_auth and pending_ask == (self._launched_auth, running_login):
+            self._clear_served_auth_pending(pending_ask)
+            self._mirror_auth_pending()
+            self.backend._poke()
+
     def _connect_landed(self) -> None:
         """The (re)connect is up (the reconnect loop, right after the handshake): the shape _options
         composed for it (_launching) is what the process runs from here, so stamp it as the launched
@@ -7979,7 +8069,16 @@ class SdkSession:
         launched_login = getattr(self, "_launched_login", "") or ""
         auth = getattr(self, "auth", None)       # None: a __new__-built test double, which follows no default
         if auth in ("login", "key") or auth is None:
-            if pending_auth and (self._launched_auth is None or self._launched_unkeyed_pick
+            # THE ATTACH GUARD, as the follower branch below carries it (round 4 of the reviewer's review, 2026-09-19;
+            # its regression-1, the billing bug): `_launched_auth is None` serves the ask only OFF the attach road (a
+            # launch of an explicit key pick with no helper, the dots-forever case). On the attach road None is
+            # CANNOT-TELL, not a serve: this diff made None mean that, and without `and not attach` a pick pending across
+            # a cannot-tell attach landing was cleared as SERVED while the surviving CLI still billed the old side, on a
+            # PR whose subject is which account a session bills. The CLI's own first init is the closing event for a
+            # pick this landing cannot decide (_note_auth_source -> _recover_picked_pending_at_init): a re-pick of the
+            # SAME side inside an attach window arms no reconnect (set_auth's already-applying branch), so without that
+            # event the pending would latch forever (both refuters reproduced it on the one-line patch)
+            if pending_auth and ((self._launched_auth is None and not attach) or self._launched_unkeyed_pick
                                  or (pending_auth == self._launched_auth
                                      and (pending_auth != "login"
                                           or launched_login == (getattr(self, "auth_login", "") or "")))):
@@ -10974,10 +11073,18 @@ class SdkSession:
         action on an inference manufactured by an unrelated failure. A payload whose list is missing or malformed is a
         NO-REPORT (the seeded rows hold for the settle, which says so), never an empty report."""
         # the report first: a list, or None for a payload without one (a missing or malformed list is no report, never an
-        # empty one). The two reconciles below read it; the launch ledger's re-reads the payload under its own guard
+        # empty one). ONE usable-report decision, read by BOTH reconciles below (round 4 of the reviewer's review,
+        # 2026-09-19; its regression-4): a list is a report only when EVERY entry is a dict with an id. A list with any
+        # entry the kernel cannot key (not a dict, or no id) cannot decide an ABSENCE for the entries it CAN key, so the
+        # whole list is a NO-REPORT (the seeded rows hold, the settle names the shape), never a report that omits every
+        # seeded row and tears the surviving CLI down. Fed to both reconciles so neither acts on a payload the other
+        # cannot read: before, the check was on the list OBJECT alone, so a well-formed list of unusable entries passed
+        # both. An empty list stays a real report (nothing running)
         bg_report = inp.get("background_tasks") if isinstance(inp, dict) else None
         if not isinstance(bg_report, list):
             bg_report = None
+        report = bg_report if (bg_report is not None
+                               and all(isinstance(t, dict) and t.get("id") for t in bg_report)) else None
         try:
             append_awaiting(self.backend.state_dir, self.sid, False)
         except Exception as e:
@@ -11055,10 +11162,12 @@ class SdkSession:
         # that the live set lacks is counted from here, before the ResultMessage settle reads the live sets to arm a held
         # pick (_reconcile_seeded_with_report says why the settle's silence test was the wrong event). Guarded inside. No
         # list is a no-report turn: the seeded rows stand and the settle says so (_reconcile_seeded_work), never a drop
-        if bg_report is not None:
-            self._reconcile_seeded_with_report(bg_report)
+        if report is not None:
+            self._reconcile_seeded_with_report(report)
+        elif bg_report is None:
+            self._stop_hook_no_list = True     # a payload with no list, or a non-list value
         else:
-            self._stop_hook_no_list = True
+            self._stop_hook_bad_list = True    # a list arrived, but an entry was unreadable (round 4; regression-4)
         # Reconcile the LAUNCH LEDGER against the payload's background_tasks — the per-turn snapshot
         # this hook used to discard (2026-08-29). The ledger is launch-authoritative; the payload is
         # the CLI's own answer to "what is still running", so: a live-generation ledger entry absent
@@ -11066,15 +11175,13 @@ class SdkSession:
         # process (background tasks are children of the CLI); a payload task the ledger never saw is
         # adopted (src:"stopReconcile" — the hook missed a shape, or the entry predates the ledger).
         try:
-            bg = inp.get("background_tasks") if isinstance(inp, dict) else None
-            if isinstance(bg, list):
+            if report is not None:                                        # the SAME usable-report decision both reconciles read
                 nw = int(time.time())
                 lr = self._ledger_read()
                 if lr is None:
                     raise OSError("reg unreadable — reconcile skipped")   # the except below logs it
                 live, ended = lr
-                running = {str(t.get("id")): t for t in bg
-                           if isinstance(t, dict) and t.get("status") == "running" and t.get("id")}
+                running = {str(t.get("id")): t for t in report if t.get("status") == "running"}
                 kept = []
                 for e in live:
                     tid = str(e.get("tid") or "")
@@ -11087,17 +11194,36 @@ class SdkSession:
                         # known to enumerate completely; the probe of 2026-08-28 and the 2.1.266 producer read of
                         # 2026-09-19 are recorded there): a monitor absent from it may simply be uncovered, and a false
                         # "gone" would silently un-wait the session; monitors end by deadline, fail, stop, or
-                        # processDied. The same predicate decides the seeded live work's rows
-                        # (_reconcile_seeded_with_report), so the two reconciles of one payload cannot disagree; since
-                        # 2026-09-19 it reads the report's own label too, so a shell this reconcile adopted (tool
-                        # "shell") is ruled like one the launch recorded (tool "bash")
+                        # processDied. The SAME PREDICATE (report_absence_decides) decides the seeded live work's rows
+                        # (_reconcile_seeded_with_report), so the two reconciles agree about the ONE QUESTION the predicate
+                        # answers: which TYPES an omission may retire. They do NOT agree about every verdict on a payload,
+                        # and the shared predicate does not make them (round 4 of the reviewer's review, 2026-09-19; its
+                        # correctness-2, kernel-1 and regression-2, a false "cannot disagree" claim corrected): this
+                        # ledger's live-set test is `status == "running"` while the seeded reconcile's is `status not in
+                        # _TERMINAL_TASK`, so a "pending" row is live to the seeded side and ended here; and this ledger
+                        # decides a cross-generation entry by procGen FIRST (above), a road the predicate never reaches.
+                        # On such a payload the seeded reconcile can hold a row live while this ledger tombstones the same
+                        # id. That is harmless and out of this PR's scope: the card layer's liveness authority is the live
+                        # mirror, not the ledger, and this tombstone's only consumer (_bg_ended_after) is gated on the
+                        # live mirror being EMPTY, which the seeded hold keeps non-empty; no CLI build examined (2.1.266)
+                        # emits a pending shell. Widening this filter would also widen the adoption loop below to mint
+                        # entries for non-running rows, a behaviour change filed separately in the intake with the procGen
+                        # leg. Since 2026-09-19 the predicate reads the report's own label too, so a shell this reconcile
+                        # adopted (tool "shell") is ruled like one the launch recorded (tool "bash")
                         ended.append({"tid": e.get("tid"), "why": "gone", "at": nw})
                     else:
                         kept.append(e)   # no id / unproven coverage — the reconciler cannot rule on it
                 have = {str(e.get("tid")) for e in kept}
                 for tid, t in running.items():
                     if tid not in have:
-                        kept.append({"tid": tid, "toolUseId": None, "tool": str(t.get("type") or "shell"),
+                        # an untyped adopted entry records "" (a type never learned), NEVER "shell" (round 4 of the
+                        # reviewer's review, 2026-09-19; its tests-1): the "shell" default made report_absence_decides
+                        # retire it on a later omission though its type was never learned, the one thing the predicate
+                        # forbids, and disagreed with the seeded reconcile's own adoption (which records ""). The case is
+                        # unreachable on the bundled CLI (its producer always labels every entry) and even if reached the
+                        # same payload's seeded reconcile holds the row, so no un-wait follows; the fix is the restricted
+                        # side of an unverified default, not a live bug
+                        kept.append({"tid": tid, "toolUseId": None, "tool": str(t.get("type") or ""),
                                      "desc": str(t.get("description") or "")[:300], "armedAt": nw,
                                      "deadlineEpoch": None, "persistent": False,
                                      "procGen": self.proc_gen, "agentId": None, "src": "stopReconcile"})
@@ -11621,6 +11747,7 @@ class SdkSession:
             #   host-attach retry road does not call this (the loop top skips it): its CLI lives on, and a row seeded from
             #   the mirror is not work that ended (the reviewer's round 2, 2026-09-19; its regression-1); nor does a
             #   stand-down or a detach (_on_session_gone holds a detached session's rows; the round 3 pre-check)
+            self._reported_tasks.clear()   # a row a report spoke for dies with the CLI too (round 4, 2026-09-19)
         if died:
             note = task_death_notice(died, cause=self._RECONNECT_CAUSE)
             with self._lock:
@@ -11790,14 +11917,15 @@ class SdkSession:
         with self._sub_lock:
             # the CLI's own stream speaks for this id: a row seeded from the reg's mirror at an attach is confirmed (a
             # start or progress frame) or ended (below), and leaves the seeded set either way (_reconcile_seeded_work
-            # drops only what nothing confirmed; round 1 of the reviewer's review, 2026-09-18)
+            # drops only what nothing confirmed; round 1 of the reviewer's review, 2026-09-18). It leaves _reported_tasks
+            # too (round 4, 2026-09-19): once the stream owns a row, a later turn-end report no longer rules it
             self._seeded_tasks.discard(tid)
+            self._reported_tasks.discard(tid)
             if subtype in ("task_started", "task_progress"):
                 entry = self._bg_tasks.get(tid)
                 if entry is None:
-                    self._bg_tasks[tid] = entry = {"desc": "", "type": d.get("task_type") or "",
-                                                   "since": int(time.time()),
-                                                   "toolUseId": d.get("tool_use_id") or "", "lastTool": ""}
+                    self._bg_tasks[tid] = entry = _bg_row(type=d.get("task_type"), desc="", since=int(time.time()),
+                                                          toolUseId=d.get("tool_use_id"))
                     changed = True
                 if d.get("description"):
                     entry["desc"] = str(d.get("description"))
@@ -11964,7 +12092,12 @@ class SdkSession:
         2; its kernel-2 and the owner's audit): (1) a seeded row whose closing record never replays (a mirror write
         that failed, a journal gap, a task the CLI never ends) on a session that then takes no turn from any source
         holds the ask, the pending dots and a stoppable-task row in the dashboard indefinitely; a replayed end frame
-        pops the row but releases no pick (no removal from the live sets arms), so only a turn's settle does. (2) A
+        pops the row but releases no pick (no removal from the live sets arms), so only a turn's settle does. A held
+        row also counts as live background work in the box's RESTART-DISRUPTION reading (round 4 of the reviewer's
+        review, 2026-09-19; its kernel-4): _restart_disrupts reads _bg_tasks, so the held row keeps /busy above zero
+        (the count `romp down --wait` polls) and makes the update banner's confirm step say a restart would interrupt
+        that session, holding a quiet deploy to its 15-minute backstop; the automatic converge is unaffected (its gate
+        reads would_cut, in-flight turns alone). That is correct: a genuinely live task should hold a deploy. (2) A
         subagent known only to the SubagentStart hook has no reg mirror and is never seeded, so a survivor whose only
         live work is such a subagent can be re-armed at the attach. Both are one design question, what the
         authoritative read of a CLI's live work is at attach time, for all four kinds (background tasks, Task agents,
@@ -11980,9 +12113,11 @@ class SdkSession:
                 tid = str(row.get("taskId"))
                 if tid in self._bg_tasks:
                     continue
-                self._bg_tasks[tid] = {"desc": str(row.get("desc") or ""), "type": str(row.get("type") or ""),
-                                       "since": int(row.get("since") or 0) or int(time.time()),
-                                       "toolUseId": str(row.get("toolUseId") or ""), "lastTool": str(row.get("lastTool") or "")}
+                # _bg_row normalises the mirror's `type` to the registry discriminant (round 4, 2026-09-19; the
+                # correctness-1 rider): a mirror an earlier build wrote from an adopted row carries the report's
+                # LABEL ("workflow"), which after a restart would leave the row's self-heal and wf reconcile dead
+                self._bg_tasks[tid] = _bg_row(type=row.get("type"), desc=row.get("desc"), since=row.get("since"),
+                                              toolUseId=row.get("toolUseId"), lastTool=row.get("lastTool"))
                 self._seeded_tasks.add(tid)
                 seeded += 1
         if seeded:
@@ -12000,29 +12135,38 @@ class SdkSession:
         hook share). The Stop hook's `background_tasks` is the CLI's task registry as it stands at the turn's end, in the
         id space the task_* lifecycle frames carry, delivered before the ResultMessage settle that arms a held pick; a
         survivor attach sends its own initialize, which the CLI takes as a replacement of its hook table, so the first
-        turn after the attach brings the report to this kernel. Four verdicts, each on the report's own words:
-        - a seeded row the report LISTS with a live status (any but a terminal one) is CONFIRMED: it leaves the seeded
-          set and stays live, owned from here by the same mechanisms as a row the stream started (an end frame pops it;
-          _drop_live_work names it if a teardown then cuts it, a death notice for work the CLI confirmed and this kernel
-          then ended, never for a row nothing spoke for);
-        - a seeded row the report LISTS with a terminal status is RETIRED on that word, with no notice (the CLI reports
-          the end itself), and the mirror is rewritten;
-        - a seeded row the report OMITS is retired on the omission only when its type is one the report enumerates
+        turn after the attach brings the report to this kernel. The rule applies to a row awaiting a verdict: one still
+        SEEDED (its first report), or one a PRIOR report already spoke for and is still live (_reported_tasks), so
+        "trust presence always" keeps holding after the first report (round 4 of the reviewer's review, 2026-09-19; its
+        kernel-2 and tests-2: before it a held, a confirmed or an adopted row left the seeded set for good and no later
+        report could rule it, so a monitor stuck held on a positive report of its end and an adopted shell was never
+        retired). Four verdicts, each on the report's own words:
+        - a row the report LISTS with a live status (any but a terminal one) is CONFIRMED: it moves to _reported_tasks
+          (so a later report can rule it) and stays live, owned by the same mechanisms as a row the stream started (an
+          end frame pops it and drops it from _reported_tasks; _drop_live_work names it if a teardown then cuts it, a
+          death notice for work the CLI confirmed and this kernel then ended, never for a row nothing spoke for);
+        - a row the report LISTS with a terminal status is RETIRED on that word, with no notice (the CLI reports the end
+          itself), popped from _bg_tasks and both sets, and the mirror is rewritten;
+        - a row the report OMITS is retired on the omission only when its type is one the report enumerates
           completely, a SHELL (report_absence_decides records what is known and how): the CLI reports no such task, so
           it ended while no kernel heard or the mirror row was stale; no notice, said in the log, the mirror rewritten;
-        - a seeded row the report OMITS of any other type (a Monitor, a Task agent, a Workflow run, a type never
-          learned) is HELD: the omission is no report about it, so the row leaves the seeded set as an ordinary live
-          row, counted until the CLI's own stream ends it, said in the log. Until this round the omission retired it
-          whatever its type, the hold released, and the settle tore the surviving CLI down with the agent, run or
-          monitor inside it, on a report that, by the launch ledger's own probe note in the same hook, may not have
-          covered it; the two reconciles of one payload disagreed and one of them was wrong. The cost is the disclosed
-          residual's shape: a stale non-shell row holds the ask until a frame ends it or a probe widens the predicate.
-        And the mirror of the third verdict: a task with a live status that the report NAMES and the live set LACKS (a
-        lost opening record: a task_started frame no kernel heard, a mirror write that failed) is ADOPTED into the live
-        set with the reported type and description, on every report and not only after a seed, so the settle holds for
-        work the CLI says is running instead of arming against the CLI's own report (until this round the launch ledger
-        adopted it and the live set did not, and a test pinned the arm as the expected outcome). An adopted row carries
-        no tool-use id, so the chat box cannot stop it by that id; the CLI's own stream ends it. Before round 2 the
+        - a row the report OMITS of any other type (a Monitor, a Task agent, a Workflow run, a type never learned) is
+          HELD: the omission is no report about it, so the row moves to (or stays in) _reported_tasks as an ordinary
+          live row, counted until the CLI's own stream ends it or a later report retires it on a terminal listing, said
+          in the log. Until the round 3 pre-check the omission retired it whatever its type, the hold released, and the
+          settle tore the surviving CLI down with the agent, run or monitor inside it, on a report that, by the launch
+          ledger's own probe note in the same hook, may not have covered it. The cost is the disclosed residual's shape:
+          a stale non-shell row holds the ask until a frame ends it or a probe widens the predicate.
+        The rows the report never mentioned are not swept in: a task the stream started after the payload snapshot must
+        not be retired on an absence that is no report about it, so only a seeded row or one this reconcile already
+        spoke for is decided. The mirror of the third verdict: a task with a live status that the report NAMES and the
+        live set LACKS (a lost opening record: a task_started frame no kernel heard, a mirror write that failed) is
+        ADOPTED into the live set with the reported type (normalised to the registry discriminant, _bg_row) and
+        description, on every report and not only after a seed, joins _reported_tasks like a confirmed row, so the
+        settle holds for work the CLI says is running instead of arming against the CLI's own report (until round 2 the
+        launch ledger adopted it and the live set did not, and a test pinned the arm as the expected outcome). An
+        adopted row carries no tool-use id, so the chat box cannot stop it by that id; the CLI's own stream ends it.
+        Before round 2 the
         settle dropped every seeded row no FRAME had spoken for during the turn, and a refuter showed that silence is
         the ordinary case, not a rare one: a backgrounded shell streams task_started and then nothing until its terminal
         frame (read in the bundled CLI, 2.1.266), so every background shell alive across a kernel restart plus one turn
@@ -12036,10 +12180,16 @@ class SdkSession:
             with self._sub_lock:
                 for tid, t in live.items():
                     if tid not in self._bg_tasks:
-                        self._bg_tasks[tid] = {"desc": str(t.get("description") or "")[:300], "type": str(t.get("type") or ""),
-                                               "since": int(time.time()), "toolUseId": "", "lastTool": ""}
+                        # _bg_row normalises the report's type LABEL to the registry discriminant and names the
+                        # invariants an adopted row satisfies (round 4, 2026-09-19; the reviewer's correctness-1)
+                        self._bg_tasks[tid] = _bg_row(type=t.get("type"), desc=str(t.get("description") or "")[:300],
+                                                      since=int(time.time()))
                         adopted.append(tid)
-                for tid in sorted(self._seeded_tasks):
+                # every row awaiting a verdict: one seeded (its FIRST report) or one a report already spoke for and is
+                # still live (_reported_tasks, round 4, 2026-09-19; the reviewer's kernel-2 and tests-2: a held, a
+                # confirmed or an adopted row must stay visible so a LATER report can rule it, or "trust presence
+                # always" stops holding after the first report)
+                for tid in sorted(self._seeded_tasks | self._reported_tasks):
                     kind = (self._bg_tasks.get(tid) or {}).get("type") or ""
                     if tid in live:
                         confirmed.append(tid)
@@ -12049,7 +12199,13 @@ class SdkSession:
                     else:
                         held.append(tid)
                         held_types.add(kind or "a type never learned")
+                # the seeded rows got their first report; every row still live that the report spoke for (adopted,
+                # confirmed) or held moves to _reported_tasks so a later report rules it, and a retired one leaves both.
+                # Rows the report never mentioned are not swept in (a task the stream started after the payload snapshot
+                # would be retired on an absence that is no report about it)
                 self._seeded_tasks.clear()
+                self._reported_tasks.difference_update(retired)
+                self._reported_tasks.update(adopted, confirmed, held)
             n_a, n_c, n_r, n_h = len(adopted), len(confirmed), len(retired), len(held)
             if not (n_a or n_c or n_r or n_h):
                 return
@@ -12108,16 +12264,21 @@ class SdkSession:
             with self._sub_lock:
                 held = sorted(self._seeded_tasks)
                 no_list = bool(getattr(self, "_stop_hook_no_list", False))
+                bad_list = bool(getattr(self, "_stop_hook_bad_list", False))
                 self._stop_hook_no_list = False
+                self._stop_hook_bad_list = False
             if not held:
                 return
             n = len(held)
+            # three no-report shapes, each its own phrase (round 4, 2026-09-19; regression-4 added the bad-list one:
+            # a list arrived but an entry was unreadable, so the report cannot decide an absence and this is no report)
+            shape = ("the turn's Stop hook carried a background_tasks list this kernel could not read" if bad_list
+                     else "the turn's Stop hook carried no background_tasks list" if no_list
+                     else "no Stop hook report reached this kernel for the turn")
             self._log_quietly("live work (%s): %d background task%s the reg named for the surviving CLI had no frame and no "
                               "turn-end report through this turn (%s); still counted as live, held (nothing says %s ended), and "
                               "the hold stands until the CLI's own stream or its turn-end report decides %s"
-                              % (self.name, n, "" if n == 1 else "s",
-                                 "the turn's Stop hook carried no background_tasks list" if no_list
-                                 else "no Stop hook report reached this kernel for the turn",
+                              % (self.name, n, "" if n == 1 else "s", shape,
                                  "it" if n == 1 else "they", "it" if n == 1 else "them"))
         except Exception as e:
             self._log_quietly("live work (%s): the seeded-work reconcile failed: %s: %s" % (self.name, type(e).__name__, e))
@@ -14841,6 +15002,12 @@ class SdkBackend:
             # through the one guarded entry point (the reviewer's round 2, 2026-09-19; its kernel-1): this road's own
             # handler filed a line and left a half-written ask standing; the shared guard leaves the session as it found it
             self._follow_default_guarded(sess, landing="init")
+        elif (sess.auth in ("login", "key") and getattr(sess, "_launched_auth", None) is None
+                and getattr(sess, "_launched_effort", None) is not None and sess._auth_pending):
+            # A PICKED session whose attach could not tell what its CLI bills (the picked branch's cannot-tell,
+            # this diff's regression-1): the pick pending across it has no closer, since set_auth's already-applying
+            # branch arms no reconnect for a re-pick of the same side. The CLI's own init is that closing event
+            sess._recover_picked_pending_at_init()
         if keyed == sess.api_key_auth and not first:
             return
         sess.api_key_auth = keyed
@@ -20058,8 +20225,12 @@ class SdkBackend:
         # append_machine_cut and _ensure run after it. What remains is the window between the verdict
         # and the hold (microseconds): a kill landing there is ended when the hold writes, so the nudge
         # goes to the reg of a session the heal's _ensure then finds not alive, and a later resume runs it.
-        # A DETACHED session (T315: its thread ends while a live host keeps the CLI and its turn) is no death
-        # at all: no cut, no seal, no heal, no idle settle; the pop below is the whole of it.
+        # A DETACHED session (T315: its thread ends while a live host keeps the CLI and its turn) is not CUT: no
+        # abnormal-death heal and no queue seal below (the `cut` test excludes it). But the pop is NOT the whole of
+        # it (round 4 of the reviewer's review, 2026-09-19; its kernel-3, the comment whose falseness hid the bug
+        # fixed 74 lines below): the pending-switch flags still clear, _heal_stale_awaiting and retire_live_work
+        # still run for this ended THREAD (its stream is over for this kernel object, whatever the host's CLI does),
+        # and the bg-task block below HOLDS a detached session's rows and mirror rather than filing a death notice.
         cut = not sess.ended and not sess.detached and sess.inflight > 0 and not sess._interrupted
         if cut:
             with sess._lock:
@@ -20093,10 +20264,17 @@ class SdkBackend:
             if not sess.ended and not sess.detached:
                 # process exited on its own while idle (crash / EOF): settle state; next send resumes
                 append_state(self.state_dir, sess.sid, "waiting")
-        # the thread (and its claude subprocess) is gone, so any background work is too — clear a stale
-        # awaiting overlay so the session doesn't read working/awaiting forever (reorder_bug 2026-06-24).
+        # this session's THREAD has ended (a death, or merely a detach where a live host keeps the CLI); its stream
+        # is over FOR THIS KERNEL OBJECT either way (round 4 of the reviewer's review, 2026-09-19; its kernel-3,
+        # correcting a comment that claimed a detach ends the CLI's background work too, which contradicts the PR's
+        # own detached-hold below). Clear a stale awaiting overlay so the session does not read working/awaiting
+        # forever (reorder_bug 2026-06-24), and retire this object's live-tail work atoms so an unlanded atom does
+        # not hold the turn open forever (the WORKING-with-a-timer bug retire_live_work exists to prevent, 2026-07-03);
+        # both run on the detached road too, and must not be gated behind `not detached`. Whether the CLI's own
+        # background tasks are gone is decided per road by the bg-task block below (held when detached, a notice
+        # when the CLI truly died), not here.
         self._heal_stale_awaiting(sess.sid)
-        self.retire_live_work(sess.sid)   # no stream left → unlanded work atoms must not hold the turn open
+        self.retire_live_work(sess.sid)   # no stream left for this object → unlanded work atoms must not hold the turn open
         self._wake_push_live(sess.sid)    # the death is this sid's event and the tab it belongs to shows it (the
         #                                   chip, the tail's end); the plain _poke below carries no sid, so a
         #                                   watched tab's repaint would wait out the pusher's minimum interval

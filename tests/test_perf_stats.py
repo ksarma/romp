@@ -2161,6 +2161,15 @@ class PerfRoutes(unittest.TestCase):
         undocumented = sorted(k for k in dyn_kinds if "`%s`" % k not in para)
         self.assertEqual(undocumented, [], "every kind family with a payload (sdk, codex, end-host, peer, ...) is in the reference's kind list; a constant name is its own kind")
         self.assertGreaterEqual(len(dyn_kinds), 5, sorted(dyn_kinds))
+        # _thread_kind's OWN docstring enumerates the registered prefixes exhaustively (no ellipsis), and nothing pinned
+        # it, so a prefix added to the constant could drift out of the prose (round 4 of the reviewer's review,
+        # 2026-09-19; its regression-3: sdk-slot was added to _THREAD_KIND_PREFIXES in this PR and not to the docstring).
+        # The clause is `... is a registered prefix (sdk, sdk-intr, ...)`; every prefix must appear in it.
+        doc = km._thread_kind.__doc__ or ""
+        m = re.search(r"is a registered prefix \(([^)]*)\)", " ".join(doc.split()))
+        self.assertIsNotNone(m, "the docstring names its registered-prefix clause")
+        named = {w.strip() for w in m.group(1).split(",") if w.strip()}
+        self.assertEqual(sorted(km._THREAD_KIND_PREFIXES - named), [], "every registered prefix is named in _thread_kind's docstring")
 
     def test_the_judge_pools_workers_carry_their_tier(self):
         """Round three, low 2: the pin on the pool prefix was a substring check on the source; the behaviour is pinned instead:
