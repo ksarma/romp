@@ -3803,13 +3803,16 @@ document stands on its own, each with the reasoning it was given.
     now that their value resolves (a `$PWD` link source, an `x=scratch` class-E entry, a `~+` spelling), and one cost
     entry is added, a `$PWD` write beside a mention of PWD from the tracked cwd.
     The pin addendum (2026-09-19; the fifth pass's mutation lens found seven B2 claims no test held, and its attacker
-    seven in-model overwrites; the second commit of the ruled sequence) pinned the claims from the tracked cwd, where an
-    unresolved name is refused and a resolved one judged by name (a mid-word `$HOME` beside a mention of HOME; a loop
-    variable, a `read`, a `mapfile` and a `getopts` into a name set earlier; the copy of the names a `$(...)` inherits;
-    the poison of an unknown wrapper option and of an `env -S` string; the fresh scope of a `flock -c` string;
-    resolution under a bare `.git` repo, each with the real-shell landing or the clean twin run, and each opaque row
-    pinned allowed from a cwd in no project, the residual with its boundary) and closed the overwrites, each a stated
-    rule applied to a construct the guard could already see, no rule added (the PWD and OLDPWD finding is closed in B2's
+    seven in-model overwrites; the second commit of the ruled sequence) pinned five of the claims from the tracked cwd,
+    where an unresolved name is refused and a resolved one judged by name (a mid-word `$HOME` beside a mention of HOME;
+    a loop variable, a `read`, a `mapfile` and a `getopts` into a name set earlier; the copy of the names a `$(...)`
+    inherits; the fresh scope of a `flock -c` string; and beside them resolution under a bare `.git` repo, each with the
+    real-shell landing or the clean twin run, and each opaque row pinned allowed from a cwd in no project, the residual
+    with its boundary); the poison of an unknown wrapper option and of an `env -S` string (the other two)
+    is not pinned, disclosed for a ruling (an external command cannot reassign the calling shell's names, so whether
+    that poison stays is the reviewer's call, and a pin would fix one side of it). The addendum closed the overwrites,
+    each a stated rule applied to a construct the guard could already see, no rule added (the PWD and OLDPWD finding is
+    closed in B2's
     own commit, above): `cp --parents` lands each source at its whole spelling under the destination (`under` in
     `copyTargets`; the flag was known and its landing computed as the basename); python's short options are read as a
     cluster the way python reads them, `-c` and `-m` taking the rest of the word or the next word and `-W` and `-X` a
@@ -3820,6 +3823,24 @@ document stands on its own, each with the reasoning it was given.
     The cost, measured against the corpus (285 entries): none of the 164 ordinary commands newly refuses. The contract's
     writer list names a concatenation and an escape sequence among the interpreter paths that pass
     (`open("docs\x2freport.md","w")` lands, measured), and the four surfaces carry the addendum's sentence.
+    The sixth pass (2026-09-19; the mutation lens over the ruled sequence's head ran seventy-five mutations and found
+    thirteen green, each a claim the code made that no test held) pinned nine of them in both directions, the refused
+    row run unguarded in a real shell and every allowed row run with the tracked subset fingerprinted after: the
+    unreadable-name marks reach a `$(...)` (`unreadableNames` in the recurse context; PWD reassigned outside and `$PWD`
+    inside, bash and zsh wrote another project's tracked file); a cd the guard cannot follow leaves OLDPWD unknown
+    (`moveUnknown`; `cd docs; cd "$(pwd)"; cp <src> $OLDPWD/report.md` overwrote the tracked file through the stale
+    value); a nameref, a `printf -v` and a `readarray` into a name set earlier make it unreadable (`recordAssignments`;
+    bash landed the write in the tracked folder through each); a `$(...)`'s own assignments do not come back (the copy
+    of the names; a shared map refused the write by name, falsely); an empty value is not read (`resolveWord`); with
+    `cp --parents` a destination that is not there is read as a directory (`copyTargets`; cp writes nothing without it,
+    and the guard's reading of the landing is what refuses); python's `-m` ends the option walk (a heredoc after
+    `-mjson.tool` is the module's stdin data, allowed and run). The `recordAssignments` line that poisoned the names
+    after an unknown wrapper option, an `env -S` string or a `flock -c` string was unreachable (each branch continues
+    before `recordAssignments` runs; the first two poison in their own branches of `extract`) and is removed, and a
+    `flock -c` string is pinned as it measures, no poisoner. Not pinned, for a ruling: whether the poison of an unknown
+    wrapper option, an `env -S` string and `xargs` stays (an external command cannot reassign the calling shell's
+    names; both sides are observable once ruled: from a tracked cwd the refusal's class, from a cwd in no project the
+    verdict). No verdict changes: the corpus's 285 entries keep theirs.
     Without ROMP_SID it exits 0 before reading stdin (decision 24). Cost: about 60 ms
     per Bash call when no target needs the link closure (a read, a literal target outside any project, an explicit
     hit on the project's tracked list, an empty list); a write to a file inside a tracking project that the list

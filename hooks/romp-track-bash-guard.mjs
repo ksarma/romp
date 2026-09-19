@@ -283,11 +283,13 @@
 // the 22 opaque shapes keep their verdicts, refused from the tracked cwd and allowed from the cwd in no project.
 //
 // THE PIN ADDENDUM (2026-09-19, after the fifth pass's mutation lens and attacker; the second commit of the ruled
-// sequence). Seven B2 claims no test held are pinned (a mid-word `$HOME` beside a mention of HOME; a loop variable, a
-// `read`, a `mapfile` and a `getopts` into a name set earlier; the copy of the names a `$(...)` inherits; the poison
-// of an unknown wrapper option and of an `env -S` string; the fresh scope of a `flock -c` string; resolution under a
-// bare `.git` repo), each from a tracked cwd, where an unresolved name is refused and a resolved one judged by name,
-// and the attacker's in-model overwrites are closed, each a stated rule applied to a construct the guard could
+// sequence). Seven B2 claims no test held: five are pinned (a mid-word `$HOME` beside a mention of HOME; a loop
+// variable, a `read`, a `mapfile` and a `getopts` into a name set earlier; the copy of the names a `$(...)` inherits;
+// the fresh scope of a `flock -c` string), with resolution under a bare `.git` repo beside them, each from a tracked
+// cwd, where an unresolved name is refused and a resolved one judged by name; the poison of an unknown wrapper option
+// and of an `env -S` string is not pinned, disclosed for a ruling (fork PR #780's body: an external command cannot
+// reassign the calling shell's names, so whether that poison stays is the reviewer's call, and a pin would fix one
+// side of it). The attacker's in-model overwrites are closed, each a stated rule applied to a construct the guard could
 // already see, no rule added (the PWD and OLDPWD finding is closed in B2's own commit above: EXPANDED_NAMES names
 // every name valueOf substitutes). `cp --parents`, a known flag, had its landing computed as the basename; the source
 // lands at its whole spelling under the destination (`under` in copyTargets). Python's `-c` was matched only at the
@@ -297,6 +299,23 @@
 // (pyStringArg), and a template literal holding a quote matched neither the literal nor the template class (nodeStr).
 // None of the 164 ordinary commands newly refuses. The contract's writer list names a concatenation and an escape
 // sequence among the interpreter paths that pass (measured: `open("docs\x2freport.md","w")` lands).
+//
+// THE SIXTH PASS (2026-09-19; the mutation lens over the ruled sequence's head: seventy-five mutations, thirteen green,
+// each a claim the code made that no test held). Nine are pinned, each with its refused row run unguarded in a real
+// shell and every allowed row run with the tracked subset fingerprinted after: the unreadable-name marks reach a
+// `$(...)` (PWD reassigned outside and `$PWD` inside: bash and zsh wrote another project's tracked file); a cd the
+// guard cannot follow leaves OLDPWD unknown (`cd docs; cd "$(pwd)"; cp <src> $OLDPWD/report.md` overwrote the tracked
+// file through the stale value); a nameref, a `printf -v` and a `readarray` into a name set earlier make it
+// unreadable (bash landed the write in the tracked folder through each); a `$(...)`'s own assignments do not come back
+// (a shared map refused the write by name, falsely); an empty value is not read; with `cp --parents` a destination
+// that is not there is read as a directory (cp writes nothing without it; the guard's reading of the landing is what
+// refuses); python's `-m` ends the option walk (a heredoc after `-mjson.tool` is the module's stdin data, allowed and
+// run). The recordAssignments line that poisoned the names after an unknown wrapper option, an `env -S` string or a
+// `flock -c` string was unreachable (each branch continues before recordAssignments runs; the first two poison in
+// their own branches of extract) and is removed; a `flock -c` string is pinned as it measures, no poisoner, the later
+// write judged by name on the resolved value. Not pinned, for a ruling: whether the poison of an unknown wrapper
+// option, an `env -S` string and `xargs` stays (an external command cannot reassign the calling shell's names; both
+// sides are observable once ruled). No verdict changes: the corpus's 285 entries keep theirs.
 //
 // THE LISTS THAT REMAIN, each with the side its GAP falls on (a missing entry causes a false refusal, or a write):
 //   PREFIXES (the wrapper set): gap = a WRITE (an unlisted wrapper is read as its own command, an unmodelled writer by
@@ -2260,7 +2279,6 @@ function extract(command, ctx) {
       for (const w of seg.words) { const n = nameOf(w); if (n && isAssignmentWord(w)) set(n, w); }
       return;
     }
-    if (cmd.unknown || cmd.opaque || 'script' in cmd) { varsPoisoned = true; return; }
     if (VAR_POISONERS.has(cmd.name) || definedFunctions.has(cmd.name)) { varsPoisoned = true; return; }
     if (VAR_ASSIGNERS.has(cmd.name) || cmd.name === 'local') {
       const nameref = cmd.args.some((w) => w.literal && /^-[A-Za-z]*n/.test(w.text));

@@ -357,3 +357,15 @@ test('decision 47 records the walk-around lens third pass, each rule tied to its
   }
   assert.ok(!/\u2014/.test(d47), 'no em dash in decision 47');
 });
+
+// The sixth pass (2026-09-19): decision 47 records the mutation lens's unpinned claims pinned and the unreachable poison
+// line removed from recordAssignments; the poison that runs stays in extract's own branches, and the poison left for a
+// ruling is disclosed on the hook header and in the decision rather than claimed pinned.
+test('decision 47 records the sixth pass: the unreachable poison line is gone, the poison that runs sits in extract, and the unpinned poison is disclosed on both surfaces', () => {
+  assert.ok(d47.includes('The sixth pass (2026-09-19;') && hook.includes('THE SIXTH PASS (2026-09-19;'), 'both surfaces record the pass');
+  assert.ok(!hook.includes("if (cmd.unknown || cmd.opaque || 'script' in cmd) { varsPoisoned = true; return; }"), 'the unreachable poison line in recordAssignments is gone');
+  assert.ok(hook.includes('varsPoisoned = true;   // B2: what the wrapper ran is not known') && hook.includes('varsPoisoned = true;   // B2\n'), 'the poison of an unknown wrapper option and of an env -S string is set in its own branch of extract');
+  assert.ok(hook.includes('if (cmd.script && cmd.script.literal) recurse(cmd.script.text, shell, true);') && hook.includes('const moveUnknown = (why) => { oldDir = null; setUnknown(why); };'), 'a flock -c string is read in a fresh scope and poisons nothing; a cd the guard cannot follow clears OLDPWD');
+  assert.ok(d47.includes('is not pinned, disclosed for a ruling') && hook.includes('is not pinned, disclosed for a ruling') && d47.includes('Not pinned, for a ruling:'), 'the poison left for a ruling is disclosed, not claimed pinned');
+  assert.ok(!d47.includes(String.fromCharCode(0x2014)), 'no em dash in decision 47');
+});
