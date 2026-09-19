@@ -1414,15 +1414,20 @@ class Cli(unittest.TestCase):
     def test_a_file_nested_past_the_depth_bound_is_refused_in_one_line_naming_the_bound_with_no_traceback_and_nothing_sent(self):
         """The depth rule is the verb's own (the fork review of the second round, 2026-09-18): a file nested deeper than
         MAX_DEPTH (32) is refused before any check walks it, in one stderr line that names the file's depth and the bound,
-        exit 1, nothing sent, on every Python. Before the bound the verb let the walks decide by running out of stack, which
-        the three walks do at about 990 levels on every build for either shape (the recursion limit), and the fold at about
-        990 too except over LIST nesting on 3.10 and 3.11, where it spends two frames per level and gives out near 500, every
-        one of them at least fifteen times the bound; the reach that differs by orders of magnitude between builds is the
-        PARSER's, and CI's free-threaded 3.14t cell alone admitted a 100,000-level document every other cell's parser refused
-        as not strict JSON, so the walks overflowed there and nowhere else (the fourth review round corrected the comment at
-        MAX_DEPTH, which had put the variance on the walks). A bound derived from the interpreter's limit would sit within a
-        few frames of the walks' reach and would have to follow the fold's list reach on 3.10 and 3.11, so it would move with
-        the build; the bound is a fixed number well inside every build. The three documents
+        exit 1, nothing sent, on every Python. Before the bound the verb let the walks decide by running out of stack. The
+        reach of each component, the deepest chain that passes with one frame on the stack at entry, bisected at the closing
+        check (2026-09-19) over a dict chain and a list chain on the local builds: the walks (check_document) 989 on 3.10 and
+        3.11 and 992 on 3.12 to 3.14t; the fold 995 and 997 over a dict chain, and over a LIST chain 497 on 3.10 and 3.11,
+        where it spends two frames per level, and 997 from 3.12; the parser 992 to 994 on 3.10 and 3.11, 9,994 to 9,998 on
+        3.12 and 3.13, about 40,100 on this box's 3.14.6 and about 37,240 on its 3.14.6t (both moving between runs), and past
+        100,000 on CI's 3.14t runner; the writer 992 to 994 on 3.10 to 3.12, 9,997 on 3.13, and on 3.14 and 3.14t 28,971 to
+        37,241 over a dict chain and past 40,000 over a list chain. The parser's reach differs by orders of magnitude between
+        builds, and the writer's from 3.13 on; the walks and the fold stay under 1,000 everywhere, at least fifteen times the
+        bound, and CI's 3.14t cell alone admitted a 100,000-level document every other cell's parser refused as not strict
+        JSON, so the walks overflowed there and nowhere else (the comment at MAX_DEPTH carries the table). A bound derived
+        from the interpreter's limit would sit within a few frames of the walks' reach and would have to follow the fold's
+        list reach on 3.10 and 3.11, so it would move with the build; the bound is a fixed number well inside every build.
+        The three documents
         here are fixed: 33 levels, one past the bound, refused; 32, at the bound,
         sent; and the 100000-level file in the case beside this one meets whichever refusal its build's parser leaves it:
         a parser that gives up on the document refuses it as not strict JSON, one that admits it hands it to the depth

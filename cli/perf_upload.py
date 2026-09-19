@@ -112,25 +112,35 @@ RECEIVER_FILE = "~/.config/romp/perf-receiver"
 RECEIVER_FILE_MAX = 4096             # the setting file is one line of printable ASCII; past this it is not an address (fresh-5)
 ROUTE = "/v1/upload"
 MAX_BYTES = 1 << 20                  # the receiver's cap on Content-Length and on the bytes it reads
-# The DEPTH BOUND (the fork review of the second round, 2026-09-18; its stated reason corrected in the fourth, 2026-09-19).
-# This verb is the one road in romp that hands a document a PERSON named to the shared walks (perf_public's identifier
-# scan, paste walk, denylist walk and fold, through perf_export.check_document) and to the export's writer
-# (perf_export.document_text), and every one of those recurses one frame per level: past the interpreter's recursion
-# limit they raise RecursionError. Measured on every CI build (3.10 to 3.14t), each in a child, over a dict chain and a
-# list chain: the three walks give out at about 990 levels on every build for either shape (the limit of 1000 less the
-# frames already on the stack), and so does the writer; the fold gives out at about 990 over a dict chain everywhere and
-# over a list chain on 3.12 and later, and at about 500 levels of LIST nesting on 3.10 and 3.11, where the list
-# comprehension it recurses through (perf_public.fold) is a frame of its own, two per level, before 3.12 inlined
-# comprehensions. Every one of these is bounded by the recursion limit and is at least fifteen times this bound. The
-# reach that differs by ORDERS OF MAGNITUDE between builds is the PARSER's: json.loads gives up at about 990 levels on
-# 3.10 and 3.11, at about 10,000 on 3.12 and 3.13, and on the free-threaded 3.14t build only where the thread's stack
-# runs out (past 100,000 on CI's runner, near 37,000 on a local build of the same version). So the 3.14t cell alone
-# admitted the 100,000-level test document that every other cell's parser refused as not strict JSON, and handed it to
-# the walks, which overflowed there at the same 990 as everywhere. A file's nesting is therefore bounded here, before any
-# walk runs, by a fixed number the refusal names, so that no build's parser can hand the walks a document they cannot
-# take. A bound derived from the interpreter's limit would sit within a few frames of the walks' reach and would have to
-# follow the fold's list reach on 3.10 and 3.11, so it would move with the build; this one is a fixed number well inside
-# every build.
+# The DEPTH BOUND (the fork review of the second round, 2026-09-18; its stated reason corrected in the fourth, 2026-09-19;
+# the reach of every component re-measured at the closing check, 2026-09-19, which found the fourth round's text wrong
+# about the writer). This verb is the one road in romp that hands a document a PERSON named to the shared walks
+# (perf_public's identifier scan, paste walk, denylist walk and fold, through perf_export.check_document) and to the
+# export's writer (perf_export.document_text), and every one of those recurses one frame per level: past the
+# interpreter's reach they raise RecursionError. THE MEASURED REACH OF EACH, the deepest chain that passes, bisected in a
+# fresh child per probe with one frame on the stack at entry, over a dict chain and a list chain, on the local builds
+# (3.10.20, 3.11.15, 3.12.3, 3.13.14, 3.14.6 and the free-threaded 3.14.6t); the CI runner's 3.14t parser figure is the
+# check's, every other figure this box's:
+#
+#   component                    3.10        3.11        3.12          3.13          3.14                    3.14t
+#   the walks (check_document)   989         989         992           992           992                     992
+#   the fold, dict chain         995         995         997           997           997                     997
+#   the fold, list chain         497         497         997           997           997                     997
+#   the parser (strict_loads)    992 to 994  992 to 994  9,994-9,997   9,995-9,998   40,101 to 40,129 here   37,235 to 37,253 here;
+#                                                                                                            past 100,000 on CI's runner
+#   the writer (document_text)   992 to 993  993         994           9,997         37,241 dict chain,      28,971 dict chain,
+#                                                                                    past 40,000 list chain  past 40,000 list chain
+#
+# The walks and the fold stay under 1,000 on every build, at least fifteen times this bound (the fold's list reach halves
+# on 3.10 and 3.11, where the list comprehension it recurses through, perf_public.fold, is a frame of its own before 3.12
+# inlined comprehensions). The parser's reach differs by ORDERS OF MAGNITUDE between builds, and so does the writer's
+# from 3.13 on; on 3.14 and 3.14t both figures moved between runs of the same probe. On every build the walks overflow at
+# a shallower depth than the writer, and CI's 3.14t cell alone admitted the 100,000-level test document that every other
+# cell's parser refused as not strict JSON (both local 3.14 builds refuse it too), and handed it to the walks, which
+# overflowed there at 992 as everywhere. A file's nesting is therefore bounded here, before any walk runs, by a fixed
+# number the refusal names, so that no build's parser can hand the walks a document they cannot take. A bound derived
+# from the interpreter's limit would sit within a few frames of the walks' reach and would have to follow the fold's list
+# reach on 3.10 and 3.11, so it would move with the build; this one is a fixed number well inside every build.
 # The measurement the bound rests on: a fresh `romp perf export --public --usage` on 2026-09-18 was 116,063 bytes with a
 # maximum nesting depth of 7 by nesting_depth's count (the deepest leaf perf/jobs/stageRing/#/stages/jobs.autoNudge/bytes),
 # the reviewer measured 6 on a 129,435-byte document, and the receiver's own contract refuses more than about eight
