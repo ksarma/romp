@@ -92,8 +92,9 @@ alphabetically, and each case's `before` is what the previous case left):
     a. None before and, after, a backend over a kept sandbox, jd.STATE elsewhere: the allowance does not
        cover it either (it asks for jd.STATE, not for any directory that exists).
     C is run a second time with a module-level DeprecationWarning planted in the scratch, so the child's summary
-    line reads "1 passed, 1 warning, 1 error in": the outer tests read the error count past the warning segment
-    (summary_mismatch, which tolerates any other count between passed and errors and refuses a wrong count by name).
+    line carries a warnings segment between passed and errors ("1 passed, 1 warning, 1 error in" today): the outer
+    tests read the error count past that segment (summary_mismatch, which tolerates any other count between passed
+    and errors and refuses a wrong count by name) and pin the segment's presence and position, not its count.
   D, a class teardown that removes the directory under the singleton its tests left:
     One.a builds over a kept sandbox stored on the class and fails as its own; One.b does nothing and passes at
     its own window; tearDownClass removes the sandbox and writes a regular FILE at the path, and the class
@@ -1053,16 +1054,20 @@ assert SCRATCH_C_WARNED != SCRATCH_C, SCRATCH_C
 
 
 class ASummaryWithAWarningSegment(FirstBuildOverAKeptSandbox):
-    """C's run with one module-level DeprecationWarning planted in the scratch: the child's summary line gains a
-    "1 warning" segment between passed and errors, the outcomes and the ratchet's text are C's (every test of C runs
+    """C's run with a module-level DeprecationWarning planted in the scratch: the child's summary line gains a
+    warnings segment between passed and errors, the outcomes and the ratchet's text are C's (every test of C runs
     again here over the warned output), and the summary matcher reads the error count past the warning. The first
-    form's regex went red on this output with a message that named no warning."""
+    form's regex went red on this output with a message that named no warning. The run pins the segment's presence
+    and position and a count of at least one, never the count itself: an exact "1 warning" here would put back, on
+    this one run, the strict shape the widened matcher removed."""
     SCRATCH = SCRATCH_C_WARNED
 
     def test_the_summary_line_carries_the_warning_segment_between_passed_and_errors(self):
         m = SUMMARY_LINE.search(self.out)
         self.assertIsNotNone(m, self.out)
-        self.assertRegex(m.group(1), r"^\d+ passed, 1 warning, 1 error in ", "the warning is counted on the line: %s" % m.group(1))
+        seg = re.match(r"^\d+ passed, (\d+) warnings?, 1 error in ", m.group(1))
+        self.assertIsNotNone(seg, "a warnings segment sits between passed and errors on the line: %s" % m.group(1))
+        self.assertGreaterEqual(int(seg.group(1)), 1, "the warning is counted on the line: %s" % m.group(1))
         self.assertIsNone(summary_mismatch(self.out, 1), self.out)
         self.assertIn("DeprecationWarning", self.out, "the warnings summary names it: %s" % self.out)
 
