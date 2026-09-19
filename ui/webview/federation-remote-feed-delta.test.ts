@@ -216,9 +216,9 @@ test("the local host's path is unchanged: a local delta applies onto the merge's
 // whatever the socket's readyState, where a spec-faithful socket never dispatches a message on a socket that is not
 // OPEN, so a real page raises the ask only on the socket the delta just arrived on, which is open. Before the
 // registration the same frame took the gesture arm: a warn toast naming the wire word, and a senddrop row.
-test("a needFullFeed the remote socket cannot carry is held like its twins: no toast, one hostconn hold row, flushed first on the open; a host with no conn drops it with the breadcrumb alone", async () => {
+test("a needFullFeed the remote socket cannot carry is held like its twins: no toast, one hostconn hold row, flushed on the open behind the ready; a host with no conn drops it with the breadcrumb alone", async () => {
   await withManager(({ fm, emitted, sent }) => {
-    fm.outbound({ type: "ready", proto: 2 });   // the page's proto: the open posts a ready, so the flush's place before it is visible
+    fm.outbound({ type: "ready", proto: 2 });   // the page's proto: the open posts a ready first, so the flush's place behind it is visible
     fm.openRemote(HOST, true);
     const ws = FakeWS.made[0];                  // left CONNECTING: no open()
     ws.frame({ type: "feedDelta", now: 510, buildId: 2, asks: [card(SID_A, 2)] });
@@ -232,8 +232,8 @@ test("a needFullFeed the remote socket cannot carry is held like its twins: no t
     assert.deepEqual(rows("feedDelta-nobase"), [{ host: HOST, buildId: 2 }], "the no-base row still says why the ask was raised");
     assert.deepEqual(ws.sent, [], "nothing goes on a socket that is not open");
     ws.open();
-    assert.deepEqual(ws.sent, [{ type: "needFullFeed" }, { type: "ready", proto: 2 }],
-      "flushed on the open event itself, ahead of the ready post (flushPending runs first): the kernel serves a full frame at once, one extra full per reconnect at most, as for needFull and needSlot");
+    assert.deepEqual(ws.sent, [{ type: "ready", proto: 2 }, { type: "needFullFeed" }],
+      "flushed on the open event itself, behind the ready (the ready is this socket's first word, federation.ts onopen 2026-09-18; the held ask rides right behind it, so the kernel serves a full frame at once, one extra full per reconnect at most, as a held needSlot does)");
     assert.deepEqual(last(rows("hostconn")), { host: HOST, ev: "open", flushed: ["needFullFeed"] }, "the open row names what flushed");
     assert.equal(fm.conns.get(HOST).pending.size, 0);
     assert.deepEqual(warns(), []);
