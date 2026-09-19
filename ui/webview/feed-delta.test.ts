@@ -223,7 +223,7 @@ test("with no local frame yet the pair comes from the newest REMOTE arrival — 
   assert.equal("now" in none, false, "a frame with no clock (an older kernel) anchors nothing");
 });
 
-test("federation stamps the arrival beside the frame on both wire paths, drops it with the host, and the merge is handed it", () => {
+test("federation stamps the arrival beside the frame on the wire paths, drops it with the host, and the merge is handed it", () => {
   assert.match(FED, /private perHostFeedAt: Record<string, number> = \{\};/);
   assert.match(FED, /this\.perHostFeed\[host\] = m;\n\s*this\.perHostFeedAt\[host\] = Date\.now\(\);/, "a full frame's arrival");
   assert.match(FED, /this\.perHostFeed\[host\] = applyFeedDelta\(base, m\);\n\s*this\.perHostFeedAt\[host\] = Date\.now\(\);[^\n]*\n\s*this\.emitMergedFeed\(\);/, "a delta's arrival");

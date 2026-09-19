@@ -208,3 +208,136 @@ test("the local host's path is unchanged: a local delta applies onto the merge's
     fm.conns.get(HOST).closed = true;
   });
 });
+
+// ── the ask's class (2026-09-19) ──────────────────────────────────────────────────────────────────────────────────────
+// needFullFeed to a remote socket is the pane's own bookkeeping, held on the conn like needFull and needSlot and never
+// toasted (BOOKKEEPING). This pins the CLASSIFICATION, not a road a browser reaches today: FakeWS.frame dispatches
+// whatever the socket's readyState, where a spec-faithful socket never dispatches a message on a socket that is not
+// OPEN, so a real page raises the ask only on the socket the delta just arrived on, which is open. Before the
+// registration the same frame took the gesture arm: a warn toast naming the wire word, and a senddrop row.
+test("a needFullFeed the remote socket cannot carry is held like its twins: no toast, one hostconn hold row, flushed first on the open; a host with no conn drops it with the breadcrumb alone", async () => {
+  await withManager(({ fm, emitted, sent }) => {
+    fm.outbound({ type: "ready", proto: 2 });   // the page's proto: the open posts a ready, so the flush's place before it is visible
+    fm.openRemote(HOST, true);
+    const ws = FakeWS.made[0];                  // left CONNECTING: no open()
+    ws.frame({ type: "feedDelta", now: 510, buildId: 2, asks: [card(SID_A, 2)] });
+    const warns = () => emitted.filter((m) => m && m.type === "warn");
+    const rows = (what: string) => sent.filter((x) => x && x.type === "clientDiag" && x.what === what).map((x) => x.data);
+    assert.deepEqual(warns(), [], "no toast: the user sent nothing for a toast to be about");
+    assert.deepEqual(rows("senddrop"), [], "not a drop: held");
+    assert.deepEqual(rows("hostconn").filter((d) => d.ev === "hold"), [{ host: HOST, ev: "hold", msgType: "needFullFeed", rs: 0 }],
+      "held once, journaled in the hostconn family at the not-held to held transition");
+    assert.equal(fm.conns.get(HOST).pending.size, 1);
+    assert.deepEqual(rows("feedDelta-nobase"), [{ host: HOST, buildId: 2 }], "the no-base row still says why the ask was raised");
+    assert.deepEqual(ws.sent, [], "nothing goes on a socket that is not open");
+    ws.open();
+    assert.deepEqual(ws.sent, [{ type: "needFullFeed" }, { type: "ready", proto: 2 }],
+      "flushed on the open event itself, ahead of the ready post (flushPending runs first): the kernel serves a full frame at once, one extra full per reconnect at most, as for needFull and needSlot");
+    assert.deepEqual(last(rows("hostconn")), { host: HOST, ev: "open", flushed: ["needFullFeed"] }, "the open row names what flushed");
+    assert.equal(fm.conns.get(HOST).pending.size, 0);
+    assert.deepEqual(warns(), []);
+    // a host this page holds no conn for (detached since the frame): nothing to hold it on, dropped with the breadcrumb alone
+    fm.closeRemote(HOST);
+    fm.applyRemoteFeedDelta(HOST, { type: "feedDelta", now: 520, buildId: 3, asks: [card(SID_A, 3)] });
+    assert.deepEqual(rows("senddrop"), [{ host: HOST, msgType: "needFullFeed", why: "no-conn" }], "the no-conn drop names its why");
+    assert.deepEqual(warns(), [], "and still no toast");
+  });
+});
+
+// ── two hosts, overlapping names (2026-09-19) ─────────────────────────────────────────────────────────────────────────
+// Session names and sids are not unique across hosts: a hub federating two boxes that both run a session called `api`
+// (here even the same bare sid, the hardest case) must apply each host's delta onto THAT host's raw frame and nothing
+// else. These pin the per-host keying of perHostFeedRaw, not the feature: they are green at this head and red under
+// the mutation that keys the raw base by a constant at its four sites (the store, the two reads in applyRemoteFeedDelta,
+// the detach), which the single-host tests above cannot see (a review round found that a "host B untouched after host
+// A's delta" case stays green under it: only DIFFERENT content per host, and a no-base leg with one host holding a base
+// and the other none, make the collapse visible). Asserted by prefixed sid, never by position: mergeHostFeeds
+// concatenates per host in hostSeq order.
+const HOST_A = "TESTHOSTA";
+const HOST_B = "TESTHOSTB";
+const SID_S = "11111111-2222-4333-8444-000000000901";   // "api" on BOTH hosts
+const cardOn = (n: number, text: string) => ({ itemId: SID_S + ":g" + n, sid: SID_S, name: "api", text, t: 1000 - n, column: "working" });
+const fullA = () => ({ type: "feed", now: 500, buildId: 1, asks: [cardOn(1, "goal 1 on A")], working: [SID_S], ledgers: [ledger(SID_S, "api", ["tA"])] });
+const fullB = () => ({ type: "feed", now: 500, buildId: 1, asks: [cardOn(3, "goal 3 on B")], working: [], ledgers: [ledger(SID_S, "api", ["tB"])] });
+const asksOf = (m: any, host: string) => m.asks.filter((a: any) => a.sid === host + ":" + SID_S).map((a: any) => a.itemId);
+const topsOf = (m: any, host: string) => m.ledgers.filter((l: any) => l.sid === host + ":" + SID_S).map((l: any) => l.ledger.tops);
+
+// dial, open, and hand the socket that host's first full frame; returns the socket
+function attachedAs(fm: any, host: string, full: any): FakeWS {
+  fm.openRemote(host, true);
+  const ws = last(FakeWS.made);
+  ws.open();
+  ws.frame(full);
+  return ws;
+}
+
+test("two hosts with the same session name and sid: each host's rows move only on its own deltas, applied onto its own raw frame", async () => {
+  await withManager(({ fm, emitted, sent }) => {
+    const wsA = attachedAs(fm, HOST_A, fullA());
+    const wsB = attachedAs(fm, HOST_B, fullB());
+    let m = last(feeds(emitted));
+    assert.deepEqual([asksOf(m, HOST_A), asksOf(m, HOST_B)], [[SID_S + ":g1"], [SID_S + ":g3"]], "both hosts' cards merged, each under its own prefix");
+    wsA.frame({ type: "feedDelta", now: 510, buildId: 2, asks: [cardOn(2, "goal 2 on A")], removeAsks: [SID_S + ":g1"], ledgers: [ledger(SID_S, "api", ["tA2"])] });
+    m = last(feeds(emitted));
+    assert.deepEqual(asksOf(m, HOST_A), [SID_S + ":g2"], "A's delta replaced A's card");
+    assert.deepEqual(asksOf(m, HOST_B), [SID_S + ":g3"], "…and left B's, the same bare sid, alone");
+    assert.deepEqual([topsOf(m, HOST_A), topsOf(m, HOST_B)], [[["tA2"]], [["tB"]]], "A's ledger moved, B's stands");
+    assert.deepEqual(m.working, [HOST_A + ":" + SID_S], "the non-keyed fields came from A's own raw base");
+    assert.deepEqual([wsA.sent, wsB.sent], [[], []], "nothing asked of either kernel");
+    assert.deepEqual(fm.perHostFeedRaw[HOST_A].asks.map((a: any) => a.itemId), [SID_S + ":g2"], "A's raw base advanced (bare ids: the key is the host alone)");
+    assert.deepEqual(fm.perHostFeedRaw[HOST_B].asks.map((a: any) => a.itemId), [SID_S + ":g3"], "B's raw base is untouched");
+    // B's turn: ledgers: [] beside removeLedgers, since applyFeedDelta applies ledger removals only when `ledgers` is an array
+    wsB.frame({ type: "feedDelta", now: 520, buildId: 2, removeAsks: [SID_S + ":g3"], ledgers: [], removeLedgers: [SID_S] });
+    m = last(feeds(emitted));
+    assert.deepEqual([asksOf(m, HOST_B), topsOf(m, HOST_B)], [[], []], "B's rows are gone");
+    assert.deepEqual([asksOf(m, HOST_A), topsOf(m, HOST_A)], [[SID_S + ":g2"], [["tA2"]]], "A's are as A's delta left them");
+    assert.deepEqual([wsA.sent, wsB.sent], [[], []]);
+    assert.equal(sent.filter((x) => x && x.type === "clientDiag" && x.what === "feedDelta-nobase").length, 0);
+    fm.conns.get(HOST_A).closed = true; fm.conns.get(HOST_B).closed = true;
+  });
+});
+
+test("two hosts, one base: a delta from the host with no full frame held asks THAT host alone, and the other host's base is not applied onto", async () => {
+  await withManager(({ fm, emitted, sent }) => {
+    const wsA = attachedAs(fm, HOST_A, fullA());
+    fm.openRemote(HOST_B, true);
+    const wsB = last(FakeWS.made);
+    wsB.open();                                  // no full frame from B
+    const before = feeds(emitted).length;
+    wsB.frame({ type: "feedDelta", now: 510, buildId: 2, asks: [cardOn(4, "goal 4 on B")] });
+    assert.deepEqual(wsB.sent, [{ type: "needFullFeed" }], "B's kernel is asked for a full frame on B's socket");
+    assert.deepEqual(wsA.sent, [], "A's is not");
+    assert.equal(sent.filter((x) => x && x.type === "needFullFeed").length, 0, "nor the local kernel");
+    const nobase = sent.filter((x) => x && x.type === "clientDiag" && x.what === "feedDelta-nobase");
+    assert.deepEqual(nobase.map((x) => x.data.host), [HOST_B], "one no-base row, naming B");
+    assert.equal(feeds(emitted).length, before, "nothing emitted: B's delta was not applied onto A's base");
+    const m = last(feeds(emitted));
+    assert.deepEqual([asksOf(m, HOST_A), asksOf(m, HOST_B)], [[SID_S + ":g1"], []], "the merge carries A's rows only");
+    assert.deepEqual(fm.perHostFeedRaw[HOST_A].asks.map((a: any) => a.itemId), [SID_S + ":g1"], "A's raw base is as A's full left it");
+    fm.conns.get(HOST_A).closed = true; fm.conns.get(HOST_B).closed = true;
+  });
+});
+
+test("two hosts: detaching one drops its raw base and leaves the other's; the re-attached host's first delta asks on its NEW socket only", async () => {
+  await withManager(({ fm, emitted }) => {
+    const wsA = attachedAs(fm, HOST_A, fullA());
+    const wsB = attachedAs(fm, HOST_B, fullB());
+    fm.closeRemote(HOST_B);
+    assert.equal(fm.perHostFeedRaw[HOST_B], undefined, "B's raw base went with B");
+    assert.deepEqual(fm.perHostFeedRaw[HOST_A].asks.map((a: any) => a.itemId), [SID_S + ":g1"], "A's raw base survived B's detach");
+    wsA.frame({ type: "feedDelta", now: 530, buildId: 3, asks: [cardOn(1, "goal 1 on A, edited")] });
+    assert.deepEqual(wsA.sent, [], "A's next delta applied onto A's base: nothing asked");
+    let m = last(feeds(emitted));
+    assert.deepEqual(m.asks.map((a: any) => [a.sid, a.text]), [[HOST_A + ":" + SID_S, "goal 1 on A, edited"]], "A's card moved and no B row remains");
+    fm.openRemote(HOST_B, true);
+    const wsB2 = last(FakeWS.made);
+    assert.notEqual(wsB2, wsB, "a fresh conn and socket for B");
+    wsB2.open();
+    wsB2.frame({ type: "feedDelta", now: 540, buildId: 2, asks: [cardOn(5, "goal 5 on B")] });
+    assert.deepEqual(wsB2.sent, [{ type: "needFullFeed" }], "B's first delta on the new socket finds no base and asks B's kernel");
+    assert.deepEqual([wsA.sent, wsB.sent], [[], []], "…on that socket alone");
+    m = last(feeds(emitted));
+    assert.deepEqual(asksOf(m, HOST_A), [SID_S + ":g1"], "A's rows stand throughout");
+    fm.conns.get(HOST_A).closed = true; fm.conns.get(HOST_B).closed = true;
+  });
+});

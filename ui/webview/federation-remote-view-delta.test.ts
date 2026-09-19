@@ -221,3 +221,57 @@ test("the LOCAL socket's frames pass untouched: the shim reassembles its own del
     assert.deepEqual(localAsks(sent), [], "this manager asks nothing for the local socket");
   });
 });
+
+// ── the one frame neither path decodes (2026-09-19) ──────────────────────────────────────────────────────────────────
+// A patch for a slot this receiver has no table for (a kernel newer than this bundle) is asked for whole by the receiver
+// (needSlot on this conn, view-deltas.ts recover) and said first by the manager: one hostconn row under keys the family
+// already has (ev delta-unknown-slot, why = the slot), and a console line. A patch with no slot at all is said the same
+// way and asked for nothing (there is no slot to name). Neither reaches the pane, and the known slot's base stands.
+test("a remote patch for a slot this side does not decode is said (a hostconn row naming the slot) and asked for whole on the sending socket; a slotless one is said and dropped; the known slot's base survives", async () => {
+  await withManager("timeline", ({ fm, emitted, sent }) => {
+    seedLocalTimeline(fm);
+    const ws = attached(fm);
+    const before = barsOf(emitted).length;
+    const rows = () => sent.filter((x) => x && x.type === "clientDiag" && x.what === "hostconn" && x.data && x.data.ev === "delta-unknown-slot").map((x) => x.data);
+    ws.frame({ type: "delta", slot: "lanes", base: 0, rev: 1, coll: {}, rest: { now: 505 } });
+    assert.deepEqual(rows(), [{ host: HOST, ev: "delta-unknown-slot", why: "lanes" }], "said once, naming the host and the slot, under the family's existing keys");
+    assert.deepEqual(ws.sent, [{ type: "needSlot", slot: "lanes" }], "…and that kernel is asked for the whole slot on this conn (its full frame renders through the raw dispatch below)");
+    assert.equal(barsOf(emitted).length, before, "nothing emitted for it");
+    assert.equal(emitted.filter((m) => m && m.type === "delta").length, 0, "the raw patch never reached the pane");
+    ws.frame({ type: "delta" });
+    assert.deepEqual(rows().map((r) => r.why), ["lanes", ""], "a slotless patch is said too (an empty why)");
+    assert.deepEqual(ws.sent, [{ type: "needSlot", slot: "lanes" }], "…and asks for nothing: there is no slot to name");
+    ws.frame(barsPatch(0, bar("seg-2", 1010, 1015, "second"), 506));
+    assert.deepEqual(ids(last(barsOf(emitted)).turns[HOST + ":" + SID_A]), ["seg-1", "seg-2"], "the bars base held through both: a known slot's patch still applies");
+    assert.deepEqual(localAsks(sent), []);
+    fm.conns.get(HOST).closed = true;
+  });
+});
+
+// ── two hosts, the same bare lane (2026-09-19) ──────────────────────────────────────────────────────────────────────
+// A receiver per conn, not one shared: two hosts whose bars frames carry the same bare lane (a session sid is not
+// unique across hosts) each reassemble onto their own base. Different bar ids per host make a shared base visible
+// (A's patch onto B's full would put B's bar on A's lane).
+test("two hosts with the same bare lane: a patch from one host reassembles onto that host's own base and moves only its lane", async () => {
+  await withManager("timeline", ({ fm, emitted }) => {
+    seedLocalTimeline(fm);
+    const HOST_B = "TESTHOSTB";
+    const wsA = attached(fm);   // TESTHOST: lane SID_A holds seg-1
+    fm.openRemote(HOST_B, true);
+    const wsB = last(FakeWS.made);
+    wsB.open();
+    wsB.frame({ type: "bars", turns: { [SID_A]: [bar("b-1", 2000, 2005, "B's first")] }, judging: {}, messages: [], now: 600, warming: false });
+    let m = last(barsOf(emitted));
+    assert.deepEqual([ids(m.turns[HOST + ":" + SID_A]), ids(m.turns[HOST_B + ":" + SID_A])], [["seg-1"], ["b-1"]], "both hosts' lanes merged under their own prefixes");
+    wsA.frame(barsPatch(0, bar("seg-2", 1010, 1015, "second"), 505));
+    m = last(barsOf(emitted));
+    assert.deepEqual(ids(m.turns[HOST + ":" + SID_A]), ["seg-1", "seg-2"], "A's patch appended to A's lane, onto A's own base");
+    assert.deepEqual(ids(m.turns[HOST_B + ":" + SID_A]), ["b-1"], "B's lane, the same bare key, stands");
+    assert.deepEqual([wsA.sent, wsB.sent], [[], []], "nothing asked of either kernel");
+    wsB.frame(barsPatch(0, bar("b-2", 2010, 2015, "B's second"), 610));
+    m = last(barsOf(emitted));
+    assert.deepEqual([ids(m.turns[HOST + ":" + SID_A]), ids(m.turns[HOST_B + ":" + SID_A])], [["seg-1", "seg-2"], ["b-1", "b-2"]], "and B's onto B's");
+    assert.deepEqual([wsA.sent, wsB.sent], [[], []]);
+    fm.conns.get(HOST).closed = true; fm.conns.get(HOST_B).closed = true;
+  });
+});

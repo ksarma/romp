@@ -14,7 +14,7 @@
 import { adoptArrivals, applyViewOrder, applyViewOrderTo, churnSwaps, healOrder, pruneViewOrder,
          readViewOrder, writeViewOrder, VIEW_ORDER_KEY, VIEW_ORDER_EVENT } from "./view-order";
 import { applyFeedDelta } from "./feed-delta";
-import { ViewDeltas } from "./view-deltas";
+import { ViewDeltas, VIEW_DELTA_KINDS } from "./view-deltas";
 import { adoptViews, capsAdopts, announcedSeq, announcedAfter } from "./views-writes";
 import { hostOf, bareId, hostDialLive } from "./host-prefix";
 import { installPerfTelemetry, classifyFrame, type RompPerf } from "./perf-telemetry";
@@ -119,7 +119,13 @@ const K = "\u001f";   // the key separator: a control character no session id, p
 export const BOOKKEEPING: ReadonlyMap<string, (m: any) => string | null> = new Map<string, (m: any) => string | null>([
   ["activeTab",      ()  => "activeTab"],                          // render.ts notifyActive: the tab this pane is looking at
   ["needFull",       (m) => "needFull" + K + m.id],                // render.ts requestFullSession: a session's re-send (gap / nobase / skeleton / prefetch)
-  ["needSlot",       (m) => "needSlot" + K + m.slot],              // fleet.ts: a view slot's re-send after a rejected delta
+  ["needSlot",       (m) => "needSlot" + K + m.slot],              // fleet.ts, and each remote conn's view-delta receiver (view-deltas.ts via Conn.viewDeltas): a view slot's re-send after a rejected delta
+  // needFullFeed (2026-09-19): applyRemoteFeedDelta's ask to a remote host for its full feed when a delta finds no
+  // base; one per conn, like needSlot per slot. Registered for the classification, not for repair: a browser's
+  // message task never dispatches a frame on a socket that has left OPEN, so today the ask is raised only on an
+  // open socket and goes at once; applyRemoteFeedDelta re-asks on the next delta anyway. Should remote dispatch
+  // ever leave the socket handler, the ask holds here and never toasts, as its twins do.
+  ["needFullFeed",   ()  => "needFullFeed"],                       // federation.ts applyRemoteFeedDelta: a remote host's full feed re-send when a delta finds no base
   ["loadOlder",      (m) => "loadOlder" + K + m.id],               // render.ts: the head's older page on a scroll-up or a deep link into it
   ["loadAround",     (m) => "loadAround" + K + m.id],              // render.ts: a window around a deep-link anchor past the resident list (proto 2)
   ["loadTurns",      (m) => "loadTurns" + K + m.id + K + m.lo + K + m.hi],   // render.ts requestTurns: a gap's page by turn span (T386 stage 2); flushed on the open like loadOlder, one per span
@@ -1207,7 +1213,20 @@ export class FederationManager {
     // and pass untouched, as does a frame for a host this manager holds no conn for (a detached host's straggler).
     if (host !== LOCAL) {
       const vd = this.conns.get(host)?.viewDeltas;
-      if (vd) { msg = vd.receive(msg); if (msg === null) return; }
+      if (vd) {
+        // A patch for a slot this receiver has no table for (a kernel newer than this bundle, serving a slot it does
+        // not know) is the one frame neither path decodes: the receiver asks that kernel for the whole slot and yields
+        // nothing, and the drop is said here first, the way every other drop on this layer is (a hostconn row under the
+        // keys the family already has, and the console), never silently. A known slot's patch that cannot apply is the
+        // receiver's own resync (needSlot on this conn) and needs no row: the full frame it earns is the repair.
+        if (msg && msg.type === "delta" && !(typeof msg.slot === "string" && Object.prototype.hasOwnProperty.call(VIEW_DELTA_KINDS, msg.slot))) {
+          const slot = typeof msg.slot === "string" ? msg.slot : "";
+          try { console.error("federation: a delta frame from " + host + " names a slot this side does not decode (" + (slot || "no slot") + "): asking that kernel for the whole slot"); } catch (e) { /* nothing to report to */ }
+          this.diag("hostconn", { host, ev: "delta-unknown-slot", why: slot });
+        }
+        msg = vd.receive(msg);
+        if (msg === null) return;
+      }
     }
     const m = prefixInbound(host, msg);
     if (m && m.type === "session" && typeof m.id === "string") {
