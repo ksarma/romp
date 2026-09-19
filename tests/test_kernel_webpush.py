@@ -92,7 +92,13 @@ def _no_crypto():
     every loaded cryptography module and the top-level name read None in sys.modules, which the
     import system raises ModuleNotFoundError for, and the kernel's cache is reset so the import is
     really attempted (patching _PUSH_CRYPTO to a sentinel would only prove the sentinel). Reset again
-    on the way out: the next call is the retry a re-installed package is found by."""
+    on the way out: the next call is the retry a re-installed package is found by.
+
+    Mint keys (_mint_browser_keys, _sub_body) BEFORE entering the block, never inside it: the
+    package's Rust bindings import `cryptography.hazmat.primitives.asymmetric.ec` lazily on the first
+    key generated in the process and cache it, so a mint inside the block meets the hidden None and
+    raises the halt from the TEST, before the route is reached. That only showed on a process where no
+    earlier test had minted (the test alone, or an xdist split of this module) — 2026-09-19."""
     hidden = {k: None for k in list(sys.modules) if k == "cryptography" or k.startswith("cryptography.")}
     hidden["cryptography"] = None
     km._PUSH_CRYPTO[0] = None
@@ -660,8 +666,9 @@ class SubscribeRoutes(unittest.TestCase):
         # is ONE deliberate sentence (_push_crypto_missing) that also names the exact command for this
         # install layout, bin/romp-sdk-setup in this checkout, which installs the package into the SDK
         # venv the kernel reads; the bell's This-device sub-line shows the body verbatim
+        sub = self._sub_body()   # minted before the block: see _no_crypto
         with _no_crypto():
-            code, body = self._post("/push/subscribe", self._sub_body())
+            code, body = self._post("/push/subscribe", sub)
             kcode, kbody = self._get_text("/push/vapid-key")
         self.assertEqual(code, 500)
         self.assertIn("'cryptography'", body)
@@ -676,8 +683,9 @@ class SubscribeRoutes(unittest.TestCase):
     def test_a_package_installed_since_is_found_on_the_next_tap_without_a_restart(self):
         # the message sends the user to bin/romp-sdk-setup and says to turn the switch on again: that
         # only holds if a miss is not cached for the kernel's life (it was, as _PUSH_CRYPTO[0] = False)
+        sub = self._sub_body()   # minted before the block: see _no_crypto
         with _no_crypto():
-            code, _ = self._post("/push/subscribe", self._sub_body())
+            code, _ = self._post("/push/subscribe", sub)
             self.assertEqual(code, 500)
             self.assertIsNone(km._push_crypto())
         code, _ = self._post("/push/subscribe", self._sub_body())
