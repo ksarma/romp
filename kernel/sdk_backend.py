@@ -12628,12 +12628,17 @@ class SdkBackend:
                     reason = ht.host_exit_reason(self.state_dir, sess.sid, since=mark)
                     # the file a refused host leaves is named per class (review round 3 of the socket-mode fix, 2026-09-19): a
                     # host refused in its constructor (a hosts/ or hosts/<sid>/ that is a symlink, another uid's or stubbornly
-                    # loose) exits before writing any row, so its traceback is on host.stderr beside the specification and no
-                    # host.log exists for it; host.log stays the tail so the reason, when a row says one, follows it
-                    said = ("exited before serving its socket (code %s); its reason is in host.stderr beside the specification when it "
-                            "exited before writing a row (a hosts/ or hosts/<sid>/ it refused: review round 3 of the socket-mode fix, "
-                            "2026-09-19), else see hosts/%s/host.log%s"
-                            % (proc.returncode, sess.sid, (": " + reason) if reason else ""))
+                    # loose) exits before writing any row, so its traceback is on hosts/<sid>/host.stderr beside the
+                    # specification and no host.log exists for it. The string says what happened, then where to look, and
+                    # nothing else (round 5 of the same review, 2026-09-19: it reaches the operator twice, as the error
+                    # centre's row and as the launch error, and through round 4 it carried this comment's citation and its
+                    # explanation; the why lives here, once). host.log stays the tail so the reason, when a row says one,
+                    # follows it: main's pins in tests/test_session_host_sdk_pin.py hold "see hosts/<sid>/host.log" as the
+                    # no-reason ending and "host.log: <reason>" as the other, and PreludeRefusalRead in
+                    # tests/test_session_host.py holds the code and host.stderr; so host.stderr, the file of the class that
+                    # has no host.log, is named before the tail.
+                    said = ("exited before serving its socket (code %s); see hosts/%s/host.stderr when it wrote no host.log, else see "
+                            "hosts/%s/host.log%s" % (proc.returncode, sess.sid, sess.sid, (": " + reason) if reason else ""))
                     # The drift fact first, on its own row (fresh-1 as the closing check ruled it, 2026-09-18): a
                     # host that imported an untested SDK wrote so before it failed, and that fact is filed whatever
                     # the failure was, with the remedy, once per kernel life per version pair. The failure's row below

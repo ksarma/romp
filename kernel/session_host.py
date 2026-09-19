@@ -686,6 +686,13 @@ class PipeCliTransport:
 # derives the number by binding throwaway sockets at the lengths around it, so this is a measured limit, not an
 # assumed one.
 SOCK_PATH_MAX = 103 if sys.platform == "darwin" else 107
+# The floor: SOCK_PATH_MAX's minimum across the platforms the expression above names (darwin's 103), one number under
+# one name. It exists because a guard that reads SOCK_PATH_MAX is exactly as permissive as the platform it runs on: a
+# setUp guard on Linux lets a root through at 104 to 107 bytes that the same test then breaks on at darwin's 103, with
+# no run having said so. A guard that must hold everywhere reads this (asked by the session-host lab fix's setUp guard
+# after fork PR #851's round-2 ruling, 2026-09-19). tests/test_session_host.py SocketBudget pins it equal to the minimum
+# over the expression's two literal arms, read from this source, so a change to either arm that leaves this behind reds.
+SOCK_PATH_FLOOR = 103
 
 _TEMP_DIGITS = "0123456789abcdefghijklmnopqrstuv"        # base 32 as int(s, 32) reads it back
 _TEMP_NAME = re.compile(r"^([0-9a-v]{5})[0-9a-v]{4}\.tmp$")
@@ -780,8 +787,22 @@ def hosts_dir(state_dir) -> Path:
     SpawnSpec.test_a_symlink_at_hosts_or_a_tighten_that_does_not_take_fails_the_spawn (the kernel's road, under a 000
     umask) and tests/test_session_host.py HostsDir, SocketMode.test_hosts_is_owner_only_once_the_host_binds and
     HostProcess.test_a_real_host_leaves_hosts_owner_only (the host's road, in-process and as a real process). The
-    parents=True is for the state root, which every install has (kernel/judge.py makes it 0700 at import); nothing is
-    made below `hosts/` until this has returned."""
+    parents=True is for the state root, which every install has (kernel/judge.py makes it 0700 at import: a mkdir, then
+    a chmod read back); nothing is made below `hosts/` until this has returned.
+    THE ROOT'S MODE WHEN THIS CALL MAKES IT (kernel-7, round 5 of the review, 2026-09-19; read back, not assumed):
+    pathlib's Path.mkdir applies `mode` to the leaf alone and makes each missing parent with its default 0777, so a
+    state root that is not on disk when this runs lands at the process umask's mode, 0755 under 022, 0700 under 077,
+    0777 under 000, while `hosts/` below it is 0700 in all three (tests/test_session_host.py StateRootByHostsDir reads
+    every one of those modes back under each umask). Nothing here tightens the root, and the root matters: it is the
+    parent of `hosts/` (owner-only by this code) and of the registry and the parked-ops files (owner-only since fork
+    PR #789), and its traverse bit is what stands between a peer uid and any of them. A finding for the queue, not a
+    fix in this change. Where it reaches: kernel/judge.py's import is the road every install's root takes, and it is a
+    different creator; the kernel writes the spawn specification in a process that made that root at import, and the
+    host's two calls here (its constructor and _prepare_socket) run over the specification's state_dir, the root the
+    kernel wrote the specification under, so on the roads this code runs today the root is on disk before this call
+    and the mode above is never the root's. It is the creator's own shape, reachable by a caller over a root no romp
+    tool has made (a test's fresh root, a host run by hand over one). The fix, queued: the root's own mkdir carrying
+    0700 and read back, the leaf's shape."""
     return owner_only_dir(Path(state_dir) / "hosts", "hosts directory", parents=True)
 
 
@@ -1443,7 +1464,13 @@ class SessionHost:
             # for a live SDK CLI, in exactly the case that matters here. Unconfirmed, the lease stays and a lease-kept row
             # says so (the kind and the CLI's pid, nothing else): the kernel reads that lease as an orphan's and waits
             # for the CLI to finish, as it did before this fix, with no bound on that wait (the reviewer queued the bound
-            # as a change of its own).
+            # as a change of its own). That lease-kept row IS the operator's handle (kernel-5's clause, round 5 of the
+            # review, 2026-09-19). Its fields, read by execution from the row this arm writes: t, kind ("lease-kept") and
+            # cliPid, and tests/test_session_host.py SocketMode's kept-lease case pins the set as exactly those three. The
+            # row names the pid to end, and ending that pid is the recovery: over the kept lease the kernel's connect
+            # road waits and spawns nothing while the pid the lease names lives, and spawns once after it is gone
+            # (KeptLease, on the real backend). So the one state on this road that needs a human to clear is visible,
+            # with the pid, to the human who clears it.
             try:
                 await self.transport.close()
             except Exception:

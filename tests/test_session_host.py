@@ -2016,6 +2016,54 @@ class SocketBudget(unittest.TestCase):
         self.assertEqual(under("linux"), 107, "Linux: sun_path is 108 bytes, 107 usable")
         self.assertEqual(under(sys.platform), sh.SOCK_PATH_MAX, "the expression read is the one the module evaluated")
 
+    def test_the_floor_is_the_minimum_over_the_platform_expressions_two_arms(self):
+        """SOCK_PATH_FLOOR, one flat number for a guard that must hold on every platform (round 5 of the review, 2026-09-19;
+        asked by the session-host lab fix's setUp guard after fork PR #851's round-2 ruling): pinned to the minimum over
+        SOCK_PATH_MAX's two literal arms as the source holds them, and to the minimum of that expression evaluated under
+        both platform names, never to a second hand-typed 103 alone. Refusable: SOCK_PATH_FLOOR = 104 reds both."""
+        src = Path(sh.__file__).read_text()
+        node = next(n for n in ast.parse(src).body if isinstance(n, ast.Assign)
+                    and any(isinstance(t, ast.Name) and t.id == "SOCK_PATH_MAX" for t in n.targets))
+        self.assertIsInstance(node.value, ast.IfExp, "the platform expression: one literal arm per platform")
+        arms = (node.value.body.value, node.value.orelse.value)                  # the literals, read from the source
+        expr = compile(ast.Expression(body=node.value), sh.__file__, "eval")
+        under = lambda platform: eval(expr, {"sys": types.SimpleNamespace(platform=platform)})
+        self.assertEqual(sh.SOCK_PATH_FLOOR, min(arms), "the floor is the smaller arm as written: %r" % (arms,))
+        self.assertEqual(sh.SOCK_PATH_FLOOR, min(under("darwin"), under("linux")), "and the smaller value the expression gives")
+        self.assertLessEqual(sh.SOCK_PATH_FLOOR, sh.SOCK_PATH_MAX, "never above the platform's own budget")
+
+
+class StateRootByHostsDir(unittest.TestCase):
+    """kernel-7 (round 5 of the review, 2026-09-19): the state root's mode when hosts_dir's parents=True makes it, READ
+    BACK under three umasks and never assumed. pathlib's Path.mkdir applies `mode` to the leaf alone and makes a missing
+    parent with its default 0777, so the root lands at the umask's mode (0755 under 022, 0700 under 077, 0777 under 000)
+    while hosts/ below it is 0700 in every case. A characterisation of the mechanism as it stands, filed as a finding
+    for the queue and not fixed in this change (hosts_dir's docstring says which roads can reach it: only a caller over
+    a root no romp tool has made); the queued fix, 0700 on the root's own mkdir read back, re-points this pin."""
+
+    def _made_under(self, umask):
+        """hosts_dir over a root not yet on disk, under `umask` (restored); the root's and hosts/'s modes as read back."""
+        base = tempfile.mkdtemp(prefix="sr-")
+        self.addCleanup(shutil.rmtree, base, True)
+        root = Path(base) / "state"
+        self.assertFalse(root.exists())
+        old = os.umask(umask)
+        try:
+            self.assertEqual(sh.hosts_dir(root), root / "hosts")
+        finally:
+            os.umask(old)
+        return stat.S_IMODE(os.lstat(root).st_mode), stat.S_IMODE(os.lstat(root / "hosts").st_mode)
+
+    def test_the_root_hosts_dir_makes_on_the_way_lands_at_the_umasks_mode_and_hosts_below_it_is_0700(self):
+        current = os.umask(0)                           # the runner's own umask, read and put back
+        os.umask(current)
+        for umask, expected in ((current, 0o777 & ~current), (0o022, 0o755), (0o077, 0o700)):
+            with self.subTest(umask="%03o" % umask):
+                root_mode, hosts_mode = self._made_under(umask)
+                self.assertEqual(root_mode, expected, "the root's mode read back under umask %03o: the umask's, not the code's" % umask)
+                self.assertEqual(hosts_mode, 0o700, "hosts/ below it: the leaf carries the mode")
+        self.assertEqual(os.umask(current), current, "the umask is the one the case found")
+
 
 class HostsDir(unittest.TestCase):
     """sh.hosts_dir called directly, the checks it takes whole from kernel/judge.py's _ensure_judge_scratch (the review of
