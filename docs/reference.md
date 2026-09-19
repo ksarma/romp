@@ -3660,9 +3660,11 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   last two seconds, or one whose listing failed, is stored unvouched and
   walked again until it is quiet and lists cleanly, the racy-stamp rule,
   since a filesystem stamps with a coarser clock than the wall clock and a
-  failure moves no stamp (and such a tree, like a missing root or a stamp
-  whose stat fails, is not held for the cycle either: nothing failed is
-  served);
+  failure moves no stamp (a tree with a racy stamp is stored unvouched
+  across cycles and walked again at the next cycle's first read, but held
+  for the rest of the cycle it was walked in like any clean walk; a walk
+  with a failed listing or child lstat, a missing root and a stamp whose
+  stat fails are not held for the cycle: nothing failed is served);
   `nudgeGate` is the auto-nudge walk's
   planner-placement gate, derived once per (parse, store) and served while
   both stand, and on this fork while `cleared.jsonl` stands too, its stat a
