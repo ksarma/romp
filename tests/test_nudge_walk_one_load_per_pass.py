@@ -19,15 +19,17 @@ load_goals in the decision path). Three witnesses count it. By execution: a reco
 one door both of the judge's boundary wrappers reach (`load_goals_shared_or_fault` hands the name to `_or_fault`, which
 resolves it from the judge's globals at call time, so every spelling of the shared read arrives at this door), and a
 second recorder on `jd.load_goals`, the writer's door. Each records the call with its caller's function, file and line,
-stepping over the judge's boundary frames by code identity (never by name), and calls through to the real loader, so
-nothing about the shared cache is stubbed. A call from the look's body or from its gate wrapper (`_nudge_look_gated`'s
+stepping over the judge's boundary frames by code identity (never by name) and only while a wrapper's frame sits at its
+pass-through call (the line read from the wrapper's source at setUp), so a load written inside a wrapper's own body is
+named for the wrapper in the judge's file, and calls through to the real loader, so nothing about the shared cache is
+stubbed. A call from the look's body or from its gate wrapper (`_nudge_look_gated`'s
 inner function, the same mechanism) is the walk's, a call from `_nudge_placement_gate` is the gate's, a call from
 `_awaiting_wake_outcomes` is the wake sweep's (the store's third reader on the pass, bounded below), and any other caller
 during a pass fails the test, named by function, file and line. The writer door has its own assertion on every pass: the
 writer recorder's list must be empty after the tick, each entry named by function, file and line, kept apart from the
 shared door's assertion (one filter over both lists would accept a writer-door load whose caller is the walk); a call
-through `load_goals_or_fault` is named for its kernel caller, never for the judge's `_or_fault`. The claim has three
-limits. The door: a third loader that reaches the store through the judge's loaders during the pass is caught and named;
+through `load_goals_or_fault` is named for its kernel caller, never for the judge's `_or_fault`, and a load written inside
+`_or_fault` or either outer wrapper is named for that wrapper. The claim has three limits. The door: a third loader that reaches the store through the judge's loaders during the pass is caught and named;
 a reader below those loaders (the judge's own file reader and parser) is outside the recorders and outside the claim. The
 road: the execution witness covers every caller the fixture actually executes; the helpers in REPLACED_KM and REPLACED_JD
 and Sessions.backend_for run as stubs, so a loader inside their real bodies is outside the recorders and is caught by the
@@ -102,10 +104,12 @@ Drives the real pass (_auto_nudge_tick) over two alive sessions with real transc
 suite's fake clock (the pass takes `now`). SYNTHETIC fixtures only; a PRIVATE synthetic sid pair (the goal-store fixture
 rule), their override journals cleaned in the teardown; the state root rebound through jd._rebind_state and `off` written
 into its session-hosts."""
+import ast
 import inspect
 import json
 import os
 import tempfile
+import textwrap
 import unittest
 from romp_load import load_source
 from pathlib import Path
@@ -151,14 +155,31 @@ REPLACED_JD = ("parsed_session", "_segs", "plan_units")
 JUDGE_FILE = os.path.basename(os.path.realpath(jd.__file__))
 
 
+def _pass_through_lines(fn, callee):
+    """The line numbers, in `fn`'s file, of its calls to `callee`: the boundary wrapper's hand-off of the read (`loader(fsid)`
+    in _or_fault, `_or_fault(...)` in the two outer wrappers), read from the source by the AST so a docstring or a comment
+    naming the callee is not one. Absolute: inspect gives the source with its first line's number."""
+    src, start = inspect.getsourcelines(fn)
+    tree = ast.parse(textwrap.dedent("".join(src)))
+    return frozenset(start - 1 + node.lineno for node in ast.walk(tree)
+                     if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == callee)
+
+
 def _caller(frame, boundary):
     """(function, file, line) of the frame that asked for the store: `frame` is the recorder's own, its f_back the immediate
-    caller, and the judge's boundary frames (`boundary`, their code objects) are stepped over by code identity, never by
-    name, so a call through either boundary wrapper is named for the kernel function that made it. The file is the basename
-    of the frame's REAL path: the kernel is loaded from bin/romp-kernel, a symlink to kernel/kernel.py, so the bare basename
-    would read romp-kernel."""
+    caller, and the judge's boundary frames are stepped over by code identity, never by name, so a call through either
+    boundary wrapper is named for the kernel function that made it. `boundary` pairs each wrapper's code object with the
+    lines of its pass-through calls (_pass_through_lines, taken at setUp): a boundary frame is stepped over only while it
+    sits at one of those lines, so a load written anywhere else in a wrapper's own body is named for the wrapper itself,
+    in the judge's file (review round 2: stepped over unconditionally, a load planted inside _or_fault was named for the
+    wrapper's kernel caller, the misnaming that costs more than silence). The file is the basename of the frame's REAL
+    path: the kernel is loaded from bin/romp-kernel, a symlink to kernel/kernel.py, so the bare basename would read
+    romp-kernel."""
     f = frame.f_back
-    while any(f.f_code is c for c in boundary):
+    while True:
+        lines = next((ls for c, ls in boundary if f.f_code is c), None)
+        if lines is None or f.f_lineno not in lines:
+            break
         f = f.f_back
     return f.f_code.co_name, os.path.basename(os.path.realpath(f.f_code.co_filename)), f.f_lineno
 
@@ -267,7 +288,11 @@ class _WalkHarness(unittest.TestCase):
         # replaces a door. Not at import: the judge module is shared by every kernel a worker loads and re-executed into the same
         # module object by each load (romp_load), so a code object captured when this module was imported is a previous
         # execution's once a sibling module imports its kernel (the first run beside six siblings failed on exactly that).
-        boundary = (jd._or_fault.__code__, jd.load_goals_shared_or_fault.__code__, jd.load_goals_or_fault.__code__)
+        boundary = tuple((fn.__code__, _pass_through_lines(fn, callee)) for fn, callee in
+                         ((jd._or_fault, "loader"), (jd.load_goals_shared_or_fault, "_or_fault"), (jd.load_goals_or_fault, "_or_fault")))
+        for code, lines in boundary:
+            self.assertEqual(len(lines), 1, "%s hands the read on at exactly one call; the recorder steps over the wrapper only "
+                                            "while its frame sits at that line" % code.co_name)
         shared_body = real_shared.__code__
         self.calls, self.writer = [], []
         self.owned_records = {}                           # sid -> the wake records the sweep owns this test (the seeding helper sets it)
