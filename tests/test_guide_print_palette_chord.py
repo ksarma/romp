@@ -11,8 +11,9 @@ the palette. The print flow's listener (ui/webview/file-print.ts) is registered 
 same phase, so it runs after the dispatcher (same target, same phase: registration order), and it stands down on a
 key a listener before it already prevented (the first review of the follow-on, 2026-09-19; before that fix one press
 ran the print AND opened the palette, and the guide of that day said so). So in the dashboard the key opens the
-palette and prints nothing, and the bar's Print button prints; outside the shell (a chat page opened on its own, the
-VS Code webview) no dispatcher stands ahead and the chord prints. The guide says so in the same sentence, and this
+palette and prints nothing, and the bar's Print button prints; outside the shell (a chat page opened on its own, or
+the page the browser legs serve) no dispatcher stands ahead and the chord prints. The guide says so in the same
+sentence, and this
 module holds the sentence to the code it describes: the chord is the palette's default and resolves to the two keys
 the sentence names; the two listeners meet on the same document in the same phase, the palette's first; the flow
 yields to the prevented key before it presses, knowing the palette by that bit alone; the palette does not stand

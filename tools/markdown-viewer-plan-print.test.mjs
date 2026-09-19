@@ -7,7 +7,8 @@
 // section is present once and last, and carries the seven decision heads, the ask, the tests and the open points; the
 // flow module exists and both viewers call it where the section says; the words quoted in the section are the module's
 // literals; both sheets carry the two rules right after the `.fileview-body` line inside byte-equal print blocks; the
-// button starts disabled and both viewers report the body at the seatings and the panes the section names; the guide's
+// button starts disabled, wears aria-disabled and never the property, and the flow reads the body's readiness off the body
+// itself, the viewers reporting nothing (the third review, 2026-09-19); the guide's
 // sentence is the one the section describes, carries the palette clause the reviews settled on, agrees with the Python
 // pin of that clause (tests/test_guide_print_palette_chord.py, whose SENTENCE literal is read here, so the two pins cannot
 // pull the guide two ways again), and the old sentence is gone; and the module list is two-way (every
@@ -176,7 +177,7 @@ test('P4: the frame detector reads the document type or the frame\'s own URL and
   assert.ok(flow.includes('const holds = (w.document !== null && w.document.contentType === "application/pdf") || (href !== "about:blank" && href === bare(frame.src));'), 'the tightened test');
   assert.ok(section.includes('its document\'s content type `application/pdf` (what Chromium\'s PDF viewer document reports) or the window\'s location the frame\'s own blob URL with any `#page=N` fragment set aside, and `print` a function'));
   assert.ok(section.includes('leaves the window at about:blank, where print is a function too and would print a blank page'));
-  assert.ok(viewer.includes('kind: () => (isPdf ? "pdf" : "document"), openTab: () => openFileTab(path, sid) });'), 'the local viewer passes the kind and the opener');
+  assert.ok(viewer.includes('kind: () => (isPdf ? "pdf" : "document"), openTab: () => openFileTab(path, sid), takeKeyboard: () => takeKeyboard() });'), 'the local viewer passes the kind, the opener and its keyboard hand-over');
   assert.equal(viewer.split('installFilePrint(').length - 1, 2, 'two callers');
   assert.equal(viewer.split('kind: () => (isPdf').length - 1, 1, 'one of them passes a kind: the local viewer (the URL viewer\'s call, quoted whole under P1, has none)');
   assert.ok(section.includes('openUrlView passes neither, so the URL viewer\'s flow is a document\'s'));
@@ -230,35 +231,33 @@ test('P6: the flow module imports the gate alone and fetches nothing itself', ()
 
 // ── P7: disabled until the body is in ──────────────────────────────────────────────────────────────
 
-test('P7: the flow starts disabled and the body event moves it, the button wears the attribute and aria-disabled under the sheets\' disabled dress, the chord is prevented before the press, a disarm cancels the wait, and both viewers report the body at the seatings and the panes the section names', () => {
+test('P7: the flow starts disabled and the body event moves it, the button wears aria-disabled under the sheets\' disabled dress and never the property, the chord is prevented before the press, a disarm cancels the wait, and the readiness is read off the body by the flow, the viewers reporting nothing', () => {
   assert.ok(flow.includes('export const DISABLED: PrintState = { phase: "disabled", gated: 0, pending: 0 };'));
   assert.ok(flow.includes('let state: PrintState = DISABLED;'), 'the driver starts there');
-  assert.ok(flow.includes('| { kind: "body"; in: boolean }'), 'the host\'s event');
+  assert.ok(flow.includes('| { kind: "body"; in: boolean }'), 'the body event');
   assert.ok(flow.includes('if (!ev.in) return s.phase === "disabled" ? { state: s, act: "none" } : { state: DISABLED, act: "disarm" };'), 'out: disabled from every phase, the line dropped');
   assert.ok(flow.includes('return s.phase === "disabled" ? { state: RESTING, act: "none" } : { state: s, act: "none" };'), 'in: rests a disabled flow, changes nothing elsewhere');
-  assert.ok(flow.includes('btn.disabled = off;') && flow.includes('if (off) btn.setAttribute("aria-disabled", "true"); else btn.removeAttribute("aria-disabled");'), 'the attribute and aria-disabled');
-  assert.ok(section.includes('The flow starts in a `disabled` phase and the button wears the `disabled` attribute, `aria-disabled` and the sheets\' disabled dress'));
+  assert.ok(flow.includes('if (off) btn.setAttribute("aria-disabled", "true"); else btn.removeAttribute("aria-disabled");'), 'aria-disabled');
+  assert.ok(!flow.includes('btn.disabled'), 'never the property (the bar\'s rule: a button that disables under keyboard focus drops it on the document\'s body)');
+  assert.ok(section.includes('The flow starts in a `disabled` phase and the button wears `aria-disabled` and the sheets\' disabled dress'));
+  assert.ok(section.includes('and never the `disabled` property: the bar\'s own rule, `textSizeControl`\'s, copied whole with its reason'));
   for (const [name, css] of Object.entries(sheets)) assert.ok(css.includes('.fileview-btn:disabled, .fileview-btn[aria-disabled="true"] { opacity: 0.55; cursor: default; }'), name + ': the disabled dress the section names');
   const chord = flow.indexOf('if (!isPrintChord(e)) return;');
   const prevented = flow.indexOf('e.preventDefault();', chord);
   const pressed = flow.indexOf('press();', prevented);
   assert.ok(chord > 0 && prevented > chord && pressed > prevented, 'the chord is prevented, then pressed, and the disabled phase ignores the press');
   assert.ok(section.includes('a press there changes nothing, and the chord is still prevented, so the browser\'s raw print does not run over the loader either'));
-  assert.ok(flow.includes('case "disarm": dropSettle(); dropLine(); break;'), 'a disarm cancels a running wait');
-  assert.ok(flow.includes('return { button: btn, bodyIn };'), 'the installer hands the host the button and the report');
-  // the reports, at their seatings and panes in the viewer
-  for (const re of [/if \(objUrl === null\) return;[^\n]*\n\s+viewError = null;[^\n]*\n\s+print\.bodyIn\(true\);/, /print\.bodyIn\(true\);\s+\/\/ the text is in/, /body\.replaceChildren\(host\);\n\s+print\.bodyIn\(true\);/,
-    /body\.replaceChildren\(ta\);\n\s+print\.bodyIn\(true\);/, /landFragment\(\);[^\n]*\n\s+\}\);\n\s+print\.bodyIn\(true\);\s+\/\/ the document is in/]) {
-    assert.match(viewer, re, 'the body reported in at ' + re.source.slice(0, 50));
-  }
-  for (const re of [/viewError = words;[^\n]*\n\s+print\.bodyIn\(false\);\s+\/\/ a pane, not the file: Print is off until a landing seats a picture/, /rearmDiskBar\(my\);[^\n]*\n\s+print\.bodyIn\(false\);\s+\/\/ a pane, not the file: Print is off until a landing seats the text or the bytes/,
-    /body\.replaceChildren\(wait\);\n\s+print\.bodyIn\(false\);/, /body\.replaceChildren\(why\);\n\s+print\.bodyIn\(false\);\s+\/\/ a pane, not the document/]) {
-    assert.match(viewer, re, 'the body reported out at ' + re.source.slice(0, 50));
-  }
-  assert.equal(viewer.split('print.bodyIn(true);').length - 1, 5, 'five seatings report the body in: the media paint, the text paint, the editor\'s mount, the plain fallback, the URL viewer\'s paint');
-  assert.equal(viewer.split('print.bodyIn(false);').length - 1, 4, 'four takings report it out: a picture that would not decode, the fetch\'s failure pane, the editor\'s chunk wait, the URL viewer\'s failure');
-  assert.ok(section.includes('true at every paint that seats the file\'s content'));
-  assert.ok(section.includes('false where the loader or a failure pane takes the body'));
+  assert.ok(flow.includes('case "disarm": dropSettle(); dropLine(ev.kind === "body"); break;'), 'a disarm cancels a running wait');
+  assert.ok(flow.includes('return { button: btn };'), 'the installer hands the host the button alone');
+  // the readiness, read off the body's children by the flow: the observer and the press's own read; the viewers report nothing
+  assert.ok(flow.includes('export function bodyReady(body: BodyLike): boolean {'), 'the exported test of the body');
+  assert.ok(flow.includes('if (c.classList.contains("fileview-load")) return false;') && flow.includes('if (c.localName === "textarea" && c.classList.contains("fileview-editor")) return false;') && flow.includes('if (!c.classList.contains("fileview-err")) content = true;'), 'the loader, the plain fallback editor, a failure line alone');
+  assert.ok(flow.includes('const observer = new MutationObserver(onBody);') && flow.includes('observer.observe(host.body, { childList: true });'), 'after every paint');
+  assert.ok(flow.includes('if (ready() !== (state.phase !== "disabled")) onBody();'), 'and at each press, first');
+  assert.equal(viewer.split('print.bodyIn(').length - 1, 0, 'no paint in either viewer reports the body');
+  assert.equal(viewer.split('installFilePrint(').length - 1, 2, 'both viewers still install the flow');
+  assert.ok(section.includes('read off the body\'s element children by the flow itself (`bodyReady`'));
+  assert.ok(section.includes('Not in: while a `.fileview-load` is a child of the body'));
   assert.ok(section.includes('The button is disabled until the body is in (P7).'), 'P1 hands the rule to P7');
 });
 

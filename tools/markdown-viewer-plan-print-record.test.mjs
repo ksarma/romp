@@ -5,7 +5,11 @@
 // recount events, the wait is re-aimed at a repainted body under the press's deadline, the armed line is recounted at a
 // repaint and at a placeholder the person activates by hand and its "Print with them" loads the hosts its title named,
 // the line's word buttons hand the keyboard back to the Print button, the wait's line carries the viewer's loader, and
-// two browser legs joined the follow-on. tools/markdown-viewer-plan-print.test.mjs holds the first
+// two browser legs joined the follow-on; the third review (2026-09-19) made the probes one per URL for a press's wait,
+// set a lazy picture eager, carried the wait's verdict as `ready` with `why`, derived the body's readiness from the body
+// itself (bodyReady, the viewers reporting nothing), dropped the button's `disabled` property for the bar's aria-disabled
+// rule with the keyboard handed through the host at a body-out disarm, and pinned the re-aim's deadline by an executed
+// case. tools/markdown-viewer-plan-print.test.mjs holds the first
 // build's sentences; this module holds the rounds' sentences to the tree the same way, each read from its source, with
 // one difference: the TypeScript sources are read with their comments removed, so a pin here is met by a statement and
 // never by a comment that names the same string. Where the section states a count a command produces (the `ls` listing)
@@ -67,6 +71,8 @@ const TESTS = part('**Tests.**', '**Open points for the owner.**');
 const OPEN = part('**Open points for the owner.**');
 // the flow's keydown handler alone
 const onKey = between(flow, 'const onKey = (e: KeyboardEvent): void => {', 'doc.addEventListener("keydown", onKey, true);');
+// the machine's event union
+const events = between(flow, 'export type PrintEvent =', ';\n');
 
 // ── P1: the chord's fourth condition, the palette ──────────────────────────────────────────────────
 
@@ -150,7 +156,6 @@ test('P1: while armed a key a listener ahead already stopped, an Escape from a c
 test('P2: the machine\'s phases and events are the record\'s: six phases with disabled and stalled, and the body, recount, stalled, anyway and keep events beside the six', () => {
   assert.ok(flow.includes('export type PrintPhase = "disabled" | "resting" | "armed" | "preparing" | "stalled" | "printing";'));
   assert.ok(P2.includes('a pure function over a state (disabled, resting, armed, preparing, stalled, printing; the first is P7\'s, the fifth the deadline\'s ask) and an event (press, escape, choose, prepare, ready, printed, the host\'s body report, P7\'s `body`, the driver\'s `recount` after a repaint under the armed line, and the ask\'s `stalled`, `anyway` and `keep`)'));
-  const events = between(flow, 'export type PrintEvent =', ';\n');
   for (const k of ['press', 'escape', 'choose', 'prepare', 'ready', 'stalled', 'anyway', 'keep', 'printed', 'body', 'recount']) assert.ok(events.includes('{ kind: "' + k + '"'), 'the event ' + k);
   assert.equal([...events.matchAll(/\{ kind: "/g)].length, 11, 'and no other');
 });
@@ -165,13 +170,20 @@ test('P2: the deadline asks instead of printing, Print anyway prints, Keep waiti
   assert.ok(flow.includes('export function settlePictures(pics: Picture[], deadlineMs: number | null, timers: Timers = REAL_TIMERS): Settle {'));
   assert.ok(flow.includes('else if (deadlineMs !== null) timer = timers.setTimeout(() => end("deadline"), deadlineMs);'), 'no timer under a null deadline');
   const aim = between(flow, 'const aimWait = (deadlineMs: number | null): number => {', '\n  };');
-  assert.ok(aim.includes('if (why === "deadline") { feed({ kind: "stalled", pending: s.pending() }); return; }'), 'the deadline asks');
-  assert.ok(!aim.includes('if (why === "settled" && left > 0)'), 'the first build\'s deadline path, which fed ready, is gone');
-  inOrder(aim, ['if (why === "deadline") { feed({ kind: "stalled", pending: s.pending() }); return; }', 'const left = timeLeft();', 'if (left === null || left > 0) {', 'feed({ kind: "ready" });'], 'the settle handler');
+  // the wait's verdict is one event, ready, carrying why and the count still loading (the third review's extra6-1 root: the
+  // first build fed one bare ready for both ends, and the second wired the ask off a separate stalled event from the resolver)
+  assert.ok(events.includes('{ kind: "ready"; why: "settled" | "deadline"; pending: number }'), 'the verdict\'s datum, in the type');
+  assert.ok(aim.includes('if (why === "deadline") { feed({ kind: "ready", why, pending: s.pending() }); return; }'), 'the deadline feeds ready with why and the count');
+  assert.ok(!aim.includes('feed({ kind: "stalled"'), 'the resolver feeds no stalled: that event is the driver\'s, after a repaint under the ask');
+  assert.ok(!aim.includes('feed({ kind: "ready" });'), 'and no bare ready');
+  inOrder(aim, ['if (why === "deadline") { feed({ kind: "ready", why, pending: s.pending() }); return; }', 'const left = timeLeft();', 'if (left === null || left > 0) {', 'feed({ kind: "ready", why: "settled", pending: 0 });'], 'the settle handler');
+  assert.ok(flow.includes('if (ev.kind === "ready") return ev.why === "deadline" && ev.pending > 0 ? ask(ev.pending) : { state: { phase: "printing", gated: 0, pending: 0 }, act: "print" };'), 'the machine: a deadline with a count asks, a settle or a deadline with none prints');
+  assert.ok(P2.includes('The wait\'s verdict reaches the machine as one event, `ready`, carrying `why` (`settled`, or `deadline`) and the count still loading: a settle prints, a deadline with a count asks, and a deadline that finds none loading is a settle in effect and prints'));
+  assert.ok(read('ui', 'webview', 'file-print.test.ts').includes('the wait\'s verdict carries why and the count still loading'), 'the node test of the three verdicts');
   assert.ok(flow.includes('const timeLeft = (): number | null => (state.phase === "preparing" && state.untimed === true ? null : Math.max(0, waitEnds - Date.now()));'), 'the open-ended wait has no deadline');
   // the machine: the ask over a count, the print over none; the two answers; Escape in the open-ended wait alone
   assert.ok(flow.includes('pending > 0 ? { state: { phase: "stalled", gated: 0, pending }, act: "stall" } : { state: { phase: "printing", gated: 0, pending: 0 }, act: "print" };'), 'the ask, or the print over none');
-  assert.equal(flow.split('if (ev.kind === "stalled") return ask(ev.pending);').length - 1, 2, 'read during the wait and under the ask (the repaint\'s recount)');
+  assert.equal(flow.split('if (ev.kind === "stalled") return ask(ev.pending);').length - 1, 1, 'stalled is read under the ask alone (the repaint\'s recount); the deadline arrives as ready');
   assert.ok(flow.includes('if (ev.kind === "escape" && s.untimed === true) return { state: RESTING, act: "disarm" };'), 'Escape cancels the open-ended wait alone');
   const stalled = between(flow, 'case "stalled":', 'break;');
   inOrder(stalled, ['if (ev.kind === "press" || ev.kind === "escape") return { state: RESTING, act: "disarm" };', 'if (ev.kind === "anyway") return { state: { phase: "printing", gated: 0, pending: 0 }, act: "print" };', 'if (ev.kind === "keep") return { state: s, act: "resume" };', 'if (ev.kind === "prepare") return begin(ev.pending, true);'], 'the stalled phase');
@@ -191,15 +203,27 @@ test('P2: the deadline asks instead of printing, Print anyway prints, Keep waiti
   assert.ok(TESTS.includes('the deadline\'s ask over a picture whose route never answers'));
 });
 
-test('P2: the wait is re-aimed at a repaint and at each settle under the press\'s deadline, and the armed line is recounted at a repaint', () => {
+test('P2: the wait is re-aimed at a repaint and at each settle under the press\'s deadline, the bound held by an executed case, and the armed line is recounted at a repaint', () => {
   assert.ok(P2.includes('The wait is aimed at the body as it stands and re-aimed in two cases'));
   assert.ok(P2.includes('Both re-aims run under the deadline the press set, never past it'));
-  assert.ok(flow.includes('waitEnds = Date.now() + settleMs;'), 'the press sets the deadline');
-  assert.ok(flow.includes('const n = aimWait(timeLeft());') && flow.includes('Math.max(0, waitEnds - Date.now())'), 'a re-aim keeps it (the time left, or none for Keep waiting\'s wait)');
+  assert.ok(flow.includes('const n = aimWait(timeLeft());') && flow.includes('Math.max(0, waitEnds - Date.now())'), 'a re-aim reads the time left (or none for Keep waiting\'s wait)');
   assert.ok(flow.includes('const more = aimWait(left);'), 'the settle reads the body again under the time left');
-  assert.deepEqual([...flow.matchAll(/\bwaitEnds = [^;]*;/g)].map((m) => m[0]), ['waitEnds = 0;', 'waitEnds = Date.now() + settleMs;'], 'the declaration and one writer of the deadline: nothing extends it');
-  const bodyIn = between(flow, 'const bodyIn = (present: boolean): void => {', '\n  };');
-  inOrder(bodyIn, ['feed({ kind: "body", in: present });', 'if (!present) return;', 'if (state.phase === "armed") feed({ kind: "recount", gated: gates().length });', 'else if (state.phase === "preparing") reaim();', 'else if (state.phase === "stalled") recountAsk();'], 'the host\'s body report');
+  // the bound is a claim about time, so it is held by the driver leg's executed case (3c) and the record cites that case; the
+  // second review's census of the deadline's writers in the source is gone (the third review's tests-2: a re-aim restarting
+  // the full deadline left every leg green, so a grep was no pin)
+  assert.ok(P2.includes('the bound is executed by file-print-driver-browser.test.ts case (3c) (the round\'s tests-2)'));
+  const driver = read('ui', 'webview', 'file-print-driver-browser.test.ts');
+  assert.ok(driver.includes('the re-aim runs under the press\'s deadline, never a restarted one: with the landing\'s picture parked too the ask comes at the press\'s deadline'), 'the driver leg\'s case (3), sub-case c, in its title');
+  assert.ok(driver.includes('assert.ok(t2 - t0 >= 1900 && t2 - t0 < 3000,') && driver.includes('assert.ok(t2 - tLand < 1600,'), 'the two bounds the record states, asserted there');
+  assert.ok(P2.includes('the ask is asserted between 1900 and 3000 ms after the press and under 1600 ms after the landing'));
+  // the wait's line is rewritten in place at a re-aim
+  assert.ok(flow.includes('const preparingLine = (n: number): void => {') && flow.includes('if (line && line.querySelector(".fileview-print-load")) { line.firstChild!.textContent = preparingWords(n); return; }'), 'the standing wait line\'s words change in place');
+  assert.ok(flow.includes('if (more > 0) { preparingLine(more); return; }') && between(flow, 'const reaim = (): void => {', '\n  };').includes('preparingLine(n);'), 'both re-aims go through it');
+  assert.ok(P2.includes('rewritten in place when the wait\'s line stands (`preparingLine`'));
+  // the repaint reaches the driver through its observer of the body (P7), not a report
+  const onBody = between(flow, 'const onBody = (): void => {', '\n  };');
+  inOrder(onBody, ['const present = ready();', 'feed({ kind: "body", in: present });', 'if (!present) return;', 'if (state.phase === "armed") feed({ kind: "recount", gated: gates().length });', 'else if (state.phase === "preparing") reaim();', 'else if (state.phase === "stalled") recountAsk();'], 'the body\'s change: the machine, then the phase\'s re-read');
+  assert.ok(P2.includes('when P7\'s observer sees a repaint under it'));
   assert.ok(P2.includes('has its placeholders counted again (the driver\'s `recount`): over placeholders the line stands with the new count and the title with the new hosts, rewritten in place, the keyboard where it was; over none the line goes, since the question it asked is moot, and the next press prints'));
   assert.ok(flow.includes('if (ev.kind === "recount") return ev.gated > 0 ? { state: { phase: "armed", gated: ev.gated, pending: 0 }, act: "arm" } : { state: RESTING, act: "disarm" };'), 'the machine: arm again over a count, disarm over none');
   assert.ok(flow.includes('if (line && withBtn) { line.firstChild!.textContent = words; withBtn.title = withWords; break; }'), 'the driver rewrites the standing line in place');
@@ -260,8 +284,8 @@ test('P2: the wait\'s line carries the viewer\'s loader after its words, under o
   assert.ok(P2.includes('Beside the words the line carries the viewer\'s loader, the swirl, the wordmark and the three pulsing dots (`.fileview-load`, the markup file-view.ts\'s waits use, hidden from the status\'s announcement), inline on the words\' row under a rule of its own in both sheets, `.fileview-print-line .fileview-load`'));
   const show = between(flow, 'const showLine = (words: string, loading = false): HTMLElement => {', '\n  };');
   inOrder(show, ['row.textContent = words;', 'if (loading) {', 'load.className = "fileview-load fileview-print-load";', 'load.setAttribute("aria-hidden", "true");', '<img src="/media/romp-swirl-glyph.svg" alt=""><span>romp</span>', '<i class="fileview-dot"></i><i class="fileview-dot"></i><i class="fileview-dot"></i>', 'row.appendChild(load);'], 'the words first, then the loader');
-  assert.equal([...flow.matchAll(/showLine\(preparingWords\([^)]*\), true\)/g)].length, 3, 'every preparing line loads: the wait act, the re-aim, the settle\'s second look');
-  assert.equal([...flow.matchAll(/showLine\(preparingWords\(/g)].length, 3, 'and no preparing line without the loader');
+  assert.equal([...flow.matchAll(/showLine\(preparingWords\([^)]*\), true\)/g)].length, 2, 'every fresh preparing line loads: the wait act, and preparingLine\'s line when none stands (the re-aim and the settle\'s second look rewrite a standing one in place)');
+  assert.equal([...flow.matchAll(/showLine\(preparingWords\(/g)].length, 2, 'and no preparing line without the loader');
   const RULE = '.fileview-print-line .fileview-load { display: inline-flex; padding: 0; margin-left: 10px; font-size: 1em; vertical-align: middle; }';
   for (const sheet of ['styles.css', 'feed.css']) {
     const css = read('ui', 'webview', sheet);
@@ -274,9 +298,16 @@ test('P2: the wait\'s line carries the viewer\'s loader after its words, under o
 
 test('P4: the window between the frame\'s insertion and its document is recorded, and the body is reported in at the media paint, before the frame loads', () => {
   const P4 = part('P4. **', 'P5. **');
-  assert.ok(P4.includes('The frame being in is not the frame holding the document: the body is reported in (P7) at the media paint that inserts the frame'));
+  assert.ok(P4.includes('The frame being in is not the frame holding the document: the body reads as in (P7) once the media paint puts the frame\'s column in it'));
   assert.ok(P4.includes('The button is not held to the frame\'s load event, since a browser that downloads the PDF instead never fires it'));
-  assert.ok(/if \(objUrl === null\) return;[ \t]*\n\s+viewError = null;[ \t]*\n\s+print\.bodyIn\(true\);/.test(viewer), 'the media paint reports the body in before any frame is built (a stripped trailing comment leaves its spaces)');
+  // the media paint puts pdfBlock's column in the body, and the flow reads that column as content (bodyReady counts any child
+  // that is not a loader, the fallback textarea or a failure line); no paint reports anything
+  assert.ok(viewer.includes('const shown = isPdf ? pdfBlock(objUrl, path) : imgBlock(objUrl, path, imgFailed);') && viewer.includes('body.replaceChildren(shown);'), 'the media paint');
+  const pdfBlock = between(viewer, 'function pdfBlock(objUrl: string, path: string): HTMLElement {', '\n}');
+  assert.ok(pdfBlock.includes('const col = el("div", "fileview-pdffall");') && pdfBlock.includes('col.appendChild(frame);') && pdfBlock.includes('return col;'), 'the frame comes in its column');
+  assert.equal(viewer.split('print.bodyIn(').length - 1, 0, 'the viewer reports nothing');
+  assert.ok(P4.includes('while the pages flow\'s loader alone holds the body, before page 1 is drawn, Print is disabled (P7), and over a kept frame under the attempt\'s loader it stays live'));
+  assert.ok(read('ui', 'webview', 'file-view-print-takings-browser.test.ts').includes('case 5: the Comments panel\'s PDF pages flow.'), 'the takings leg\'s case 5 drives the pages flow');
   assert.ok(!viewer.includes('frame.addEventListener("load"') || !between(viewer, 'frame.addEventListener("load"', '\n').includes('bodyIn'), 'no report waits on the frame\'s load');
   assert.ok(read('ui', 'webview', 'file-print-media-browser.test.ts').includes('one tab opened, inside the click\'s own task'), 'the media leg\'s in-task assertion the section cites');
 });
@@ -298,9 +329,17 @@ test('P2: the word buttons\' titles are the module\'s, the hosts are read at the
   assert.ok(!activate.includes('gatedHosts()'), 'the click reads no hosts of its own');
   // the focus hand-back
   assert.ok(P2.includes('A word button of the line that holds the keyboard when the line goes hands it to the Print button, the trigger'));
-  const drop = between(flow, 'const dropLine = (): void => {', '\n  };');
-  assert.ok(drop.includes('const held = !closed && line.contains(doc.activeElement);') && drop.includes('if (held) btn.focus({ preventScroll: true });'), 'the hand-back, not at the close');
+  const drop = between(flow, 'const dropLine = (bodyOut = false): void => {', '\n  };');
+  assert.ok(drop.includes('const held = !closed && line.contains(doc.activeElement);'), 'who held it, read before the removal and not at the close');
+  assert.ok(drop.includes('if (held) { if (bodyOut && host.takeKeyboard) host.takeKeyboard(); else btn.focus({ preventScroll: true }); }'), 'the hand-back to the button, or through the host when the body went out');
+  assert.ok(flow.includes('case "disarm": dropSettle(); dropLine(ev.kind === "body"); break;'), 'the disarm names the body-out case');
+  assert.ok(flow.includes('takeKeyboard?: () => void;'), 'the host hook, optional');
+  assert.ok(viewer.includes('kind: () => (isPdf ? "pdf" : "document"), openTab: () => openFileTab(path, sid), takeKeyboard: () => takeKeyboard() });'), 'the local viewer passes its own hand-over');
+  assert.equal(viewer.split('takeKeyboard: () => takeKeyboard()').length - 1, 1, 'the URL viewer passes none: its button takes the keyboard');
+  assert.ok(between(viewer, 'const dropDiskBar = (): void => {', '\n  };').includes('if (held) takeKeyboard(ring);'), 'the changed-on-disk bar\'s own hand-over, the precedent');
+  assert.ok(P2.includes('When the disarm is the body going out (P7) the button is not enabled, so the keyboard goes to the viewer\'s body through the host\'s `takeKeyboard`, the changed-on-disk bar\'s own hand-over (`dropDiskBar`)'));
   assert.ok(read('ui', 'webview', 'file-print-driver-browser.test.ts').includes('(8) Escape or Enter on the armed line\'s word buttons hands the keyboard to the Print button'), 'the driver leg\'s case (8)');
+  assert.ok(read('ui', 'webview', 'file-view-print-takings-browser.test.ts').includes('assert.equal(b.active, "DIV.fileview-body", "FAILS BEFORE: the keyboard went to the viewer\'s body through its own hand-over'), 'the takings leg\'s case 1 reads the keyboard on the viewer\'s body');
 });
 
 // ── P5: the guide's palette clause ─────────────────────────────────────────────────────────────────
@@ -332,19 +371,85 @@ test('Tests: the count the section gives for `ls ui/webview/file-print*.test.ts`
   assert.ok(TESTS.includes('One module of the follow-on, ui/webview/file-view-print-takings-browser.test.ts, is outside that listing'));
   assert.ok(TESTS.includes('- ui/webview/file-print-armed-browser.test.ts, under node first') && exists('ui', 'webview', 'file-print-armed-browser.test.ts'), 'the second review\'s leg is named');
   assert.ok(TESTS.includes('- ui/webview/file-print-driver-browser.test.ts, headless Chromium over the real viewer') && exists('ui', 'webview', 'file-print-driver-browser.test.ts'));
+  assert.ok(TESTS.includes('- ui/webview/file-print-egress-browser.test.ts, headless Chromium over the real viewer under a request intercept'), 'the third review\'s egress leg is named (the listing test above requires it on disk)');
   assert.ok(TESTS.includes('- tests/test_guide_print_palette_chord.py, Python:'));
   assert.ok(TESTS.includes(path.basename(fileURLToPath(import.meta.url)) + ' holds the review rounds\' sentences here to the tree'), 'the section names this pin');
 });
 
-test('Open point 1 records the two-host placeholder\'s wording, and open point 5 the re-place Escape collision, which stands in the panel\'s listener', () => {
+test('Open point 1 records the two-host placeholder\'s wording, and open point 5 the re-place Escape\'s order: the panel\'s listener is registered at the viewer\'s open, ahead of the flow\'s, and the flow stands down on the stopped key', () => {
   assert.ok(OPEN.includes('1. Wording. A gated clip counts as a picture in the armed line, and one placeholder naming two hosts'));
   assert.ok(flow.includes('return n === 1 ? "1 picture from another host is not loaded." : n + " pictures from other hosts are not loaded.";'), 'the words count pictures');
   assert.ok(OPEN.includes('5. Escape with a re-place pending in the Comments panel while the bar is armed.'));
+  assert.ok(OPEN.includes('a capture-phase document listener the panel\'s constructor registers when the viewer\'s action walk mounts the panel at the open, ahead of the flow\'s per-open listener, which installFilePrint registers after that walk'));
+  assert.ok(!OPEN.includes('wired when the panel opens, so after the flow\'s'), 'the first record\'s order, false, is gone');
   const fc = code(read('ui', 'webview', 'file-comments.ts'));
-  assert.ok(fc.includes('document.addEventListener("keydown", this.escapeReplace, true);'), 'the panel\'s listener, capture phase on the document');
+  const reg = 'document.addEventListener("keydown", this.escapeReplace, true);';
+  const ctor = fc.indexOf('constructor(readonly ctx: FileViewActionCtx, readonly button: HTMLButtonElement, readonly unit: HTMLElement) {');
+  assert.ok(ctor >= 0, 'the panel\'s constructor');
+  const ctorEnd = fc.indexOf('\n  }\n', ctor);
+  const regAt = fc.indexOf(reg);
+  assert.ok(regAt > ctor && regAt < ctorEnd, 'the listener is registered in the constructor, capture phase on the document');
+  assert.ok(fc.includes('new Panel(ctx, b, unit).probe();'), 'which the action\'s mount runs');
+  const openFileView = between(viewer, 'export function openFileView(', '\nexport function openUrlView(');
+  const walk = openFileView.indexOf('for (const a of fileViewActions) {');
+  const install = openFileView.indexOf('const print = installFilePrint({');
+  assert.ok(walk >= 0 && install > walk, 'the viewer mounts the registered actions before it installs the print flow, so the panel\'s listener is ahead of the flow\'s on the same document in the same phase');
   const esc = between(fc, 'escapeReplace = (ev: KeyboardEvent) => {', '\n  };');
   assert.ok(esc.includes('ev.preventDefault(); ev.stopPropagation();') && esc.includes('this.closeComposer();'), 'cancels the re-place and stops the key');
-  assert.ok(!esc.includes('cancelBubble') && !esc.includes('defaultPrevented'), 'and reads no claim by the flow: the collision the open point records stands (a fix here closes the point)');
+  assert.ok(between(onKey, 'if (e.key === "Escape") {', 'return;\n    }').startsWith('if (e.key === "Escape") {\n      if (e.cancelBubble) return;'), 'the flow reads the stopped key first and stands down: one Escape cancels the re-place alone and the bar stays armed');
+  assert.ok(OPEN.includes('so one Escape cancels the re-place alone and the bar stays armed for the next Escape, which disarms'));
+});
+
+test('P2: the probes are one per URL for a press\'s wait, cleared where the wait begins and never per re-aim, and a lazy picture is set eager as it is collected', () => {
+  assert.ok(flow.includes('const probes = new Map<string, Picture>();'), 'the press\'s probes, by resolved URL');
+  const probe = between(flow, 'const probe = (url: string): Picture => {', '\n  };');
+  assert.ok(probe.includes('let p = probes.get(url);') && probe.includes('if (!p) { const im = new Image(); im.src = url; p = im; probes.set(url, p); }'), 'a URL already probed is not minted again');
+  assert.equal(flow.split('new Image()').length - 1, 1, 'one minting site, inside the factory');
+  assert.ok(flow.includes('const beginWait = (): number => { probes.clear(); waitEnds = Date.now() + settleMs; return aimWait(settleMs); };'), 'cleared where a press or a choice begins its wait, with the deadline');
+  assert.equal(flow.split('probes.clear()').length - 1, 1, 'and nowhere else: a re-aim keeps them');
+  assert.ok(flow.includes('settlePictures(collectPictures(host.body, doc.baseURI, probe), deadlineMs)'), 'the collection takes the factory');
+  assert.ok(flow.includes('export function collectPictures(body: ParentNode, base: string, probe: (url: string) => Picture): Picture[] {'));
+  assert.ok(P2.includes('The probes are one per resolved URL for the life of one press\'s wait (`probes`, a Map in the driver keyed by the resolved URL, filled by the driver\'s `probe` factory, which `collectPictures` takes, and cleared in `beginWait`, at a press or a choice, never per re-aim)'));
+  assert.ok(P2.includes('the review measured one press asking the host 337 times over 8 s for one URL whose route answers 404'));
+  // the lazy picture
+  assert.ok(flow.includes('if (img.loading === "lazy") img.loading = "eager";'), 'set eager as it is collected');
+  assert.ok(P2.includes('so `collectPictures` sets it eager before pushing it and the deferred fetch starts at once, for the same URL, and the attribute stays eager after the print'));
+  // the legs
+  const driver = read('ui', 'webview', 'file-print-driver-browser.test.ts');
+  assert.ok(driver.includes('(10) a <video poster> and an svg <image href> whose routes answer 404'), 'the driver leg\'s case (10)');
+  assert.ok(driver.includes('assert.equal(asked.poster, 1,') && driver.includes('assert.equal(asked.image, 1,'), 'one request per URL, asserted');
+  assert.ok(driver.includes('(11) an <img loading="lazy"> far below the fold (the third review\'s fresh-2)'), 'the driver leg\'s case (11)');
+  assert.ok(read('ui', 'webview', 'file-print.test.ts').includes('collectPictures sets a lazy img eager before the wait listens on it'), 'the node test');
+  assert.ok(TESTS.includes('a <video poster> and an svg <image href> whose routes answer 404 (one request per URL after the press'));
+});
+
+test('P7: the body\'s readiness is derived by the flow from the body\'s children, the viewers report nothing, and the button wears aria-disabled and never the property, the bar\'s own rule', () => {
+  const ready = between(flow, 'export function bodyReady(body: BodyLike): boolean {', '\n}');
+  inOrder(ready, ['if (c.classList.contains("fileview-load")) return false;', 'if (c.localName === "textarea" && c.classList.contains("fileview-editor")) return false;', 'if (!c.classList.contains("fileview-err")) content = true;', 'return content;'], 'the loader, the fallback editor, a failure line alone');
+  assert.ok(flow.includes('const ready = (): boolean => bodyReady(host.body);'), 'the driver reads its host\'s body through it');
+  assert.ok(flow.includes('const observer = new MutationObserver(onBody);') && flow.includes('observer.observe(host.body, { childList: true });'), 'after every paint, through an observer of the body\'s children');
+  assert.ok(flow.includes('if (ready() !== (state.phase !== "disabled")) onBody();'), 'and at each press, first');
+  assert.ok(flow.includes('observer.disconnect();'), 'dropped at the close');
+  assert.ok(flow.includes('return { button: btn };'), 'the installer hands the host the button alone: no report');
+  assert.ok(!flow.includes('bodyIn'), 'the report is gone from the flow');
+  assert.equal(viewer.split('print.bodyIn(').length - 1, 0, 'and from the viewer: no paint reports');
+  const P7 = part('P7. **', '**Tests.**');
+  assert.ok(P7.includes('Whether the body is in is DERIVED, read off the body\'s element children by the flow itself (`bodyReady`, exported: a MutationObserver on the body\'s child list feeds the machine\'s `body` event after every paint, and a press reads the body again first'));
+  assert.ok(P7.includes('Not in: while a `.fileview-load` is a child of the body') && P7.includes('while `textarea.fileview-editor` is a child') && P7.includes('or while `.fileview-err` is all the body holds'));
+  assert.ok(!P7.includes('The host reports the body through the installer\'s `bodyIn`'), 'the reported design is gone from the record');
+  // aria-disabled and never the property: the bar's precedent, textSizeControl's atEnd, whose reason the flow's own comment carries
+  const sync = between(flow, 'const syncButton = (): void => {', '\n  };');
+  assert.ok(sync.includes('if (off) btn.setAttribute("aria-disabled", "true"); else btn.removeAttribute("aria-disabled");'), 'aria-disabled follows the disabled phase');
+  assert.ok(!flow.includes('btn.disabled'), 'the property is never set');
+  assert.ok(viewer.includes('const atEnd = (b: HTMLButtonElement, end: boolean) => { if (end) b.setAttribute("aria-disabled", "true"); else b.removeAttribute("aria-disabled"); };'), 'the bar\'s precedent');
+  assert.ok(read('ui', 'webview', 'file-view.ts').includes('aria-disabled, not `disabled`: a button that disables under keyboard focus drops it'), 'the precedent\'s stated reason (the source with its comments, since the reason is a comment)');
+  assert.ok(P7.includes('and never the `disabled` property: the bar\'s own rule, `textSizeControl`\'s, copied whole with its reason'));
+  // the legs
+  assert.ok(read('ui', 'webview', 'file-print.test.ts').includes('bodyReady reads the body\'s children'), 'the node shapes');
+  const takings = read('ui', 'webview', 'file-view-print-takings-browser.test.ts');
+  assert.ok(takings.includes('case 2: Edit while armed') && takings.includes('the plain fallback takes the body and the button stays DISABLED'), 'the fallback editor road');
+  assert.ok(takings.includes('case 5: the Comments panel\'s PDF pages flow.'), 'the pages flow road');
+  assert.ok(read('ui', 'webview', 'file-print-browser.test.ts').includes('Print is disabled over the loader by aria-disabled alone (never the property, so the button keeps the keyboard and the tab order)'), 'the gated leg\'s case 6');
 });
 
 test('Open point 2 says the poster and svg probes run in Chromium too, and the driver leg does run them there', () => {
