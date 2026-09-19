@@ -35,6 +35,15 @@ at this head every one of the 364 is green alone except that one. The full-suite
 an earlier first builder in every worker made their builds cache hits: a green suite run is no evidence a module is
 clean, and the module-alone sweep is the measurement.
 
+The residual that leaves, a stated limit: a green run under the ratchet proves no leak occurred in that run and not that no
+test would leak alone, because a first builder that leaves its build masks a later sandboxed test's reach as a cache hit
+(no build, no transition, the ratchet silent). Measured at this head, tests/test_kernel_fleet_cache.py then
+tests/test_token_usage.py with CostWeighting's fix reverted gave 77 passed and 0 verdicts, while the module alone gave 65
+passed and 1 error. An arm keyed on the build event inherits the masking, since a cache hit is no build, so the
+order-independent instrument is the module-alone sweep; a reach-under-moved-root arm with two signals (a leak keyed on
+what is LEFT at teardown, and a wrong-root read keyed on the root the RETURNED backend was built over) is a follow-up
+item, its own PR after this one. TheResidualIsWorded holds this wording here and in the ledger entry.
+
 The ratchet judges TRANSITIONS, at three windows. The test: the singleton read before the test and after its own
 teardown, and the test whose own transition made the bad state fails (a different object left, or the directory
 removed under the object it found). The class and module boundaries: a read at the scope's start and at its end,
@@ -1176,6 +1185,46 @@ class TheStatedLimitIsWorded(unittest.TestCase):
 
     def test_this_modules_docstring_says_the_same(self):
         self._assert_worded(re.sub(r"\s+", " ", __doc__), "the module docstring")
+
+
+RESIDUAL_GREEN = "proves no leak occurred in that run and not that no test would leak alone"
+RESIDUAL_MASK = "a first builder that leaves its build masks a later sandboxed test's reach as a cache hit"
+RESIDUAL_MEASURED = ("77 passed and 0 verdicts", "65 passed and 1 error")
+RESIDUAL_INSTRUMENT = "the order-independent instrument is the module-alone sweep"
+RESIDUAL_FOLLOWUP = "a follow-up item, its own PR after this one"
+LEDGER_ENTRY = os.path.join(ROOT, "upstream", "2026-09-19-sdk-singleton-ratchet.md")
+
+
+def ledger_entry_body():
+    """The ratchet's ledger entry, the body past its header block, whitespace collapsed. A missing entry fails the test
+    that reads it, never skips it: a skipping pin reports green."""
+    with open(LEDGER_ENTRY) as f:
+        lines = f.read().split("\n")
+    assert lines[0] == "---", "the entry opens with a header block: %r" % lines[:1]
+    close = lines.index("---", 1)
+    return re.sub(r"\s+", " ", " ".join(lines[close + 1:]))
+
+
+class TheResidualIsWorded(unittest.TestCase):
+    """The residual the ratchet leaves is worded, in this module's docstring and in the ledger entry, as a stated
+    limit: a green run under it proves no leak occurred in that run and not that no test would leak alone, because a
+    first builder that leaves its build masks a later sandboxed test's reach as a cache hit; with the measurement that
+    shows it, the order-independent instrument (the module-alone sweep) and the follow-up arm as its own PR, in that
+    order. An edit that drops any of them reds here."""
+
+    def _assert_worded(self, text, where):
+        for needle in (RESIDUAL_GREEN, RESIDUAL_MASK, RESIDUAL_INSTRUMENT, RESIDUAL_FOLLOWUP) + RESIDUAL_MEASURED:
+            self.assertTrue(needle in text, "%s does not say: %s" % (where, needle))
+        self.assertLess(text.index(RESIDUAL_GREEN), text.index(RESIDUAL_MASK), "%s: the claim before its mechanism" % where)
+        self.assertLess(text.index(RESIDUAL_MASK), text.index(RESIDUAL_MEASURED[0]), "%s: the mechanism before the measurement" % where)
+        self.assertLess(text.index(RESIDUAL_MEASURED[1]), text.index(RESIDUAL_INSTRUMENT), "%s: the measurement before the instrument" % where)
+        self.assertLess(text.index(RESIDUAL_INSTRUMENT), text.index(RESIDUAL_FOLLOWUP), "%s: the instrument before the follow-up" % where)
+
+    def test_this_modules_docstring_names_the_residual(self):
+        self._assert_worded(re.sub(r"\s+", " ", __doc__), "the module docstring")
+
+    def test_the_ledger_entry_names_the_residual(self):
+        self._assert_worded(ledger_entry_body(), "the ledger entry")
 
 
 class ClassTeardownRemovesTheDirectory(_NestedRun, unittest.TestCase):
