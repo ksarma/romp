@@ -3,7 +3,7 @@ title: Compact mode streams its tail by unit, and the head gap's per-turn estima
 status: candidate
 where: ui/webview/render.ts (syncViewInner's compact seam, patchWorkedFooters, renderWindowItems, sizeSpacers, measureUnits/applyMeasure, the unit ResizeObserver), ui/webview/chat-compact-tail.ts, ui/webview/turn-estimate.ts, ui/webview/chat-regions.ts (MAX_TURN_PX)
 added: 2026-09-19
-pr:
+pr: 861
 tier: fix
 offered:
 closed:
