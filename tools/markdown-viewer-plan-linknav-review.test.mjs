@@ -79,6 +79,17 @@ test('L3 opens on the exceptions it names, and names the floor by the source\'s 
   assert.ok(small.includes('b.w < FIGOPEN_MIN_PX || b.h < FIGOPEN_MIN_PX'), 'under the floor on either side, as L3 says');
   const arm = between(viewer, 'function armFigureControls(body: HTMLElement, filePath: string): () => void {', '\n}\n');
   assert.ok(arm.includes('if (img) ensureFigureControl(img, filePath);'), 'the load runs the same builder, where the measure is read');
+  // the re-read at each change of the body's width (the review's measurement: read once at the load, a narrowed figure kept its control)
+  assert.ok(L3.includes('the floor is read again at each change of the body\'s width (`refigureControls`'), 'L3 names the re-read and its function');
+  assert.ok(L3.includes('a value measured once against a condition that can change is re-read on the event that changes it'), 'L3 states the class');
+  const refigure = between(viewer, 'function refigureControls(body: HTMLElement, filePath: string): void {', '\n}\n');
+  assert.ok(refigure.includes('body.querySelectorAll(".fileview-md img").forEach((img) => { ensureFigureControl(img, filePath); });'), 'the source re-reads every figure of the box through the same builder');
+  const repaint = between(viewer, 'const repaint = () => {', '\n  };\n');
+  inOrder(repaint, ['if (unmeasurable()) return;', 'landRemembered(); landTarget();', 'retakeAfterHide();', 'refigureControls(body, path);'], 'the width watch\'s repaint runs the re-read over a body with a box, after the seat');
+  const FLOOR_LEG = 'file-view-figure-floor-browser.test.ts';
+  assert.ok(exists('ui', 'webview', FLOOR_LEG), FLOOR_LEG + ' exists');
+  assert.ok(L3.slice(L3.indexOf('Held by')).includes(FLOOR_LEG), 'L3\'s Held-by sentence names ' + FLOOR_LEG);
+  assert.ok(tests.includes('ui/webview/' + FLOOR_LEG), 'the Tests paragraph names ui/webview/' + FLOOR_LEG);
 });
 
 test('L3 puts the web test first in figureTarget, as the source does, and names the bare figure\'s yield to an anchor with an href, which the figure listener carries after the links\' yield', () => {
@@ -87,7 +98,8 @@ test('L3 puts the web test first in figureTarget, as the source does, and names 
   assert.ok(L3.includes('What it opens (`figureTarget`): a remote picture (an http or https source, a protocol-relative one) in a tab, never the viewer, the web test run FIRST, before the model\'s join'));
   const clicks = viewer.split('body.addEventListener("click", (ev) => {');
   assert.equal(clicks.length, 3, 'two click listeners on the body: the links\' and the figures\'');
-  inOrder(clicks[2].split('\n  });\n')[0], ['if (!img || linkOf(t)) return;', 'if (img.closest("a[href]")) return;', 'openFigure(img, ev);'], 'the figure listener');
+  inOrder(clicks[2].split('\n  });\n')[0], ['if (ev.defaultPrevented) return;', 'if (!img || linkOf(t)) return;', 'if (img.closest("a[href]")) return;', 'openFigure(img, ev);'], 'the figure listener');
+  assert.ok(L3.includes('stands down on a click another listener already answered (`ev.defaultPrevented`, its first line)'), 'L3 names the stand-down on an answered click');
   assert.ok(L3.includes('the figure\'s own click yields to a figure inside a link (the author\'s link, through the links listener; and an anchor with an href that listener leaves to the browser'));
 });
 

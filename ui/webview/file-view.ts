@@ -2233,7 +2233,9 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // the size at observe(), not a change. The repaint is ONE per animation frame: the reports are folded into the
   // next frame (requestAnimationFrame, the frame's own event) and the frame repaints only if the width it finds
   // differs from the one last painted over, so a burst of reports (several observers' entries, a width that
-  // moved and came back, the body growing taller as a figure loaded) costs one pass or none. The panel answers a
+  // moved and came back, the body growing taller as a figure loaded) costs one pass or none. The same pass re-reads every
+  // figure's "Open the picture" control against the size floor (refigureControls): the floor was read once, at the
+  // picture's load, and a figure the pane or the aside then narrowed under it kept a control that hung over it. The panel answers a
   // reflow by re-placing its cards and nothing more (file-comments.ts): until 2026-09-09 it ran its whole paint
   // pass here, unwrapping and re-wrapping every highlight and rebuilding the cards, once per frame of a pane drag,
   // and at a big reviewed file (15,000 lines, hundreds of comments and changes) that pass took seconds a frame and
@@ -2281,6 +2283,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     if (restored) notePlace(); else seat(place);   // the restored offset read, or the place read before the width moved (see notePlace) seated
     landRemembered(); landTarget();                // then a remembered place a first paint under a boxless body left pending (landRemembered), and the target and the keyboard such a paint left pending (landTarget)
     retakeAfterHide();                             // and the keyboard the hide's focus fixup dropped off the body, if the body held it (retakeAfterHide)
+    refigureControls(body, path);   // every figure's control re-read against the size floor at the new width (the figure-control section before keepVideoShape): one the column narrowed under the floor leaves, one it widened past arrives
   };
   // The Files pane toggled off and on (the shell's display:none on the pane; a phone's tab swap): the browser's focus fixup drops
   // the keyboard off a body that has no box, to the document's body, and nothing re-took it at the show, since keyboardOnLanding
@@ -2735,6 +2738,10 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     openFromViewer("push", target.path, sid || null, null);                     // the picture in this viewer: the shown file goes onto the trail (moveTrail)
   };
   body.addEventListener("click", (ev) => {
+    // a click another listener already answered stands down here: the gate listener, first on this body, prevents default as
+    // it restores a placeholder's img, and a click dispatched on that img (a display:none element no pointer can reach) then
+    // arrived here with the img restored, was read as a bare figure, and opened its target; one click, one answer
+    if (ev.defaultPrevented) return;
     const t = ev.target as Element | null;
     const control = figureControlOf(t, body);
     if (control) { const img = figureOfControl(control); if (img) openFigure(img, ev); return; }
@@ -4778,9 +4785,13 @@ function resolveFigureRefs(root: ParentNode, base: string): void {
 // climb leaves such a link standing over the img, so the control went inside the author's link, nested interactive content
 // whose one click the links listener took as the link's and this one as the control's, two opens and a phantom entry on the
 // trail (the review's round 1); there the figure is the author's link, as its plain click is. A figure under the floor on
-// either side (FIGOPEN_MIN_PX, read once its picture has loaded: a badge, an inline icon) gets none either, and one added at
-// paint leaves at the load that measured it: the sheets' fixed box overhung it and took the click meant for its link or the
-// prose before it. The sheets lay it over the figure's top-right corner from that place with no measuring (`.fileview-md
+// either side (FIGOPEN_MIN_PX, read at its picture's load and again whenever the body's width changes: a badge, an inline
+// icon, a figure the column narrowed under it) gets none either: one added at paint leaves at the load that measured it, and
+// one the width moved across the floor leaves or arrives at the report of that change (refigureControls, run from the width
+// watch's repaint in openFileView; a value measured once against a condition that can change is re-read on the event that
+// changes it: read once at the load, a 761 by 76 figure narrowed to 323 by 32 kept its control), since the sheets' fixed box
+// overhung a small figure and took the click meant for its link or the prose before it. The sheets lay it over the figure's
+// top-right corner from that place with no measuring (`.fileview-md
 // .fv-figopen`: a zero-width margin box aligned to the line's top), transparent until the pointer is over the figure or over
 // it, or a keyboard focus reaches it; always in the tab order. A figure the author floated by its align attribute stacks
 // sideways, so the control floats with it (the -left and -right classes). It has no text of its own and the text walks skip
@@ -4854,7 +4865,7 @@ function figureTooSmall(img: Element): boolean {
   return b !== null && (b.w < FIGOPEN_MIN_PX || b.h < FIGOPEN_MIN_PX);
 }
 /** Remove the control standing after `img`'s anchor, when one does: a control added at paint, before the load measured the
- *  figure under the floor. */
+ *  figure under the floor, or one the body's width then narrowed under it (refigureControls). */
 function dropFigureControl(img: Element): void {
   const c = figureControlAfter(figureAnchor(img));
   if (c) c.remove();
@@ -4868,7 +4879,8 @@ function linkAbove(anchor: Element): Element | null {
 }
 /** Put the control after `img`'s anchor when the figure has something to open and none stands there yet; an img inside a
  *  gate's placeholder is left alone (its control waits for the load); a figure under the floor (figureTooSmall) gets none and
- *  loses one added before its load; a figure inside a link holding more than it (linkAbove) gets none. */
+ *  loses one it has (added before its load, or before the width narrowed it); a figure inside a link holding more than it
+ *  (linkAbove) gets none. */
 function ensureFigureControl(img: Element, filePath: string): void {
   if (img.closest('[data-act="' + GATE_ACT + '"]')) return;
   if (figureTooSmall(img)) { dropFigureControl(img); return; }   // a badge, an inline icon: the sheets' fixed box would overhang it
@@ -4897,6 +4909,13 @@ function armFigureControls(body: HTMLElement, filePath: string): () => void {
   const onLoad = (e: Event): void => { const img = figureOf(e); if (img) ensureFigureControl(img, filePath); };
   body.addEventListener("load", onLoad, true);
   return () => { body.removeEventListener("load", onLoad, true); };
+}
+/** Every figure of the body's Rendered box re-read against the floor by the same builder: run from the width watch's repaint
+ *  (openFileView) once the body's width has changed, the pane dragged or the Comments aside opened or closed, so a figure
+ *  the column narrowed under the floor loses its control and one it widened past gets its control; a figure whose verdict
+ *  did not change is left as it stands (the builder adds nothing twice). */
+function refigureControls(body: HTMLElement, filePath: string): void {
+  body.querySelectorAll(".fileview-md img").forEach((img) => { ensureFigureControl(img, filePath); });
 }
 
 /** A pixel-sized `<video>` keeps the shape its `width` and `height` attributes give it, capped or not. The viewer's sheets

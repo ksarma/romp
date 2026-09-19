@@ -7864,7 +7864,13 @@ figure's neighbours took the clicks meant for them, itself transparent): a figur
 plain click still opens them where no link holds them), measured from the loaded picture's laid-out box, else its own
 size (`figureBox`, `figureTooSmall`), so the paint, which runs before the load, adds the control and the load
 (armFigureControls, the same builder) removes the one on a figure the measure finds under the floor
-(`dropFigureControl`); a picture that failed to load has no size to read and keeps its control, and a figure at the
+(`dropFigureControl`), and the floor is read again at each change of the body's width (`refigureControls`, run from the
+width watch's repaint over every figure of the box through the same builder: the pane dragged, the Comments aside
+opened or closed), so a figure the column narrows under the floor loses its control and one it widens past gets it
+back (the review's measurement at an earlier head: read once at the load, a 761 by 76 figure narrowed to 323 by 32
+kept its control, which hung over the figure and took the click meant for the prose, where the note reopened at that
+width had none; a value measured once against a condition that can change is re-read on the event that changes it);
+a picture that failed to load has no size to read and keeps its control, and a figure at the
 floor (48 by 48) keeps its control inside its own box; and a figure inside a link that holds more than it
 (`[![alt](fig.png) caption](other.md)`, an author's `<a>` with a caption beside the img; `linkAbove`: an anchor with
 an href, or a path link, above `figureAnchor`'s climb, which stops under a link holding text beside the figure), since
@@ -7879,7 +7885,11 @@ leaves to the browser, a web address of the markdown, which carries no class: th
 never the picture beside it, the review's round 1), to a picture the panel framed (`panelMark`: the card's), to the
 open Comments panel (a plain click is the panel's comment offer, `onImageClick`, and a drag its region; the layer's
 overlay takes the press on a fine pointer, and on a coarse one the click reaches the listener and stands down) and to
-a drag that selected and ended on the picture (`selectionOpenIn`). Held by file-figure-open.test.ts (the source pins:
+a drag that selected and ended on the picture (`selectionOpenIn`). The listener also stands down on a click another
+listener already answered (`ev.defaultPrevented`, its first line): the gate listener, first on the body, prevents
+default as it restores a placeholder's img, and a click dispatched on that img (a display:none element no pointer
+reaches; a synthetic case from a read-only pre-drive, not a measured one) arrived at this listener with the img
+restored, was read as a bare figure, and opened its target. Held by file-figure-open.test.ts (the source pins:
 the builder, the target, the two insertion points, the click routing, the walks, the sheets) and
 file-figure-open-browser.test.ts (Chromium: the controls on a synthetic report, the hover reveal and the corner in
 both float cases, Tab and Enter, the place kept across the open and Back, the plain click with the panel closed, the
@@ -7891,7 +7901,11 @@ the builder's order, the measure's reads, the click's yield to an anchor with an
 file-view-figure-shapes-browser.test.ts (Chromium: eleven shapes on one report, which wear a control and where it
 stands, the badge's face and the prose before the icon under the pointer, the plain click on the captioned links, on
 the badge and on the two web links, the control of the figure alone in a web link, and the protocol-relative figure's
-tab from its control and from its click), and, for the chosen candidate, file-view-figure-chosen.test.ts (the source
+tab from its control and from its click), file-view-figure-floor-browser.test.ts (Chromium: the 761 by 76 figure's
+control leaving as the viewport or the Comments aside narrows the column under the floor and returning as it widens,
+a page opened at the narrow width with none, and a click dispatched on a gated placeholder's img opening nothing
+while a real click on the restored figure's control opens its tab), and, for the chosen candidate,
+file-view-figure-chosen.test.ts (the source
 pins: chosenSource's body, figureTarget's read of it first, failedSource's delegation and the two callers) and
 file-view-figure-chosen-browser.test.ts (Chromium: a `<picture>`, a srcset img and a gated remote `<picture>` open the
 candidate shown, through the paint's URL).
@@ -7938,7 +7952,14 @@ three kinds of picture without the button to the floor's constant, the builder's
 for figureTarget's read of the candidate the browser chose, ui/webview/file-view-figure-chosen.test.ts (the source pins:
 chosenSource's body, figureTarget's order, failedSource's delegation and the two callers) and
 ui/webview/file-view-figure-chosen-browser.test.ts (Chromium over the real chat modal: a `<picture>`, a srcset img and a
-gated remote `<picture>` open the candidate shown through the paint's URL).
+gated remote `<picture>` open the candidate shown through the paint's URL). The floor's re-read at each change of the
+body's width and the click listener's stand-down on an answered click added
+ui/webview/file-view-figure-floor-browser.test.ts (Chromium over the real chat modal: the 761 by 76 figure's control
+leaving as the viewport narrows the column under the floor and returning as it widens, the same across the Comments
+aside opening and closing, a page opened at the narrow width with none, and a click dispatched on a gated
+placeholder's img opening nothing while a real click on the restored figure's control opens its tab) and re-aimed
+ui/webview/file-view-figure-shapes.test.ts (the re-read's pins: refigureControls's body and its place in the repaint)
+and ui/webview/file-figure-open.test.ts (the stand-down as the listener's first line).
 Eleven standing suites were re-aimed, not undone:
 ui/webview/file-view-text-size.test.ts (its real-module bar leg at 380, 420, 480 and 600 px in the chat and feed modals
 measures the two glyphs among the actions, case 8), ui/webview/file-view.test.ts and ui/webview/file-view-links.test.ts
@@ -7966,8 +7987,10 @@ wording is gone; the browser plan's pointer stands in its navigation-stack secti
 sentence; every test module under ui/webview, tools or tests whose own text names this follow-on is named here; every
 module named here exists, this one included). tools/markdown-viewer-plan-linknav-review.test.mjs holds the review's
 corrections to this record: L3 names the floor by the source's constant and the number the source gives it, its two
-exclusions with their functions, the web test's place before the join and the click's yield to an anchor with an href;
-L3 and this paragraph name the two shapes modules, which exist; L6 names tests among the directories and the two files
+exclusions with their functions, the web test's place before the join and the click's yield to an anchor with an href,
+the floor's re-read at each change of the body's width by its function and the click's stand-down on an answered
+click, both carried by the source; L3 and this paragraph name the two shapes modules and the floor module, which
+exist; L6 names tests among the directories and the two files
 under it, which this paragraph names too. tests/test_file_view_bar_browser.py, the served bar pins, read the groups
 inside `.fileview-acts`, and the nav group stands outside it, in the bar itself, before the path; run as a single module
 at the records commit, green (`pytest tests/test_file_view_bar_browser.py`, a run that needs the extension deps and a

@@ -69,10 +69,11 @@ test("where it is added: mdBlock's file arm after the anchors are sorted; a figu
   assert.match(VIEW, /parent\.insertBefore\(label, \(figureControlAfter\(anchor\) \|\| anchor\)\.nextSibling\);/, "the label goes after the control");
 });
 
-test("the click: a listener of its own on the body beside the links'; the control's click is the figure's own; a bare figure's click yields to a link, a panel mark, the open panel and a drag-select; a remote picture is a tab, a modified click the /file URL in a tab (stopped before the row), a plain one the viewer through openFromViewer with no target", () => {
+test("the click: a listener of its own on the body beside the links'; the control's click is the figure's own; a bare figure's click yields to a link, a panel mark, the open panel and a drag-select; a remote picture is a tab, a modified click the /file URL in a tab (stopped before the row), a plain one the viewer through openFromViewer with no target; a click another listener already answered stands down first", () => {
   const listeners = VIEW.split('body.addEventListener("click", (ev) => {');
   assert.equal(listeners.length, 3, "two click listeners on the viewer's body: the links' and the figures'");
   const fig = listeners[2].split("\n  });\n")[0];
+  assert.match(fig, /^\s*if \(ev\.defaultPrevented\) return;\n\s*const t = ev\.target as Element \| null;\n\s*const control = figureControlOf\(t, body\);/m, "a click another listener already answered (the gate listener's restore of a placeholder's img) stands down before anything is read");
   assert.match(fig, /const control = figureControlOf\(t, body\);\n\s*if \(control\) \{ const img = figureOfControl\(control\); if \(img\) openFigure\(img, ev\); return; \}/, "the control first, wherever it stands");
   assert.match(fig, /const img = bareFigureOf\(t, body\);\n\s*if \(!img \|\| linkOf\(t\)\) return;/, "a figure inside a link: the author's link (the links listener)");
   assert.match(fig, /if \(panelMark\(t\) && !wantsOwnTab\(ev\)\) return;\n\s*if \(asideOpen && !wantsOwnTab\(ev\)\) return;\n\s*if \(selectionOpenIn\(box\)\) return;\n\s*openFigure\(img, ev\);/, "the mark's card, the open panel's offer and drag, a drag-select: each keeps the plain click");

@@ -10,8 +10,11 @@
 // (linkAbove); and the bare figure's own click yields to an anchor with an href too (a web address of the markdown carries
 // no class, so linkOf read none and the plain click opened the tab AND the picture); (3) a figure under 48px on either side
 // (a badge, an inline icon) wore a control the sheets' fixed margins laid over its neighbours, transparent, taking the click
-// meant for the badge's link or the prose before the icon: a floor (FIGOPEN_MIN_PX), read once the picture has loaded (the
-// paint adds the control before the size is known; the load, armFigureControls, removes one on a figure under the floor).
+// meant for the badge's link or the prose before the icon: a floor (FIGOPEN_MIN_PX), read at the picture's load (the paint
+// adds the control before the size is known; the load, armFigureControls, removes one on a figure under the floor) and again
+// at each change of the body's width (refigureControls, from the width watch's repaint: a figure the column narrowed under
+// the floor loses its control and one it widened past gets it back; read once, at the load, a figure the pane narrowed to
+// 323 by 32 kept a control that hung over it, file-view-figure-floor-browser.test.ts).
 // Every pin reads the tree's own source, so a rename fails loudly; the leg executes each rule in a browser. Synthetic values
 // only.
 import { test } from "node:test";
@@ -49,7 +52,7 @@ test("figureTarget reads the web address before the model's join, so a protocol-
   assert.match(fn, /figurePath reads a protocol-relative source \(`\/\/host\/pic\.svg`\) as an\n\s*\/\/ absolute path of the disk/, "the comment says why the order matters");
 });
 
-test("ensureFigureControl: a figure under the floor gets no control and loses one added before its load; a figure inside a link the climb did not leave gets none; the floor is 48px on either side, read from the loaded picture's rendered box (or its own size when not laid out)", () => {
+test("ensureFigureControl: a figure under the floor gets no control and loses one added before its load; a figure inside a link the climb did not leave gets none; the floor is 48px on either side, read from the loaded picture's rendered box (or its own size when not laid out), at its load and again from the width watch's repaint at each change of the body's width", () => {
   const fn = between(VIEW, "function ensureFigureControl(img: Element, filePath: string): void {", "function addFigureControls(");
   inOrder(fn, [
     "if (img.closest('[data-act=\"' + GATE_ACT + '\"]')) return;",
@@ -77,6 +80,11 @@ test("ensureFigureControl: a figure under the floor gets no control and loses on
   // the load re-reads the figure: the one listener armed per open calls the same builder, which now measures
   const arm = between(VIEW, "function armFigureControls(body: HTMLElement, filePath: string): () => void {", "\n}\n");
   assert.match(arm, /const img = figureOf\(e\); if \(img\) ensureFigureControl\(img, filePath\);/, "the load's road into the builder, where the floor is read");
+  // the width's report re-reads every figure of the box through the same builder, from the repaint the width watch folds into a frame
+  const refigure = between(VIEW, "function refigureControls(body: HTMLElement, filePath: string): void {", "\n}\n");
+  assert.match(refigure, /body\.querySelectorAll\("\.fileview-md img"\)\.forEach\(\(img\) => \{ ensureFigureControl\(img, filePath\); \}\);/, "every figure of the Rendered box, the same builder");
+  const repaint = between(VIEW, "const repaint = () => {", "\n  };\n");
+  inOrder(repaint, ["if (seenWidth === paintedWidth) return;", "paintedWidth = seenWidth;", "if (!textShowing()) return;", "if (unmeasurable()) return;", "landRemembered(); landTarget();", "retakeAfterHide();", "refigureControls(body, path);"], "the repaint: the re-read once the width moved, over a text view with a box, after the seat (the control is a zero-width inline box and moves no layout)");
 });
 
 test("the figure listener: the bare figure's plain click yields to an anchor with an href as it yields to the links listener's links; the control's branch and the pinned guards stand as they were", () => {

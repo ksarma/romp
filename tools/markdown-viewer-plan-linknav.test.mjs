@@ -184,12 +184,14 @@ test('L3: the control\'s words are the viewer\'s literal, quoted by the section 
   const clicks = viewer.split('body.addEventListener("click", (ev) => {');
   assert.equal(clicks.length, 3, 'two click listeners on the body: the links\' and the figures\'');
   const fig = clicks[2].split('\n  });\n')[0];
-  for (const line of ['if (!img || linkOf(t)) return;', 'if (panelMark(t) && !wantsOwnTab(ev)) return;', 'if (asideOpen && !wantsOwnTab(ev)) return;', 'if (selectionOpenIn(box)) return;', 'openFigure(img, ev);']) assert.ok(fig.includes(line), 'the figure listener: ' + line);
+  for (const line of ['if (ev.defaultPrevented) return;', 'if (!img || linkOf(t)) return;', 'if (panelMark(t) && !wantsOwnTab(ev)) return;', 'if (asideOpen && !wantsOwnTab(ev)) return;', 'if (selectionOpenIn(box)) return;', 'openFigure(img, ev);']) assert.ok(fig.includes(line), 'the figure listener: ' + line);
   const openFig = between(viewer, 'const openFigure = (img: Element, ev: MouseEvent): void => {', '\n  };\n');
   assert.ok(openFig.includes('if (target.kind === "web") { openUrlTab(target.href); return; }'));
   assert.ok(openFig.includes('if (wantsOwnTab(ev) && openFileTab(target.path, sid || null)) return;'));
   assert.ok(openFig.includes('openFromViewer("push", target.path, sid || null, null);'), 'the plain click is the trail\'s push with no target');
   assert.ok(section.includes('the figure\'s own click yields to a figure inside a link'));
+  assert.ok(section.includes('the floor is read again at each change of the body\'s width (`refigureControls`'), 'the re-read at a width change, by its function');
+  assert.ok(viewer.includes('refigureControls(body, path);'), 'which the width watch\'s repaint runs');
   // the walks
   assert.match(read('ui', 'webview', 'anchor-map.ts'), /"fv-figerr",[^\n]*\n\s*"fv-figopen",/, 'anchor-map.ts CONTROL_CLASSES');
   assert.ok(read('ui', 'webview', 'anchor-map.ts').includes('const isFigureCompanion = (n: DNode): boolean => hasClass(n, "fv-figerr") || hasClass(n, "fv-figopen");'));
