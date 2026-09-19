@@ -830,8 +830,10 @@ class ReturnFromBackground(unittest.TestCase):
                 denial = e.read()
                 self.assertEqual(e.code, 403, p + ": the kernel's denial")
                 self.assertTrue(e.headers.get("Content-Type", "").startswith("text/plain"), p + ": text/plain: %r" % (e.headers.get("Content-Type"),))
-                self.assertNotIn(b"<html", denial.lower(), p + ": the denial writes no <html> tag (%d bytes)" % (len(denial),))
-                self.assertNotIn(b"data-romp-served", denial, p + ": ...and carries no stamp")
+                # asserted as derived booleans (review round 4 verify): assertNotIn's red appends the container, the body that names the
+                # serve-token file's path, to the failure text; a red here says the count and the size and prints no byte of it
+                self.assertFalse(b"<html" in denial.lower(), p + ": the denial writes no <html> tag (%d bytes)" % (len(denial),))
+                self.assertFalse(b"data-romp-served" in denial, p + ": ...and carries no stamp (%d bytes)" % (len(denial),))
 
     def test_firefox_phone_hung_12s_tab_tap_denied_document(self):
         self._leg("phone", "hung", 12, engine="firefox", tap="fleet", denied=True)

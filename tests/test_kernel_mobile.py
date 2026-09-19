@@ -1527,6 +1527,37 @@ unmarked:shRows('pane-load-unmarked'),failedRows:shRows('pane-load-failed'),list
         self.assertIn("window.__rompApp=APP;", km._shim_core_js("waiting"), "the shim's marker line")
         self.assertIn("if(w&&typeof w.__rompApp==='string')return 'app';", km._LANDING_MOBILE_JS, "the shell's read of the same name (review round 4: the marker is read first, the kernel's 200 stamp tells doc from other after it)")
 
+    def test_the_gears_tap_time_read_and_the_real_settings_shims_marker_agree_so_a_second_tap_toggles_the_live_page_and_fetches_nothing(self):
+        # review round 4 verify (2026-09-19, kernel-2's coupling): the gear's tap-time check reads window.__rompApp on the settings frame's
+        # window, the marker the settings page's REAL shim sets (APP "settings"). The gear harness in tests/test_pane_state_broadcast.py
+        # stubs the marker under whatever name the gear reads, and the linked case above couples the shim to the PANES' reader (docState),
+        # not the gear's, so a rename kept in step on the shim and in docState and missed in the gear's read left every fast tier green
+        # while every second gear tap on the real dashboard judged the live page not-live and fetched it again. Here the real settings
+        # shim runs in the pane scope as the gear frame's contentWindow after the first tap's promotion, and the second tap reads it.
+        settings_js = km._LANDING_SETTINGS_JS.replace("__ROMP_BOOT__", json.dumps("boot-1")).replace("__ROMP_LOADER__", json.dumps(""))
+        r = _run_linked(app="settings", pre=_LAZY_PRE + "PANES['f-settings'] = mk('f-settings');\n" + settings_js + "\n", before=_MOBILE_GLUE + r"""
+var GEARPOSTS=[];var gearListeners=function(){return (LOADFNS['f-settings']||[]).length;};var l0=gearListeners();   // the shell's panes-word hook is on the gear frame already (the mobile script wires the seven frames)
+global.__rompOpenSettings();   // tap 1: the frame has no src, so the src is set once, the opener's one load listener armed, the ask pending
+var t_tap1={src:ATTRS['f-settings'].src,sets:SRCSETS.filter(function(id){return id==='f-settings';}).length,armed:gearListeners()-l0};
+PANES['f-settings'].contentWindow=window;   // the pane's window IS the gear frame's contentWindow; the shim below is the settings page's own
+PANES['f-settings'].contentDocument={URL:'https://TESTHOST/settings'};   // its document, committed at the gear's url
+window.postMessage=function(m){GEARPOSTS.push(JSON.parse(JSON.stringify(m)));};   // what the shell posts into the page
+""", scenario=r"""
+var t_marker={type:typeof window.__rompApp,value:window.__rompApp};   // what the REAL shim set at its parse
+(LOADFNS['f-settings']||[]).forEach(function(f){f({type:'load'});});   // the page's load: the pending ask posts
+var gearSets=function(){return SRCSETS.filter(function(id){return id==='f-settings';}).length;};
+var t_loaded={posts:GEARPOSTS.slice(),sets:gearSets()};
+global.__rompOpenSettings();   // tap 2 over the real, marked page: live, so no re-fetch; the ask posts (the page's own opener toggles)
+var t_tap2={posts:GEARPOSTS.slice(),sets:gearSets(),src:ATTRS['f-settings'].src,armed:gearListeners()-l0};
+out({tap1:t_tap1,marker:t_marker,loaded:t_loaded,tap2:t_tap2});""")
+        self.assertEqual(r["tap1"], {"src": "/settings", "sets": 1, "armed": 1}, "the first tap promotes the gear frame once and arms the opener's one load listener (beside the shell's panes-word hook, wired at boot)")
+        self.assertEqual(r["marker"], {"type": "string", "value": "settings"}, "the real shim set the marker on the settings page's window at its parse (APP)")
+        self.assertEqual(r["loaded"], {"posts": [{"romp": "openSettings"}], "sets": 1}, "the page's load delivers the pending ask into the page")
+        self.assertEqual(r["tap2"], {"posts": [{"romp": "openSettings"}, {"romp": "openSettings"}], "sets": 1, "src": "/settings", "armed": 1}, "the second tap reads the real page as live: zero more src sets (a re-fetch drops and sets it), the ask posts; a marker renamed on the shim alone, or in the gear's read alone, re-fetches here")
+        # the belt beside the executed case: the two literals, so a rename that keeps the pair in step still shows up in a diff review
+        self.assertIn("window.__rompApp=APP;", km._shim_core_js("settings"), "the shim's marker line")
+        self.assertIn("typeof f.contentWindow.__rompApp==='string'", km._LANDING_SETTINGS_JS, "the gear's read of the same name (review round 4, kernel-2)")
+
     def test_the_phones_first_chat_dial_carries_skeleton_1_and_a_redial_or_another_layout_does_not(self):
         r = _run_linked(app="chat", pre=_LAZY_PRE, before=_MOBILE_GLUE, scenario=r"""
 var first=sock().url;
