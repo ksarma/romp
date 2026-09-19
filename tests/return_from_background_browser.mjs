@@ -91,13 +91,29 @@ const armOutage = () => { outageEnded = new Promise((r) => { endOutage = r; }); 
 const live = new Set();   // routes passed through and still open, to close at the suspend
 const appOf = (u) => { try { const q = new URL(u).searchParams; return q.get("app") || (/\/remote\//.test(u) ? "relay" : "?"); } catch (e) { return "?"; } };
 const relayOf = (u) => { const m = /\/remote\/([^/]+)\/ws/.exec(u); return m ? m[1] : null; };
+// THE HELD FULL (review round 3, 2026-09-19, fresh-2): on the BOOT chat dial, when cfg.holdActiveFullMs is set, every server frame
+// naming the active tab (its `session` full and any tail with its id) is queued instead of forwarded, in order, while every other
+// frame (the strip with its skeleton list, the statuses, the caps frame) goes through at once; after the hold the queue flushes in
+// order. That makes the start gate's claim testable CAUSALLY in a real engine: the chain is armed by the strip's first paint and the
+// chat is on screen, so the only thing holding the first background ask is the gate, and a prefetch stamped before the release left
+// ahead of the active tab's full. The stamps are the proxy's (wire time), so no page-side apply time is needed.
+let heldBootChat = false;   // one boot chat dial is held (a redial after the return is not: the return hold owns that half)
 const wire = (ws, d) => {
   const server = ws.connectToServer();
   d.connectedT = now();
-  server.onMessage((m) => { if (!d.firstServerMsgT) d.firstServerMsgT = now(); d.serverFrames = (d.serverFrames || 0) + 1; ws.send(m); });
+  const hold = cfg.holdActiveFullMs > 0 && cfg.activeSid && d.app === "chat" && d.phase === "boot" && !heldBootChat;
+  if (hold) heldBootChat = true;
+  const queue = []; let released = !hold;
+  const names = (m) => { if (typeof m !== "string" || m.indexOf(cfg.activeSid) < 0) return false; try { const o = JSON.parse(m); return !!o && o.id === cfg.activeSid; } catch (e) { return false; } };
+  server.onMessage((m) => { if (!d.firstServerMsgT) d.firstServerMsgT = now(); d.serverFrames = (d.serverFrames || 0) + 1;
+    if (!released && names(m)) {
+      if (!d.held) { d.held = { t: now(), id: cfg.activeSid }; setTimeout(() => { released = true; d.heldRelease = { t: now(), n: queue.length }; for (const q of queue) ws.send(q); queue.length = 0; }, cfg.holdActiveFullMs); }
+      queue.push(m); return;
+    }
+    ws.send(m); });
   ws.onMessage((m) => { d.pageFrames = (d.pageFrames || 0) + 1; server.send(m);
     // the chat pane's asks for a full session frame (needFull, with its why): the idle prefetch's `prefetch`, the tap's `skeleton-click`
-    try { if (typeof m === "string" && m.indexOf('"needFull"') >= 0) { const o = JSON.parse(m); if (o && o.type === "needFull") (d.needFull = d.needFull || []).push(String(o.why || "")); } } catch (e) { /* not JSON */ }
+    try { if (typeof m === "string" && m.indexOf('"needFull"') >= 0) { const o = JSON.parse(m); if (o && o.type === "needFull") { (d.needFull = d.needFull || []).push(String(o.why || "")); (d.needFullT = d.needFullT || []).push({ why: String(o.why || ""), id: String(o.id || ""), t: now() }); } } } catch (e) { /* not JSON */ }
   });
   server.onClose((code, reason) => { d.serverClosedT = now(); d.serverCloseCode = code; live.delete(ws); try { ws.close({ code: code || 1000, reason: reason || "" }); } catch (e) { /* closed */ } });
   ws.onClose((code) => { d.pageClosedT = now(); d.pageCloseCode = code; live.delete(ws); try { server.close(); } catch (e) { /* closed */ } });
@@ -244,6 +260,18 @@ try {
   out.bodyClass = await page.evaluate(() => document.body.className);
   out.mobileShell = await page.evaluate(() => !!document.getElementById("mtabs") && getComputedStyle(document.getElementById("mtabs")).display !== "none");
   await sleep(cfg.settleMs || 1500);   // the bundles' ready, the caps answer, the first pushes: the return is measured from a settled page
+  // THE START GATE'S WITNESS (fresh-2): the boot chat dial's held full was released (the precondition happened); then the chain's first
+  // prefetch after the release, within a bounded wait (the gate opened on the full, so the chain ran once it applied)
+  if (cfg.holdActiveFullMs > 0) {
+    const bootChat = out.dials.find((d) => d.app === "chat" && d.phase === "boot");
+    const relDeadline = now() + 10000;
+    while (now() < relDeadline && !(bootChat && bootChat.heldRelease)) await sleep(100);
+    const pfDeadline = now() + 10000;
+    const after = () => (bootChat && bootChat.heldRelease && (bootChat.needFullT || []).filter((x) => x.why === "prefetch" && x.t >= bootChat.heldRelease.t)) || [];
+    while (now() < pfDeadline && !after().length) await sleep(100);
+    out.gate = { held: bootChat ? bootChat.held || null : null, heldRelease: bootChat ? bootChat.heldRelease || null : null,
+                 prefetchAfterReleaseMs: after().length && bootChat.heldRelease ? after()[0].t - bootChat.heldRelease.t : -1 };
+  }
   // the iframes' src after the settle: the lazy contract read off the DOM (a lazy pane has none until its tap; every eager pane has its page)
   out.srcAtBoot = await page.evaluate(() => Object.fromEntries(Array.from(document.querySelectorAll("iframe[id^=f-]")).map((f) => [f.id.slice(2), f.getAttribute("src")])));
   out.wsWordsAtBoot = await page.evaluate(() => (window.__labWs || []).map((w) => w.app));   // every pane that said anything before the tap or the suspend

@@ -338,11 +338,11 @@ class ReturnFromBackground(unittest.TestCase):
             shutil.rmtree(cls.lab, ignore_errors=True)
 
     # ---- the driver ----
-    def _drive(self, shell, regime, outage_s, engine="chromium", tap=None, boot_tab=None, abort=False, error_body=False):
+    def _drive(self, shell, regime, outage_s, engine="chromium", tap=None, boot_tab=None, abort=False, error_body=False, hold_active_full_ms=0, active_sid=None):
         declared = os.environ.get("ROMP_SERVED_TESTS_ENGINES", "")
         if engine != "chromium" and declared and engine not in [e.strip() for e in declared.split(",")]:
             self.skipTest("optional: this runner declares no %s (ROMP_SERVED_TESTS_ENGINES=%s)" % (engine, declared))
-        name = "%s-%s-%s-%ds%s%s%s" % (engine, shell, regime, outage_s, "-tap-" + tap if tap else "", ("-errbody" if error_body else "-abort") if abort else "", "-boot-" + boot_tab if boot_tab else "")
+        name = "%s-%s-%s-%ds%s%s%s%s" % (engine, shell, regime, outage_s, "-tap-" + tap if tap else "", ("-errbody" if error_body else "-abort") if abort else "", "-boot-" + boot_tab if boot_tab else "", "-heldfull" if hold_active_full_ms else "")
         eager = _eager(shell, tap)
         # a derived set that came out empty would hand the driver a boot wait and a fresh wait that end at once with nothing witnessed
         # (review round 2, 2026-09-19: every derived expectation must fail when the derivation yields nothing)
@@ -356,7 +356,10 @@ class ReturnFromBackground(unittest.TestCase):
                "abortMode": "error-body" if error_body else "abort",   # HIGH 2, review round 2 closeout: error-body answers the fetch with a 502 page (same-origin at the pane's url, load fires) instead of aborting it
                "perfShare": True, "bootTimeoutMs": 30000, "freshTimeoutMs": 25000, "settleMs": 1500,
                "bootTab": boot_tab or "", "expectPrefetchAfterChatTap": bool(boot_tab and tap == "chat"),   # stage 0, review round 1: a phone left on another tab, then the Chat tab shown, arms the idle chain
-               "activeSid": SESSIONS[0][0] if boot_tab else "",   # the chat blob's active tab (the dial's hint): with none the kernel serves the whole board and there is no skeleton set to prefetch
+               # the chat blob's active tab (the dial's hint): with none the kernel serves the whole board and there is no skeleton set to prefetch.
+               # A leg names its own (active_sid); the boot-tab legs default to web, the held-full leg to web too (the kernel's one full is what is held)
+               "activeSid": active_sid if active_sid is not None else (SESSIONS[0][0] if (boot_tab or hold_active_full_ms) else ""),
+               "holdActiveFullMs": hold_active_full_ms,   # fresh-2 (review round 3): the driver's proxy holds the boot chat dial's frames naming the active tab for this long
                "shots": os.path.join(self.lab, "return-harness-" + name) if os.environ.get("RETURN_HARNESS_SHOTS") else ""}
         cfg["resultPath"] = os.path.join(self.lab, "result-%s.json" % name)   # the full result; the RESULT: line is a compact copy
         cfg_path = os.path.join(self.lab, "cfg-%s.json" % name)
@@ -381,8 +384,8 @@ class ReturnFromBackground(unittest.TestCase):
         self.assertEqual(len(full.get("dials") or []), r.get("dialsN"), "the full result carries every dial the compact line counted")
         return name, full
 
-    def _leg(self, shell, regime, outage_s, engine="chromium", tap=None, boot_tab=None, abort=False, error_body=False):
-        name, r = self._drive(shell, regime, outage_s, engine, tap, boot_tab, abort, error_body)
+    def _leg(self, shell, regime, outage_s, engine="chromium", tap=None, boot_tab=None, abort=False, error_body=False, hold_active_full_ms=0, active_sid=None):
+        name, r = self._drive(shell, regime, outage_s, engine, tap, boot_tab, abort, error_body, hold_active_full_ms, active_sid)
         rows = _rows(self.diag)
         m = measure(rows, r)
         art = os.path.join(self.lab, "return-harness-%s.json" % name)
@@ -394,6 +397,8 @@ class ReturnFromBackground(unittest.TestCase):
         self._parked(name, r, m)
         self._lazy(name, r, m, tap)
         self._dial(name, r, boot_tab, tap)
+        if hold_active_full_ms:
+            self._gate(name, r)
         self._feed_paint(name, r, boot_tab)
         self._return_chain(name, r, rows)
         return m
@@ -472,6 +477,31 @@ class ReturnFromBackground(unittest.TestCase):
         self.assertFalse(la.get("failed"), where + "the re-tap cleared the failed state: %r" % (la,))
         self.assertEqual(la.get("failedPanes"), [], where + "no .pane carries `failed` after the re-tap: %r" % (la,))
         self.assertIn("/" + tap, r.get("frames") or [], where + "the re-tap loaded the pane's document (the frame at its url): %r" % (r.get("frames"),))
+
+    # ---- the start gate's witness (review round 3, 2026-09-19, fresh-2): the chain waits for the active tab's full, with the chat ON SCREEN ----
+    def _gate(self, name, r):
+        """The gate's central claim, above the pure function: no background ask leaves before the visible tab's full has applied. The one
+        served assertion that named it (prefetchBeforeTap, the boot-on-Feed legs) is carried by paneHidden() alone (the chat display:none),
+        so this leg boots ON the chat tab (paneHidden() false) with an active tab stored (a skeleton set to prefetch), and the driver's
+        proxy HOLDS the boot chat dial's frames naming that tab for cfg.holdActiveFullMs while the strip and the statuses pass: the strip's
+        first paint arms the chain, the chat is visible, and the gate is the only thing that can hold the first prefetch. Asserted: the
+        hold happened (the precondition, guarded: a derived expectation over nothing is no witness), no prefetch left before the release
+        (a wire-time stamp on the proxy, so a prefetch inside the hold is unambiguous), and one left after it within the driver's wait
+        (the gate opened on the full: the frame half). The mutation of record: nextPrefetch without its gate term asks inside the hold."""
+        where = name + ": "
+        boot_chat = [d for d in (r.get("dials") or []) if d.get("app") == "chat" and d.get("phase") == "boot"]
+        self.assertTrue(boot_chat, where + "the chat pane dialed at boot")
+        d = boot_chat[0]
+        self.assertTrue(d.get("skeleton"), where + "the boot dial carries skeleton=1 (a set to prefetch exists): %r" % (d,))
+        held, rel = d.get("held") or {}, d.get("heldRelease") or {}
+        self.assertEqual(held.get("id"), SESSIONS[0][0], where + "the proxy held a frame naming the active tab (the precondition): %r" % (held,))
+        self.assertGreater(rel.get("n", 0), 0, where + "…and released at least one held frame after the hold: %r" % (rel,))
+        self.assertGreaterEqual(rel.get("t", 0) - held.get("t", 0), 1000, where + "the hold stood for about the configured time: held %r released %r" % (held, rel))
+        asks = d.get("needFullT") or []
+        early = [x for x in asks if x.get("why") == "prefetch" and x.get("t", 0) < rel["t"]]
+        self.assertEqual(early, [], where + "no background full was asked for before the active tab's full was even on the wire, with the chat on screen: the gate alone held it (asks: %r)" % (asks,))
+        g = r.get("gate") or {}
+        self.assertGreaterEqual(g.get("prefetchAfterReleaseMs", -1), 0, where + "the chain asked for a background full once the active tab's full applied (the gate opened on the frame): %r; asks %r" % (g, asks))
 
     # ---- stage 0's dial pins (review round 1, 2026-09-19): the phone's first chat dial takes the diet; the chain waits for the chat pane's show ----
     def _dial(self, name, r, boot_tab, tap):
@@ -653,6 +683,9 @@ class ReturnFromBackground(unittest.TestCase):
 
     def test_phone_hung_12s_tab_tap_http_error_body(self):
         self._leg("phone", "hung", 12, tap="fleet", abort=True, error_body=True)   # HIGH 2, review round 2 closeout: the tapped pane's first fetch answers a 502 body (a proxy while the kernel restarts): same-origin at the pane's url, load fires, and the shell must call it failed (the pane's own document carries the shim), re-park it and load it on the re-tap
+
+    def test_phone_hung_12s_the_start_gate_holds_the_chain_behind_the_active_tabs_full(self):
+        self._leg("phone", "hung", 12, hold_active_full_ms=1500)   # fresh-2 (review round 3): the chat on screen, the active tab's full held 1.5 s on the wire: no prefetch inside the hold, one after it
 
     def test_phone_opened_on_the_feed_tab_arms_the_chain_when_chat_is_shown(self):
         self._leg("phone", "hung", 12, tap="chat", boot_tab="feed")   # stage 0, review round 1 (F1): the chat display:none at boot asks nothing; its show arms the idle prefetch
