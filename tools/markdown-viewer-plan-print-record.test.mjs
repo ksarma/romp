@@ -8,8 +8,9 @@
 // two browser legs joined the follow-on; the third review (2026-09-19) made the probes one per URL for a press's wait,
 // set a lazy picture eager, carried the wait's verdict as `ready` with `why`, derived the body's readiness from the body
 // itself (bodyReady, the viewers reporting nothing), dropped the button's `disabled` property for the bar's aria-disabled
-// rule with the keyboard handed through the host at a body-out disarm, and pinned the re-aim's deadline by an executed
-// case. tools/markdown-viewer-plan-print.test.mjs holds the first
+// rule with the keyboard handed through the host at a body-out disarm, and pinned the repaint re-aim's deadline by an
+// executed case; the fourth review (2026-09-19) gave the settle re-aim's deadline its own executed case.
+// tools/markdown-viewer-plan-print.test.mjs holds the first
 // build's sentences; this module holds the rounds' sentences to the tree the same way, each read from its source, with
 // one difference: the TypeScript sources are read with their comments removed, so a pin here is met by a statement and
 // never by a comment that names the same string. Where the section states a count a command produces (the `ls` listing)
@@ -203,19 +204,33 @@ test('P2: the deadline asks instead of printing, Print anyway prints, Keep waiti
   assert.ok(TESTS.includes('the deadline\'s ask over a picture whose route never answers'));
 });
 
-test('P2: the wait is re-aimed at a repaint and at each settle under the press\'s deadline, the bound held by an executed case, and the armed line is recounted at a repaint', () => {
+test('P2: the wait is re-aimed at a repaint and at each settle under the press\'s deadline, each bound held by its own executed case, and the armed line is recounted at a repaint', () => {
   assert.ok(P2.includes('The wait is aimed at the body as it stands and re-aimed in two cases'));
   assert.ok(P2.includes('Both re-aims run under the deadline the press set, never past it'));
   assert.ok(flow.includes('const n = aimWait(timeLeft());') && flow.includes('Math.max(0, waitEnds - Date.now())'), 'a re-aim reads the time left (or none for Keep waiting\'s wait)');
   assert.ok(flow.includes('const more = aimWait(left);'), 'the settle reads the body again under the time left');
-  // the bound is a claim about time, so it is held by the driver leg's executed case (3c) and the record cites that case; the
-  // second review's census of the deadline's writers in the source is gone (the third review's tests-2: a re-aim restarting
-  // the full deadline left every leg green, so a grep was no pin)
-  assert.ok(P2.includes('the bound is executed by file-print-driver-browser.test.ts case (3c) (the round\'s tests-2)'));
+  // each bound is a claim about time, so each is held by its own executed case of the driver leg and the record names both:
+  // case (3c) the repaint's re-aim, case (12) the settle's. The second review's census of the deadline's writers in the source
+  // is gone (the third review's tests-2: a repaint re-aim restarting the full deadline left every leg green, so a grep was no
+  // pin), and the third review's one case pinned the repaint's re-aim alone (the fourth review: a settle re-aim restarting the
+  // full deadline left every leg green, case (3c) included)
+  assert.ok(P2.includes('each re-aim\'s bound is executed by its own case of file-print-driver-browser.test.ts'));
+  assert.ok(!P2.includes('the bound is executed by file-print-driver-browser.test.ts case (3c)'), 'the one-case wording is gone');
   const driver = read('ui', 'webview', 'file-print-driver-browser.test.ts');
+  // the repaint's re-aim: case (3c)
+  assert.ok(P2.includes('The repaint\'s bound is case (3c):'));
   assert.ok(driver.includes('the re-aim runs under the press\'s deadline, never a restarted one: with the landing\'s picture parked too the ask comes at the press\'s deadline'), 'the driver leg\'s case (3), sub-case c, in its title');
-  assert.ok(driver.includes('assert.ok(t2 - t0 >= 1900 && t2 - t0 < 3000,') && driver.includes('assert.ok(t2 - tLand < 1600,'), 'the two bounds the record states, asserted there');
+  const c3 = between(driver, 'test("(3) a Reload landing during the wait re-aims it', '\n});');
+  inOrder(c3, ['await reloadTo(page, SLOW2_NOTE);', 'assert.ok(t2 - t0 >= 1900 && t2 - t0 < 3000,', 'assert.ok(t2 - tLand < 1600,'], 'sub-case c: the landing, then the two bounds the record states');
   assert.ok(P2.includes('the ask is asserted between 1900 and 3000 ms after the press and under 1600 ms after the landing'));
+  // the settle's re-aim: case (12), an insertion the body's observer does not see, then the release that settles the wait
+  assert.ok(P2.includes('The settle\'s bound is case (12):'));
+  assert.ok(driver.includes('(12) the settle\'s re-aim runs under the press\'s deadline, never a restarted one: a second parked picture inserted inside the rendered root mid-wait'), 'the driver leg\'s case (12), in its title');
+  const c12 = between(driver, 'test("(12) the settle\'s re-aim runs under the press\'s deadline', '\n});');
+  inOrder(c12, ['md.appendChild(img);', 'assert.equal(ins.grandchild, true,', 'assert.equal(b.line, "Preparing 1 picture…", "the observer was silent', 'await s.release([SLOW]);', 'const tSettle = await nowOnPage(page);', 'assert.equal((await prints(page)).length, 0, "no print at the settle', 'assert.ok(t2 - t0 >= 1900 && t2 - t0 < 3000,', 'assert.ok(t2 - tSettle < 1600,'], 'case (12): the insertion inside the root, the silent observer, the release, no print at the settle, then the two bounds the record states');
+  assert.ok(P2.includes('the ask is asserted between 1900 and 3000 ms after the press and under 1600 ms after the release'));
+  assert.ok(flow.includes('observer.observe(host.body, { childList: true });'), 'the observer reads the body\'s children alone, which is why the insertion inside the root is silent');
+  assert.ok(TESTS.includes('and the settle\'s re-aim under the press\'s deadline (a second parked picture inserted inside the rendered root mid-wait'), 'the Tests list names case (12)');
   // the wait's line is rewritten in place at a re-aim
   assert.ok(flow.includes('const preparingLine = (n: number): void => {') && flow.includes('if (line && line.querySelector(".fileview-print-load")) { line.firstChild!.textContent = preparingWords(n); return; }'), 'the standing wait line\'s words change in place');
   assert.ok(flow.includes('if (more > 0) { preparingLine(more); return; }') && between(flow, 'const reaim = (): void => {', '\n  };').includes('preparingLine(n);'), 'both re-aims go through it');

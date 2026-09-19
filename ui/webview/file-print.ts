@@ -61,9 +61,12 @@
 //      body is repainted under it (the host's `body` report: a reload's landing, a format pick, the editor's exit; the
 //      pictures listened on were the old body's, detached by the swap) and again at the settle (a picture that entered or
 //      was re-aimed since the collection, a heal's retry of a failed figure among them, is awaited too; a URL the retry
-//      changed is a new key and is probed once), always under the deadline the press set, never past it (executed:
-//      file-print-driver-browser.test.ts case 3c lands a parked picture mid-wait and reads the ask at the press's deadline):
-//      the print fires with every picture in the body complete, or the deadline asks. A repaint under the ask counts the new
+//      changed is a new key and is probed once), always under the deadline the press set, never past it (each re-aim's
+//      bound executed by its own case of file-print-driver-browser.test.ts: case 3c lands a parked picture by a Reload
+//      mid-wait, the repaint's re-aim, and case 12 inserts one inside the rendered root, unseen by the body's observer, and
+//      releases the first, the settle's re-aim; each reads the ask at the press's deadline, under 1600 ms after the landing
+//      or the release, where a re-aim that restarted the deadline would read about 2000): the print fires with every
+//      picture in the body complete, or the deadline asks. A repaint under the ask counts the new
 //      body's pictures still loading the same way: the line's count follows in place, and none loading prints, as a re-aim
 //      that finds nothing loading does.
 //   3. window.print(). On afterprint, or at once when print returns, the bar rests.

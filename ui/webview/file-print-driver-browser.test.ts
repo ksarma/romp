@@ -30,10 +30,16 @@
 //     hundreds of times for each URL (the review measured 337 in 8 s) and the bar asked at the deadline instead of printing;
 // (11) an <img loading="lazy"> far below the fold (the third review's fresh-2): the browser has not started its fetch, so
 //     nothing would fire load or error; the press sets it eager, the fetch starts, and the print follows its load. Before
-//     the fix the wait ran to its deadline over it and the bar asked, the picture blank.
-// The re-aim's deadline is executed in case (3c): a landing mid-wait whose picture is parked too, and the ask at the
-// PRESS's deadline, not one restarted at the landing (the third review's tests-2: the record's claim was pinned by a
-// source-text census alone, and a re-aim restarting the full deadline left every leg green).
+//     the fix the wait ran to its deadline over it and the bar asked, the picture blank;
+// (12) the settle's re-aim under the press's deadline (the fourth review's correction of tests-2, 2026-09-19): a second
+//     parked picture inserted inside the rendered root mid-wait, a grandchild of the body, so the observer of the body's
+//     children is silent and no repaint re-aim runs; the first picture released settles the wait, and the settle's re-aim
+//     finds the second; the ask comes at the PRESS's deadline, not one restarted at the settle.
+// Each re-aim's deadline is executed by its own case: the repaint's in case (3c), a Reload landing mid-wait whose picture
+// is parked too, and the ask at the PRESS's deadline, not one restarted at the landing (the third review's tests-2: the
+// record's claim was pinned by a source-text census alone, and a re-aim restarting the full deadline left every leg
+// green); the settle's in case (12) (the fourth review: case (3c) drives the repaint's re-aim alone, and a settle re-aim
+// restarting the full deadline left every leg green, case (3c) included).
 // Skips loudly without a browser. Synthetic values only: an invented note, /repo/notes-api paths, invented hosts.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
@@ -761,6 +767,71 @@ test("(11) an <img loading=\"lazy\"> far below the fold is not requested until t
     assert.equal(b.phase, null, "the bar rested");
     assert.equal((await lazy()).loading, "eager", "the attribute stays eager after the print");
     assert.deepEqual(s.requests.filter((u) => !u.startsWith(ORIGIN)), [], "every request went to the page's origin");
+    assert.deepEqual(s.errors, [], "no script error");
+    await page.close();
+  });
+});
+
+// ── (12) the settle's re-aim under the press's deadline ────────────────────────────────────────────
+
+test("(12) the settle's re-aim runs under the press's deadline, never a restarted one: a second parked picture inserted inside the rendered root mid-wait (a grandchild of the body, so the observer of the body's children is silent and no repaint re-aim runs), then the first released, which settles the wait and the settle's re-aim finds the second; the line still reads one picture with no print, and the ask comes at the press's deadline under a 2000 ms seam, not one restarted at the settle; Print anyway then prints once with the inserted picture still loading", { timeout: 120000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const s = await scene(browser, "pane", SLOW_NOTE, { held: [SLOW, SLOW2] });
+    const { page } = s;
+    await parked(s, [SLOW]);
+    await page.evaluate(() => { (window as any).FV.setPrintSettleMs(2000); });
+    await page.click(PRINT_BTN);
+    const t0 = await nowOnPage(page);
+    let b = await bar(page);
+    assert.equal(b.phase, "preparing"); assert.equal(b.line, "Preparing 1 picture…", "the slow picture is loading");
+    await pause(page, 600);
+    // a second parked picture, inserted inside the rendered root: a child of `.fileview-md`, a grandchild of the body, so the
+    // flow's observer of the body's CHILDREN (P7) does not see it and no repaint re-aim runs; the settle's re-aim is the one
+    // that finds it. Its URL is the one the viewer's rewrite gave the first picture, the name changed: the same route and shape
+    const ins = await page.evaluate(([a, c]: [string, string]) => {
+      const body = document.querySelector("#romp-fileview .fileview-body")!;
+      const md = body.querySelector(".fileview-md")!;
+      const first = (Array.from(md.querySelectorAll("img")) as HTMLImageElement[]).find((i) => decodeURIComponent(i.src).includes("/docs/" + a))!;
+      const img = document.createElement("img");
+      img.src = first.src.replace(a, c); img.alt = "";
+      md.appendChild(img);
+      return { grandchild: img.parentElement === md && md.parentElement === body, src: decodeURIComponent(img.src), imgs: body.querySelectorAll("img").length };
+    }, [SLOW, SLOW2]);
+    assert.equal(ins.grandchild, true, "the inserted picture is a child of the rendered root and a grandchild of the body");
+    assert.ok(ins.src.includes("/docs/" + SLOW2), "at the kernel's /file route: " + ins.src);
+    assert.equal(ins.imgs, 3, "the body's pictures: the quick one, the slow one and the inserted one (the wait line's loader glyph stands in the card, outside the body)");
+    for (let i = 0; i < 100 && s.heldCount(SLOW2) === 0; i++) await frames(page, 1);
+    const tIns = await nowOnPage(page);
+    assert.equal(s.heldCount(SLOW2), 1, "the inserted picture is requested and parked");
+    assert.equal(s.heldCount(SLOW), 1, "the first is still parked");
+    assert.ok(tIns - t0 >= 550 && tIns - t0 < 1500, "the insertion came mid-wait (" + Math.round(tIns - t0) + " ms after the press)");
+    await frames(page, 2);
+    b = await bar(page);
+    assert.equal(b.phase, "preparing");
+    assert.equal(b.line, "Preparing 1 picture…", "the observer was silent: the line still counts the first picture alone (a repaint re-aim would have counted both)"); assert.equal(b.lines, 1);
+    assert.equal((await prints(page)).length, 0);
+    // the first picture lands: the wait settles, and the settle's re-aim finds the inserted picture still loading
+    await s.release([SLOW]);
+    const tSettle = await nowOnPage(page);
+    await frames(page, 6);
+    assert.equal((await prints(page)).length, 0, "no print at the settle: the settle's re-aim found the inserted picture loading");
+    b = await bar(page);
+    assert.equal(b.phase, "preparing", "the wait goes on over the inserted picture"); assert.equal(b.line, "Preparing 1 picture…"); assert.equal(b.lines, 1, "the line rewritten in place");
+    await page.waitForFunction(() => (document.getElementById("fileview-print-line")?.firstChild?.textContent || "") === "1 picture has not loaded.", null, { timeout: 6000 });
+    const t2 = await nowOnPage(page);
+    assert.ok(t2 - t0 >= 1900 && t2 - t0 < 3000, "the ask came at the press's deadline (" + Math.round(t2 - t0) + " ms after the press)");
+    assert.ok(t2 - tSettle < 1600, "…not at a deadline restarted at the settle (" + Math.round(t2 - tSettle) + " ms after it; a restart would read about 2000)");
+    t.diagnostic("case 12: the insertion " + Math.round(tIns - t0) + " ms after the press; the settle " + Math.round(tSettle - t0) + " ms after the press; the ask " + Math.round(t2 - t0) + " ms after the press and " + Math.round(t2 - tSettle) + " ms after the settle (seam 2000 ms)");
+    b = await bar(page);
+    assert.equal(b.phase, "stalled"); assert.deepEqual(b.buttons, [ANYWAY_WORDS, KEEP_WORDS]);
+    assert.equal((await prints(page)).length, 0, "nothing printed at the deadline: the bar asked");
+    await page.click('#fileview-print-line button:has-text("' + ANYWAY_WORDS + '")');
+    const p = await prints(page);
+    assert.equal(p.length, 1, "Print anyway printed once");
+    assert.equal(p[0].incomplete.length, 1, "the inserted picture is the one still loading at the print");
+    assert.ok(decodeURIComponent(p[0].incomplete[0]).includes("/docs/" + SLOW2));
+    await page.evaluate(() => { (window as any).FV.setPrintSettleMs(null); });
+    assert.equal(await page.evaluate(() => (window as any).FV.printSettleMs()), 8000, "the seam restored");
     assert.deepEqual(s.errors, [], "no script error");
     await page.close();
   });

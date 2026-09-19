@@ -7899,12 +7899,22 @@ P7's observer sees a repaint under it (a reload's landing, a format pick, the ed
 were the old body's, detached by the swap), the driver collects the new body's pictures and waits on those; and at each
 settle it reads the body again for a picture that entered or was re-aimed since the collection (a heal's retry of a
 failed figure among them). Both re-aims run under the deadline the press set, never past it, so the print fires with
-every picture in the body complete, or the deadline asks, and a re-aim that finds nothing loading prints at once; the
-bound is executed by file-print-driver-browser.test.ts case (3c) (the round's tests-2): under a 2000 ms seam a Reload
-lands a body whose picture is parked too, between 550 and 1500 ms after the press, and the ask is asserted between 1900
-and 3000 ms after the press and under 1600 ms after the landing, where a re-aim that restarted the full deadline would
-read about 2000 ms after the landing; before that the claim was held by a census of the deadline's writers in the source
-alone, which a restarted deadline left green with every leg. The line's count follows each re-aim, rewritten in place
+every picture in the body complete, or the deadline asks, and a re-aim that finds nothing loading prints at once; each
+re-aim's bound is executed by its own case of file-print-driver-browser.test.ts (the third review's tests-2 pinned the
+repaint's; the fourth review, 2026-09-19, found that case (3c) drives the repaint's re-aim alone and that a settle
+re-aim restarting the full deadline left every leg green, case (3c) included, so the settle's has its own case). The
+repaint's bound is case (3c): under a 2000 ms seam a Reload lands a body whose picture is parked too, between 550 and
+1500 ms after the press, and the ask is asserted between 1900 and 3000 ms after the press and under 1600 ms after the
+landing, where a re-aim that restarted the full deadline would read about 2000 ms after the landing. The settle's bound
+is case (12): under the same seam a second parked picture is inserted inside the rendered root between 550 and 1500 ms
+after the press, a child of `.fileview-md` and a grandchild of the body, so P7's observer of the body's children is
+silent and no repaint re-aim runs (the line still counts one picture, where a repaint re-aim would have counted both);
+the first picture is then released, which settles the wait, and the settle's re-aim finds the second still loading, the
+line still reading one picture with no print; the ask is asserted between 1900 and 3000 ms after the press and under
+1600 ms after the release, where a re-aim that restarted the full deadline would read about 2000 ms after the release
+(the fourth review ran that mutation: case (12) red, the ask about 2000 ms after the release, case (3c) green). Before the
+third review the claim was held by a census of the deadline's writers in the source alone, which a restarted deadline
+left green with every leg. The line's count follows each re-aim, rewritten in place
 when the wait's line stands (`preparingLine`, which finds the line by its loader: the words alone change, and the loader
 beside them is the one the wait put up). A repaint under the ask counts the new body's pictures still loading again
 (`recountAsk`, through the wait's own collection, the listeners taken off again): the line's count follows in place, and
@@ -8103,7 +8113,10 @@ _Avoid_ (a review finding, 2026-09-19).
   2 s of it, a second press asking once more per URL, no request to another host; FAILS BEFORE: hundreds per URL over
   the full deadline and the ask at the deadline); an <img loading="lazy"> far below the fold (no request before the
   press, the request after it, the attribute reading eager, the print at its load, eager after; FAILS BEFORE: the wait
-  ran to its deadline and the bar asked).
+  ran to its deadline and the bar asked); and the settle's re-aim under the press's deadline (a second parked picture
+  inserted inside the rendered root mid-wait, the observer silent and the line still counting one; the first released,
+  the settle's re-aim finding the second with no print; the ask between 1900 and 3000 ms after the press and under
+  1600 ms after the release; Print anyway then prints once with the inserted picture still loading).
 - ui/webview/file-print-armed-browser.test.ts, under node first (the machine's `recount` event; `ownsEscape` over
   stand-ins: the keyboard inside a menu or a dialog, an open popup's trigger anywhere in the scope whatever the target,
   not an aria-expanded alone, not a scope with none; `printable` over stand-in trees: the open body, a closed details
