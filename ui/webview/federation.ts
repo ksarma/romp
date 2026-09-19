@@ -865,41 +865,21 @@ export const REMOTE_REDIAL_MS = 8000;
 // end stays open), and only the kernel's next frame can tell; until one lands the watchdog runs at this bound
 // instead of REMOTE_STALE_MS.
 export const REMOTE_PROVISIONAL_MS = 15000;
-// The capability words a REMOTE socket announces (its `caps` dial term) are TWO sets joined (remoteDialCaps, 2026-09-19):
-// this manager's own word, REMOTE_DIAL_CAPS, and the page's own caps as the shim states them (__rompDialTerms.caps, the
-// shim's CAPS: the words its local /ws dial carries), less READY_GATE_CAP, deduped, in a fixed order (the decoder word
-// first, then the page's remaining words in the shim's order). REMOTE_DIAL_CAPS is feedDelta because the feedDelta branch
-// below decodes one for any host (kernel.py FEED_DELTA_CAP; the shim announces the same for its local socket on the feed,
-// Outline and Waiting pages): the decoder lives here, so this word does too, whatever the page says. The page's words
-// ride so a capability a page grows reaches the remote kernel without a change here; today every kernel-served page's
-// caps are feedDelta and/or readyGate, so the joined term is "feedDelta" for every app and nothing on the wire moves.
-// readyGate NEVER travels: it is the shim's hold on its OWN socket (the kernel sends a client that announces it nothing
-// until its bundle's ready), and this manager posts its own ready on a first dial's open and dials a redial as ready from
-// accept (reconnect=1); a relay conn dialed before the page's proto was known would post no ready and be held for its
-// life under the term. Without the decoder word a remote kernel served the feed on its view-delta slot path
-// ({type:"delta", slot:"feed"}, which nothing on this side decoded then: the shim's reassembler reads its LOCAL socket
-// alone), so a remote Outline froze after its first full frame, each dropped frame filing a `delta-unapplied` row and a
-// needSlot the LOCAL kernel could not answer (86 rows in 2.4 minutes on the user's phone, 2026-09-18). Each conn now
-// carries a view-delta receiver of its own (Conn.viewDeltas, later that day: the timeline's bars have no other path, and
-// a remote too old to read this term still serves the feed as slot patches), but the feed stays on feedDelta where the
-// remote reads the term: the slot path re-encodes every card per build on the remote (kernel.py memos.wire
-// feed_slot_split). Exported for its readers as the word this manager itself decodes on a remote frame, to be joined
-// with the page's travelling caps; the wire term is remoteDialCaps().
+// The capabilities a REMOTE socket announces (its `caps` dial term), this manager's own statement about what it
+// can apply to a frame from that host: feedDelta, because the feedDelta branch below decodes one for any host
+// (kernel.py FEED_DELTA_CAP; the shim announces the same for its local socket on the feed, Outline and Waiting
+// pages). Not the page's caps (readyGate is the shim's hold, and this manager posts its own ready), and not read
+// from the shim's __rompDialTerms: the decoder lives here, so the announcement does too. Without the term a
+// remote kernel served the feed on its view-delta slot path ({type:"delta", slot:"feed"}, which nothing on this
+// side decoded then: the shim's reassembler reads its LOCAL socket alone), so a remote Outline froze after its first
+// full frame, each dropped frame filing a `delta-unapplied` row and a needSlot the LOCAL kernel could not answer
+// (86 rows in 2.4 minutes on the user's phone, 2026-09-18). Each conn now carries a view-delta receiver of its own
+// (Conn.viewDeltas, later that day: the timeline's bars have no other path, and a remote too old to read this term
+// still serves the feed as slot patches), but the feed stays on feedDelta where the remote reads the term: the slot
+// path re-encodes every card per build on the remote (kernel.py memos.wire feed_slot_split). The held members a
+// dial may carry beside this word (held:feed:<gen>.<rev>, held:bars:<gen>.<rev>) are written from the CONN's own
+// bases by remoteDialUrl, never from the page's caps string.
 export const REMOTE_DIAL_CAPS = "feedDelta";
-// The shim's hold word (kernel.py READY_GATE_CAP): the one page cap a relay dial never carries (see above).
-export const READY_GATE_CAP = "readyGate";
-
-/** The `caps` term for one remote dial: REMOTE_DIAL_CAPS, then the page's own caps (`pageCaps`, the shim's comma-joined
- *  CAPS as __rompDialTerms returns it; anything but a string reads as none) in their order, READY_GATE_CAP and repeats
- *  dropped, empty words skipped (the kernel splits the term on commas and drops empty words the same way). Never empty:
- *  the decoder word is always first. Pure. */
-export function remoteDialCaps(pageCaps: unknown): string {
-  const out = [REMOTE_DIAL_CAPS];
-  if (typeof pageCaps === "string") {
-    for (const w of pageCaps.split(",")) if (w && w !== READY_GATE_CAP && !out.includes(w)) out.push(w);
-  }
-  return out.join(",");
-}
 
 /** What the watchdog should do about ONE remote socket, from its state alone (pure, unit-tested):
  *  "close" — force-close so the onclose→redial chain runs (open but silent past the keepalive bound,
@@ -2041,14 +2021,12 @@ export class FederationManager {
   // everConnected && bundleReady && readyAcked gate: the remote served this page whole and holds its
   // sessions), so the remote holds what it served this page and skeletons the rest; a socket that opened but
   // never got a ready acked dials as a first dial, holding nothing to reconnect to. `caps` is this manager's
-  // own word joined with the page's caps less readyGate (remoteDialCaps, its header above): REMOTE_DIAL_CAPS names
-  // what THIS side decodes on a frame from that host, so the remote kernel serves its feed as feedDelta frames,
-  // which the feedDelta branch applies per host, instead of the view-delta slot frames (2026-09-18; the conn's
-  // receiver reassembles those too since later that day, but the slot path costs the remote a re-encode of every
-  // card per build); the page's words ride since 2026-09-19 so a cap a page grows reaches the remote too, and the
-  // shim's hold word stays home. `delta` stays among the page's terms on purpose: it puts the remote's timeline
-  // bars on the view-delta path, where a change costs one patch instead of the whole bars frame and its 60 s
-  // repost (kernel.py _DEDUP_REPOST_S) per remote host.
+  // own term, not one of the page's (REMOTE_DIAL_CAPS): it names what THIS side decodes on a frame from that
+  // host, so the remote kernel serves its feed as feedDelta frames, which the feedDelta branch applies per
+  // host, instead of the view-delta slot frames (2026-09-18; the conn's receiver reassembles those too since later
+  // that day, but the slot path costs the remote a re-encode of every card per build). `delta` stays among the
+  // page's terms on purpose: it puts the remote's timeline bars on the view-delta path, where a change costs one
+  // patch instead of the whole bars frame and its 60 s repost (kernel.py _DEDUP_REPOST_S) per remote host.
   private remoteDialUrl(conn: Conn, redial: boolean): string {
     const host = conn.host;
     const proto = location.protocol === "https:" ? "wss://" : "ws://";
@@ -2057,7 +2035,7 @@ export class FederationManager {
     try { const f = (window as any).__rompDialTerms; if (typeof f === "function") t = f(); } catch (e) { /* no terms → the bare dial, the pre-2026-09-15 behaviour */ }
     let url = `${proto}${location.host}/remote/${encodeURIComponent(host)}/ws?app=${encodeURIComponent(this.app)}`
       + (w ? `&wid=${encodeURIComponent(w)}` : "")
-      + `&caps=${encodeURIComponent(remoteDialCaps(t && t.caps))}`;   // the decoder word and the page's caps, readyGate never (remoteDialCaps)
+      + `&caps=${encodeURIComponent(REMOTE_DIAL_CAPS)}`;
     if (t) {
       if (t.delta) url += "&delta=1";
       if (t.iid) url += `&iid=${encodeURIComponent(this.iidNamespace() + ":" + t.iid)}`;

@@ -590,10 +590,11 @@ class _Corner(unittest.TestCase):
 
     # ---- the assertions the decoded corners share ----
     def _assert_dials(self, caps):
-        """Every page's relay dial carries its app, delta=1 and the caps term derived from that page's own local dial by the
-        join rule (tests/test_federated_dial_terms_served.py assert_relay_dials), or none where this corner strips it."""
-        dials = {app: self._page(app)["dials"] for app in self.apps}
-        _dial.assert_relay_dials(self, dials, {app: (_dial.expected_relay_caps(dials[app]) if caps else None) for app in self.apps})
+        for app in self.apps:
+            qs = parse_qs(urlsplit(self._relay_dial(app)).query)
+            self.assertEqual(qs.get("app"), [app])
+            self.assertEqual(qs.get("delta"), ["1"], "the page's delta term rides the %s relay dial (since 2026-09-15)" % app)
+            self.assertEqual(qs.get("caps"), (["feedDelta"] if caps else None), "the %s relay dial's caps term: %r" % (app, qs))
 
     def _assert_change_posted(self):
         self._driver_ran()
@@ -1016,8 +1017,8 @@ class TwoHostsBytesByHost(unittest.TestCase):
     exactly (the flush is forced in the same synchronous step as the snapshot); the position-to-host mapping is read from
     the order the hosts first appeared to the page (federation's hosts(), attach order with nothing detached here), which
     must agree with the hub's /tunnels row order the page read. The row names positions, never hosts; wsBytes stays the
-    local socket's figure. The relay dials carry the joined caps term (assert_relay_dials). Run with ROMP_CORNER_TWO_HOSTS
-    set (any value); skipped without it, as the other knob-gated corners are (three kernels and a browser)."""
+    local socket's figure. Run with ROMP_CORNER_TWO_HOSTS set (any value); skipped without it, as the other knob-gated
+    corners are (three kernels and a browser)."""
     maxDiff = None
 
     @classmethod
@@ -1174,12 +1175,15 @@ class TwoHostsBytesByHost(unittest.TestCase):
         return sums, ws
 
     # ---- the assertions ----
-    def test_the_relay_dials_carry_the_decoder_word_joined_with_the_feed_pages_caps(self):
+    def test_the_relay_dials_carry_the_decoder_word_and_none_of_the_pages_caps(self):
         self._driver_ran()
-        dials = self.result["dials"]
-        expected = _dial.expected_relay_caps(dials)
-        self.assertEqual(expected, "feedDelta", "the feed page's own feedDelta is the decoder word already and its readyGate stays home: %r" % (_dial.local_dial(dials),))
-        _dial.assert_relay_dials(self, {"feed": dials}, {"feed": expected})
+        relay = [u for u in self.result["dials"] if "/remote/" in u]
+        self.assertTrue(relay, "the feed page dialed the remotes' relay sockets: %r" % (self.result["dials"],))
+        for u in relay:
+            qs = parse_qs(urlsplit(u).query)
+            self.assertEqual(qs.get("app"), ["feed"], "the pane's app on the relay dial: %r" % (u,))
+            self.assertEqual(qs.get("delta"), ["1"], "the page's delta term rides the relay dial (since 2026-09-15): %r" % (u,))
+            self.assertEqual(qs.get("caps"), ["feedDelta"], "federation's own decoder word alone, none of the page's caps (readyGate stays home): %r" % (u,))
         self.assertEqual(sorted(h for h in self.result["hostOf"].values() if h), sorted(TWO_HOSTS), "one relay dial per host")
 
     def test_the_minute_row_carries_each_hosts_bytes_by_position_equal_to_its_sockets_own_count_keepalives_included(self):

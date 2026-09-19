@@ -55844,9 +55844,8 @@ def _send_chat(c, m, ms, change_from, led_changed):
 # this socket, gets the full {type:"feed"} frame: the legacy path, kept for the consumers that dial without
 # ?delta=1 too (a bundle before the cap, its local socket; a relay dialed by a dashboard bundle before 2026-09-15;
 # the VS Code extension before 2026-09-16), with its 60 s repost of the unchanged frame. Federation's remote
-# sockets announce the cap since 2026-09-18 (federation.ts REMOTE_DIAL_CAPS, joined since 2026-09-19 with the page's
-# own caps less READY_GATE_CAP, remoteDialCaps; the relay forwards the dial's query whole, so the cap is read at accept
-# like a page's). A client that dials ?delta=1 and no cap is served through the
+# sockets announce the cap since 2026-09-18 (federation.ts REMOTE_DIAL_CAPS; the relay forwards the dial's query
+# whole, so the cap is read at accept like a page's). A client that dials ?delta=1 and no cap is served through the
 # view-delta SLOT path instead (_send_slot: a keyed full frame, then patches; a clock-only patch of about 100 bytes
 # on an idle board), not this path or its repost: the VS Code extension's pipes (client=ext&delta=1 since
 # 2026-09-16, reassembled by their own ViewDeltas) and a relay dialed by a dashboard bundle from 2026-09-15 to
@@ -66402,7 +66401,6 @@ window.__rompLocalSend=send;window.__rompApp=APP;
 window.__rompDiag=function(what,data){try{send({type:"clientDiag",surface:"reload-core",what:what,data:data});}catch(e){}};   // the reload core's breadcrumb door: this pane's socket, the serving kernel (the core itself names no send route)   // federation.ts (the multi-kernel manager) routes local sends + knows the app through these
 var SK="romp-vscode-state-%s"+(COL?":"+COL:"");   // persist webview state to localStorage so UI prefs survive a refresh — per chat column (split screen 2026-09-08)
 window.__rompDialTerms=function(){var a="";try{var st=JSON.parse(localStorage.getItem(SK)||"null");a=(st&&st.activeId)||"";}catch(e){}return{app:APP,iid:IID,active:a,col:COL,skeleton:((SKEL||(RESTART_DIET&&!everConnected))?1:0),provrows:(APP==="fleet"?1:0),proto:readyProto,delta:1};};   // the page's live dial terms for federation.ts to carry to each remote socket (2026-09-15): the same terms the local /ws dial above states, read fresh so a remote redial reflects current state; the reader namespaces iid and strips active per host
-(function(){var f=window.__rompDialTerms;window.__rompDialTerms=function(){var t=f();t.caps=CAPS;return t;};})();   // ...and the page's own caps (2026-09-19): the same CAPS the local /ws dial above announces, so federation.ts can carry a page cap to each remote (remoteDialCaps joins it with its own decoder word and drops readyGate, the shim's hold on THIS socket alone). A wrapper and not a field on the line above, which is byte for byte the project's (8fe70da07 is in both trees): the fork inserts around such lines so a fold merges clean
 window.acquireVsCodeApi=function(){return{postMessage:function(m){if(window.__rompFed){window.__rompFed.outbound(m);}else{send(m);}},
 getState:function(){try{return JSON.parse(localStorage.getItem(SK)||"null");}catch(e){return null;}},
 setState:function(s){try{localStorage.setItem(SK,JSON.stringify(s));}catch(e){}}};};connect();
@@ -77527,13 +77525,7 @@ class Handler(BaseHTTPRequestHandler):
         # view-delta slot patches instead (_send_slot): the VS Code extension's pipes (client=ext&delta=1 since
         # 2026-09-16, its Outline pipe among them, reassembled by their own ViewDeltas) and a relay dialed by a
         # dashboard bundle from 2026-09-15 to 2026-09-18. Federation's remote sockets announce it since 2026-09-18
-        # (federation.ts REMOTE_DIAL_CAPS; the relay forwards the dial's query whole, so it is read here like a page's),
-        # and since 2026-09-19 the term is that word joined with the PAGE's own caps (the shim's CAPS through
-        # __rompDialTerms, federation.ts remoteDialCaps) less READY_GATE_CAP, which never rides a relay dial: the hold is
-        # the shim's on its own socket, and the federation manager posts its own ready (a relay conn held under it would
-        # be held for its life). Today every page's caps are FEED_DELTA_CAP and/or READY_GATE_CAP, so a relay dial's term
-        # is still FEED_DELTA_CAP alone; a word a page grows reaches here without a federation change. Unknown words are
-        # ignored below (the set is consulted by name), so a newer page costs an older kernel nothing.
+        # (federation.ts REMOTE_DIAL_CAPS; the relay forwards the dial's query whole, so it is read here like a page's).
         caps = (q.get("caps") or [""])[0]
         reconnect = (q.get("reconnect") or [""])[0] == "1"   # the shim's own statement: this page opened a socket before and its bundle has said ready, with no ready waiting in its queue
         skeleton = (q.get("skeleton") or [""])[0] == "1" and app == "chat"   # the shell's statement (the chat split, 2026-09-11): a later column, a VIEW of the one session its active hint names; a chat socket's alone (round two of PR 1661: the term is meaningless for a feed or a timeline client)
