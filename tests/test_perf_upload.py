@@ -676,6 +676,42 @@ class Cli(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr + " (a fresh export passes with the list loaded)")
         self.assertEqual(len(self.fake.requests), 2)
 
+    def test_a_list_path_that_yields_no_list_is_said_on_stderr_and_the_document_is_sent_where_a_readable_list_refuses_it(self):
+        """The list turning itself off is said where it happens (pp.LIST_UNREADABLE, the fourth review round, 2026-09-19):
+        with a fifo or a directory at ROMP_PRIVATE_STRINGS the upload child sends a document carrying a listed string, as
+        before, and now says so in one stderr line naming the path and the reason, where the third round left stderr empty
+        and the listed string travelled unannounced (extra4-1); with a readable list at the derived path the same document
+        is refused by the scan. The children are run under a timeout and hard-killed, since a fifo at a user-named path is
+        where a hang was possible (the second round's defect). Fails before: rc 0, one request, stderr empty."""
+        base = ["--yes", "--receiver", self.fake.url]
+        token = "zzcoinedzz"
+        edited = os.path.join(self.xdg, "edited.json")
+        doc = json.loads(self.data)
+        doc["perf"]["leak"] = token
+        with open(edited, "w") as fh:
+            json.dump(doc, fh)
+        for make, kind in ((os.mkfifo, "a fifo"), (os.mkdir, "a directory")):
+            path = os.path.join(self.xdg, "list-" + kind.split()[-1])
+            make(path)
+            self.fake.reset()
+            try:
+                r = subprocess.run([sys.executable, "-c", CHILD, UPLOAD, edited] + base, capture_output=True, text=True, timeout=8,
+                                   env=_env(self.state, extra={"ROMP_PRIVATE_STRINGS": path}), stdin=subprocess.DEVNULL)
+            except subprocess.TimeoutExpired:
+                self.fail("the upload child hung on %s at the private-strings path (killed after 8 s)" % kind)
+            self.assertEqual(r.returncode, 0, r.stderr + " (%s: no list, so no probe knows the token)" % kind)
+            self.assertEqual(r.stderr, "romp: no private-strings list was read from %s (%s); no listed string is checked\n" % (path, kind),
+                             "the list turning itself off is said, naming the path and the reason")
+            self.assertEqual(len(self.fake.requests), 1, kind)
+            self.assertIn(token.encode(), self.fake.requests[0][2], "the listed string travelled, and the line above is what says the check was off")
+        os.makedirs(os.path.join(self.home, ".config", "romp"))
+        with open(os.path.join(self.home, ".config", "romp", "private-strings.txt"), "w", encoding="utf-8") as fh:
+            fh.write(token + "\n")
+        self.fake.reset()
+        r = self._refused(_run([edited] + base, self.state, home=self.home), 1,
+                          "refused: a string this machine knows (private string) survives as the value at perf/leak; nothing sent")
+        self.assertEqual(self.fake.requests, [], "a readable list refuses the same document, as before")
+
     def test_an_edited_file_carrying_a_split_row_stamp_is_refused_by_the_denylist_naming_the_row_and_never_the_key(self):
         """`t` is denied at any depth (perf_public.DENY_KEYS, 2026-09-18): the export drops it from every split row, so a
         file that carries one was edited after the export. The walk alone passes it (`t` fits the identifier grammar);

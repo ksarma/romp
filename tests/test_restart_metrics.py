@@ -9,6 +9,8 @@ import io
 import json
 import os
 import re
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -706,6 +708,32 @@ class PublicForm(unittest.TestCase):
                               "a key under events/recent/%d/detail); nothing printed\n" % j)
         for token in (key_token, value_token):
             self.assertNotIn(token, out + err, "the token never reaches stdout or stderr")
+
+    def test_a_fifo_at_the_private_strings_path_is_no_list_said_on_stderr_and_the_public_print_returns_at_once(self):
+        """The third of the three callers of the shared list reader (perf_public.private_strings): with a fifo at
+        ROMP_PRIVATE_STRINGS the public print goes out with no list, as before, and now says so in one stderr line naming the
+        path and the reason (pp.LIST_UNREADABLE, the fourth review round, 2026-09-19), where the list turned itself off in
+        silence (extra4-1). The verb runs as a child under a pinned hostname, a synthetic HOME and login and no kernel, and
+        THE CHILD IS RUN UNDER A TIMEOUT AND HARD-KILLED WHEN IT EXPIRES: a fifo at a user-named path is where a plain open
+        hung this verb (the second round), so a plain wait would take the runner with it. Fails before: stderr was empty."""
+        fifo = str(self.state / "private-strings.fifo")
+        os.mkfifo(fifo)
+        xdg = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, xdg, True)
+        env = {k: v for k, v in os.environ.items() if not k.startswith("ROMP_") and k not in ("CLAUDE_CODE_SESSION_ID", "XDG_CONFIG_HOME")}
+        env.update({"XDG_STATE_HOME": xdg, "HOME": "/home/tester", "USER": "tester", "LOGNAME": "tester", "ROMP_KERNEL_PORT": "1",
+                    "ROMP_PRIVATE_STRINGS": fifo})
+        child = ("import runpy, socket, sys; socket.gethostname = lambda: 'TESTHOST.example'; sys.argv = sys.argv[1:]; "
+                 "runpy.run_path(sys.argv[0], run_name='__main__')")
+        try:
+            r = subprocess.run([sys.executable, "-c", child, os.path.join(BIN, "romp-restart-metrics"), "--json", "--public", "--anchor", "2026-09-10",
+                                "--tz", TZ, "--no-live", "--state", str(self.state)], capture_output=True, text=True, timeout=8, env=env)
+        except subprocess.TimeoutExpired:
+            self.fail("the restart-metrics child hung on the fifo at the private-strings path (killed after 8 s)")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(r.stderr, "romp: no private-strings list was read from %s (a fifo); no listed string is checked\n" % fifo,
+                         "the list turning itself off is said, naming the path and the reason")
+        self.assertIs(json.loads(r.stdout)["public"], True, "and the public document was printed")
 
     def test_public_without_json_is_refused(self):
         err = io.StringIO()

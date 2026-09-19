@@ -1506,16 +1506,18 @@ class Cli(unittest.TestCase):
             self.assertEqual(pp.private_strings_path(dict(env, XDG_CONFIG_HOME=xdg, ROMP_PRIVATE_STRINGS=explicit)), explicit)
             self.assertEqual([s for k, s in pp.machine_probes(None, env=dict(env, XDG_CONFIG_HOME=xdg)) if k == "private string"], ["xdgcoined"])
             self.assertEqual([s for k, s in pp.machine_probes(None, env=dict(env, ROMP_PRIVATE_STRINGS=explicit)) if k == "private string"], ["explicitcoined"])
-            # the bound: a large file costs PRIVATE_STRINGS_MAX and its tail is dropped, never a traceback; bytes that are not UTF-8 neither
+            # the bound: a large file costs PRIVATE_STRINGS_MAX and its tail is dropped, never a traceback; a line of bytes that are
+            # not UTF-8 is not an entry and is said (the fourth review round, 2026-09-19: replaced, it was a probe that matched
+            # nothing while the list read as in force)
             with open(explicit, "wb") as fh:
                 fh.write(b"first\n" + b"\xff\xfe\n" + b"x" * pp.PRIVATE_STRINGS_MAX + b"\nlast\n")
             err = io.StringIO()
             with contextlib.redirect_stderr(err):
                 got = pp.private_strings(dict(env, ROMP_PRIVATE_STRINGS=explicit))
-            self.assertEqual(got[0], "first")
-            self.assertNotIn("last", got)
+            self.assertEqual(got, ["first"], "the good line is an entry, the undecodable one is not, the tail past the bound is cut")
             self.assertEqual(pp.PRIVATE_STRINGS_MAX, 64 * 1024)
-            self.assertEqual(err.getvalue(), "romp: the private-strings list is over 65536 bytes; entries past the bound are not checked\n")
+            self.assertEqual(err.getvalue(), "romp: the private-strings list is over 65536 bytes; entries past the bound are not checked\n"
+                                             "romp: 1 line(s) of the private-strings list at %s are not UTF-8 and are not checked\n" % explicit)
             # the cut falls back to the last complete line: a list built so the bound lands mid-line, the fragment is not an entry,
             # the last complete entry before the bound is, the entry past it is not, and the loud line is said once; a file exactly
             # at the bound is read whole and nothing is said (fails before: a 12-byte fragment of an entry was a probe of its own)
@@ -1578,14 +1580,16 @@ class Cli(unittest.TestCase):
         r = _run(["--public", "--from", self.src], state=self.state)
         self.assertEqual(r.returncode, 0, r.stderr + " (without the list, abc is a grammar-fitting word)")
 
-    def test_a_fifo_at_the_private_strings_path_is_no_list_and_the_export_returns_at_once(self):
+    def test_a_fifo_at_the_private_strings_path_is_no_list_said_on_stderr_and_the_export_returns_at_once(self):
         """The private list must be a REGULAR file (pp.open_regular: opened O_NONBLOCK, fstat'ed, S_ISREG required); anything
-        else is no list, []. A fifo at the path hung `romp perf export --public` and `romp restart-metrics --json --public`
+        else is no list, [], AND IS SAID: one stderr line naming the path and what was there (pp.LIST_UNREADABLE, the
+        fourth review round, 2026-09-19; until then the fifo disabled the whole list in silence and this case pinned the
+        silence). A fifo at the path hung `romp perf export --public` and `romp restart-metrics --json --public`
         indefinitely: a plain open of a fifo blocks until a writer arrives, before any read the bound could cover (the
         upload's second review round, 2026-09-18). THE CHILD IS RUN UNDER A TIMEOUT AND HARD-KILLED WHEN IT EXPIRES, AND IT
         RUNS BEFORE THE UNIT CALL: the defect is a hang, so a plain wait, or the unit call first, would take the runner with
         it; subprocess.run kills the child on TimeoutExpired and the case fails instead. Do not simplify this back into
-        _run's sixty-second wait or move the unit call above the child."""
+        _run's sixty-second wait or move the unit call above the child. Fails before: stderr was empty."""
         fifo = os.path.join(self.xdg, "private-strings.fifo")
         os.mkfifo(fifo)
         out = os.path.join(self.xdg, "public.json")
@@ -1599,9 +1603,76 @@ class Cli(unittest.TestCase):
             self.fail("the export child hung on the fifo at the private-strings path (killed after 8 s)")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertTrue(os.path.exists(out), "the export was written: a fifo adds no probe and blocks nothing")
-        self.assertEqual(r.stderr, "", "and nothing is said about it")
-        self.assertEqual(pp.private_strings({"ROMP_PRIVATE_STRINGS": fifo}), [], "the unit, after the child proved the open returns: a fifo is no list")
+        self.assertEqual(r.stderr, "romp: no private-strings list was read from %s (a fifo); no listed string is checked\n" % fifo,
+                         "and the list turning itself off is said, naming the path and the reason")
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertEqual(pp.private_strings({"ROMP_PRIVATE_STRINGS": fifo}), [], "the unit, after the child proved the open returns: a fifo is no list")
+        self.assertEqual(err.getvalue(), pp.LIST_UNREADABLE % (fifo, "a fifo") + "\n")
         self.assertIsNone(pp.open_regular(fifo))
+
+    def test_every_road_to_no_list_but_the_derived_defaults_absence_is_said_on_stderr_naming_the_path_and_the_reason(self):
+        """A private-strings path that EXISTS but yields no list (unreadable, a directory, a fifo, a device node, a socket)
+        turned the WHOLE list off in silence, and the upload then sent a document carrying a listed string with nothing on
+        stderr, while the two loud lines the third round added covered the over-the-bound case and a case the reader
+        cannot produce (extra4-1, the upload's third review round, 2026-09-18). Now every road to [] but two writes
+        pp.LIST_UNREADABLE once, the path and the reason: a directory, a fifo, a socket and a character device by kind, whether
+        the fstat or the open itself found them (a socket is ENXIO at the open); an unreadable regular file and a parent that
+        is not a directory by the error's class; a ROMP_PRIVATE_STRINGS that names
+        a file that is not there as absent (the operator named it, so its absence is a typo, not a clone without a list). The
+        two silent roads: no path at all, and the DERIVED default absent, the normal case of a clone that never set a list up,
+        which stays silent so every export on such a clone does not nag. A readable list still reads with nothing said, and a
+        line that is not UTF-8 is dropped and counted in pp.LIST_NOT_UTF8 rather than replaced into a probe that matches
+        nothing. Fails before: every one of these returned [] in silence."""
+        home = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, home, True)
+        derived = os.path.join(home, ".config", "romp", "private-strings.txt")
+
+        def read(env):
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                got = pp.private_strings(env)
+            return got, err.getvalue()
+
+        self.assertEqual(read({"HOME": home}), ([], ""), "the derived default absent: a clone without a list, silent")
+        self.assertEqual(read({}), ([], ""), "no path at all: silent")
+        missing = os.path.join(home, "no-such-list.txt")
+        self.assertEqual(read({"HOME": home, "ROMP_PRIVATE_STRINGS": missing}), ([], pp.LIST_UNREADABLE % (missing, "absent") + "\n"),
+                         "a file the operator named and which is not there is said")
+        for make, kind in ((os.mkdir, "a directory"), (os.mkfifo, "a fifo")):
+            path = os.path.join(home, kind.split()[-1])
+            make(path)
+            self.assertEqual(read({"HOME": home, "ROMP_PRIVATE_STRINGS": path}), ([], pp.LIST_UNREADABLE % (path, kind) + "\n"), kind)
+        sock_path = os.path.join(home, "sock")
+        sock = socket.socket(socket.AF_UNIX)
+        self.addCleanup(sock.close)
+        sock.bind(sock_path)
+        self.assertEqual(read({"HOME": home, "ROMP_PRIVATE_STRINGS": sock_path}), ([], pp.LIST_UNREADABLE % (sock_path, "a socket") + "\n"),
+                         "a socket: the open itself fails with ENXIO, and the reason is the kind all the same")
+        if os.path.exists("/dev/null"):
+            self.assertEqual(read({"HOME": home, "ROMP_PRIVATE_STRINGS": "/dev/null"}), ([], pp.LIST_UNREADABLE % ("/dev/null", "a character device") + "\n"))
+        os.makedirs(os.path.dirname(derived))
+        with open(derived, "w", encoding="utf-8") as fh:
+            fh.write("zzcoinedzz\n")
+        self.assertEqual(read({"HOME": home}), (["zzcoinedzz"], ""), "a readable list at the derived path reads with nothing said")
+        if os.geteuid() != 0:                    # root reads a mode-000 file, so the road does not exist for it
+            os.chmod(derived, 0)
+            self.assertEqual(read({"HOME": home}), ([], pp.LIST_UNREADABLE % (derived, "PermissionError") + "\n"),
+                             "the derived path present and unreadable is said: only its absence is the normal case")
+            os.chmod(derived, 0o600)
+        with open(derived, "wb") as fh:
+            fh.write(b"zzcoinedzz\n\xff\xfe\n\xc3\x28 # a truncated sequence\nabc\n")
+        self.assertEqual(read({"HOME": home}), (["zzcoinedzz", "abc"], pp.LIST_NOT_UTF8 % (2, derived) + "\n"),
+                         "two lines that are not UTF-8 are not entries and are counted once; the good lines stay in force")
+        notdir = os.path.join(home, "file-as-parent")
+        with open(notdir, "w") as fh:
+            fh.write("x")
+        inside = os.path.join(notdir, "list.txt")
+        self.assertEqual(read({"HOME": home, "ROMP_PRIVATE_STRINGS": inside}), ([], pp.LIST_UNREADABLE % (inside, "NotADirectoryError") + "\n"),
+                         "a parent that is a file: the open's own error, by class, never a claim that the path exists")
+        for line in (pp.LIST_UNREADABLE % ("p", "r"), pp.LIST_NOT_UTF8 % (1, "p")):
+            self.assertNotEqual(line, pp.LIST_OVER_BOUND)
+            self.assertNotIn("not fully in force", line, "a third and a fourth loud line, distinct from the two the third round added")
 
     def test_a_name_probe_matches_whole_tokens_and_an_id_probe_matches_anywhere(self):
         # a hostname or a login is a word, and romp's own vocabulary contains common ones as substrings: a user named

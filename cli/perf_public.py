@@ -95,7 +95,10 @@ identifier_hits) is the last of the three, the backstop: strings only this machi
 working directories the state directory's sdk registry holds; and the strings listed in the machine-local file
 ~/.config/romp/private-strings.txt, the same list the repository's pre-push hook reads, one string per line with
 `#` comments, resolved the way the hook resolves it: ROMP_PRIVATE_STRINGS, else $XDG_CONFIG_HOME, else $HOME/.config,
-and absent on a clone that never set one up, which adds nothing) are searched for in every key and string value of
+and absent on a clone that never set one up, which adds nothing, in silence; every other road to no list, a path that
+is there but is not a regular file, one that cannot be read, a ROMP_PRIVATE_STRINGS naming a file that is not there, is
+said on stderr at the moment it happens, LIST_UNREADABLE, naming the path and the reason, since a check that turns
+itself off must say so) are searched for in every key and string value of
 the finished document, case-insensitively, and a hit refuses the write naming the key path and the kind of
 string, never the value. A hostname or a login is a WORD and is matched as a run of whole tokens
 (a key or value split on everything outside letters and digits): romp's own vocabulary contains common ones as
@@ -721,7 +724,17 @@ TOKEN = re.compile(r"[a-z0-9]+")
 # The machine-local list of strings that must never be published: the file the repository's pre-push hook reads
 # (.githooks/pre-push, scan_identifiers), one string per line, a `#` starting a comment, surrounding whitespace
 # dropped, blanks skipped, resolved as the hook resolves it (private_strings_path). Absent on a clone that never set
-# one up, and then it adds nothing. Read with a bound: a list is a few lines, and a file put there by mistake costs
+# one up, and then it adds nothing, in silence: that is the normal case. EVERY OTHER ROAD TO NO LIST IS SAID: a path that
+# is there but is not a regular file (a directory, a fifo, a device node, a socket), one that cannot be opened or read
+# (a permission, a parent that is not a directory), a ROMP_PRIVATE_STRINGS that names a file that is not there (a typo
+# in the one setting the operator wrote), each writes LIST_UNREADABLE to stderr at the moment it happens, naming the path
+# and the reason, and the caller goes on with no list. The list is a protection, and a protection that turns itself off
+# must say so when it does, not when someone wonders: the upload's third review round (2026-09-18) found the two loud
+# lines below written for the over-the-bound case and for a case the reader cannot produce, while the one road that
+# disabled the whole list, a fifo or a directory or an unreadable file at the path, sent a document carrying a listed
+# string with nothing on stderr. A line that is not UTF-8 is not an entry and is counted once in LIST_NOT_UTF8 the same
+# way, where a replaced byte once made it a probe that matched nothing while the list read as in force.
+# Read with a bound: a list is a few lines, and a file put there by mistake costs
 # PRIVATE_STRINGS_MAX and no more. Past the bound the file is cut back to its last complete line and every entry from
 # there on is not checked, said once on stderr (LIST_OVER_BOUND): a cut mid-line made a fragment of an entry a probe of
 # its own, which falsely refused an unrelated document while the entry it was cut from travelled (the upload's second
@@ -737,6 +750,8 @@ PRIVATE_STRINGS_FILE = os.path.join("romp", "private-strings.txt")
 PRIVATE_STRINGS_MAX = 64 * 1024
 LIST_OVER_BOUND = "romp: the private-strings list is over %d bytes; entries past the bound are not checked" % PRIVATE_STRINGS_MAX
 LIST_NOT_IN_FORCE = "romp: %d of %d private-strings entries did not become probes and are not checked; the list is not fully in force"
+LIST_UNREADABLE = "romp: no private-strings list was read from %s (%s); no listed string is checked"   # the path and the reason
+LIST_NOT_UTF8 = "romp: %d line(s) of the private-strings list at %s are not UTF-8 and are not checked"
 
 
 def open_regular(path):
@@ -770,33 +785,73 @@ def private_strings_path(env):
     return os.path.join(config, PRIVATE_STRINGS_FILE) if config else None
 
 
+def _file_kind(path):
+    """For LIST_UNREADABLE: the kind of thing at `path` when it is not a regular file (a directory, a fifo, a socket, a
+    character device, a block device), by a stat of its own for the message alone, whether open_regular's fstat found
+    it (None returned) or the open itself failed on it (a socket is ENXIO at the open, a block device EACCES for an
+    account outside its group); None for a regular file, or a path that cannot be stat'ed, and the caller says what
+    it knows instead (the error's class, or "not a regular file")."""
+    try:
+        mode = os.stat(path).st_mode
+    except OSError:
+        return None
+    for test, kind in ((stat.S_ISDIR, "a directory"), (stat.S_ISFIFO, "a fifo"), (stat.S_ISSOCK, "a socket"),
+                       (stat.S_ISCHR, "a character device"), (stat.S_ISBLK, "a block device")):
+        if test(mode):
+            return kind
+    return None
+
+
 def private_strings(env):
     """[str]: the private list's entries, a `#` comment and surrounding whitespace stripped from each line and blanks
-    dropped, read as UTF-8 (a byte that is not is replaced, never a traceback) from a REGULAR file (open_regular) of at
-    most PRIVATE_STRINGS_MAX bytes: PRIVATE_STRINGS_MAX + 1 are read, and a file over the bound is cut back to the last
-    complete line inside it, so no fragment of an entry becomes a probe, with LIST_OVER_BOUND said once on stderr, since
-    the entries from the cut on are not checked; a file exactly at the bound is read whole and nothing is said. [] when
-    there is no file to read: absent, unreadable, no path at all, or not a regular file (a fifo, a device node)."""
+    dropped, read line by line as UTF-8 from a REGULAR file (open_regular) of at most PRIVATE_STRINGS_MAX bytes:
+    PRIVATE_STRINGS_MAX + 1 are read, and a file over the bound is cut back to the last complete line inside it, so no
+    fragment of an entry becomes a probe, with LIST_OVER_BOUND said once on stderr, since the entries from the cut on
+    are not checked; a file exactly at the bound is read whole and nothing is said. A line that is not UTF-8 is not an
+    entry, and how many were dropped is said once (LIST_NOT_UTF8), never a traceback. [] when there is no list to read,
+    and in SILENCE for exactly two of those roads: no path at all (no HOME and no variable), and the derived default
+    path absent, a clone that never set a list up. Every other road to [] is said once on stderr (LIST_UNREADABLE,
+    the path and the reason): a ROMP_PRIVATE_STRINGS that names a file that is not there (absent), a path that is not
+    a regular file (a directory, a fifo, a device node, a socket, by kind through _file_kind, whether the fstat or the
+    open itself found it), and one that cannot be opened or read (the error's class). The comment at
+    PRIVATE_STRINGS_VAR says why silence is the wrong signal here."""
     path = private_strings_path(env)
     if not path:
         return []
     try:
         fh = open_regular(path)
-        if fh is None:
-            return []
+    except FileNotFoundError:
+        if env.get(PRIVATE_STRINGS_VAR):         # named by the operator and not there; the derived default's absence is the normal case
+            sys.stderr.write(LIST_UNREADABLE % (path, "absent") + "\n")
+        return []
+    except OSError as e:                          # a socket (ENXIO), a device the account cannot open, a permission, a parent that is a file
+        sys.stderr.write(LIST_UNREADABLE % (path, _file_kind(path) or e.__class__.__name__) + "\n")
+        return []
+    if fh is None:
+        sys.stderr.write(LIST_UNREADABLE % (path, _file_kind(path) or "not a regular file") + "\n")
+        return []
+    try:
         with fh:
             raw = fh.read(PRIVATE_STRINGS_MAX + 1)
-    except OSError:
+    except OSError as e:
+        sys.stderr.write(LIST_UNREADABLE % (path, e.__class__.__name__) + "\n")
         return []
     if len(raw) > PRIVATE_STRINGS_MAX:
         raw = raw[:PRIVATE_STRINGS_MAX]
         raw = raw[:raw.rfind(b"\n") + 1]        # back to the last complete line; empty when the bound cut the first one
         sys.stderr.write(LIST_OVER_BOUND + "\n")
-    out = []
-    for line in raw.decode("utf-8", "replace").splitlines():
-        line = line.split("#", 1)[0].strip()
-        if line:
-            out.append(line)
+    out, undecodable = [], 0
+    for line in raw.split(b"\n"):
+        try:
+            text = line.decode("utf-8")
+        except UnicodeDecodeError:
+            undecodable += 1
+            continue
+        text = text.split("#", 1)[0].strip()
+        if text:
+            out.append(text)
+    if undecodable:
+        sys.stderr.write(LIST_NOT_UTF8 % (undecodable, path) + "\n")
     return out
 
 

@@ -3812,11 +3812,16 @@ registry, and the lines of `~/.config/romp/private-strings.txt` when that
 file exists, the list the repository's pre-push hook reads, one string per
 line with `#` comments, `ROMP_PRIVATE_STRINGS` naming another file and
 `XDG_CONFIG_HOME` honoured, absent on a clone that never set one up, so a
-no-op there, and no list either when the path is not a regular file, a fifo
-among them, so nothing waits on it; the file is read as far as 64 KiB, a
+no-op there, in silence; a path that is there but yields no list (not a
+regular file, a fifo or a directory among them, so nothing waits on it; a
+file that cannot be read; a `ROMP_PRIVATE_STRINGS` naming a file that does not
+exist) is still no list, and is said in one stderr line naming the path and
+the reason at the moment it happens, since a check that turns itself off must
+say so; the file is read as far as 64 KiB, a
 partial last line dropped so a fragment never becomes a probe, and every entry
 is a probe whatever its length; one line on stderr says when the bound was hit
-and the entries past it are not checked, or when listed entries did not become
+and the entries past it are not checked, when lines that are not UTF-8 were
+dropped rather than read as entries, or when listed entries did not become
 probes; a hostname or user is matched as whole words, so a user named `mark`
 is not found in the counter `intrMarks`, and a private string as whole words
 or as a substring, whichever finds it, so a listed word glued into a camelCase
