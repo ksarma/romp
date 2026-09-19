@@ -40,7 +40,12 @@ for the kernel caller of that call and counted under that caller's mechanism). T
 a reader below those loaders (the judge's own file reader and parser) is outside the recorders and outside the claim. The
 road: the execution witness covers every caller the fixture actually executes; the helpers in REPLACED_KM and REPLACED_JD
 and Sessions.backend_for run as stubs, so a loader inside their real bodies is outside the recorders and is caught by the
-source census in TheCountersOneSite instead, one level deep (the helper's own source); setUp checks that it rebinds
+source census in TheCountersOneSite instead, one level deep (the helper's own source, checked to be the named helper's: a
+decorator without functools.wraps would hand the census its wrapper's source), while a loader that would reach a body under
+another name, or through a string, is refused where that name is born, by a pin over the kernel's and the judge's whole
+source (every loader by attribute the callee of a call; no alias, bare name, parameter, keyword or loader-naming string handed
+to a dynamic lookup spells one; review round 4), and the census's own forms, counted and missed, are enumerated in
+TheCensusOverEveryForm; setUp checks that it rebinds
 exactly the listed names, so the census reads the fixture's list and not a hand-kept copy of it, and the check spans the
 whole setUp: its snapshots are setUp's first statements and its comparison the last, and the judge names the rebind moves are
 the diff across the rebind call alone, read against a second judge snapshot taken at the rebind, so a stub placed before the
@@ -205,12 +210,14 @@ suite's fake clock (the pass takes `now`). SYNTHETIC fixtures only; a PRIVATE sy
 rule), their override journals cleaned in the teardown; the state root rebound through jd._rebind_state and `off` written
 into its session-hosts."""
 import ast
+import importlib.util
 import inspect
 import json
 import os
 import sys
 import tempfile
 import textwrap
+import types
 import unittest
 from romp_load import load_source
 from pathlib import Path
@@ -290,6 +297,19 @@ def _pass_through_lines(fn, callee):
     return frozenset(start - 1 + node.lineno for node in calls), len(calls)
 
 
+def _spelled(node):
+    """The dotted spelling of an Attribute chain (`jd.load_goals_shared_or_fault`; a base that is not a Name is spelled `...`)
+    or a Name's id: the text _loader_sites and _loader_births match a needle against."""
+    if isinstance(node, ast.Name):
+        return node.id
+    parts, v = [node.attr], node.value
+    while isinstance(v, ast.Attribute):
+        parts.append(v.attr)
+        v = v.value
+    parts.append(v.id if isinstance(v, ast.Name) else "...")
+    return ".".join(reversed(parts))
+
+
 def _loader_sites(obj, needle):
     """Every place `obj`'s source names a loader whose spelling contains `needle`, read from the AST: (index, line) pairs, one
     per node, indexed as inspect.getsource(obj).splitlines() is, so a census can check adjacency against a line index. A site
@@ -299,8 +319,18 @@ def _loader_sites(obj, needle):
     review round 3: over Name and Attribute alone, a loader imported under an alias inside a replaced helper's body was no
     site), so `jd.load_goals_shared` counts both spellings of the shared door and nothing else, and a mention in a comment, a
     docstring or any string literal is no node of these kinds and no site: the one rule the source censuses share. By the same
-    rule a loader reached through a string, `getattr(jd, "load_goals_shared")` or an importlib lookup, names it in no node of
-    these kinds and is outside the census. Two calls on one line are two sites. Read from the tree and not from tokenised text
+    rule a loader reached through a string names it in no node of these kinds and is outside the census: `getattr(jd,
+    "load_goals_shared")` (the string built by concatenation too), `exec` or `eval` of a string, `compile` of one,
+    `operator.attrgetter("load_goals_shared")`, `vars(jd)["load_goals_shared"]` or `jd.__dict__[...]`,
+    `jd.__getattribute__("load_goals_shared")`, and `getattr` on an `importlib.import_module` result (review round 4: the limit
+    named in full; the sample case holds the getattr form at no site, and the kernel-wide pin, _loader_births, refuses a
+    loader-naming string handed to any of these in the kernel and the judge). A name bound OUTSIDE obj's source is no site in
+    obj either (a module-level alias of a door, an import alias at module level, a module-level dict or partial, a closure
+    variable, a parameter, a class or instance attribute when only the method is scanned): the same pin refuses every such birth
+    in the kernel and the judge, where the alias is spelled. And the census reads the object it is handed: behind a decorator
+    without functools.wraps that is the wrapper, so the replaced-helpers census checks each object is the named helper first.
+    Every form, counted and missed, is enumerated in TheCensusOverEveryForm. Two calls on one line are two sites. Read from the
+    tree and not from tokenised text
     (review round 2, correctness-1): the first cut blanked comments and strings token by token, and on 3.10 and 3.11 the
     tokenizer gives a whole f-string as one STRING token (3.12 and later split it into FSTRING_* parts), so a loader CALL
     written inside an f-string was blanked with the literal and invisible on two of the five CI interpreters; ast.walk reaches
@@ -312,12 +342,7 @@ def _loader_sites(obj, needle):
         if isinstance(node, ast.Name):
             spelled = node.id
         elif isinstance(node, ast.Attribute):
-            parts, v = [node.attr], node.value
-            while isinstance(v, ast.Attribute):
-                parts.append(v.attr)
-                v = v.value
-            parts.append(v.id if isinstance(v, ast.Name) else "...")
-            spelled = ".".join(reversed(parts))
+            spelled = _spelled(node)
         elif isinstance(node, ast.alias):
             spelled = node.name                       # the imported name; the alias itself (`as _lgs`) is a spelling of the census's own
         else:
@@ -325,6 +350,84 @@ def _loader_sites(obj, needle):
         if needle in spelled:
             out.append((node.lineno - 1, lines[node.lineno - 1]))
     return sorted(out)
+
+
+def _bump_sites(obj):
+    """The line indices (as _loader_sites indexes) of every `_NUDGE_WALK_STATS["loads"] += 1` in `obj`'s source, read as a
+    statement from the AST: an augmented add on a constant "loads" subscript of the Name _NUDGE_WALK_STATS, never a line of
+    text (review round 2: a comment quoting the statement counted as a bump). Any other spelling (a plain assignment, the key in
+    a variable, the dict under a local alias or qualified by its module, `-= -1`, `__setitem__`, `update`) is no bump here, so
+    the walk census reds on it, conservatively; the increment's value is not read (the served counter's delta holds it), and a
+    bump under a one-line `if` or `for` on the line after the load counts with its adjacency intact. The bump forms are
+    enumerated in TheCensusOverEveryForm (review round 4)."""
+    tree = ast.parse(textwrap.dedent(inspect.getsource(obj)))
+    return [n.lineno - 1 for n in ast.walk(tree)
+            if isinstance(n, ast.AugAssign) and isinstance(n.op, ast.Add) and isinstance(n.target, ast.Subscript)
+            and isinstance(n.target.value, ast.Name) and n.target.value.id == "_NUDGE_WALK_STATS"
+            and isinstance(n.target.slice, ast.Constant) and n.target.slice.value == "loads"]
+
+
+_DYNAMIC_LOOKUPS = ("getattr", "exec", "eval", "compile", "__import__", "import_module", "attrgetter", "vars", "__getattribute__")
+
+
+def _loader_births(path, judge):
+    """Every place a file's source could give a loader another name, or reach one through a string, over its whole AST (review
+    round 4): (born, called, defs, handoffs). `born` lists (line, what) for every reference to a loader the census could not
+    follow into a body: an Attribute spelled with a loader that is not the callee of a call (bound to a name, passed, stored in a
+    dict or list, a default, an assignment target); a bare Name spelled with a loader (in the kernel, any: the kernel reaches
+    the judge's doors as `jd.<door>(...)`; in the judge, `judge`, one that is neither the callee of a call nor the loader a
+    boundary wrapper hands to _or_fault, which is what `handoffs` lists as (wrapper, loader)); an import alias; a parameter or
+    a keyword named like a loader; a loader defined behind a decorator; and a loader-naming string constant among the
+    arguments of a call to one of _DYNAMIC_LOOKUPS. `called` counts each spelling called and `defs` each def named like a
+    loader, so a caller can check the population it read is the doors' and not empty."""
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    parents = {}
+    for node in ast.walk(tree):
+        for child in ast.iter_child_nodes(node):
+            parents[child] = node
+
+    def enclosing(node):
+        while node is not None and not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            node = parents.get(node)
+        return node.name if node is not None else "<module>"
+    born, called, defs, handoffs = [], {}, {}, []
+    for n in ast.walk(tree):
+        p = parents.get(n)
+        as_callee = isinstance(p, ast.Call) and p.func is n
+        if isinstance(n, ast.Attribute):
+            spelled = _spelled(n)
+            if "load_goals" in spelled:
+                if as_callee:
+                    called[spelled] = called.get(spelled, 0) + 1
+                else:
+                    born.append((n.lineno, "a loader by attribute that is not the callee of a call: %s, under %s in %s"
+                                 % (spelled, type(p).__name__, enclosing(n))))
+        elif isinstance(n, ast.Name) and "load_goals" in n.id:
+            if judge and as_callee:
+                called[n.id] = called.get(n.id, 0) + 1
+            elif judge and isinstance(p, ast.Call) and isinstance(p.func, ast.Name) and p.func.id == "_or_fault" and n in p.args:
+                handoffs.append((enclosing(n), n.id))
+            else:
+                born.append((n.lineno, "a loader as a bare name: %s, %s context under %s in %s"
+                             % (n.id, type(n.ctx).__name__, type(p).__name__, enclosing(n))))
+        elif isinstance(n, ast.alias) and "load_goals" in n.name + (n.asname or ""):
+            born.append((n.lineno, "a loader imported: %s%s" % (n.name, " as " + n.asname if n.asname else "")))
+        elif isinstance(n, ast.arg) and "load_goals" in n.arg:
+            born.append((n.lineno, "a parameter named like a loader: %s in %s" % (n.arg, enclosing(n))))
+        elif isinstance(n, ast.keyword) and n.arg and "load_goals" in n.arg:
+            born.append((n.lineno, "a keyword named like a loader: %s in %s" % (n.arg, enclosing(n))))
+        elif isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and "load_goals" in n.name:
+            defs[n.name] = defs.get(n.name, 0) + 1
+            if n.decorator_list:
+                born.append((n.lineno, "a loader defined behind a decorator: %s" % n.name))
+        if isinstance(n, ast.Call):
+            last = n.func.id if isinstance(n.func, ast.Name) else n.func.attr if isinstance(n.func, ast.Attribute) else ""
+            if last in _DYNAMIC_LOOKUPS:
+                for a in list(n.args) + [k.value for k in n.keywords]:
+                    for sub in ast.walk(a):
+                        if isinstance(sub, ast.Constant) and isinstance(sub.value, str) and "load_goals" in sub.value:
+                            born.append((n.lineno, "a loader-naming string handed to %s in %s: %r" % (last, enclosing(n), sub.value[:48])))
+    return sorted(born), called, defs, sorted(handoffs)
 
 
 def _caller(frame, boundary):
@@ -996,11 +1099,7 @@ class TheCountersOneSite(unittest.TestCase):
         at = [i for i, _ln in _loader_sites(km._auto_nudge_session, "jd.load_goals_shared")]
         self.assertEqual(len(at), 1, "one shared load in the walk's look, by either spelling of the shared door: a second call site is "
                                      "a second load per look (condition 7, the walk's bound)")
-        tree = ast.parse(textwrap.dedent(inspect.getsource(km._auto_nudge_session)))
-        bump = [n.lineno - 1 for n in ast.walk(tree)
-                if isinstance(n, ast.AugAssign) and isinstance(n.op, ast.Add) and isinstance(n.target, ast.Subscript)
-                and isinstance(n.target.value, ast.Name) and n.target.value.id == "_NUDGE_WALK_STATS"
-                and isinstance(n.target.slice, ast.Constant) and n.target.slice.value == "loads"]
+        bump = _bump_sites(km._auto_nudge_session)
         self.assertEqual(len(bump), 1, "the counter is bumped once, by one `_NUDGE_WALK_STATS[\"loads\"] += 1` statement")
         self.assertEqual(bump[0], at[0] + 1, "on the line after the load")
         gated = [ln.strip() for _i, ln in _loader_sites(km._nudge_look_gated, "load_goals")]
@@ -1039,15 +1138,61 @@ class TheCountersOneSite(unittest.TestCase):
         execution witness cannot see it; this scan of each real source for either door's name (by the AST, _loader_sites, on
         every interpreter) is the only witness for those bodies. One level deep, the helper's own source: _session_awaiting reaches two bare-door
         readers (_owned_yield_why and _session_stamp_read) only under stamp=True, which the walk's call does not pass, so
-        the walk's road does not reach them; a helper the fixture does not replace is covered by execution instead."""
+        the walk's road does not reach them; a helper the fixture does not replace is covered by execution instead. Each
+        object is first checked to be the named helper, by the name inspect.unwrap reaches and by the def its source parses to
+        (review round 4): inspect follows __wrapped__ only through functools.wraps, so behind a decorator without it the census
+        would read the wrapper's source and answer no site for a body it never read."""
         targets = ([(k, getattr(km, k)) for k in REPLACED_KM if k not in REPLACED_DATA]
                    + [("jd." + k, getattr(jd, k)) for k in REPLACED_JD]
                    + [("Sessions.backend_for", km.Sessions.backend_for)])
         self.assertEqual(len(targets), 21, "the census covers every replaced callable")
         for label, obj in targets:
+            name = label.split(".")[-1]
+            first = ast.parse(textwrap.dedent(inspect.getsource(obj))).body[0]
+            self.assertEqual((inspect.unwrap(obj).__name__, type(first).__name__, getattr(first, "name", None)), (name, "FunctionDef", name),
+                             "%s: the object the census scans is the named helper itself, by the name inspect.unwrap reaches and by the def "
+                             "its source parses to; inspect follows __wrapped__ only through functools.wraps, so behind a decorator without it "
+                             "the census would read the wrapper's source and answer no site for a body it never read: unwrap reaches %r and "
+                             "the source's first statement is a %s named %r"
+                             % (label, inspect.unwrap(obj).__name__, type(first).__name__, getattr(first, "name", None)))
             hits = [ln.strip() for _i, ln in _loader_sites(obj, "load_goals")]
             self.assertEqual(hits, [], "%s: a loader planted in a replaced helper never runs under the fixture, so this scan is the only "
                                        "witness for its body: %s" % (label, "; ".join(hits)))
+
+    def test_no_other_name_for_a_loader_is_born_in_the_kernel_or_the_judge(self):
+        """The census reads a body. A loader that reaches a body under another name (a module-level `_lgs = jd.load_goals_shared`,
+        a `from romp_judge import load_goals_shared as _lgs` at module level, a dict of callables, a functools.partial, a closure
+        variable, a parameter) or through a string (getattr, exec, eval, compile, operator.attrgetter, vars(), __getattribute__,
+        importlib) is no site in that body, and inside a replaced helper nothing else sees it (review round 4: every such form
+        scanned as no site on 3.10 through 3.13 while a recorder saw the real load). So the kernel and the judge are each read
+        once, whole, where any such name would be born, by _loader_births: in the kernel every reference to a loader by attribute
+        is the callee of a call and no alias, bare name, parameter, keyword or loader-naming string handed to a dynamic lookup
+        spells one; in the judge every bare loader name is the callee of a call or the loader a boundary wrapper hands to
+        _or_fault, the four doors are defined once each and undecorated, and the same list of births is empty. The population
+        read is asserted too, so an empty file or a moved door cannot pass as clean: the kernel calls the judge's four doors by
+        `jd.<door>` and no other spelling (58 references at this round), and the two hand-offs are the two outer wrappers'."""
+        born, called, defs, handoffs = _loader_births(Path(os.path.realpath(km.__file__)), judge=False)
+        self.assertEqual(born, [], "%s: a loader bound to another name, or reached through a string, is a body the census cannot read; every "
+                                   "reference to a loader in the kernel is the callee of a call spelled jd.<door>(...), so no other name is born "
+                                   "and no string names one: %s" % (KERNEL_FILE, "; ".join("line %d, %s" % b for b in born)))
+        self.assertEqual(set(called), {"jd.load_goals", "jd.load_goals_or_fault", "jd.load_goals_shared", "jd.load_goals_shared_or_fault"},
+                         "%s: the kernel calls the judge's four doors by attribute and no other loader spelling (the pin above read a non-empty "
+                         "population; a spelling missing here is a door the kernel no longer calls or a file that is not the kernel's, a fifth is "
+                         "a new door or a new base, which needs a recorder or a bound before this set grows): %r"
+                         % (KERNEL_FILE, {k: v for k, v in sorted(called.items())}))
+        self.assertEqual((defs, handoffs), ({}, []), "%s: the kernel defines no loader and hands none to _or_fault" % KERNEL_FILE)
+        born, called, defs, handoffs = _loader_births(Path(os.path.realpath(jd.__file__)), judge=True)
+        self.assertEqual(born, [], "%s: the judge reaches its own doors by bare name as the callee of a call, or hands one to _or_fault from a "
+                                   "boundary wrapper, and gives them no other name (no alias, parameter, keyword, attribute, decorator or "
+                                   "loader-naming string handed to a dynamic lookup): %s" % (JUDGE_FILE, "; ".join("line %d, %s" % b for b in born)))
+        self.assertEqual(defs, dict.fromkeys(("load_goals", "load_goals_or_fault", "load_goals_shared", "load_goals_shared_or_fault"), 1),
+                         "%s: the four doors are defined once each (a fifth def named like a loader is a new door, which needs a recorder or a "
+                         "bound): %r" % (JUDGE_FILE, defs))
+        self.assertEqual(set(called), set(defs), "%s: the judge calls its four doors and no other loader spelling: %r" % (JUDGE_FILE, sorted(called)))
+        self.assertEqual(handoffs, [("load_goals_or_fault", "load_goals"), ("load_goals_shared_or_fault", "load_goals_shared")],
+                         "%s: the two outer boundary wrappers hand their loader to _or_fault and no other function does (the recorder steps over "
+                         "exactly those frames at their hand-off lines; a third wrapper would be a caller the recorder names for itself): %r"
+                         % (JUDGE_FILE, handoffs))
 
     def test_the_census_reads_code_not_prose_and_sees_a_call_inside_an_f_string_on_every_interpreter(self):
         """The rule the censuses share, exercised (review round 2, tests-3: no scanned source carried a mention of a loader, so
@@ -1075,6 +1220,9 @@ class TheCountersOneSite(unittest.TestCase):
             from romp_judge import load_goals_shared as _lgs      # the import is the site; the call below is a Name of another spelling
             return _lgs(sid)
 
+        def via_getattr(sid):
+            return getattr(jd, "load_goals_shared")(sid)         # the loader reached through a string: spelled in no Name, Attribute or alias
+
         self.assertEqual(_loader_sites(mentions_only, "load_goals"), [],
                          "a loader named in a docstring, a string literal or a comment is not a site")
         self.assertEqual(len(_loader_sites(one_call, "load_goals")), 1, "one call is one site: %r" % _loader_sites(one_call, "load_goals"))
@@ -1084,6 +1232,359 @@ class TheCountersOneSite(unittest.TestCase):
         alias_sites = _loader_sites(under_an_alias, "load_goals")
         self.assertEqual([ln.split()[0] for _i, ln in alias_sites], ["from"],
                          "a loader imported under an alias is one site, the import line, and the alias's call is not: %r" % alias_sites)
+        self.assertEqual(_loader_sites(via_getattr, "load_goals"), [],
+                         "a loader reached through a string, getattr here (exec, eval, compile, operator.attrgetter, vars(), __dict__ and "
+                         "__getattribute__ the same, and getattr on an importlib.import_module result), is spelled in no Name, Attribute or "
+                         "alias node and is outside the census: the limit _loader_sites's docstring states, held by the census reading code and "
+                         "not strings; the kernel-wide pin refuses a loader-naming string handed to those callables in the kernel and the judge, "
+                         "so the limit is this census's and not the module's (review round 4): %r" % _loader_sites(via_getattr, "load_goals"))
+
+
+# The census's form enumeration (review round 4). One sample module per form, written to a file and imported so inspect can read
+# it, with a stub judge standing in for the real one (its four loaders take any argument and return it, so a decorator form's
+# def-time call is harmless and no store is touched; the samples are otherwise never called). Each row of _LOADER_FORMS: the
+# form's id and description, the module body, the target's dotted name, the interpreter it needs (None: every one; a gated form
+# fails to compile below it, which the test checks), the sites _loader_sites answers for the needle "load_goals" as line indices
+# into the target's source, the site count for the needle "jd.load_goals_shared", and, for a form the census answers no site
+# for, the stated limit it falls under (_LIMITS). The expectations are the lens's, read on 3.10 through 3.13 and identical there
+# but for the three gated forms; the bodies' `romp_judge` is the stub's name when loaded.
+_STUB_JUDGE, _STUB_KERNEL = "romp_judge_c7pin_stub", "romp_kernel_c7pin_stub"
+_FORM_PRE = ("import functools, importlib, operator, sys\n"
+             "import %s as jd\n"
+             "import %s as km\n"
+             "from typing import Callable\n"
+             "_NUDGE_WALK_STATS = {'loads': 0}\n"
+             "X = 3\n" % (_STUB_JUDGE, _STUB_KERNEL))
+_LIMITS = {
+    "string": "a loader reached through a string (getattr, exec, eval, compile, operator.attrgetter, vars(), __dict__, __getattribute__, "
+              "getattr on an importlib.import_module result): the limit _loader_sites states; the kernel-wide pin refuses such a call "
+              "in the kernel and the judge",
+    "outside": "a loader that reaches the scanned body under a name bound outside it (a module-level alias, an import alias at module "
+               "level, a module-level dict or partial, a closure variable, a parameter, a class or instance attribute when only the "
+               "method is scanned): the birth the kernel-wide pin refuses in the kernel and the judge",
+    "wrapper": "the object handed to the census is not the body (a decorator without functools.wraps hands it the wrapper; "
+               "functools.wraps around another function points inspect at that function): the limit the replaced-helpers census's "
+               "identity check holds for the fixture's helpers",
+    "none": "no loader is named in code at all (prose, a string annotation, a keyword or a key spelled like one): the census's own rule",
+}
+_LOADER_FORMS = [
+    ('F01', 'ast.Name call, bound by a MODULE-LEVEL bare from-import',
+     'from romp_judge import load_goals_shared\ndef f(sid):\n    return load_goals_shared(sid)\n', 'f', None, [1], 0, None),
+    ('F02', 'ast.Attribute call jd.<loader>',
+     'def f(sid):\n    store, fault = jd.load_goals_shared_or_fault(sid)\n    return store\n', 'f', None, [1], 1, None),
+    ('F03', 'from-import WITH as, inside the body, alias called',
+     'def f(sid):\n    from romp_judge import load_goals_shared as _lgs\n    return _lgs(sid)\n', 'f', None, [1], 0, None),
+    ('F04', 'bare from-import inside the body, then the Name call',
+     'def f(sid):\n    from romp_judge import load_goals_shared\n    return load_goals_shared(sid)\n', 'f', None, [1, 2], 0, None),
+    ('F05', 'import <module> as j inside the body; j.<loader>',
+     'def f(sid):\n    import romp_judge as j\n    return j.load_goals_shared(sid)\n', 'f', None, [2], 0, None),
+    ('F05b', 'import romp_judge (no alias) inside the body; romp_judge.<loader>',
+     'def f(sid):\n    import romp_judge\n    return romp_judge.load_goals_shared(sid)\n', 'f', None, [2], 0, None),
+    ('F06', 'star import at MODULE level, Name call in the body',
+     'from romp_judge import *\ndef f(sid):\n    return load_goals_shared(sid)\n', 'f', None, [1], 0, None),
+    ('F07', 'getattr with a string',
+     "def f(sid):\n    return getattr(jd, 'load_goals_shared')(sid)\n", 'f', None, [], 0, 'string'),
+    ('F07b', 'getattr with a string built by concatenation',
+     "def f(sid):\n    return getattr(jd, 'load_goals_' + 'shared')(sid)\n", 'f', None, [], 0, 'string'),
+    ('F08', 'importlib.import_module(...).<loader>',
+     "def f(sid):\n    return importlib.import_module('romp_judge').load_goals_shared(sid)\n", 'f', None, [1], 0, None),
+    ('F08b', "getattr(importlib.import_module(...), '<loader>')",
+     "def f(sid):\n    return getattr(importlib.import_module('romp_judge'), 'load_goals_shared')(sid)\n", 'f', None, [], 0, 'string'),
+    ('F09', "__import__('romp_judge').<loader>",
+     "def f(sid):\n    return __import__('romp_judge').load_goals_shared(sid)\n", 'f', None, [1], 0, None),
+    ('F10', "sys.modules['romp_judge'].<loader>",
+     "def f(sid):\n    return sys.modules['romp_judge'].load_goals_shared(sid)\n", 'f', None, [1], 0, None),
+    ('F11', 'decorator @jd.<loader> on the scanned function',
+     '@jd.load_goals_shared\ndef f(sid):\n    return sid\n', 'f', None, [0], 1, None),
+    ('F11b', 'decorator with a call, @functools.wraps(jd.<loader>)',
+     '@functools.wraps(jd.load_goals_shared)\ndef f(sid):\n    return sid\n', 'f', None, [], 0, 'wrapper'),
+    ('F12', 'default argument value loader=jd.<loader>, called via the parameter',
+     'def f(sid, loader=jd.load_goals_shared):\n    return loader(sid)\n', 'f', None, [0], 1, None),
+    ('F13', 'lambda body',
+     'def f(sid):\n    g = lambda s: jd.load_goals_shared(s)\n    return g(sid)\n', 'f', None, [1], 1, None),
+    ('F14', 'list comprehension',
+     'def f(sid):\n    return [jd.load_goals_shared(s) for s in (sid,)]\n', 'f', None, [1], 1, None),
+    ('F15', 'f-string expression',
+     "def f(sid):\n    return f'{jd.load_goals_shared(sid)}'\n", 'f', None, [1], 1, None),
+    ('F15b', 'f-string with conversion and nested format spec',
+     "def f(sid):\n    w = 4\n    return f'{jd.load_goals_shared(sid)!r:>{w}}'\n", 'f', None, [2], 1, None),
+    ('F15c', 'f-string debug specifier =',
+     "def f(sid):\n    return f'{jd.load_goals_shared(sid)=}'\n", 'f', None, [1], 1, None),
+    ('F15d', 'f-string nested in an f-string (different quotes)',
+     'def f(sid):\n    return f"{f\'{jd.load_goals_shared(sid)}\'}"\n', 'f', None, [1], 1, None),
+    ('F15e', 'f-string nested in an f-string, SAME quotes (PEP 701, 3.12+ only)',
+     'def f(sid):\n    return f"{f"{jd.load_goals_shared(sid)}"}"\n', 'f', (3, 12), [1], 1, None),
+    ('F16', 'walrus',
+     'def f(sid):\n    if (store := jd.load_goals_shared(sid)):\n        return store\n', 'f', None, [1], 1, None),
+    ('F16b', 'walrus inside a comprehension condition',
+     'def f(sid):\n    return [y for s in (sid,) if (y := jd.load_goals_shared(s))]\n', 'f', None, [1], 1, None),
+    ('F17', 'match value pattern case jd.<loader> (a reference, not a call)',
+     'def f(sid):\n    match sid:\n        case jd.load_goals_shared:\n            return 1\n        case _:\n            return 0\n', 'f', None, [2], 1, None),
+    ('F17b', 'match mapping pattern with the loader as a value',
+     "def f(sid):\n    match sid:\n        case {'k': jd.load_goals_shared}:\n            return 1\n        case _:\n            return 0\n", 'f', None, [2], 1, None),
+    ('F17c', 'match guard calling the loader',
+     'def f(sid):\n    match sid:\n        case str() if jd.load_goals_shared(sid):\n            return 1\n        case _:\n            return 0\n', 'f', None, [2], 1, None),
+    ('F18', 'global declaration then the Name call (binding at module level)',
+     'from romp_judge import load_goals_shared\ndef f(sid):\n    global load_goals_shared\n    return load_goals_shared(sid)\n', 'f', None, [2], 0, None),
+    ('F18b', 'nonlocal declaration; the loader bound in an inner function',
+     'def f(sid):\n    L = None\n    def g():\n        nonlocal L\n        L = jd.load_goals_shared\n    g()\n    return L(sid)\n', 'f', None, [4], 1, None),
+    ('F19', 'class attribute loader = jd.<loader>; the CLASS is scanned',
+     'class C:\n    loader = jd.load_goals_shared\n    def f(self, sid):\n        return self.loader(sid)\n', 'C', None, [1], 1, None),
+    ('F19b', 'class attribute bound in the class body; only the METHOD is scanned',
+     'class C:\n    loader = jd.load_goals_shared\n    def f(self, sid):\n        return self.loader(sid)\n', 'C.f', None, [], 0, 'outside'),
+    ('F19c', 'instance attribute bound in __init__; only the METHOD is scanned',
+     'class C:\n    def __init__(self):\n        self.loader = jd.load_goals_shared\n    def f(self, sid):\n        return self.loader(sid)\n', 'C.f', None, [], 0, 'outside'),
+    ('F19d', 'property returning the loader; only the METHOD is scanned',
+     'class C:\n    @property\n    def loader(self):\n        return jd.load_goals_shared\n    def f(self, sid):\n        return self.loader(sid)\n', 'C.f', None, [], 0, 'outside'),
+    ('F20', 'annotated assignment of the loader to a local',
+     'def f(sid):\n    loader: Callable = jd.load_goals_shared\n    return loader(sid)\n', 'f', None, [1], 1, None),
+    ('F20b', 'STRING annotation naming the loader (no call)',
+     "def f(sid):\n    x: 'jd.load_goals_shared' = None\n    return x\n", 'f', None, [], 0, 'none'),
+    ('F21', 'nested function defined and called inside the body',
+     'def f(sid):\n    def inner():\n        return jd.load_goals_shared(sid)\n    return inner()\n', 'f', None, [2], 1, None),
+    ('F21b', 'nested function defined and NEVER called (a reference that never loads)',
+     'def f(sid):\n    def inner():\n        return jd.load_goals_shared(sid)\n    return sid\n', 'f', None, [2], 1, None),
+    ('F22', 'local variable bound to the loader inside the body, then called',
+     'def f(sid):\n    L = jd.load_goals_shared\n    return L(sid)\n', 'f', None, [1], 1, None),
+    ('F22b', 'MODULE-LEVEL name bound to the loader (L = jd.<loader>), called in the body',
+     'L = jd.load_goals_shared\ndef f(sid):\n    return L(sid)\n', 'f', None, [], 0, 'outside'),
+    ('F22c', 'MODULE-LEVEL from-import with as, alias called in the body',
+     'from romp_judge import load_goals_shared as _lgs\ndef f(sid):\n    return _lgs(sid)\n', 'f', None, [], 0, 'outside'),
+    ('F22d', 'closure: loader bound in the ENCLOSING function; only the inner function is scanned',
+     'def outer():\n    L = jd.load_goals_shared\n    def f(sid):\n        return L(sid)\n    return f\nf = outer()\n', 'f', None, [], 0, 'outside'),
+    ('F22e', "loader handed in as a PARAMETER (the judge's _or_fault shape), body scanned",
+     'def f(sid, loader):\n    return loader(sid)\n', 'f', None, [], 0, 'outside'),
+    ('F23', 'dict of callables, indexed and called',
+     "def f(sid):\n    return {'a': jd.load_goals_shared}['a'](sid)\n", 'f', None, [1], 1, None),
+    ('F23b', 'list of callables',
+     'def f(sid):\n    return [jd.load_goals_shared][0](sid)\n', 'f', None, [1], 1, None),
+    ('F23c', 'loop over a tuple of callables',
+     'def f(sid):\n    out = None\n    for L in (jd.load_goals_shared,):\n        out = L(sid)\n    return out\n', 'f', None, [2], 1, None),
+    ('F24', 'functools.partial',
+     'def f(sid):\n    return functools.partial(jd.load_goals_shared, sid)()\n', 'f', None, [1], 1, None),
+    ('F25', 'method on a module alias chain km.jd.<loader>',
+     'def f(sid):\n    return km.jd.load_goals_shared(sid)\n', 'f', None, [1], 1, None),
+    ('F25b', 'attribute chain through self: self._jd.<loader>',
+     'class C:\n    _jd = jd\n    def f(self, sid):\n        return self._jd.load_goals_shared(sid)\n', 'C.f', None, [1], 1, None),
+    ('F25c', 'chain through a call: _judge().<loader>',
+     'def _judge():\n    return jd\ndef f(sid):\n    return _judge().load_goals_shared(sid)\n', 'f', None, [1], 0, None),
+    ('F25d', "chain through a subscript: globals()['jd'].<loader>",
+     "def f(sid):\n    return globals()['jd'].load_goals_shared(sid)\n", 'f', None, [1], 0, None),
+    ('F25e', "chain through a dict literal: {'jd': jd}['jd'].<loader>",
+     "def f(sid):\n    return {'jd': jd}['jd'].load_goals_shared(sid)\n", 'f', None, [1], 0, None),
+    ('F25f', "the loader's own attribute: jd.<loader>.__call__(sid)",
+     'def f(sid):\n    return jd.load_goals_shared.__call__(sid)\n', 'f', None, [1, 1], 2, None),
+    ('F25g', 'a forwarding object: _J().<loader> via __getattr__',
+     'class _J:\n    def __getattr__(self, n):\n        return getattr(jd, n)\ndef f(sid):\n    return _J().load_goals_shared(sid)\n', 'f', None, [1], 0, None),
+    ('F26', 'conditional import inside try/except, alias called',
+     'def f(sid):\n    try:\n        from romp_judge import load_goals_shared as L\n    except ImportError:\n        L = None\n    return L(sid)\n', 'f', None, [2], 0, None),
+    ('F27', 'exec of a string',
+     "def f(sid):\n    exec('jd.load_goals_shared(sid)')\n", 'f', None, [], 0, 'string'),
+    ('F28', 'eval of a string, result called',
+     "def f(sid):\n    return eval('jd.load_goals_shared')(sid)\n", 'f', None, [], 0, 'string'),
+    ('F29', 'operator.attrgetter with a string',
+     "def f(sid):\n    return operator.attrgetter('load_goals_shared')(jd)(sid)\n", 'f', None, [], 0, 'string'),
+    ('F30', "vars(jd)['<loader>']",
+     "def f(sid):\n    return vars(jd)['load_goals_shared'](sid)\n", 'f', None, [], 0, 'string'),
+    ('F30b', "jd.__dict__['<loader>']",
+     "def f(sid):\n    return jd.__dict__['load_goals_shared'](sid)\n", 'f', None, [], 0, 'string'),
+    ('F30c', "jd.__getattribute__('<loader>')",
+     "def f(sid):\n    return jd.__getattribute__('load_goals_shared')(sid)\n", 'f', None, [], 0, 'string'),
+    ('F31', 'keyword argument NAMED like the loader (no loader referenced)',
+     'def g(**k):\n    return k\ndef f(sid):\n    return g(load_goals_shared=sid)\n', 'f', None, [], 0, 'none'),
+    ('F32', 'a PARAMETER named like the loader, called (not the loader)',
+     'def f(load_goals_shared, sid):\n    return load_goals_shared(sid)\n', 'f', None, [1], 0, None),
+    ('F33', 'call spanning lines: the site index vs the closing line',
+     "def f(sid):\n    store, fault = jd.load_goals_shared_or_fault(\n        sid,\n    )\n    _NUDGE_WALK_STATS['loads'] += 1\n    return store\n", 'f', None, [1], 1, None),
+    ('F33b', 'backslash continuation between jd. and the loader name',
+     'def f(sid):\n    store = jd.\\\n        load_goals_shared(sid)\n    return store\n', 'f', None, [1], 1, None),
+    ('F34', 'two calls on one line',
+     'def f(sid):\n    a = jd.load_goals_shared(sid); b = jd.load_goals_shared(sid)\n    return a, b\n', 'f', None, [1, 1], 2, None),
+    ('F35', 'conditional expression picking a loader',
+     'def f(sid):\n    return (jd.load_goals_shared if X else jd.load_goals)(sid)\n', 'f', None, [1, 1], 1, None),
+    ('F36', 'await (async def)',
+     'async def f(sid):\n    return await jd.load_goals_shared(sid)\n', 'f', None, [1], 1, None),
+    ('F37', 'with statement',
+     'def f(sid):\n    with jd.load_goals_shared(sid) as s:\n        return s\n', 'f', None, [1], 1, None),
+    ('F38', 'yield',
+     'def f(sid):\n    yield jd.load_goals_shared(sid)\n', 'f', None, [1], 1, None),
+    ('F39', 'class decorator',
+     '@jd.load_goals_shared\nclass C:\n    pass\n', 'C', None, [0], 1, None),
+    ('F40', 'assignment TARGET jd.<loader> = x (a monkeypatch, no call)',
+     'def f(sid):\n    jd.load_goals_shared = jd.load_goals\n    return sid\n', 'f', None, [1, 1], 1, None),
+    ('F41', 'passed as a callback: map(jd.<loader>, ...)',
+     'def f(sid):\n    return list(map(jd.load_goals_shared, (sid,)))\n', 'f', None, [1], 1, None),
+    ('F42', 'star-args call jd.<loader>(*a, **k)',
+     'def f(sid):\n    a, k = (sid,), {}\n    return jd.load_goals_shared(*a, **k)\n', 'f', None, [2], 1, None),
+    ('F43', "docstring, string literal and comment only (the module's sample)",
+     "def f(sid):\n    '''jd.load_goals_shared_or_fault(sid) here'''\n    note = 'jd.load_goals_shared_or_fault(sid) in a string'   # jd.load_goals_shared_or_fault(sid)\n    return note\n", 'f', None, [], 0, 'none'),
+    ('F43b', 'type comment naming the loader',
+     'def f(sid):\n    x = None  # type: jd.load_goals_shared\n    return x\n', 'f', None, [], 0, 'none'),
+    ('F44', 'compile() of a string then exec of the code object',
+     "def f(sid):\n    exec(compile('jd.load_goals_shared(sid)', '<s>', 'exec'))\n", 'f', None, [], 0, 'string'),
+    ('F45', 'the loader name as a dict KEY string (no call)',
+     "def f(sid):\n    return {'load_goals_shared': sid}\n", 'f', None, [], 0, 'none'),
+    ('F46', 'semicolon: load and the bump on ONE line',
+     "def f(sid):\n    store = jd.load_goals_shared_or_fault(sid); _NUDGE_WALK_STATS['loads'] += 1\n    return store\n", 'f', None, [1], 1, None),
+    ('F47', 'one-line if guarding the bump on the line after the load',
+     "def f(sid):\n    store = jd.load_goals_shared_or_fault(sid)\n    if X: _NUDGE_WALK_STATS['loads'] += 1\n    return store\n", 'f', None, [1], 1, None),
+    ('F48', 'inner CLASS method calling the loader inside the body',
+     'def f(sid):\n    class K:\n        def m(self):\n            return jd.load_goals_shared(sid)\n    return K().m()\n', 'f', None, [3], 1, None),
+    ('F49', 'except* clause body (3.11+)',
+     "def f(sid):\n    out = None\n    try:\n        raise ExceptionGroup('x', [ValueError()])\n    except* ValueError:\n        out = jd.load_goals_shared(sid)\n    return out\n", 'f', (3, 11), [5], 1, None),
+    ('F50', 'type alias statement referencing the loader in a subscript (3.12+)',
+     'def f(sid):\n    type T = list[jd.load_goals_shared]\n    return sid\n', 'f', (3, 12), [1], 1, None),
+    ('F51', 'shadowed local jd = km.jd; jd.<loader>',
+     'def f(sid):\n    jd = km.jd\n    return jd.load_goals_shared(sid)\n', 'f', None, [2], 1, None),
+    ('F52', 'Name in STORE context: load_goals_shared = None (no call)',
+     'def f(sid):\n    load_goals_shared = None\n    return load_goals_shared\n', 'f', None, [1, 2], 0, None),
+    ('F53', 'lambda default binding L=jd.<loader>',
+     'def f(sid):\n    return (lambda s, L=jd.load_goals_shared: L(s))(sid)\n', 'f', None, [1], 1, None),
+    ('F55', 'MODULE-LEVEL dict of callables, indexed in the body',
+     "LOADERS = {'s': jd.load_goals_shared}\ndef f(sid):\n    return LOADERS['s'](sid)\n", 'f', None, [], 0, 'outside'),
+    ('F56', 'MODULE-LEVEL functools.partial of the loader, called in the body',
+     'P = functools.partial(jd.load_goals_shared)\ndef f(sid):\n    return P(sid)\n', 'f', None, [], 0, 'outside'),
+    ('F57', 'generator expression',
+     'def f(sid):\n    return next(jd.load_goals_shared(s) for s in (sid,))\n', 'f', None, [1], 1, None),
+    ('F58', 'decorated WITHOUT functools.wraps: the scanned object is the wrapper',
+     'def deco(fn):\n    def w(*a, **k):\n        return fn(*a, **k)\n    return w\n@deco\ndef f(sid):\n    return jd.load_goals_shared(sid)\n', 'f', None, [], 0, 'wrapper'),
+    ('F58b', "decorated WITH functools.wraps (the kernel's gate shape)",
+     'def deco(fn):\n    @functools.wraps(fn)\n    def w(*a, **k):\n        return fn(*a, **k)\n    return w\n@deco\ndef f(sid):\n    return jd.load_goals_shared(sid)\n', 'f', None, [2], 1, None),
+    ('F58c', 'functools.lru_cache decorated',
+     '@functools.lru_cache(maxsize=None)\ndef f(sid):\n    return jd.load_goals_shared(sid)\n', 'f', None, [2], 1, None),
+    ('F58d', 'decorated WITHOUT wraps, and the WRAPPER also loads (what the census reads)',
+     'def deco(fn):\n    def w(*a, **k):\n        return fn(*a, **k)\n    return w\n@deco\ndef f(sid):\n    return jd.load_goals_shared(sid)\n', 'deco', None, [], 0, 'none'),
+    ('F59', 'staticmethod on a class, the METHOD scanned via the class attribute',
+     'class C:\n    @staticmethod\n    def f(sid):\n        return jd.load_goals_shared(sid)\n', 'C.f', None, [2], 1, None),
+    ('F60', 'loader referenced only via keyword default in a nested def, never called',
+     'def f(sid):\n    def g(L=jd.load_goals_shared):\n        return L\n    return sid\n', 'f', None, [1], 1, None),
+]
+# The bump forms: the statement placed on the line after the load in `def f(sid)`, the bump indices _bump_sites answers, and
+# whether the walk census's adjacency (one bump, one load, the bump on the line after) holds.
+_BUMP_FORMS = [
+    ('B01', "_NUDGE_WALK_STATS['loads'] += 1 (the kernel's statement)", "    _NUDGE_WALK_STATS['loads'] += 1\n", [2], True),
+    ('B02', 'plain assignment x = x + 1', "    _NUDGE_WALK_STATS['loads'] = _NUDGE_WALK_STATS['loads'] + 1\n", [], False),
+    ('B03', '+= 2 (the value is not checked by the scan)', "    _NUDGE_WALK_STATS['loads'] += 2\n", [2], True),
+    ('B04', '+= 1.0 (a float)', "    _NUDGE_WALK_STATS['loads'] += 1.0\n", [2], True),
+    ('B05', 'key in a variable', "    key = 'loads'\n    _NUDGE_WALK_STATS[key] += 1\n", [], False),
+    ('B06', 'the dict in a local alias', "    _S = _NUDGE_WALK_STATS\n    _S['loads'] += 1\n", [], False),
+    ('B07', 'attribute-qualified dict km._NUDGE_WALK_STATS', "    km._NUDGE_WALK_STATS['loads'] += 1\n", [], False),
+    ('B08', '-= -1', "    _NUDGE_WALK_STATS['loads'] -= -1\n", [], False),
+    ('B09', '__setitem__', "    _NUDGE_WALK_STATS.__setitem__('loads', _NUDGE_WALK_STATS['loads'] + 1)\n", [], False),
+    ('B10', "implicit string concatenation 'lo' 'ads'", "    _NUDGE_WALK_STATS['lo' 'ads'] += 1\n", [2], True),
+    ('B11', 'parenthesised key', "    _NUDGE_WALK_STATS[('loads')] += 1\n", [2], True),
+    ('B12', '+= +1', "    _NUDGE_WALK_STATS['loads'] += +1\n", [2], True),
+    ('B13', 'dict.update', "    _NUDGE_WALK_STATS.update(loads=_NUDGE_WALK_STATS['loads'] + 1)\n", [], False),
+    ('B14', 'the statement quoted in a comment and a string (no bump)', '    note = "_NUDGE_WALK_STATS[\'loads\'] += 1"   # _NUDGE_WALK_STATS[\'loads\'] += 1\n', [], False),
+    ('B15', 'two bumps on one line', "    _NUDGE_WALK_STATS['loads'] += 1; _NUDGE_WALK_STATS['loads'] += 1\n", [2, 2], False),
+    ('B16', 'bump under a one-line if', "    if X: _NUDGE_WALK_STATS['loads'] += 1\n", [2], True),
+    ('B17', 'bump in a one-line for', "    for _ in range(1): _NUDGE_WALK_STATS['loads'] += 1\n", [2], True),
+    ('B18', "bump on a bytes key b'loads'", "    _NUDGE_WALK_STATS[b'loads'] += 1\n", [], False),
+    ('B19', "bump of a NESTED key _NUDGE_WALK_STATS['x']['loads']", "    _NUDGE_WALK_STATS['x']['loads'] += 1\n", [], False),
+    ('B20', 'bump through operator.iadd', "    _NUDGE_WALK_STATS['loads'] = operator.iadd(_NUDGE_WALK_STATS['loads'], 1)\n", [], False),
+]
+# The hand-off forms: a stand-in wrapper `w(fsid, loader)`, the lines _pass_through_lines answers as offsets from the def's line,
+# and its call count (setUp's guard reads both).
+_HANDOFF_FORMS = [
+    ('P01', "loader(fsid) (the judge's statement)", 'def w(fsid, loader):\n    store = loader(fsid)\n    return store\n', [1], 1),
+    ('P02', '(loader)(fsid) parenthesised', 'def w(fsid, loader):\n    store = (loader)(fsid)\n    return store\n', [1], 1),
+    ('P03', 'loader.__call__(fsid)', 'def w(fsid, loader):\n    store = loader.__call__(fsid)\n    return store\n', [], 0),
+    ('P04', 'two calls on one line', 'def w(fsid, loader):\n    store = loader(fsid) if X else loader(fsid)\n    return store\n', [1], 2),
+    ('P05', 'functools.partial(loader)(fsid)', 'def w(fsid, loader):\n    store = functools.partial(loader)(fsid)\n    return store\n', [], 0),
+    ('P06', 'call inside an f-string', "def w(fsid, loader):\n    return f'{loader(fsid)}'\n", [1], 1),
+    ('P07', 'alias then call: L = loader; L(fsid)', 'def w(fsid, loader):\n    L = loader\n    return L(fsid)\n', [], 0),
+]
+
+
+class TheCensusOverEveryForm(unittest.TestCase):
+    """The census functions run over the enumeration above on the interpreter at hand: per loader form _loader_sites answers the
+    sites the table expects for both needles (a form the census counts keeps counting, at the lines it counts it at; a form it
+    misses stays a stated limit, named), per bump form _bump_sites answers the bumps and the adjacency the walk census reads,
+    and per hand-off form _pass_through_lines answers the lines and the call count setUp's guard reads. Review round 4: a lens
+    enumerated the forms on 3.10 through 3.13 and found the tables identical but for the gated forms; this is that enumeration
+    as the module's own check, so a census that visits one node kind less reds here naming the form (review round 3's alias
+    finding: over Name and Attribute alone, an import alias inside a helper's body was no site, and no sample said so)."""
+
+    def setUp(self):
+        self.td = tempfile.TemporaryDirectory()
+        self.addCleanup(self.td.cleanup)
+        stub = self._module(_STUB_JUDGE, "".join("def %s(fsid=None, *a, **k):\n    return fsid\n\n\n" % n for n in
+                                                 ("load_goals", "load_goals_shared", "load_goals_or_fault", "load_goals_shared_or_fault")))
+        kstub = types.ModuleType(_STUB_KERNEL)
+        kstub.jd = stub
+        sys.modules[_STUB_KERNEL] = kstub
+        self.addCleanup(sys.modules.pop, _STUB_KERNEL, None)
+
+    def _module(self, name, source):
+        path = Path(self.td.name) / (name + ".py")
+        path.write_text(source)
+        spec = importlib.util.spec_from_file_location(name, path)
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[name] = mod                           # inspect finds a class's source through sys.modules[cls.__module__]
+        self.addCleanup(sys.modules.pop, name, None)
+        spec.loader.exec_module(mod)
+        return mod
+
+    def _target(self, fid, body, dotted):
+        obj = self._module("c7pin_form_" + fid, _FORM_PRE + body.replace("romp_judge", _STUB_JUDGE))
+        for part in dotted.split("."):
+            obj = getattr(obj, part)
+        return obj
+
+    def test_every_loader_form_is_a_site_where_the_table_says_or_a_stated_limit(self):
+        here = sys.version.split()[0]
+        self.assertEqual(len(_LOADER_FORMS), 95, "the table carries the lens's 95 loader forms")
+        self.assertEqual(len({row[0] for row in _LOADER_FORMS}), 95, "with distinct ids")
+        counted, limits, gated = 0, {}, []
+        for fid, form, body, dotted, needs, sites, jds, limit in _LOADER_FORMS:
+            self.assertEqual(limit is None, bool(sites), "%s (%s): a form the census counts names no limit and a form it misses names one" % (fid, form))
+            self.assertIn(limit, (None,) + tuple(_LIMITS), "%s (%s): the limit is one of the stated four" % (fid, form))
+            if needs and sys.version_info[:2] < needs:
+                with self.assertRaises(SyntaxError, msg="%s (%s): gated to %d.%d and later, so its syntax must not compile on %s (the gate is "
+                                                        "checked on the side it refuses)" % (fid, form, needs[0], needs[1], here)):
+                    compile(_FORM_PRE + body, fid, "exec")
+                gated.append(fid)
+                continue
+            obj = self._target(fid, body, dotted)
+            got = _loader_sites(obj, "load_goals")
+            self.assertEqual([i for i, _ln in got], sites,
+                             "%s (%s): on %s the census over the needle 'load_goals' answers %r and the table expects sites at line indices %r%s"
+                             % (fid, form, here, got, sites,
+                                "" if limit is None else "; the form is the stated limit %r: %s" % (limit, _LIMITS[limit])))
+            self.assertEqual(len(_loader_sites(obj, "jd.load_goals_shared")), jds,
+                             "%s (%s): on %s the walk census's needle 'jd.load_goals_shared' counts %d and the table expects %d"
+                             % (fid, form, here, len(_loader_sites(obj, "jd.load_goals_shared")), jds))
+            if limit is None:
+                counted += 1
+            else:
+                limits[limit] = limits.get(limit, 0) + 1
+        self.assertEqual(counted + sum(limits.values()) + len(gated), 95, "every row was counted, a limit, or gated: %d, %r, %r" % (counted, limits, gated))
+        self.assertEqual(limits, {"string": 10, "outside": 9, "wrapper": 2, "none": 6}, "the missed forms by limit, the lens's classification")
+
+    def test_every_bump_form_reads_as_the_table_says(self):
+        self.assertEqual(len(_BUMP_FORMS), 20, "the table carries the lens's 20 bump forms")
+        for bid, form, stmt, bumps, adjacent in _BUMP_FORMS:
+            f = self._target(bid, "def f(sid):\n    store = jd.load_goals_shared_or_fault(sid)\n" + stmt + "    return store\n", "f")
+            at = [i for i, _ln in _loader_sites(f, "jd.load_goals_shared")]
+            self.assertEqual(at, [1], "%s (%s): the load sits at index 1 in every bump form" % (bid, form))
+            got = _bump_sites(f)
+            self.assertEqual(got, bumps, "%s (%s): _bump_sites answers %r and the table expects %r (a spelling other than the kernel's "
+                                         "`_NUDGE_WALK_STATS[\"loads\"] += 1` is no bump, and the walk census reds on it, conservatively)"
+                                         % (bid, form, got, bumps))
+            self.assertEqual(len(got) == 1 and got[0] == at[0] + 1, adjacent,
+                             "%s (%s): the walk census's adjacency, one bump on the line after the one load, %s here" % (bid, form, "holds" if adjacent else "fails"))
+
+    def test_every_hand_off_form_reads_as_the_table_says(self):
+        self.assertEqual(len(_HANDOFF_FORMS), 7, "the table carries the lens's 7 hand-off forms")
+        for pid, form, body, offsets, count in _HANDOFF_FORMS:
+            w = self._target(pid, body, "w")
+            start = inspect.getsourcelines(w)[1]
+            lines, n = _pass_through_lines(w, "loader")
+            self.assertEqual((sorted(lines), n), (sorted(start + o for o in offsets), count),
+                             "%s (%s): _pass_through_lines answers lines %r and %d call(s); the table expects the def's line %d plus %r and %d (a "
+                             "hand-off spelled other than `loader(fsid)`, through __call__, a partial or a local alias, is no call here and "
+                             "setUp's guard reds on it, conservatively; two on one line are two calls on one line)"
+                             % (pid, form, sorted(lines), n, start, offsets, count))
 
 
 class Docs(unittest.TestCase):
