@@ -78,8 +78,10 @@ def _transcript(sid, tag, cwd, pairs):
     return "".join(json.dumps(r) + "\n" for r in out)
 
 
-def _kernel(lab, name, port, token, sessions):
-    """Boot one hermetic kernel: its own state root and dist, and `sessions` [(sid, name, tag)] with closed-turn transcripts."""
+def _kernel(lab, name, port, token, sessions, bin_dir=BIN):
+    """Boot one hermetic kernel: its own state root and dist, and `sessions` [(sid, name, tag)] with closed-turn transcripts.
+    `bin_dir` is the checkout whose bin/romp-kernel runs: this one by default; another vintage's for a mixed-build lab
+    (tests/test_federated_capability_corners.py boots an older remote or hub against this checkout's pages)."""
     state = os.path.join(lab, name, "xdg", "romp")
     claude = os.path.join(lab, name, "claude")
     cwd = os.path.join(lab, name, "proj")
@@ -97,7 +99,7 @@ def _kernel(lab, name, port, token, sessions):
         Path(proj, sid + ".jsonl").write_text(_transcript(sid, tag, cwd, 6))
     env = _lab.kernel_env(os.path.join(lab, name), claude, os.path.join(lab, "dist"), port, token, ROMP_HOST_NAME=name.upper())
     log = os.path.join(lab, name + "-kernel.log")
-    proc = subprocess.Popen([os.path.join(BIN, "romp-kernel")], stdout=open(log, "w"), stderr=subprocess.STDOUT, env=env)
+    proc = subprocess.Popen([os.path.join(bin_dir, "romp-kernel")], stdout=open(log, "w"), stderr=subprocess.STDOUT, env=env)
     for _ in range(120):
         try:
             urllib.request.urlopen("http://127.0.0.1:%d/healthz" % port, timeout=1)

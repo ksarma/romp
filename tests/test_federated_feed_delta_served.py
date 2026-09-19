@@ -6,29 +6,35 @@ relay sockets hold its full frame, so the next frame each relay socket gets is a
 
 Before this change the relay dial announced no caps, so the remote kernel served its feed on the view-delta
 slot path ({type:"delta", slot:"feed"}, re-encoding every card per build: memos.wire feed_slot_split), which
-nothing in the hub's pages decodes: the shim reassembles view deltas on its LOCAL socket alone, and
+nothing in the hub's pages decoded then: the shim reassembles view deltas on its LOCAL socket alone, and
 federation.ts applied a feedDelta for the local host only. The remote's board froze on its first full frame,
 the Outline filed a `delta-unapplied` row per dropped frame and posted a needSlot the LOCAL kernel could not
 answer (86 rows in 2.4 minutes on the user's phone), and the Waiting pane dropped the same frames silently.
 Now federation.ts announces caps=feedDelta on every remote dial (REMOTE_DIAL_CAPS) and applies a remote host's
-feedDelta onto the raw frame it holds for that host.
+feedDelta onto the raw frame it holds for that host (and, since the same day, reassembles a remote's view-delta
+slot patches per conn, so a kernel that ignores the term is decoded too: tests/test_federated_capability_corners.py).
 
 Five observables, green with the change:
   1. each relay dial URL (window.__dials) carries caps=feedDelta;
   2. the Waiting pane shows the todo TESTHOST filed after its full frame (the delta applied and reached the pane);
   3. the frames each relay socket received after its full frame are feedDelta, none of them {type:"delta"};
   4. the HUB's client-diag.jsonl carries no `delta-unapplied` (outline), `feedDelta-unapplied` (outline, waiting)
-     or `feedDelta-nobase` (federation) row;
+     or `feedDelta-nobase` (federation) row, and DOES carry the pages' own federation rows (the positive control:
+     a negative read over an absent or renamed file must not pass);
   5. the REMOTE kernel's /perf memos.wire.feed_slot_split stays 0 (it never took the re-encoding split path).
-Red at the base on 1, 3 and 5 (run 2026-09-18: the dial carried no caps, no feedDelta frame reached either relay
-socket, feed_slot_split counted every feed send). 2 and 4 are green at the base in THIS lab and are the fix's
-end-to-end confirmation rather than its failing-before test: the lab's board is two sessions and one todo, and
-the kernel mints one usertodo card per session with every todo row in the frame's remainder, so the slot path's
-delta for the change is nearly the whole frame and its size guard (_DELTA_MAX_FRACTION) sends a full frame the
-pane applies. The phone's board is large enough for the same change to go as a delta the pane dropped; the
-failing-before test for the apply path is the real FederationManager fed a remote full frame and a remote
-delta in ui/webview/federation-remote-feed-delta.test.ts, which also runs the no-base case (a remote delta
-with no full frame held asks THAT kernel for one on its own socket), unreachable from outside a live page.
+Red at the base on 1, on 3's feedDelta clause, and on 5 (run 2026-09-18: the dial carried no caps, no feedDelta
+frame reached either relay socket, feed_slot_split counted every feed send). 3's {type:"delta"} clause and 2 and 4
+are green at the base too, all for one reason: every change in this lab lands in the frame's REMAINDER (the todo
+changes userTodos and userTodoRows beside the per-session usertodo card; the ledgers slice moves with it), and the
+slot path signs the remainder whole, so its delta for the change exceeds the size guard (_DELTA_MAX_FRACTION, 0.6)
+and downgrades to a whole frame the pane applies. That is the remainder, not the board's size: a 12-session board
+behaves the same, and the base's remote counted 54, 44 and 34 slot-path sends across three runs while sending zero
+{type:"delta"} frames. The {type:"delta"} clause stays because it is the only check on what the socket actually
+received (5 is a counter on the sender); an asks-only change (a notice card, POST /notice) is what makes the slot
+path emit a real patch, and the corners lab drives that. The failing-before test for the apply path is the real
+FederationManager fed a remote full frame and a remote delta in ui/webview/federation-remote-feed-delta.test.ts,
+which also runs the no-base case (a remote delta with no full frame held asks THAT kernel for one on its own
+socket), unreachable from outside a live page.
 
 This lab boots subprocess kernels and drives Chromium; it loads no romp code in-process, so it carries no
 in-process state-isolation preamble and is not scanned by tests/test_state_isolation_order.py (the same as
@@ -65,6 +71,13 @@ TODOS_ON = json.dumps({"enabled": True, "gt": 1})   # kernel.py USER_TODOS_SWITC
 
 def _state_root(lab, name):
     return os.path.join(lab, name, "xdg", "romp")
+
+
+def _is_page_federation_row(r):
+    """A row the hub's PAGES posted through federation.ts diag() about TESTHOST's relay socket (surface federation,
+    what hostconn, data.host TESTHOST): the positive control that the page-posting road is live. The kernel's own
+    wsopen rows (surface kernel, written by _note_ws_open) would satisfy a bare non-empty check without it."""
+    return r.get("surface") == "federation" and r.get("what") == "hostconn" and (r.get("data") or {}).get("host") == HOST
 
 
 # The Chromium driver: hook every socket the pages dial (window.__dials) and, on a relay socket, the type of
@@ -234,18 +247,28 @@ class FederatedFeedDelta(unittest.TestCase):
 
     @classmethod
     def _read_hub_diag_rows(cls):
-        """Every row of the HUB's client-diag.jsonl: the pages post their rows to the kernel they are served by."""
+        """Every row of the HUB's client-diag.jsonl: the pages post their rows to the kernel they are served by. Polled
+        (20 x 0.3 s, the shape of test_federated_dial_terms_served._read_relay_wsopen_rows) until the file carries at
+        least one federation hostconn row for TESTHOST (each page's relay socket posts {ev: "open"} on its open through
+        federation.ts diag(), so two are expected and one is enough); whatever was read is returned on the timeout, and
+        the test asserts that row's presence before the negatives, so an absent file or a moved posting road fails
+        there rather than passing an empty read."""
         path = os.path.join(_state_root(cls.lab, "hub"), "client-diag.jsonl")
         rows = []
-        try:
-            with open(path) as fh:
-                for ln in fh:
-                    try:
-                        rows.append(json.loads(ln))
-                    except ValueError:
-                        continue
-        except OSError:
-            pass
+        for _ in range(20):
+            rows = []
+            try:
+                with open(path) as fh:
+                    for ln in fh:
+                        try:
+                            rows.append(json.loads(ln))
+                        except ValueError:
+                            continue
+            except OSError:
+                rows = []
+            if any(_is_page_federation_row(r) for r in rows):
+                break
+            time.sleep(0.3)
         return rows
 
     @classmethod
@@ -302,10 +325,19 @@ class FederatedFeedDelta(unittest.TestCase):
             self.assertIn("feed", kinds, "the %s relay socket received the remote's full frame: %r" % (app, kinds))
             self.assertIn("feedDelta", kinds, "…and, after the board changed, a feedDelta frame: %r" % (kinds,))
             self.assertEqual([f for f in frames if f["t"] == "delta"], [],
-                             "no view-delta slot frame reached the %s relay socket (nothing on this side decodes one): %r" % (app, kinds))
+                             "no view-delta slot frame reached the %s relay socket: the remote honoured the cap, so the feed never took "
+                             "the slot path (a slot patch would now be reassembled per conn, federation-remote-view-delta.test.ts, at "
+                             "the cost of a re-encode per build on the remote): %r" % (app, kinds))
 
     def test_the_hub_files_no_unapplied_or_nobase_row(self):
         self._driver_ran()
+        # the positive control first, in the same test so it runs whatever the order: the pages' federation rows about
+        # TESTHOST's relay socket were read from the hub's file, so the negative below is over a live read, not an
+        # empty one (the read swallows an absent file to [])
+        control = [r for r in self.hub_diag_rows if _is_page_federation_row(r)]
+        self.assertTrue(control, "the hub's client-diag carries the pages' federation rows about TESTHOST (the posting road is live): "
+                                 "%d rows read, by (surface, what): %r"
+                        % (len(self.hub_diag_rows), sorted({(r.get("surface"), r.get("what")) for r in self.hub_diag_rows})))
         bad = [r for r in self.hub_diag_rows
                if (r.get("surface"), r.get("what")) in (("outline", "delta-unapplied"), ("outline", "feedDelta-unapplied"),
                                                          ("waiting", "feedDelta-unapplied"), ("federation", "feedDelta-nobase"))]
