@@ -547,6 +547,52 @@ SCRATCH_S6 = SCRATCH_HEAD + textwrap.dedent("""\
             pass
 """)
 
+SCRATCH_M = SCRATCH_HEAD + textwrap.dedent("""\
+
+    class One(unittest.TestCase):
+        def test_a_the_lazy_first_build(self):
+            assert km._sdk_backend is None
+            assert km._sdk().state_dir == jd.STATE
+
+    class Two(unittest.TestCase):
+        @classmethod
+        def tearDownClass(cls):
+            saved = jd.STATE
+            cls.root = sandbox()
+            build_over(cls.root)                      # the teardown itself builds a new singleton over a sandbox that stands
+            jd.STATE = saved
+
+        def test_a_does_nothing(self):
+            pass
+
+    class Three(unittest.TestCase):
+        @classmethod
+        def tearDownClass(cls):
+            km._sdk_backend = None                    # a class "cleaning up": the next reader rebuilds over whatever jd.STATE is then
+
+        def test_a_does_nothing_under_twos_object(self):
+            assert km._sdk_backend.state_dir == Two.root and Two.root.is_dir()
+
+    class Four(unittest.TestCase):
+        def test_a_does_nothing_under_none(self):
+            assert km._sdk_backend is None
+
+    class Five(unittest.TestCase):
+        @classmethod
+        def tearDownClass(cls):
+            saved = jd.STATE
+            cls.root = sandbox()
+            build_over(cls.root)                      # None at the start, a singleton over a sandbox at the end
+            jd.STATE = saved
+
+        def test_a_does_nothing_under_none(self):
+            assert km._sdk_backend is None
+
+    class Six(unittest.TestCase):
+        def test_a_does_nothing_under_fives_object(self):
+            assert km._sdk_backend.state_dir == Five.root
+""")
+
 
 def nested_run(text, follower=None):
     """pytest in a child over one scratch module written to a fresh directory, under this checkout's conftest
@@ -993,6 +1039,34 @@ class ImportTimeLeakOverAKeptSandboxIsInheritedOnce(_NestedRun, unittest.TestCas
         self.assertRatchetPassed("Cases", "test_b_does_nothing")
         self.assertIsNone(boundary(self.out, "::Cases"), self.out)
         self.assertIsNone(boundary(self.out, ""), self.out)
+
+class ClassTeardownInstallsAValue(_NestedRun, unittest.TestCase):
+    SCRATCH = SCRATCH_M
+    ERRORS = 3
+
+    def test_a_teardown_that_builds_over_a_sandbox_is_named_at_the_class_boundary(self):
+        text = self.assertBoundaryFailed("::Two", "Two.test_a_does_nothing")
+        self.assertTrue(text.startswith("changed after its teardown: before SdkBackend over "), text)
+        self.assertIn(", after SdkBackend over ", text)
+        self.assertNotIn(GONE, text)
+        self.assertNotIn(REBUILT, text, "another root, not a rebuild over the same one: %s" % text)
+
+    def test_a_teardown_that_resets_the_slot_to_none_is_named_with_the_object_remedy(self):
+        text = self.assertBoundaryFailed("::Three", "Three.test_a_does_nothing_under_twos_object", remedy=REMEDY_B)
+        self.assertTrue(text.startswith("changed after its teardown: before SdkBackend over "), text)
+        self.assertTrue(text.endswith(", after None (not built)"), text)
+        _, fix = boundary(self.out, "::Three")
+        self.assertNotIn(SANDBOX, fix, fix)
+        self.assertRatchetPassed("Four", "test_a_does_nothing_under_none")
+        self.assertIsNone(boundary(self.out, "::Four"), "a class that inherits the None and does nothing is quiet: %s" % self.out)
+
+    def test_a_teardown_that_builds_from_none_is_named_and_the_module_end_is_quiet_on_it(self):
+        text = self.assertBoundaryFailed("::Five", "Five.test_a_does_nothing_under_none")
+        self.assertTrue(text.startswith("changed after its teardown: before None (not built), after SdkBackend over "), text)
+        self.assertNotIn(GONE, text)
+        self.assertRatchetPassed("Six", "test_a_does_nothing_under_fives_object")
+        self.assertIsNone(boundary(self.out, "::Six"), self.out)
+        self.assertIsNone(boundary(self.out, ""), "the module end is quiet on the object the class end named: %s" % self.out)
 
 if __name__ == "__main__":
     unittest.main()
