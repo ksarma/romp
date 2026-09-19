@@ -5964,5 +5964,67 @@ class Disclosed(unittest.TestCase):
         self.assertTrue(self._names_span("views").startswith("`chat`, `feed`"), "the pane names in the register's order")
         self.assertTrue(self._names_span("actions").startswith("`color`, `compact`"), "the action names in alphabetical order")
 
+
+class HttpCollapseDocs(unittest.TestCase):
+    """The two sentences of docs/reference.md about the http table's fold, held to the kernel's key function and to the
+    public fold by execution (the reviewer's re-check of the second closing check, 2026-09-19, its ruling item 1). The
+    /perf bullet said the remote family collapsed to one key each, while _perf_http_key collapses the host alone and keeps
+    the route, one key per remote operation, the claim the disclosure paragraph six hundred lines below had already been
+    corrected to; and the export paragraph's parenthetical said an older kernel's raw paths were collapsed to their
+    families, naming the family key as the fold's image, while http_public_key yields one key per remote operation there
+    too. The census of the collapse claim over the tracked tree, ruled before the edit, found those two sites and no other.
+    Each is pinned here with the absence of the false wording first (so a restored wording is named as such), the presence
+    of the corrected words exactly once in the flattened reference, and the kernel's or the fold's own answer beside the
+    words, so the bullet cannot drift from the paragraph again. By boolean asserts naming the words, never the page."""
+
+    @staticmethod
+    def _reference():
+        """docs/reference.md flattened to single spaces, so the 80-column wrap changes nothing."""
+        return " ".join(Path(HERE).parent.joinpath("docs", "reference.md").read_text(encoding="utf-8").split())
+
+    def test_the_perf_http_bullet_says_the_remote_family_keeps_its_route_and_the_kernel_keeps_it(self):
+        """Absent: the remote family collapsed to one key each, in either spelling of the ellipsis, and the cap clause
+        following the one-key-each claim directly, the bullet's old shape. Present once: the three static families
+        collapsed to one key each and, apart from them, `/remote/<host>/...` collapsed by host alone, the host a star and
+        the route kept, one key per remote operation. Beside the words, the kernel's own key function: two hosts' /sessions
+        requests give one key, that key is not the family's, two operations give two keys, and each static family folds two
+        names to one key. Fails on: the old wording restored; the corrected words reworded or doubled; a key function that
+        folds the remote family to one key (executed: the execution check made to expect the family key reds)."""
+        doc = self._reference()
+        for words in ("`/remote/*/\u2026` collapsed to one key each", "`/remote/*/...` collapsed to one key each",
+                      "collapsed to one key each, for at most 256 keys"):
+            self.assertFalse(words in doc, "the false claim is back in the /perf bullet: %r" % words)
+        wanted = "and `/remote/<host>/...` collapsed by host alone, the host a star and the route kept, one key per remote operation"
+        self.assertEqual(doc.count(wanted), 1, "the /perf bullet's corrected words are in the reference %d times, not once" % doc.count(wanted))
+        statics = ("`/dist/*`, `/media/*` and `/glossary/*` (the term is the user's text; its lookups count under one key) "
+                   "collapsed to one key each, and `/remote/<host>/...`")
+        self.assertEqual(doc.count(statics), 1, "the three static families collapse to one key each and the remote family is described apart")
+        self.assertTrue(doc.count(wanted + " (`GET /remote/*/sessions`, say), for at most 256 keys."), "the example key and the cap follow the corrected words")
+        key = km._perf_http_key
+        self.assertEqual(key("GET", "/remote/TESTHOST/sessions"), "GET /remote/*/sessions", "the host a star, the route kept")
+        self.assertEqual(key("GET", "/remote/TESTHOST2/sessions"), key("GET", "/remote/TESTHOST/sessions"), "two hosts, one key per operation")
+        self.assertNotEqual(key("GET", "/remote/TESTHOST/sessions"), "GET /remote/*", "not one key for the family")
+        self.assertNotEqual(key("GET", "/remote/TESTHOST/sessions"), key("GET", "/remote/TESTHOST/feed"), "two operations, two keys")
+        for family, a, b in (("/dist/", "render.js", "fonts/a-b-c.woff2"), ("/media/", "icon-192.png", "icon-512.png"), ("/glossary/", "Roadmap", "Budget")):
+            self.assertEqual(key("GET", family + a), "GET " + family + "*", "one key for the %s family" % family)
+            self.assertEqual(key("GET", family + a), key("GET", family + b), "two names, one key: %s" % family)
+
+    def test_the_export_paragraph_points_at_the_bullet_for_an_older_snapshots_fold_and_the_fold_keeps_the_route(self):
+        """Absent: an older kernel's raw http paths collapsed to their families, the family key named as the fold's image.
+        Present once: folded the way the kernel folds them now, as the `http` bullet above describes. Beside the words, the
+        public fold: an older kernel's raw host-bearing key folds to the per-operation key, the same key the kernel's own
+        function gives, not the family's, and a static family's raw path folds to the family key. Fails on: the old wording
+        restored; the pointer reworded; a fold that gives the remote family one key."""
+        doc = self._reference()
+        self.assertFalse("collapsed to their families" in doc, "the fold's image named as the family key is back in the export paragraph")
+        wanted = "(an older kernel's raw http paths are folded the way the kernel folds them now, as the `http` bullet above describes)"
+        self.assertEqual(doc.count(wanted), 1, "the export paragraph's pointer at the http bullet is in the reference %d times, not once" % doc.count(wanted))
+        self.assertEqual(pp.http_public_key("GET /remote/TESTHOST/sessions"), "GET /remote/*/sessions", "a raw host-bearing key folds to the per-operation key")
+        self.assertEqual(pp.http_public_key("GET /remote/TESTHOST/sessions"), km._perf_http_key("GET", "/remote/TESTHOST/sessions"), "the way the kernel folds them now")
+        self.assertNotEqual(pp.http_public_key("GET /remote/TESTHOST/sessions"), "GET /remote/*", "not the family key")
+        self.assertEqual(pp.http_public_key("POST /remote/TESTHOST/send"), "POST /remote/*/send", "the relay's operation kept too")
+        self.assertEqual(pp.http_public_key("GET /dist/render.js"), "GET /dist/*", "a static family's raw path folds to the family key")
+        self.assertEqual(pp.http_public_key("GET /glossary/Roadmap"), "GET /glossary/*")
+
 if __name__ == "__main__":
     unittest.main()
