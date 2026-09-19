@@ -10,8 +10,9 @@ instead of raising TypeError out of the projection; a float infinity in rev, t, 
 cleared ledger never takes a hold's id, whichever door sends it, so a hold-only Clear-all lights no Undo that restores
 nothing; a held file that cannot be read and cannot be moved aside files a bell row, once per episode, the episode
 ending when a listing no longer has to skip it; the bell's row for a moved-aside hold fits SYNC_NOTICE_FIT for a
-relayed message's sixty-character mid; and the notice sweep archives the lines the parse left out instead of deleting
-them when it rewrites the live file.
+relayed message's sixty-character mid; the notice sweep archives the lines the parse left out instead of deleting
+them when it rewrites the live file; and, with the Task tracking switch off, the off frame's two ledger counts pass over
+an older ledger's hold rows as build_feed's do (the closing pass).
 
 Synthetic only: a hermetic temp state root, a placeholder session id private to this module (the goal-store rule,
 2026-08-24), invented hold and notice text, TESTHOST. Every root this module mints writes `off` into
@@ -509,6 +510,46 @@ class SweepArchivesSkippedLines(_Case):
         self.assertEqual([c["itemId"] for c in _asks(feed, "notice:")], [NOTICE_ID], "Undo brings the card back")
         self.assertEqual([r["op"] for r in self._archive_rows()], ["skipped"], "the skipped row stays archived")
         self.assertEqual([m for m in sent if m.get("type") == "undoClearResult"], [])
+
+
+class OffFrameCountsPassOverHoldRows(_Case):
+    """With the Task tracking switch off the feed is _feed_off_frame, not build_feed, and it counted the cleared ledger
+    whole for dismissedCount and canUndoClear after review round 2 taught build_feed's two counts and _undo_clear to pass
+    over an older ledger's quarantine:<mid> rows (_cleared_undoable): with tracking off and such a ledger the off frame
+    lit Undo with a count of one where nothing dismissable stood (the closing pass). The off frame reads the same
+    filtered count now."""
+
+    def setUp(self):
+        super().setUp()
+        (self.r.state / km.TASK_TRACKING_FILE).write_text(json.dumps({"enabled": False}))
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertFalse(km._task_tracking_on(), "the scene: tracking off, so every feed door takes the off frame")
+
+    def _off_frame(self):
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            f = km._feed_off_frame(self.now)
+        return f, err.getvalue()
+
+    def _ledger(self, rows):
+        with (self.r.state / "cleared.jsonl").open("w") as f:
+            for iid, t in rows:
+                f.write(json.dumps({"id": iid, "t": float(t), "op": "clear"}) + "\n")
+
+    def test_an_older_ledgers_hold_rows_light_nothing(self):
+        self.r.write_hold("qa-1")
+        self._ledger([("quarantine:qa-1", self.now - 50)])
+        f, log = self._off_frame()
+        self.assertTrue(f["off"])
+        self.assertEqual((f["canUndoClear"], f["dismissedCount"], f["showDismissed"]), (False, 0, False),
+                         "nothing dismissable stands: the hold's row is inert")
+        self.assertEqual(log, "")
+
+    def test_the_users_own_clear_still_counts(self):
+        self.r.write_hold("qa-1")
+        self._ledger([(NOTICE_ID, self.now - 100), ("quarantine:qa-1", self.now - 50), ("quarantine:qa-2", self.now - 50)])
+        f, _ = self._off_frame()
+        self.assertEqual((f["canUndoClear"], f["dismissedCount"]), (True, 1), "the user's clear, and only it")
 
 
 if __name__ == "__main__":

@@ -28179,7 +28179,11 @@ def _notice_parse_rows(sid, raw, skipped=None):
     round 1) and a line that is not UTF-8 (review round 2: the file was decoded whole, so one Latin-1 byte in one row, or
     a file saved as UTF-16, raised UnicodeDecodeError, a ValueError the readers' `except OSError` never caught, out of
     every feed build; each line is decoded on its own now, and a leading UTF-8 BOM, which json.loads refuses, is dropped
-    from the first). Each is said ONCE per episode on stderr, naming the session, the key, the field and the value's
+    from the first). The rows are split on the boundaries str.splitlines uses, the set main split on: CR, LF and CRLF on
+    the bytes (bytes.splitlines), then VT, FF, FS, GS, RS, NEL, LINE SEPARATOR and PARAGRAPH SEPARATOR in each line that
+    decodes (the closing pass: round 2 split the bytes on LF alone, so a file with CR endings, which main read whole, read
+    as no rows; a line that does not decode is one skipped line, whatever it holds). Each is said ONCE per episode on
+    stderr, naming the session, the key, the field and the value's
     TYPE, never its text: every consumer coerces those three with int() and hashes the key, so one such row in one
     session's file raised ValueError or TypeError out of every feed build, and the whole board went with it (the push
     cycle and GET /feed.json alike) over a row no other session had anything to do with. The rule: a reader that cannot
@@ -28194,18 +28198,20 @@ def _notice_parse_rows(sid, raw, skipped=None):
     rewrites the live file from the parsed rows, a rewrite that deleted them (review round 1)."""
     rows, bad = [], set()
     if isinstance(raw, bytes):
-        lines = (raw[len(_UTF8_BOM):] if raw.startswith(_UTF8_BOM) else raw).split(b"\n")
+        lines = []                                 # main's boundary set in two steps (the closing pass): the bytes split on CR, LF
+        for chunk in (raw[len(_UTF8_BOM):] if raw.startswith(_UTF8_BOM) else raw).splitlines():   # and CRLF (bytes.splitlines), and
+            try:                                   # a chunk that decodes splits again on the rest of str.splitlines' boundaries;
+                lines.extend(chunk.decode("utf-8").splitlines())   # one that does not decode is one skipped line, kept in file order
+            except UnicodeDecodeError:
+                lines.append(chunk)
     else:
         lines = raw.splitlines()
     for line in lines:
-        if isinstance(line, bytes):
-            try:
-                line = line.decode("utf-8")
-            except UnicodeDecodeError:
-                bad.add(("", "line", "bytes"))
-                if skipped is not None:
-                    skipped.append(line.decode("utf-8", "backslashreplace"))
-                continue
+        if isinstance(line, bytes):                # not UTF-8: skipped and said, its bytes escaped for the sweep's archive
+            bad.add(("", "line", "bytes"))
+            if skipped is not None:
+                skipped.append(line.decode("utf-8", "backslashreplace"))
+            continue
         if not line.strip():
             continue
         try:
@@ -44558,8 +44564,9 @@ def _cleared_undoable(cleared):
     since review round 1, but a ledger written before it holds them (every box where Clear-all ran over holds), and
     they are inert for the card (_quarantine_cards reads no ledger), so a batch of them lit canUndoClear, counted in
     dismissedCount, and a press restored nothing while the user's real previous clear waited for a second press
-    (review round 2). Read by _undo_clear and by build_feed's two counts; the ids themselves stay in the ledger,
-    where every reader of it treats them as no session's (_CLEARED_NO_SESSION). Callers never mutate the result."""
+    (review round 2). Read by _undo_clear, by build_feed's two counts and by _feed_off_frame's (the closing pass: the
+    off frame counted the ledger whole); the ids themselves stay in the ledger, where every reader of it treats them as
+    no session's (_CLEARED_NO_SESSION). Callers never mutate the result."""
     return {i: t for i, t in cleared.items() if not str(i).startswith("quarantine:")}
 
 
@@ -62011,7 +62018,8 @@ def _feed_off_frame(now, live_map=None):
     """The feed frame while the Task tracking switch is off (T404): no build, the `off` flag the feed and the
     outline panes read to show their notice, every list the frame's readers iterate, empty, and the three notice
     rings with their real rows plus the bell's bits (dismissedCount, showDismissed, canUndoClear), so the shell's
-    bell stays fed (round four)."""
+    bell stays fed (round four). The two counts read what build_feed's read, _cleared_undoable: an older ledger's
+    hold rows (quarantine:<mid>) count for nothing (the held-mail readers' closing pass)."""
     f = {"type": "feed", "off": True, "now": now}
     for key in _FEED_FRAME_LISTS:
         f[key] = []
@@ -62024,10 +62032,10 @@ def _feed_off_frame(now, live_map=None):
         _subagent_trees_forget(alive)                 #  build_feed never runs; the bound's home is the jobs pass; a FAILED alive
     #                                                    read evicts nothing (an empty set from a failure is no owner list)
     try:
-        cleared = _cleared_ids()
-    except Exception:
-        cleared = set()
-    f["dismissedCount"] = len(cleared); f["showDismissed"] = False; f["canUndoClear"] = len(cleared) > 0
+        undoable = _cleared_undoable(_cleared_ids())  # what Undo can restore, the count build_feed's two bits read (the closing
+    except Exception:                                 #  pass): an older ledger's hold rows (quarantine:<mid>) are inert and were
+        undoable = {}                                 #  counted whole here, so the off frame lit Undo over nothing dismissable
+    f["dismissedCount"] = len(undoable); f["showDismissed"] = False; f["canUndoClear"] = len(undoable) > 0
     f["clearNotices"] = _boundary_clear_notices(alive)
     f["sdkNotices"] = _sdk_problem_rows()
     f["syncNotices"] = _sync_notice_rows()

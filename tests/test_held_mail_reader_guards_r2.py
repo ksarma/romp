@@ -5,7 +5,8 @@ reader that cannot parse must not report absent and must not take down callers t
 skip the row, name the session and the key in the log, keep the board.
 
 The cases: a notice line that is not UTF-8 skips and is said once instead of raising UnicodeDecodeError out of every
-feed build, and a file saved with a UTF-8 BOM keeps its first row; a notices directory or file the kernel cannot list,
+feed build, and a file saved with a UTF-8 BOM keeps its first row; the rows split on every line boundary main split on,
+so a file with CR endings reads whole (the closing pass); a notices directory or file the kernel cannot list,
 stat or read is said once per episode on the bell instead of drawing a clean board; a hold nested past the interpreter's
 limit (RecursionError), a hold whose record names another message id than its file, and a dangling .json symlink are
 moved aside and said like the other unreadable records; the said-once registry's prune reads a snapshot, so two
@@ -107,6 +108,61 @@ class NoticeFileWithABom(_R2Case):
         self.assertEqual((self._notice_ids(feed), log), ([NOTICE_ID], ""))
         with contextlib.redirect_stderr(io.StringIO()):
             self.assertEqual([r["key"] for r in km._notice_rows_unlocked(SID)], ["figure"])
+
+
+class NoticeRowsSplitOnEveryLineBoundary(_R2Case):
+    """Round 2's per-line decode split the bytes on the LF byte alone, so a file with CR endings, which main read whole
+    through str.splitlines, read as no rows and every notice card of the session left the board (the closing pass: a
+    regression against main). The parse splits on the boundaries str.splitlines uses, in two steps: CR, LF and CRLF on
+    the bytes, then VT, FF, FS, GS, RS, NEL, LINE SEPARATOR and PARAGRAPH SEPARATOR in each line that decodes. A line
+    that is not UTF-8 still skips and is said once, and the sweep's skipped lines keep file order and carry no line
+    ending, as main's did. Over the round 2 archive the CR case and the boundary case read no rows; the CRLF case fails
+    there on the skipped line's text alone (json.loads takes a trailing CR as whitespace, so its rows already read)."""
+
+    MENU_ID = "notice:%s:menu:1" % SID
+
+    def _rows(self, skipped=None):
+        with contextlib.redirect_stderr(io.StringIO()):
+            return [r["key"] for r in km._notice_rows_unlocked(SID, skipped)]
+
+    def _two_rows(self, ending):
+        return ending.join(json.dumps(_good(self.now, key=k)).encode() for k in ("figure", "menu")) + ending
+
+    def test_cr_endings_read_every_row(self):
+        self._write_bytes(SID, self._two_rows(b"\r"))
+        feed, log = self._feed()
+        self.assertEqual((sorted(self._notice_ids(feed)), log), ([NOTICE_ID, self.MENU_ID], ""), "both cards stand, nothing said")
+        self.assertEqual(self._rows(), ["figure", "menu"], "the writer's reader reads them too")
+
+    def test_crlf_endings_read_every_row_and_a_skipped_line_carries_no_ending(self):
+        self._write_bytes(SID, b"not json\r\n" + self._two_rows(b"\r\n"))
+        feed, log = self._feed()
+        self.assertEqual((sorted(self._notice_ids(feed)), log), ([NOTICE_ID, self.MENU_ID], ""))
+        skipped = []
+        self.assertEqual(self._rows(skipped), ["figure", "menu"])
+        self.assertEqual(skipped, ["not json"], "the line the sweep archives, without its CR")
+
+    def test_the_other_boundaries_split_as_main_did(self):
+        seps = ["\x0b", "\x0c", "\x1c", "\x1d", "\x1e", "\x85", "\u2028", "\u2029"]      # VT FF FS GS RS NEL LS PS
+        keys = ["k%d" % i for i in range(len(seps) + 1)]
+        text = "".join(json.dumps(_good(self.now, key=k)) + s for k, s in zip(keys, seps + ["\n"]))
+        self._write_bytes(SID, text.encode("utf-8"))
+        self.assertEqual(self._rows(), keys, "nine rows over eight boundaries, str.splitlines' set")
+
+    def test_a_row_that_is_not_utf8_among_cr_rows_still_skips_and_is_said_once(self):
+        bad = ('{"op": "post", "key": "menu", "rev": 1, "t": %d, "title": "caf\xe9 MARKER-ROW-TEXT"}'
+               % (self.now - 5)).encode("latin-1")
+        self._write_bytes(SID, b"not json\r" + bad + b"\r" + json.dumps(_good(self.now)).encode() + b"\r")
+        feed, log = self._feed()
+        self.assertEqual(self._notice_ids(feed), [NOTICE_ID], "the good row's card stands; the damaged row skips")
+        self.assertEqual(log.count("romp-kernel:"), 1, log)
+        self.assertIn("notices/%s.jsonl: a line is not UTF-8 text; the row is skipped" % SID, log)
+        self.assertNotIn("MARKER-ROW-TEXT", log, "never the line's text")
+        skipped = []
+        self.assertEqual(self._rows(skipped), ["figure"])
+        self.assertEqual(skipped, ["not json", bad.decode("utf-8", "backslashreplace")], "the lines left out, in file order")
+        feed, log = self._feed()
+        self.assertEqual((self._notice_ids(feed), log), ([NOTICE_ID], ""), "said once per episode")
 
 
 class NoticeStoreUnreadableIsSaid(_R2Case):
