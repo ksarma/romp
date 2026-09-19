@@ -1582,12 +1582,12 @@ class RoutingStatements(unittest.TestCase):
     above whose text matches BLOCKS at least once, however many times it matches, so the count the sweep holds is the
     size of PLACES, a set of files. `git ls-files -z --cached --others --exclude-standard | xargs -0 grep -I -l -E
     '<the BLOCKS pattern>'` at the repo root approximates it (at 639043a31 it lists the same files plus the bin/romp-kernel
-    symlink the scan skips) and is not the scan's rule: grep -I drops a file when it meets a NUL byte in what it has read
-    before the first match, so a NUL after the scan's 8 KiB probe hides a file the scan reads, and grep -I has no UTF-8
-    requirement, so it lists a file the scan skips on a decode error; at 639043a31 no listed file is in either class. No
-    count of statements is held anywhere: a statement has no unit a regex fixes (a line matching BLOCKS, an occurrence
-    of it and a sentence give three different numbers over the same files), and the sweep needs the files to read, not
-    a tally."""
+    symlink the scan skips) and is not the scan's rule (GNU grep 3.11; another grep's -I may differ): grep -I drops a
+    file when it meets a NUL byte in what it has read before the first match, so a NUL after the scan's 8 KiB probe hides
+    a file the scan reads, and grep -I has no UTF-8 requirement, so it lists a file the scan skips on a decode error; at
+    639043a31 no listed file is in either class. No count of statements is held anywhere: a statement has no unit a regex
+    fixes (a line matching BLOCKS, an occurrence of it and a sentence give three different numbers over the same files),
+    and the sweep needs the files to read, not a tally."""
 
     BLOCKS = re.compile(r"stagesForeign|cycleJobsMs|connectPush\.stagesMs|stages_foreign|cycle_jobs_ms|connect_stages_ms")
     # the places a routing sentence lives today; a file added here has been read against the measured cells
