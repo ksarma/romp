@@ -4,19 +4,31 @@
 // lifted from render.ts, syncViewInner and patchWorkedFooters, appendItem and renderWindowItems, the rail chain (railSeed, railExit,
 // railChainBefore), the day walk (dayWalkBefore, dayDividerFor, stampWalkDay), the trim, the eviction and its re-seed, over a stand-in
 // DOM whose rows record what a reader can see: the unit, the class list, the row's text, the rail marker's reference (data-prev) and the
-// stamp it yields (markerLabel), the walk's day (data-day) and the worked footer. Every kind of change the stream delivers is driven
-// through the incremental path frame by frame, and after each frame the same session and window are rebuilt from scratch and the two
-// DOMs compared unit by unit: an append (a prompt, a reply, a tool, a notice), an edit of the last block and of a tool inside a run (a
-// result landing), a hidden thinking block landing at the tail (no unit reaches it: nothing re-rendered), a tool joining a run and a
-// run extending (a fold boundary, closed and open), a notice run forming on an anchor out of order, a status-only tail while the turn
-// is OPEN (idle puts the footer on the turn's last reply and on the last row of an open notice run by its position; work takes it off),
-// a reply landing while idle (the footer moves off the reply before it), a day crossing (the divider the seam appends), a shrink (the
-// tail truncated), a hover's rail band present as the thread's last child, and an eviction (the window's span kept, the promoted head
-// unit's stamp; a gap promoted to the head, the stamp of the first marker after it). The plan's kind is asserted per frame, and after
-// an append the units below the plan's u0 are the SAME nodes and the units from u0 are new, so a seam that silently fell back to the
-// rebuild, with the plan asked or not, could not make the comparison vacuously green (the plan assertion alone guarded the planner, not
-// the executor: round 1's second pass). The renderers are stubs that record their inputs; the rail and day rules, the trim and the
-// footer patch are the real functions.
+// stamp it yields (markerLabel), the walk's day (data-day) and the worked footer. Frames are driven through the incremental path one
+// at a time, and after each the same session and window are rebuilt from scratch and the two DOMs compared unit by unit. WHAT IS
+// DRIVEN is derived from two lists rather than claimed whole (review round 2): the seam's OUTCOMES (chat-compact-tail.ts TailPlan:
+// append, spacer, rebuild, and syncViewInner's status-only fast path) over the UNIT KINDS compactDisplay mints (compact.ts DisplayItem:
+// a lone event, a tool run, a notice run, a gap) and the states the stream delivers (working, compacting, ready).
+// - append, per unit kind and fold state: a prompt, a reply, a tool, a notice landing; an edit of the last block and of a tool inside
+//   a run (a result landing); a hidden thinking block landing at the tail (no unit reaches it: nothing re-rendered); a tool joining a
+//   run and a run extending (a fold boundary, closed and open); a notice run forming on an anchor out of order, and one of the three
+//   notice shapes production folds (a retried, a user-shaped and an assistant-shaped member, minted through isFoldableNoticeShape); a
+//   reply landing while idle (the footer moves off the reply before it); a day crossing (the divider the seam appends); a hover's rail
+//   band present as the thread's last child; an eviction (the window's span kept, the promoted head unit's stamp; a gap promoted to
+//   the head, the stamp of the first marker after it).
+// - spacer, in both directions below a browsed window: the footer landing on the window's last reply when the completing prompt lands
+//   below it, and coming off when a later reply joins the turn below it (the one branch review round 1b changed).
+// - the fast path: a status-only tail while the turn is OPEN, over every state (idle puts the footer on the turn's last reply and on
+//   the last row of an open notice run by its position; work and compacting take it off).
+// - rebuild: the shrink (the tail truncated: the handler's stale mark). Its other whys (no-record, below-window, inside-browsed,
+//   bottom-spacer, gap) share one executor that never reads plan.why and calls the same renderWindowItems the rebuild leg calls, so no
+//   mutation there can make the legs diverge, and they have no frame here; a scrolled-up reader's keepTop is a window bound the
+//   projection cannot see (compact-seam-exec.test.ts drives it).
+// The plan's kind is asserted per frame, and after an append the units below the plan's u0 are the SAME nodes and the units from u0
+// are new, so a seam that silently fell back to the rebuild, with the plan asked or not, could not make the comparison vacuously green
+// (the plan assertion alone guarded the planner, not the executor: round 1's second pass); a spacer frame replaces no node. The rebuild
+// leg reads the working state the seam stored on the view (v.working), never a restatement of the state test. The renderers are
+// stubs that record their inputs; the rail and day rules, the trim and the footer patch are the real functions.
 // Silent on scroll-only properties: the spacers' heights, the measured figures, the keepTop guard and every scroll write are outside
 // what a DOM projection can see (spacer-measure.test.ts, chat-compact-tail.test.ts and the served labs carry those). Synthetic events.
 import { test } from "node:test";
@@ -24,7 +36,7 @@ import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
-import { compactDisplay, itemAnchor, type DisplayItem } from "./compact";
+import { compactDisplay, isFoldableNoticeShape, itemAnchor, type DisplayItem } from "./compact";
 import { DayWalk, markerLabel } from "./time-marker";
 import { gapHeight } from "./chat-regions";
 import { turnWorkedSecs as workedSecsOf, workedFooterPlan } from "./worked-footer";
@@ -96,19 +108,21 @@ class FakeEl {
   querySelectorAll(sel: string): FakeEl[] { return this.select(sel); }
 }
 
-type Ev = { kind: string; uuid: string; t?: number; md?: string; name?: string; human?: boolean };
+type Ev = { kind: string; uuid: string; t?: number; md?: string; name?: string; human?: boolean;
+            rompSystem?: boolean; interruptMarker?: boolean; interruptSettle?: boolean; source?: string; undelivered?: boolean };   // the notice shapes isFoldableNoticeShape reads
 type Lifted = {
   syncViewInner: (id: string, atBottom?: boolean) => any;
   renderWindowItems: (v: any, s: any, items: DisplayItem[], ws: number, we: number, working: boolean) => void;
 };
 const WINDOW_TAIL = 8;   // the harness's window: small, so an append evicts the top within a few frames (the real one is 80; the plan and the trim do not read it)
 
-/** The display units for a session: compactDisplay over the events' kinds, tool names and foldable notices (render.ts displayItems); a
- *  session with `gapBefore` set holds a hidden-history gap (T386: turns the page does not hold) as the unit before the one opening at
- *  that event, where the regions' itemization puts it. */
+/** The display units for a session: compactDisplay over the events' kinds, tool names and foldable notices (render.ts displayItems,
+ *  whose notice predicate is compact.ts isFoldableNoticeShape: passed here as production passes it, never a hand copy of one of its six
+ *  shapes, which could mint no run of the other five; review round 2); a session with `gapBefore` set holds a hidden-history gap (T386:
+ *  turns the page does not hold) as the unit before the one opening at that event, where the regions' itemization puts it. */
 const firstEventOf = (it: DisplayItem): number => (it.kind === "event" ? it.index : it.kind === "gap" ? it.before : it.indices[0]);
 const itemsOf = (s: { events: Ev[]; gapBefore?: number }): DisplayItem[] => {
-  const base = compactDisplay(s.events.map((e) => e.kind), s.events.map((e) => (e.kind === "tool" ? e.name : undefined)), s.events.map((e) => e.kind === "retried"));
+  const base = compactDisplay(s.events.map((e) => e.kind), s.events.map((e) => (e.kind === "tool" ? e.name : undefined)), s.events.map(isFoldableNoticeShape));
   if (s.gapBefore == null) return base;
   const out: DisplayItem[] = [];
   for (const it of base) { if (firstEventOf(it) === s.gapBefore) out.push({ kind: "gap", lo: 10, hi: 12, before: s.gapBefore }); out.push(it); }
@@ -183,6 +197,8 @@ const reply = (uuid: string, t: number, md: string): Ev => ({ kind: "assistant",
 const tool = (uuid: string, t: number, name: string): Ev => ({ kind: "tool", uuid, t, name });
 const thinking = (uuid: string, t: number): Ev => ({ kind: "thinking", uuid, t });
 const notice = (uuid: string, t: number): Ev => ({ kind: "retried", uuid, t });   // a foldable notice: two in a row fold into a notice run (itemsOf)
+const sysNotice = (uuid: string, t: number): Ev => ({ kind: "user", uuid, t, md: "a note from the tracker", rompSystem: true });   // a user-shaped foldable notice (an injected romp line)
+const settleNotice = (uuid: string, t: number): Ev => ({ kind: "assistant", uuid, t, interruptSettle: true });                 // an assistant-shaped one (an interrupt's settle)
 const nextDay = (h: number, m: number, s: number) => Math.floor(new Date(2026, 0, 16, h, m, s).getTime() / 1000);   // the day after `at`'s
 
 /** What a reader can see of a view's DOM, unit by unit: the unit, the class list, the row's text, the rail marker (its reference and the
@@ -215,10 +231,15 @@ function world(events: Ev[], open: Set<string>, working = true, gapBefore?: numb
   assert.ok(v.el.children.length > 0, "the first build rendered the window");
   return { s, v, L, plans, open, frames: [] };
 }
-/** The rebuild of the same state over the incremental view's own window, in a fresh view. */
+/** The rebuild of the same state over the incremental view's own window, in a fresh view. The rebuild leg reads the working state
+ *  production's own syncViewInner computed and stored on the view (render.ts `v.working = working`), never a restatement of the state
+ *  test: a copy here dropped `compacting` and rendered the two legs from different inputs, so the instrument went red against correct
+ *  production code (review round 2). The value is asserted present so a production change that stops storing it is a loud red here,
+ *  not a rebuild over `undefined` that happens to match. */
 function rebuild(w: World): FakeEl {
   const v2: any = { el: new FakeEl("div"), rendered: 0, scrollTop: 0, stick: true, shown: true, stale: false, winStart: 0 };
-  w.L.renderWindowItems(v2, w.s, itemsOf(w.s), w.v.winStart ?? 0, w.v.winEnd ?? itemsOf(w.s).length, w.s.status.state === "working");
+  assert.notEqual(w.v.working, undefined, "the view holds the working state the seam's last paint computed (syncViewInner stores v.working); the rebuild leg reads it");
+  w.L.renderWindowItems(v2, w.s, itemsOf(w.s), w.v.winStart ?? 0, w.v.winEnd ?? itemsOf(w.s).length, w.v.working);
   return v2.el;
 }
 /** The two DOMs agree, unit by unit, and nothing foreign stands among the incremental view's units. */
@@ -235,13 +256,14 @@ function compare(w: World, label: string): void {
  *  some away and the re-seed repaints the promoted head's marker in place; a spacer carries no unit), every unit node from u0 is new, and
  *  when u0 is the unit count (`u0: "total"`: a hidden thinking block landed, no unit reaches it) nothing is new. A seam that asked the
  *  plan and rebuilt the window anyway passes the plan assertion with every node new. */
-function frame(w: World, label: string, mutate: (events: Ev[]) => Ev[], expect: "append" | "rebuild" | "fast", opts: { working?: boolean; band?: boolean; u0?: "total" } = {}): void {
+function frame(w: World, label: string, mutate: (events: Ev[]) => Ev[], expect: "append" | "rebuild" | "fast", opts: { working?: boolean; state?: "working" | "ready" | "compacting"; band?: boolean; u0?: "total" } = {}): void {
   const was: Ev[] = w.s.events;
   const now = mutate(was.slice());
   let from = 0;
   while (from < was.length && from < now.length && was[from] === now[from]) from++;
   w.s.events = now;
-  if (opts.working != null) w.s.status.state = opts.working ? "working" : "ready";
+  if (opts.state != null) w.s.status.state = opts.state;   // the stream's own state words (compacting is work to the footer: syncViewInner's `working`)
+  else if (opts.working != null) w.s.status.state = opts.working ? "working" : "ready";
   w.v.rendered = Math.min(w.v.rendered, from);
   if (now.length < was.length) w.v.stale = true;
   if (opts.band) w.v.el.appendChild(new FakeEl("div", "rail-band rail-band-local"));   // a hover's band: drawRailBand appends it to the thread as its last child
@@ -269,6 +291,45 @@ function frame(w: World, label: string, mutate: (events: Ev[]) => Ev[], expect: 
       if (plan.u0 < total) assert.ok(fresh > 0, label + ": the units from u0 were re-rendered"); else assert.equal(fresh, 0, label + ": u0 is the unit count: nothing re-rendered");
     }
   }
+  compare(w, label);
+}
+/** The reader browses away from the tail: the window re-rendered over [ws, we) with `we` below the unit count, through the real
+ *  renderWindowItems (a landing or a scroll-back leaves the view this way), so a bottom spacer stands under the window and the next
+ *  change below it takes the seam's spacer branch. */
+function browse(w: World, ws: number, we: number): void {
+  const items = itemsOf(w.s);
+  assert.ok(we < items.length, "a browsed window ends below the unit count (" + we + " of " + items.length + ")");
+  w.L.renderWindowItems(w.v, w.s, items, ws, we, w.v.working);
+  assert.equal(w.v.winEnd, we, "the window ends where the browse put it");
+  assert.ok((w.v.el as FakeEl).querySelector(":scope > .tx-spacer-bot"), "a bottom spacer stands for the units below the window");
+  w.frames.push("browse [" + ws + ", " + we + ")");
+  compare(w, "the browsed window");
+}
+/** One streamed frame whose change lies BELOW a browsed window: the seam's SPACER outcome (review round 2: the one branch the delta
+ *  changed, the footer patch, and the outcome the frame() driver could not reach). The events after `mutate` (an append below the
+ *  window), the first changed index lowering v.rendered, then the sync with the reader scrolled up. Exactly one plan is asked and it is
+ *  `spacer`; no unit node is replaced (every unit node is the node that was there: the footer patch edits a row in place); the bottom
+ *  spacer stands; and the window's DOM equals a rebuild of the same state over the same window, which is where a footer that should
+ *  have landed or come off shows (the composition: the seam's `from` and its unit list reaching the real patchWorkedFooters). */
+function spacerFrame(w: World, label: string, mutate: (events: Ev[]) => Ev[], opts: { working?: boolean } = {}): void {
+  const was: Ev[] = w.s.events;
+  const now = mutate(was.slice());
+  let from = 0;
+  while (from < was.length && from < now.length && was[from] === now[from]) from++;
+  assert.ok(now.length > was.length && from === was.length, label + ": a spacer frame appends below the window");
+  w.s.events = now;
+  if (opts.working != null) w.s.status.state = opts.working ? "working" : "ready";
+  w.v.rendered = Math.min(w.v.rendered, from);
+  const before = new Set<FakeEl>((w.v.el as FakeEl).children);
+  const n = w.plans.length;
+  w.L.syncViewInner("A", false);
+  w.frames.push(label);
+  const asked = w.plans.slice(n);
+  assert.equal(asked.length, 1, label + ": one plan asked: " + JSON.stringify(asked));
+  assert.equal(asked[0].kind, "spacer", label + ": the change below the browsed window is the spacer outcome: " + JSON.stringify(asked[0]));
+  for (const c of (w.v.el as FakeEl).children) assert.ok(before.has(c), label + ": no node replaced (the branch re-renders no unit; the footer is patched in place)");
+  assert.ok((w.v.el as FakeEl).querySelector(":scope > .tx-spacer-bot"), label + ": the bottom spacer stands");
+  assert.equal(w.v.spacerCountBot, itemsOf(w.s).length - w.v.winEnd, label + ": the bottom spacer stands for the units below the window");
   compare(w, label);
 }
 /** The footer text on the incremental view's node(s) for `uuid`: an event's row, or a run's head and the rows of its members (a run's head
@@ -312,6 +373,10 @@ for (const [fold, open] of FOLDS) {
     assert.equal(footerOn(w, "a9"), String(at(10, 6, 40) - at(10, 0, 0)), "idle: the footer is on the turn's last reply, the prompt to the reply");
     frame(w, "working again", (ev) => ev, "fast", { working: true });
     assert.equal(footerOn(w, "a9"), null, "back at work: the footer comes off");
+    // compacting is a state the stream delivers and the footer reads as work (syncViewInner: working || compacting): a status-only tail
+    // into it changes nothing, on both legs (review round 2: the rebuild leg restated the state test and dropped compacting)
+    frame(w, "compacting", (ev) => ev, "fast", { state: "compacting" });
+    assert.equal(footerOn(w, "a9"), null, "compacting is work: no footer on the open turn's reply");
     // idle again, then a reply lands in the same turn: the footer comes off the reply before it (the seam's patch, its off branch) and the
     // new reply is rendered with its own
     frame(w, "idle again", (ev) => ev, "fast", { working: false });
@@ -341,6 +406,39 @@ for (const [fold, open] of FOLDS) {
     assert.ok(units(project(w.v.el)).some((r) => r.uuid == null && r.cls.includes("day-divider")), "a day divider stands among the units");
     frame(w, "a reply the next day", (ev) => ev.concat([reply("a14", nextDay(0, 1, 30), "next morning's answer")]), "append");
     frame(w, "idle the next day", (ev) => ev, "fast", { working: false });
+  });
+
+  test(`a change below a browsed window, run ${fold}: the spacer outcome patches the window's worked footers in both directions (the footer lands on the window's last reply when the completing prompt lands below it; comes off when a later reply joins the turn below it), replaces no node, and the window equals a rebuild of the same state`, () => {
+    // the base transcript and an injected user-kind line after the agentic turn's reply (a line the footer's turn scan skips: a tool or
+    // a reply there would make the reply not its turn's last); the reader browses the window to end at that reply (unit 4: the injected
+    // line is the one unit below it, under the bottom spacer). The turn is OPEN and the session works, so the reply carries no footer
+    const w = world(base().concat([sysNotice("x5", at(10, 5, 0))]), new Set(open));
+    browse(w, 0, 5);
+    assert.equal(footerOn(w, "a4"), null, "the open turn's reply carries no footer while the session works");
+    // a human prompt lands below the window: the turn is complete, so its last reply, INSIDE the window, gets its footer (the seam's spacer
+    // branch patches from the first changed event; the rebuild this branch replaced re-rendered the window's footers; review round 1b)
+    spacerFrame(w, "a prompt completes the turn below the window", (ev) => ev.concat([user("u6", at(10, 6, 0), "third question")]), { working: true });
+    assert.equal(footerOn(w, "a4"), String(at(10, 4, 20) - at(10, 0, 0)), "the completing prompt below the window put the footer on the window's last reply");
+    // the other direction, its own world: the session is idle, so the open turn's last reply carries the footer; a later reply lands below
+    // the browsed window and the footer comes off the reply inside it (the new reply, unrendered, is the turn's last)
+    const w2 = world(base().concat([sysNotice("x5", at(10, 5, 0))]), new Set(open), false);
+    browse(w2, 0, 5);
+    assert.equal(footerOn(w2, "a4"), String(at(10, 4, 20) - at(10, 0, 0)), "idle: the footer is on the turn's last reply");
+    spacerFrame(w2, "a reply joins the turn below the window", (ev) => ev.concat([reply("a6", at(10, 5, 30), "second answer, continued")]));
+    assert.equal(footerOn(w2, "a4"), null, "no longer the turn's last reply: the footer came off, below a browsed window");
+  });
+
+  test(`a notice run of the three shapes production folds, run ${fold}: a retried, then a user-shaped and an assistant-shaped foldable notice (isFoldableNoticeShape), each appended and compared against a rebuild`, () => {
+    // the unit list is minted through production's own predicate, so the run forms here as it does in render.ts displayItems; a hand
+    // copy of one shape (`kind === "retried"`) could mint none of these (review round 2: hardening, no failing-before of its own)
+    const w = world(base(), new Set(open));
+    frame(w, "a retried notice lands", (ev) => ev.concat([notice("n5", at(10, 5, 0))]), "append");
+    frame(w, "a user-shaped notice joins: the run forms", (ev) => ev.concat([sysNotice("n6", at(10, 5, 20))]), "append");
+    frame(w, "an assistant-shaped notice extends the run", (ev) => ev.concat([settleNotice("n7", at(10, 5, 40))]), "append");
+    const last = itemsOf(w.s)[itemsOf(w.s).length - 1];
+    assert.deepEqual(last, { kind: "noticegroup", indices: [7, 8, 9] }, "the three fold into one notice run (production's predicate admits all three shapes)");
+    const rows = units(project(w.v.el)).filter((r) => r.unit === itemsOf(w.s).length - 1);
+    assert.equal(rows.length, fold === "open" ? 4 : 1, "the run's head, and a row per member when the fold is open");
   });
 
   test(`a hover's rail band as the thread's last child, run ${fold}: the next streamed frame still renders what a rebuild renders (the trim reaches the units behind it), and nothing foreign is left among the units`, () => {
