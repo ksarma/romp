@@ -69861,7 +69861,12 @@ if(h)document.documentElement.style.setProperty('--app-h',h+'px');
 // place the body's bottom, the composer row, below the layout viewport until the zoom ended. The clamp bounds what is
 // published and leaves the hold itself standing (round 4, 2026-09-20: it had written its result back, so the first time it
 // bound the held pan decayed to 0 and a keyboard raised again under the same zoom laid the shell out at pan 0 under a
-// keyboard-sized --app-h, the band reopened). The hold is the last value PUBLISHED, on every road: the 0px road writes it
+// keyboard-sized --app-h, the band reopened). The hold is the pan of the KEYBOARD it was measured with: a keyboard of a
+// different height raised while the zoom stands (the emoji keyboard, the predictive bar toggled) is laid out at that pan
+// under its own height until the zoom ends, a band under the composer for a taller keyboard and the body's bottom below
+// the band for a shorter one, by the height difference (round 5, 2026-09-20, disclosed: re-measuring under a zoom only
+// when the height changes is a design call not taken here; the harness and served legs re-raise the same keyboard). The
+// hold is the last value PUBLISHED, on every road: the 0px road writes it
 // too, so a pointer that turns fine and coarse again under a zoom holds the 0 the page is using, not the coarse pan from
 // before the flip. The pan is published under the same validity guard as the height it belongs to (round 4, 2026-09-20,
 // as round 1 confirmed it): a coarse run whose height report is refused (h 0) publishes neither, so the prior pan stands

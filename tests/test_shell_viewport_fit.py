@@ -146,66 +146,167 @@ class OneHeightBasis(unittest.TestCase):
         # an element whose position:fixed and whose sizing sit under two different selector STRINGS (the settings lift is
         # such an element: #f-settings{display:none} and body.settings-open #f-settings{...position:fixed...}), and a style
         # element carrying an attribute (every <style> is read, and the parse refuses when a tag opening was not consumed).
-        # The join is per ELEMENT: keyed on the selector's subject compound, so both of the settings lift's rules land on
-        # one key; two compounds that differ by a class on the same element (body and body.picker-open) stay separate keys,
-        # a bound this static reading keeps. Each member sits at var(--app-top) in a rule inside the mobile block (the
-        # lift's base rule is upstream's line and stays byte-identical; the mobile block re-tops it, so a coarse desktop
-        # layout keeps the lift at the static body's origin), and the cascade is judged over EVERY rule whose subject can
-        # match the member's element (a subset or superset of its simple selectors: iframe, .lifted, body.picker-open), by
-        # specificity, then order, an !important winning outright, over every property that sets the top edge (top and the
-        # inset, inset-block and inset-block-start shorthands, which the sheet uses fourteen times); within the origin rule
-        # itself the origin is the last top-edge declaration. A selector sharing no simple selector with the member
-        # (body.picker-open #f-chat) is outside this reading; the served leg reads the boxes themselves.
+        # The join is per ELEMENT. Round 5 (2026-09-20): it had been keyed on the subject compound's exact string, so a box
+        # whose position:fixed and whose sizing sat under two compounds that select one element but differ by a simple
+        # selector (iframe#f-x and #f-x; #f-x and #f-x.big; .ovl and iframe.ovl) landed on two keys, neither both fixed
+        # and sized, and was outside the population. A member is now a PAIR of a fixed compound and a sized compound that
+        # can select one element (served_css.can_match: one's restricting selectors are a subset of the other's, so a
+        # compound is paired with itself too), the element known by the union of the two compounds' simple selectors and
+        # named by the canonical compound of that set (served_css.compound: body, iframe.lifted). Pairs, not a union-find
+        # over the whole sheet: through a bare `iframe` rule a class join unites every iframe compound, so a second fixed
+        # iframe sized by --app-h would have been one member with the lift and the lift's origin would have answered for it.
+        # Each member sits at var(--app-top) in a rule inside the mobile block (the lift's base rule is upstream's line and
+        # stays byte-identical; the mobile block re-tops it, so a coarse desktop layout keeps the lift at the static body's
+        # origin); the origin's rule must SURELY select the element (served_css.surely: its subject's restricting selectors
+        # all among the element's), and its top must BE the pan (a bare var(--app-top) or an alias declared as one,
+        # served_css.bare_var and aliases; round 5: a mention had counted, so top:calc(var(--app-top) - 40px) read as the
+        # origin), the last top-edge declaration of its own rule, without !important. The cascade is judged over EVERY rule
+        # whose subject CAN match the element (a subset or superset of its restricting selectors: iframe, .lifted, `*`,
+        # iframe[id], iframe:not(.x); round 5: `*`, attribute selectors and functional pseudo-classes had been read as
+        # selectors the element must carry), by specificity, then order, an !important winning outright however spaced
+        # (served_css.important), over every property that sets the top edge (top and the inset, inset-block and
+        # inset-block-start shorthands, which the sheet uses fourteen times). A selector sharing no restricting selector
+        # with the member (body.picker-open #f-chat) is outside this reading; the served leg reads the boxes themselves.
         rules = served_css.rules(self.html)
         self.assertGreater(len(rules), 100, "the parse read the served stylesheets: %d rules" % len(rules))
-        by_el = {}
-        for r in rules:
-            for el in served_css.subjects(r.selector):
-                by_el.setdefault(el, []).append(r)
         app_h = served_css.closure(rules, "--app-h")
         sized = lambda r: any(served_css.names_any(v, app_h) for _, v in r.decls)
-        fixed_h = sorted(el for el, rs in by_el.items() if any(served_css.is_fixed(r) for r in rs) and any(sized(r) for r in rs))
-        self.assertTrue(fixed_h, "derived population empty: no element both position:fixed and sized by --app-h in the served CSS")
+        fixed_c = sorted({c for r in rules if served_css.is_fixed(r) for c in served_css.subjects(r.selector)})
+        sized_c = sorted({c for r in rules if sized(r) for c in served_css.subjects(r.selector)})
+        self.assertTrue(fixed_c and sized_c, "derived population empty: fixed compounds %r, --app-h sized compounds %r" % (fixed_c, sized_c))
+        known = {}   # canonical compound -> the element's known simple selectors
+        for f in fixed_c:
+            for sz in sized_c:
+                if served_css.can_match(f, sz):
+                    k = served_css.restricting(f) | served_css.restricting(sz)
+                    known.setdefault(served_css.compound(k), frozenset(k))
+        fixed_h = sorted(known)
+        self.assertTrue(fixed_h, "derived population empty: no element both position:fixed and sized by --app-h in the served CSS: fixed %r, sized %r"
+                        % (fixed_c, sized_c))
         # the split-selector element the per-selector census could not see: the settings lift is position:fixed under one
         # selector string and hidden under another, and the join sees one element. It is NOT sized by --app-h today (inset:0
         # spans the whole layout viewport, so no bare band shows under it; moving it onto the band is a design change the
         # owner decides), so it is outside the census; a sizing by --app-h under EITHER of its selectors puts it in.
-        settings = by_el.get("#f-settings", [])
+        settings = [r for r in rules if "#f-settings" in served_css.subjects(r.selector)]
         self.assertTrue(any(served_css.is_fixed(r) for r in settings) and len({r.selector for r in settings}) >= 2,
-                        "the join unites the settings lift's rules on one element: %r" % ([(r.at, r.selector) for r in settings],))
+                        "the settings lift's rules sit under two selector strings with one subject: %r" % ([(r.at, r.selector) for r in settings],))
+        self.assertIn("#f-settings", fixed_c)
         self.assertNotIn("#f-settings", fixed_h, "the settings lift is not sized by --app-h; when it is, it joins the census and takes the origin")
-        # the census as of this change, in subject-compound form. A new fixed consumer of --app-h joins this list AND takes the
-        # pan (the loop below), or the band opens again under whatever it covers.
+        # the census as of this change, each member named by its canonical compound. A new fixed consumer of --app-h joins
+        # this list AND takes the pan (the loop below), or the band opens again under whatever it covers.
         self.assertEqual(fixed_h, ["body", "iframe.lifted"])
         mobile = ("@media " + km._MOBILE_MQ,)
-        app_top = served_css.closure(rules, "--app-top")
-        is_origin = lambda p, v: p == "top" and served_css.names_any(v, app_top)
+        app_top = served_css.aliases(rules, "--app-top")
+        is_origin = lambda p, v: p == "top" and served_css.bare_var(v) in app_top
         top_edge = {"top", "inset", "inset-block", "inset-block-start"}
         for el in fixed_h:
-            rs = by_el[el]
-            origins = [r for r in rs if r.at == mobile and any(is_origin(p, v) for p, v in r.decls)]
-            self.assertTrue(origins, "%s has no --app-top origin inside the mobile block: %r" % (el, [(r.at, r.declarations) for r in rs]))
+            k = known[el]
+            sure = [r for r in rules if any(served_css.surely(served_css.subject(m), k) for m in served_css.members(r.selector))]
+            may = [r for r in rules if any(served_css.can_match(served_css.subject(m), el) for m in served_css.members(r.selector))]
+            origins = [r for r in sure if r.at == mobile and any(is_origin(p, v) for p, v in r.decls)]
+            self.assertTrue(origins, "%s has no --app-top origin inside the mobile block in a rule that surely selects it: %r"
+                            % (el, [(r.at, r.selector, r.declarations) for r in sure]))
             # the origin is INSIDE the mobile block only (round 4, 2026-09-20, tests-1): outside it, on a coarse desktop layout
             # wider than the query, the body stays in flow at layout y 0, and a lift moved to the pan there would part from
             # the pane rect render.ts placeLifted measures for the transcript backing. The kernel comment over the lift's
-            # origin states that condition; this is the assertion that holds it.
-            self.assertEqual([(r.at, r.selector, r.declarations) for r in rs if r.at != mobile and any(is_origin(p, v) for p, v in r.decls)], [],
+            # origin states that condition; this is the assertion that holds it (over every rule that CAN select the element).
+            self.assertEqual([(r.at, r.selector, r.declarations) for r in may if r.at != mobile and any(is_origin(p, v) for p, v in r.decls)], [],
                              "%s: a --app-top origin outside the mobile block would move the box on a coarse desktop layout" % el)
             for r in origins:
                 tops = [(p, v) for p, v in r.decls if p in top_edge]
                 self.assertTrue(is_origin(*tops[-1]), "%s: the origin is not the last top-edge declaration of its own rule: %r" % (el, r.declarations))
-                self.assertFalse(any("!important" in v for p, v in tops), "%s: the origin rule's top edge carries no !important: %r" % (el, r.declarations))
-            spec = max(served_css.specificity(m) for r in origins for m in served_css.members(r.selector) if served_css.subject(m) == el)
+                self.assertFalse(any(served_css.important(v) for p, v in tops), "%s: the origin rule's top edge carries no !important: %r" % (el, r.declarations))
+            spec = max(served_css.specificity(m) for r in origins for m in served_css.members(r.selector) if served_css.surely(served_css.subject(m), k))
             last = max(r.index for r in origins)
             winners = [(r.at, m, p, v) for r in rules for m in served_css.members(r.selector) if served_css.can_match(served_css.subject(m), el)
                        for p, v in r.decls if p in top_edge and not is_origin(p, v)
-                       and ("!important" in v or served_css.specificity(m) > spec or (served_css.specificity(m) == spec and r.index > last))]
+                       and (served_css.important(v) or served_css.specificity(m) > spec or (served_css.specificity(m) == spec and r.index > last))]
             self.assertEqual(winners, [], "%s: a rule that can match the element sets its top edge and wins the cascade over the --app-top origin" % el)
 
     def test_an_unpainted_pane_is_dark_not_white(self):
         # a pane whose document has not painted is a white rectangle in a dark frame (Firefox shows it
         # plainly) — which is exactly what "a white strip at the bottom" looks like
         self.assertIn("iframe{background:#1e1e1e}", self.html)
+
+
+class ParsedSheetReads(unittest.TestCase):
+    """The instrument the census reads through (tests/served_css.py), pinned on the forms round 5 (2026-09-20) found it
+    misreading: each case was green under the reading it replaces and is red once against it."""
+
+    def test_a_style_or_script_inside_an_html_comment_is_not_an_element(self):
+        # the census had accepted an origin that existed only in commented-out markup, and a pin over scripts() was
+        # satisfiable by a commented-out script; the tag-opening count guard counted the commented opening too
+        self.assertEqual(served_css.rules("<!-- <style>#x{top:0}</style> -->"), [])
+        self.assertEqual(served_css.scripts("<!-- <script>var y=1;</script> -->"), [])
+        self.assertEqual(served_css.style_blocks("<!-- <style>#x{top:0}</style> -->"), [])
+        page = "<style>#a{top:0}</style><!-- <style>#x{top:0}</style> --><script>var a=1;</script><!-- <script>var y=1;</script> -->"
+        self.assertEqual([r.selector for r in served_css.rules(page)], ["#a"])
+        self.assertEqual(served_css.scripts(page), ["var a=1;"])
+        # the commented markup is comment text to the pins census, and code() blanks it
+        self.assertEqual([page[s:e] for s, e in served_css.comment_spans(page)],
+                         ["<!-- <style>#x{top:0}</style> -->", "<!-- <script>var y=1;</script> -->"])
+        self.assertNotIn("#x", served_css.code(page))
+        # a <!-- inside a live script is script text, not a comment: the served timeline script spells one in a regular
+        # expression and in its own comments, and a comment opened there would swallow the element's end
+        page = '<script>x="<!--";</script><!-- c --><script>y="-->";</script>'
+        self.assertEqual(served_css.scripts(page), ['x="<!--";', 'y="-->";'])
+        self.assertEqual([page[s:e] for s, e in served_css.comment_spans(page)], ["<!-- c -->"])
+
+    def test_a_statement_at_rule_is_consumed_and_the_rule_after_it_is_read(self):
+        # @import url(x); had accumulated into the next rule's prelude, which then began with @ and was dropped with its
+        # declarations as a nested at-rule, silently
+        sheet = "<style>@import url(x.css);#planted{position:fixed;height:var(--app-h)}#q{color:red}</style>"
+        self.assertEqual([r.selector for r in served_css.rules(sheet)], ["#planted", "#q"])
+        sheet = "<style>#a{top:0}@layer base;#planted{position:fixed;height:var(--app-h)}</style>"
+        self.assertEqual([r.selector for r in served_css.rules(sheet)], ["#a", "#planted"])
+        with self.assertRaises(AssertionError):   # a ; that ends no statement at-rule is refused, not folded
+            served_css.rules("<style>#a{top:0};#b{top:0}</style>")
+
+    def test_can_match_reads_only_the_selectors_that_tell_elements_apart(self):
+        # `*`, an attribute selector and a functional pseudo-class had been read as selectors the other compound must also
+        # carry, so `*{top:0!important}` was no competitor for the lift's origin
+        for other in ("*", "iframe[id]", "iframe:not(.foo)", "iframe:nth-child(2)", "[hidden]", ":is(.a,.b)"):
+            self.assertTrue(served_css.can_match(other, "iframe.lifted"), other)
+            self.assertTrue(served_css.can_match("iframe.lifted", other), other)
+        self.assertEqual(served_css.restricting("iframe:not(.foo)[id]"), {"iframe"})
+        self.assertEqual(served_css.restricting("*"), set())
+        # what a static reading still cannot unite: a different id, a pseudo-element's own box, a keyframe step
+        self.assertFalse(served_css.can_match("#f-chat", "iframe.lifted"))
+        self.assertFalse(served_css.can_match("iframe::before", "iframe.lifted"))
+        self.assertFalse(served_css.can_match("0%", "iframe"))
+        self.assertTrue(served_css.can_match("iframe.lifted::before", "iframe::before"))
+        # the element join's two readings: surely (an origin's rule) and the canonical name
+        known = served_css.restricting("iframe#f-x") | served_css.restricting("#f-x")
+        self.assertEqual(served_css.compound(known), "iframe#f-x")
+        self.assertEqual(served_css.compound({".ovl", "iframe"}), "iframe.ovl")
+        self.assertEqual(served_css.compound({"#planted", ".big"}), "#planted.big")
+        self.assertEqual(served_css.compound(set()), "*")
+        self.assertTrue(served_css.surely("#f-x", known) and served_css.surely("iframe", known) and served_css.surely("*", known))
+        self.assertFalse(served_css.surely("iframe#f-x.big", known))
+        self.assertFalse(served_css.surely("0%", known))
+
+    def test_keywords_functions_and_important_are_read_as_css_reads_them(self):
+        # case-insensitive keywords and function names; a custom property's NAME stays case-sensitive
+        self.assertTrue(served_css.is_fixed(served_css.Rule(0, (), "#p", "", (("position", "FIXED"),))))
+        self.assertTrue(served_css.is_fixed(served_css.Rule(0, (), "#p", "", (("position", "fixed !important"),))))
+        self.assertFalse(served_css.is_fixed(served_css.Rule(0, (), "#p", "", (("position", "absolute"),))))
+        self.assertEqual(served_css.var_names("VAR(--app-h)"), {"--app-h"})
+        self.assertEqual(served_css.var_names("var( --App-h )"), {"--App-h"})
+        self.assertEqual(served_css.declarations("--App-h:1px;Position:FIXED"), [("--App-h", "1px"), ("position", "FIXED")])
+        for v in ("0!important", "0 ! important", "0!IMPORTANT", "var(--x) !important"):
+            self.assertTrue(served_css.important(v), v)
+        self.assertFalse(served_css.important("0"))
+        self.assertFalse(served_css.important("important"))
+
+    def test_a_bare_var_is_the_value_and_a_mention_is_not(self):
+        # the origin must BE the pan: top:calc(var(--app-top) - 40px) names it and sits 40 px off it
+        for v in ("var(--app-top,0px)", "var(--app-top)", " var( --app-top , calc(1px + 2px) ) ", "VAR(--app-top)!important"):
+            self.assertEqual(served_css.bare_var(v), "--app-top", v)
+        for v in ("calc(var(--app-top,0px) - 40px)", "var(--app-top,0px) - 40px", "var(--a,0px) + var(--b)", "var(--a) var(--b)", "0px"):
+            self.assertIsNone(served_css.bare_var(v), v)
+        rules = served_css.rules("<style>:root{--x:var(--app-top)}:root{--y:calc(var(--x) - 4px)}:root{--z:var(--y,1px)}</style>")
+        self.assertEqual(sorted(served_css.closure(rules, "--app-top")), ["--app-top", "--x", "--y", "--z"], "every mention, for the consumers tripwire")
+        self.assertEqual(sorted(served_css.aliases(rules, "--app-top")), ["--app-top", "--x"], "the names whose value IS the pan, for the origin")
 
 
 class RefitsWhenTheVisibleHeightChanges(unittest.TestCase):

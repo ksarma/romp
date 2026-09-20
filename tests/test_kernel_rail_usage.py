@@ -48,7 +48,9 @@ class RailUsage(unittest.TestCase):
     def test_the_shell_renders_the_posted_usage_colormapped_with_a_hover_panel(self):
         self.assertIn("romp==='usage'", self.html, "the shell listens for the timeline's usage post")
         for win in ("fiveHour", "sevenDay"):
-            self.assertIn(win, self.html, "renders both rate-limit windows")
+            # the code, not the page: the usage script's comments spell both window names (round 5, 2026-09-20: the literal
+            # reached assertIn through the loop variable, outside the pins census's derivation until it read the loop form)
+            self.assertIn(win, self.code, "renders both rate-limit windows")
         # the used bar wears the SELECTED COLORMAP colour (server-computed in _usage_limits, read here as seg.color)
         self.assertIn("seg.color", self.code, "the used bar is colored by the selected colormap")
         self.assertIn("seg.tone", self.code, "and the yatharth themes pick the tone shipped beside it (PR #763)")

@@ -8,20 +8,24 @@ assertIn of a string literal over a served page's text whose literal also occurs
 comment can satisfy, and this module derives them and fails on each (round 4, 2026-09-20; the first instance beyond the
 three was the timeline's touch-action pin, satisfied by two script comments that spell the declaration).
 
-Population, derived by an AST walk over tests/test_*.py: `self.assertIn(<str literal>, X)` where X is a call to one of the
-kernel's page getters, or a Name bound to such a call in the same function (a tuple assignment counts by position), or a
-`self.<attr>` bound to one in any method of the same class (a setUp). The getters are derived from the kernel source: the
-zero-argument `_landing` and `_<name>_page` functions, called through any module alias. Each getter is rendered once; a row
-is comment-satisfiable when its literal occurs inside a comment span of that page (tests/served_css.py comment_spans: an
-HTML comment, a /* */ inside a style element, a /* */ or // inside a script element). A row whose literal occurs ONLY in
-comments pins prose and is reported the same way.
+Population, derived by an AST walk over tests/test_*.py: `self.assertIn(<lit>, X)`, `self.assertTrue(<lit> in X)` and a
+bare `assert <lit> in X`, where <lit> is a string literal or the variable of a `for <name> in (<str>, ...)` loop in the
+same function (one row per literal; round 5, 2026-09-20: a loop variable had been outside the derivation, and the one such
+pin in the suite was satisfiable by two comments), and X is a call to one of the kernel's page getters, or a Name bound to
+such a call in the same function (a tuple assignment counts by position), or a `self.<attr>` bound to one in any method of
+the same class (a setUp). The getters are derived from the kernel source: the zero-argument `_landing` and `_<name>_page`
+functions, called through any module alias. Each getter is rendered once; a row is comment-satisfiable when its literal
+occurs inside a comment span of that page (tests/served_css.py comment_spans: an HTML comment, a /* */ inside a style
+element, a /* */ or // inside a script element). A row whose literal occurs ONLY in comments pins prose and is reported
+the same way.
 
 The fix for a row is to read the parsed rule (served_css.rules), the script's code with its comments removed
 (served_css.scripts), or the element's own attribute (test_kernel_mobile._viewport_meta_tokens), never to reword the
 comment: the next comment re-arms it.
 
-Bound: a body fetched over HTTP, a name bound outside the function, a slice of the page, html.count and html.index pins,
-and assertNotIn (a comment can red it, never green it) are outside this derivation.
+Bound: a body fetched over HTTP, a name bound outside the function, a literal bound by assignment rather than a loop, a
+slice of the page, html.count and html.index pins, and assertNotIn (a comment can red it, never green it) are outside this
+derivation.
 """
 import ast
 import glob
@@ -81,8 +85,33 @@ def _bind(targets, value, names, attrs, getters):
             attrs[t.attr] = g
 
 
+def _literals(node):
+    """The string literals a node stands for: a str Constant, or a Tuple or List of them; None otherwise."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return [node.value]
+    if isinstance(node, (ast.Tuple, ast.List)) and node.elts and all(isinstance(e, ast.Constant) and isinstance(e.value, str) for e in node.elts):
+        return [e.value for e in node.elts]
+    return None
+
+
+def _membership(node):
+    """(literal node, page node) when node asserts a literal's membership in a page: `self.assertIn(lit, X, ...)`,
+    `self.assertTrue(lit in X, ...)` or a bare `assert lit in X`; None otherwise."""
+    test = None
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+        if node.func.attr == "assertIn" and len(node.args) >= 2:
+            return node.args[0], node.args[1]
+        if node.func.attr == "assertTrue" and node.args:
+            test = node.args[0]
+    elif isinstance(node, ast.Assert):
+        test = node.test
+    if isinstance(test, ast.Compare) and len(test.ops) == 1 and isinstance(test.ops[0], ast.In):
+        return test.left, test.comparators[0]
+    return None
+
+
 def rows_of(path, getters):
-    """[(line, literal, getter)] for every assertIn of a literal over a getter's page in one test module."""
+    """[(line, literal, getter)] for every membership assertion of a literal over a getter's page in one test module."""
     with open(path, encoding="utf-8") as f:
         tree = ast.parse(f.read(), path)
     out = []
@@ -98,18 +127,30 @@ def rows_of(path, getters):
             for st in ast.walk(fn):
                 if isinstance(st, ast.Assign):
                     _bind(st.targets, st.value, names, {}, getters)
-            for call in ast.walk(fn):
-                if not (isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute) and call.func.attr == "assertIn"
-                        and len(call.args) >= 2 and isinstance(call.args[0], ast.Constant) and isinstance(call.args[0].value, str)):
-                    continue
-                x = call.args[1]
+
+            def page_of(x):
                 g = _getter_call(x, getters)
                 if not g and isinstance(x, ast.Name):
                     g = names.get(x.id)
                 if not g and isinstance(x, ast.Attribute) and isinstance(x.value, ast.Name) and x.value.id == "self":
                     g = attrs.get(x.attr)
-                if g:
-                    out.append((call.lineno, call.args[0].value, g))
+                return g
+
+            rows = []
+            for node in ast.walk(fn):
+                pair = _membership(node)
+                if pair and _literals(pair[0]) and page_of(pair[1]):
+                    rows += [(node.lineno, node.col_offset, i, lit, page_of(pair[1])) for i, lit in enumerate(_literals(pair[0]))]
+            # `for win in ("fiveHour", "sevenDay"):` binds the literals to the loop's own body: one row per literal for each
+            # membership assertion of the variable inside it (a variable rebound by a later loop resolves to its own loop)
+            for loop in ast.walk(fn):
+                if not (isinstance(loop, ast.For) and isinstance(loop.target, ast.Name) and _literals(loop.iter)):
+                    continue
+                for node in [n for b in loop.body for n in ast.walk(b)]:
+                    pair = _membership(node)
+                    if pair and isinstance(pair[0], ast.Name) and pair[0].id == loop.target.id and page_of(pair[1]):
+                        rows += [(node.lineno, node.col_offset, i, lit, page_of(pair[1])) for i, lit in enumerate(_literals(loop.iter))]
+            out += [(line, lit, g) for line, _, _, lit, g in sorted(rows)]
     return out
 
 
@@ -137,7 +178,9 @@ class ServedPinsReadElements(unittest.TestCase):
 
     def test_the_derivation_reads_the_forms_it_claims(self):
         # the population is a derivation, so its form space is pinned: a getter call inline, a Name bound in the function,
-        # a tuple assignment by position, a self.<attr> bound in setUp; a Name bound to something else is not a row
+        # a tuple assignment by position, a self.<attr> bound in setUp; a Name bound to something else is not a row. Round 5
+        # (2026-09-20): a loop variable over a tuple or list of literals (one row per literal), assertTrue(lit in page) and a
+        # bare assert; a literal bound by assignment stays outside (the bound in the docstring)
         src = '''
 class T(unittest.TestCase):
     def setUp(self):
@@ -151,6 +194,15 @@ class T(unittest.TestCase):
         self.assertIn("w", css)
         self.assertIn("v", self.html)
         self.assertNotIn("u", page)
+        for w in ("p", "q"):
+            self.assertIn(w, page, "both")
+        for w in ["r"]:
+            self.assertTrue(w in page)
+        self.assertTrue("s" in self.html, "a membership test through assertTrue")
+        assert "t" in page
+        bound = "o"
+        self.assertIn(bound, page)
+        self.assertTrue("n" not in page)
 '''
         with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as f:
             f.write(src)
@@ -158,7 +210,8 @@ class T(unittest.TestCase):
             rows = rows_of(f.name, page_getters())
         finally:
             os.unlink(f.name)
-        self.assertEqual(rows, [(6, "x", "_chat_page"), (8, "y", "_feed_page"), (10, "z", "_timeline_page"), (12, "v", "_landing")])
+        self.assertEqual(rows, [(6, "x", "_chat_page"), (8, "y", "_feed_page"), (10, "z", "_timeline_page"), (12, "v", "_landing"),
+                                (15, "p", "_feed_page"), (15, "q", "_feed_page"), (17, "r", "_feed_page"), (18, "s", "_landing"), (19, "t", "_feed_page")])
 
 
 if __name__ == "__main__":
