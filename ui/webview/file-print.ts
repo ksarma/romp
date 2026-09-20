@@ -81,13 +81,13 @@
 //      settle from a deadline: a settle prints, a deadline with a picture still loading ASKS instead of printing (the
 //      `stalled` phase), and a deadline that finds nothing loading is a settle in effect and prints (the third review: the
 //      first build fed one bare `ready` for both ends, and the deadline's print said nothing). The ask (the third review,
-//      2026-09-19): the line reads "N pictures have not loaded. Print anyway prints without them." with two word buttons
+//      2026-09-19): the line reads "N pictures have not loaded. Print anyway leaves out any picture still loading." with two word buttons
 //      in the armed line's shape, "Print anyway", which prints at once WITHOUT the pictures still loading (a markdown
 //      picture with no declared size prints as a 0 by 0 box, nothing where it was, no gap and no label; one with width
 //      and height as an empty box of that size; measured in Chromium under print media, file-print-driver-browser.test.ts
 //      case (15a); the round-4 review, 2026-09-20: before this the prose here said an empty box for every shape), and
 //      "Keep waiting", which waits on the load and error events alone, with no timer, until every picture settles, then
-//      prints. That open-ended wait's line reads "Waiting for N pictures… Print anyway prints without them." beside the
+//      prints. That open-ended wait's line reads "Waiting for N pictures… Print anyway leaves out any picture still loading." beside the
 //      loader with ONE word button, "Print anyway" (the ask's words and title), which prints at once with what has loaded;
 //      a re-aim under it rewrites the count in place and keeps the button (romp-manager's ruling, 2026-09-20, on the
 //      round-2 review's fresh-2 and the round-3 review's tests-4, ui-2 and extra5-3: the person chose to wait and the
@@ -315,24 +315,27 @@ export function preparingWords(n: number): string {
   return n === 1 ? "Preparing 1 picture…" : "Preparing " + n + " pictures…";
 }
 /** The sentence that stands beside "Print anyway" wherever that button stands (the ask's line and Keep waiting's), the last
- *  words of the line's text, so the person reads what the press does before pressing: the `n` pictures still loading are
- *  left off the paper when it prints (a markdown picture with no declared size prints as a 0 by 0 box, one with width and
- *  height as an empty box of that size: measured in Chromium under print media, file-print-driver-browser.test.ts case
- *  (15a)). The round-4 review's ruling (2026-09-20): a press that silently drops the pictures the person chose to wait for is
- *  an omission; a sentence in place before the press makes it an informed choice, with no second click and no paint at
- *  print time. The count is the line's, so "it" and "them" name the pictures the first sentence counted. */
-export function anywayWords(n: number): string {
-  return n === 1 ? "Print anyway prints without it." : "Print anyway prints without them.";
+ *  words of the line's text, so the person reads what the press does before pressing: the pictures still loading at the
+ *  press are left off the paper (a markdown picture with no declared size prints as a 0 by 0 box, one with width and height
+ *  as an empty box of that size: measured in Chromium under print media, file-print-driver-browser.test.ts case (15a)). The
+ *  round-4 review's ruling (2026-09-20): a press that silently drops the pictures the person chose to wait for is an
+ *  omission; a sentence in place before the press makes it an informed choice, with no second click and no paint at print
+ *  time. The sentence names no count and no picture: the line's count is the aim's and does not fall as pictures land (the
+ *  header), and a picture that lands while the line stands prints, so a sentence about the counted pictures is false from
+ *  that landing on (the round-5 review's ui-1, 2026-09-20: "Print anyway prints without them." was worded against the
+ *  count; file-print-driver-browser.test.ts case (15b) releases pictures under both lines and reads what prints). */
+export function anywayWords(): string {
+  return "Print anyway leaves out any picture still loading.";
 }
 /** The open-ended wait's words for `n` pictures still loading: Keep waiting's line, which carries Print anyway beside the
  *  loader (the timed wait's line reads preparingWords and carries no button: its deadline asks), so anywayWords follows the
  *  count. The count is the aim's, as preparingWords' is. */
 export function waitingWords(n: number): string {
-  return (n === 1 ? "Waiting for 1 picture…" : "Waiting for " + n + " pictures…") + " " + anywayWords(n);
+  return (n === 1 ? "Waiting for 1 picture…" : "Waiting for " + n + " pictures…") + " " + anywayWords();
 }
 /** The ask's words at the deadline: `n` pictures still loading, then what Print anyway does (anywayWords). */
 export function stalledWords(n: number): string {
-  return (n === 1 ? "1 picture has not loaded." : n + " pictures have not loaded.") + " " + anywayWords(n);
+  return (n === 1 ? "1 picture has not loaded." : n + " pictures have not loaded.") + " " + anywayWords();
 }
 export const WITH_WORDS = "Print with them";
 export const WITHOUT_WORDS = "Print without them";

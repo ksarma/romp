@@ -76,18 +76,18 @@ test("ready during the wait prints; printed rests; a press, an Escape, a choice 
   assert.equal(step(RESTING, { kind: "printed" }).act, "none");
 });
 
-test("the words: one picture and many, for the armed line, the wait, the open-ended wait and the ask; the four buttons' words; the ask's line and the open-ended wait's line each end with the button's own sentence, what Print anyway does (FAILS BEFORE: neither line said, and the press dropped the pictures still loading with nothing said)", () => {
+test("the words: one picture and many, for the armed line, the wait, the open-ended wait and the ask; the four buttons' words; the ask's line and the open-ended wait's line each end with the button's own sentence, what Print anyway does (FAILS BEFORE: neither line said, and the press dropped the pictures still loading with nothing said), a sentence that takes no count and names no picture, since a picture the count covers can land while the line stands and then prints (FAILS BEFORE: the sentence read \"prints without them\", them being the counted pictures)", () => {
   assert.equal(armedWords(1), "1 picture from another host is not loaded.");
   assert.equal(armedWords(2), "2 pictures from other hosts are not loaded.");
   assert.equal(preparingWords(1), "Preparing 1 picture…");
   assert.equal(preparingWords(3), "Preparing 3 pictures…");
-  assert.equal(anywayWords(1), "Print anyway prints without it.");
-  assert.equal(anywayWords(3), "Print anyway prints without them.");
-  assert.equal(waitingWords(1), "Waiting for 1 picture… Print anyway prints without it.");
-  assert.equal(waitingWords(3), "Waiting for 3 pictures… Print anyway prints without them.");
-  assert.equal(stalledWords(1), "1 picture has not loaded. Print anyway prints without it.");
-  assert.equal(stalledWords(3), "3 pictures have not loaded. Print anyway prints without them.");
-  for (const n of [1, 2, 7]) for (const [site, words] of [["the ask", stalledWords(n)], ["the open-ended wait", waitingWords(n)]] as Array<[string, string]>) assert.ok(words.endsWith(" " + anywayWords(n)), site + " over " + n + ": the line ends with the button's own sentence");
+  assert.equal(anywayWords(), "Print anyway leaves out any picture still loading.");
+  assert.equal(anywayWords.length, 0, "the sentence takes no count: it is the same words beside every count, true of whichever pictures are still loading at the press (the round-5 review's ui-1)");
+  assert.equal(waitingWords(1), "Waiting for 1 picture… Print anyway leaves out any picture still loading.");
+  assert.equal(waitingWords(3), "Waiting for 3 pictures… Print anyway leaves out any picture still loading.");
+  assert.equal(stalledWords(1), "1 picture has not loaded. Print anyway leaves out any picture still loading.");
+  assert.equal(stalledWords(3), "3 pictures have not loaded. Print anyway leaves out any picture still loading.");
+  for (const n of [1, 2, 7]) for (const [site, words] of [["the ask", stalledWords(n)], ["the open-ended wait", waitingWords(n)]] as Array<[string, string]>) assert.ok(words.endsWith(" " + anywayWords()), site + " over " + n + ": the line ends with the button's own sentence");
   assert.equal(ANYWAY_TITLE, "Print now; a picture still loading is left out");
   assert.ok(!ANYWAY_TITLE.includes("as the browser has it"), "the title no longer says the picture prints as the browser has it: a still-loading picture with no declared size prints as nothing (case (15a))");
   assert.equal(WITH_WORDS, "Print with them");

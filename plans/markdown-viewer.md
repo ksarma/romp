@@ -8001,8 +8001,8 @@ romp loader on every wait, and the first build showed the words alone (the revie
 file-print-browser.test.ts case 1 reads the loader's parts, its computed style and its running animations). The wait
 ends at the last load or error event, or at `PRINT_SETTLE_MS`, 8 s, after which the bar asks instead of printing (the
 third review, 2026-09-19): with a picture still loading the flow enters the `stalled` phase and the line reads "1
-picture has not loaded. Print anyway prints without it." or "N pictures have not loaded. Print anyway prints without
-them." (`stalledWords`, the count then `anywayWords`) with **Print anyway** and **Keep waiting**, two word buttons
+picture has not loaded." or "N pictures have not loaded." then the button's own sentence, "Print anyway leaves out any
+picture still loading." (`stalledWords`, the count then `anywayWords`) with **Print anyway** and **Keep waiting**, two word buttons
 in the armed line's shape (`ANYWAY_TITLE` and `KEEP_TITLE` their titles; the button wears `.on` and aria-expanded under
 the ask as while armed); a
 second press or Escape disarms as under the armed line. The ask is written into the wait's standing row (`stall`: the
@@ -8026,11 +8026,15 @@ second sentence of both lines is the button's own (`anywayWords`): it stands bes
 line appears, so the person reads what the press does before pressing, one press and no second click (the ruling: the
 press must tell the person, at the moment they press, that the pictures still loading will not appear on the paper; a
 visible statement of what will happen, where a silent omission was the defect; no print-time paint and no sheet change;
-`ANYWAY_TITLE` reads "Print now; a picture still loading is left out"). "Keep waiting" waits on the load and error events alone, with no timer (`settlePictures`
+`ANYWAY_TITLE` reads "Print now; a picture still loading is left out"). The sentence takes no count and names no
+picture (the round-5 review's ui-1, 2026-09-20): the line's count is the aim's and does not fall as pictures land, and a
+picture that lands while the line stands prints, so the round-5 wording, "Print anyway prints without them.", was false
+from that landing on; file-print-driver-browser.test.ts case (15b) releases pictures under both lines and reads what
+prints. "Keep waiting" waits on the load and error events alone, with no timer (`settlePictures`
 under a null deadline; the state carries `untimed`), until every pending picture settles, then prints; Escape cancels
 that open-ended wait, where the timed wait's Escape stays the viewer's, which closes the card. While that open-ended
-wait stands the line reads "Waiting for 1 picture… Print anyway prints without it." or "Waiting for N pictures… Print
-anyway prints without them." (`waitingWords`, the count then `anywayWords`) beside the loader,
+wait stands the line reads "Waiting for 1 picture…" or "Waiting for N pictures…" then the same sentence
+(`waitingWords`, the count then `anywayWords`) beside the loader,
 with one word button, **Print anyway** (`ANYWAY_WORDS` and `ANYWAY_TITLE`, the ask's), which prints at once with what
 has loaded, the pictures still loading left off the paper as above (the machine reads `anyway` in the `preparing` phase
 under `untimed` alone; the driver's `waitLine` builds the row and its `preparingLine` rewrites the count in place at a
@@ -8452,9 +8456,9 @@ _Avoid_ (a review finding, 2026-09-19).
   at once; untouched with a text field focused or with no file open); one click on a complete note, Rendered and Raw,
   inside the click handler; the deadline's ask over a picture whose route never answers, the deadline shortened to 300
   ms through the seam and restored (the line with Print anyway and Keep waiting and no print, FAILS BEFORE: the print
-  ran at the deadline; the ask's line ending in the button's own sentence, "Print anyway prints without it.", read
+  ran at the deadline; the ask's line ending in the button's own sentence (`anywayWords`), read
   before the press, and Print anyway then printing once without the picture still loading; Keep waiting setting no
-  timer, its line reading "Waiting for 1 picture… Print anyway prints without it." with Print anyway alone, 1 s past the
+  timer, its line reading `waitingWords(1)` with Print anyway alone, 1 s past the
   seam's deadline still waiting, and
   printing once at the picture's load with every `<img>` complete;
   Escape and a second press under the ask, and Escape during the open-ended wait, printing nothing with the card up and
@@ -8515,22 +8519,28 @@ _Avoid_ (a review finding, 2026-09-19).
   and the ask standing, its words rewritten in the same row; FAILS BEFORE: the count read none and the question was
   called moot); and the ask written into the wait's row (the row marked during the wait is the row the ask stands in,
   the loader gone and the two word buttons in it, one line on the card; FAILS BEFORE: the ask was a fresh row).
-  Since the ruling of 2026-09-20: Keep waiting's open-ended wait with its one button (the line reading "Waiting for
-  1 picture… Print anyway prints without it." beside the loader with Print anyway alone, FAILS BEFORE: "Preparing 1
+  Since the ruling of 2026-09-20: Keep waiting's open-ended wait with its one button (the line reading
+  `waitingWords(1)` beside the loader with Print anyway alone, FAILS BEFORE: "Preparing 1
   picture…" with no button; Print
   anyway printing once with the parked picture incomplete and the placeholder on the paper, the request still parked
   and the keyboard on the Print button; a Reload landing under that wait rewriting the count in the same row with
   the button staying, and the landing's pictures released printing once; Escape during that wait resting the bar
   with the card up and nothing printed, the release after it printing nothing). Since the round-4 review (2026-09-20),
   case (15a), what reaches the paper: under the deadline's ask and under Keep waiting's open-ended wait both lines read,
-  before any press, the count then the button's own sentence ("2 pictures have not loaded. Print anyway prints without
-  them.", "Waiting for 2 pictures… Print anyway prints without them."; FAILS BEFORE: the line ended at the count), and
+  before any press, the count then the button's own sentence (`stalledWords(2)` and `waitingWords(2)`; FAILS BEFORE:
+  the line ended at the count), and
   with print media emulated the parked markdown picture with no declared size has a 0 by 0 box (nothing where the
   picture was), the parked `<img>` with width and height a 120 by 80 box with nothing in it, the gated placeholder a
   box with width and height, and the line itself a 0 by 0 box, the same read on screen media beside it and the parked
   picture's `complete` false at both reads (case (15) pinned `complete`, which is not what reaches the paper); one of
   the two pictures then landing leaves the line reading two, the aim's count, with nothing printed (extra7-2); Escape
-  ends the wait and the last release prints nothing.
+  ends the wait and the last release prints nothing. Since the round-5 review (2026-09-20), case (15b), a picture that
+  lands while the line stands prints, and the sentence stays true of it: under the ask over two parked pictures both
+  released, the ask stands with its line unchanged and its last sentence still true (FAILS BEFORE: the line read "Print
+  anyway prints without them." with both complete), and Print anyway prints once with every `<img>` complete, the landed
+  picture with a box under print media where the parked one had none; under Keep waiting one of the two released leaves
+  the line reading two with the same sentence, and Print anyway prints once with the released picture complete and the
+  other still loading; under Keep waiting both released print once on the settle, no press.
 - ui/webview/file-print-armed-browser.test.ts, under node first (the machine's `recount` event; `ownsEscape` over
   stand-ins: the keyboard inside a menu or a dialog, an open popup's trigger anywhere in the scope whatever the target,
   not an aria-expanded alone, not a scope with none; `printable` over stand-in trees: the open body, a closed details

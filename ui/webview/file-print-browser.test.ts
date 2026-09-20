@@ -17,11 +17,12 @@
 // the Raw view (a code view, no pictures) the same. (4) the deadline asks: a picture whose route never answers brings, at
 // the deadline (shortened through the module's test seam, FV.setPrintSettleMs), a line saying it has not loaded with
 // "Print anyway" and "Keep waiting", and no print; the line's last sentence says what Print anyway does ("Print anyway
-// prints without it."), read from the line before the press at both sites (the round-4 review's ruling, 2026-09-20);
+// leaves out any picture still loading."), read from the line before the press at both sites (the round-4 review's ruling,
+// 2026-09-20; count-free since the round-5 review's ui-1: a counted picture can land while the line stands, and then prints);
 // "Print anyway" prints once without the picture still loading (a markdown picture with no declared size prints as a 0
 // by 0 box, nothing where it was: measured under print media in file-print-driver-browser.test.ts case (15a));
 // "Keep waiting" waits on the load and error events alone, with no timer, its line reading "Waiting for 1 picture… Print
-// anyway prints without it." with one word button, "Print anyway" (romp-manager's ruling, 2026-09-20;
+// anyway leaves out any picture still loading." with one word button, "Print anyway" (romp-manager's ruling, 2026-09-20;
 // file-print-driver-browser.test.ts case (15) presses it), and prints once the picture lands, every <img>
 // complete; Escape or a second press under the ask, and Escape during that open-ended wait, print nothing and leave the
 // card up (the third review, 2026-09-19: before this the print ran at the deadline and the picture, a markdown picture
@@ -284,8 +285,8 @@ test("case 3: no placeholder and every picture complete: one click prints at onc
   });
 });
 
-const STALLED_ONE = stalledWords(1);            // "1 picture has not loaded. Print anyway prints without it."
-const WAITING_ONE = waitingWords(1);            // "Waiting for 1 picture… Print anyway prints without it."
+const STALLED_ONE = stalledWords(1);            // "1 picture has not loaded. Print anyway leaves out any picture still loading."
+const WAITING_ONE = waitingWords(1);            // "Waiting for 1 picture… Print anyway leaves out any picture still loading."
 const PRINT_BTN = "#romp-fileview .fileview-print";
 const WITHOUT_BTN = '#fileview-print-line button:has-text("Print without them")';
 const ANYWAY_BTN = '#fileview-print-line button:has-text("Print anyway")';
@@ -319,8 +320,8 @@ test("case 4: the deadline asks. A picture whose route never answers: at the dea
     assert.equal(b.phase, "stalled", "FAILS BEFORE: the bar rested after printing at the deadline");
     assert.equal(b.busy, false, "nothing is awaited under the ask"); assert.equal(b.on, true); assert.equal(b.expanded, "true", "the button opened the line, as while armed");
     assert.deepEqual(b.buttons, ["Print anyway", "Keep waiting"], "the two choices");
-    assert.equal(b.line, "1 picture has not loaded. Print anyway prints without it.", "the ask's line, read before the press: the count, then the button's own sentence (FAILS BEFORE: the line ended at the count, and the press dropped the picture with nothing said)");
-    assert.ok(b.line!.endsWith(" " + anywayWords(1)), "the sentence is the line's last words, beside the button");
+    assert.equal(b.line, "1 picture has not loaded. Print anyway leaves out any picture still loading.", "the ask's line, read before the press: the count, then the button's own sentence (FAILS BEFORE: the line ended at the count, and the press dropped the picture with nothing said)");
+    assert.ok(b.line!.endsWith(" " + anywayWords()), "the sentence is the line's last words, beside the button");
     assert.equal((await loaderFacts(page)).present, false, "no loader under the ask");
     assert.equal((await prints(page)).length, 0, "FAILS BEFORE: window.print ran at the deadline; nothing prints until the person answers");
     await frames(page, 6);
@@ -345,7 +346,7 @@ test("case 4: the deadline asks. A picture whose route never answers: at the dea
     await askAtDeadline(s);
     await page.click(KEEP_BTN);
     b = await bar(page);
-    assert.equal(b.phase, "preparing", "Keep waiting: the wait again"); assert.equal(b.line, "Waiting for 1 picture… Print anyway prints without it.", "the open-ended wait's words, read before any press: the count, then the button's own sentence (FAILS BEFORE: the line ended at the count)"); assert.equal(b.line, WAITING_ONE); assert.equal(b.busy, true); assert.deepEqual(b.buttons, ["Print anyway"], "one word button, the way through the open-ended wait (romp-manager's ruling, 2026-09-20; the driver leg's case (15) presses it)");
+    assert.equal(b.phase, "preparing", "Keep waiting: the wait again"); assert.equal(b.line, "Waiting for 1 picture… Print anyway leaves out any picture still loading.", "the open-ended wait's words, read before any press: the count, then the button's own sentence (FAILS BEFORE: the line ended at the count)"); assert.equal(b.line, WAITING_ONE); assert.equal(b.busy, true); assert.deepEqual(b.buttons, ["Print anyway"], "one word button, the way through the open-ended wait (romp-manager's ruling, 2026-09-20; the driver leg's case (15) presses it)");
     assert.equal((await loaderFacts(page)).present, true, "the wait's loader is back on the line");
     await page.evaluate((k: number) => new Promise<void>((r) => setTimeout(r, k)), 1000);   // a timer, since the absence of one is what is measured: three of the seam's deadlines
     assert.equal((await prints(page)).length, 0, "no print 1 s past the answer: Keep waiting set no deadline");

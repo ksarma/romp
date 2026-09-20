@@ -56,7 +56,7 @@
 //     row, so the accessibility tree lost the wait's live region and gained another at the transition).
 // (15) Keep waiting's open-ended wait carries one word button, "Print anyway" (romp-manager's ruling, 2026-09-20, on the
 //     round-2 review's fresh-2 and the round-3 review's tests-4, ui-2 and extra5-3): after Keep waiting the line reads
-//     "Waiting for 1 picture… Print anyway prints without it." beside the loader with Print anyway alone, which prints at once with what has loaded, the
+//     "Waiting for 1 picture… Print anyway leaves out any picture still loading." beside the loader with Print anyway alone, which prints at once with what has loaded, the
 //     parked picture incomplete and the placeholder on the paper, the request still parked; a Reload landing under that
 //     wait rewrites the count in the same row with the button staying, and the landing's pictures released print as
 //     before; no timer. Before this the line read "Preparing 1 picture…" with no button, so the wait had no way through
@@ -541,7 +541,7 @@ test("(5) a press and the chord during the wait change nothing over the driver: 
     await page.click('#fileview-print-line button:has-text("' + ANYWAY_WORDS + '")');
     const p = await prints(page);
     assert.equal(p.length, 1, "exactly one print, at the answer");
-    assert.equal(p[0].gates, 1); assert.equal(p[0].incomplete.length, 1, "the parked picture is still loading at the print: Print anyway prints without it, as its line said");
+    assert.equal(p[0].gates, 1); assert.equal(p[0].incomplete.length, 1, "the parked picture is still loading at the print: the press leaves it out, as its line said");
     await frames(page, 1);
     b = await bar(page);
     assert.equal(b.phase, null, "the bar rested");
@@ -874,7 +874,7 @@ test("(12) the settle's re-aim runs under the press's deadline, never a restarte
 
 // ── (13) a repaint under the deadline's ask ────────────────────────────────────────────────────────
 
-const STALLED_ONE = stalledWords(1);   // "1 picture has not loaded. Print anyway prints without it."
+const STALLED_ONE = stalledWords(1);   // "1 picture has not loaded. Print anyway leaves out any picture still loading."
 const STALLED_TWO = stalledWords(2);
 const askReached = (page: any): Promise<unknown> => page.waitForFunction((w: string) => (document.getElementById("fileview-print-line")?.firstChild?.textContent || "") === w, STALLED_ONE, { timeout: 6000 });
 const markLine = (page: any): Promise<void> => page.evaluate(() => { document.getElementById("fileview-print-line")!.setAttribute("data-probe", "1"); });
@@ -1280,15 +1280,15 @@ test("(15a) what reaches the paper: under the deadline's ask and under Keep wait
     await page.click(WITHOUT_BTN);
     await page.waitForFunction((w: string) => (document.getElementById("fileview-print-line")?.firstChild?.textContent || "") === w, STALLED_TWO, { timeout: 6000 });   // the ask over the two parked pictures
     let b = await bar(page);
-    assert.deepEqual({ line: b.line, buttons: b.buttons, titles: b.titles }, { line: "2 pictures have not loaded. Print anyway prints without them.", buttons: [ANYWAY_WORDS, KEEP_WORDS], titles: [ANYWAY_TITLE, KEEP_TITLE] }, "the ask's line, read before any press: the count, then the button's own sentence (FAILS BEFORE: the line ended at the count)");
-    assert.ok(b.line!.endsWith(" " + anywayWords(2)), "the sentence is the line's last words, beside the button");
+    assert.deepEqual({ line: b.line, buttons: b.buttons, titles: b.titles }, { line: "2 pictures have not loaded. Print anyway leaves out any picture still loading.", buttons: [ANYWAY_WORDS, KEEP_WORDS], titles: [ANYWAY_TITLE, KEEP_TITLE] }, "the ask's line, read before any press: the count, then the button's own sentence (FAILS BEFORE: the line ended at the count)");
+    assert.ok(b.line!.endsWith(" " + anywayWords()), "the sentence is the line's last words, beside the button");
     const askScreen = await paper(page, "screen"), askPrint = await paper(page, "print");
     for (const p of [askScreen, askPrint]) t.diagnostic("paper | ask | " + JSON.stringify(p));
     assert.equal((await bar(page)).phase, "stalled", "the ask stands after the reads");
     await page.click(KEEP_BTN);
     await page.waitForFunction((w: string) => (document.getElementById("fileview-print-line")?.firstChild?.textContent || "") === w, waitingWords(2), { timeout: 6000 });
     b = await bar(page);
-    assert.deepEqual({ line: b.line, buttons: b.buttons, titles: b.titles }, { line: "Waiting for 2 pictures… Print anyway prints without them.", buttons: [ANYWAY_WORDS], titles: [ANYWAY_TITLE] }, "the open-ended wait's line, read before any press: the count, then the button's own sentence");
+    assert.deepEqual({ line: b.line, buttons: b.buttons, titles: b.titles }, { line: "Waiting for 2 pictures… Print anyway leaves out any picture still loading.", buttons: [ANYWAY_WORDS], titles: [ANYWAY_TITLE] }, "the open-ended wait's line, read before any press: the count, then the button's own sentence");
     const waitScreen = await paper(page, "screen"), waitPrint = await paper(page, "print");
     for (const p of [waitScreen, waitPrint]) t.diagnostic("paper | open-ended wait | " + JSON.stringify(p));
     // the count is the aim's: one of the two pictures landing settles nothing, so the line still reads two (extra7-2: the
@@ -1312,6 +1312,90 @@ test("(15a) what reaches the paper: under the deadline's ask and under Keep wait
     await s.release([SLOW2]);
     await frames(page, 4);
     assert.equal((await prints(page)).length, 0, "the last release after the Escape prints nothing: nothing waits");
+    await page.evaluate(() => { (window as any).FV.setPrintSettleMs(null); });
+    assert.deepEqual(s.errors, [], "no script error");
+    await page.close();
+  });
+});
+
+// ── (15b) a picture landing while the line stands: the sentence stays true, and the landed picture prints ─────────────
+
+test("(15b) a picture that lands while the line stands prints, and the line's last sentence stays true of it: under the deadline's ask over two parked pictures, both released, the ask stands with its line unchanged (nothing listens under the ask; the count is the aim's, extra7-2) and the sentence beside Print anyway names no count and no picture, so it holds with both complete (FAILS BEFORE: it read \"Print anyway prints without them.\", them being the two the count named, and the press printed both), and Print anyway then prints once with every <img> complete, the landed picture with a box under print media; under Keep waiting's open-ended wait one of the two released leaves the line reading two with the same sentence, and Print anyway prints once with the released picture complete and the other still loading; under Keep waiting both released print once on the settle, no press (the round-5 review's ui-1, 2026-09-20)", { timeout: 180000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const KEEP_BTN = '#fileview-print-line button:has-text("' + KEEP_WORDS + '")';
+    const ANYWAY_BTN = '#fileview-print-line button:has-text("' + ANYWAY_WORDS + '")';
+    const SENTENCE = "Print anyway leaves out any picture still loading.";   // the round-5 review's ui-1 wording; file-print.test.ts pins anywayWords() to it
+    const lineIs = (page: any, words: string): Promise<unknown> => page.waitForFunction((w: string) => (document.getElementById("fileview-print-line")?.firstChild?.textContent || "") === w, words, { timeout: 6000 });
+    const stillLoading = (page: any, k: number): Promise<unknown> => page.waitForFunction((n: number) => (Array.from(document.querySelectorAll("#romp-fileview img")) as HTMLImageElement[]).filter((i) => !i.complete).length === n, k, { timeout: 6000 });
+    /** SIZED_NOTE's two parked pictures under the deadline's ask. */
+    const askOverTwo = async (): Promise<Scene> => {
+      const sc = await scene(browser, "pane", SIZED_NOTE, { held: [SLOW, SLOW2] });
+      await waitGates(sc.page, 1); await parked(sc, [SLOW, SLOW2]);
+      await sc.page.evaluate(() => { (window as any).FV.setPrintSettleMs(600); });
+      await sc.page.click(PRINT_BTN);
+      await sc.page.click(WITHOUT_BTN);
+      await lineIs(sc.page, STALLED_TWO);
+      return sc;
+    };
+    // a: the ask; both pictures land under it; then Print anyway
+    let s = await askOverTwo();
+    let { page } = s;
+    await s.release([SLOW, SLOW2]);
+    await stillLoading(page, 0);
+    await frames(page, 3);
+    let b = await bar(page);
+    assert.deepEqual({ phase: b.phase, line: b.line, buttons: b.buttons, prints: (await prints(page)).length }, { phase: "stalled", line: STALLED_TWO, buttons: [ANYWAY_WORDS, KEEP_WORDS], prints: 0 }, "both landed under the ask: the ask stands, its line unchanged (nothing listens under the ask, and the count is the aim's), nothing printed");
+    const askLine = b.line!;   // read before the press, held against what the press prints below
+    const askPrint = await paper(page, "print");
+    t.diagnostic("paper | ask, both landed | " + JSON.stringify(askPrint));
+    assert.equal(askPrint.parkedComplete, true, "the picture with no declared size is complete at the read");
+    assert.ok(askPrint.parked && askPrint.parked.w > 0 && askPrint.parked.h > 0, "print media: the landed picture has a box where the parked one had a 0 by 0 box (case (15a)): " + JSON.stringify(askPrint.parked));
+    assert.equal((await bar(page)).phase, "stalled", "the ask stands after the read");
+    await page.click(ANYWAY_BTN);
+    let p = await prints(page);
+    assert.equal(p.length, 1, "Print anyway printed once, at the press");
+    assert.deepEqual(p[0].incomplete, [], "every <img> complete at the print: the two pictures the line counted are on the paper");
+    assert.equal(p[0].gates, 1, "the placeholder stands");
+    assert.ok(askLine.endsWith(" " + SENTENCE), "the sentence read before the press names no count and no picture, so it was true of a print that carried both (FAILS BEFORE: the line read \"Print anyway prints without them.\", them being the two the count named, and the press printed both): " + askLine);
+    await frames(page, 1);
+    assert.equal((await bar(page)).phase, null, "the bar rested");
+    await page.evaluate(() => { (window as any).FV.setPrintSettleMs(null); });
+    assert.deepEqual(s.errors, [], "no script error");
+    await page.close();
+    // b: Keep waiting; one of the two lands; then Print anyway
+    s = await askOverTwo(); page = s.page;
+    await page.click(KEEP_BTN);
+    await lineIs(page, waitingWords(2));
+    await s.release([SLOW]);
+    await stillLoading(page, 1);
+    await frames(page, 3);
+    b = await bar(page);
+    assert.deepEqual({ phase: b.phase, line: b.line, buttons: b.buttons, prints: (await prints(page)).length }, { phase: "preparing", line: waitingWords(2), buttons: [ANYWAY_WORDS], prints: 0 }, "one landed under the open-ended wait: the line still reads two (the aim's count) with the button, nothing printed");
+    const waitLine = b.line!;
+    await page.click(ANYWAY_BTN);
+    p = await prints(page);
+    assert.equal(p.length, 1, "Print anyway printed once, at the press");
+    assert.equal(p[0].incomplete.length, 1, "one <img> still loading at the print: the picture never released, left out as the sentence says");
+    assert.ok(decodeURIComponent(p[0].incomplete[0]).includes("/docs/" + SLOW2), "the one left out is the one never released: " + p[0].incomplete[0]);
+    assert.equal(p[0].gates, 1);
+    assert.ok(waitLine.endsWith(" " + SENTENCE), "the sentence read before the press was true of the one still loading and of the one that printed (FAILS BEFORE: the line read \"Print anyway prints without them.\", and the press printed one of them): " + waitLine);
+    await frames(page, 1);
+    assert.equal((await bar(page)).phase, null, "the bar rested");
+    assert.equal(s.heldCount(SLOW2), 1, "the second request is still parked: nothing released it");
+    await page.evaluate(() => { (window as any).FV.setPrintSettleMs(null); });
+    assert.deepEqual(s.errors, [], "no script error");
+    await page.close();
+    // c: Keep waiting; both land; the settle prints with no press
+    s = await askOverTwo(); page = s.page;
+    await page.click(KEEP_BTN);
+    await lineIs(page, waitingWords(2));
+    await s.release([SLOW, SLOW2]);
+    await printsReach(page, 1);
+    p = await prints(page);
+    assert.equal(p.length, 1, "one print, at the last picture's load");
+    assert.deepEqual(p[0].incomplete, [], "with every <img> complete"); assert.equal(p[0].gates, 1); assert.equal(p[0].line, false, "the line went before the print");
+    await frames(page, 1);
+    assert.equal((await bar(page)).phase, null, "the bar rested");
     await page.evaluate(() => { (window as any).FV.setPrintSettleMs(null); });
     assert.deepEqual(s.errors, [], "no script error");
     await page.close();

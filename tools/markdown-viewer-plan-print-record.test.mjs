@@ -170,10 +170,10 @@ test('P2: the machine\'s phases and events are the record\'s: six phases with di
 });
 
 test('P2: the deadline asks instead of printing, Print anyway prints, Keep waiting is an open-ended wait Escape cancels and whose line offers Print anyway (the ruling of 2026-09-20), and a repaint under the ask counts again', () => {
-  assert.ok(P2.includes('after which the bar asks instead of printing (the third review, 2026-09-19): with a picture still loading the flow enters the `stalled` phase and the line reads "1 picture has not loaded. Print anyway prints without it." or "N pictures have not loaded. Print anyway prints without them." (`stalledWords`, the count then `anywayWords`) with **Print anyway** and **Keep waiting**'));
+  assert.ok(P2.includes('after which the bar asks instead of printing (the third review, 2026-09-19): with a picture still loading the flow enters the `stalled` phase and the line reads "1 picture has not loaded." or "N pictures have not loaded." then the button\'s own sentence, "Print anyway leaves out any picture still loading." (`stalledWords`, the count then `anywayWords`) with **Print anyway** and **Keep waiting**'));
   // the words and the titles are the module\'s
-  assert.ok(flow.includes('return (n === 1 ? "1 picture has not loaded." : n + " pictures have not loaded.") + " " + anywayWords(n);'), 'the ask\'s words: the count, then the button\'s own sentence (round 5: the round-4 review\'s HIGH 1)');
-  assert.ok(flow.includes('return n === 1 ? "Print anyway prints without it." : "Print anyway prints without them.";'), 'the button\'s own sentence, anywayWords');
+  assert.ok(flow.includes('return (n === 1 ? "1 picture has not loaded." : n + " pictures have not loaded.") + " " + anywayWords();'), 'the ask\'s words: the count, then the button\'s own sentence (round 5: the round-4 review\'s HIGH 1)');
+  assert.ok(flow.includes('export function anywayWords(): string {\n  return "Print anyway leaves out any picture still loading.";'), 'the button\'s own sentence, anywayWords, takes no count (round 6: the round-5 review\'s ui-1)');
   assert.ok(flow.includes('export const ANYWAY_TITLE = "Print now; a picture still loading is left out";'), 'and its title says the same');
   assert.ok(flow.includes('export const ANYWAY_WORDS = "Print anyway";') && flow.includes('export const KEEP_WORDS = "Keep waiting";'));
   assert.ok(flow.includes('export const ANYWAY_TITLE = ') && flow.includes('export const KEEP_TITLE = '), 'the titles the section names');
@@ -208,8 +208,8 @@ test('P2: the deadline asks instead of printing, Print anyway prints, Keep waiti
   assert.ok(P2.includes('Nothing listens under the ask: "Keep waiting" reads the body as it stands then, so a picture that landed meanwhile is not waited on again, and with none left loading the print runs at once.'));
   // the open-ended wait's line: the waiting words, one word button, and the machine's anyway under untimed alone (romp-manager's
   // ruling, 2026-09-20: not an exit control, since Escape already left the wait, established by execution; no timer)
-  assert.ok(flow.includes('return (n === 1 ? "Waiting for 1 picture…" : "Waiting for " + n + " pictures…") + " " + anywayWords(n);'), 'the open-ended wait\'s words: the count, then the button\'s own sentence');
-  assert.ok(P2.includes('While that open-ended wait stands the line reads "Waiting for 1 picture… Print anyway prints without it." or "Waiting for N pictures… Print anyway prints without them." (`waitingWords`, the count then `anywayWords`) beside the loader, with one word button, **Print anyway** (`ANYWAY_WORDS` and `ANYWAY_TITLE`, the ask\'s), which prints at once with what has loaded'));
+  assert.ok(flow.includes('return (n === 1 ? "Waiting for 1 picture…" : "Waiting for " + n + " pictures…") + " " + anywayWords();'), 'the open-ended wait\'s words: the count, then the button\'s own sentence');
+  assert.ok(P2.includes('While that open-ended wait stands the line reads "Waiting for 1 picture…" or "Waiting for N pictures…" then the same sentence (`waitingWords`, the count then `anywayWords`) beside the loader, with one word button, **Print anyway** (`ANYWAY_WORDS` and `ANYWAY_TITLE`, the ask\'s), which prints at once with what has loaded'));
   assert.ok(flow.includes('if (ev.kind === "anyway" && s.untimed === true) return { state: { phase: "printing", gated: 0, pending: 0 }, act: "print" };'), 'anyway prints under the open-ended wait alone');
   inOrder(between(flow, 'case "preparing":', 'break;'), ['if (ev.kind === "ready")', 'if (ev.kind === "escape" && s.untimed === true)', 'if (ev.kind === "anyway" && s.untimed === true)'], 'the preparing phase: the verdict, then Escape and anyway under the mark');
   assert.equal([...flow.matchAll(/ev\.kind === "anyway"/g)].length, 2, 'anyway is read twice: under the ask, and under the open-ended wait');
@@ -868,13 +868,28 @@ test('P2: the ask\'s line and the open-ended wait\'s line end with the button\'s
   assert.ok(driver.includes('pressing it prints once with the parked picture still incomplete and the placeholder on the paper'), 'case (15)\'s title stands: the placeholder\'s box is on the paper (the gated box, not the picture)');
   assert.ok(TESTS.includes('Print anyway printing once with the parked picture incomplete and the placeholder on the paper, the request still parked'), 'and so does the record\'s sentence about it');
   assert.ok(TESTS.includes('case (15a), what reaches the paper: under the deadline\'s ask and under Keep waiting\'s open-ended wait both lines read, before any press, the count then the button\'s own sentence'));
-  assert.ok(read('ui', 'webview', 'file-print-browser.test.ts').includes('assert.equal(b.line, "1 picture has not loaded. Print anyway prints without it.", "the ask\'s line, read before the press'), 'the gated leg reads the ask\'s line before the press');
+  assert.ok(read('ui', 'webview', 'file-print-browser.test.ts').includes('assert.equal(b.line, "1 picture has not loaded. Print anyway leaves out any picture still loading.", "the ask\'s line, read before the press'), 'the gated leg reads the ask\'s line before the press');
   assert.ok(read('ui', 'webview', 'file-print.test.ts').includes('the ask\'s line and the open-ended wait\'s line each end with the button\'s own sentence, what Print anyway does (FAILS BEFORE:'), 'the node test pins the words');
   // the guide says it as the person reads it
   const label = '**Opening a markdown document.**';
   const para = guide.slice(guide.indexOf(label), guide.indexOf('\n\n', guide.indexOf(label))).replace(/\s+/g, ' ');
   assert.ok(para.includes('you are asked whether to print anyway, without the pictures still loading, or keep waiting'), 'the guide\'s ask clause says what Print anyway does');
   assert.ok(P5.includes('print anyway, without the pictures still loading, or keep waiting (P2\'s ask, the third review; the button\'s sentence, the round-4 review\'s HIGH 1)'));
+});
+
+// ── round 6 (the round-5 review's ui-1, 2026-09-20): the button's sentence takes no count ─────────────────────────────
+
+test('P2: the sentence beside Print anyway takes no count and names no picture, since a counted picture that lands while the line stands prints; the driver leg\'s case (15b) releases pictures under both lines and reads what prints, and the Tests list names it (the round-5 review\'s ui-1)', () => {
+  assert.ok(flow.includes('export function anywayWords(): string {'), 'anywayWords takes no argument');
+  assert.ok(!flow.includes('anywayWords(n)') && !flow.includes('export function anywayWords(n: number)'), 'and no caller hands it the count');
+  assert.equal([...flow.matchAll(/\+ " " \+ anywayWords\(\)/g)].length, 2, 'the ask\'s line and the open-ended wait\'s line end with it, and no other line does');
+  assert.ok(!flow.includes('"Print anyway prints without it."') && !flow.includes('"Print anyway prints without them."'), 'the round-5 sentence is gone from the module');
+  assert.ok(P2.includes('The sentence takes no count and names no picture (the round-5 review\'s ui-1, 2026-09-20): the line\'s count is the aim\'s and does not fall as pictures land, and a picture that lands while the line stands prints, so the round-5 wording, "Print anyway prints without them.", was false from that landing on; file-print-driver-browser.test.ts case (15b) releases pictures under both lines and reads what prints.'));
+  const driver = read('ui', 'webview', 'file-print-driver-browser.test.ts');
+  assert.ok(driver.includes('test("(15b) a picture that lands while the line stands prints, and the line\'s last sentence stays true of it:'), 'the driver leg\'s case (15b)');
+  inOrder(between(driver, 'test("(15b) a picture that lands while the line stands prints', '\n});'), ['await s.release([SLOW, SLOW2]);', '{ phase: "stalled", line: STALLED_TWO, buttons: [ANYWAY_WORDS, KEEP_WORDS], prints: 0 }', 'const askLine = b.line!;', 'await page.click(ANYWAY_BTN);', 'assert.deepEqual(p[0].incomplete, [], "every <img> complete at the print', 'assert.ok(askLine.endsWith(" " + SENTENCE)', 'await page.click(KEEP_BTN);', 'await s.release([SLOW]);', '{ phase: "preparing", line: waitingWords(2), buttons: [ANYWAY_WORDS], prints: 0 }', 'assert.equal(p[0].incomplete.length, 1', 'assert.ok(waitLine.endsWith(" " + SENTENCE)', 'await s.release([SLOW, SLOW2]);', 'await printsReach(page, 1);'], 'case (15b): both released under the ask, the line read before the press and held against a print with every picture complete; one released under Keep waiting, the print with one still loading; both released under Keep waiting, the settle\'s print');
+  assert.ok(TESTS.includes('Since the round-5 review (2026-09-20), case (15b), a picture that lands while the line stands prints, and the sentence stays true of it'), 'the Tests list names case (15b)');
+  assert.ok(read('ui', 'webview', 'file-print.test.ts').includes('assert.equal(anywayWords.length, 0, "the sentence takes no count'), 'the node test pins the arity');
 });
 
 test('P2, P6, open point 8 and the guide carry the figure-level grant sentence: the restore is the whole figure\'s, so a remote URL inside a non-painting element of a painting figure is counted, named and fetched (the round-4 review\'s HIGH 2, a consent-text correction), and the code road is recorded as needing an owner', () => {
