@@ -38,17 +38,23 @@ positions, each run under bats (the register below): the test's own closing brac
 return value); a function's closing brace, its opener found by brace depth over the command lines
 before it (`name() {` in any spelling bash accepts, with or without a trailing comment, or an
 Allman `{` under a `name()` line) when the function is CALLED where its status is read (a plain
-call, alone on its line or under `&&` or `;`, the caller's errexit reading it; a plain assignment's
-`x=$(name)`; `run name` followed by a line reading `$status`), since a helper called under `if`,
+call, alone on its line or under `&&` or `;`, with or without a `time` or `time -p` prefix, the
+caller's errexit reading it; a plain assignment's `x=$(name)`; `run name` followed by a line
+reading `$status`), since a helper called under `if`,
 `while`, `!`, `||`, a pipe, `&`, `echo $(...)` or not at all has its status discarded; a brace
 group's closing brace, an `if`'s `fi` (an `else` or `elif` before that `fi`), a loop's `done` and a
 `case`'s `esac` (a `;;` before it) exactly where that close is itself in a read position, so a
 compound that is the test's, a helper's or a subshell's last command is read and one followed by
 another command, or by `; <command>` on its own line, is not; a subshell's `)` unless what follows
-it discards the status; and a command substitution's `)` only under a plain assignment (`out="$(`),
-since `echo "$(...)"` discards the status and `local out="$(...)"` returns local's own 0. What
-follows a `)`, a `}` or a compound's close decides with redirections read past: `|`, `|&`, `||` and
-a trailing `&` discard the status; `&&` hands it to a list whose status is read exactly where the
+it discards the status or the subshell closes an `if`, `elif`, `while` or `until` condition; and a
+command substitution's `)` only under a plain assignment (`out="$(`), since `echo "$(...)"`
+discards the status and `local out="$(...)"` returns local's own 0. What follows a `)`, a `}` or a
+compound's close decides with redirections read past: `; then` or `; do`, on the close's line or as
+the first word of the next command line, ends a condition whose status the compound consumes,
+whatever else the trailer carries (`if (` newline `! cmd` newline `); then` asserts nothing under
+bats; the round-8 verifier's shape, exempt until the second round-8 addendum, when the `; then`
+decided nothing for a `)` and `if (` was read as a subshell's opener); `|`, `|&`, `||` and a
+trailing `&` discard the status; `&&` hands it to a list whose status is read exactly where the
 line is in a read position, unless a `||` or a trailing `&` follows the `&&` (`) && true` as the
 test's last command is read, `) && true || echo` is not). A heredoc's body is text and is skipped:
 an introducer is a `<<` outside quotes, outside a comment and outside `((...))`, its delimiter any
@@ -82,9 +88,11 @@ wherever it sits: a fixture written through such a heredoc reaches the disk rewr
 declares one test more than it runs), so the pin's message for such a line says to write it
 through printf.
 
-Measured over the 45 tests/*.bats at the round-7 head (938 tests, 14206 in-test lines by bash's
-parse), the two roads round 7's ruling left open, both with the helpers of the byte-order-mark case
-at file scope: round 6's rule (a block ends at any line stripping to `}`, no heredoc skip) scanned
+Measured over the 45 tests/*.bats at the round-7 head (948 tests by bash_test_extents, the pin's
+derivation over bats-preprocess's pattern, where the round-8 commit's column-zero opener had
+counted 938; 14206 in-test lines by bash's parse), the two roads round 7's ruling left open, both
+with the helpers of the byte-order-mark case at file scope: round 6's rule (a block ends at any
+line stripping to `}`, no heredoc skip) scanned
 14019 lines, 187 outside the scan in 10 blocks ended early (tests/install-sh.bats 80,
 tests/romp-uninstall.bats 49, tests/install-sh-coexist.bats 35, tests/romp-service.bats 23), 0
 reports; round 7's rule scanned all 14206, 0 reports; the round-8 rule scanned all 14206, 0
@@ -303,12 +311,12 @@ def _strip_redirections(rest):
 
 def _after_heredoc(lines, i):
     """The index of the first line after the heredocs lines[i] opens, when each has its terminator line before the next `@test`
-    open; i + 1 otherwise. A blank or comment line opens none. A heredoc whose terminator never comes, or comes after a `@test`
-    open, is not skipped (round 8, correctness-1: the search is bounded so a skip cannot cross a test; the body is then scanned as
-    commands, which is the visible side). Two heredocs on one line are skipped in order, the second body after the first's
-    terminator (round 8, tests-4)."""
-    if _BLANK_OR_COMMENT.match(lines[i]):
-        return i + 1
+    open; i + 1 otherwise. A blank or comment line opens none: _introducers stops at an unquoted `#` at the start of the line or
+    after a blank, and a blank line holds no `<<` (a _BLANK_OR_COMMENT guard stood here as well until the second round-8 addendum,
+    dead code behind that break: the round-8 verifier's mutant deleting it survived, and the tests-5 case pins the break instead). A
+    heredoc whose terminator never comes, or comes after a `@test` open, is not skipped (round 8, correctness-1: the search is
+    bounded so a skip cannot cross a test; the body is then scanned as commands, which is the visible side). Two heredocs on one line
+    are skipped in order, the second body after the first's terminator (round 8, tests-4)."""
     intros = _introducers(lines[i])
     if not intros:
         return i + 1
@@ -402,11 +410,13 @@ def _function_name(lines, k, heredoc_body, block):
 
 def _plain_call(lines, idx, name, heredoc_body, block):
     """Whether the command line at idx calls the function `name` where bash reads its status: a plain call as the line's first word
-    (after `{` or `(` openers), with no `||`, pipe or trailing `&` on the line (`&&` and `;` leave it read: the list short-circuits
-    on it, errexit reads it); a plain assignment's `x=$(name ...)`; or `run name` followed by a command line that reads `$status`."""
+    (after `{` or `(` openers and after a `time` or `time -p` prefix, which times the pipeline and leaves its status the call's;
+    round 8, second addendum: `time _h` was not read as a call, so the helper's last command was reported while bats fails the test
+    through errexit), with no `||`, pipe or trailing `&` on the line (`&&` and `;` leave it read: the list short-circuits on it,
+    errexit reads it); a plain assignment's `x=$(name ...)`; or `run name` followed by a command line that reads `$status`."""
     code = _code_part(lines[idx]).strip()
     esc = re.escape(name)
-    if re.match(r"^(?:[{(]\s+)*" + esc + r"(?=[\s;]|$)", code):
+    if re.match(r"^(?:[{(]\s+)*(?:time\s+(?:-p\s+)?)?" + esc + r"(?=[\s;]|$)", code):
         ops = _top_level_ops(code)
         if any(op == "||" for op, _ in ops):
             return _fallback_fails(code[[i for op, i in ops if op == "||"][-1] + 2:])
@@ -453,14 +463,35 @@ def _matching_close(lines, j, opener, closer, heredoc_body, block):
     return None
 
 
+_CONDITION_WORD = re.compile(r"(?:then|do)(?![\w-])")
+
+
+def _closes_a_condition(lines, j, rest, heredoc_body):
+    """Whether the close on lines[j], its trailer `rest` (redirections stripped), ends an `if`, `elif`, `while` or `until` condition,
+    whose status the compound consumes: a top-level `;` in the trailer followed by the word `then` or `do`, or the next command line
+    beginning with one (round 8, second addendum, the round-8 verifier's shape: `if (` newline `! true` newline `); then true; fi`
+    passes under bats with the negation asserting nothing, and was exempt, the `; then` deciding nothing for a `)` and `if (` read as
+    a subshell's opener; `while (` and `until (` conditions, `then` or `do` on the next line, and an `&&` or `||` list before the
+    `then` take the same road, each ok under bats)."""
+    for op, i in _top_level_ops(rest):
+        if op == ";" and _CONDITION_WORD.match(rest[i + 1:].lstrip()):
+            return True
+    nxt = _next_command_line(lines, j + 1, heredoc_body)
+    return nxt < len(lines) and bool(_CONDITION_WORD.match(_code_part(lines[nxt]).lstrip()))
+
+
 def _trailer(lines, j, rest, heredoc_body, block, brace):
     """What the text after a `)`, a `}` or a compound's close on lines[j] does with its status: False when it discards it (`|`, `|&`,
     a trailing `&`; `||` with a fallback whose status is not known to fail; `&&` followed by such a `||` or by a trailing `&`; for a
     `}` or a compound's close, `; <command>` on the same line, which bats runs on past); True when it is read (`|| false`, `||
     return 1`: the fallback fails the test; an `&&` list whose line is itself in a read position); None when the trailer decides
     nothing (empty, `;`, redirections alone, `; <command>` after a subshell's `)`, which errexit reads) and the closer's own rule
-    applies. Redirections before the operator are read past (round 8 addendum, F2, F3, F6)."""
+    applies. Redirections before the operator are read past (round 8 addendum, F2, F3, F6). Before any of that, a close that ends
+    an `if`, `elif`, `while` or `until` condition (_closes_a_condition) is False whatever else the trailer carries: the compound
+    consumes the status (round 8, second addendum)."""
     rest = _strip_redirections(rest)
+    if _closes_a_condition(lines, j, rest, heredoc_body):
+        return False
     if rest in ("", ";"):
         return None
     if rest.startswith("||"):
@@ -483,7 +514,9 @@ def _trailer(lines, j, rest, heredoc_body, block, brace):
 
 def _read_position(lines, i, j, heredoc_body, block):
     """Whether lines[j], the first command line after the bare `!` at lines[i], puts that `!` where bash reads its status. A `)`: a
-    subshell's end, read unless what follows the paren discards it (round 8, tests-1 and correctness-4), or a command substitution's
+    subshell's end, read unless what follows the paren discards it (round 8, tests-1 and correctness-4) or the paren closes an `if`,
+    `elif`, `while` or `until` condition (`); then`, `); do`, or `then` or `do` opening the next command line: the compound consumes
+    the status, _closes_a_condition, the second round-8 addendum), or a command substitution's
     end (its opener ends in `$(`, quoted or not; round 8 addendum, F5), read only when the opener is a plain assignment (`out="$(`),
     since `echo "$(...)"` discards it and `local out="$(...)"` returns local's 0. A `}`: what it closes decides, found by brace depth
     over the command lines before it, heredoc bodies skipped (round 8, regression-2): the test's own opener (the test's return value,
@@ -808,7 +841,7 @@ class BatsSuites(unittest.TestCase):
 
 class Scanner(unittest.TestCase):
     """The scanner itself, on synthetic snippets: it flags exactly the form bats cannot see. Every shape below was run under bats
-    1.10.0 with the negated command succeeding (round 8 of fork PR #778 and its addendum; the register in BatsGroundTruth runs the
+    1.10.0 with the negated command succeeding (round 8 of fork PR #778 and its two addenda; the register in BatsGroundTruth runs the
     families under bats in the suite): `ok` means the position asserts nothing and the scanner must report it, `not ok` means bats
     checked it and the scanner must not. `# red before:` names the earlier module's answer."""
 
@@ -1052,6 +1085,28 @@ class Scanner(unittest.TestCase):
                      '    x="$(_h)"\n', '    run _h\n    [ "$status" -eq 0 ]\n', '    _h || return 1\n    true\n'):
             self.assertExempt(helper % (self.NEG, call), repr(call))
 
+    def test_a_subshell_closing_a_condition_is_consumed_and_a_timed_call_is_a_plain_call(self):
+        # second round-8 addendum (the round-8 verifier's shapes s04 and s03, each run under bats 1.10.0 here with the negated command
+        # succeeding). bats: ok for every condition shape, mid-test and as the test's last command (the if, while or until consumes
+        # the subshell's status: `; then` or `; do` on the paren's line, `then` or `do` on the next line, an else branch, an `&&` or
+        # `||` list before the `then`); red before: every one exempt (the `; then` trailer decided nothing for a `)` and `if (` was
+        # read as a subshell's opener) but the `&& true; then` spelling mid-test, which the `&&` branch's recursion onto the next
+        # line happened to report
+        cond = '@test "x" {\n    %s (\n        %s\n    )%s\n%s}\n'
+        for kw, trailer in (("if", "; then true; fi"), ("while", "; do break; done"), ("until", "; do break; done"),
+                            ("if", "\n    then true; fi"), ("while", "\n    do break; done"), ("until", "\n    do break; done"),
+                            ("if", "; then true; else true; fi"), ("if", " && true; then true; fi"), ("if", " || false; then true; fi")):
+            self.assertReported(cond % (kw, self.NEG, trailer, "    true\n"), kw + repr(trailer) + " mid-test")
+            self.assertReported(cond % (kw, self.NEG, trailer, ""), kw + repr(trailer) + " last")
+        # bats: not ok for a helper called under `time` or `time -p`, mid-test and last, and under `time _h && true` (errexit reads
+        # the timed pipeline); red before: each reported, `time _h` not read as a plain call. `time _h || true` and `time _h | cat`
+        # discard the status (bats: ok) and stay reported
+        helper = '@test "x" {\n    _h() {\n        run true\n        %s\n    }\n%s}\n'
+        for call in ("    time _h\n    true\n", "    time _h\n", "    time -p _h\n    true\n", "    time -p _h\n", "    time _h && true\n"):
+            self.assertExempt(helper % (self.NEG, call), repr(call))
+        for call in ("    time _h || true\n    true\n", "    time _h | cat\n    true\n"):
+            self.assertReported(helper % (self.NEG, call), repr(call))
+
     def test_a_heredoc_inside_a_nested_helper_does_not_end_the_backward_walk(self):
         # round 8 (regression-2): the helper's opener is found over command lines, heredoc text skipped; bats: not ok. Red before:
         # the walk stopped at the column-zero `PY` and reported the helper's last command
@@ -1111,8 +1166,11 @@ class Scanner(unittest.TestCase):
         self.assertReported('@test "x" {\n    grep -q \'x <<FAKE\' "$LOG" || cat > "$f" <<EOF\n! text\nEOF\n    %s\n    true\n}\n' % self.NEG)
 
     def test_a_comment_line_opens_no_heredoc(self):
-        # round 8 (tests-5): the guard that makes _after_heredoc's docstring true; without it the comment's `<<PLIST` skips to the
-        # real terminator below and the negation between is lost (the mutant returns [])
+        # round 8 (tests-5): what makes _after_heredoc's docstring true is _introducers' break at an unquoted `#` at the start of the
+        # line or after a blank; with that break replaced by `pass` the comment's `<<PLIST` skips to the real terminator below and the
+        # negation between is lost (the mutant returns [] and this case reds). Second round-8 addendum: the case's comment had named a
+        # _BLANK_OR_COMMENT guard in _after_heredoc as what it pinned; the round-8 verifier's mutant deleting that guard survived (the
+        # break decides first), so the guard was dead code and is removed
         self.assertReported('@test "x" {\n    # the fixture below is written with a heredoc <<PLIST\n    %s\n'
                             '    cat > "$f" <<\'PLIST\'\n<plist/>\nPLIST\n    true\n}\n' % self.NEG)
 
@@ -1263,6 +1321,7 @@ def ground_truth_shapes():
             S["A_%s_%s" % (name, pos)] = '@test "x" {\n    (\n        run true\n        %s\n    %s%s\n}\n' % (N, closer, tail)
     S["A_neg_before_last"] = '@test "x" {\n    (\n        %s\n        run true\n    )\n    true\n}\n' % N
     S["A_bg_wait_last"] = '@test "x" {\n    (\n        %s\n    ) &\n    wait\n}\n' % N
+    S["A_if_condition_mid"] = '@test "x" {\n    if (\n        run true\n        %s\n    ); then true; fi\n    true\n}\n' % N
     for name, opener, closer in (("assign_quoted", 'out="$(', ')"'), ("assign_unquoted", "out=$(", ")"), ("assign_plus", 'out+="$(', ')"'),
                                  ("echo_quoted", 'echo "$(', ')"'), ("echo_unquoted", "echo $(", ")"), ("export", 'export out="$(', ')"'),
                                  ("bracket", '[ -z "$(', ')" ]'), ("assign_then_pipe", 'out="$(', ')" | cat')):
@@ -1297,7 +1356,8 @@ def ground_truth_shapes():
     for name, call in (("called_last", "    _h\n"), ("called_mid", "    _h\n    true\n"), ("called_with_args", '    _h /dev/null x\n    true\n'),
                        ("called_in_if", "    if _h; then true; fi\n    true\n"), ("called_or_true", "    _h || true\n    true\n"),
                        ("called_or_return", "    _h || return 1\n    true\n"), ("called_or_false_last", "    _h || false\n"),
-                       ("called_or_return_0", "    _h || return 0\n    true\n"), ("never_called", "    true\n"), ("run_no_status", "    run _h\n    true\n"),
+                       ("called_or_return_0", "    _h || return 0\n    true\n"), ("called_under_time", "    time _h\n    true\n"),
+                       ("never_called", "    true\n"), ("run_no_status", "    run _h\n    true\n"),
                        ("run_status", '    run _h\n    [ "$status" -eq 0 ]\n'), ("and_true_last", "    _h && true\n"), ("semi_true", "    _h; true\n    true\n"),
                        ("subst_echo", "    echo $(_h)\n    true\n"), ("subst_assign_last", "    x=$(_h)\n"), ("subst_assign_quoted_mid", '    x="$(_h)"\n    true\n'),
                        ("if_negated", "    if ! _h; then true; fi\n    true\n"), ("in_group_last", "    {\n        _h\n    }\n"),
@@ -1393,6 +1453,7 @@ class BatsGroundTruth(unittest.TestCase):
         'A_bg_last': 'ok',
         'A_bg_mid': 'ok',
         'A_bg_wait_last': 'ok',
+        'A_if_condition_mid': 'ok',
         'A_neg_before_last': 'ok',
         'A_or_false_last': 'not ok',
         'A_or_false_mid': 'not ok',
@@ -1472,6 +1533,7 @@ class BatsGroundTruth(unittest.TestCase):
         'D_called_or_return': 'not ok',
         'D_called_or_return_0': 'ok',
         'D_called_or_true': 'ok',
+        'D_called_under_time': 'not ok',
         'D_called_with_args': 'not ok',
         'D_close_trailing_comment': 'not ok',
         'D_column_zero_body': 'not ok',
