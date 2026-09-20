@@ -674,10 +674,15 @@ DERIVE_ENV_DROPPED = ("PYTEST_ADDOPTS", "PYTEST_PLUGINS", "PYTEST_DISABLE_PLUGIN
                       "PYTEST_XDIST_WORKER", "PYTEST_XDIST_WORKER_COUNT", "ROMP_TESTS_SYSTEM_TMPDIR",
                       "PY_COLORS", "FORCE_COLOR", "CLICOLOR_FORCE",      # what nested_run pops from its child's
                       "CLAUDE_CODE_SESSION_ID")                          # environment; the session id the recipe unsets
-# The matrix's blocks by key prefix, the same blocks the docstring's two "each cell a rule and a derive id" heads open.
-# cell_counts refuses a key that opens on no block's prefix, or on two, so a cell of a new block is added here before it
-# can be counted: never a silent third bucket.
-CELL_BLOCKS = (("the refusal block", ("refusal-", "refused-", "report-")), ("the boundary link", ("boundary-",)))
+# The matrix's blocks: each by the name --count prints, the words that open its head in the module docstring (the head
+# ends in BLOCK_HEAD_TAIL) and its key prefixes. cell_counts refuses a key that opens on no block's prefix, or on two,
+# so a cell of a new block is added here before it can be counted: never a silent third bucket; and
+# TheMutationCellsApply holds each block's docstring paragraph (docstring_block_ids) and its prefixes to the same
+# cells, so a cell whose text sits under the other block's head reds there instead of being counted under its prefix
+# while it is read under its paragraph (the round-7 review's plant).
+CELL_BLOCKS = (("the refusal block", "the first window's refusal (_sdk_swapped)", ("refusal-", "refused-", "report-")),
+               ("the boundary link", "the boundary verdict's link to the refusal (_sdk_found_refused)", ("boundary-",)))
+BLOCK_HEAD_TAIL = ", each cell a rule and a derive id: "
 # The table's floor, the table's length when the floor pin was written: a shorter table is a failure, not a pass. The
 # floor pin's message formats this constant, so the value has one copy.
 TABLE_FLOOR = 30
@@ -693,14 +698,34 @@ def cell_counts(table=None):
     written in prose is measured once and outlives the cell added after it, and this one is read at the tree it runs
     in. A key that opens on no block's prefix, or on more than one, is a loud error, never an uncounted cell."""
     table = MUTATIONS if table is None else table
-    counts = {block: 0 for block, _ in CELL_BLOCKS}
+    counts = {block: 0 for block, _, _ in CELL_BLOCKS}
     for cell in table:
-        blocks = [block for block, prefixes in CELL_BLOCKS if cell.startswith(prefixes)]
+        blocks = [block for block, _, prefixes in CELL_BLOCKS if cell.startswith(prefixes)]
         if len(blocks) != 1:
             raise ValueError("%s opens on %s block prefix (CELL_BLOCKS)" % (cell, "no" if not blocks else "more than one"))
         counts[blocks[0]] += 1
     counts["in total"] = len(table)
     return counts
+
+
+def docstring_block_ids(doc):
+    """The derive ids each block's paragraph of the module docstring carries, by block name: the collapsed docstring is
+    cut at the block heads (CELL_BLOCKS' opening words followed by BLOCK_HEAD_TAIL, each exactly once), and a block's
+    paragraph runs from its head to the next head or the end. A docstring that carries BLOCK_HEAD_TAIL more times than
+    CELL_BLOCKS has blocks raises, so a third block written there is never read as the tail of the second."""
+    text = re.sub(r"\s+", " ", doc)
+    if text.count(BLOCK_HEAD_TAIL) != len(CELL_BLOCKS):
+        raise AssertionError("the docstring opens %d block heads (%r) and CELL_BLOCKS names %d blocks"
+                             % (text.count(BLOCK_HEAD_TAIL), BLOCK_HEAD_TAIL, len(CELL_BLOCKS)))
+    heads = {}
+    for block, opening, _ in CELL_BLOCKS:
+        head = opening + BLOCK_HEAD_TAIL
+        if text.count(head) != 1:
+            raise AssertionError("%s's head occurs %d times in the docstring, not once: %r" % (block, text.count(head), head))
+        heads[block] = text.index(head) + len(head)
+    starts = sorted(heads.values()) + [len(text)]
+    return {block: re.findall(r"; derive: ([\w-]+)\)", text[start:starts[starts.index(start) + 1]])
+            for block, start in heads.items()}
 
 
 def mutation_cell_text(doc, cell):
@@ -3122,6 +3147,20 @@ class TheMutationCellsApply(unittest.TestCase):
             text = mutation_cell_text(__doc__, cell)
             self.assertIsNotNone(text, cell)
             self.assertIn("(red: ", text, "%s: the cell states no rule: %s" % (cell, text))
+
+    def test_each_blocks_paragraph_carries_exactly_the_keys_of_its_prefixes(self):
+        """The blocks --count reports (cell_counts, by key prefix) are the blocks the docstring's heads open: each
+        block's paragraph carries the derive ids of exactly the keys that open on its prefixes. The round-7 review moved
+        a boundary cell's text into the refusal paragraph and the pins stayed green while --count and the paragraphs
+        disagreed by one; the CELL_BLOCKS comment claimed the equality and nothing held it."""
+        by_block = docstring_block_ids(__doc__)
+        for block, _, prefixes in CELL_BLOCKS:
+            keys = {cell for cell in MUTATIONS if cell.startswith(prefixes)}
+            self.assertEqual(set(by_block[block]), keys, "%s: its paragraph and the keys opening on %r differ: in the "
+                             "paragraph under another block's prefix %r, keyed to it but written elsewhere %r"
+                             % (block, prefixes, sorted(set(by_block[block]) - keys), sorted(keys - set(by_block[block]))))
+        with self.assertRaisesRegex(AssertionError, "opens 3 block heads"):
+            docstring_block_ids(__doc__ + " a third" + BLOCK_HEAD_TAIL)
 
     def test_the_first_cell_of_each_block_opens_on_its_own_words(self):
         """The cell text derive() prints starts at the cell's own words for a block's first cell too, whose left
