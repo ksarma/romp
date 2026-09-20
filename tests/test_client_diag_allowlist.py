@@ -275,19 +275,188 @@ def federation_host_row_kinds():
 STALE_WHY_WORDS = ("unpaired", "gen", "newGen", "base", "ahead", "through", "behind", "rev", "disagree")   # the feedDelta-stale row's why vocabulary in the ladder's test order (round 4, 2026-09-20): a word per field failure and a word per relation, held to the ladder by test_the_stale_rows_vocabulary_is_the_ladders
 
 
-def stale_why_words():
-    """The feedDelta-stale row's `why` vocabulary as federation.ts mints it: the string literals of the `const why = ...`
-    ladder in applyRemoteFeedDelta, in source order (the order the conditions are tested in), or None when the anchors are
-    gone. The anchor includes the minter's literal, `{ host, buildId: d.buildId, why }`, so the read also holds that the row
-    carries host, buildId and why and nothing else: the word is the whole signal a reader of the file has (a stale row in
-    the file carries no gen, base, rev or through), which is why a relation failure between two valid fields needs a word
-    of its own and cannot ride a field's; and since round 4 the anchor holds the row's latch too (sayDeltaOnce keyed on the
-    word and the remote's build, the ask beside it unlatched). test_the_stale_rows_vocabulary_is_the_ladders holds this list to STALE_WHY_WORDS,
-    and tests/test_federated_dial_terms_served.py's held_pair points here for the refusals its model does not reproduce."""
+def stale_why_expr():
+    """The `const why = ...` expression of applyRemoteFeedDelta's stale row, as federation.ts spells it, or None when the
+    anchors are gone. The anchor is the statement AFTER it, which carries the minter's literal, `{ host, buildId: d.buildId,
+    why }`, so the read also holds that the row carries host, buildId and why and nothing else: the word is the whole signal a
+    reader of the file has (a stale row in the file carries no gen, base, rev or through), which is why a relation failure
+    between two valid fields needs a word of its own and cannot ride a field's; and since the author's pass 4 the anchor
+    holds the row's latch too (sayDeltaOnce keyed on the word and the remote's build, the ask beside it unlatched). The
+    expression is cut at the `;` that ends its statement, found from the anchor backwards, so a `;` inside one of its
+    literals stays inside the expression (an earlier reader stopped at the first `;`)."""
     src = open(os.path.join(os.path.dirname(HERE), "ui", "webview", "federation.ts"), encoding="utf-8").read()
-    m = re.search(r'const why = ([^;]*);\s*\n\s*if \(this\.sayDeltaOnce\(c, "feedDelta-stale", why \+ this\.peerTag\(c\)\)\) '
-                  r'this\.diag\("feedDelta-stale", \{ host, buildId: d\.buildId, why \}\);', src)
-    return re.findall(r'"([\w-]+)"', m.group(1)) if m else None
+    anchor = re.search(r';\s*\n\s*if \(this\.sayDeltaOnce\(c, "feedDelta-stale", why \+ this\.peerTag\(c\)\)\) '
+                       r'this\.diag\("feedDelta-stale", \{ host, buildId: d\.buildId, why \}\);', src)
+    if not anchor:
+        return None
+    start = src.rfind("const why = ", 0, anchor.start())
+    return src[start + len("const why = "):anchor.start()] if start >= 0 else None
+
+
+_JS_FORMS = {'"': "double-quoted string", "'": "single-quoted string", "`": "template literal"}
+_JS_SIMPLE_ESCAPES = {"n": "\n", "t": "\t", "r": "\r", "b": "\b", "f": "\f", "v": "\v", "0": "\0", "\\": "\\", "'": "'", '"': '"', "`": "`"}
+_JS_PUNCT = ("===", "!==", "?.", "??", "==", "!=", "<=", ">=", "&&", "||", "=>", "**")
+
+
+def _js_literal(src, i):
+    """Read the string or template literal that opens at src[i] as JavaScript reads it: the value it denotes and the index
+    after its closing quote. Every escape the language permits is decoded (the simple escapes, \\xHH, \\uHHHH, \\u{H...}, an
+    escaped quote, a line continuation, and a non-escape character standing for itself); a template literal may hold a raw
+    newline. A literal this cannot read, an unterminated one, a malformed escape or a template expression (a `${...}`
+    substitution, no constant), raises an AssertionError naming the form: a refusal, never absence."""
+    q = src[i]
+    form = _JS_FORMS[q]
+    j, out = i + 1, []
+    while True:
+        if j >= len(src):
+            raise AssertionError("stale_why_words(): an unterminated %s at offset %d: %r" % (form, i, src[i:i + 40]))
+        c = src[j]
+        if c == q:
+            return "".join(out), j + 1
+        if q == "`" and src.startswith("${", j):
+            raise AssertionError("stale_why_words(): a template expression (a `${...}` substitution) at offset %d is no constant this reader can read: %r" % (i, src[i:i + 40]))
+        if c == "\\":
+            e = src[j + 1:j + 2]
+            if e == "":
+                raise AssertionError("stale_why_words(): an unterminated %s at offset %d (it ends in a backslash): %r" % (form, i, src[i:i + 40]))
+            if e == "\n":
+                j += 2
+                continue   # a line continuation: nothing
+            if e == "\r":
+                j += 3 if src.startswith("\r\n", j + 1) else 2
+                continue
+            if e in _JS_SIMPLE_ESCAPES:
+                out.append(_JS_SIMPLE_ESCAPES[e])
+                j += 2
+                continue
+            if e == "x":
+                h = src[j + 2:j + 4]
+                if not re.fullmatch(r"[0-9a-fA-F]{2}", h):
+                    raise AssertionError("stale_why_words(): a malformed \\x escape in a %s at offset %d: %r" % (form, i, src[i:i + 40]))
+                out.append(chr(int(h, 16)))
+                j += 4
+                continue
+            if e == "u":
+                if src.startswith("{", j + 2):
+                    k = src.find("}", j + 3)
+                    h = src[j + 3:k] if k > 0 else ""
+                    if not re.fullmatch(r"[0-9a-fA-F]{1,6}", h):
+                        raise AssertionError("stale_why_words(): a malformed \\u{} escape in a %s at offset %d: %r" % (form, i, src[i:i + 40]))
+                    out.append(chr(int(h, 16)))
+                    j = k + 1
+                    continue
+                h = src[j + 2:j + 6]
+                if not re.fullmatch(r"[0-9a-fA-F]{4}", h):
+                    raise AssertionError("stale_why_words(): a malformed \\u escape in a %s at offset %d: %r" % (form, i, src[i:i + 40]))
+                out.append(chr(int(h, 16)))
+                j += 6
+                continue
+            out.append(e)   # a non-escape character stands for itself (JavaScript's rule for \\a, \\d, ...)
+            j += 2
+            continue
+        if c == "\n" and q != "`":
+            raise AssertionError("stale_why_words(): a newline inside a %s at offset %d (unterminated): %r" % (form, i, src[i:i + 40]))
+        out.append(c)
+        j += 1
+
+
+def _js_tokens(expr):
+    """The expression as tokens: ("literal", value, text) for every string or template literal (every form, decoded by
+    _js_literal), ("identifier", ...), ("number", ...) and ("punct", ...) for the rest, the multi-character punctuators
+    kept whole so `?.` and `??` are never read as the ternary's `?`."""
+    toks, i, n = [], 0, len(expr)
+    while i < n:
+        c = expr[i]
+        if c.isspace():
+            i += 1
+            continue
+        if c in _JS_FORMS:
+            v, j = _js_literal(expr, i)
+            toks.append(("literal", v, expr[i:j]))
+            i = j
+            continue
+        if c.isalpha() or c in "_$":
+            j = i + 1
+            while j < n and (expr[j].isalnum() or expr[j] in "_$"):
+                j += 1
+            toks.append(("identifier", expr[i:j], expr[i:j]))
+            i = j
+            continue
+        if c.isdigit():
+            j = i + 1
+            while j < n and (expr[j].isalnum() or expr[j] in "._"):
+                j += 1
+            toks.append(("number", expr[i:j], expr[i:j]))
+            i = j
+            continue
+        for punct in _JS_PUNCT:
+            if expr.startswith(punct, i):
+                toks.append(("punct", punct, punct))
+                i += len(punct)
+                break
+        else:
+            toks.append(("punct", c, c))
+            i += 1
+    return toks
+
+
+def ladder_words(expr):
+    """The words of a flat conditional ladder, `cond ? value : cond ? value : ... : value`, in source order: each VALUE must
+    be one string literal, in any form the language permits (a double-quoted or single-quoted string, a template literal
+    without a substitution, any escape), decoded as the language reads it; a condition may hold anything (a literal there is
+    no word). A value that is not one literal (an identifier, a member or other expression, a concatenation, a call, a
+    number, an empty value, a template expression, an unterminated literal, a malformed escape) or a shape that is not a
+    flat ladder raises an AssertionError naming the form, so the vocabulary pin reds naming what it could not read instead
+    of passing over a word it never saw (the maintainer's round 4, extra7-2: an earlier reader collected double-quoted
+    `[\\w-]+` literals alone, and a tenth word in any other form vanished from the derived list)."""
+    toks = _js_tokens(expr)
+    runs, cur, depth = [], [], 0
+    for t in toks:
+        if t[0] == "punct" and t[1] in "([{":
+            depth += 1
+        elif t[0] == "punct" and t[1] in ")]}":
+            depth -= 1
+        if depth == 0 and t[0] == "punct" and t[1] in ("?", ":"):
+            runs.append((t[1], cur))
+            cur = []
+        else:
+            cur.append(t)
+    runs.append(("end", cur))
+    n = len(runs)
+    v = (n - 1) // 2
+    if n < 3 or [d for d, _ in runs] != ["?", ":"] * v + ["end"]:
+        raise AssertionError("stale_why_words(): the expression is not a flat conditional ladder (condition ? value : condition ? value : ... : value): its top-level delimiters read %r" % ([d for d, _ in runs],))
+    values = [runs[k][1] for k in range(1, n - 1, 2)] + [runs[n - 1][1]]
+    words = []
+    for pos, run in enumerate(values, 1):
+        if len(run) == 1 and run[0][0] == "literal":
+            words.append(run[0][1])
+            continue
+        text = " ".join(t[2] for t in run)
+        if not run:
+            form = "an empty value"
+        elif len(run) == 1:
+            form = ("an " if run[0][0][0] in "aeiou" else "a ") + run[0][0]
+        elif any(t[0] == "identifier" for t in run) and any(t[1] == "(" for t in run):
+            form = "a call"
+        elif any(t[1] == "+" for t in run):
+            form = "a concatenation"
+        else:
+            form = "an expression of %d tokens" % len(run)
+        raise AssertionError("stale_why_words(): the ladder's value %d of %d is %s, not one string literal (a double-quoted or single-quoted string, or a template literal without a substitution): %r; a value this reader cannot read is a refusal, never absence"
+                             % (pos, len(values), form, text))
+    return words
+
+
+def stale_why_words():
+    """The feedDelta-stale row's `why` vocabulary as federation.ts mints it: the value literals of the `const why = ...`
+    ladder in applyRemoteFeedDelta (stale_why_expr), in source order (the order the conditions are tested in), read by
+    ladder_words in every literal form the language permits, or None when the anchors are gone; a value the reader cannot
+    read raises, naming the form (the maintainer's round 4, extra7-2). test_the_stale_rows_vocabulary_is_the_ladders holds
+    this list to STALE_WHY_WORDS, test_the_vocabulary_reader_reads_every_literal_form_and_refuses_what_it_cannot pins the
+    forms, and tests/test_federated_dial_terms_served.py's held_pair points here for the words the feed gate files."""
+    expr = stale_why_expr()
+    return ladder_words(expr) if expr is not None else None
 
 
 def disclosure_copies():
@@ -1203,9 +1372,61 @@ class ClientDiagAllowlistTest(unittest.TestCase):
         added to the ladder fails here until STALE_WHY_WORDS carries it, so it is driven too. Red at the head before the
         fifth word (the ladder minted four, the relation failure riding rev's), and again at the round-3 head before the
         round-4 words (three relations riding a field's word: unpaired under gen, ahead under base, behind under through)."""
-        words = stale_why_words()
+        words = stale_why_words()   # raises, naming the form, on a value the reader cannot read: never a shorter list
         self.assertIsNotNone(words, "federation.ts: the ladder's anchors are gone (the `const why` expression, or the minter's literal {host, buildId, why}): re-aim stale_why_words()")
         self.assertEqual(tuple(words), STALE_WHY_WORDS, "the ladder's words, in test order, are the driven vocabulary")
+
+    def test_the_vocabulary_reader_reads_every_literal_form_and_refuses_what_it_cannot(self):
+        """The maintainer's round 4 (extra7-2): stale_why_words() read only double-quoted `[\\w-]+` literals, so a tenth word
+        in any other form vanished from the derived list, the vocabulary pin passed nine against nine, and the word was never
+        driven through the admit road. The reader now parses the expression as a flat conditional ladder and reads one string
+        literal per value in every form the language permits (double quotes, single quotes, a template literal without a
+        substitution; every escape: the simple ones, \\x, \\u, \\u{}, an escaped quote, a line continuation, a non-escape
+        character standing for itself; a raw newline in a template), and REFUSES, naming the form, a value it cannot read (a
+        template expression, an identifier, a member expression, a concatenation, a call, a number, an empty value, an
+        unterminated literal, a malformed escape) and a shape that is not a flat ladder. This plants a tenth word in EACH form
+        into the real expression before its last value: a readable form yields ten words with the tenth decoded, so the
+        vocabulary pin reds (ten against nine: the word not driven); an unreadable form raises with the form named. The two
+        form sets are the census form space, asserted so a form added to one list is counted. Red at the head before the
+        pass: the reader returned nine words for the single-quoted and dotted plants (the module stayed green under both)."""
+        expr = stale_why_expr()
+        self.assertIsNotNone(expr, "the anchors are gone")
+        self.assertTrue(expr.rstrip().endswith(': "disagree"'), "the rig: the ladder's last value is the relation word: %r" % (expr[-40:],))
+        self.assertEqual(tuple(ladder_words(expr)), STALE_WHY_WORDS, "the real expression reads as the pinned vocabulary")
+        plant = lambda lit: expr[:expr.rstrip().rfind(': "disagree"')] + ": d.rev < 0 ? " + lit + ' : "disagree"'
+        readable = [("double", '"negative"', "negative"), ("single", "'negative'", "negative"), ("template", "`negative`", "negative"),
+                    ("double-with-dot", '"rev.negative"', "rev.negative"), ("unicode-escape", '"neg\\u0061tive"', "negative"),
+                    ("unicode-brace-escape", '"neg\\u{61}tive"', "negative"), ("hex-escape", '"neg\\x61tive"', "negative"),
+                    ("quote-escape", "'neg\\'ative'", "neg'ative"), ("double-quote-escape", '"neg\\"ative"', 'neg"ative'),
+                    ("line-continuation", '"nega\\\ntive"', "negative"), ("template-newline", "`nega\ntive`", "nega\ntive"),
+                    ("non-escape", '"neg\\ative"', "negative"), ("simple-escape", '"neg\\tative"', "neg\tative")]
+        for name, lit, decoded in readable:
+            words = ladder_words(plant(lit))
+            self.assertEqual(len(words), 10, name)
+            self.assertEqual(words[8], decoded, "%s: the tenth word decoded as the language reads it" % name)
+            self.assertNotEqual(tuple(words), STALE_WHY_WORDS, "%s: the vocabulary pin would red (a word not driven)" % name)
+        unreadable = [("template-expression", "`neg${x}ative`", "template expression"), ("identifier", "NEGATIVE", "an identifier"),
+                      ("member", "d.why", "an expression"), ("concatenation", '"neg" + "ative"', "a concatenation"),
+                      ("call", 'word("negative")', "a call"), ("number", "42", "a number"), ("empty", "", "an empty value"),
+                      ("unterminated", '"negative', "unterminated"), ("newline-in-string", '"nega\ntive"', "unterminated"),
+                      ("bad-hex-escape", '"neg\\xZZtive"', "malformed")]
+        for name, lit, named in unreadable:
+            with self.assertRaises(AssertionError, msg=name) as cm:
+                ladder_words(plant(lit))
+            self.assertIn(named, str(cm.exception), "%s: the refusal names the form" % name)
+        # the census form space: the literal forms the language permits, each read; the non-literal shapes, each refused
+        self.assertEqual({n for n, _, _ in readable}, {"double", "single", "template", "double-with-dot", "unicode-escape", "unicode-brace-escape", "hex-escape",
+                                                       "quote-escape", "double-quote-escape", "line-continuation", "template-newline", "non-escape", "simple-escape"})
+        self.assertEqual({n for n, _, _ in unreadable}, {"template-expression", "identifier", "member", "concatenation", "call", "number", "empty",
+                                                         "unterminated", "newline-in-string", "bad-hex-escape"})
+        # a string literal inside a CONDITION is not a value and is no word (the conditions are free; only the values are read)
+        self.assertEqual(tuple(ladder_words(expr.replace("!held ?", '(d.kind === "x" || !held) ?', 1))), STALE_WHY_WORDS)
+        # a ladder that is not flat (a nested ternary in a value) is refused, named
+        with self.assertRaises(AssertionError) as cm:
+            ladder_words(plant('d.x ? "a" : "b"'))
+        self.assertIn("not a flat conditional ladder", str(cm.exception))
+        # the anchor's cut: a `;` inside a literal stays inside the expression (the earlier reader stopped at the first `;`)
+        self.assertEqual(ladder_words(plant('"semi;colon"'))[8], "semi;colon")
 
     def test_data_that_is_not_an_object_reads_null_and_an_unknown_surface_keeps_no_key(self):
         err = self.post("perf", "minute", "a string where an object goes")
