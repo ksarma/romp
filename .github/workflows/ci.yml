@@ -200,9 +200,15 @@ jobs:
           # inference): tests/test_ci_sdk_pin.py's InstalledVersion FAILS, naming the interpreter, where
           # claude_agent_sdk does not import in the interpreter running pytest, instead of the warning a
           # box's bare road gets, and tests/test_session_host.py's switch case asserts that the host a
-          # test spawns imports it. The stance of ROMP_SERVED_TESTS_REQUIRE below; a source pin in
-          # tests/test_ci_sdk_pin.py holds this line. Off (a box), that road warns and the host case
-          # skips, saying so.
+          # test spawns imports it. The stance of ROMP_SERVED_TESTS_REQUIRE below. Off (a box), that road
+          # warns and the host case skips, saying so. tests/test_ci_sdk_pin.py's population check holds
+          # this on every pytest invocation in this file, not on this step's text: each command that runs
+          # pytest here sets the switch in the env Actions merges for it (workflow, job, step, or a prefix
+          # on the command) or is listed there by job and step name with a reason the test checks (the
+          # served-page step alone today, whose job installs no SDK), and each passes -p no:anyio with no
+          # listing. The check reads this file's text: a pytest run by a script or action a step calls is
+          # outside it, and a run line that spells pytest in a form the check does not read as a command
+          # is red until it is read.
           ROMP_SDK_REQUIRE: "1"
           # The free-threaded cell runs with the GIL off, stated rather than defaulted (a 't'
           # build disables it by default, and an extension that lacks free-threading support
@@ -220,7 +226,8 @@ jobs:
         # slowest tests on every run so a creeping one is visible before it stalls.
         # -p no:anyio: the SDK step's closure carries anyio, whose pytest plugin would otherwise
         # auto-load here and nowhere else; the SDK step's comment states the decision and its
-        # measurement, and a source pin in tests/test_ci_sdk_pin.py holds the flag.
+        # measurement, and tests/test_ci_sdk_pin.py's population check holds the flag on every pytest
+        # invocation in this file.
         run: python -m pytest -q -p no:anyio --durations=10 --timeout=600 --timeout-method=thread
 
   shell:
@@ -457,10 +464,22 @@ jobs:
         # browser, still skipping these. --durations=20 names the slowest labs in the log: this step is
         # the job's long phase (12 min 44 s on main, 2026-09-14, against the job's cap above), and every
         # served lab added grows it, so the next growth should be visible by name.
+        # -p no:anyio, as on every pytest invocation in this file (tests/test_ci_sdk_pin.py's population
+        # check holds the flag on each, with no exemption): this interpreter has no anyio today (the pip
+        # line below installs pip, pytest, pytest-timeout and cryptography, none of which depends on it;
+        # run 35535192879's served step installed nine packages, none anyio) and pytest accepts the flag
+        # where the plugin is absent, so the flag costs nothing here and a package added to that line
+        # whose closure carries anyio cannot auto-load its pytest plugin without a word. No
+        # ROMP_SDK_REQUIRE: the switch declares that the interpreter running pytest has the SDK the Python
+        # job's install step put there, and this job installs none, so setting it would declare something
+        # untrue; the population check lists this step for the switch with that reason and checks its
+        # premises (no SDK install in this job's run blocks; no file the two globs collect, and no helper
+        # module under tests/ they could import, conftest included, spells the switch's name), so the day a
+        # served module reads the switch the listing goes red.
         working-directory: ${{ github.workspace }}
         env:
           ROMP_SERVED_TESTS_REQUIRE: "1"
           ROMP_SERVED_TESTS_ENGINES: chromium
         run: |
           python -m pip install --upgrade pip pytest pytest-timeout cryptography
-          python -m pytest tests/test_*_browser.py tests/test_*_served.py -q -rs -p no:cacheprovider --durations=20 --timeout=600 --timeout-method=thread
+          python -m pytest tests/test_*_browser.py tests/test_*_served.py -q -rs -p no:cacheprovider -p no:anyio --durations=20 --timeout=600 --timeout-method=thread
