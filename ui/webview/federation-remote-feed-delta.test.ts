@@ -701,8 +701,14 @@ test("a stamped delta whose gen differs, or whose base is above the held rev, or
     assert.equal(ws.sent.length, 4, "a stamped delta carrying no through: asked again");
     ws.frame({ type: "feedDelta", gen: G, base: 0, rev: 1.5, through: 0, now: 524, buildId: 34, asks: [card(SID_A, 9)] });   // below the held rev AND a rev that is no safe integer
     assert.equal(ws.sent.length, 5, "a frame below the held rev with a bad rev: asked again");
-    assert.deepEqual(diagRows(sent, "feedDelta-stale"), [{ host: HOST, buildId: 30, why: "gen" }, { host: HOST, buildId: 31, why: "ahead" }, { host: HOST, buildId: 32, why: "behind" }, { host: HOST, buildId: 33, why: "through" }, { host: HOST, buildId: 34, why: "behind" }],
-                     "a field's word for a field's own failure (gen; through not carried) and a relation's word for a relation's (ahead: the base above the held rev; behind: the through below it), the gate's tests in order: a frame below the held rev reads behind whatever its rev (round 4: base and through each carried a relation under their field's word)");
+    // the base field's own failure, a base that is no safe integer, on a frame whose base is NOT above the held rev and whose
+    // other fields pass (round 4, tests-2): a non-integer base above the held rev would read "base" on the relation's arm
+    // too under a ladder that lost the integer test (JS coercion makes 1.5 > 1 true), so that frame cannot pin the test;
+    // this one can, since without it the frame falls through to "disagree"
+    ws.frame({ type: "feedDelta", gen: G, base: 0.5, rev: 1, through: 1, now: 525, buildId: 35, asks: [card(SID_A, 9)] });
+    assert.equal(ws.sent.length, 6, "a base that is no safe integer: asked again");
+    assert.deepEqual(diagRows(sent, "feedDelta-stale"), [{ host: HOST, buildId: 30, why: "gen" }, { host: HOST, buildId: 31, why: "ahead" }, { host: HOST, buildId: 32, why: "behind" }, { host: HOST, buildId: 33, why: "through" }, { host: HOST, buildId: 34, why: "behind" }, { host: HOST, buildId: 35, why: "base" }],
+                     "a field's word for a field's own failure (gen; through not carried; a base that is no safe integer) and a relation's word for a relation's (ahead: the base above the held rev; behind: the through below it), the gate's tests in order: a frame below the held rev reads behind whatever its rev (round 4: base and through each carried a relation under their field's word)");
     assert.equal(feeds(emitted).length, before, "nothing applied, nothing emitted");
     assert.equal(fm.conns.get(HOST).feedRaw, raw, "the base stands");
     assert.deepEqual(heldOf(fm), { gen: G, rev: 1 }, "…and the pair with it");
@@ -713,13 +719,13 @@ test("a stamped delta whose gen differs, or whose base is above the held rev, or
     assert.deepEqual(heldOf(fm), { gen: G3, rev: 0 });
     ws.frame(cycle(G3, 0, 4));
     assert.deepEqual(heldOf(fm), { gen: G3, rev: 1 });
-    assert.equal(ws.sent.length, 5, "no further ask");
+    assert.equal(ws.sent.length, 6, "no further ask");
     fm.conns.get(HOST).closed = true;
   });
 });
 
-test("the vintage guard: a delta carrying no gen applies onto a base holding none and moves no pair, and that conn's redial declares nothing; a full carrying no gen after a gen-holding pair clears the pair and the next dial carries no held:feed", async () => {
-  await withManager(({ fm, emitted }) => {
+test("the vintage guard: a delta carrying no gen applies onto a base holding none and moves no pair, and that conn's redial declares nothing; a full carrying no gen after a gen-holding pair clears the pair and the next dial carries no held:feed; a stamped delta onto that pair-less base is refused with why unpaired and a bare needFullFeed carrying no gen and no rev", async () => {
+  await withManager(({ fm, emitted, sent }) => {
     const ws = attached(fm);
     assert.equal(heldOf(fm), undefined, "a full carrying no gen (every kernel in this repo today) leaves no pair");
     ws.frame({ type: "feedDelta", now: 510, buildId: 2, asks: [card(SID_A, 2)] });
@@ -739,6 +745,15 @@ test("the vintage guard: a delta carrying no gen applies onto a base holding non
     ws2.frame(remoteFull());   // a full carrying no gen after a gen-holding pair: a kernel rolled back to one before the stamp
     assert.equal(heldOf(fm), undefined, "the pair is cleared by the gen-less full");
     assert.ok(fm.conns.get(HOST).feedRaw, "the base is the new full");
+    // the ladder's first arm and the pair-less ask (round 4, tests-1): a stamped delta onto a base holding no pair is refused
+    // with the pair's word, and the ask carries no gen and no rev, since none is held to declare
+    const before2 = feeds(emitted).length, raw2 = fm.conns.get(HOST).feedRaw, asked = ws2.sent.length;
+    ws2.frame(cycle(G, 0, 4));
+    assert.deepEqual(ws2.sent.slice(asked), [{ type: "needFullFeed" }], "the bare ask: no gen, no rev");
+    assert.deepEqual(diagRows(sent, "feedDelta-stale"), [{ host: HOST, buildId: 14, why: "unpaired" }], "the pair's word: no pair is held for a stamped stream");
+    assert.equal(feeds(emitted).length, before2, "nothing applied");
+    assert.equal(fm.conns.get(HOST).feedRaw, raw2, "the base stands");
+    assert.equal(heldOf(fm), undefined, "and still no pair");
     ws2.readyState = 3;
     const timers2 = heldTimers(() => ws2.onclose!({ code: 1006, wasClean: false }));
     timers2[0]();
