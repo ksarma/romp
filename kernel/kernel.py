@@ -69839,8 +69839,9 @@ function wid(){try{return sessionStorage.getItem('romp:wid')||'';}catch(e){retur
 // as document.documentElement.clientHeight through the fork line after the h assignment.
 // [fork] D1 (2026-09-19): the pan a WRITING road of fit() last stored, the value its pinch branch holds: the measured road
 // stores its measurement and the 0px road a zero, in a no-pan state only; the clamp road publishes a bound of the hold and
-// stores nothing, so what the page is using can sit below the hold until a writing road runs next (round 6, 2026-09-20: it
-// had read "the pan last published, on every road", which the clamp road contradicts whenever it binds). The one stored
+// stores nothing, so what the page is using can sit below the hold until a road WRITES it: the measured road, or the 0px road in
+// a no-pan state, which under a standing pan or zoom runs without writing (round 8, 2026-09-20; round 6, 2026-09-20: it had
+// read "the pan last published, on every road", which the clamp road contradicts whenever it binds). The one stored
 // value in this script, and the sentence above is about --app-h, which every run still recomputes from scratch: the hold is
 // bounded at use (the clamp inside fit) and never adjusted in place, so a keyboard raised again under a standing zoom finds
 // the pan it was measured with, not a value the clamp lowered (round 4, 2026-09-20).
@@ -69905,7 +69906,8 @@ if(h)document.documentElement.style.setProperty('--app-h',h+'px');
 // publishes the keyboard's pan and not a 0 the fine window never measured (round 4 had written the zero on every fine run,
 // and the pinch road then laid the shell out at pan 0 under a keyboard-sized --app-h, the band reopened); a flip with the
 // visual viewport at rest clears it, so a zoom after that republishes no stale pan. The clamp road publishes a bound of the
-// hold and stores nothing, so --app-top can sit below the hold until a writing road runs next. The pan is published under
+// hold and stores nothing, so --app-top can sit below the hold until a road WRITES it (the measured road, or the 0px road in a
+// no-pan state; the 0px road runs without writing under a standing pan or zoom, round 8, 2026-09-20). The pan is published under
 // the same validity guard as the height it belongs to (round 4, 2026-09-20,
 // as round 1 confirmed it): a coarse run whose height report is refused (h 0) publishes neither, so the prior pan stands
 // beside the prior height rather than moving the fixed body by a pan measured against nothing; the 0px road has no height

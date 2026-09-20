@@ -497,7 +497,8 @@ class RefitsWhenTheVisibleHeightChanges(unittest.TestCase):
         # 1.01, whose offsetTop rounds to no positive pixel, panPx, the one reading the measured road stores too, so a sub-pixel
         # pan is the same answer on both roads, round 8, 2026-09-20; round 6, 2026-09-20: written on every fine run, the zero had reopened the band after a pointer flip under a keyboard or a
         # zoom); the clamp road publishes a bound of the hold and stores nothing, so --app-top can sit below the hold until a
-        # writing road runs next (round 6: this comment had said the hold is the last value published on every road, which
+        # road WRITES it, the measured road or the 0px road in a no-pan state (round 8, 2026-09-20: the 0px road runs without
+        # writing under a standing pan or zoom; round 6: this comment had said the hold is the last value published on every road, which
         # the clamp road contradicts whenever it binds, and the harness asserts that state). Both coarse branches sit under
         # the height's own validity guard (h truthy, the `if(h)` of the --app-h write above them): a refused height report
         # publishes no pan either, so the prior pan stands beside the prior height (round 4, 2026-09-20, as round 1
