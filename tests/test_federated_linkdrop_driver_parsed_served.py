@@ -1,5 +1,10 @@
 """The link-drop driver's receiver walk and wait census over the compiler's PARSE of the driver (2026-09-20, round 5 of PR 857).
 
+The `_served` suffix is a PLACEMENT, not a description: this module boots no kernel, drives no page and needs no browser; it
+parses source. The suffix reaches the one CI job whose vscode-extension/node_modules holds the typescript package (the
+browser-backed served-page step, which runs tests/test_*_served.py after `npm ci` under ROMP_SERVED_TESTS_REQUIRE=1); on the
+Python matrix, which installs no node deps, it skips with a reason saying the same, and under REQUIRE that skip is a failure.
+
 tests/test_federated_linkdrop_driver_bound.py requires every wait the driver places to draw on its budget and every call
 on a playwright receiver to be one an allow-list names for that receiver's kind, because an auto-waiting read inherits
 playwright's 30 s default that no budget caps. Its instruments there are regular expressions over the driver text, keyed
@@ -180,9 +185,9 @@ def parse_js(sources):
     """[(name, src)] through node and the typescript package under EXT: (tsVersion, {name: (diagnostics, tree)}). Skips, in
     the served labs' words, when node or the package is absent, so ROMP_SERVED_TESTS_REQUIRE=1 turns that into a failure."""
     if not shutil.which("node"):
-        raise unittest.SkipTest("extension deps absent (npm ci not run here): the parsed census needs node")
+        raise unittest.SkipTest("extension deps absent (npm ci not run here): this is a source parse with no server and no browser, placed under the _served suffix to reach the CI job that has node; it needs node")
     if not os.path.isdir(os.path.join(EXT, "node_modules", "typescript")):
-        raise unittest.SkipTest("extension deps absent (npm ci not run here): the parsed census needs the typescript package under vscode-extension/node_modules")
+        raise unittest.SkipTest("extension deps absent (npm ci not run here): this is a source parse with no server and no browser, placed under the _served suffix to reach the CI job that has vscode-extension/node_modules; it needs the typescript package there")
     d = tempfile.mkdtemp(prefix="linkdrop-parse-")
     try:
         helper, inputs = os.path.join(d, "parse.cjs"), os.path.join(d, "in.json")
