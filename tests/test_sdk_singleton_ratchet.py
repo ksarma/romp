@@ -465,7 +465,10 @@ is that run's, at the head it prints, and none is written here.
     refused object and whose verdict renders another object, the last-object roads; derive:
     boundary-link-on-start-object); the clause moved into _sdk_judge, the boundary's call bare and the changed-object
     return wrapped, so it rides the function fixture's road too (red: every case that reads a test's own verdict whose
-    before value is the refused object for the clause's absence; derive: boundary-link-in-judge).
+    before value is the refused object for the clause's absence; derive: boundary-link-in-judge); the changed-marker
+    term dropped from the gate, the clause then riding the reload judgment too (red: every case whose scope found the
+    refused object and ends on a kernel re-execution the reload judgment names, a line that renders no before value;
+    derive: boundary-link-marker-term-dropped).
   the boundary: the class end deleted (D.One.b and K.One.b show no boundary error, M, P); the module end deleted
     (L.b shows none); compared to its last read only (K.One passes silently); judged without the restore exemption
     (K.Two errors); the named skip dropped (a second report at the class or module end of A, B, C, D, E, K and L;
@@ -482,7 +485,7 @@ is that run's, at the head it prints, and none is written here.
     yield removed).
   the function fixture not naming the object it accused (A.h gets an inherited report, E, D).
 Eighty-nine cells red at the round-6 head.
-Five are pinned by no run at the round-6 head, each for a stated reason: the unreadable reference root granting
+Four are pinned by no run at the round-6 close head, each for a stated reason: the unreadable reference root granting
 the allowance (not constructible: the kernel always binds jd); the yield's identity condition dropped (redundant by
 construction: when the end value is the last read's and is not the last window's value, a class teardown inside the
 scope installed it, and that class's own boundary judged it against its start, which only a restore of the value the
@@ -490,10 +493,7 @@ scope found passes, so the module end is looking at its own start value); the wi
 end (the read-count filter never selects a stale entry; the clearing bounds memory); the refusal's _sdk_reported term (a
 belt: the one site that fills _SDK_REPORTED, the function fixture's report line, runs after the refusal is computed in
 the same first window, and no earlier window exists in the worker, so the list is empty whenever the refusal is
-consulted; dropped, the module stays green; the _sdk_named term beside it is reachable and pinned, S13); the boundary
-link's changed-marker term (end.marker is not start.marker in _sdk_found_refused's gate: the reload judgment renders the
-after value alone and no before, so the term keeps the clause off a line that renders no found object; no case has a
-refusal followed by a kernel re-execution inside the refused object's scope, the run that would show it); and no others.
+consulted; dropped, the module stays green; the _sdk_named term beside it is reachable and pinned, S13); and no others.
 """
 import ast
 import inspect
@@ -629,6 +629,8 @@ MUTATIONS = {
     "boundary-link-on-start-object": ("conftest.py", [
         (_BOUNDARY_LINK_CALL, "    return _sdk_judge(start, end, start.jd_state)\n"),
         (_BOUNDARY_VERDICT, "    verdict = _sdk_found_refused(_sdk_judge_scope(start, last, end, windows), start, end)\n")]),
+    "boundary-link-marker-term-dropped": ("conftest.py", [
+        (_BOUNDARY_LINK_GATE, "    if verdict is None or not _sdk_refused(start.be):\n        return verdict\n")]),
     "boundary-link-in-judge": ("conftest.py", [
         (_BOUNDARY_LINK_CALL, "    return _sdk_judge(start, end, start.jd_state)\n"),
         (_JUDGE_CHANGED_RETURN, _JUDGE_CHANGED_RETURN.replace("    return (", "    return _sdk_found_refused((", 1)
@@ -1638,6 +1640,36 @@ SCRATCH_S15 = SCRATCH_HEAD + textwrap.dedent("""\
                                                       # refused object as before; the module end finds the slot changed
 """)
 
+SCRATCH_S16 = SCRATCH_HEAD + textwrap.dedent("""\
+
+    _root = sandbox()                                 # E's import-time leak: built over a sandbox, jd.STATE restored, the sandbox removed
+    _saved = jd.STATE
+    jd.STATE = _root
+    km._sdk()
+    jd.STATE = _saved
+    shutil.rmtree(_root)
+
+    class One(unittest.TestCase):
+        root = None
+
+        @classmethod
+        def setUpClass(cls):
+            km._sdk_backend = None                    # S10's swap: the refused object swapped out and never put back
+
+        @classmethod
+        def tearDownClass(cls):
+            load_source("romp_kernel", KERNEL)        # the marker changes: the class end is judged on the reload road
+            km2 = sys.modules["romp_kernel"]
+            One.root = sandbox()
+            saved = km2.jd.STATE
+            km2.jd.STATE = One.root
+            km2._sdk()                                # the re-executed kernel's build over a root that is not jd.STATE, left
+            km2.jd.STATE = saved
+
+        def test_a_builds_over_the_run_root(self):
+            assert km._sdk().state_dir == jd.STATE
+""")
+
 CONFTEST_W = textwrap.dedent("""\
     import sys, tempfile
     from pathlib import Path
@@ -2624,7 +2656,7 @@ class TheMutationCellsApply(unittest.TestCase):
             self.assertIn("(red: ", text, "%s: the cell states no rule: %s" % (cell, text))
 
     def test_the_table_is_not_short(self):
-        self.assertGreaterEqual(len(MUTATIONS), 29, "the refusal block's twenty-three cells and the boundary link's six "
+        self.assertGreaterEqual(len(MUTATIONS), 30, "the refusal block's twenty-three cells and the boundary link's seven "
                                 "at the round-6 close head; a shorter table is a failure, not a pass: %r" % sorted(MUTATIONS))
 
 
@@ -3463,6 +3495,41 @@ class ATestResetsTheSlotUnderTheRefusedObjectAndTheModuleEndFindsItChanged(_Nest
         self.assertEqual(boundary_scopes(self.out), {"test_scratch.py"}, self.out)
         self.assertRegex(self.out, r"BaseExceptionGroup: errors during test teardown \(2 sub-exceptions\)",
                          "Two.a's report and the module end's verdict are Two.a's one teardown report: %s" % self.out)
+
+
+class TheScopeThatFoundTheRefusedObjectEndsOnAReExecution(_NestedRun, unittest.TestCase):
+    """S16, the boundary link's changed-marker term: the scope that found the refused object ends on the reload road,
+    and its verdict carries no clause. E's import-time gone leak, then a class whose setUpClass resets the slot (S10's
+    swap; One.a lazy-builds over the run root, allowed, and its first window refuses under the gone head) and whose
+    tearDownClass re-executes the kernel and builds the new kernel's singleton over a sandbox, jd.STATE restored. The
+    class end's marker differs from its start's, so the start-to-end judgment takes the reload road, which renders the
+    after value alone against jd.STATE as the reload re-bound it (over a root that is not jd.STATE, the sandbox remedy)
+    and no before value: a clause there would say the object the scope found is the refused one on a line that shows no
+    found object, and the gate's changed-marker term keeps it off. The refusal and the verdict are One.a's one teardown
+    report, one error; the module end is quiet on the object the class end named. Kill cell: the term dropped from the
+    gate (derive: boundary-link-marker-term-dropped), under which the reload verdict carries the clause."""
+    SCRATCH = SCRATCH_S16
+    ERRORS = 1
+    FIRST = "One.test_a_builds_over_the_run_root"
+
+    def test_the_reload_verdict_beside_the_refusal_carries_no_clause(self):
+        cls, method = self.FIRST.split(".")
+        refusal = inherited(self.out, cls, method, head=SWAPPED_GONE)
+        self.assertIsNotNone(refusal, "the first window's refusal line, opening with SWAPPED_GONE, is missing: %s" % self.out)
+        self.assertEqual(outcomes(self.out).get(self.FIRST), {"PASSED", "ERROR"}, self.out)
+        self.assertIsNone(verdict(self.out, cls, method), "the allowed build over the run root is not accused: %s" % self.out)
+        self.assertIn("building the singleton over a directory since removed", refusal)
+        clause = self.assertBoundaryFailed("::One", self.FIRST, remedy=REMEDY_A)
+        self.assertTrue(clause.startswith("re-executed the kernel (or loaded it for the first time) and left the kernel's backend "
+                                          "singleton (km._sdk_backend) over a root that is not jd.STATE: SdkBackend over "), clause)
+        self.assertNotIn(REFUSED_OBJECT, clause, "the reload judgment renders the after value alone and no before; a clause here "
+                         "would name an object the line does not show: %s" % clause)
+        self.assertEqual(boundary_scopes(self.out), {"test_scratch.py::One"}, self.out)
+        self.assertIsNone(boundary(self.out, ""), "the module end is quiet on the object the class end named: %s" % self.out)
+        self.assertRegex(self.out, r"BaseExceptionGroup: errors during test teardown \(2 sub-exceptions\)",
+                         "the refusal and the reload verdict are One.a's one teardown report: %s" % self.out)
+        self.assertEqual(carriers(self.out, SWAPPED_GONE), {"test_scratch.py::" + self.FIRST.replace(".", "::")}, self.out)
+        self.assertEqual(carriers(self.out, SWAPPED), set(), self.out)
 
 
 class SessionScopedFixtureInstallsBeforeTheModulesReads(_NestedRun, unittest.TestCase):

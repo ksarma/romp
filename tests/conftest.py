@@ -1055,8 +1055,9 @@ def _sdk_found_refused(verdict, start, end):
     there). Keyed on the object THIS ROAD RENDERS: the start-to-end judgment renders the found object as its before
     value, so the clause is true of the line it rides; a verdict on a found object no refusal named carries none
     (S10C's Two, with a refusal standing in the worker; M, with none). Off the changed-marker road: the reload judgment
-    renders the after value alone and no before, so a clause there would name an object the line does not show (no case
-    has a refusal followed by a re-execution inside the refused object's scope, so this term is pinned by no run)."""
+    renders the after value alone and no before, so a clause there would name an object the line does not show (S16:
+    the scope that found the refused object ends on a re-execution and a build over a sandbox, and its reload verdict
+    carries no clause; with the term dropped it would, derive: boundary-link-marker-term-dropped)."""
     if verdict is None or end.marker is not start.marker or not _sdk_refused(start.be):
         return verdict
     return ("%s. %s" % (verdict[0], _SDK_FOUND_REFUSED), verdict[1])
