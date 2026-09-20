@@ -80,6 +80,7 @@ from importlib.machinery import ModuleSpec
 from pathlib import Path
 from unittest import mock
 from romp_load import load_source
+import sdk_blocker   # noqa: E402  the shared test helper, registered by name in tests/__init__.py like romp_load
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -439,11 +440,15 @@ class HostProcess(unittest.TestCase):
         ModuleNotFoundError); an empty site did not, so under an interpreter that has the SDK installed (every CI
         cell since the workflow installs the pinned SDK; a venv built the same way on a box) the no-SDK control ran
         the SDK transport and read CLINotFoundError for a missing CLI where the pipe transport reads
-        FileNotFoundError."""
+        FileNotFoundError. The blocker witnesses its own run (tests/sdk_blocker.py) and the control asserts the witness:
+        without it, an interpreter with no SDK passed the control whatever the blocker did, the pipe transport being its
+        only road."""
         if no_sdk:
             site.mkdir(parents=True, exist_ok=True)
-            (site / "sitecustomize.py").write_text('import sys\nsys.modules["claude_agent_sdk"] = None\n')
+            (site / "sitecustomize.py").write_text(sdk_blocker.SITECUSTOMIZE)
         env = dict(os.environ, PYTHONUNBUFFERED="1", ROMP_SDK_SITE=str(site), PYTHONPATH=str(site))
+        if no_sdk:
+            env[sdk_blocker.WITNESS_ENV] = str(self.hostdir / "blocker-witness")
         for name in sb.AUTH_ENV_NAMES:
             env.pop(name, None)
         err = self.hostdir / "host.stderr"
@@ -651,6 +656,7 @@ class HostProcess(unittest.TestCase):
         empty.mkdir()
         code, _ = self._run_host(empty, no_sdk=True)
         self.assertEqual(code, 1)
+        sdk_blocker.assert_witnessed(self, str(self.hostdir / "blocker-witness"), sdk_blocker.interpreter_imports_sdk())
         kinds = [r["kind"] for r in self._hostlog()]
         self.assertNotIn("sdk-version-untested", kinds)
         self.assertIn("cli-spawn-failed", kinds)

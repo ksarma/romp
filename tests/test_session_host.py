@@ -30,6 +30,7 @@ from importlib.machinery import ModuleSpec
 from pathlib import Path
 from unittest import mock
 from romp_load import load_source
+import sdk_blocker   # noqa: E402  the shared test helper, registered by name in tests/__init__.py like romp_load
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -52,12 +53,7 @@ def _host_imports_sdk() -> bool:
     host would run the pipe transport. bin/romp-session-host's _sdk_on_path takes its interpreter's SDK before it
     reads ROMP_SDK_SITE, so a positive here means every host these tests spawn runs the SDK transport, whatever
     site _start hands it."""
-    env = dict(os.environ)
-    env.pop("ROMP_SDK_SITE", None)
-    probe = subprocess.run([sys.executable, "-c",
-                            "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('claude_agent_sdk') else 1)"],
-                           env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=60)
-    return probe.returncode == 0
+    return sdk_blocker.interpreter_imports_sdk()
 
 
 # The gate of the two SDK-transport cases (2026-09-20): the machine's SDK venv, the box's road, or the host interpreter's
@@ -1286,12 +1282,16 @@ class HostProcess(unittest.TestCase):
         pipe transport, the road a plain venv's host runs, would have no test in CI. This host is hidden from the SDK the
         way tests/test_session_host_sdk_pin.py's no-SDK control hides it: a site on PYTHONPATH whose sitecustomize.py sets
         sys.modules["claude_agent_sdk"] = None before the host imports anything, so its find_spec answers None and the
-        launcher falls through to ROMP_SDK_SITE, which _start(sdk=False) points at a path that does not exist."""
+        launcher falls through to ROMP_SDK_SITE, which _start(sdk=False) points at a path that does not exist. The
+        blocker witnesses its own run (tests/sdk_blocker.py) and the control asserts the witness: without it, an
+        interpreter with no SDK passed this control with the blocker never loaded, the pipe transport being its only road."""
         site = os.path.join(self.state, "no-sdk-site")
         os.makedirs(site)
         with open(os.path.join(site, "sitecustomize.py"), "w") as f:
-            f.write('import sys\nsys.modules["claude_agent_sdk"] = None\n')
-        host, sock, spec = self._start(host_env={"PYTHONPATH": site})
+            f.write(sdk_blocker.SITECUSTOMIZE)
+        witness = os.path.join(self.state, "blocker-witness")
+        host, sock, spec = self._start(host_env={"PYTHONPATH": site, sdk_blocker.WITNESS_ENV: witness})
+        sdk_blocker.assert_witnessed(self, witness, _host_imports_sdk())
         k, hello = self._attach(sock)
         k.send({"t": "in", "data": self._user("hi sleep=0.1")})
         k.recv_until(lambda f: f.get("t") == "out" and f["data"].get("type") == "result")
@@ -1300,6 +1300,15 @@ class HostProcess(unittest.TestCase):
         k.send({"t": "end", "grace": 10})
         k.recv_until(lambda f: f.get("t") == "exit")
         k.close()
+
+    @unittest.skipUnless(os.environ.get("GITHUB_ACTIONS"), "CI's road only: a box's host may run without the SDK")
+    def test_in_ci_the_hosts_interpreter_imports_the_sdk(self):
+        """In CI every Python cell installs the pinned SDK before pytest runs (.github/workflows/ci.yml), so the host a test
+        spawns imports it and the two SDK-transport cases below run. Without this pin a cell whose interpreter lost the
+        SDK (an install that did not reach the interpreter pytest runs, a PYTHONPATH leak in the runner) read green: the
+        two cases skipped, both no-SDK controls passed on the pipe transport, and nothing was red (2026-09-20)."""
+        self.assertTrue(HOST_SDK, "a child of %s does not import claude_agent_sdk, and this runner has no SDK venv: the "
+                        "SDK-transport cases are skipping in CI" % sys.executable)
 
     @unittest.skipUnless(HOST_SDK, "the host's interpreter does not import the SDK and this machine has no SDK venv; the pipe transport covered the host")
     def test_the_sdk_transport_drives_the_fake_cli_the_same_way(self):

@@ -200,7 +200,8 @@ class InstalledVersion(unittest.TestCase):
     so a venv that moved past the constant (or a constant moved past the venv) reds there before a hosted session finds
     out; a worker on the other road checks the form and warns that it checked no more (a warning, because pytest prints
     the warnings summary under -q where a captured print never shows; no filter in the repo turns a UserWarning into an
-    error)."""
+    error). In CI (GITHUB_ACTIONS set) the other road is a failure, not a warning: the install step put the pin into the
+    interpreter pytest runs, so an interpreter without it is a cell whose SDK checks are all silently on the no-SDK road."""
     def test_the_installed_sdk_is_the_pin_where_it_imports_and_the_pin_is_well_formed_where_it_does_not(self):
         pin = sh.SDK_TESTED_VERSION
         self.assertRegex(pin, VERSION_RE, "SDK_TESTED_VERSION is not a bare x.y.z version: %r" % pin)
@@ -212,6 +213,14 @@ class InstalledVersion(unittest.TestCase):
             self.fail("sys.modules holds a %s that is not an installed package (%r: %s); a fixture's fake SDK leaked into "
                       "this process, so the pin cannot be judged here" % (sh.SDK_PACKAGE, sys.modules.get(sh.SDK_PACKAGE), e))
         if spec is None:
+            # In CI the install step put the pin into this interpreter, so no cell takes this road with the step in place; a
+            # cell that does has lost the SDK between the step and pytest (an install into another interpreter, a
+            # PYTHONPATH leak in the runner), and every SDK check in the run is then reading the no-SDK road: the gated
+            # tests skip, the no-SDK controls pass on the pipe transport, and a warning is the only trace. That is a
+            # failure there (2026-09-20). On a box the road is ordinary and the warning says what was not checked.
+            self.assertFalse(os.environ.get("GITHUB_ACTIONS"),
+                             "claude_agent_sdk does not import in CI's interpreter (%s) after the install step: the pinned "
+                             "version was not checked and the SDK-gated tests are skipping in this cell" % sys.executable)
             warnings.warn("claude_agent_sdk does not import in this interpreter (%s): the pin's form is checked, the installed "
                           "version is not; a CI cell that ran the install step never takes this road" % sys.executable)
             return

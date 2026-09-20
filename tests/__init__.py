@@ -177,3 +177,7 @@ sys.modules.setdefault("fs_clock", _fs_clock)
 # runner, registered the same way for the same reason.
 from . import git_fixture as _git_fixture  # noqa: E402
 sys.modules.setdefault("git_fixture", _git_fixture)
+# `import sdk_blocker` in the two no-SDK controls (tests/sdk_blocker.py, 2026-09-20): the self-witnessing sitecustomize
+# that hides an installed SDK from a spawned host, and the assertions on its witness, registered the same way.
+from . import sdk_blocker as _sdk_blocker  # noqa: E402
+sys.modules.setdefault("sdk_blocker", _sdk_blocker)
