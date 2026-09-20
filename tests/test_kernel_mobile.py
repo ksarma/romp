@@ -509,14 +509,20 @@ const pane = (id) => ({ id, classList: { toggle() {} }, contentDocument: {},
   contentWindow: { addEventListener: on(id === 'f-chat' ? CHAT : {}) },
   addEventListener: (k) => { if (k === 'load') LOADS.push(id); } });
 const PANES = { 'f-chat': pane('f-chat'), 'f-fleet': pane('f-fleet'), 'f-feed': pane('f-feed'), 'f-timeline': pane('f-timeline') };
-// the bar's BOX (D1, 2026-09-19): a fixed bottom:0 bar sits at the layout viewport's bottom, innerHeight - its height, unless a
+// the LAYOUT viewport's height (round 7, 2026-09-20): document.documentElement.clientHeight, what the pinch road's clamp reads. It is
+// innerHeight unless a scenario parts the two (LAYOUT.h): Chromium keeps window.innerHeight at the layout viewport under a pinch,
+// WebKit shrinks it to the visual viewport's height (iOS Safari), and the layout viewport, clientHeight, keeps its height in both
+const LAYOUT = { h: null };
+const layoutH = () => (LAYOUT.h === null ? global.innerHeight : LAYOUT.h);
+// the bar's BOX (D1, 2026-09-19): a fixed bottom:0 bar sits at the layout viewport's bottom, its height above layoutH(), unless a
 // scenario leaves it elsewhere (BAR.top: an engine that shrank innerHeight but kept the bar at the old bottom)
 const BAR = { offsetHeight: 44, querySelectorAll: () => [], top: null,
-  getBoundingClientRect() { const top = BAR.top === null ? global.innerHeight - BAR.offsetHeight : BAR.top; return { top, bottom: top + BAR.offsetHeight, left: 0, right: 390 }; } };
+  getBoundingClientRect() { const top = BAR.top === null ? layoutH() - BAR.offsetHeight : BAR.top; return { top, bottom: top + BAR.offsetHeight, left: 0, right: 390 }; } };
 global.document = {
   visibilityState: 'visible',
   addEventListener: on(DOC),
-  documentElement: { scrollTop: 0, style: { setProperty: (k, v) => { PROPS[k] = v; SETS.push(k); }, getPropertyValue: (k) => PROPS[k] || '' } },   // the published band, read back by barfit (round 4, 2026-09-20)
+  documentElement: { scrollTop: 0, get clientHeight() { return layoutH(); },   // the layout viewport (round 7, 2026-09-20)
+    style: { setProperty: (k, v) => { PROPS[k] = v; SETS.push(k); }, getPropertyValue: (k) => PROPS[k] || '' } },   // the published band, read back by barfit (round 4, 2026-09-20)
   body: { setAttribute() {} },
   getElementById: (id) => (id === 'mtabs' ? BAR : (PANES[id] || null)),
 };
@@ -603,7 +609,7 @@ out.pinchBack = { appTop: appTop(), appH: appH(), barH: barH() };
 // round 2 (2026-09-19): a pinch taken WHILE the keyboard is up holds the pan (the hold, from a state where --app-top is NOT
 // already 0px), and a keyboard dismissed while still zoomed cannot leave that pan behind: --app-h returns to the full height
 // on the same run, and a held 83 would place the body at 83..927 in an 844 viewport with the composer row below it, so the
-// held value is clamped to innerHeight - h
+// held value is clamped to the layout viewport's height less h (round 7, 2026-09-20: read from documentElement.clientHeight, not innerHeight)
 visualViewport.scale = 1; visualViewport.height = 460; visualViewport.offsetTop = 83; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
 out.panAgain = { appTop: appTop(), appH: appH(), barH: barH() };
 visualViewport.scale = 2; visualViewport.height = 230; visualViewport.offsetTop = 83; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
@@ -715,9 +721,9 @@ out.coarseAgainZoomed = { appTop: appTop(), appH: appH() };
 visualViewport.scale = 1; visualViewport.height = 844; visualViewport.offsetTop = 0; fire(VV, 'resize'); flush();
 out.coarseAgainBack = { appTop: appTop(), appH: appH(), barH: barH() };
 // round 6 (2026-09-20): the 0px road's CONDITION, both sides of every variable in it. The road clears the hold only in a true
-// no-pan state, one an unzoomed coarse run would have measured as 0: no visual viewport, or one at scale 1 with offsetTop 0
-// (the keyboard gone in the same run the pointer turned fine, the kernel-4 case); a standing pan (one pixel) or a standing
-// zoom (scale 1.02; 1.01 is the cut the pinch road uses) leaves it. Each state: the hold from a pan (83), the pointer turns
+// no-pan state, one an unzoomed coarse run would have measured as 0: no visual viewport, or one at or under the pinch road's
+// cut (scale 1.01) with no positive offsetTop (the keyboard gone in the same run the pointer turned fine, the kernel-4 case); a
+// standing pan (one pixel) or a standing zoom (scale 1.02) leaves it. Each state: the hold from a pan (83), the pointer turns
 // fine in the given visual-viewport state (one run), coarse again under the slack zoom so the pinch road publishes the hold
 const flips = {};
 const flip = (label, vvState) => {
@@ -739,6 +745,31 @@ flip('onePixelPan', { height: 460, offsetTop: 1, scale: 1 });   // a standing pa
 flip('zoomedTop', { height: 422, offsetTop: 0, scale: 2 });     // zoomed with the keyboard gone, at the top: the hold stands
 flip('zoomPan', { height: 422, offsetTop: 200, scale: 2 });     // a zoom pan with the keyboard gone: the hold stands
 out.flips = flips;
+// round 7 (2026-09-20): the ENGINE MODEL of innerHeight under a pinch, and every sign of the clamp's difference. Chromium keeps
+// window.innerHeight at the layout viewport's height under a pinch; WebKit (iOS Safari, where the meta's user-scalable=no is
+// ignored and a pinch is reachable) shrinks it to the visual viewport's height, so a clamp reading innerHeight saw a difference
+// below 0 on every zoomed run there and published 0px whatever the hold, the band under the composer reopened for as long
+// as the zoom held; every step above kept innerHeight at 844 through the pinch, the Chromium model. The clamp reads
+// document.documentElement.clientHeight, the layout viewport in both models, and the stub parts the two here: LAYOUT.h holds
+// the layout height while innerHeight tracks vv.height, and the bar's box stays at the layout viewport's bottom (800..844), as a
+// fixed bottom:0 box does under a WebKit pinch. The difference's three states: SLACK (844 - 460: the hold, 83, is published),
+// ZERO (844 - 844, the keyboard gone under the zoom: 0px), and NEGATIVE (a rotation under the standing zoom: the layout
+// viewport is 390 while the visual viewport's last report still says 422 at scale 2, h 844, so max(0, 390 - 844) binds at 0 and
+// the road publishes 0px, never -454px). Each record carries innerHeight and clientHeight, so the test derives the model and
+// the sign from what it reads back.
+visualViewport.scale = 1; visualViewport.height = 460; visualViewport.offsetTop = 83; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+const clientHeight = () => document.documentElement.clientHeight;
+LAYOUT.h = 844; BAR.top = 800;
+global.innerHeight = 230; visualViewport.scale = 2; visualViewport.height = 230; visualViewport.offsetTop = 83; fire(WIN, 'resize'); fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+out.webkitPinchPanned = { appTop: appTop(), appH: appH(), barH: barH(), innerHeight: global.innerHeight, clientHeight: clientHeight() };
+global.innerHeight = 422; visualViewport.height = 422; visualViewport.offsetTop = 200; fire(WIN, 'resize'); fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+out.webkitKbDownZoomed = { appTop: appTop(), appH: appH(), barH: barH(), innerHeight: global.innerHeight, clientHeight: clientHeight() };
+// the rotation under the zoom: the layout viewport is 390 (the fixed bar rides its bottom, 346..390) and the visual viewport's
+// report is still the one above (422 at scale 2), so h is 844 against a layout height of 390
+LAYOUT.h = 390; BAR.top = null; fire(WIN, 'resize'); flush();
+out.rotatedUnderZoom = { appTop: appTop(), appH: appH(), barH: barH(), innerHeight: global.innerHeight, clientHeight: clientHeight() };
+LAYOUT.h = null; BAR.top = null; global.innerHeight = 844; visualViewport.scale = 1; visualViewport.height = 844; visualViewport.offsetTop = 0; fire(WIN, 'resize'); fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+out.webkitBack = { appTop: appTop(), appH: appH(), barH: barH(), innerHeight: global.innerHeight, clientHeight: clientHeight() };
 console.log(JSON.stringify(out));
 """
 
@@ -854,7 +885,7 @@ class MobileFitExecutes(unittest.TestCase):
         # round 2 (2026-09-19). The hold, from a PANNED state (the pinch pin above starts from --app-top already 0px, which the
         # opposite stance, zero on a pinch, satisfies identically): zoomed with the keyboard still up, the pan stands and --app-h
         # keeps upstream's scale arithmetic (230 * 2). Then the keyboard goes while the zoom holds: --app-h returns to the full
-        # height on the same run and the held pan is clamped to innerHeight - h, 0 here, so the body stays inside the layout
+        # height on the same run and the held pan is clamped to the layout viewport's height less h, 0 here, so the body stays inside the layout
         # viewport. The base tree kept 83px and hung the body's bottom 83 px, the composer row, below the viewport.
         self.assertEqual(self.out["panAgain"], {"appTop": "83px", "appH": "460px", "barH": "0px"})
         self.assertEqual(self.out["pinchPanned"], {"appTop": "83px", "appH": "460px", "barH": "0px"}, "the hold, from a pan")
@@ -958,7 +989,7 @@ class MobileFitExecutes(unittest.TestCase):
         # again under a zoom then published the 0 the fine window laid out), and that reopened this change's own band: with
         # the keyboard up and its pan standing the pinch road published 0px under a keyboard-sized --app-h. The road now clears
         # the hold only in a true no-pan state, one an unzoomed coarse run would have measured as 0 (no visual viewport, or
-        # one at scale 1 with offsetTop 0); with a pan standing, or under a standing zoom, the hold stands for the keyboard it
+        # one at or under the pinch road's cut, scale 1.01, with no positive offsetTop); with a pan standing, or under a standing zoom, the hold stands for the keyboard it
         # was measured with. Every writing road writes the value it publishes; the clamp road writes nothing.
         self.assertEqual(self.out["fineFromPan"], "0px", "the fine pointer published 0px from the pan")
         self.assertEqual(self.out["coarseAgainZoomed"], {"appTop": "83px", "appH": "460px"}, "the hold stands across a flip with the keyboard's pan standing")
@@ -970,6 +1001,26 @@ class MobileFitExecutes(unittest.TestCase):
                           "scaleAboveCut": {"appTop": "83px", "appH": "460px"}, "onePixelPan": {"appTop": "83px", "appH": "460px"},
                           "zoomedTop": {"appTop": "83px", "appH": "460px"}, "zoomPan": {"appTop": "83px", "appH": "460px"}},
                          "cleared where no pan stands and the viewport is unzoomed; kept under a standing pan or zoom")
+
+    def test_the_clamp_reads_the_layout_viewport_in_both_engine_models_and_binds_only_below_zero(self):
+        # round 7 (2026-09-20). The clamp had read window.innerHeight as the layout viewport's height, which holds in Chromium
+        # and not in WebKit: iOS Safari shrinks innerHeight to the visual viewport's height under a pinch, so there every zoomed
+        # run had innerHeight - h below 0 and the pinch road published 0px whatever the hold (the band under the composer, back
+        # for as long as the zoom held), while every step above kept innerHeight at 844 through the pinch and could not see it.
+        # The clamp reads document.documentElement.clientHeight, the layout viewport in both models. The records carry both
+        # readings, so the model (innerHeight parted from clientHeight) and the sign of the difference are derived, not assumed.
+        px = lambda v: int(v[:-2])
+        wp, wd, rot, back = (self.out[k] for k in ("webkitPinchPanned", "webkitKbDownZoomed", "rotatedUnderZoom", "webkitBack"))
+        self.assertLess(wp["innerHeight"], wp["clientHeight"], "the WebKit model: innerHeight shrunk to the visual viewport under the pinch: %r" % (wp,))
+        self.assertEqual({k: wp[k] for k in ("appTop", "appH", "barH")}, {"appTop": "83px", "appH": "460px", "barH": "0px"},
+                         "the hold is published under a WebKit pinch (innerHeight 230 - 460 would have bound at 0)")
+        self.assertEqual({k: wd[k] for k in ("appTop", "appH", "barH")}, {"appTop": "0px", "appH": "844px", "barH": "44px"}, "the keyboard gone under the zoom: the clamp binds at zero slack")
+        self.assertEqual({k: rot[k] for k in ("appTop", "appH", "barH")}, {"appTop": "0px", "appH": "844px", "barH": "44px"},
+                         "a rotation under the zoom with a stale visual-viewport report: the difference is negative and the max binds at 0, no negative pan")
+        signs = {k: (r["clientHeight"] - px(r["appH"]) > 0) - (r["clientHeight"] - px(r["appH"]) < 0) for k, r in (("slack", wp), ("zero", wd), ("negative", rot))}
+        self.assertEqual(signs, {"slack": 1, "zero": 0, "negative": -1}, "the clamp's difference driven at both signs and zero: %r" % (signs,))
+        self.assertEqual({k: back[k] for k in ("appTop", "appH", "barH")}, {"appTop": "0px", "appH": "844px", "barH": "44px"})
+        self.assertEqual(back["innerHeight"], back["clientHeight"], "the models rejoin at scale 1")
 
 
 # A node stand-in for the installed phone app with a REAL class list: the shell's mobile script and

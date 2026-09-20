@@ -14,8 +14,10 @@ and brace-matches it into Rule(index, at, selector, declarations, decls): `at` i
 (an @media query, a @supports condition), `declarations` the block's raw text, `decls` its (property, value) pairs split
 at ; outside parentheses and quotes; a statement at-rule (@charset, @namespace, `@layer name;`: an at-prelude ended by ;
 with no block) is consumed and dropped, never folded into the next rule's prelude (round 5). CSS the parser cannot read
-REFUSES rather than shrinking a census silently (round 6, 2026-09-20): a `<link rel=stylesheet>` in the live markup and
-an `@import` statement both raise, the way an unconsumed `<style` opening does, since what an external file adds or
+REFUSES rather than shrinking a census silently (round 6, 2026-09-20): a `<link>` whose rel set carries the stylesheet
+token anywhere (`rel=stylesheet`, `rel="preload stylesheet"`, `alternate stylesheet` too; round 7, 2026-09-20: a token
+after another had passed) in the live markup and an `@import` statement, ended by `;` or by the end of the element (round 7:
+a trailing statement had been dropped unread), both raise, the way an unconsumed `<style` opening does, since what an external file adds or
 re-tops is outside every rule the parse returns (a rule the file merely moves still reds the pins that name it); a caller
 that reads a page which links its stylesheets by design passes `linked=True` and takes the style elements alone. Keywords
 and function names are compared case-insensitively, as CSS reads them (`position:FIXED`, `VAR(--app-h)`, `! IMPORTANT`).
@@ -25,7 +27,8 @@ a name already in the set, so a declaration keyed to the shell height through an
 nothing outside the function; None for `calc(var(--app-top) - 40px)`), and `aliases(rules, name, member)` the fixed point
 of the names declared as a bare var() of one in the set, for a pin that needs the VALUE, not a mention, less any name a
 rule that can select `member` re-declares to something else (round 6, 2026-09-20: the table had been sheet-global, so an
-alias on one rule counted where the member's own rule re-declared it); `is_fixed(rule, rules)` reads position:fixed
+alias on one rule counted where the member's own rule re-declared it), the refusal following the chain on the member's
+rules to a fixed point (round 7: a name declared on the member's rule as a bare var() of a REFUSED name had stayed); `is_fixed(rule, rules)` reads position:fixed
 through the same indirection (a bare var() resolved against every declaration of the name, its fallback when undeclared;
 round 6). A property published only by script, never declared in the served CSS, is outside any served-CSS census by
 construction, and so is the sheet a `<link>` or an `@import` names (the parse refuses those, above). Selectors:
@@ -48,7 +51,11 @@ page that is comment text (an HTML comment outside a script or style element, a 
 or // inside a script element), which tests/test_served_pins_read_elements.py reads to find a pin a comment could
 satisfy; `code(html)` is the page with every such span blanked, for a token that has no parsed form (a markup attribute,
 a string inside a script); `js_code(js)` and `css_code(css)` blank the comments of one script or style fragment, for a pin
-over one of the kernel's served constants (a `_*_JS` or `_*_CSS` string spliced into a page), which the same census reads.
+over one of the kernel's served constants (a string spliced into a page), which the same census reads; `element_spans(html)`
+is every live script and style element's content span with its kind, for a reader that needs to know which kind of element
+a text landed in (the census picks a constant's comment scanner by it, round 7, 2026-09-20); `linked_sheets(html)` the
+offsets of the live `<link>` elements whose rel set carries stylesheet, the parse's refusal and the census's pin reading one
+predicate.
 
 Loads no romp code, so it needs no state preamble.
 """
@@ -100,21 +107,41 @@ def _script_spans(html):
     return [(m.start(1), m.end(1)) for m in _SCRIPT.finditer(markup(html))]
 
 
-_LINK_SHEET = re.compile(r"<link\b[^>]*\brel\s*=\s*['\"]?stylesheet\b", re.I)
+# a <link> whose rel SET carries the stylesheet token: HTML reads rel as space-separated tokens and applies the keyword wherever
+# it sits (round 7, 2026-09-20: the regex had anchored the token at the start of the value, so `rel="preload stylesheet"`
+# passed in silence while `rel="stylesheet preload"` refused; `alternate stylesheet` refuses too, the safe side)
+# (a token is whitespace-delimited: `my-stylesheet` is one token and not the keyword, so no \b, which treats `-` as a boundary)
+_LINK_SHEET = re.compile(r"""<link\b[^>]*\brel\s*=\s*(?:"(?:[^"]*\s)?stylesheet(?:\s[^"]*)?"|'(?:[^']*\s)?stylesheet(?:\s[^']*)?'|stylesheet(?=[\s/>]))""", re.I)
+
+
+def linked_sheets(html):
+    """Offsets of every live `<link>` element whose rel set carries the stylesheet token (outside script elements and HTML
+    comments): the one predicate behind the parse's refusal and a census's pin that a page links no sheet."""
+    live = markup(html)
+    scripts = _script_spans(html)
+    return [m.start() for m in _LINK_SHEET.finditer(live) if _outside(m.start(), scripts)]
+
+
+def element_spans(html):
+    """[(start, end, kind)] for the content span of every live script and style element, kind 'script' or 'style', in
+    document order: a text that lands inside one is script or style text, and one outside every span is markup."""
+    live = markup(html)
+    spans = [(m.start(1), m.end(1), "script") for m in _SCRIPT.finditer(live)] + [(m.start(1), m.end(1), "style") for m in _STYLE.finditer(live)]
+    return sorted(spans)
 
 
 def style_blocks(html, linked=False):
     """[(start, css)] for every live style element; refuses when a `<style` tag opening outside a script element or an
-    HTML comment was not consumed, and when the live markup links an external stylesheet (`<link rel=stylesheet>`, outside
-    script elements), whose rules no parse of the page's style elements returns (round 6, 2026-09-20: the unconsumed tag
-    refused while the linked sheet passed in silence, which taught a reader that unread CSS is always caught); `linked=True`
-    states that the caller knows the page links its stylesheets and wants the style elements alone."""
+    HTML comment was not consumed, and when the live markup links an external stylesheet (a `<link>` whose rel set carries
+    stylesheet, outside script elements: linked_sheets), whose rules no parse of the page's style elements returns (round 6,
+    2026-09-20: the unconsumed tag refused while the linked sheet passed in silence, which taught a reader that unread CSS is
+    always caught); `linked=True` states that the caller knows the page links its stylesheets and wants the style elements alone."""
     live = markup(html)
     blocks = [(m.start(1), m.group(1)) for m in _STYLE.finditer(live)]
     scripts = _script_spans(html)
     opens = [m.start() for m in _STYLE_OPEN.finditer(live) if _outside(m.start(), scripts)]
     assert len(opens) == len(blocks), "the served page opens %d style elements and the parser consumed %d" % (len(opens), len(blocks))
-    links = [m.start() for m in _LINK_SHEET.finditer(live) if _outside(m.start(), scripts)]
+    links = linked_sheets(html)
     assert linked or not links, "the served page links %d external stylesheet(s) this parse does not read; pass linked=True to take the style elements alone" % len(links)
     return blocks
 
@@ -184,9 +211,20 @@ def declarations(block):
 _DECLARATION_AT = {"@font-face", "@page", "@counter-style", "@property", "@viewport", "@color-profile", "@font-palette-values", "@font-feature-values"}
 
 
+def _statement(buf):
+    """A statement at-rule's text (`@import url(x); @charset "utf-8"; @namespace svg url(...); @layer base;`), met at a `;`
+    outside any block or left at the end of the element (CSS ends an at-rule at EOF as well as at `;`, round 7, 2026-09-20: a
+    trailing `@import url(x.css)` with no semicolon had been dropped unread): anything else at that level is a parse this
+    instrument cannot account for and refuses, and an `@import` refuses because its sheet is outside the parse."""
+    text = buf.strip()
+    assert text.startswith("@"), "text outside a declaration block that is no statement at-rule: %r" % (text[:80],)
+    assert not text.lower().startswith("@import"), "an @import in a served style element pulls in a sheet this parse does not read: %r" % (text[:80],)
+
+
 def rules(html, linked=False):
     """Every rule of every served style element, comments stripped, as Rule tuples in document order; refuses a linked
-    stylesheet (style_blocks) and an `@import` statement (its sheet is outside this parse)."""
+    stylesheet (style_blocks) and an `@import` statement, ended by `;` or by the end of the element (its sheet is outside this
+    parse)."""
     out = []
     for _, css in style_blocks(html, linked):
         css = _blank(css, css_comment_spans(css))
@@ -218,12 +256,13 @@ def rules(html, linked=False):
                 # a statement at-rule (@import url(x); @charset "utf-8"; @namespace svg url(...); @layer base;) ends here
                 # with no block. Round 5 (2026-09-20): it had accumulated into the NEXT rule's prelude, which then began
                 # with @ and was pushed as a nested at-rule, dropping that rule and its declarations silently.
-                assert buf.strip().startswith("@"), "a ; outside a declaration block that ends no statement at-rule: %r" % (buf.strip()[:80],)
-                assert not buf.strip().lower().startswith("@import"), "an @import in a served style element pulls in a sheet this parse does not read: %r" % (buf.strip()[:80],)
+                _statement(buf)
                 buf = ""
             else:
                 buf += ch
             i += 1
+        if buf.strip():
+            _statement(buf)   # a statement at-rule the end of the element ends (round 7, 2026-09-20)
         assert not stack, "unbalanced braces in a served style element: %r" % (stack,)
     return out
 
@@ -397,9 +436,12 @@ def aliases(rules_, name, member=None):
     `member`, a compound naming the element the pin is about, a name that any rule able to select that element declares to
     something other than a bare var() of a name in the set is refused (round 6, 2026-09-20: the table had been sheet-global
     with no cascade, so `--x:var(--app-top)` on one rule made `top:var(--x)` the pan even where the member's own rule
-    re-declared `--x:0`). This is not a cascade: a re-declaration on an ANCESTOR of the member, which the member would
-    inherit, is not read (no served rule takes that shape today), so the table stays over-inclusive there and the served
-    leg reads the boxes."""
+    re-declared `--x:0`), and the refusal follows the chain on the member's rules to a fixed point (round 7, 2026-09-20: it had
+    run once, so `--y:var(--x)` on the member's own rule stayed an alias after `--x` was refused there, though the engine
+    computes `--y` on the member from the member's own `--x`; a `--y:var(--x)` declared on `:root` stays, the root computes it
+    as the pan and the member inherits that). This is not a cascade: a re-declaration on an ANCESTOR of the member, which the
+    member would inherit, is not read (no served rule takes that shape today), so the table stays over-inclusive there and the
+    served leg reads the boxes."""
     custom = [(r, p, v) for r in rules_ for p, v in r.decls if p.startswith("--")]
     names = {name}
     while True:
@@ -410,8 +452,11 @@ def aliases(rules_, name, member=None):
     if member is None:
         return names
     selects = lambda r: any(can_match(subject(m), member) for m in members(r.selector))
-    refused = {p for r, p, v in custom if p != name and p in names and bare_var(v) not in names and selects(r)}
-    return names - refused
+    while True:
+        refused = {p for r, p, v in custom if p != name and p in names and bare_var(v) not in names and selects(r)}
+        if not refused:
+            return names
+        names -= refused
 
 
 def names_any(value, names):

@@ -175,7 +175,7 @@ class OneHeightBasis(unittest.TestCase):
         # element: a name a rule that can select the member re-declares to a constant is no alias of the pan there); and
         # the page must link no external stylesheet and import none, or the parse refuses (the population claim below is
         # over the rules the parse returns, and a linked or imported sheet adds or re-tops rules it never sees).
-        self.assertNotRegex(served_css.markup(self.html), r"<link\b[^>]*\brel\s*=\s*['\"]?stylesheet", "the landing links no external stylesheet: every rule the census judges is in a style element it parses")
+        self.assertEqual(served_css.linked_sheets(self.html), [], "the landing links no external stylesheet (a link whose rel set carries the token, the parser's own predicate): every rule the census judges is in a style element it parses")
         rules = served_css.rules(self.html)
         self.assertGreater(len(rules), 100, "the parse read the served stylesheets: %d rules" % len(rules))
         app_h = served_css.closure(rules, "--app-h")
@@ -289,6 +289,30 @@ class ParsedSheetReads(unittest.TestCase):
         self.assertEqual([r.selector for r in served_css.rules("<link rel=stylesheet href=x.css><style>#a{top:0}</style>", linked=True)], ["#a"])
         # a link inside a script string or an HTML comment is not a link element
         self.assertEqual([r.selector for r in served_css.rules('<script>x="<link rel=stylesheet>";</script><!-- <link rel=stylesheet href=y.css> --><style>#a{top:0}</style>')], ["#a"])
+        # round 7 (2026-09-20): rel is a SET of tokens and the keyword applies wherever it sits; the token after another had
+        # passed in silence while the same sheet under rel=stylesheet refused. linked_sheets is the predicate both the parse
+        # and the census's pin read
+        for rel in ("'preload stylesheet'", '"stylesheet preload"', "'alternate stylesheet'", "StyleSheet", "'a stylesheet b'"):
+            page = "<link rel=%s href=x.css><style>#a{top:0}</style>" % rel
+            with self.assertRaises(AssertionError, msg=rel) as cm:
+                served_css.rules(page)
+            self.assertIn("links 1 external stylesheet", str(cm.exception), rel)
+            self.assertEqual(len(served_css.linked_sheets(page)), 1, rel)
+        for rel in ("'preload'", '"stylesheets"', "'my-stylesheet'", "icon"):   # no stylesheet token in the set
+            page = "<link rel=%s href=x.css><style>#a{top:0}</style>" % rel
+            self.assertEqual([r.selector for r in served_css.rules(page)], ["#a"], rel)
+            self.assertEqual(served_css.linked_sheets(page), [], rel)
+        # round 7 (2026-09-20): a statement at-rule ends at the end of the element as well as at a `;` (CSS Syntax), so a
+        # style element that is one `@import` with no semicolon loads the sheet in every engine; the parse had read it as an
+        # empty element and refused nothing, and `#a{top:0}@import url(x.css)` returned the #a rule alone
+        for sheet in ("<style>@import url(x.css)</style>", "<style>@import 'x.css'</style>", "<style>#a{top:0}@import url(x.css)</style>", "<style>@import url(x.css)\n</style>"):
+            with self.assertRaises(AssertionError, msg=sheet) as cm:
+                served_css.rules(sheet)
+            self.assertIn("@import", str(cm.exception), sheet)
+        self.assertEqual(served_css.rules("<style>@charset 'utf-8'</style>"), [], "a trailing statement at-rule that is no import is consumed")
+        self.assertEqual([r.selector for r in served_css.rules("<style>#a{top:0}@layer base</style>")], ["#a"])
+        with self.assertRaises(AssertionError):   # trailing text that is no at-rule is a parse the instrument cannot account for
+            served_css.rules("<style>#a{top:0}#b</style>")
 
     def test_surely_refuses_a_selector_that_selects_by_a_state_the_sheet_cannot_show(self):
         # round 6 (2026-09-20): surely() had dropped attribute selectors and functional pseudo-classes the way can_match
@@ -329,6 +353,19 @@ class ParsedSheetReads(unittest.TestCase):
         self.assertEqual(sorted(served_css.aliases(rules, "--app-top", "iframe.lifted")), ["--app-top", "--y"],
                          "--x is re-declared by a rule that can select the lift; --y only by #f-chat, which cannot")
         self.assertEqual(sorted(served_css.aliases(rules, "--app-top", "#f-chat")), ["--app-top", "--x"])
+        # round 7 (2026-09-20): the refusal follows the CHAIN on the member's rules. --y declared on the lift's own rule as a
+        # bare var() of --x, which the same rule re-declares to 0: the engine computes --y on the lift from the lift's own --x,
+        # 0, so top:var(--y) is no origin; the one-pass refusal had kept --y (its value named --x, then still in the set)
+        rules = served_css.rules("<style>:root{--x:var(--app-top)}iframe.lifted{--y:var(--x);--x:0;top:var(--y)}</style>")
+        self.assertEqual(sorted(served_css.aliases(rules, "--app-top", "iframe.lifted")), ["--app-top"], "--y follows --x out of the table")
+        self.assertEqual(sorted(served_css.aliases(rules, "--app-top")), ["--app-top", "--x", "--y"], "the sheet-global table still lists both")
+        # ...and stays where the chain's link is declared on :root: the root computes --y as the pan and the lift inherits it,
+        # whatever the lift's own --x says
+        rules = served_css.rules("<style>:root{--x:var(--app-top);--y:var(--x)}iframe.lifted{--x:0;top:var(--y)}</style>")
+        self.assertEqual(sorted(served_css.aliases(rules, "--app-top", "iframe.lifted")), ["--app-top", "--y"])
+        # a longer chain on the member's rules empties the same way
+        rules = served_css.rules("<style>:root{--x:var(--app-top)}iframe.lifted{--z:var(--y);--y:var(--x);--x:0;top:var(--z)}</style>")
+        self.assertEqual(sorted(served_css.aliases(rules, "--app-top", "iframe.lifted")), ["--app-top"])
 
     def test_can_match_reads_only_the_selectors_that_tell_elements_apart(self):
         # `*`, an attribute selector and a functional pseudo-class had been read as selectors the other compound must also
@@ -397,11 +434,14 @@ class RefitsWhenTheVisibleHeightChanges(unittest.TestCase):
         # consumer is gated on the layout query, a different population, see the fit() comment). Under a pinch (scale above 1.01) the last pan
         # holds, a zoom pans too and never re-lays the shell, CLAMPED AT USE to the layout viewport less the height the same
         # run publishes, so a keyboard dismissed while zoomed cannot leave the body hanging below the viewport (round 2,
-        # 2026-09-19); the clamp bounds what is published and never writes back into the hold (round 4, 2026-09-20: it had,
+        # 2026-09-19); the layout viewport is document.documentElement.clientHeight, the same height in both engine models
+        # (round 7, 2026-09-20: it had read window.innerHeight, which WebKit shrinks to the visual viewport's height under a
+        # pinch, so on iOS Safari the difference was below 0 on every zoomed run and the road published 0px whatever the
+        # hold; the harness drives both models); the clamp bounds what is published and never writes back into the hold (round 4, 2026-09-20: it had,
         # so the hold decayed to 0 the first time the clamp bound and a keyboard raised again under the zoom reopened the
         # band). Every road that WRITES the hold writes the value it publishes: the measured road its measurement, the 0px
-        # road a zero, and that only in a true no-pan state (no visual viewport, or one at scale 1 with offsetTop 0; round 6,
-        # 2026-09-20: written on every fine run, the zero had reopened the band after a pointer flip under a keyboard or a
+        # road a zero, and that only in a true no-pan state (no visual viewport, or one at or under the pinch road's cut, scale
+        # 1.01, with no positive offsetTop; round 6, 2026-09-20: written on every fine run, the zero had reopened the band after a pointer flip under a keyboard or a
         # zoom); the clamp road publishes a bound of the hold and stores nothing, so --app-top can sit below the hold until a
         # writing road runs next (round 6: this comment had said the hold is the last value published on every road, which
         # the clamp road contradicts whenever it binds, and the harness asserts that state). Both coarse branches sit under
@@ -412,7 +452,8 @@ class RefitsWhenTheVisibleHeightChanges(unittest.TestCase):
         self.assertIn("\nvar lastPan=0;\nfunction fit(){", self.js)
         self.assertIn("if(!coarse||!vv){if(!vv||((vv.scale||1)<=1.01&&!(vv.offsetTop>0)))lastPan=0;document.documentElement.style.setProperty('--app-top','0px');}", self.js)
         self.assertIn("else if(h&&(vv.scale||1)<=1.01)document.documentElement.style.setProperty('--app-top',(lastPan=Math.round(vv.offsetTop||0))+'px');\n"
-                      "else if(h)document.documentElement.style.setProperty('--app-top',Math.min(lastPan,Math.max(0,window.innerHeight-h))+'px');", self.js)
+                      "else if(h)document.documentElement.style.setProperty('--app-top',Math.min(lastPan,Math.max(0,document.documentElement.clientHeight-h))+'px');", self.js)
+        self.assertNotIn("innerHeight-h", self.js, "the clamp reads the layout viewport (clientHeight), not innerHeight, which WebKit shrinks under a pinch")
         self.assertNotIn("lastPan=Math.min", self.js, "the clamp is at use: nothing writes its result back into the hold")
         # the write sits inside fit(), after the --app-h write and before the stray-scroll reset, so one frame publishes both
         self.assertLess(self.js.index("setProperty('--app-h',h+'px')"), self.js.index("setProperty('--app-top'"))
