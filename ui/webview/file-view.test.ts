@@ -17,6 +17,24 @@ import { hideEdges, staysEnumerable } from "../test-dom-shim";
 
 const web = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
 const VIEW = web("file-view.ts");
+/** `src` with its comments removed (file-view-seam.test.ts codeOnly, copied: a line comment to the line's end, a block comment to
+ *  its close, string literals kept), so an order pin here reads code and a comment quoting the pinned lines cannot satisfy it. */
+function codeOnly(src: string): string {
+  let out = "", i = 0;
+  while (i < src.length) {
+    const c = src[i], n = src[i + 1];
+    if (c === '"' || c === "'" || c === "`") {
+      out += c; i++;
+      while (i < src.length && src[i] !== c) { if (src[i] === "\\") { out += src[i]; i++; } out += src[i] ?? ""; i++; }
+      out += src[i] ?? ""; i++;
+    } else if (c === "/" && n === "/") {
+      while (i < src.length && src[i] !== "\n") i++;
+    } else if (c === "/" && n === "*") {
+      const end = src.indexOf("*/", i + 2); i = end < 0 ? src.length : end + 2;
+    } else { out += c; i++; }
+  }
+  return out.split("\n").map((l) => l.trimEnd()).filter((l) => l !== "").join("\n");
+}
 const RENDER = web("render.ts");
 const FEED = web("feed.ts");
 const FEED_CSS = web("feed.css");
@@ -439,9 +457,13 @@ test("Raw ⇄ Rendered exists for markdown ONLY, and nothing reaches innerHTML u
   assert.doesNotMatch(VIEW, /from "dompurify"/, "the viewer spells no profile of its own: every option comes through md-sanitize.ts");
   // the sanitized <body>'s children are adopted as they are (no re-parse of a serialized string); the heading ids are minted
   // inside the call, as the caller's own pass, so they are read from the text as written, before the math fill (md-url-view.test.ts);
-  // the figure chain runs on that body between the two lines, before the adoption (file-view-seam.test.ts pins the order)
-  assert.match(VIEW, /const clean = sanitizeMd\(dirty, mintHeadingIds\);/);
-  assert.match(VIEW, /box\.replaceChildren\(\.\.\.Array\.from\(clean\.childNodes\)\);/);
+  // the figure chain runs on that body between the two lines, before the adoption: read off the comment-stripped code (codeOnly),
+  // so a comment quoting these lines above an adopt-first body does not satisfy it (file-view-seam.test.ts pins the whole order)
+  const mdCode = codeOnly(VIEW.split("function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {")[1].split("\n}\n")[0]);
+  assert.match(mdCode, /const clean = sanitizeMd\(dirty, mintHeadingIds\);/);
+  assert.match(mdCode, /box\.replaceChildren\(\.\.\.Array\.from\(clean\.childNodes\)\);/);
+  const adoptAt = mdCode.indexOf("box.replaceChildren(...Array.from(clean.childNodes));");
+  for (const call of ["resolveFigureRefs(clean", "rewriteFigureSrcs(clean", "gateRemoteFigures(clean"]) assert.ok(mdCode.indexOf(call) > 0 && mdCode.lastIndexOf(call) < adoptAt, call + " runs before the adoption");
   // a note's links open a NEW tab rather than navigating the hosting pane's document away. A file on disk hands its
   // anchors to file-view-links.ts (linkMarkdownAnchors, fork PR #347: a web link stamped, a sibling file opened in
   // the viewer); a URL document, or a caller with no location, stamps every link element in mdBlock's own pass. Both
@@ -1326,7 +1348,7 @@ test("source: mdBlock keeps no try, no catch and no fallback; both viewers' rend
   assert.match(recipe, /\n {2}return marked\.parser\(tokens, opts\);$/, "the parser at the recipe's own level");
   assert.doesNotMatch(recipe, /try \{/, "inside no try: a throw from the lexer or the parser propagates to mdBlock and on to the caller");
   assert.match(mdFn, /\n {2}const clean = sanitizeMd\(dirty, mintHeadingIds\);/, "the sanitize at the function's own level: a throw propagates");
-  assert.match(mdFn, /\n {2}box\.replaceChildren\(\.\.\.Array\.from\(clean\.childNodes\)\);\n/, "the adoption at the function's own level too, after the figure chain ran on the sanitizer's body: a throw from either propagates");
+  assert.match(mdFn, /\n {2}box\.replaceChildren\(\.\.\.Array\.from\(clean\.childNodes\)\);\n/, "the adoption at the function's own level too: a throw from either propagates (its place after the figure chain is pinned above, on the comment-stripped code, and in file-view-seam.test.ts)");
   assert.doesNotMatch(mdFn, /\n {2}try \{/, "no try at the function's own level (the fence highlight's and the URL parse's inner ones stand)");
   assert.doesNotMatch(mdFn, /box\.textContent = text;|let rendered|rendered = false|if \(rendered/, "no fallback write and no `rendered` flag: the caller keeps the content, and both link passes run on every render");
   assert.match(mdFn, /\n {4}linkMarkdownAnchors\(box, doc\.path\);\n/, "the anchors' pass, ungated");

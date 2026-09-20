@@ -17,6 +17,24 @@ const web = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui
 const RENDER = web("render.ts");
 const VIEW = web("file-view.ts");
 const SANITIZE = web("md-sanitize.ts");   // the one sanitizer both md() and mdBlock call (sanitizeMd)
+/** `src` with its comments removed (file-view-seam.test.ts codeOnly, copied: a line comment to the line's end, a block comment to
+ *  its close, string literals kept), so an order pin here reads code and a comment quoting the pinned lines cannot satisfy it. */
+function codeOnly(src: string): string {
+  let out = "", i = 0;
+  while (i < src.length) {
+    const c = src[i], n = src[i + 1];
+    if (c === '"' || c === "'" || c === "`") {
+      out += c; i++;
+      while (i < src.length && src[i] !== c) { if (src[i] === "\\") { out += src[i]; i++; } out += src[i] ?? ""; i++; }
+      out += src[i] ?? ""; i++;
+    } else if (c === "/" && n === "/") {
+      while (i < src.length && src[i] !== "\n") i++;
+    } else if (c === "/" && n === "*") {
+      const end = src.indexOf("*/", i + 2); i = end < 0 ? src.length : end + 2;
+    } else { out += c; i++; }
+  }
+  return out.split("\n").map((l) => l.trimEnd()).filter((l) => l !== "").join("\n");
+}
 const CHAT_CSS = web("styles.css");
 const FEED_CSS = web("feed.css");
 const KERNEL = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "kernel.py"), "utf8");
@@ -28,6 +46,9 @@ const HANDLER = (RENDER.match(/closest\?\.\((?:"a\[href\]"|LINK_SEL)\)[\s\S]*?\}
 const URL_FN = (VIEW.split("export function openUrlView")[1] || "").split("// Kick the browser's downloader")[0];
 // the markdown renderer
 const MD_FN = (VIEW.split("function mdBlock(")[1] || "").split("// The image body:")[0];
+// mdBlock's body alone, comments stripped (codeOnly, below): the order pins read this, so a comment quoting the pinned lines
+// above an adopt-first body cannot satisfy them (the review's round-2 pre-answers built that reversion, 2026-09-20)
+const MD_CODE = codeOnly((VIEW.split("function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {")[1] || "").split("\n}\n")[0]);
 // the local viewer (the split file-view.test.ts uses — openUrlView sits AFTER offersDownload so it
 // never leaks into this slice)
 const OPEN_FN = VIEW.split("export function openFileView")[1].split("function offersDownload")[0];
@@ -268,17 +289,18 @@ test("EVERY exit that stops short of consuming the body aborts this open's contr
 test("mdBlock takes the document's location and resolves relative figure references (every fetching attribute) and a/href AFTER the sanitizer", () => {
   assert.match(VIEW, /type MdDocLoc = \{ kind: "url"; href: string \} \| \{ kind: "file"; path: string; sid: string \| null \};/);
   assert.match(VIEW, /function mdBlock\(text: string, doc\?: MdDocLoc\): HTMLElement \{/);
-  const sanitize = MD_FN.indexOf("sanitizeMd(");
-  const figures = MD_FN.indexOf("resolveFigureRefs(clean, doc.href);");
-  const adopt = MD_FN.indexOf("box.replaceChildren(...Array.from(clean.childNodes));");
-  const links = MD_FN.indexOf("resolveDocRelative(href, doc.href)");
+  const sanitize = MD_CODE.indexOf("sanitizeMd(");
+  const figures = MD_CODE.indexOf("resolveFigureRefs(clean, doc.href);");
+  const adopt = MD_CODE.indexOf("box.replaceChildren(...Array.from(clean.childNodes));");
+  const links = MD_CODE.indexOf("resolveDocRelative(href, doc.href)");
   assert.ok(sanitize > -1 && figures > sanitize && links > sanitize, "sanitise first; the rewrites only ever see what the sanitizer kept");
   assert.ok(adopt > figures && links > adopt, "the figures are resolved on the sanitizer's own body, before its nodes are adopted into the live document (2026-09-20: WebKit fetches a reference on adoption, the pre-resolution value included); the links after");
+  assert.equal(MD_CODE.indexOf("resolveFigureRefs(clean"), figures, "one resolve call, the pinned one");
   // the figures: every attribute a figure fetches through (figure-gate.ts figureRefs), not img[src] alone (the Slice 4 review, round 2:
   // a relative srcset candidate, a video's src or poster, an audio's, a source's or a track's src resolved against the PAGE and 404'd),
   // each resolved through the executed helper against the document URL; a srcset candidate by candidate, its descriptors kept;
   // an svg image's xlink:href folded into href as rewriteFigureSrcs folds it (md-config-url-figure-refs-browser.test.ts drives it)
-  assert.match(MD_FN, /if \(doc && doc\.kind === "url"\) \{\n(?:\s*\/\/[^\n]*\n)*\s*resolveFigureRefs\(clean, doc\.href\);/, "the URL kind's figure pass is the walk over every fetching attribute, over the sanitizer's body");
+  assert.match(MD_CODE, /if \(doc && doc\.kind === "url"\) \{\n\s*resolveFigureRefs\(clean, doc\.href\);/, "the URL kind's figure pass is the walk over every fetching attribute, over the sanitizer's body (code only: the arm's first statement)");
   assert.doesNotMatch(MD_FN, /querySelectorAll\("img\[src\]"\)/, "no img-only arm is left in mdBlock");
   const RF = VIEW.split("function resolveFigureRefs(root: ParentNode, base: string): void {")[1].split("\n}")[0];
   assert.match(RF, /for \(const ref of figureRefs\(root\)\) \{/, "the gate's own walk names the attributes");
@@ -306,7 +328,8 @@ test("local file mode: a relative image is the sibling over the kernel's /file r
   // matching and joins the path the way the panel's poll and the kernel read it (relative under the file's directory,
   // absolute as itself, `..` left to the kernel; file-view-seam.test.ts pins its body). Deliberate divergence: a
   // `~`-anchored src joins under the directory here, as those two readers do, where upstream took it as itself.
-  assert.match(MD_FN, /rewriteFigureSrcs\(clean, doc\.path\.slice\(0, doc\.path\.lastIndexOf\("\/"\) \+ 1\), doc\.sid\);/);   // over the sanitizer's body, before the adoption (file-view-seam.test.ts pins the order)
+  assert.match(MD_CODE, /rewriteFigureSrcs\(clean, doc\.path\.slice\(0, doc\.path\.lastIndexOf\("\/"\) \+ 1\), doc\.sid\);/);   // over the sanitizer's body
+  assert.ok(MD_CODE.indexOf("rewriteFigureSrcs(clean") < MD_CODE.indexOf("box.replaceChildren(...Array.from(clean.childNodes));"), "before the adoption (file-view-seam.test.ts pins the whole order; this reads code, not comments)");
   const RW = VIEW.split("export function rewriteFigureSrcs(")[1].split("\n}")[0];
   // one path builder for every fetching attribute (Slice 4 of plans/markdown-viewer.md widened the rewrite from `img[src]` to
   // every attribute figure-gate.ts's figureRefs reads: srcset candidates, a video's poster, a source's src, an svg image's href)
@@ -358,7 +381,7 @@ test("every heading gets id=md-<slug> after sanitisation and BEFORE the math fil
   // the math fill among them, so a heading with a formula is slugged from its TeX as written and never from KaTeX's
   // glyphs (the Slice 4 review: `# Ratio $\frac{a}{b}$` minted md-ratio-ba and the note's own link to md-ratio-fracab was
   // dead; md-config-fragment-landing-browser.test.ts executes both over the real bundle)
-  assert.match(MD_FN, /const clean = sanitizeMd\(dirty, mintHeadingIds\);/, "mdBlock's one sanitize call hands the minting in as the caller's pass");
+  assert.match(MD_CODE, /const clean = sanitizeMd\(dirty, mintHeadingIds\);/, "mdBlock's one sanitize call hands the minting in as the caller's pass (code only)");
   const MINT = (VIEW.split("function mintHeadingIds(root: ParentNode): void {")[1] || "").split("\n}\n")[0];
   assert.match(MINT, /const heads = Array\.from\(root\.querySelectorAll\("h1, h2, h3, h4, h5, h6"\)\) as HTMLElement\[\];\s*\n\s*const slugs = uniqueSlugs\(heads\.map\(\(h\) => headingSlug\(h\.textContent \|\| ""\)\)\);\s*\n\s*heads\.forEach\(\(h, i\) => \{ h\.id = "md-" \+ slugs\[i\]; \}\);/);
   const SAN = web("md-sanitize.ts");

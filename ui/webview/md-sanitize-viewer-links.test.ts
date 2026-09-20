@@ -29,6 +29,27 @@ const VIEW = read("file-view.ts");
 const RENDER = read("render.ts");
 // mdBlock, from its declaration to the next exported function
 const MD_FN = VIEW.split("function mdBlock(")[1].split("export function rewriteFigureSrcs")[0];
+// mdBlock's body with its comments stripped (codeOnly, below), for the order pins: a comment quoting the pinned lines cannot
+// satisfy them (the review's round-2 pre-answers built that reversion, 2026-09-20); the prose pins above read MD_FN as written
+const MD_CODE = codeOnly(VIEW.split("function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {")[1].split("\n}\n")[0]);
+/** `src` with its comments removed (file-view-seam.test.ts codeOnly, copied: a line comment to the line's end, a block comment to
+ *  its close, string literals kept), so an order pin here reads code and a comment quoting the pinned lines cannot satisfy it. */
+function codeOnly(src: string): string {
+  let out = "", i = 0;
+  while (i < src.length) {
+    const c = src[i], n = src[i + 1];
+    if (c === '"' || c === "'" || c === "`") {
+      out += c; i++;
+      while (i < src.length && src[i] !== c) { if (src[i] === "\\") { out += src[i]; i++; } out += src[i] ?? ""; i++; }
+      out += src[i] ?? ""; i++;
+    } else if (c === "/" && n === "/") {
+      while (i < src.length && src[i] !== "\n") i++;
+    } else if (c === "/" && n === "*") {
+      const end = src.indexOf("*/", i + 2); i = end < 0 ? src.length : end + 2;
+    } else { out += c; i++; }
+  }
+  return out.split("\n").map((l) => l.trimEnd()).filter((l) => l !== "").join("\n");
+}
 
 /** A stub element carrying only the attributes linkHref reads: `href` in no namespace, `xlink:href` in XLink. */
 function stub(attrs: { href?: string; xlink?: string }) {
@@ -79,12 +100,12 @@ test("target and rel are written with setAttribute: the `target` property is rea
 });
 
 test("an SVG anchor's xlink:href is moved to a plain href before either pass (copied when the anchor has none, then removed), so the delegates and the browser read one attribute", () => {
-  const norm = MD_FN.indexOf('querySelectorAll("a[*|href]").forEach((a) => {');
-  const sanitize = MD_FN.indexOf("sanitizeMd(");
-  const adopt = MD_FN.indexOf("box.replaceChildren(...Array.from(clean.childNodes));");   // the figure chain runs between the sanitize and this line, on the sanitizer's body; it touches no anchor
-  const urlLinks = MD_FN.indexOf("resolveDocRelative(href, doc.href)");    // the URL kind's link pass
-  const fileLinks = MD_FN.indexOf("linkMarkdownAnchors(box, doc.path)");   // the file kind's
-  const stamp = MD_FN.indexOf('a.dataset.act = "fv-anchor"');              // the arm every other document takes
+  const norm = MD_CODE.indexOf('querySelectorAll("a[*|href]").forEach((a) => {');
+  const sanitize = MD_CODE.indexOf("sanitizeMd(");
+  const adopt = MD_CODE.indexOf("box.replaceChildren(...Array.from(clean.childNodes));");   // the adoption; where the figure chain sits relative to it is file-view-seam.test.ts's pin, not this one's
+  const urlLinks = MD_CODE.indexOf("resolveDocRelative(href, doc.href)");    // the URL kind's link pass
+  const fileLinks = MD_CODE.indexOf("linkMarkdownAnchors(box, doc.path)");   // the file kind's
+  const stamp = MD_CODE.indexOf('a.dataset.act = "fv-anchor"');              // the arm every other document takes
   assert.ok(norm > -1, "the normalisation pass exists");
   assert.ok(sanitize < adopt && adopt < norm, "after the sanitize (the attribute must survive DOMPurify first) and after the adoption");
   assert.ok(urlLinks > norm && fileLinks > norm && stamp > norm, "before every link pass (all three see it)");
@@ -98,7 +119,7 @@ test("an SVG anchor's xlink:href is moved to a plain href before either pass (co
   assert.doesNotMatch(MD_FN, /a\[\*\|href\]:not\(\[href\]\)/, "the copy-only pass is gone: it left xlink:href for the browser to follow once href came off");
   // a stand-in element runs the pass's logic as written: an xlink-only anchor gains href and loses xlink; one with both keeps its
   // own href and loses xlink; an href-only anchor is untouched
-  const pass = MD_FN.slice(norm + 'querySelectorAll("a[*|href]").forEach('.length);
+  const pass = MD_CODE.slice(norm + 'querySelectorAll("a[*|href]").forEach('.length);   // `norm` is an index into the comment-stripped body
   const fnSrc = pass.slice(0, pass.indexOf("\n  });") + "\n  }".length);
   const fn = new Function("XLINK_NS", "return " + fnSrc)(XLINK_NS) as (a: unknown) => void;
   const el = (attrs: Record<string, string | undefined>) => {

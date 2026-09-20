@@ -54,6 +54,24 @@ const RECIPE = [
   '  if (walk) marked.walkTokens(tokens, walk);',
   '  return marked.parser(tokens, opts);',
 ].join('\n');
+/** `src` with its comments removed (ui/webview/file-view-seam.test.ts codeOnly, copied: a line comment to the line's end, a block comment to
+ *  its close, string literals kept), so an order pin here reads code and a comment quoting the pinned lines cannot satisfy it. */
+function codeOnly(src) {
+  let out = "", i = 0;
+  while (i < src.length) {
+    const c = src[i], n = src[i + 1];
+    if (c === '"' || c === "'" || c === "`") {
+      out += c; i++;
+      while (i < src.length && src[i] !== c) { if (src[i] === "\\") { out += src[i]; i++; } out += src[i] ?? ""; i++; }
+      out += src[i] ?? ""; i++;
+    } else if (c === "/" && n === "/") {
+      while (i < src.length && src[i] !== "\n") i++;
+    } else if (c === "/" && n === "*") {
+      const end = src.indexOf("*/", i + 2); i = end < 0 ? src.length : end + 2;
+    } else { out += c; i++; }
+  }
+  return out.split("\n").map((l) => l.trimEnd()).filter((l) => l !== "").join("\n");
+}
 const WALK = [
   '  const dirty = viewerHtml(text, (t) => {',
   '    if (t.type === "code") { const c = t as Tokens.Code; fences.push({ text: c.text, indented: c.codeBlockStyle === "indented" }); }',
@@ -73,7 +91,13 @@ test('file-view.ts exports viewerHtml, the five statements in order and nothing 
   for (const s of ['marked.parse(', 'marked.lexer(', 'marked.parser(', 'marked.walkTokens(', 'literalizeUnclosedTags(']) assert.ok(!mdBlock.includes(s), `mdBlock holds no ${s} of its own`);
   assert.equal((view.match(/literalizeUnclosedTags\(/g) || []).length, 1, 'one call in the viewer, the recipe\'s');
   assert.ok(view.includes('\n  const clean = sanitizeMd(dirty, mintHeadingIds);'), 'the sanitizer stays mdBlock\'s own step after the recipe');
-  assert.ok(view.includes('\n  box.replaceChildren(...Array.from(clean.childNodes));\n'), 'and its body is adopted as a step of its own, after the figure chain ran on it (2026-09-20)');
+  assert.ok(view.includes('\n  box.replaceChildren(...Array.from(clean.childNodes));\n'), 'and its body is adopted as a step of its own (2026-09-20)');
+  // after the figure chain ran on it: read off the comment-stripped body, so a comment quoting the lines above an adopt-first body
+  // does not satisfy it (the review's round-2 pre-answers built that reversion); file-view-seam.test.ts pins the whole order
+  const mdCode = codeOnly(mdBlock);
+  const adoptAt = mdCode.indexOf('box.replaceChildren(...Array.from(clean.childNodes));');
+  assert.ok(adoptAt > 0, 'the adoption in the code');
+  for (const call of ['resolveFigureRefs(clean', 'rewriteFigureSrcs(clean', 'gateRemoteFigures(clean']) assert.ok(mdCode.indexOf(call) > 0 && mdCode.lastIndexOf(call) < adoptAt, call + ' runs before the adoption');
   assert.ok(view.includes('import { marked, type Token, type Tokens } from "marked";'), 'the walk\'s parameter type comes from marked');
 });
 
