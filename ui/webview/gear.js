@@ -2052,19 +2052,38 @@ function initGear(post, opts) {
     // it (round three, the manager's ruling): a bottom clip is reachable by the card's scroll, a top clip is not
     if (above >= sr.height + 2) host.classList.add('rs-up');
   }
+  // EVERY host of the row an event touched, the row and its Fast mode boxes, re-placed on every road's enter and exit (the
+  // maintainer's round 4 of the share field, correctness-2 and regression-1): the class is written and cleared by two roads, the
+  // pointer's and the keyboard's, and each exit stripped it unconditionally, so a pointer leaving a row whose checkbox holds a
+  // keyboard focus (or a focus leaving a hovered row) dropped the placement while the description was still shown, and it
+  // flipped below the row and past the card's bottom, the T408 clip placeSub exists to prevent. placeSub drops the class first
+  // and re-adds it only while the host's OWN popover is shown and does not fit below, so re-placing is the guard: either road's
+  // exit leaves the other road's placement standing and the class off when nothing is shown. The whole row and not the touched
+  // host alone, on the enters too, because a road that moves from a row's picker button (or label) into its box never leaves
+  // the row (relatedTarget inside the host, so no exit fires for the row), and the row's class, decided for the ROW's popover,
+  // stayed behind: with nothing shown once the focus left the box (measured: a row wearing rs-up), and while the box's popover
+  // showed, placing it above by the row's up rule on a measurement of a different popover.
+  function placeRowHosts(host) {
+    var row = host.classList.contains('rs-fastin') ? (host.closest('#rsettings .rs-row') || host) : host;
+    placeSub(row);
+    var boxes = row.querySelectorAll('.rs-fastin');
+    for (var i = 0; i < boxes.length; i++) placeSub(boxes[i]);
+  }
   if (pcard) {
-    pcard.addEventListener('mouseover', function (e) { var host = hostOf(e.target); if (host) placeSub(host); });
-    pcard.addEventListener('mouseout', function (e) { var host = hostOf(e.target); if (host && !(e.relatedTarget && host.contains(e.relatedTarget))) host.classList.remove('rs-up'); });
-    // the focus road (2026-09-20): the sheet shows a description while its row holds the focus (:focus-within, gear.css), and
-    // the selector alone does not place it, so the same measurement runs on focusin (a Tab, a screen reader's move, a touch
-    // browser's focus on tap) and the class goes with the focus as it goes with the pointer. The host is hostOf's on both
-    // roads: for a focus inside a Fast mode box that is the box, whose own description the sheet shows on that focus (the
-    // focus twins of the box's hover pair, gear.css) as it does on a hover on the box, so the box's popover is the one with a
-    // height to place. (Round 4 of the share field had the sheet show the ROW's description on that focus, and a climb from
-    // the box to its row here, so that the shown popover was the one placed; the twins made the row's stand down and the
-    // climb a measurement of a hidden popover, so it went.)
-    pcard.addEventListener('focusin', function (e) { var host = hostOf(e.target); if (host) placeSub(host); });
-    pcard.addEventListener('focusout', function (e) { var host = hostOf(e.target); if (host && !(e.relatedTarget && host.contains(e.relatedTarget))) host.classList.remove('rs-up'); });
+    pcard.addEventListener('mouseover', function (e) { var host = hostOf(e.target); if (host) placeRowHosts(host); });
+    pcard.addEventListener('mouseout', function (e) { var host = hostOf(e.target); if (host && !(e.relatedTarget && host.contains(e.relatedTarget))) placeRowHosts(host); });
+    // the focus road (2026-09-20): the sheet shows a description while its row holds a keyboard focus (:has(:focus-visible),
+    // gear.css), and the selector alone does not place it, so the same measurement runs on focusin (a Tab, a screen reader's
+    // move; a mouse click focuses too but shows nothing, and placeSub finds no height to place) and the class goes with the
+    // focus as it goes with the pointer. The host is hostOf's on both roads: for a focus inside a Fast mode box that is the box,
+    // whose own description the sheet shows on that focus (the focus twins of the box's hover pair, gear.css) as it does on a
+    // hover on the box, so the box's popover is the one with a height to place. (The author's pass 4 of the share field had the
+    // sheet show the ROW's description on that focus, and a climb from the box to its row here, so that the shown popover was
+    // the one placed; the twins made the row's stand down and the climb a measurement of a hidden popover, so it went.) Every
+    // handler re-places the row's hosts (placeRowHosts above): at focusout the focus is already gone from the host, at mouseout
+    // the hover is (both measured), so what placeSub measures there is the other road's state alone.
+    pcard.addEventListener('focusin', function (e) { var host = hostOf(e.target); if (host) placeRowHosts(host); });
+    pcard.addEventListener('focusout', function (e) { var host = hostOf(e.target); if (host && !(e.relatedTarget && host.contains(e.relatedTarget))) placeRowHosts(host); });
   }
   function closeSettings() { endDrags(); if (raBack && !raBack.hidden) raHide(); clearSectionScroll(); p.hidden = true; setModalCls(false); feedFull(false); }   // the reset FIRST, while the card still has a layout: a hidden card ignores a scroll write and keeps its old offset for the next open (measured); a pending section ask dies with the panel (round two, LOW 2 and 7)
   function openSettings(tab, section) {
