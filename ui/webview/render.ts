@@ -15328,12 +15328,19 @@ function landActive(content: HTMLElement | null, v: View): void {
     return;
   }
   // the view is now VISIBLE (display set in showActive): the spacers take the figures the view holds, and the land takes the figures the
-  // observer parked since the last paint when it anchors the reader, which is every road below but one: an anchor's or a moment's land, a
-  // seek, the reload restore and the bottom land all put the reader over the result. The one raw road is land-saved (a re-show of a scrolled-up
-  // view with nothing armed: the saved scrollTop was measured in the pre-move layout), where a spacer written here would move the reader;
-  // that road takes nothing and leaves the figures for keepPlaceAcrossWindow, which showActive runs after this land with the reader's own row,
-  // or for the next tail paint (PR E, review round 1b: a figure is taken only by a paint that anchors, and every anchoring paint takes one)
+  // observer parked since the last paint on every road but the nothing-armed re-show (`saved`), BEFORE its landing attempt: an anchor's or
+  // a moment's land reads the target's live rect (scrollToAnchor, landOn) and a resident target rebuilds nothing, so a take after the
+  // attempt would re-size the spacer under a row just placed; a seek, the reload restore and the bottom land put the reader over the
+  // result too. The take is decided on what is ARMED, not on the outcome: a land whose anchor misses (nowhere in the transcript, the wrong
+  // kind, a fetch armed) falls through to the saved-place restore below with the spacers re-sized, so the row the SAVED place held is
+  // captured here, at that place (the scroller does not hold it yet on a switch: the leaving tab's position is still under the viewport),
+  // and the fallback puts it back at its offset (anchor-restore). The raw land-saved write stands when nothing was armed (no take: the
+  // saved scrollTop is exact, and the figures wait for keepPlaceAcrossWindow, which showActive runs after this land with the reader's own
+  // row, or for the next tail paint) or when no row was at the saved place (inside a spacer). land-active-keep.test.ts executes the
+  // roads (PR E, review round 1b: a figure is taken only by a paint that anchors, and every anchoring paint takes one; review round 2:
+  // the missed land took and wrote raw, moving the reader by the spacer's delta, while this comment said the road could not happen)
   const saved = !pendingAnchor && pendingAnchorT == null && !(seek && seek.sid === activeId) && v.shown && !v.stick && takeReloadScroll(pendingReloadScroll, activeId) == null;
+  const held = !saved && v.shown && !v.stick ? captureScrollAnchor(content, v, v.scrollTop) : null;   // the row at the saved place, for a land that misses
   if (!saved && applyMeasure(v)) redrawGapUnits(v);
   sizeSpacers(v);
   // The durable seek re-arms the per-pass attempt: every render pass retries until it lands, the
@@ -15422,7 +15429,9 @@ function landActive(content: HTMLElement | null, v: View): void {
       }
     }
     else if (!v.shown || v.stick) writeScroll(content, content.scrollHeight, "land-bottom", true);
-    else writeScroll(content, v.scrollTop, "land-saved");
+    // an armed land that missed: the row the saved place held goes back at its offset over the spacers the take re-sized; the raw write
+    // when nothing was armed (nothing taken: the saved scrollTop is exact) or no row was at the saved place (review round 2)
+    else if (!(held && restoreScrollAnchor(content, v, held))) writeScroll(content, v.scrollTop, "land-saved");
   }
   v.shown = true;
   scheduleRailSticky();
@@ -15484,8 +15493,10 @@ function persistForReload(): void { persistScrollForReload(); persistNoticesForR
 (window as any).__rompPersistForReload = persistForReload;
 window.addEventListener("pagehide", persistScrollForReload);
 
-function captureScrollAnchor(content: HTMLElement, v: View): { uuid: string; y: number } | null {
-  const cTop = content.getBoundingClientRect().top;
+function captureScrollAnchor(content: HTMLElement, v: View, at: number = content.scrollTop): { uuid: string; y: number } | null {
+  // `at`: the scrollTop the capture is read AT, the scroller's own unless the caller names another (landActive names the view's saved
+  // place, which the scroller does not hold yet on a switch); the viewport top in the rects' frame moves by the difference
+  const cTop = content.getBoundingClientRect().top + (at - content.scrollTop);
   const turns = v.el.querySelectorAll("[data-uuid]");
   for (let i = 0; i < turns.length; i++) {
     const t = turns[i] as HTMLElement;
