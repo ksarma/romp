@@ -64940,7 +64940,7 @@ if(ws.readyState===3&&Date.now()-connT>8000){connect();}},5000);
 // waits, and the shell's link-up word is the redial's event. The shell re-tells the link on its socket's open, close
 // and abandon (_LANDING_COLLAPSE_JS broadcast): the six pane frames hear it as the link field of the panes word
 // (link:'up'|'down', panesMsg), every other shim-bearing iframe (the settings frame, a split chat column) as a link
-// word of its own ({romp:'link',link}), since a panes word would replace those frames' pane set (review round 1,
+// word of its own ({romp:'link',link,mob}: this reader takes the link alone, render.ts the layout term), since a panes word would replace those frames' pane set (review round 1,
 // 2026-09-18: before this the word reached the six pane frames alone, and the others ended their await on the 5 s
 // backstop poll below). Only ends an await with no socket; stamps linkUpMs (foreground->link-up) onto the pending
 // return-fresh.

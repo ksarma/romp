@@ -331,7 +331,8 @@ console.log(JSON.stringify(out));
 # The boot and toggle apply (broadcast) tell the six pane frames the panes word, whose link field is the shell socket's
 # state. The re-tell the shell socket makes on its open, close and abandon (__rompPanesTell, also the mobile script's
 # tab switch) is the one that carries a CHANGED link, so it reaches every iframe in the document: the pane frames as
-# the panes word, the others (the settings frame, a split chat column) as a link word of their own, {romp:'link',link},
+# the panes word, the others (the settings frame, a split chat column) as a link word of their own, {romp:'link',link,mob}
+# (the shim takes the link alone, render.ts the layout term),
 # since a panes word would replace a chat column's pane set wholesale (render.ts). Before this the shell's link-up
 # reached the six pane frames alone and a split column or the settings frame ended its await on the shim's 5 s poll.
 # The two later-loading frames get load hooks: the settings frame (in the markup at boot, loaded when the gear opens)

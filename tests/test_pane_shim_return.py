@@ -890,7 +890,7 @@ class ShellLedReturn(unittest.TestCase):
     the link.
 
     parentLinkVal is the shell's {up,connT}; fireWin("message",{romp:'panes',link:...}) hands the pane the shell's word
-    as a pane frame hears it, fireWin("message",{romp:'link',link:...}) as the settings frame or a split chat column
+    as a pane frame hears it, fireWin("message",{romp:'link',link:...,mob:...}) as the settings frame or a split chat column
     hears it (review round 1, 2026-09-18: a link word of its own, since a panes word would replace those frames' set)."""
 
     def test_await_with_the_link_down_puts_the_socket_down_and_dials_nothing_across_two_ticks(self):
@@ -930,7 +930,8 @@ rf:rows(sock(),"return-fresh").map(function(x){return x.data;})});""")
     def test_the_shells_link_word_ends_the_await_at_the_words_time_not_the_backstop_ticks(self):
         # review round 1 (correctness-1): the settings frame and a split chat column are shim-bearing iframes the panes
         # word never reached, so they ended a shell-led await only on the 5 s backstop poll and their linkUpMs absorbed
-        # it. The shell now tells them a link word of their own ({romp:'link',link}); the shim ends its await on it.
+        # it. The shell now tells them a link word of their own ({romp:'link',link,mob}; the shim takes the link alone, render.ts the
+        # layout term); the shim ends its await on it.
         r = _run(r"""
 open();recv({type:"ka"});hide();NOW+=46000;
 parentLinkVal={up:false,connT:NOW};show();
@@ -1499,7 +1500,7 @@ rf:dialed?rows(sock(),"return-fresh").map(function(x){return x.data;}):[]});""" 
             self.assertEqual(r["rf"], [])
 
     def test_a_parked_pane_hears_the_shells_own_link_word_and_dials_nothing_until_its_tap(self):
-        # PR 768's round 1 (2026-09-18) gives every shim-bearing iframe a link word of its own ({romp:'link',link}) beside the
+        # PR 768's round 1 (2026-09-18) gives every shim-bearing iframe a link word of its own ({romp:'link',link,mob}: the shim takes the link alone, render.ts the layout term) beside the
         # panes word's link field, and the shim's link listener accepts both. A parked pane must hear it without dialing: a park
         # never awaits the link (the park branch returns before the D3 block sets awaitLink), so the listener's `awaitLink&&!ws`
         # gate holds, and connect()'s parked guard would hold a dial anyway. The tap still dials once, through the link now up.
