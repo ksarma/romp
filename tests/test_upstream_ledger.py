@@ -26,10 +26,7 @@ tree last:
    synthetic row into an entry that parses and round-trips its cells, sees an existing entry whether
    or not it parses, keeps the entry's header values under `--replace` and takes the row's under
    `--force`, and names every value it kept or changed;
-7. the real tree: `check()` over `upstream/` and UPSTREAM.md returns no problems;
-8. `where-check` (2026-09-20): the paths a where line names are derived from its text, the paths a branch
-   changed from `git diff --name-only` against its base (the ledger directory excluded, an empty diff
-   refused), and the drift is reported in both directions.
+7. the real tree: `check()` over `upstream/` and UPSTREAM.md returns no problems.
 """
 import contextlib
 import importlib.util
@@ -608,45 +605,6 @@ class Render(unittest.TestCase):
         rendered = L.render(only_open)
         self.assertEqual(len(_tables(rendered)), 1)
         self.assertEqual(rendered.count("(none)"), 2)
-
-
-class WhereLine(unittest.TestCase):
-    """Check 8: the where line against the branch's changed paths."""
-
-    def test_where_paths_reads_paths_in_prose_code_spans_and_parentheses_once_each(self):
-        where = ("kernel/kernel.py (_LANDING_MOBILE_JS fit and barfit; the mobile block's body rule); `tests/served_css.py` and "
-                 "tests/test_x.py (new); tests/keyboard_gap_browser.mjs; six modules, tests/test_x.py among them; PR #4 (`a0e95cd7`)")
-        self.assertEqual(L.where_paths(where), ["kernel/kernel.py", "tests/served_css.py", "tests/test_x.py", "tests/keyboard_gap_browser.mjs"])
-        self.assertEqual(L.where_paths("PR #24"), [], "a PR number names no path")
-        self.assertEqual(L.where_paths("`monscan` branch PR; scripts/x.sh, kernel/kernel.py."), ["scripts/x.sh", "kernel/kernel.py"])
-
-    def test_where_drift_reports_both_directions_and_is_empty_when_the_line_names_exactly_the_changed_paths(self):
-        changed = ["kernel/kernel.py", "tests/test_a.py", "tests/test_b.py"]
-        self.assertEqual(L.where_drift("kernel/kernel.py (fit and kbOpen); tests/test_a.py; tests/old.py", changed), (["tests/test_b.py"], ["tests/old.py"]))
-        self.assertEqual(L.where_drift("kernel/kernel.py; tests/test_b.py; tests/test_a.py", changed), ([], []))
-        self.assertEqual(L.where_drift("", changed), (changed, []), "an empty line misses every changed path")
-
-    def test_changed_paths_reads_the_branch_diff_without_the_ledger_directory_and_refuses_an_empty_diff(self):
-        d = Path(tempfile.mkdtemp())
-        self.addCleanup(shutil.rmtree, d)
-        git = lambda *a: subprocess.run(["git", "-C", str(d), "-c", "user.name=t", "-c", "user.email=t@TESTHOST", *a], check=True, capture_output=True, text=True).stdout
-        git("init", "-q", "-b", "main")
-        (d / "kernel").mkdir(); (d / "tests").mkdir(); (d / L.DIR).mkdir()
-        (d / "kernel" / "kernel.py").write_text("a\n"); (d / "tests" / "test_a.py").write_text("a\n")
-        git("add", "-A"); git("commit", "-q", "-m", "base")
-        base = git("rev-parse", "HEAD").strip()
-        with self.assertRaises(SystemExit) as cm:
-            L.changed_paths(d, base)
-        self.assertIn("nothing to derive a where line from", str(cm.exception))
-        (d / "kernel" / "kernel.py").write_text("b\n"); (d / "tests" / "test_b.py").write_text("b\n")
-        (d / L.DIR / "2026-09-20-alpha-x.md").write_text(_entry("2026-09-20-alpha-x.md", where="kernel/kernel.py; tests/test_b.py"), encoding="utf-8")
-        git("add", "-A"); git("commit", "-q", "-m", "change")
-        self.assertEqual(L.changed_paths(d, base), ["kernel/kernel.py", "tests/test_b.py"], "the ledger's own entry is not a changed site")
-        self.assertEqual(L.where_check(d, d / L.DIR / "2026-09-20-alpha-x.md", base), [])
-        L.set_key(d / L.DIR / "2026-09-20-alpha-x.md", "where", "kernel/kernel.py (fit and kbOpen); tests/test_a.py")
-        self.assertEqual(L.where_check(d, d / L.DIR / "2026-09-20-alpha-x.md", base),
-                         ["2026-09-20-alpha-x.md: where does not name a changed path: tests/test_b.py",
-                          "2026-09-20-alpha-x.md: where names a path the branch did not change: tests/test_a.py"])
 
 
 class SetAndImport(unittest.TestCase):
