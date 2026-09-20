@@ -14,7 +14,13 @@
 // a right or middle mousedown raises it not at all, since Chromium on Linux and macOS opens the native context menu on that
 // mousedown and the menu takes the release, so a flag raised by one stood until the next left click and every keyboard change in
 // between offered nothing; a contextmenu and the window's blur end a press as a mouseup does (ctrl+click on macOS and a long press
-// on a touch screen end in a contextmenu and no mouseup; a release in another frame never reaches this one). Driven over the
+// on a touch screen end in a contextmenu and no mouseup; a release in another frame never reaches this one). A drag of the selected
+// text ends in a dragend at the drag's SOURCE, the text node under the press, which a pass mid-drag can detach (the unpaint's normalize
+// merges a mark's text node away), and Chromium then dispatches the dragend at the detached node, out of the document's hearing: the
+// panel hears it on the source itself (dragBegan, hooked at the document's capture dragstart), keeps the source (dragSource) and takes
+// the listener off at the press's end by any road and at dispose (the review of PR 865, round 1: tests-2, this file's CI-run pin of the
+// behaviour, and fresh-1, the handle). The stand-in gives text nodes listeners, honours `once`, and dispatches at a parentless text node
+// with a path of itself alone, as the browser does for a detached node. Driven over the
 // behavior suite's DOM stand-in with the selection faked
 // per case (window.getSelection is what the panel reads) and the document's listeners run as the browser runs them.
 // file-comments-keyboard-offer-browser.test.ts presses the keys in Chromium. Nodes hide their edges at construction (hideEdges,
@@ -61,15 +67,24 @@ class Ev {
   stopPropagation(): void { this.stopped = true; }
 }
 type Listener = (ev: Ev) => void;
-type Reg = { type: string; cb: Listener; capture: boolean };
+type Reg = { type: string; cb: Listener; capture: boolean; once: boolean };
+type ListenerOpts = boolean | { capture?: boolean; once?: boolean };
+const regOf = (type: string, cb: Listener, opts?: ListenerOpts): Reg => ({ type, cb, capture: typeof opts === "boolean" ? opts : !!(opts && opts.capture), once: typeof opts === "object" && !!opts && !!opts.once });
 const kebab = (k: string) => k.replace(/[A-Z]/g, (c) => "-" + c.toLowerCase());
 class Txt {
   nodeType = 3;
   parentNode: El | null = null;
+  listeners: Reg[] = [];   // a text node is an EventTarget too: a drag's source is the text node under the press, and the panel hears its dragend there (dragBegan)
   constructor(public data: string) { hideEdges(this); }
   get textContent(): string { return this.data; }
   get length(): number { return this.data.length; }
   get parentElement(): El | null { return this.parentNode; }
+  addEventListener(type: string, cb: Listener, opts?: ListenerOpts): void { this.listeners.push(regOf(type, cb, opts)); }
+  removeEventListener(type: string, cb: Listener, opts?: ListenerOpts): void {
+    const cap = typeof opts === "boolean" ? opts : !!(opts && opts.capture);
+    this.listeners = this.listeners.filter((l) => !(l.type === type && l.cb === cb && l.capture === cap));
+  }
+  dispatchEvent(ev: Ev): boolean { return dispatch(this, ev); }
   splitText(off: number): Txt {
     const tail = new Txt(this.data.slice(off));
     this.data = this.data.slice(0, off);
@@ -168,10 +183,8 @@ class El {
     return out;
   }
   querySelector(sel: string): El | null { return this.querySelectorAll(sel)[0] || null; }
-  addEventListener(type: string, cb: Listener, opts?: boolean | { capture?: boolean }): void {
-    this.listeners.push({ type, cb, capture: typeof opts === "boolean" ? opts : !!(opts && opts.capture) });
-  }
-  removeEventListener(type: string, cb: Listener, opts?: boolean | { capture?: boolean }): void {
+  addEventListener(type: string, cb: Listener, opts?: ListenerOpts): void { this.listeners.push(regOf(type, cb, opts)); }
+  removeEventListener(type: string, cb: Listener, opts?: ListenerOpts): void {
     const cap = typeof opts === "boolean" ? opts : !!(opts && opts.capture);
     this.listeners = this.listeners.filter((l) => !(l.type === type && l.cb === cb && l.capture === cap));
   }
@@ -191,33 +204,37 @@ const doc = hideEdges({
   createElement: (tag: string) => new El(tag),
   createTextNode: (s: string) => new Txt(s),
   getElementById: () => null,
-  addEventListener(type: string, cb: Listener, opts?: boolean | { capture?: boolean }): void {
-    doc.listeners.push({ type, cb, capture: typeof opts === "boolean" ? opts : !!(opts && opts.capture) });
-  },
-  removeEventListener(type: string, cb: Listener, opts?: boolean | { capture?: boolean }): void {
+  addEventListener(type: string, cb: Listener, opts?: ListenerOpts): void { doc.listeners.push(regOf(type, cb, opts)); },
+  removeEventListener(type: string, cb: Listener, opts?: ListenerOpts): void {
     const cap = typeof opts === "boolean" ? opts : !!(opts && opts.capture);
     doc.listeners = doc.listeners.filter((l) => !(l.type === type && l.cb === cb && l.capture === cap));
   },
   contains: (n: El | Txt | null) => doc.body.contains(n),
 });
 doc.body = new El("body");
-/** The DOM event path: document capture, ancestors' capture root to target, target and ancestors' bubble, document bubble. */
+/** The DOM event path: document capture, ancestors' capture root to target, the target's own listeners, ancestors' bubble, document
+ *  bubble. A text node DETACHED from every tree (the paint's unwrap and normalize merged it away: no parent) has a path of itself alone,
+ *  as a detached node's is in the browser, so nothing of the document's hears the event; the stand-in's viewer tree hangs off no
+ *  document body, so every other target counts as in the document. A `once` listener leaves at its first call. */
 function dispatch(target: El | Txt, ev: Ev): boolean {
   ev.target = target;
   const chain: El[] = [];
-  for (let n: El | null = target instanceof El ? target : target.parentNode; n; n = n.parentNode) chain.push(n);
-  const run = (ls: Reg[], capture: boolean, node: El | null): boolean => {
-    for (const l of ls.slice()) {
+  for (let n: El | null = target.parentNode; n; n = n.parentNode) chain.push(n);
+  const connected = !(target instanceof Txt && !target.parentNode);
+  const run = (owner: { listeners: Reg[] }, capture: boolean, node: El | null): boolean => {
+    for (const l of owner.listeners.slice()) {
       if (l.type !== ev.type || l.capture !== capture) continue;
+      if (l.once) owner.listeners = owner.listeners.filter((x) => x !== l);
       ev.currentTarget = node; l.cb.call(node, ev);
       if (ev.stopped) return true;
     }
     return false;
   };
-  if (run(doc.listeners, true, null)) return !ev.defaultPrevented;
-  for (let i = chain.length - 1; i >= 0; i--) if (run(chain[i].listeners, true, chain[i])) return !ev.defaultPrevented;
-  for (const n of chain) if (run(n.listeners, false, n)) return !ev.defaultPrevented;
-  run(doc.listeners, false, null);
+  if (connected && run(doc, true, null)) return !ev.defaultPrevented;
+  for (let i = chain.length - 1; i >= 0; i--) if (run(chain[i], true, chain[i])) return !ev.defaultPrevented;
+  for (const capture of [true, false]) if (run(target, capture, target instanceof El ? target : null)) return !ev.defaultPrevented;
+  for (const n of chain) if (run(n, false, n)) return !ev.defaultPrevented;
+  if (connected) run(doc, false, null);
   return !ev.defaultPrevented;
 }
 /** The document's own event (selectionchange has no target in the tree): its listeners in both phases, as the browser runs them. */
@@ -230,10 +247,10 @@ win.parent = win; win.innerWidth = 1200; win.innerHeight = 800;
 /** The window's listeners by type, as installed and removed (a native EventTarget lists none): the press flag's blur release. */
 const winListeners: Reg[] = [];
 const winAdd = win.addEventListener.bind(win), winRemove = win.removeEventListener.bind(win);
-win.addEventListener = (type: string, cb: Listener, opts?: boolean | { capture?: boolean }) => {
-  winListeners.push({ type, cb, capture: typeof opts === "boolean" ? opts : !!(opts && opts.capture) }); winAdd(type, cb, opts);
+win.addEventListener = (type: string, cb: Listener, opts?: ListenerOpts) => {
+  winListeners.push(regOf(type, cb, opts)); winAdd(type, cb, opts);
 };
-win.removeEventListener = (type: string, cb: Listener, opts?: boolean | { capture?: boolean }) => {
+win.removeEventListener = (type: string, cb: Listener, opts?: ListenerOpts) => {
   const cap = typeof opts === "boolean" ? opts : !!(opts && opts.capture);
   const i = winListeners.findIndex((l) => l.type === type && l.cb === cb && l.capture === cap); if (i >= 0) winListeners.splice(i, 1);
   winRemove(type, cb, opts);
@@ -328,6 +345,7 @@ function textNodeWith(root: El, needle: string): { node: Txt; at: number } {
   return hit!;
 }
 type Rect = { left: number; top: number; right: number; bottom: number; width: number; height: number };
+const BODY_BOX: Rect = { left: 0, top: 100, right: 1000, bottom: 600, width: 1000, height: 500 };   // the body's box in the stand-in (world), the paint-offer file's
 const RECT_A: Rect = { left: 100, top: 200, right: 300, bottom: 220, width: 200, height: 20 };
 const RECT_B: Rect = { left: 100, top: 200, right: 240, bottom: 220, width: 140, height: 20 };
 const RECT_MOVED: Rect = { left: 100, top: 40, right: 300, bottom: 60, width: 200, height: 20 };
@@ -339,7 +357,6 @@ function selectionOn(root: El, passage: string, length: number, rect: Rect): any
     toString: () => passage.slice(0, length), getRangeAt: () => ({ getBoundingClientRect: () => sel.rect }), rect };
   return sel;
 }
-const BODY_BOX: Rect = { left: 0, top: 100, right: 1000, bottom: 600, width: 1000, height: 500 };   // the body's box in the stand-in (world), the paint-offer file's
 const theFloat = (): El => { const all = doc.body.querySelectorAll(".fc-float"); return all[all.length - 1]; };
 /** Where showFloat puts the button for a rect (its own arithmetic: beside the selection's end, above its line, kept on screen). */
 const placeOf = (r: Rect) => ({ left: Math.min(Math.max(8, r.right + 6), win.innerWidth - 90) + "px", top: Math.min(Math.max(8, r.top - 30), win.innerHeight - 34) + "px" });
@@ -530,6 +547,77 @@ test("a primary press the browser ended itself is over at its contextmenu (ctrl+
   dispatch(w.body, new Ev("touchend"));
   documentEvent("selectionchange");
   assert.equal(float.hidden, false, "the finger lifted: offered");
+});
+
+/** The onRendered hook for a paint: the panel hides the float and runs paintAll over the body as it stands (a status landing, a settings
+ *  pick): the highlight's mark is unwrapped, the row normalized (the mark's text node merged into the text before it and DETACHED) and
+ *  the mark wrapped anew around a new text node. */
+const paintHook = (w: World): void => { for (const cb of w.hooks.rendered) cb(); };
+const dragendsOn = (n: Txt): number => n.listeners.filter((l) => l.type === "dragend").length;
+
+test("a drag of the selected text whose SOURCE a mid-drag pass detaches (the press on a highlight's text, the drag begun, a peer's paint unwrapping the mark and merging its text node away): the press's end is heard on the source itself, where the pass left it, so the press flag clears and the next selection offers (before: the dragend fired at the detached node, out of the document's hearing, and every change of the selection offered nothing until the next click); the stand-in's own premise, that nothing of the document's hears a detached node's event, is checked first", async (t) => {
+  const { w, float } = await offered(t);
+  const source = textNodeWith(w.body, QUOTE).node;
+  assert.ok(source.parentNode && source.parentNode.classes.includes("fc-hl"), "the passage's text node is the highlight's");
+  // the press on the selected text and the drag begun: the document's capture dragstart puts a dragend listener on the source
+  dispatch(w.body, new Ev("mousedown", { button: 0 }));
+  assert.equal(float.hidden, true, "the press hid the float");
+  assert.equal(dragendsOn(source), 0, "no listener on the text node before the drag");
+  dispatch(source, new Ev("dragstart"));
+  assert.equal(dragendsOn(source), 1, "the drag's source carries the panel's dragend listener");
+  // the pass mid-drag: the mark unwrapped and the row normalized, the source merged away and detached, the mark painted anew
+  paintHook(w);
+  assert.equal(source.parentNode, null, "the pass detached the drag's source (the unpaint's normalize merged it into the text before it)");
+  assert.ok(textNodeWith(w.body, QUOTE).node !== source, "...and the passage stands in a new text node");
+  // the stand-in's premise: a dragend at the detached node reaches no listener of the document's (Chromium dispatches at the detached
+  // node, whose path ends at itself)
+  let docHeard = 0; const probe = () => { docHeard++; };
+  doc.addEventListener("dragend", probe, true); doc.addEventListener("dragend", probe);
+  dispatch(source, new Ev("dragend"));
+  doc.removeEventListener("dragend", probe, true); doc.removeEventListener("dragend", probe);
+  assert.equal(docHeard, 0, "the premise: the document's dragend listeners never ran for the detached source");
+  assert.equal(dragendsOn(source), 0, "the source's listener ran once and is gone (`once`, and the press's end takes it off)");
+  // the flag is down: the next selection (caret browsing, a screen reader, a Shift+Arrow) offers
+  selection = selectionOn(w.body, QUOTE, 9, RECT_B);
+  documentEvent("selectionchange");
+  assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_B) }, "the press ended with the drag: the selection offers the float (before: the flag stood past the drop, and the selection offered nothing)");
+  // a second dragend at the node, or a document-level one later, does nothing more (the flag is down already)
+  dispatch(source, new Ev("dragend"));
+  assert.equal(float.hidden, false, "a stray dragend at the detached node changes nothing");
+});
+
+test("the dragend listener on a drag's source leaves with the press or with the viewer: the press ended by the window's blur mid-drag takes it off the source, and the viewer's dispose mid-drag takes it off too (before: no handle was kept, so the listener and the disposed panel behind it outlived the viewer, and the PR body's claim that dispose removed it was false)", async (t) => {
+  // the press's end by another road than the source's dragend: the window's blur mid-drag
+  {
+    const { w } = await offered(t);
+    const source = textNodeWith(w.body, QUOTE).node;
+    dispatch(w.body, new Ev("mousedown", { button: 0 }));
+    dispatch(source, new Ev("dragstart"));
+    assert.equal(dragendsOn(source), 1, "the drag's source carries the listener");
+    win.dispatchEvent(new Event("blur"));
+    assert.equal(dragendsOn(source), 0, "the blur ended the press: the listener is off the source");
+    selection = selectionOn(w.body, QUOTE, 9, RECT_B);
+    documentEvent("selectionchange");
+    assert.equal(theFloat().hidden, false, "...and the flag is down: the next selection offers");
+    // a second drag under a new press re-arms one listener, never two
+    dispatch(w.body, new Ev("mousedown", { button: 0 }));
+    dispatch(source, new Ev("dragstart")); dispatch(source, new Ev("dragstart"));
+    assert.equal(dragendsOn(source), 1, "two dragstarts under one press: one listener on the source");
+    dispatch(w.body, new Ev("mouseup", { button: 0 }));
+    assert.equal(dragendsOn(source), 0, "the mouseup ended the press: off again");
+    w.close();
+  }
+  // the viewer disposed mid-drag: the source's listener goes with the document's
+  {
+    const w = world(); t.after(() => w.close()); t.after(() => { selection = null; });
+    await openPanel(w);
+    const source = textNodeWith(w.body, QUOTE).node;
+    dispatch(w.body, new Ev("mousedown", { button: 0 }));
+    dispatch(source, new Ev("dragstart"));
+    assert.equal(dragendsOn(source), 1, "the drag's source carries the listener");
+    w.close();
+    assert.equal(dragendsOn(source), 0, "dispose took the listener off the drag's source (before: it stayed, holding the disposed panel)");
+  }
 });
 
 test("the document's listeners leave at dispose: selectionchange, and the press flag's mousedown, touchstart, mouseup, touchend, touchcancel, dragend, contextmenu and dragstart, and the window's blur", async (t) => {

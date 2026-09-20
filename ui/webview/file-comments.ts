@@ -1392,7 +1392,16 @@ class Panel {
     this.pointerHeld = true;
     if (ev.type === "mousedown") this.unfocusForPress(ev.target as Element | null);
   };
-  pressEnded = (ev?: Event): void => { this.pointerHeld = false; this.refocusPressed(!ev || (ev.type !== "blur" && ev.type !== "contextmenu")); };
+  pressEnded = (ev?: Event): void => { this.pointerHeld = false; this.unhookDragSource(); this.refocusPressed(!ev || (ev.type !== "blur" && ev.type !== "contextmenu")); };
+  /** The drag's source a dragend listener of ours stands on (dragBegan): the node under the press, a text node, kept so the press's
+   *  end (pressEnded, whichever road ends it: the source's own dragend, the document's, a contextmenu, the window's blur) and the
+   *  viewer's dispose take the listener off again (unhookDragSource). The first version kept no handle and left the once listener on
+   *  the source, with the disposed panel behind it, for a drag the viewer closed or replaced mid-way (the review's round 1, fresh-1). */
+  dragSource: EventTarget | null = null;
+  private unhookDragSource(): void {
+    const src = this.dragSource; this.dragSource = null;
+    if (src) src.removeEventListener("dragend", this.pressEnded);
+  }
   /** A drag began under the press (the document's capture dragstart: the selected text taken up to drop elsewhere). Its end is a dragend
    *  at the drag's SOURCE, the node under the press, a text node, which the document's own dragend listener hears by propagation alone.
    *  A pass landing mid-drag (a peer's comment through the poll, a settings pick from another pane) removes that node when it is a mark's
@@ -1401,12 +1410,16 @@ class Panel {
    *  runs: the flag stood past the drop, every change of the selection from the keyboard offered nothing until the next primary press,
    *  and nothing on screen said why (the browser probe of 2026-09-20: a programmatic passage selection and Shift+ArrowRight offered
    *  nothing; a click, then the same selection offered). So the press's end is heard at the source itself, once for this drag: a listener
-   *  on a node runs wherever the node has gone. A connected source's dragend reaches the document's listener first, and the second call
-   *  finds the flag down (pressEnded is idempotent). No hook for a drag that began under no press of ours. */
+   *  on a node runs wherever the node has gone. A connected source's dragend reaches the document's listener first, which takes the
+   *  source's listener off (pressEnded, unhookDragSource) before the event reaches the node. The source is kept (dragSource) so the
+   *  press's end by any road and the viewer's dispose remove the listener; `once` covers the detached source, whose dragend nothing of
+   *  the document's hears. No hook for a drag that began under no press of ours. */
   dragBegan = (ev: Event): void => {
     const src = ev.target as (EventTarget & Node) | null;
     if (!this.pointerHeld || !src || typeof src.addEventListener !== "function") return;
+    this.unhookDragSource();
     src.addEventListener("dragend", this.pressEnded, { once: true });
+    this.dragSource = src;
   };
   /** A press began on `t`: every mark of ours from it up to the body wears no tabindex until the press ends (pressedMarks). */
   private unfocusForPress(t: Element | null): void {
@@ -2395,6 +2408,7 @@ class Panel {
     for (const ev of ["mouseup", "touchend", "touchcancel", "dragend", "contextmenu"]) document.removeEventListener(ev, this.pressEnded, true);
     window.removeEventListener("blur", this.pressEnded);
     document.removeEventListener("dragstart", this.dragBegan, true);
+    this.unhookDragSource();                                                    // ...and the dragend on a drag's source, mid-drag (dragBegan)
     document.removeEventListener("selectionchange", this.onSelectionChange);   // the keyboard's offer goes with the float (onSelectionChange)
     this.offeredFor = null;                                                      // ...and the selection it compared with
     this.lastDelivered = null; this.passLeft = null;                             // ...and the two notes a pass's head compares with (pendingChange)
