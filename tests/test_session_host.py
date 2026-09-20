@@ -5,9 +5,11 @@ the fake CLI (tests/fixtures/fake_claude.py) while this test plays the kernel ov
 (HostProcess's pick case) lets the REAL backend loop play the kernel instead, for a settings pick on the hosted road.
 
 Hermetic: a temp state root per test, the fake CLI on a temp path, no scopes (the host is a plain child
-here), every process killed by the test, synthetic ids. The host runs on its built-in pipe transport when
-the SDK is not importable (CI, the plain test venv); one test runs the SDK transport when the machine has
-the SDK venv, and skips otherwise.
+here), every process killed by the test, synthetic ids. A spawned host runs the SDK transport when its own
+interpreter imports the SDK (CI, which installs the pinned SDK in every Python cell since 2026-09-20) and its
+built-in pipe transport otherwise (the plain test venv); two tests ask for the SDK transport by name, over the
+machine's SDK venv when there is one and over the host interpreter's own SDK otherwise, and skip only when
+neither exists (HOST_SDK below).
 """
 import asyncio
 import json
@@ -38,6 +40,30 @@ sb = load_source("romp_sdk_backend_host", os.path.join(BIN, "romp_sdk_backend.py
 FAKE = os.path.join(HERE, "fixtures", "fake_claude.py")
 SDK_SITE = next(iter(sorted(Path(os.path.expanduser("~/.local/state/romp/sdkvenv/lib")).glob(
     "python%d.%d/site-packages" % sys.version_info[:2]))), None) if os.path.isdir(os.path.expanduser("~/.local/state/romp/sdkvenv")) else None
+
+
+def _host_imports_sdk() -> bool:
+    """Whether a host started the way HostProcess._start starts one (sys.executable, this process's environment,
+    no ROMP_SDK_SITE) imports claude_agent_sdk on its own: CI's road since 2026-09-20, when the workflow began
+    installing the pinned SDK into every Python cell's interpreter. Asked of a CHILD, once at import, because this
+    process's own find_spec is the wrong witness: tests/test_host_transport.py puts the machine's SDK venv on THIS
+    process's sys.path, which no child inherits, so an in-process probe would say yes on a box where the spawned
+    host would run the pipe transport. bin/romp-session-host's _sdk_on_path takes its interpreter's SDK before it
+    reads ROMP_SDK_SITE, so a positive here means every host these tests spawn runs the SDK transport, whatever
+    site _start hands it."""
+    env = dict(os.environ)
+    env.pop("ROMP_SDK_SITE", None)
+    probe = subprocess.run([sys.executable, "-c",
+                            "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('claude_agent_sdk') else 1)"],
+                           env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=60)
+    return probe.returncode == 0
+
+
+# The gate of the two SDK-transport cases (2026-09-20): the machine's SDK venv, the box's road, or the host interpreter's
+# own SDK, CI's road. Until then the gate was the venv DIRECTORY alone, so on an interpreter that had the SDK and no
+# venv for its minor (every CI cell after the install; 3.14t on this box) the two cases skipped, reporting green for a
+# reason that no longer applied while checking nothing.
+HOST_SDK = SDK_SITE is not None or _host_imports_sdk()
 SID = "11111111-2222-3333-4444-0000000000a1"          # the romp sid the lease is filed under
 FSID = "11111111-2222-3333-4444-0000000000f1"         # the fake CLI's own conversation id (distinct on purpose)
 
@@ -697,7 +723,8 @@ class HostProcess(unittest.TestCase):
             env.pop(name, None)
         env.update(host_env or {})
         if sdk:
-            env["ROMP_SDK_SITE"] = str(SDK_SITE)
+            if SDK_SITE is not None:        # the machine venv's site; with none, the host's own interpreter imports the SDK (HOST_SDK)
+                env["ROMP_SDK_SITE"] = str(SDK_SITE)
         else:
             env["ROMP_SDK_SITE"] = os.path.join(self.state, "no-sdk-here")
         host = subprocess.Popen([sys.executable, os.path.join(BIN, "romp-session-host"), spec_path],
@@ -1238,7 +1265,7 @@ class HostProcess(unittest.TestCase):
         self.assertEqual(open(seen).read(), "absent", "no token anywhere: the probe reads the CLI's real environment")
         k.close()
 
-    @unittest.skipUnless(SDK_SITE, "the SDK venv is not on this machine; the pipe transport covered the host")
+    @unittest.skipUnless(HOST_SDK, "the host's interpreter does not import the SDK and this machine has no SDK venv; the pipe transport covered the host")
     def test_the_sdk_transport_hands_the_hosts_environment_to_the_cli_too(self):
         """The road a real install takes: the SDK's SubprocessCLITransport merges the host's environment under the
         spec's overlay, so the token rides there as well."""
@@ -1252,7 +1279,7 @@ class HostProcess(unittest.TestCase):
         k.recv_until(lambda f: f.get("t") == "exit")
         k.close()
 
-    @unittest.skipUnless(SDK_SITE, "the SDK venv is not on this machine; the pipe transport covered the host")
+    @unittest.skipUnless(HOST_SDK, "the host's interpreter does not import the SDK and this machine has no SDK venv; the pipe transport covered the host")
     def test_the_sdk_transport_drives_the_fake_cli_the_same_way(self):
         host, sock, spec = self._start(sdk=True)
         k, hello = self._attach(sock)
@@ -1276,7 +1303,8 @@ class HostProcess(unittest.TestCase):
         ended by the test and killed by its cleanup if it is not."""
         sid = "7c0e5d1a-3b2f-4e6d-9a8b-000000000315"
         saved_site = os.environ.get("ROMP_SDK_SITE")
-        os.environ["ROMP_SDK_SITE"] = os.path.join(self.state, "no-sdk-here")   # the spawned host inherits it: the pipe transport
+        os.environ["ROMP_SDK_SITE"] = os.path.join(self.state, "no-sdk-here")   # the spawned host inherits it: the pipe transport where
+        # its interpreter has no SDK of its own; where it has one (CI since 2026-09-20) the host runs the SDK transport and the hold is the same
 
         def restore_site():
             if saved_site is None:

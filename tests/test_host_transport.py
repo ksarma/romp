@@ -7,8 +7,9 @@ Hermetic: temp state roots, a fake host server inside the test (an asyncio Unix 
 frame protocol), synthetic ids, no real CLI. Tests needing the SDK skip without it.
 
 Two effects on the rest of a pytest process, both from the import block below that puts romp's SDK venv on
-sys.path when claude_agent_sdk is not already importable (the kernel's own _ensure_sdk_on_path idiom; CI has no
-venv and the SDK-gated cases skip). (1) The cases that build the SDK's options with a can_use_tool callback raise
+sys.path when claude_agent_sdk is not already importable (the kernel's own _ensure_sdk_on_path idiom; CI installs
+the pinned SDK into every Python cell's interpreter since 2026-09-20, so there the block is inert and the SDK-gated
+cases run). (1) The cases that build the SDK's options with a can_use_tool callback raise
 claude_agent_sdk.types.CanUseToolShadowedWarning, a UserWarning subclass the SDK emits when the callback is set
 beside a permission mode or an allowed_tools entry that auto-approves a tool before the callback is consulted.
 Under pytest-xdist the worker ships that warning to the controller, whose venv cannot import the class: xdist's
@@ -44,7 +45,8 @@ os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)
 os.environ["ROMP_CLI_SCOPE"] = "0"          # no scopes: a test's children sit in the tester's own scope
 # the SDK, when this machine has the venv bin/romp-sdk-setup builds (the kernel's own _ensure_sdk_on_path
-# does the same at boot); CI has none and the SDK-gated tests skip there
+# does the same at boot); CI installs the pinned SDK into the interpreter itself (.github/workflows/ci.yml, the
+# Install the Claude Agent SDK step), so this block is the box's road and the SDK-gated tests run on both
 if importlib.util.find_spec("claude_agent_sdk") is None:
     _tag = "python%d.%d" % sys.version_info[:2]
     for _sp in sorted(Path(os.path.expanduser("~/.local/state/romp/sdkvenv/lib")).glob(_tag + "/site-packages")):

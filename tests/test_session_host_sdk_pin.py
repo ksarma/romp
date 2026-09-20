@@ -430,9 +430,20 @@ class HostProcess(unittest.TestCase):
         self.spec_path.write_text(json.dumps(spec)); self.spec_path.chmod(0o600)
         self.hostdir = d
 
-    def _run_host(self, site: Path):
+    def _run_host(self, site: Path, no_sdk: bool = False):
+        """The real host over `site`, handed as ROMP_SDK_SITE and as PYTHONPATH. PYTHONPATH does two jobs, both
+        because the launcher's _sdk_on_path takes an SDK its interpreter imports before it reads ROMP_SDK_SITE. A
+        fake claude_agent_sdk package in `site` shadows a real SDK the interpreter has. And `no_sdk` (2026-09-20)
+        writes a sitecustomize.py into `site` that sets sys.modules["claude_agent_sdk"] = None before the host
+        imports anything, which hides a real SDK from the child (find_spec None, the import raises
+        ModuleNotFoundError); an empty site did not, so under an interpreter that has the SDK installed (every CI
+        cell since the workflow installs the pinned SDK; a venv built the same way on a box) the no-SDK control ran
+        the SDK transport and read CLINotFoundError for a missing CLI where the pipe transport reads
+        FileNotFoundError."""
+        if no_sdk:
+            site.mkdir(parents=True, exist_ok=True)
+            (site / "sitecustomize.py").write_text('import sys\nsys.modules["claude_agent_sdk"] = None\n')
         env = dict(os.environ, PYTHONUNBUFFERED="1", ROMP_SDK_SITE=str(site), PYTHONPATH=str(site))
-        # PYTHONPATH too: an interpreter that has the real SDK would otherwise import it ahead of the fake
         for name in sb.AUTH_ENV_NAMES:
             env.pop(name, None)
         err = self.hostdir / "host.stderr"
@@ -631,13 +642,14 @@ class HostProcess(unittest.TestCase):
         self.assertNotIn(sh.SDK_REPIN_COMMAND, reason, "a fact beside the failure, never its remedy (the closing check)")
 
     def test_a_spawn_failure_with_no_sdk_at_all_keeps_the_bare_type_name(self):
-        # the control: the pipe transport's spawn of a CLI that is not there, with no SDK in the host's site
+        # the control: the pipe transport's spawn of a CLI that is not there, with no SDK importable by the host
+        # (no_sdk: the site hides one the interpreter has; an empty site alone left this control on the SDK transport)
         spec = json.loads(self.spec_path.read_text())
         spec["cli_path"] = os.path.join(self.state, "no-such-cli")
         self.spec_path.write_text(json.dumps(spec))
         empty = Path(self.state, "nosite")
         empty.mkdir()
-        code, _ = self._run_host(empty)
+        code, _ = self._run_host(empty, no_sdk=True)
         self.assertEqual(code, 1)
         kinds = [r["kind"] for r in self._hostlog()]
         self.assertNotIn("sdk-version-untested", kinds)
