@@ -133,7 +133,10 @@ jobs:
         # release that breaks there shows as a red cell, which is the point of having the cell.
         # Cost: about 106.5 MB of download per cell after the cryptography step (the SDK wheel is 102 MB, it
         # bundles the Claude Code binary; its other dependencies total about 4.5 MB) and a few seconds of
-        # install; the run's own step timings are the measurement that counts.
+        # install; the run's own step timings are the measurement that counts. The step timeout is the
+        # file's convention for a download (the bats, gitleaks and Playwright steps): a wedged fetch fails
+        # in minutes instead of eating the job's cap.
+        timeout-minutes: 5
         shell: bash
         run: |
           set -euo pipefail

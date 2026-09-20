@@ -14,7 +14,8 @@ This module holds three things, and it never skips: a pin that skips reports gre
    pyjwt[crypto]; a lagging cryptography wheel must red the cell, not skip 48 tests), carries no `if:` (the 3.14t cell
    installs it too: install, import with the GIL off and the gated and host test modules ran green on a free-threaded
    3.14.6 before this landed, the Verify 3.14t stage of 2026-09-20), names the constant and its file, and carries no
-   literal `claude-agent-sdk==<digits>`.
+   literal `claude-agent-sdk==<digits>`, and bounds its download with a step timeout as the file's other fetching
+   steps do.
 2. The derivation, executed rather than read: the step's own sed run at the repo root prints one well-formed version
    equal to the constant read as a regex over the file (the installer's and the bats test's read) and as the attribute
    of the loaded module (the host's read); and the step's whole run block, run under bash with a `python` shim in a
@@ -109,6 +110,13 @@ class InstallStep(unittest.TestCase):
         # that breaks there shows as a red cell; excluding the cell would turn that into 50 silent skips.
         self.assertFalse(re.search(r"^        if:", self.step, re.M), "the step is gated by an if: clause; the 3.14t decision was INCLUDE")
         self.assertIn("3.14t cell installs it too", self.comment, "the comment no longer states the 3.14t decision")
+
+    def test_the_step_bounds_its_download_with_a_step_timeout(self):
+        # the file's convention for a step that fetches (bats, gitleaks, Playwright): a wedged download of the 102 MB
+        # wheel fails in minutes with the step named, instead of eating the job's cap and dying nameless
+        m = re.search(r"^        timeout-minutes: (\d+)$", self.step, re.M)
+        self.assertTrue(m, "the step has no timeout-minutes: a wedged download would eat the job's cap")
+        self.assertLessEqual(int(m.group(1)), 10, "the step timeout is a bound on a download, not a second job cap")
 
     def test_the_run_block_reads_the_constant_from_the_host_module(self):
         self.assertIn("SDK_TESTED_VERSION", self.run)
