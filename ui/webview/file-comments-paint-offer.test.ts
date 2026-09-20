@@ -600,6 +600,7 @@ test("a paint whose writes collapse the selection to NOTHING, with no selectionc
   // a paint that cuts the selection short but not to nothing leaves a shown float where it was (case (1)'s rule stands)
   live.cutOnPaint(3);
   externalFilterPick();
+  assert.equal(String(live), QUOTE.slice(0, 3), "the pass cut the selection");
   assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_B) }, "cut short, still a selection: the float stays where the offer put it");
   documentEvent("selectionchange");
   assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_B) }, "...and the paint's own event moves nothing");
@@ -636,6 +637,7 @@ test("a paint whose writes cut the selection to a remnant with NO box (a selecti
   // a paint that cuts the selection short to a remnant WITH a box leaves the shown float where it was (case (4)'s rule stands)
   live.cutOnPaint(3);
   externalFilterPick();
+  assert.equal(String(live), QUOTE.slice(0, 3), "the pass cut the selection");
   assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_B) }, "cut short to a remnant with a box: the float stays where the offer put it");
   documentEvent("selectionchange");
   assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_B) }, "...and the paint's own event moves nothing");
@@ -1149,4 +1151,29 @@ test("a subject the writes MOVED with the latch raised and the float showing (th
   assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_A) }, "the float stands for the person's event (a hide here and the event's show would flap within a frame)");
   documentEvent("selectionchange");
   assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_BELOW) }, "the person's event offers beside the remnant as it stands: one move");
+});
+
+test("the head read at the pass's SECOND call site, repaintPreselPass (the review's round 1, tests-3): a repaint of the composer's target alone (Comment on this file, the aside's own control, opens a composer over the whole file and repaints the pending target) landing in the gap of the person's change reads the selection at its head as paintAll does, so the person's event offers beside the changed selection (with that read gone the repaint records the changed selection as its own, and the event compares equal and offers nothing); the same repaint with no change pending records as before, and its event is no offer", async (t) => {
+  const w = world(); t.after(() => w.close()); t.after(() => { selection = null; });
+  await openPanel(w);
+  const live = liveSelectionOn(w.body, QUOTE, 9, RECT_B);
+  const float = dragOffer(w, live);
+  assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_B) });
+  const fileComment = w.main.querySelector('.fileview-aside [data-act="fcfile"]');
+  assert.ok(fileComment, "the aside offers Comment on this file");
+  // the person's change (three characters more, the box wider by them), its event a task away; the composer's repaint (repaintPresel:
+  // repaintPreselPass, then afterPaint) lands in the gap
+  const GROWN: Rect = { ...RECT_B, right: RECT_B.right + 21 };
+  live.length = 12; live.rect = GROWN;
+  fileComment!.click();
+  assert.ok(w.main.querySelector(".fileview-aside .fc-composer"), "the composer opened (the repaint ran)");
+  assert.equal(String(live), QUOTE.slice(0, 12), "the repaint left the changed selection whole (it paints the target alone)");
+  assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_B) }, "the repaint leaves the float where the offer put it: the change is the event's to answer");
+  documentEvent("selectionchange");
+  assert.deepEqual(shown(float), { hidden: false, ...placeOf(GROWN) }, "the person's event offers beside the changed selection (with repaintPreselPass's head read deleted: the repaint recorded the changed selection as its own, and this event offered nothing, the button left at the old edge)");
+  // the same repaint with no change of the person's: the record re-read, its own event no offer
+  fileComment!.click();
+  assert.deepEqual(shown(float), { hidden: false, ...placeOf(GROWN) }, "a repaint over the selection as offered moves nothing");
+  documentEvent("selectionchange");
+  assert.deepEqual(shown(float), { hidden: false, ...placeOf(GROWN) }, "...and its own event is no offer");
 });
