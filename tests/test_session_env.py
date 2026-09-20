@@ -188,6 +188,18 @@ def _declaration_surfaces():
     return census_doc, para
 
 
+def _method_docstring(path, cls, name):
+    """A method's docstring read AS ITSELF (ast.get_docstring on the def, whitespace-normalised), for a declaration pinned
+    on the def's own prose rather than on the module's text (round 7's lenses, 2026-09-20: the conduit's routine-list
+    clause was read by no test, so the round-6 wording that covered the five failure reports could return green)."""
+    tree, _parents = _parsed(path)
+    hits = [n for n in ast.walk(tree) if isinstance(n, ast.ClassDef) and n.name == cls]
+    assert len(hits) == 1, "%d classes named %s in %s" % (len(hits), cls, path)
+    defs = [n for n in hits[0].body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == name]
+    assert len(defs) == 1, "%d defs named %s in %s" % (len(defs), name, cls)
+    return " ".join((ast.get_docstring(defs[0]) or "").split())
+
+
 def _true_road(p):
     """The conduit's problem road a bound constant argument takes: any constant other than False or None (the round-7
     ruling's rule; a falsy constant such as 0 is filed here too, a false red rather than a silent miss)."""
@@ -1315,7 +1327,9 @@ class EnvRowsPopulation(unittest.TestCase):
         reader of the census sees a known unbounded row, tracked, never a false clean one. The clause and the item title
         are pinned on all three surfaces, each read AS ITSELF (round 7, tests-3): the road's comment block, the census
         module's docstring (ast.get_docstring, not the file) and the ENV ROWS paragraph (its own comment lines, not the
-        module), so a phrase leaving any one of them is red on that surface's assertion."""
+        module), so a phrase leaving any one of them is red on that surface's assertion. Round 7's lenses (2026-09-20) added
+        the conduit's own docstring, read the same way: its routine-list clause covers the reconcile's report and hold
+        lines and not its failure reports, and the sentence scoping round 6's ruling to its population stands there."""
         c = self.c
         lines = Path(SDK_BACKEND).read_text(encoding="utf-8").splitlines()
         filed = sorted((dc for dc in c.existence_rows if dc.problem_decl == ("const", True)), key=lambda d: d.lineno)
@@ -1359,6 +1373,42 @@ class EnvRowsPopulation(unittest.TestCase):
         self.assertIn("each declared and not bounded for a stated reason", paragraph, "ruling 1's condition, in the ENV ROWS paragraph")
         self.assertIn("the bound is each caller's responsibility", paragraph, "the fourth row's reason class, in the ENV ROWS paragraph")
         self.assertIn(UNMET_CLAUSE + UNMET_ITEM, paragraph, "the fourth row's bound is stated unmet and tracked, in the ENV ROWS paragraph itself")
+        # The conduit's own docstring (round 7's lenses, 2026-09-20: its routine-list clause was pinned by nothing, so the
+        # round-6 wording "the live-work reconcile's lines", which covered the reconcile's three failure reports while the
+        # merge sent them down the routine road, came back green under mutation). The clause names the two routine lines
+        # of the reconcile and no more, and the sentence scoping round 6's ruling to its population stands beside it.
+        conduit_doc = _method_docstring(SDK_BACKEND, "SdkSession", "_log_quietly")
+        self.assertIn("the live-work reconcile's report and hold lines), so it is filed problem=False", conduit_doc,
+                      "the routine list covers the reconcile's report and hold lines, not its failure reports")
+        self.assertNotIn("the live-work reconcile's lines)", conduit_doc, "the round-6 clause that covered the failure reports")
+        self.assertIn("That ruling was made over a population in which no caller was itself a failure report; the merge of main "
+                      "brought five that are", conduit_doc, "the ruling's scope, stated where the road is")
+
+    def test_the_ledger_entrys_where_line_names_the_fork_only_roads_and_no_ring_format_constant(self):
+        """The upstream ledger entry for this change (upstream/2026-09-18-env-pick-refuses-credential-names.md) names on its
+        where: line the roads an offer would carry or leave behind (round 6's regression-2, in the refuter's corrected shape:
+        cut_to and utf16_units in credentials.py; the conduit's two roads with its declared problem=True road; the two
+        refused-launch rows and host_refused_ring_text, each fork-only clause in the line's own form) and no ring FORMAT
+        constant: none has ever been named there, "the ring budgets" covers the budgets, and a format's name on that line
+        would go stale with every re-derivation of the ENV ROWS line. The formats are derived from the census, never
+        listed here (tests/test_perf_stats.py's read of its own ledger entry is the precedent for reading an entry's
+        load-bearing words). Round 7's lenses found the line pinned by nothing: the three clauses dropped stayed green."""
+        entry = Path(HERE).parent.joinpath("upstream", "2026-09-18-env-pick-refuses-credential-names.md").read_text(encoding="utf-8")
+        where = [ln for ln in entry.splitlines() if ln.startswith("where: ")]
+        self.assertEqual(len(where), 1, "one where: line in the entry's front matter")
+        where = where[0]
+        for clause in ("cut_to and utf16_units",
+                       "_log_quietly's two roads, problem=False for a line saying nothing and its declared problem=True road, and the four "
+                       "routine lines declared so (fork-only: upstream has no _log_quietly)",
+                       "host_refused_ring_text and the two refused-launch rows in _host_transport_for (fork-only: fork PR 777's rows, which "
+                       "upstream does not carry)"):
+            self.assertIn(clause, where, "the where: line names the road: %r" % clause)
+        formats = sorted({fmt for _owner, fmt, _keyed in self.c.content_identities() if fmt != "UNBOUNDED"})
+        self.assertGreaterEqual(len(formats), 2, "the census derives the formats the line must not name (an empty derivation pins nothing)")
+        for fmt in formats:
+            self.assertNotIn(fmt, where, "a ring format constant on the where: line: %s" % fmt)
+        self.assertEqual(re.findall(r"\b[A-Z][A-Z0-9_]*_(?:RING|BUDGET)\b", where), [],
+                         "no ring format or budget constant is named on the where: line (the ring budgets are covered by the phrase)")
 
     def test_the_pick_tags_dict_bound_is_stated_as_the_censuss_reach_and_not_as_the_kernels(self):
         """Ruling 3 of review round 6 (2026-09-19): that the pick tag does not cross a dict return is a bound on the
@@ -2169,7 +2219,9 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
         default, a content row with an UNBOUNDED identity (BASE + 1). The no-fold control is silent (the inner call is
         not tainted at all). Under the blanket skip of the round-6 head the message and ring-text folds were silent, 0
         violations each, and the key fold was not tainted at all (rule 6 read the key since round 7; the round-7 build's
-        probe, pasted in the PR body)."""
+        probe, pasted in the PR body). Round 7's lenses added the residual's two propagation roads (a fold through a
+        conduit local, a fold through a helper's return), their parameter-only control under a tainted site, and the
+        depth bound's over-approximation, each of which a census with that road removed had left silent."""
         anchor = self.METHOD_ANCHOR
         relay = "    def _tenth_relay(self, msg, ring=True):\n        self._log(%s)\n\n"
         site = "    def _tenth(self, sess):\n        self._tenth_relay('env (%s): tenth' % sess.name)\n\n"
@@ -2201,6 +2253,66 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
                                  "ring's default, is a content row with an UNBOUNDED identity the identity pin refuses")
                 if site_rows:
                     self.assertIn(("_tenth", "UNBOUNDED", True), c.content_identities(), "keyed: the fold is its key")
+        # Round 7's lenses (2026-09-20, the census lens): the three folds above sit in the inner call's own argument
+        # expressions, which neither of the residual's propagation roads touches, so a census reading the conduit's
+        # locals as clean (`names = {}` in residual_taint) or a helper's return as clean (_residual_return returning
+        # set()) passed this class whole while a fold through a local or through a helper's return was silent, the
+        # round-6 silence again. Each road on the refusal side: the fold reaches the inner call through a local of the
+        # conduit, or through the return of a helper the local is assigned from, and is a violation at the inner call
+        # with the residual naming the env. Their control: the same local and a clean helper carrying the parameter
+        # alone under an env-TAINTED site, where the residual is empty (the taint is wholly the parameters'), the inner
+        # call is skipped and the site is judged (refused, its ring text reducing to no format: a content row with an
+        # UNBOUNDED identity, BASE + 1), which a mask reading the locals with the main pass's taint would red falsely.
+        # The depth bound: an eight-deep clean helper chain past RESIDUAL_DEPTH reads its whole return from the main
+        # pass, so under the tainted site the inner call is kept and refused (the over-approximating side, as
+        # residual_taint's docstring says) and under a clean site it is silent. The local is `str(msg) + helper(msg)`,
+        # never a bare `helper(msg)`: a local that is no wrap of a parameter makes the method no conduit at all, and the
+        # inner call is then judged as a plain door (loud, but not through the residual).
+        relay2 = "    def _tenth_relay(self, msg, ring=True):\n        line = %s\n        self._log(line, problem=bool(ring))\n\n"
+        wrap = "    def _tenth_wrap(self, m):\n        return str(m) + %s\n\n"
+        tainted_site = "    def _tenth(self, sess):\n        self._tenth_relay(%s)\n\n" % self.MSG
+        chain = "".join("    def _tenth_w%d(self, m):\n        return str(m) + %s\n\n"
+                        % (i, "self._tenth_w%d(m)" % (i + 1) if i < 8 else "' tail'") for i in range(1, 9))
+        inner_row = ("_tenth_relay", "problem= is the expression bool(ring)")
+
+        def census_with_local(local, helpers="", where=site):
+            path = self._copy(lambda s: s.replace(anchor, helpers + relay2 % local + where + anchor))
+            c = self._census(path)
+            self.assertEqual(c.failures, [])
+            inner_calls = [dc for dc in c.door_calls if dc.owner == "_tenth_relay"]
+            self.assertEqual([dc.kind for dc in inner_calls], ["self"], "the conduit's one inner call")
+            self.assertEqual([dc.kind for dc in c.door_calls if dc.owner == "_tenth"], ["conduit:SdkBackend._tenth_relay"],
+                             "the planted site is a conduit site: the local wraps the parameter")
+            return c, inner_calls[0]
+        for road, local, helpers in (("a fold through a conduit local", "msg + %s" % fold, ""),
+                                     ("a fold through a helper's return", "str(msg) + self._tenth_wrap(msg)", wrap % fold)):
+            with self.subTest(road=road):
+                c, dc = census_with_local(local, helpers)
+                self.assertEqual((sorted(dc.taint), sorted(dc.residual)), (["env"], ["env"]),
+                                 "the fold reaches the inner call through the local (and the helper's return); the residual names it")
+                self.assertEqual(sorted((d.owner, why) for d, why in c.explicit_violations), [inner_row], "refused at the inner call")
+                self.assertEqual(([d.owner for d in c.tainted if d.owner == "_tenth"], len(c.content_rows)), ([], self.BASE),
+                                 "the site passed a clean prose and is not judged; no constant True at the inner call, so no row")
+        for road, helpers in (("the parameter alone through a local and a clean helper, under a tainted site (the control)", wrap % "' tail'"),
+                              ("a clean helper chain past RESIDUAL_DEPTH, under a tainted site (the over-approximating side)", chain)):
+            helper = "_tenth_wrap" if "wrap" in road else "_tenth_w1"
+            with self.subTest(road=road):
+                c, dc = census_with_local("str(msg) + self.%s(msg)" % helper, helpers, tainted_site)
+                self.assertEqual(sorted(dc.taint), ["env"], "the main pass carries the site's env into the inner call through msg")
+                deep = "RESIDUAL_DEPTH" in road
+                self.assertEqual(sorted(dc.residual), ["env"] if deep else [],
+                                 "past the bound the helper's whole return from the main pass is read (the env the site passed); "
+                                 "within it the taint is wholly the parameters' and the residual is empty")
+                self.assertEqual(sorted((d.owner, why) for d, why in c.explicit_violations),
+                                 sorted(at_site + ([inner_row] if deep else [])),
+                                 "the site is judged (a tainted site through a conduit is refused, its ring text reducing to no format); "
+                                 "the inner call only past the bound")
+                self.assertEqual(([d.owner for d in c.tainted if d.owner == "_tenth"], len(c.content_rows)), (["_tenth"], self.BASE + 1))
+                self.assertIn(("_tenth", "UNBOUNDED", False), c.content_identities(), "the site, declared True through ring's default")
+        with self.subTest(road="the same chain past RESIDUAL_DEPTH, under a clean site"):
+            c, dc = census_with_local("str(msg) + self._tenth_w1(msg)", chain)
+            self.assertEqual((sorted(dc.taint), sorted(dc.residual), c.explicit_violations, len(c.content_rows)), ([], [], [], self.BASE),
+                             "nothing folded, nothing passed: the bound's over-approximation reads a return that carries nothing")
         with self.subTest(road="no fold (the control)"):
             c, dc = census_with("msg, problem=bool(ring)")
             self.assertEqual((sorted(dc.taint), sorted(dc.residual), c.explicit_violations), ([], [], []))
