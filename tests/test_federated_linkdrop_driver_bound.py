@@ -698,8 +698,9 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
         self.assertEqual(record([], [frame(A0 + 3000)])._outline_caught_up_whole("A0", "A1"), [], "a frame on the feed page's socket is not the Outline's")
         t = record([frame(A0 + 3000)])
         Rec.changes_made = []
-        with self.assertRaises(AssertionError):
+        with self.assertRaises(AssertionError, msg="a phase with no change record fails rather than widening") as cm:
             t._outline_caught_up_whole("A0", "A1")
+        self.assertIn("made phase A's change bundle once", str(cm.exception), "the helper's own words for the missing record, not any red (round 5's fixer pass: a bare assertRaises here): %s" % cm.exception)
         # the socket's state at the three posts (A0 + 10, + 1010, + 2010 ms): the gap the excuse is keyed on
         posts = [int((made["t0"] + i * L.NOTICE_GAP_S) * 1000) for i in range(L.NOTICES_PER_PHASE)]
         self.assertEqual(posts, [A0 + 10, A0 + 1010, A0 + 2010], "the derived post times the cells are placed against")
@@ -822,6 +823,9 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
         self.assertEqual(carded._attaches_since(RESUME), [], "a feed slot patch carrying cards is no attach (_attaches_since's card clause)")
         self.assertEqual(carded._minus_attach_rows(stamped_c, RESUME), [{"rev": 7, "slot": "feed"}], "...so its row is nobody's and stays (the row side of the conditioning)")
         self.assertEqual(carded._rows_down_minus_attaches(), [{"rev": 7, "slot": "feed"}], "...at the gate leg's own read too, which has no patch side to red for it")
+        self.assertEqual(carded._return_window_stray(), ([{"rev": 7, "slot": "feed"}], []),
+                         "...and at the return window's read, the third reader with no patch side (the row's floored second sits inside its window): the carded patch is "
+                         "no attach there either, so the row is stray and the attach list empty (round 5's fixer pass: extra6-1's clause named this reader and no cell read it)")
         with self.assertRaises(AssertionError, msg="the storm site reds on its patch side: a card-carrying feed patch in the down window reached the Outline while the link was down") as cm:
             down([row(7, RESUME - 900)], [patch(RESUME + 50, ["asks"])])
         self.assertIn("no feed slot patch reached the Outline", str(cm.exception), "the patch filter's card clause keeps the patch, so the storm site reds on it and not on the row: %s" % cm.exception)
