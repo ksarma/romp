@@ -4,9 +4,11 @@
 // request exists. Per row: Reply (the answer goes into the session, anchored to the request) and Dismiss
 // (clears without one); a row WITH detail says so at a glance and opens on click; a row whose answer is
 // parked in the kernel reads "answer queued" in Reply's place; a blocking request wears a small mark; past
-// twelve rows the rest hide behind a keyed toggle. Source pins (render.ts has no jsdom harness, the repo
-// convention), plus the optimistic removal EXECUTED: el(), notice(), renderTodo and utDropRow lifted from
-// render.ts and run over a fake DOM the way chat-exact-tail-exec.test.ts lifts chatTail.
+// twelve rows the rest hide behind a keyed toggle. Reply's Send keeps the row and disables its Reply as
+// sending until the kernel's next frame rules (gone, queued, or plain again); Dismiss drops its row at the
+// confirm. Source pins (render.ts has no jsdom harness, the repo convention), plus the card EXECUTED: el(),
+// notice(), renderTodo, utDropRow, the Reply dialog and the frame settle lifted from render.ts and run over a
+// fake DOM the way chat-exact-tail-exec.test.ts lifts chatTail.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -161,7 +163,7 @@ test("optimistic removal keeps the heading's count honest: one helper for both s
   assert.match(helper, /querySelectorAll\("\.ut-item"\)\.length/, "recounts the rows left in the same card");
   assert.match(helper, /head\.textContent = `Waiting on you · \$\{n\}`/, "rewrites the heading the way renderTodo paints it");
   assert.match(helper, /head\.remove\(\)/, "and drops it with the last row");
-  assert.equal((RENDER.match(/utDropRow\(/g) || []).length, 3, "the definition plus the two removal sites");
+  assert.equal((RENDER.match(/utDropRow\(/g) || []).length, 2, "the definition plus Dismiss's site: Reply keeps its row (the sending state)");
   assert.doesNotMatch(RENDER, /closest\("\.ut-item"\)\?\.remove\(\)/, "no site removes a row on its own");
   assert.match(helper, /if \(!card\.childElementCount\) \(card\.closest\("\.turn-todo"\) as HTMLElement \| null\)\?\.style\.setProperty\("display", "none"\)/);
   assert.doesNotMatch(helper, /turn-todo"\)[^\n]*\.remove\(\)/, "hidden, not removed");
@@ -198,8 +200,11 @@ class FakeEl {
   childNodes: FakeEl[] = []; parentNode: FakeEl | null = null;
   get parentElement(): FakeEl | null { return this.parentNode; }
   classes = new Set<string>(); dataset: Record<string, string> = {}; attrs: Record<string, string> = {};
-  textContent = ""; title = ""; type = ""; placeholder = ""; rows = 0; value = ""; tabIndex = -1;
+  textContent = ""; title = ""; type = ""; placeholder = ""; rows = 0; value = ""; tabIndex = -1; disabled = false;
   listeners: Record<string, ((ev: any) => void)[]> = {};
+  focus(): void {}
+  /** A click's listeners on THIS node (the dialog's buttons wire their own; the card's rows are delegated). */
+  press(): void { for (const f of this.listeners.click ?? []) f({ target: this }); }
   style: { props: Record<string, string>; setProperty: (k: string, v: string) => void };
   constructor(public tagName: string) {
     const props: Record<string, string> = {};
@@ -257,17 +262,31 @@ class FakeEl {
 const DELEGATES: Record<string, (elx: FakeEl) => void> = {};   // the delegated actions a test lifts (uttoggle), keyed by data-act
 type Row = { id: string; text: string; detail?: string; blocking?: boolean; queued?: boolean };
 type Task = { subject: string; status: string; activeForm?: string };
-type Lifted = { renderTodo: (ev: { kind: "todo"; tasks: Task[]; userTodos: Row[] }) => FakeEl; utDropRow: (row: FakeEl | null) => void };
-/** el(), notice(), paintUtDismiss and the run from utDropRow through renderTodo, lifted from render.ts and run over the
- *  fake DOM. The module state they read and the helpers beside the point are stubbed. */
-function liftTodoCard(opts: { openFolds?: string[] } = {}): Lifted {
+type Lifted = {
+  renderTodo: (ev: { kind: "todo"; tasks: Task[]; userTodos: Row[] }) => FakeEl; utDropRow: (row: FakeEl | null) => void;
+  showUserTodoReply: (sid: string, todoId: string, todoText: string, todoDetail?: string) => void;
+  utSettlePending: (before: Row[] | undefined, now: Row[] | undefined) => void;
+  utSending: Set<string>; utPendingRemoval: Map<string, string>;
+};
+type World = { FakeEl: typeof FakeEl; sid: string; openFolds: string[]; DELEGATES: typeof DELEGATES; body: FakeEl; root: FakeEl | null; posted: any[] };
+/** el(), notice(), paintUtDismiss, the Reply's sending state and the pending gate (utSending through utSettlePending), the
+ *  run from utDropRow through renderTodo, and the Reply dialog, lifted from render.ts and run over the fake DOM. The module
+ *  state they read and the helpers beside the point are stubbed; `document` searches the turn a test mounts as W.root, and
+ *  the dialog's overlay lands in W.body. */
+function liftTodoCard(opts: { openFolds?: string[] } = {}, world?: World): Lifted {
   const elFn = liftBetween("function el(tag: string, cls?: string): HTMLElement {", "\n// ONE sanitizer for both renderers");
   const noticeFn = liftBetween("function notice(spec: NoticeSpec): HTMLElement {", "\n// A word button for a notice's action slot");
   const paint = liftBetween("function paintUtDismiss(node: HTMLElement, armed: boolean): void {", "function utRetireDisarmer(");
+  const pending = liftBetween("const utSending = new Set<string>();", "\n// A dismissed session takes its keyed state with it");
   const todo = liftBetween("function utDropRow(row: Element | null): void {", "\nfunction todoFoldLabel(");
+  const modal = liftBetween("function showUserTodoReply(sid: string, todoId: string, todoText: string, todoDetail = \"\"): void {",
+    "\n// ── COMMENT THREADS");
   const prelude = `
     const W = WORLD;
-    const document = { createElement: (tag) => new W.FakeEl(tag) };
+    const document = { createElement: (tag) => new W.FakeEl(tag), getElementById: () => null, body: W.body,
+                       querySelector: (sel) => (W.root ? W.root.querySelector(sel) : null),
+                       addEventListener: () => {}, removeEventListener: () => {} };
+    const vscodeApi = { postMessage: (m) => W.posted.push(m) };
     const openFolds = new Set(W.openFolds), noticeSeeded = new Set();
     const applyFold = (target, cls, key) => { if (key && openFolds.has(key)) target.classList.add(cls); };
     const dot = (kind) => el("span", "dot " + kind);
@@ -275,6 +294,7 @@ function liftTodoCard(opts: { openFolds?: string[] } = {}): Lifted {
     const setTip = () => {};
     let renderingSid = W.sid;
     const utArmed = new Set(), utDetailOpen = new Set();
+    const utDisarm = (tid) => utArmed.delete(tid);
     const isCoarsePointer = () => false;
     const linkifyFileUris = () => {};
     const todoFoldLabel = () => {};
@@ -285,9 +305,14 @@ function liftTodoCard(opts: { openFolds?: string[] } = {}): Lifted {
   const t0 = RENDER.indexOf("uttoggle: (elx) => {"), t1 = RENDER.indexOf("utreply: (elx) => {", t0);
   assert.ok(t0 > 0 && t1 > t0, "anchors not found: the uttoggle or utreply delegate moved; re-anchor");
   const acts = requireCjs("esbuild").transformSync("const ACTS = { " + RENDER.slice(t0, t1) + " };", { loader: "ts" }).code;
-  const make = new Function("WORLD", prelude + elFn + noticeFn + paint + todo + "\n" + acts + "\nW.DELEGATES.uttoggle = ACTS.uttoggle;\nreturn { renderTodo, utDropRow };") as
-    (w: { FakeEl: typeof FakeEl; sid: string; openFolds: string[]; DELEGATES: typeof DELEGATES }) => Lifted;
-  return make({ FakeEl, sid: "web", openFolds: opts.openFolds || [], DELEGATES });
+  const make = new Function("WORLD", prelude + elFn + noticeFn + paint + pending + todo + modal + "\n" + acts +
+    "\nW.DELEGATES.uttoggle = ACTS.uttoggle;\nreturn { renderTodo, utDropRow, showUserTodoReply, utSettlePending, utSending, utPendingRemoval };") as
+    (w: World) => Lifted;
+  return make(world ?? newWorld(opts));
+}
+
+function newWorld(opts: { openFolds?: string[] } = {}): World {
+  return { FakeEl, sid: "web", openFolds: opts.openFolds || [], DELEGATES, body: new FakeEl("body"), root: null, posted: [] };
 }
 
 function todoCard(rows: Row[], tasks: Task[] = [], opts: { openFolds?: string[] } = {}) {
@@ -456,13 +481,103 @@ test("reply opens a modal (outside the rebuilt transcript) and posts one answer 
   const enter = MODAL.slice(enterAt, MODAL.indexOf("go()", enterAt));
   assert.match(enter, /!e\.shiftKey/, "Shift+Enter keeps a newline");
   assert.match(enter, /!isCoarsePointer\(\)/, "Enter sends on a fine pointer only");
-  assert.match(MODAL, /utDropRow\(document\.querySelector\(`\.ut-item \[data-tid="\$\{todoId\}"\]`\)\?\.closest\("\.ut-item"\)/,
-    "optimistic: the row goes now, the next push confirms");
+  assert.doesNotMatch(MODAL, /utDropRow\(/, "the row STAYS at Send: it moves on the kernel's frame, never on inference");
+  assert.match(MODAL, /utPendingRemoval\.set\(todoId, sid\);\s*\n\s*utSending\.add\(todoId\);/, "Send marks the id sending beside the pending gate");
+  assert.match(MODAL, /const btn = document\.querySelector<HTMLButtonElement>\(`\.ut-item \[data-act="utreply"\]\[data-tid="\$\{todoId\}"\]`\);\s*\n\s*if \(btn\) paintUtReply\(btn, true\);/,
+    "and paints the on-screen Reply sending now (the click-safe rule: acknowledge before the round-trip)");
   assert.match(TODO, /\(reply as any\)\._utdetail = t\.detail \|\| "";/);
   assert.match(MODAL, /const dd = todoDetail\.trim\(\) \? el\("div", "ut-detail open"\) : null;/);
   assert.match(MODAL, /if \(dd\) box\.appendChild\(dd\)/);
   const handler = RENDER.slice(RENDER.indexOf("utreply: (elx) => {"), RENDER.indexOf("utdismiss: (elx) => {"));
   assert.match(handler, /showUserTodoReply\(sid, tid, \(\(elx as any\)\._uttext as string\) \|\| "", \(\(elx as any\)\._utdetail as string\) \|\| ""\);/);
+});
+
+test("the Reply's sending state is keyed, painted from the Set on every rebuild, and settled by the kernel's word alone", () => {
+  assert.match(RENDER, /const utSending = new Set<string>\(\)/);
+  assert.match(TODO, /if \(utSending\.has\(t\.id\)\) paintUtReply\(reply, true\);/, "renderTodo repaints the sending state from the Set");
+  const paint = RENDER.slice(RENDER.indexOf("function paintUtReply("), RENDER.indexOf("\n}", RENDER.indexOf("function paintUtReply(")));
+  assert.match(paint, /node\.disabled = sending;/, "disabled: a second press cannot send the answer twice");
+  assert.match(paint, /node\.classList\.toggle\("sending", sending\);/);
+  assert.match(paint, /node\.textContent = sending \? "Sending…" : "Reply";/, "relabelled, the posts-and-waits idiom");
+  const settleOne = RENDER.slice(RENDER.indexOf("function utSettleSending("), RENDER.indexOf("\n}", RENDER.indexOf("function utSettleSending(")));
+  assert.match(settleOne, /if \(!utSending\.delete\(tid\)\) return;/);
+  assert.match(settleOne, /paintUtReply\(node, false\)/, "the ruling repaints whichever rebuild of the button is on screen");
+  const settle = RENDER.slice(RENDER.indexOf("function utSettlePending("), RENDER.indexOf("\n}", RENDER.indexOf("function utSettlePending(")));
+  assert.match(settle, /for \(const t of now \|\| \[\]\) utSettleSending\(t\.id\);/, "a row the frame still lists, queued or plain, is ruled on");
+  assert.match(settle, /utSettleSending\(t\.id\);\s*\/\/ gone/, "and so is a row the frame dropped");
+  const warn = RENDER.slice(RENDER.indexOf('m.type === "warn"'), RENDER.indexOf('m.type === "err"'));
+  assert.match(warn, /utSending\.clear\(\);[^\n]*\n\s*if \(activeId && views\.get\(activeId\)\?\.stale\) appendActive\(\);/,
+    "a refusal's warn clears the sending state BEFORE the rebuild that repaints the row plain");
+  const forget = RENDER.slice(RENDER.indexOf("function utForgetSession("), RENDER.indexOf("\n}", RENDER.indexOf("function utForgetSession(")));
+  assert.match(forget, /utSettleSending\(t\.id\)/, "a dismissed session takes its sending ids with it");
+  assert.match(CSS, /\.ut-btn:disabled \{[^}]*cursor: default;/, "a sending Reply takes no click and says so");
+  assert.match(CSS, /\.ut-btn:disabled:hover \{[^}]*border-color: var\(--box-border\);/, "no hover accent, the click cue, on a disabled button");
+});
+
+test("executed: Send keeps the row with its Reply disabled and sending; the kernel's next frame rules it gone, queued, or plain again", () => {
+  const W = newWorld();
+  const api = liftTodoCard({}, W);
+  const rows: Row[] = [{ id: "u1", text: "which name for the new tab" }, { id: "u2", text: "ok to delete the old branch" }];
+  const render = (list: Row[]) => { const turn = api.renderTodo({ kind: "todo", tasks: [], userTodos: list }); W.root = turn; return turn; };
+  const replyOf = (turn: FakeEl, id: string) => turn.querySelector(`.ut-item [data-act="utreply"][data-tid="${id}"]`);
+  const send = (id: string, text: string) => {
+    api.showUserTodoReply("web", id, text);
+    const overlay = W.body.childNodes[W.body.childNodes.length - 1];   // the dialog's overlay, appended to the body
+    assert.ok(overlay, "the dialog opened");
+    const input = overlay.querySelector("textarea");
+    assert.ok(input, "the dialog has its field");
+    input!.value = "Go with the session cookie.";
+    const btn = overlay.querySelectorAll("button").find((b) => b.textContent === "Send");
+    assert.ok(btn, "the dialog has its Send");
+    btn!.press();
+  };
+  let turn = render(rows);
+  send("u1", rows[0].text);
+  assert.deepEqual(W.posted, [{ type: "userTodoAnswer", id: "web", todoId: "u1", text: "Go with the session cookie." }], "one answer op");
+  assert.equal(W.body.childNodes.length, 0, "the dialog closed");
+  assert.equal(turn.querySelectorAll(".ut-item").length, 2, "the row STAYS: no move before the kernel's word");
+  assert.equal(turn.querySelector(".ut-head")?.textContent, "Waiting on you · 2", "and the heading's count with it");
+  const r1 = replyOf(turn, "u1")!;
+  assert.equal(r1.disabled, true, "its Reply is disabled");
+  assert.equal(r1.classes.has("sending"), true);
+  assert.equal(r1.textContent, "Sending…");
+  assert.ok(turn.querySelector(`.ut-item [data-act="utdismiss"][data-tid="u1"]`), "Dismiss stays reachable");
+  assert.equal(replyOf(turn, "u2")!.disabled, false, "the other row's Reply is untouched");
+  assert.deepEqual([...api.utSending], ["u1"]);
+  assert.deepEqual([...api.utPendingRemoval], [["u1", "web"]], "the pending gate for a refusal's warn");
+  // a push between Send and the ruling frame rebuilds the card: the sending state is keyed, so it survives the rebuild
+  turn = render(rows);
+  assert.equal(replyOf(turn, "u1")!.disabled, true, "rebuilt sending");
+  assert.equal(replyOf(turn, "u1")!.textContent, "Sending…");
+  assert.equal(replyOf(turn, "u2")!.disabled, false);
+  // ruling one: the frame paints the row QUEUED (the answer waits in the kernel's line): the sending state ends, the row
+  // reads "answer queued" in Reply's place, and never left the card in between
+  const queued: Row[] = [{ id: "u1", text: rows[0].text, queued: true }, rows[1]];
+  api.utSettlePending(rows, queued);
+  assert.deepEqual([...api.utSending], [], "ruled");
+  turn = render(queued);
+  assert.equal(turn.querySelector(`.ut-item [data-tid="u1"]`)?.closest(".ut-item")?.querySelector(".ut-queued")?.textContent, "answer queued");
+  assert.equal(replyOf(turn, "u1"), null, "no Reply while the answer waits in line");
+  assert.equal(turn.querySelectorAll(".ut-item").length, 2, "the row is still there");
+  // ruling two: the frame drops the row (handed over: answered): the sending state and the pending gate both settle
+  send("u2", rows[1].text);
+  assert.deepEqual([...api.utSending], ["u2"]);
+  api.utSettlePending(queued, [queued[0]]);
+  assert.deepEqual([...api.utSending], []);
+  assert.equal(api.utPendingRemoval.has("u2"), false, "gone from the payload: confirmed gone");
+  assert.equal(api.utPendingRemoval.has("u1"), true, "the queued row's gate stands until its row leaves or a warn lands");
+  // ruling three: the frame lists the row PLAIN (the kernel did not take it, or the frame predates the press): the sending
+  // state ends and the ON-SCREEN button is repainted, enabled, without waiting for a rebuild
+  const plain: Row[] = [{ id: "u3", text: "which port for staging" }];
+  turn = render(plain);
+  send("u3", plain[0].text);
+  assert.equal(replyOf(turn, "u3")!.disabled, true);
+  api.utSettlePending(plain, plain);
+  assert.deepEqual([...api.utSending], []);
+  assert.equal(replyOf(turn, "u3")!.disabled, false, "the frame's word: plain, so Reply again");
+  assert.equal(replyOf(turn, "u3")!.textContent, "Reply");
+  assert.equal(replyOf(turn, "u3")!.classes.has("sending"), false);
+  assert.equal(W.posted.length, 3, "three presses, three ops, no duplicate from the disabled state");
 });
 
 test("the section head, the modal's title and every button word say request, never todo", () => {

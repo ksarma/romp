@@ -4307,30 +4307,57 @@ function utDisarm(tid: string): void {
   const node = document.querySelector<HTMLElement>(`[data-act="utdismiss"][data-tid="${tid}"]`);
   if (node) paintUtDismiss(node, false);
 }
-// OPTIMISTIC REMOVAL (Reply sent / Dismiss confirmed): the client drops the row before any verdict and the next
-// push confirms. The ids awaiting that confirmation gate the warn-frame re-sync (the refusal names its session but
-// no request id, so "this client has a removal pending" is the only gate it has), and a push that no longer lists an id
-// settles it, per session. Keyed request id -> its SESSION id: the warn's re-sync must reach the view that holds
-// the refused row, and the user may have switched sessions inside the round-trip.
+// The Reply's SENDING state (ui/CLAUDE.md, click-safe: a control that posts and waits disables and relabels itself). The
+// row STAYS at the press: dropping it there moved the card on inference, and a parked answer's row vanished and came
+// back reading "answer queued" (the project's review). It moves on the kernel's word alone: the next frame removes the
+// row (handed over: answered) or paints it queued (parked), and a refusal's warn repaints it plain through the pending
+// gate below. KEYED, never on the node, like the Dismiss's arm: the card rebuilds on every push while the session
+// streams, and a rebuild between Send and the ruling frame must keep the Reply disabled, or a second press sends the
+// answer twice.
+const utSending = new Set<string>();
+function paintUtReply(node: HTMLButtonElement, sending: boolean): void {
+  node.disabled = sending;
+  node.classList.toggle("sending", sending);
+  node.textContent = sending ? "Sending…" : "Reply";
+}
+// the ruling arrived (a frame that lists the row, queued or plain, or drops it; a warn; the session dismissed): the
+// Set, and whichever rebuild of the button is on screen
+function utSettleSending(tid: string): void {
+  if (!utSending.delete(tid)) return;
+  const node = document.querySelector<HTMLButtonElement>(`[data-act="utreply"][data-tid="${tid}"]`);
+  if (node) paintUtReply(node, false);
+}
+// PENDING GESTURES (Reply sent / Dismiss confirmed): Dismiss drops its row before any verdict (the kernel's dismiss is
+// loud on a stale id) and Reply holds its row in the sending state above; either way the next push confirms. The ids
+// awaiting that confirmation gate the warn-frame re-sync (the refusal names its session but no request id, so "this
+// client has a gesture pending" is the only gate it has), and a push that no longer lists an id settles it, per
+// session. Keyed request id -> its SESSION id: the warn's re-sync must reach the view that holds the refused row, and
+// the user may have switched sessions inside the round-trip.
 const utPendingRemoval = new Map<string, string>();
 function utSettlePending(before: UserTodo[] | undefined, now: UserTodo[] | undefined): void {
-  if (!utPendingRemoval.size && !utArmed.size) return;
+  if (!utPendingRemoval.size && !utArmed.size && !utSending.size) return;
   const live = new Set((now || []).map((t) => t.id));
   for (const t of before || []) {
     if (live.has(t.id)) continue;
     utPendingRemoval.delete(t.id);
+    utSettleSending(t.id);                    // gone: the answer was handed over (or a dismiss won the race): the ruling
     if (utArmed.has(t.id)) utDisarm(t.id);   // a row the kernel dropped mid-two-step takes its arm (and one-shot) with it
   }
+  // a row this frame still lists has its ruling too: queued (the answer waits in the kernel's line, and the row reads so
+  // in Reply's place) or plain (the kernel did not take it, or the frame predates the press): the sending state ends and
+  // the row shows the kernel's word. The pending gate stays for the warn, as for a dismissed row the frame still lists.
+  for (const t of now || []) utSettleSending(t.id);
 }
 // A dismissed session takes its keyed state with it: utSettlePending runs only from the SAME session's later
-// frames, which never arrive once it is gone. Arms go by the rows the last frame listed; pending ids by their
-// owning session (a pending row may already be gone from that list).
+// frames, which never arrive once it is gone. Arms and sending ids go by the rows the last frame listed; pending
+// ids by their owning session (a pending row may already be gone from that list).
 function utForgetSession(sid: string, rows: UserTodo[] | undefined): void {
-  for (const t of rows || []) if (utArmed.has(t.id)) utDisarm(t.id);
+  for (const t of rows || []) { if (utArmed.has(t.id)) utDisarm(t.id); utSettleSending(t.id); }
   for (const [tid, owner] of utPendingRemoval) if (owner === sid) utPendingRemoval.delete(tid);
 }
-// One helper for both removal sites: the row goes NOW and the heading's count follows it (a "Waiting on you · 3"
-// over two rows read wrong until the next push). The heading goes with the last row, as renderTodo paints it (the
+// The removal helper (Dismiss's confirm; Reply keeps its row, in the sending state above): the row goes NOW and the
+// heading's count follows it (a "Waiting on you · 3" over two rows read wrong until the next push). The heading goes
+// with the last row, as renderTodo paints it (the
 // section auto-hides when empty), and so does the card when that heading was all it had: the kernel ships no todo
 // event when both lists are empty. The turn is HIDDEN, never removed: syncViewInner keys on v.el.childNodes, and
 // the next push's render replaces the node either way.
@@ -4473,12 +4500,13 @@ function renderTodo(ev: Extract<ChatEvent, { kind: "todo" }>): HTMLElement {
         q.title = "your answer is waiting in line for this session; the cancel on its bubble takes it back";
         line.appendChild(q);
       } else {
-        const reply = el("button", "ut-btn ut-reply");
+        const reply = el("button", "ut-btn ut-reply") as HTMLButtonElement;
         reply.dataset.act = "utreply"; reply.dataset.tid = t.id; reply.dataset.sid = renderingSid || "";
         (reply as any)._uttext = t.text;   // rides the node: the dialog quotes the request it answers
         (reply as any)._utdetail = t.detail || "";   // and its detail, so the whole request is in view while answering
         reply.textContent = "Reply";
         reply.title = "answer this: your reply goes straight to the session";
+        if (utSending.has(t.id)) paintUtReply(reply, true);   // keyed: a rebuild between Send and the ruling frame keeps it disabled
         line.appendChild(reply);
       }
       const dis = el("button", "ut-btn ut-dismiss");
@@ -9697,10 +9725,14 @@ function showUserTodoReply(sid: string, todoId: string, todoText: string, todoDe
     if (!text) { input.classList.add("bad"); input.focus(); return; }
     vscodeApi?.postMessage({ type: "userTodoAnswer", id: sid, todoId, text });
     close();
-    // optimistic: the row goes NOW (answering clears it); the next push confirms, and a stale click gets the
-    // kernel's loud warn instead of a silent nothing (the pending mark lets that warn repaint the row)
+    // the row STAYS and its Reply reads sending, disabled (utSending): the kernel's next frame removes the row (handed
+    // over) or paints it queued (parked), and a stale click gets the kernel's loud warn instead of a silent nothing
+    // (the pending mark lets that warn repaint the row plain). Dropping the row here moved the card before any
+    // verdict: a parked answer's row vanished and came back queued
     utPendingRemoval.set(todoId, sid);
-    utDropRow(document.querySelector(`.ut-item [data-tid="${todoId}"]`)?.closest(".ut-item") ?? null);
+    utSending.add(todoId);
+    const btn = document.querySelector<HTMLButtonElement>(`.ut-item [data-act="utreply"][data-tid="${todoId}"]`);
+    if (btn) paintUtReply(btn, true);
   };
   cancel.addEventListener("click", close);
   send.addEventListener("click", go);
@@ -19352,15 +19384,17 @@ listenForFrames(perfFrameHandler("chat", (m) => vscodeApi?.postMessage(m), (e: M
     // an unreadable parent, the SDK setup hint). It gets a dialog naming the reason and takes the
     // provisional tab down with it; a toast would slide past the one moment it needed to be read.
     else if (provisionalId) failProvisional(m.text); else warnToast(m.text);
-    // A warn is also the kernel REFUSING a gesture this client may have already painted: Reply and Dismiss on a
-    // request remove their row optimistically before any verdict. While one of those is pending, re-sync from the
-    // events so a refused row returns NOW: the kernel's state did not change on a refusal, so the next push can
-    // dedup to nothing and the optimistic removal would otherwise stand until an unrelated repaint. GATED on the
+    // A warn is also the kernel REFUSING a gesture this client may have already painted: Dismiss on a request
+    // removes its row optimistically before any verdict, and Reply paints its row's control sending. While one of
+    // those is pending, re-sync from the events so a refused row returns NOW, plain: the kernel's state did not
+    // change on a refusal, so the next push can dedup to nothing and the painted gesture would otherwise stand until
+    // an unrelated repaint. GATED on the
     // pending set: the frame names its session but no request id; a warn about anything else should repaint nothing.
     // EVERY view holding a pending id goes stale, not only the active one: the user may have switched sessions
     // inside the round-trip; appendActive rebuilds the active one now, a hidden one rebuilds on its next switch.
     if (utPendingRemoval.size) {
       for (const sid of new Set(utPendingRemoval.values())) { const v = views.get(sid); if (v) v.stale = true; }
+      utSending.clear();   // before the rebuild reads it: a refused Reply's row comes back plain, its Reply enabled
       if (activeId && views.get(activeId)?.stale) appendActive();
       utPendingRemoval.clear();
     }

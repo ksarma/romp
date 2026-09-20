@@ -2601,6 +2601,10 @@ pre code .file-uri-link { color: var(--accent); }   /* a fenced block's path (20
 .ut-btn { flex: 0 0 auto; font-size: 0.72em; padding: 1px 8px; border-radius: 9px; cursor: pointer;
   background: none; border: 1px solid var(--box-border); color: var(--dim); }
 .ut-btn:hover { border-color: var(--accent); color: var(--accent); }
+/* a Reply in its sending state (disabled until the kernel's next frame rules): no hover accent, the click cue, and the
+   pointer says so */
+.ut-btn:disabled { cursor: default; opacity: 0.6; }
+.ut-btn:disabled:hover { border-color: var(--box-border); color: var(--dim); }
 .ut-dismiss.armed { border-color: var(--err); color: var(--err); }
 /* the Reply dialog: the request being answered, quoted above the field */
 .ut-reply-quote { white-space: pre-wrap; overflow-wrap: anywhere; }
