@@ -409,18 +409,24 @@ def suite_globs(root=ROOT):
 
 
 def suite_files(root=ROOT):
-    """The population of suites, as paths relative to root: every file the shell job's bats glob names (suite_globs), expanded
-    under root as the job's shell expands it, sorted, each once. Raises LookupError when the glob names no file: a population
-    derived from a pattern that matches nothing must red, never pass as a clean corpus (extra4-1 of fork PR #778's round 8: the
-    suite tests asserted agreement over whatever they enumerated and pinned the population nowhere, so an empty corpus printed
-    `0 files` and passed; a hand-kept floor was refused there, since the corpus has shrunk legitimately once and a suite added
-    under a widened glob would be missed). The one derivation both suite tests read (BatsSuites, BatsCorpus);
-    tests/bats-bare-negation-shell-job.bats, the wrapper that runs them in the job, is in it."""
+    """The population of suites, as paths relative to root: every file the shell job's bats globs name (suite_globs), each
+    expanded under root as the job's shell expands it, sorted, each once. Raises LookupError, naming every pattern that names no
+    file, when any one does: the job's bash hands bats an unmatched glob as the literal word and bats reds on it (`bats: cd: other:
+    No such file or directory` for a missing directory, `Error: Test file ".../other/*.bats" does not exist` for one holding no
+    match, under 1.10.0), so this reds on the same glob; a population derived from a pattern that matches nothing must red, never
+    pass as a clean corpus (extra4-1 of fork PR #778's round 8: the suite tests asserted agreement over whatever they enumerated and
+    pinned the population nowhere, so an empty corpus printed `0 files` and passed; a hand-kept floor was refused there, since the
+    corpus has shrunk legitimately once and a suite added under a widened glob would be missed), and the check is per glob, not
+    over their union (round 1 of fork PR #871: the union raised only when every glob was dead, so one glob going empty beside a
+    live one narrowed the population silently where the job reds). The one derivation both suite tests read (BatsSuites,
+    BatsCorpus); tests/bats-bare-negation-shell-job.bats, the wrapper that runs them in the job, is in it."""
     patterns = suite_globs(root)
-    files = sorted({os.path.relpath(p, root) for pat in patterns for p in glob.glob(os.path.join(root, pat))})
-    if not files:
-        raise LookupError("the shell job's bats glob (%s) names no file under %s: the population is empty" % (" ".join(patterns), root))
-    return files
+    found = {pat: glob.glob(os.path.join(root, pat)) for pat in patterns}
+    dead = [pat for pat in patterns if not found[pat]]
+    if dead:
+        raise LookupError("the shell job's bats glob (%s) names no file under %s: bats reds on the unmatched word, and the population "
+                          "would be short its suites" % (" ".join(dead), root))
+    return sorted({os.path.relpath(p, root) for paths in found.values() for p in paths})
 
 
 def _read_suite(relpath, root=ROOT):
@@ -711,9 +717,9 @@ class BatsSuites(unittest.TestCase):
 
 
 class Population(unittest.TestCase):
-    """suite_files on scratch roots: the population is the glob the shell job's Run bats step hands bats, as the workflow under the
-    root states it, expanded there; a glob naming no file, or a workflow without the step, raises instead of passing as a clean
-    corpus (extra4-1 of fork PR #778's round 8)."""
+    """suite_files on scratch roots: the population is the globs the shell job's Run bats step hands bats, as the workflow under
+    the root states it, expanded there; any glob naming no file, or a workflow without the step, raises instead of passing as a
+    clean or a narrowed corpus (extra4-1 of fork PR #778's round 8; round 1 of fork PR #871)."""
 
     WORKFLOW = ("jobs:\n  shell:\n    steps:\n      - name: Run bats\n        env:\n          BATS_TEST_TIMEOUT: \"180\"\n"
                 "        run: bats --print-output-on-failure %s\n")
@@ -751,6 +757,24 @@ class Population(unittest.TestCase):
         # is one of the suites
         self.assertEqual(suite_globs(), ["tests/*.bats"])
         self.assertIn("tests/bats-bare-negation-shell-job.bats", suite_files())
+
+    def test_a_dead_glob_beside_a_live_one_raises_naming_the_dead_one(self):
+        # the job's bash hands bats an unmatched glob as the literal word and bats reds on it, whether the directory is missing
+        # (`bats: cd: other: No such file or directory`) or holds no match (`Error: Test file ".../other/*.bats" does not exist`);
+        # the union raised only when every glob was dead, so a dead glob beside a live one narrowed the population silently where
+        # the job reds (round 1 of fork PR #871). The dead pattern is named and the live one is not; two dead are both named
+        for files in (["tests/a.bats"], ["tests/a.bats", "other/d.bash"]):
+            with tempfile.TemporaryDirectory() as d:
+                self.root(d, "tests/*.bats other/*.bats", files)
+                with self.assertRaises(LookupError) as cm:
+                    suite_files(d)
+                self.assertIn("the shell job's bats glob (other/*.bats) names no file under", str(cm.exception))
+                self.assertNotIn("tests/*.bats", str(cm.exception))
+        with tempfile.TemporaryDirectory() as d:
+            self.root(d, "tests/*.bats other/*.bats", ["tests/a.bash", "other/d.bash"])
+            with self.assertRaises(LookupError) as cm:
+                suite_files(d)
+            self.assertIn("the shell job's bats glob (tests/*.bats other/*.bats) names no file under", str(cm.exception))
 
 
 class Extents(unittest.TestCase):
