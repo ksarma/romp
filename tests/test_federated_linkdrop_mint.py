@@ -17,9 +17,13 @@ words and leaves the source's records untouched; every git command the mint runs
 source, or bound by -C to a path under the lab, and none names a worktree, a record clearing or an object collection; the
 class's teardown, spied the same way WITH a minted checkout present (round 3: spied with none, a teardown step conditioned
 on the mint, the round-1 defect's own shape, was never exercised), runs no command at all (the lab's rmtree takes the
-checkout); and no string constant
-in the lab module's source, in either quoting, is such an argv token (an ast walk, so a spelling cannot slip past it; a
-token assembled at run time or joined into one shell string is what the two spies are for, not this census).
+checkout); and no string constant in the lab module's source, in either quoting, is such an argv token (an ast walk, so a
+spelling cannot slip past it). What the two spies see is a rule, not a list: they record every command the lab module
+issues through its `subprocess` attribute, `run` and `Popen` alike (`call` and `check_call` go through `Popen`, so the same
+record sees them), so a token assembled at run time or joined into one shell string is caught whichever of the two the
+module used (round 4: the spies saw `run` alone, and round 1's defect re-planted as a `Popen` with its tokens assembled
+passed every pin, the byte-identical records included, since the peer worktree's directory was still alive). What neither
+the spies nor the census sees is a command issued any other way, `os.system` or `os.popen`.
 
 Synthetic: a scratch repository minted here, hostname TESTHOST; no kernel, no browser.
 """
@@ -40,8 +44,8 @@ FORBIDDEN_ARGV = ("worktree", "prune", "gc")
 
 
 def _git(*args):
-    """A git command for the test's own scratch (Popen, not run: the tests spy on subprocess.run around the mint, and
-    the spy must see the mint's commands only)."""
+    """A git command for the test's own scratch, through this module's real `subprocess` (the spies replace the LAB module's
+    `subprocess` attribute, so a command the test itself issues stays out of the record, whichever function it uses)."""
     p = subprocess.Popen(["git", *args], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     out, err = p.communicate(timeout=60)
     if p.returncode != 0:
@@ -100,13 +104,32 @@ class OldHubMintIsPrivate(unittest.TestCase):
         self.assertEqual(len(self.before["admin"]), 1, "the scratch holds one peer record before the mint: %r" % (self.before,))
         self.assertEqual(self.before["locked"], [], "…and nothing locked")
 
-    def _spy(self, real):
+    def _spy(self, run=None):
+        """One recording namespace to patch over the lab module's `subprocess` attribute: its `run` and `Popen` append the
+        argv to one list and hand the call to the real module (`run`, when given, stands in for the real `run`: the
+        interrupted mint's drill); every other name (PIPE, STDOUT, TimeoutExpired, CompletedProcess, which the lab module
+        reads through the same attribute) delegates to the real module. One namespace over the attribute, never a second
+        patch of `Popen` on the real module: `subprocess.run` calls `Popen` as its own module's global, so that spelling
+        records every `run` twice (read as 4 != 2 on the mint pin). The recorder exists for the shape round 4 found
+        passing every pin: round 1's repo-global sweep re-planted at the top of the class's teardown as
+        `subprocess.Popen(["git", "-C", ROOT, "workt" + "ree", "pr" + "une"]).communicate()`, a `Popen` the `run` spy
+        never saw with tokens the ast census never sees; that plant cannot live in the repo and is recorded as a mutation
+        in the builder's review note outside it (red on test_the_teardown_runs_no_command through this recorder)."""
         seen = []
+        real = subprocess
 
-        def run(cmd, *a, **k):
-            seen.append(list(cmd))
-            return real(cmd, *a, **k)
-        return seen, run
+        class Recorder:
+            def run(self, cmd, *a, **k):
+                seen.append(list(cmd))
+                return (run or real.run)(cmd, *a, **k)
+
+            def Popen(self, cmd, *a, **k):
+                seen.append(list(cmd))
+                return real.Popen(cmd, *a, **k)
+
+            def __getattr__(self, name):
+                return getattr(real, name)
+        return seen, Recorder()
 
     def _assert_commands_are_private(self, seen, expect_commands=True):
         """Every git command the mint ran either reads the source (the clone) or is bound to a path under the lab; none
@@ -125,9 +148,8 @@ class OldHubMintIsPrivate(unittest.TestCase):
                 self.assertTrue(cmd[2].startswith(self.lab + os.sep), "…to a path under the lab, never the source: %r" % (cmd,))
 
     def test_the_mint_registers_nothing_in_the_source_and_borrows_its_objects(self):
-        real = subprocess.run
-        seen, run = self._spy(real)
-        with mock.patch.object(L.subprocess, "run", run):
+        seen, recorder = self._spy()
+        with mock.patch.object(L, "subprocess", recorder):
             wt = self.Mint._mint_old_hub()
         self._assert_commands_are_private(seen)
         self.assertEqual(len(seen), 2, "the mint is one clone and one checkout: %r" % (seen,))
@@ -146,18 +168,15 @@ class OldHubMintIsPrivate(unittest.TestCase):
         self.assertEqual(self.src.records(), self.before, "…and byte-identical after teardown")
 
     def test_an_interrupted_mint_raises_and_leaves_the_source_untouched(self):
-        real = subprocess.run
-        seen, spy = self._spy(real)
-
         def killed_at_the_clone(cmd, *a, **k):
             if cmd[:2] == ["git", "clone"]:
-                seen.append(list(cmd))
-                p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)   # the test's own Popen, not the lab's
                 p.kill()   # the drill: the mint's git dies as the clone starts (a SIGKILL mid-mint, the failure path)
                 out, err = p.communicate()
                 return subprocess.CompletedProcess(cmd, p.returncode if p.returncode else -9, out, err or "killed as the clone started (the drill)")
-            return spy(cmd, *a, **k)
-        with mock.patch.object(L.subprocess, "run", killed_at_the_clone):
+            return subprocess.run(cmd, *a, **k)
+        seen, recorder = self._spy(run=killed_at_the_clone)
+        with mock.patch.object(L, "subprocess", recorder):
             with self.assertRaises(RuntimeError) as cm:
                 self.Mint._mint_old_hub()
         self.assertIn(self.src.old, str(cm.exception), "the error names the sha: %s" % cm.exception)
@@ -180,16 +199,17 @@ class OldHubMintIsPrivate(unittest.TestCase):
         subprocess at all: the lab's rmtree takes the checkout, and no git command of the class names the source (round 1's
         teardown ran a repo-wide record clearing there). The mint runs first under the spy, so a teardown step conditioned
         on the mint (old_hub_wt set, the round-1 defect's own shape) is exercised; round 3 found the pin spied a teardown
-        with nothing minted, which such a step never entered. Behavioural, so the spelling of an argv token cannot matter."""
-        real = subprocess.run
-        seen, run = self._spy(real)
-        with mock.patch.object(L.subprocess, "run", run):
+        with nothing minted, which such a step never entered. Behavioural, so the spelling of an argv token cannot matter,
+        and the recorder sees `run` and `Popen` alike, so the function it was issued through cannot matter either (round 4:
+        a `Popen` sweep with assembled tokens passed the `run` spy; _spy's docstring names the plant)."""
+        seen, recorder = self._spy()
+        with mock.patch.object(L, "subprocess", recorder):
             wt = self.Mint._mint_old_hub()
         self._assert_commands_are_private(seen)
         self.assertEqual(self.Mint.old_hub_wt, wt, "the mint recorded its checkout")
         self.assertTrue(os.path.isdir(os.path.join(wt, ".git")), "…and the checkout exists under the lab when the teardown runs: %r" % (wt,))
         del seen[:]
-        with mock.patch.object(L.subprocess, "run", run):
+        with mock.patch.object(L, "subprocess", recorder):
             self.Mint.tearDownClass()
         self._assert_commands_are_private(seen, expect_commands=False)
         self.assertEqual(seen, [], "a teardown with the minted checkout present runs no command: %r" % (seen,))
