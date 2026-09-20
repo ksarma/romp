@@ -1,11 +1,11 @@
-// Decision 8's placeholder (figure-gate.ts) is a promise about BYTES: while "Image from <host>. Click to load." stands, no
+// Decision 8's placeholder (figure-gate.ts) is a claim about BYTES: while "Image from <host>. Click to load." stands, no
 // request has left the page for that host. The instrument that observes bytes leaving is a server's request log, so this
 // leg runs the REAL Files bundle in each of Playwright's three engines against real servers on 127.0.0.1 and reads their
 // logs, never the page's request events and never a route (page.route answers a request inside the browser and can
 // report one the network never carried, or miss one the engine issued before the route saw it). The unlisted host is a
 // hostname no resolver knows, `remote.test`: the browser is launched with an HTTP forward proxy the test runs, which
 // logs every request it is handed and forwards `romp.test` to the harness server and `remote.test` to the figure server,
-// so the browser fetches under the unlisted name without DNS and every request it makes passes two logs on its way.
+// so the browser fetches under the unlisted name without DNS and every request it makes is logged twice, by the proxy and by the server it reaches.
 // The first scene: a note with one figure `![fig](http://remote.test/fig.png)` opens through the pane's own relay; the leg
 // waits for the placeholder to be on screen, drains the network with a sentinel fetch, and asserts that neither log holds
 // a request for fig.png; then it clicks the placeholder and asserts exactly one, with the method, the path and the Host
@@ -126,7 +126,7 @@ function figureServer(log: Line[]): http.Server {
   });
 }
 /** The harness server (romp.test through the proxy): the pane page, its bundle, the two notes and the folder's figure through
- *  /file, the URL document under /notes/ and its folder figure beside it, and the sentinel; every request logged. The kernel's Referrer-Policy rides on every response, as it does on every
+ *  /file, the URL document under /notes/ and its folder figure beside it, and the sentinel; every request logged. The kernel's Referrer-Policy is sent on every response, as it is on every
  *  page the kernel serves (kernel.py, the header's comment), so what the figure server sees in Referer is what it would see
  *  from the dashboard. */
 function harnessServer(js: string, log: Line[]): http.Server {
@@ -175,7 +175,7 @@ function proxyServer(map: Record<string, number>, log: Line[]): http.Server {
 type Scene = { page: any; errors: string[]; figureLog: Line[]; proxyLog: Line[]; harnessLog: Line[]; open: (p: string) => Promise<void>; openUrl: (u: string) => Promise<void>; drain: () => Promise<void> };
 /** The three servers, the engine launched through the proxy, the pane page open. `open` posts the pane's relay for a note and
  *  awaits a fresh rendered box; `openUrl` opens a document from its URL through the real openUrlView and awaits the same;
- *  `drain` makes one round trip through the proxy to the harness and waits a beat, so a request the engine issued before it
+ *  `drain` makes one round trip through the proxy to the harness and waits 250 ms, so a request the engine issued before it
  *  has reached the logs. */
 async function inEngine(t: any, engine: "chromium" | "firefox" | "webkit", body: (s: Scene) => Promise<void>): Promise<void> {
   if (!pw) { t.skip("playwright is not installed under vscode-extension; the browser legs need it (CI installs no browsers)"); return; }

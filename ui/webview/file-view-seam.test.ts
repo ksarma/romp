@@ -18,7 +18,7 @@ import * as path from "node:path";
 import DOMPurify from "dompurify";   // the module-global instance md-sanitize.ts imports, for the record pin on the seam's constraint
 import type { FileViewActionCtx, At } from "./file-view";
 import type { Status, Hunk } from "./file-comments-model";
-import { setMdSanitizer } from "./md-sanitize";   // the sanitizer seam the node suites install a stand-in through (Slice 7 of plans/markdown-viewer.md)
+import { setMdSanitizer, sanitizeMd, MD_PURIFY } from "./md-sanitize";   // the sanitizer seam the node suites install a stand-in through (Slice 7 of plans/markdown-viewer.md); sanitizeMd and the profile for the inertness pins
 import { marked } from "marked";                   // the singleton the viewer parses with: one case makes its lexer throw (the Slice 7 review's round 2)
 
 const web = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
@@ -1111,6 +1111,153 @@ test("source: the Slice 3 seam members exist with their doc comments; the media 
   assert.match(rw, /if \(el\.tagName === "IMG" && ref\.attr === "src"\) \{\n\s*if \(p === null\) \{ el\.removeAttribute\("data-fv-src"\); continue; \}\n\s*el\.setAttribute\("data-fv-src", ref\.value\);\n\s*\}/, "the authored value kept on an img's src (the attribute the comments panel pairs an embed by), removed when the src is not a path");
   assert.doesNotMatch(rw, /innerHTML|outerHTML|\.replace\(|DOMParser/, "never a string rewrite of marked's HTML");
   assert.doesNotMatch(rw, /normalize|\.\.\//, "no client-side path normalization: the kernel resolves and gates `..`");
+});
+
+// ── the inertness premise, held where CI runs (the review of the gate-before-adoption fix, 2026-09-20) ──────────────
+// The chain-before-adoption order pinned above rests on one fact: the body sanitizeMd hands mdBlock belongs to a document
+// with no browsing context, so the chain's writes over it start no fetch. The browser legs execute that fact in each engine
+// (file-view-figures-gate-adopt-browser.test.ts, the premise probe) and skip wherever Playwright's engines are absent, and
+// CI's `npm test` runs before its one `npx playwright install` (.github/workflows/ci.yml), so under CI the fact stood on
+// nothing: the pins above and their siblings in the other re-aimed modules match names and call order, and a change that kept both
+// while handing back a live-document body left every CI-run test green. The review's refuters measured that in a scratch
+// copy of the head (2026-09-20): one key, `ADD_ATTR: ["shadowrootmode"]`, on MD_PURIFY, the sanitize line and the chain as
+// written, makes the installed DOMPurify (3.4.10) clone the sanitized body into the LIVE document (its RETURN_DOM branch,
+// pinned below), every CI-run module stayed green, and in WebKit the figure server logged the gated figure while the
+// placeholder stood; a `document.adoptNode(clean)` guarded by `typeof document` after the sanitize did the same. Under
+// node DOMPurify.isSupported is false (the record pin below), so the fact cannot be executed in this suite; this test pins
+// every door to it instead: the profile literal whole and its runtime key set (a writer elsewhere would show in the keys),
+// the config the sanitize is handed at run time, sanitizeMd's body whole, no live-document call and no config verb in
+// md-sanitize.ts's code, no module of the dashboard but md-sanitize.ts naming the profile or DOMPurify's config verbs, the
+// installed library's sites that pick the body's document (the factory's template document, _initDocument's two parsers,
+// the RETURN_DOM branch's one road into the live document and the guard on it), and, in mdBlock, `clean` reaching the four
+// chain calls and nothing else before the adoption and nothing after it. Comments are stripped before any code is read
+// (codeOnly), so a comment may name what the code may not. Red at the head with either of the two changes above (measured
+// in a scratch copy, the same day). A red here means the premise moved: re-run the two gate-adopt browser legs in all three
+// engines and read the servers' logs before re-aiming a pin.
+/** `src` with its comments removed: a line comment to the line's end and a block comment to its close, outside string
+ *  literals (a `//` inside quotes, the HTML namespace URL, is kept). Regex literals are not parsed: none in the code read here
+ *  holds a comment opener or a quote (the self-check in the test reads a string holding `//` back, and a doc comment's word
+ *  off the code). Trailing whitespace a stripped comment leaves is trimmed and blank lines are dropped. */
+function codeOnly(src: string): string {
+  let out = "", i = 0;
+  while (i < src.length) {
+    const c = src[i], n = src[i + 1];
+    if (c === '"' || c === "'" || c === "`") {
+      out += c; i++;
+      while (i < src.length && src[i] !== c) { if (src[i] === "\\") { out += src[i]; i++; } out += src[i] ?? ""; i++; }
+      out += src[i] ?? ""; i++;
+    } else if (c === "/" && n === "/") {
+      while (i < src.length && src[i] !== "\n") i++;
+    } else if (c === "/" && n === "*") {
+      const end = src.indexOf("*/", i + 2); i = end < 0 ? src.length : end + 2;
+    } else { out += c; i++; }
+  }
+  return out.split("\n").map((l) => l.trimEnd()).filter((l) => l !== "").join("\n");
+}
+/** The profile's keys, in the literal's order: the whole of what sanitizeMd spreads RETURN_DOM onto. */
+const PROFILE_KEYS = ["USE_PROFILES", "ADD_DATA_URI_TAGS", "ALLOW_DATA_ATTR", "FORBID_TAGS", "FORBID_ATTR", "SANITIZE_NAMED_PROPS"];
+
+test("the inertness premise, held where CI runs: MD_PURIFY is its six-key literal at the source and at run time and reaches the sanitize with RETURN_DOM alone added; sanitizeMd's body is its five statements; md-sanitize.ts's code opens no door to the live document and no config verb, and no other dashboard module names the profile or those verbs; the installed DOMPurify parses into a template's document, returns that body itself, and clones into the live document only under a shadowroot attribute no profile here allows; in mdBlock `clean` reaches the four chain calls and nothing else before the adoption, and nothing after it", () => {
+  const SAN = web("md-sanitize.ts");
+  const SAN_CODE = codeOnly(SAN);
+  // the reader's self-check: a string holding `//` survives, a word the doc comments use and the code does not is gone
+  assert.ok(SAN_CODE.includes('const HTML_NS = "http://www.w3.org/1999/xhtml";'), "codeOnly keeps a string literal holding //");
+  assert.match(SAN, /allowedTags/); assert.doesNotMatch(SAN_CODE, /allowedTags|\/\*\*|^\s*\* /m, "codeOnly drops the doc comments (dropBodyTitle's names the hook's allowedTags lever; the code never does)");
+  // ── the profile: the literal whole, the object's keys, the config the sanitize is handed ──
+  const literal = /^export const MD_PURIFY: Config = \{\n([\s\S]*?)\n\};$/m.exec(SAN_CODE);
+  assert.ok(literal, "the profile is one exported literal");
+  assert.deepEqual(literal![1].split("\n"), [
+    "  USE_PROFILES: { html: true, svg: true },",
+    '  ADD_DATA_URI_TAGS: ["img"],',
+    "  ALLOW_DATA_ATTR: false,",
+    "  FORBID_TAGS: [...MD_FORBID_TAGS],",
+    "  FORBID_ATTR: [...MD_FORBID_ATTR],",
+    "  SANITIZE_NAMED_PROPS: true,",
+  ], "the six entries and no other: no ADD_ATTR, ADD_TAGS or ALLOWED_* (an allowed `shadowroot` or `shadowrootmode` makes DOMPurify clone the body into the live document, below), no RETURN_DOM_FRAGMENT, IN_PLACE or WHOLE_DOCUMENT");
+  assert.deepEqual(Object.keys(MD_PURIFY), PROFILE_KEYS, "the object at run time has the literal's keys: no module added one after load");
+  const seen: Array<Record<string, unknown>> = [];
+  const recorder = { addHook: () => { /* the hooks are DOMPurify's; the recorder has none */ }, sanitize: (_dirty: string, cfg: Record<string, unknown>) => { seen.push(cfg); return new El("body"); } };
+  setMdSanitizer(recorder as unknown as Parameters<typeof setMdSanitizer>[0]);
+  try { sanitizeMd('<p><img src="http://remote.test/x.png"></p>'); }
+  finally { setMdSanitizer(fakeSanitizer as unknown as Parameters<typeof setMdSanitizer>[0]); }   // the suite's stand-in back, for every paint after this test
+  assert.equal(seen.length, 1, "one sanitize per sanitizeMd");
+  assert.deepEqual(Object.keys(seen[0]), [...PROFILE_KEYS, "RETURN_DOM"], "the sanitize is handed the profile's keys and RETURN_DOM, nothing else");
+  assert.equal(seen[0].RETURN_DOM, true);
+  assert.deepEqual(seen[0].USE_PROFILES, { html: true, svg: true }, "DOMPurify's html and svg attribute lists, which quote no shadowroot attribute (below)");
+  // ── sanitizeMd's body, whole ──
+  const fnAt = SAN_CODE.indexOf("export function sanitizeMd(");
+  assert.ok(fnAt > 0);
+  assert.deepEqual(SAN_CODE.slice(fnAt, SAN_CODE.indexOf("\n}\n", fnAt) + 2).split("\n"), [
+    "export function sanitizeMd(dirty: string, own?: (body: HTMLElement) => void): HTMLElement {",
+    "  installMdSanitizeHooks();",
+    "  const clean = purifier().sanitize(dirty, { ...MD_PURIFY, RETURN_DOM: true }) as HTMLElement;",
+    "  keepOnlyInertCheckboxes(clean);",
+    "  if (own) own(clean);",
+    "  for (const pass of postPasses) pass(clean);",
+    "  return clean;",
+    "}",
+  ], "the body DOMPurify returns is the body handed back: no statement between the sanitize and the return moves it or its nodes anywhere");
+  assert.equal((SAN_CODE.match(/\bRETURN_DOM\b/g) || []).length, 1, "RETURN_DOM is spelled at the one sanitize");
+  // ── no door to the live document, no config verb, in md-sanitize.ts's code ──
+  for (const door of [/\bdocument\./, /\b(?:window|globalThis|self)\.document\b/, /adoptNode/, /importNode/, /RETURN_DOM_FRAGMENT/, /\bIN_PLACE\b/, /WHOLE_DOCUMENT/,
+    /ADD_ATTR/, /ADD_TAGS/, /ALLOWED_ATTR/, /ALLOWED_TAGS/, /allowedAttributes/, /shadowroot/i, /setConfig/, /clearConfig/, /DOMParser/, /createHTMLDocument/,
+    /createElement\(/, /innerHTML/, /outerHTML/, /insertAdjacentHTML/]) {
+    assert.doesNotMatch(SAN_CODE, door, "md-sanitize.ts's code never spells " + String(door) + ": the live document (adoptNode, importNode, createElement, a fragment of it), a DOMPurify option or verb that changes which document the body belongs to (RETURN_DOM_FRAGMENT, IN_PLACE, an allowed shadowroot attribute through ADD_ATTR or ALLOWED_ATTR, setConfig), or a re-parse of the markup");
+  }
+  assert.deepEqual(SAN_CODE.match(/^.*ownerDocument.*$/gm), ["  (node.ownerDocument as Document).createDocumentFragment().appendChild(node);"],
+    "the one call on a node's document is dropBodyTitle's fragment of the node's OWN document, DOMPurify's parse document during a sanitize");
+  // ── no other module of the dashboard names the profile or DOMPurify's config verbs (a writer to MD_PURIFY, or a setConfig, which
+  // makes DOMPurify ignore the per-call config, would change the body's document with the literal above intact) ──
+  const UI_DIR = path.resolve(process.cwd(), "..", "ui", "webview");
+  const others = fs.readdirSync(UI_DIR).filter((f) => f.endsWith(".ts") && !f.endsWith(".test.ts") && !f.endsWith(".d.ts") && f !== "md-sanitize.ts");
+  assert.ok(others.includes("file-view.ts") && others.includes("render.ts"), "the sweep reads the dashboard's modules");
+  const namers = others.filter((f) => { const code = codeOnly(web(f)); return /\b(?:MD_PURIFY|setConfig|clearConfig|addHook|RETURN_DOM)\b/.test(code) || /shadowroot/i.test(code); });
+  assert.deepEqual(namers, [], "the profile, DOMPurify's config verbs, its hook registry and RETURN_DOM are md-sanitize.ts's alone (md-sanitize.test.ts sweeps the sanitize call and the seam the same way)");
+  // ── the installed library: the sites that pick the body's document, in every dist a bundler can take ──
+  const DP = path.resolve(process.cwd(), "node_modules", "dompurify");
+  const version = (JSON.parse(fs.readFileSync(path.join(DP, "package.json"), "utf8")) as { version: string }).version;
+  for (const f of ["purify.es.mjs", "purify.cjs.js", "purify.js"]) {
+    const lib = fs.readFileSync(path.join(DP, "dist", f), "utf8");
+    const tag = "dompurify " + version + " " + f + ": ";
+    // the factory: the live document is kept as originalDocument and importNode is its method; `document` becomes a <template>'s
+    // content document, one with no browsing context, where the engine has templates
+    assert.match(lib, /\n\s*let document = window\.document;\n\s*const originalDocument = document;\n/, tag + "the factory keeps the live document as originalDocument");
+    assert.match(lib, /const template = document\.createElement\('template'\);\n\s*if \(template\.content && template\.content\.ownerDocument\) \{\n\s*document = template\.content\.ownerDocument;\n/, tag + "and works in a template's content document from then on");
+    assert.match(lib, /\n\s*const importNode = originalDocument\.importNode;\n/, tag + "importNode is the live document's, the one method of it the sanitize keeps");
+    // _initDocument: the parse document is DOMParser's, or one implementation (the template document's) creates; the only
+    // `document.` call lends a text node, which insertBefore adopts into the body's document
+    const initAt = lib.indexOf("_initDocument = function _initDocument(dirty) {");
+    const initEnd = lib.indexOf("return WHOLE_DOCUMENT ? doc.documentElement : body;", initAt);
+    assert.ok(initAt > 0 && initEnd > initAt, tag + "_initDocument is where the parse document is made");
+    const init = codeOnly(lib.slice(initAt, initEnd));
+    assert.match(init, /doc = new DOMParser\(\)\.parseFromString\(dirtyPayload, PARSER_MEDIA_TYPE\);/, tag + "DOMParser first");
+    assert.match(init, /doc = implementation\.createDocument\(NAMESPACE, 'template', null\);/, tag + "a created document when DOMParser gives none");
+    assert.deepEqual(init.match(/\b(?:document|originalDocument|window)\.\w+/g), ["document.createTextNode"], tag + "the live document is not consulted for the parse document; the template document lends a text node");
+    assert.doesNotMatch(init, /adoptNode|importNode/, tag + "nothing in the parse is moved between documents");
+    // the RETURN_DOM branch: the parse document's body itself (or a fragment of the same document), cloned into the live document
+    // by importNode ONLY when shadowroot or shadowrootmode is an allowed attribute
+    const at = lib.indexOf("if (RETURN_DOM) {");
+    const end = lib.indexOf("return returnNode;", at);
+    assert.ok(at > 0 && end > at, tag + "the RETURN_DOM branch");
+    const branch = codeOnly(lib.slice(at, end));
+    assert.match(branch, /if \(RETURN_DOM_FRAGMENT\) \{\n\s*returnNode = createDocumentFragment\.call\(body\.ownerDocument\);/, tag + "a fragment, were one asked for, is the body's own document's");
+    assert.match(branch, /\} else \{\n\s*returnNode = body;\n\s*\}/, tag + "RETURN_DOM alone hands back the parse document's body itself");
+    assert.match(branch, /if \(ALLOWED_ATTR\.shadowroot \|\| ALLOWED_ATTR\.shadowrootmode\) \{\n\s*returnNode = importNode\.call\(originalDocument, returnNode, true\);\n\s*\}\n?$/, tag + "the one road into the live document, a deep clone under importNode, taken only when shadowroot or shadowrootmode is allowed");
+    assert.deepEqual(branch.match(/\b(?:originalDocument|document|adoptNode|importNode)\b/g), ["importNode", "originalDocument"], tag + "no other door in the branch");
+    assert.doesNotMatch(lib, /['"]shadowroot(?:mode)?['"]/, tag + "no attribute list quotes shadowroot or shadowrootmode: neither the html nor the svg profile allows either, so the profile above cannot take that road by itself");
+  }
+  // ── mdBlock: `clean` reaches the chain and nothing else before the adoption, and nothing after it ──
+  const mdCode = codeOnly(VIEW.split("function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {")[1].split("\n}\n")[0]);
+  const bind = "const clean = sanitizeMd(dirty, mintHeadingIds);", adopt = "box.replaceChildren(...Array.from(clean.childNodes));";
+  const bindAt = mdCode.indexOf(bind), adoptAt = mdCode.indexOf(adopt);
+  assert.ok(bindAt > 0 && adoptAt > bindAt, "the body is bound to `clean` and adopted later");
+  const between = mdCode.slice(bindAt + bind.length, adoptAt);
+  assert.deepEqual(between.match(/\w+\(clean\b/g), ["resolveFigureRefs(clean", "gateRemoteFigures(clean", "rewriteFigureSrcs(clean", "gateRemoteFigures(clean"],
+    "between the sanitize and the adoption `clean` reaches the four chain calls (the URL kind's resolution and gate, the file kind's rewrite and gate) and nothing else");
+  assert.deepEqual(between.match(/\bdocument\.\w+/g), ["document.baseURI", "document.baseURI", "document.baseURI"], "the live document is read there for its base URI alone");
+  assert.doesNotMatch(between, /\bbox\b|adoptNode|importNode|appendChild|\bappend\(|prepend\(|insertBefore|replaceChildren|replaceWith|\bafter\(|\bbefore\(/, "nothing moves a node into the live document before the chain is done");
+  assert.doesNotMatch(mdCode.slice(adoptAt + adopt.length), /\bclean\b/, "after the adoption every pass reads `box`; the body is not touched again");
+  assert.doesNotMatch(mdCode.slice(0, bindAt), /\bclean\b/, "and nothing is called `clean` before the sanitize binds it");
 });
 
 // ── editing over pending changes (plans/file-review.md Slice 5) ────────────────────────────────────

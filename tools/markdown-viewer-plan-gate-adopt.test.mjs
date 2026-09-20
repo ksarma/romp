@@ -108,14 +108,28 @@ test('mdBlock runs the chain on the sanitized body and adopts after, and the ado
     assert.ok(at > cleanAt && at < adoptAt, call + ' runs on `clean`, between the sanitize and the adoption');
   }
   assert.doesNotMatch(mdFn, /(resolveFigureRefs|rewriteFigureSrcs|gateRemoteFigures)\(box/, 'no figure pass over the live document\'s box');
-  assert.ok(mdFn.includes(
-    '  // Adopted as they are, no re-parse, every fetching attribute gated or repointed above, so the adoption itself starts no\n' +
-    '  // fetch in any engine (the leg\'s logs: no line for the gated host, one line through /file for the folder\'s figure).\n' +
-    '  box.replaceChildren(...Array.from(clean.childNodes));\n'), 'the adoption line and its comment, as written');
+  // The adoption line's comment: the lines between the chain's closing brace and the adoption line, comment lines only, read
+  // as prose so a re-wrap of the lines does not move the pin (the round-1 rewording of this comment turned a line-for-line
+  // pin red; found by the review of this fix, 2026-09-20).
+  const braceAt = mdFn.lastIndexOf('\n  }\n', adoptAt);
+  assert.ok(braceAt >= 0 && braceAt > cleanAt, 'the chain\'s if/else closes before the adoption');
+  const aboveLines = mdFn.slice(braceAt + '\n  }\n'.length, adoptAt).split('\n');
+  assert.ok(aboveLines.length >= 1 && aboveLines.every((l) => l.startsWith('  // ')), 'only comment lines sit between the chain and the adoption line');
+  const above = prose('\n' + aboveLines.join('\n'));
+  assert.ok(above.includes('Adopted as they are, no re-parse, every fetching attribute gated or repointed above, so the adoption starts no fetch to an unlisted host and none at a pre-rewrite URL, in any engine; what it does start is the fetch of every figure left with a live attribute, the folder\'s through /file and an allowed host\'s as written (the legs\' logs: no line for a gated host, one line through /file for the folder\'s figure).'),
+    'the adoption line\'s comment says what the adoption starts and what it does not');
   const block = prose(mdFn.slice(cleanAt, adoptAt));
   assert.ok(block.includes('The figure chain runs HERE, on the sanitizer\'s body, BEFORE its nodes are adopted into `box` (2026-09-20).'), 'the block\'s opening comment');
-  assert.ok(block.includes('In Chromium and Firefox the servers\' logs held no line for either figure before the chain ran (measured at the base, 2026-09-20, by the leg named below), so only WebKit fetched'), 'the comment states the observation, not a scheduling mechanism');
+  // The observation per vector, as the legs measured it: the two <img> figures, then the inline svg image.
+  assert.ok(block.includes('In Chromium and Firefox the servers\' logs held no line for either of those <img> figures before the chain ran (measured at the base, 2026-09-20, by the first leg named below).'), 'the comment states the <img> observation, not a scheduling mechanism');
+  assert.ok(block.includes('An inline svg\'s <image> is loaded by another path, and there the gate held in Chromium alone:'), 'the comment states the svg observation');
+  assert.ok(block.includes('measured at the base by the second leg named below'), 'the svg observation names its leg');
   assert.ok(!/microtask/.test(block), 'no scheduling claim the leg did not measure');
+  // The two legs the comment names, in the order it names them, both under ui/webview.
+  const SVG_LEG = 'file-view-figures-gate-adopt-svg-browser.test.ts';
+  const firstAt = block.indexOf(LEG), secondAt = block.indexOf(SVG_LEG);
+  assert.ok(firstAt >= 0 && secondAt > firstAt, 'the comment names the img leg first and the svg leg second');
+  assert.ok(fs.existsSync(path.join(REPO, 'ui', 'webview', SVG_LEG)), SVG_LEG + ' exists under ui/webview');
   assert.ok(block.includes('the section ' + TITLE + ' of plans/markdown-viewer.md records the hole, the instrument and the scope'), 'the comment names the plan section');
 });
 

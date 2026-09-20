@@ -1,0 +1,116 @@
+// The ledger entry upstream/2026-09-20-figure-gate-before-adoption.md is the queue item the owner reads before promoting the
+// gate-before-adoption fix to an upstream offer, and its `where:` line is the offer's inventory. Round 1 of the branch's
+// review added a second browser leg and rewrote that line without naming the leg or re-deriving its count, so the line said
+// 13 files where the head's diff listed 14, and the body kept saying WebKit alone fetched a gated figure where the new leg
+// had measured Firefox doing so too (found by the review's round 2, 2026-09-20). This module holds the entry to the tree and
+// to the legs: every file the branch changed is named in the where: line, by its path or its basename (the entry by the
+// ledger's own phrase, "this entry among them"), and exists; the count the line states is the number of files it names;
+// both browser legs are named in the line and in the body; the body's engine statements match the legs' own headers (the
+// img leg red in WebKit alone at the base, the svg leg red in Firefox and in WebKit, green in Chromium); the reach names
+// Firefox beside Safari, as the chain block's comment in file-view.ts does; no em dash. The file list is the branch's diff
+// at its head, written down: the entry is a record of that branch, so this module reads no git. Synthetic: the repo's own
+// text only. Run: node --test tools/2026-09-20-figure-gate-before-adoption-ledger.test.mjs
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const REPO = path.resolve(HERE, '..');
+const read = (...parts) => fs.readFileSync(path.join(REPO, ...parts), 'utf8');
+
+const ENTRY = 'upstream/2026-09-20-figure-gate-before-adoption.md';
+const IMG_LEG = 'ui/webview/file-view-figures-gate-adopt-browser.test.ts';
+const SVG_LEG = 'ui/webview/file-view-figures-gate-adopt-svg-browser.test.ts';
+/** `git diff --name-only 2d41e5c9b HEAD` at the branch's head, sorted as git prints it. */
+const FILES = [
+  'plans/markdown-viewer.md',
+  'tools/2026-09-20-figure-gate-before-adoption-ledger.test.mjs',
+  'tools/file-review-viewer-recipe.test.mjs',
+  'tools/markdown-viewer-plan-gate-adopt.test.mjs',
+  IMG_LEG,
+  SVG_LEG,
+  'ui/webview/file-view-figures-gate-browser.test.ts',
+  'ui/webview/file-view-seam.test.ts',
+  'ui/webview/file-view-text-size.test.ts',
+  'ui/webview/file-view.test.ts',
+  'ui/webview/file-view.ts',
+  'ui/webview/md-sanitize-viewer-links.test.ts',
+  'ui/webview/md-url-view.test.ts',
+  'ui/webview/render-sanitize.test.ts',
+  ENTRY,
+];
+
+const entry = read(ENTRY);
+/** The front matter's pairs (one line each, `key: value`) and the prose after the closing delimiter. */
+function parse(text) {
+  const lines = text.split('\n');
+  assert.equal(lines[0], '---', 'the entry opens with the front matter delimiter');
+  const end = lines.indexOf('---', 1);
+  assert.ok(end > 1, 'the front matter closes');
+  const header = {};
+  for (const line of lines.slice(1, end)) {
+    const m = /^([a-z]+):(.*)$/.exec(line);
+    assert.ok(m, `a header line is one key: value pair, not ${JSON.stringify(line)}`);
+    header[m[1]] = m[2].trim();
+  }
+  return { header, body: lines.slice(end + 1).join('\n') };
+}
+const { header, body } = parse(entry);
+const where = header.where;
+
+test('the where: line names every file the branch changed, each of which exists in the tree', () => {
+  assert.ok(where && where.length > 0, 'where: is present and non-blank');
+  // the entry covers itself with the ledger's own phrase, "this entry among them", as the earlier entries do
+  const covered = (f) => where.includes(f) || where.includes(path.basename(f)) || (f === ENTRY && where.includes('this entry among them'));
+  const unnamed = FILES.filter((f) => !covered(f));
+  assert.deepEqual(unnamed, [], 'every changed file is named by its path or its basename');
+  const missing = FILES.filter((f) => !fs.existsSync(path.join(REPO, f)));
+  assert.deepEqual(missing, [], 'every named file exists');
+  assert.equal(new Set(FILES.map((f) => path.basename(f))).size, FILES.length, 'basenames are unique, so a basename names one file');
+});
+
+test('the count the where: line states is the number of files it names, derived at the head', () => {
+  const m = /(\d+) files by `git diff --name-only 2d41e5c9b HEAD` at the head/.exec(where);
+  assert.ok(m, 'the line states its count and the command it was derived from, at the head');
+  assert.equal(Number(m[1]), FILES.length, 'the stated count is the list\'s length');
+  assert.ok(where.includes('this entry among them'), 'the entry counts itself');
+});
+
+test('both browser legs are named in the where: line and in the body, the svg leg as the second vector', () => {
+  for (const leg of [IMG_LEG, SVG_LEG]) {
+    assert.ok(where.includes(leg), `where: names ${leg} by its path`);
+    assert.ok(body.includes(path.basename(leg)), `the body names ${path.basename(leg)}`);
+  }
+  assert.ok(where.includes('two new browser legs'), 'the line counts the legs');
+  assert.ok(where.includes('three scenes'), 'the img leg is described with its three scenes');
+  assert.ok(where.includes('two inline svg images, one spelt href and one xlink:href'), 'the svg leg is described by its two spellings');
+});
+
+test("the body's engine statements are the legs' own: the img leg red in WebKit alone at the base, the svg leg red in Firefox and WebKit, green in Chromium", () => {
+  const imgHeader = read(IMG_LEG).split('\nimport ')[0];
+  const svgHeader = read(SVG_LEG).split('\nimport ')[0];
+  assert.ok(imgHeader.includes('Red before the fix in WebKit alone, all three scenes'), "the img leg's header: WebKit alone, three scenes");
+  assert.ok(body.includes('red in WebKit at 2d41e5c9b in all three scenes, green in Chromium and Firefox there'), 'the body says so of the img leg');
+  assert.ok(svgHeader.includes('red in Firefox') && svgHeader.includes('red in WebKit') && svgHeader.includes('green in Chromium'), "the svg leg's header: Firefox and WebKit red, Chromium green");
+  assert.ok(body.includes('red in Firefox (both requested while the placeholders stood) and in WebKit (the xlink:href one) at 2d41e5c9b, green in Chromium there'), 'the body says so of the svg leg');
+  assert.ok(body.includes('Both legs green in all three engines after the fix.'), 'the body records the fixed state for both legs');
+  assert.ok(!body.includes('so neither leaked'), 'the pre-round-1 sentence that Chromium and Firefox did not leak is gone');
+});
+
+test('the reach names Firefox beside Safari, as the chain block\'s comment in file-view.ts does, and the title names no one engine', () => {
+  const view = read('ui', 'webview', 'file-view.ts');
+  assert.ok(view.includes('the dashboard, in Safari and in Firefox'), "file-view.ts's chain comment names both");
+  assert.ok(body.includes('Reachable from the kernel-served dashboard, in Safari and in Firefox'), 'the body names both');
+  assert.ok(body.includes('the review of this branch found it for an inline svg image in Firefox and in WebKit'), 'the body attributes the svg vector to this branch\'s review');
+  assert.ok(header.title.endsWith('so no gated figure is fetched while its placeholder stands'), 'the title states the property, not one engine');
+  assert.ok(!header.title.includes('WebKit'), 'the title names no engine');
+});
+
+test('the entry keeps the record rules: fix tier, a candidate, pr: blank until filed, no em dash', () => {
+  assert.equal(header.tier, 'fix');
+  assert.equal(header.status, 'candidate');
+  assert.equal(header.pr, '', 'pr: is blank until the PR exists');
+  assert.ok(!entry.includes(String.fromCharCode(0x2014)), 'no em dash');
+});
