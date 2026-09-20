@@ -45,7 +45,12 @@
 // the accessibility layer, the pass fired in the same task, so it is in the gap by construction), each offering beside the selection.
 // The fifth is the change whose event ALREADY RAN over a stale record: a second press inside the highlight dragged and ended by the
 // window's blur (no mouseup, so the seam never offered and the record names the first passage), then the pick, whose own event must
-// offer nothing. Legs await the DOM's own states and frames,
+// offer nothing. The sixth is the third refusal with the change pending, in a 500 by 400 px pane: the pick's writes push the pending
+// passage below the body's bottom edge, and no button stands over the body's last visible line. The seventh is a change of the person's
+// that RETURNS the selection to the ends the last pass left (the review's round 2): a quiet pick over the offered selection, Shift+ArrowRight
+// delivered and offered, then Shift+ArrowLeft back to the drag's ends with the pick in its gap; the last pass's note (passLeft) was kept
+// until the next pass, so the head read the return as that pass's own move, recorded it, hid the button the change had moved a glyph from
+// under, and the event offered nothing; every delivered selectionchange retires the note now. Legs await the DOM's own states and frames,
 // never a timer. Skips LOUDLY without a playwright browser (CI installs none). Synthetic values only: an invented report, /repo/notes-api
 // paths, the placeholder sid, invented comment ids.
 import { test } from "node:test";
@@ -689,5 +694,53 @@ test("in a browser, the real Files pane at 500 by 400 px: the paint-offer browse
       assert.deepEqual(errors, [], "no script error");
       await page.close();
     });
+  });
+});
+
+test("in a browser, the real viewer and panel: a change of the person's that RETURNS the selection to the ends the last pass left (the review's round 2): a real drag over a plain paragraph's words offers the float; a settings pick from another pane over the offered selection moves nothing (a quiet pass); Shift+ArrowRight is delivered and offers beside the grown selection; then Shift+ArrowLeft back to the drag's ends with the pick in its gap: the pass leaves the float where the last offer put it and the person's event offers beside the shrunk selection (before: the quiet pass's note stood past the delivered event, the head read the return to its ends as the pass's own move, the pass recorded it and hid the button the change had moved a glyph from under, and the event compared equal and offered nothing); then the same pick with no change of the person's moves nothing and its event offers nothing", { timeout: 240000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const { page, errors } = await openWith(browser, E);
+    await dragOver(page, 13, 30);
+    let s = await scene(page);
+    assert.deepEqual([s.selected, s.hidden, s.marks], [P2.slice(13, 30), false, 1], "the drag selected the passage, the mouseup offered the float, and the peer's mark stands after the passage on its line");
+    const dragged = { left: s.left, top: s.top, selChanges: s.selChanges };
+    // the quiet pass: a pick over the offered selection, which moves nothing on the line (the mark is after the passage) and notes what it left
+    await page.evaluate(() => { (window as any).__pick(); });
+    await frames(page, 4);
+    s = await scene(page);
+    assert.deepEqual([s.selected, s.hidden, s.left, s.top], [P2.slice(13, 30), false, dragged.left, dragged.top], "the quiet pass left the selection and the float as the drag's offer put them");
+    t.diagnostic("the quiet pass fired " + (s.selChanges - dragged.selChanges) + " selectionchange event(s) of its own");
+    // Shift+ArrowRight with no pass in its gap: delivered, and offered beside the grown selection
+    const n1 = s.selChanges;
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+    await page.keyboard.down("Shift"); await page.keyboard.press("ArrowRight"); await page.keyboard.up("Shift");
+    await page.waitForFunction((k: number) => (window as any).__selChanges > k, n1, { timeout: 5000 });
+    await frames(page, 2);
+    s = await scene(page);
+    assert.deepEqual([s.selected, s.hidden], [P2.slice(13, 31), false], "Shift+ArrowRight, delivered: offered beside the grown selection");
+    near(s.left, s.expectedLeft, "...beside the grown selection's end"); near(s.top, s.expectedTop, "...on its line");
+    const grown = { left: s.left, top: s.top, selChanges: s.selChanges };
+    // Shift+ArrowLeft back to the drag's ends, the ends the quiet pass left, with the pick forced into its gap at the arrow's keyup
+    const gap = await pressInGap(page, "ArrowLeft", grown.selChanges);
+    premise(gap, P2.slice(13, 30), grown.selChanges, grown.left, "the return");
+    assert.deepEqual([gap.after.selected, gap.after.marks], [P2.slice(13, 30), 1], "the pass left the shrunk selection whole and the peer's mark standing");
+    assert.deepEqual([gap.after.hidden, gap.after.left], [false, grown.left], "the pass in the gap leaves the float where the last offer put it: the change is the event's to answer (before: the head found the return at the last pass's note, read it as the pass's own move, recorded it, and hid the button the change had moved a glyph from under)");
+    // the outcome, after the event: offered beside the shrunk selection
+    s = await scene(page);
+    assert.equal(s.selected, P2.slice(13, 30), "the keyboard shrank the selection back to the drag's ends");
+    assert.equal(s.hidden, false, "the person's Shift+ArrowLeft offers the float beside the shrunk selection (before: the event compared equal with the record the pass wrote and offered nothing, the button gone)");
+    near(s.left, s.expectedLeft, "...beside the selection's end, showFloat's arithmetic for the live range"); near(s.top, s.expectedTop, "...on its line");
+    assert.notEqual(s.left, grown.left, "...a place the change moved (the float's place is a witness here)");
+    assert.equal(s.composer, false, "no composer opened on its own");
+    // the pinned rule stands: the same pick with NO change of the person's moves nothing, and its own event, where it fires one, offers nothing
+    const standing = { left: s.left, top: s.top, selChanges: s.selChanges };
+    await page.evaluate(() => { (window as any).__pick(); });
+    await frames(page, 4);
+    s = await scene(page);
+    assert.deepEqual([s.selected, s.hidden, s.marks], [P2.slice(13, 30), false, 1], "a pick with no change of the person's leaves the selection whole and the float shown");
+    assert.deepEqual([s.left, s.top], [standing.left, standing.top], "...where the offer put it: the paint's own move is no offer");
+    t.diagnostic("the pick with no change fired " + (s.selChanges - standing.selChanges) + " selectionchange event(s) of its own");
+    assert.deepEqual(errors, [], "no script error");
+    await page.close();
   });
 });

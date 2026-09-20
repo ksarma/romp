@@ -1324,7 +1324,14 @@ class Panel {
   /** The selection as the last pass left it, by its ends (EndsNote): afterPaint's read after the writes, every pass, the editor's
    *  stand-down included. The other note a pass's head compares with: a live selection at it is the last pass's own product, its
    *  event pending (a merged or split text node) or never coming (the lone-child collapse, afterPaint's note), no change of the
-   *  person's. Cleared at dispose. */
+   *  person's. A witness only while that event is outstanding: RETIRED by every delivered selectionchange (onSelectionChange's first
+   *  lines), since the document posts at most one selectionchange at a time and a delivered one carries every move before it, the
+   *  last pass's included, after which lastDelivered is the note for the selection standing. Kept past the event, the note stood for
+   *  the ends the pass left long after, and a change of the person's that RETURNED the selection to those ends (a quiet pass over the
+   *  offered selection, Shift+ArrowRight delivered and offered, then Shift+ArrowLeft back to the drag's ends with a pass in its gap)
+   *  read at the head as that pass's own move: the pass recorded it, hid the button the change had moved a glyph from under, and the
+   *  person's event compared equal and offered nothing, the defect of the fix by a narrower road (the review's round 2). Cleared at
+   *  dispose. */
   passLeft: EndsNote = null;
   /** A selectionchange of the person's is on its way: the selection changed since the document's last selectionchange was delivered,
    *  by other hands than the last pass's, and the browser has posted the event and not yet delivered it (offeredFor's note on the gap).
@@ -1345,12 +1352,19 @@ class Panel {
    *  deciding events alone, so none of the three holds: onSelectionChange notes the selection every delivered event finds, and
    *  afterPaint notes what every pass leaves, so a live selection at neither is one some other hand moved since the listener last
    *  heard, whose event is posted and not delivered; a pass's own move is at passLeft, its event pending or, for the lone-child
-   *  collapse, never coming. A raise keyed on the gesture instead (the document's keydown, a press's end) was weighed and not built:
+   *  collapse, never coming, a note the delivered event retires (passLeft: kept past it, the note read a return of the person's to
+   *  the ends the pass left as the pass's own move). A raise keyed on the gesture instead (the document's keydown, a press's end) was weighed and not built:
    *  a key that changes nothing (Shift alone, a copy, an arrow at the document's edge) posts no selectionchange, so a latch it raised
    *  would stand until an unrelated event lowered it, the stale-record defect by another road; and the assistive-technology road (a
    *  screen reader or caret browser moving the selection through the accessibility layer, a programmatic setBaseAndExtent) shows the
-   *  page no key at all, where the delivered event's note covers it as it covers the keyboard's. A pass the editor's stand-down ends
-   *  (paintAll's first line) reads none of it: the editor's selections are edits, as the listener has them. */
+   *  page no key at all, where the delivered event's note covers it as it covers the keyboard's. The compare's bound: a move of the
+   *  selection that posts no event, by a hand that is neither the person's nor the last pass's (a reload's body swap collapsing the
+   *  selection, case (2) of the paint-offer file), reads as pending at the next head, which drops the record and hides the float, and
+   *  the lowering at the next delivered event restores no record, so a pass's own move delivered before any gesture of the person's
+   *  would offer with none. That stays a hide only while every such move leaves a selection the listener refuses (collapsed, or an end
+   *  outside the body), as the swap's collapse does; a no-event move that left an in-view passage would be an offer with no gesture at
+   *  the next delivered event, and none is known. A pass the editor's stand-down ends (paintAll's first line) reads none of it: the
+   *  editor's selections are edits, as the listener has them. */
   pendingChange = false;
   /** Read the selection at the head of a pass, before its writes, into pendingChange: raised when the live selection is at neither
    *  note (atNote: lastDelivered, the last delivered event's; passLeft, the last pass's own). A latch already raised stands: the event
@@ -1461,6 +1475,7 @@ class Panel {
     const sel = typeof window.getSelection === "function" ? window.getSelection() : null;
     this.lastDelivered = noteEnds(sel);   // the event's own note of the selection it delivered, before any guard (pendingChange's two notes)
     this.pendingChange = false;           // the change a pass's head found still to come has come, its own move riding the same event (pendingChange)
+    this.passLeft = null;                 // the last pass's own move, where it posted an event, rode this one: its note is no witness for a later selection at the same ends (passLeft)
     if (this.pointerHeld || this.ctx.editing()) return;
     if (!sel || this.passageGone(sel)) {
       if (this.floatAt && !this.floatAt.img) this.hideFloat();

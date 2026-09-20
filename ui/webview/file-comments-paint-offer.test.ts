@@ -100,6 +100,16 @@
 //     round, extra6-3: the pending branch re-seated nothing), the person's event then re-offering at the same place; a whole move out of
 //     the box is hidden as (16) has it; a remnant the writes cut and moved with the change pending stands for the person's event, which
 //     offers beside it as it stands (one move of the button, where a hide and a show would flap within a frame), as (11) has it.
+// (18) The head read runs at the pass's SECOND call site too, repaintPreselPass (the same round, tests-3), and that read is pinned by
+//     its own scene through the aside's Comment on this file control: with it gone the repaint records the person's pending change as
+//     its own and their event offers nothing.
+// (19) A change of the person's that RETURNS the selection to the ends the last pass left (the review's round 2): the last pass's note
+//     (passLeft) was kept until the next pass, so it stood as a witness long after the pass's own event, if any, was delivered, and a
+//     quiet pass over the offered selection, then Shift+ArrowRight delivered and offered, then Shift+ArrowLeft back to the drag's ends
+//     with a pass in its gap read at the head as that pass's own move: the pass recorded the return, hid the button the change had moved
+//     a glyph from under, and the person's event compared equal and offered nothing, (10) by a narrower road. Now every delivered
+//     selectionchange retires the last pass's note (the document posts at most one selectionchange at a time, so a delivered one carries
+//     every move before it, the pass's included), and the delivered event's own note is the witness for the selection standing.
 // Driven over the behavior suite's DOM stand-in with the selection faked per case (window.getSelection is what the panel reads and
 // what afterPaint records; a cut the paint makes is applied when the paint replaces the node, liveSelectionOn's cutOnPaint, since the
 // pass reads the selection at its head too; a drag delivers its own selectionchange under the press, dragOffer, as a browser does), the
@@ -1176,4 +1186,34 @@ test("the head read at the pass's SECOND call site, repaintPreselPass (the revie
   assert.deepEqual(shown(float), { hidden: false, ...placeOf(GROWN) }, "a repaint over the selection as offered moves nothing");
   documentEvent("selectionchange");
   assert.deepEqual(shown(float), { hidden: false, ...placeOf(GROWN) }, "...and its own event is no offer");
+});
+
+test("a change of the person's that RETURNS the selection to the ends the last pass left (the review's round 2): a quiet pass over the offered selection (a poll's status that moved nothing) notes the selection it left; Shift+ArrowRight is delivered and offered; then Shift+ArrowLeft back to the drag's ends with a pass in its gap: the pass leaves the float where the last offer put it and the person's event offers beside the shrunk selection (before: the pass's note stood past the delivered event, the head read the return to those ends as the pass's own move, the pass recorded it and hid the button the change had moved a glyph from under, and the event compared equal and offered nothing); the pick with no change after it moves nothing and its own event is no offer", async (t) => {
+  const w = world(); t.after(() => w.close()); t.after(() => { selection = null; });
+  await openPanel(w);
+  const live = liveSelectionOn(w.body, QUOTE, 9, RECT_B);
+  const float = dragOffer(w, live);
+  assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_B) }, "the drag's offer stands");
+  // a quiet pass over the offered selection: it moves nothing, notes the selection it left, and its own event, where it fires one, is no offer
+  externalFilterPick();
+  assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_B) }, "a quiet pass moves nothing");
+  documentEvent("selectionchange");
+  assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_B) }, "...and its own event is no offer");
+  // Shift+ArrowRight, delivered with no pass in its gap: offered beside the grown selection
+  const GROWN: Rect = { ...RECT_B, right: RECT_B.right + 7 };
+  live.length = 10; live.rect = GROWN;
+  documentEvent("selectionchange");
+  assert.deepEqual(shown(float), { hidden: false, ...placeOf(GROWN) }, "Shift+ArrowRight offers beside the grown selection");
+  // Shift+ArrowLeft back to the drag's ends, the ends the quiet pass left, its event a task away, and a pass in the gap
+  live.length = 9; live.rect = RECT_B;
+  externalFilterPick();
+  assert.equal(String(live), QUOTE.slice(0, 9), "the pass left the shrunk selection whole");
+  assert.deepEqual(shown(float), { hidden: false, ...placeOf(GROWN) }, "the pass in the gap leaves the float where the last offer put it: the change is the event's to answer (before: the head found the return at the last pass's note, read it as the pass's own move, recorded it, and hid the button the change had moved a glyph from under)");
+  documentEvent("selectionchange");
+  assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_B) }, "the person's Shift+ArrowLeft offers beside the shrunk selection (before: the event compared equal with the record the pass wrote and offered nothing, the button gone)");
+  // the pinned rule stands: a pick with no change of the person's moves nothing, and its own event is no offer
+  externalFilterPick();
+  assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_B) }, "a pick with no change of the person's moves nothing");
+  documentEvent("selectionchange");
+  assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_B) }, "...and its own event is no offer");
 });
