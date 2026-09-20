@@ -118,8 +118,9 @@ MEMBER = re.compile(r"\s*\.\s*(?P<name>[\w$]+)\s*")
 # left the allow-list green): a binding or assignment whose target is not a walked name (BINDING against WALKED_TARGET), a
 # locator-making call whose chain ends on it (stored, returned or passed on; _receiver_calls reports it), and a receiver passed
 # bare as an argument (PASSED_BARE), allowed only to BARE_CALLEES or to a driver helper whose one parameter is itself a walked
-# name (HELPER_PARAM: snap's is `page`). Not an exhaustive list of the ways a receiver can leave the walk (round 5 measured
-# fourteen others): the class outside these spellings is the parsed census's, tests/test_federated_linkdrop_driver_parsed_served.py.
+# name (HELPER_PARAM: snap's is `page`). Not an exhaustive list of the ways a receiver can leave the walk: the class outside
+# these spellings is the parsed census's, tests/test_federated_linkdrop_driver_parsed_served.py, whose PLANTS table carries the
+# measured rows (no count is kept here).
 WALKED_NAMES = ("page", "pages", "context", "browser", "chromium")
 RECV_EXPR = r"pages(?:\.\w+|\[[^\[\]]*\])?|page|context|browser|chromium"
 BINDING = re.compile(r"(?:\b(?:const|let|var)\s+)?(?P<target>[\w$]+(?:\s*(?:\.\s*[\w$]+|\[[^\[\]]*\]))*|[\[{][^=;]*[\]}])\s*(?<![=!<>])=(?![=>])\s*(?:await\s+)?(?P<recv>%s)(?![\w$])" % RECV_EXPR)
@@ -673,9 +674,10 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
         fails rather than widening. Then the socket's state at the posts: open and served across all three posts with a
         later frame in the window (no excuse: the recorded windows the frame alone excused with their patches delivered),
         the same socket closing after the last post with the redial's frame (no excuse), closed before the posts (an excuse),
-        closing between notice 1 and notice 2 (an excuse: the recorded churn's own shape, since in all five churned drives the
-        first post, 0.01 s in, found the socket open and served and it closed 0.6 to 0.7 s in, before the second; the fixer
-        pass of round 4 corrected the labels, which had put the recorded churn on the closed-before cell), open across the
+        closing between notice 1 and notice 2 (an excuse: the churn's shape as the cells model it, the socket open and served at
+        the first post and closed before the second; the recorded churned drives and their dating are _outline_caught_up_whole's
+        docstring's, not repeated here; the fixer pass of round 4 corrected the labels, which had put the recorded churn on the
+        closed-before cell), open across the
         posts but served only after notice 2 (an excuse). And the floor the excuse guards, with the excuse frame PRESENT in
         the record: a phase with no patch and no row whose socket was open and served across the posts reds
         _assert_one_row_per_outline_feed_patch (the planted miss), the same with the socket closed across the posts passes
@@ -694,7 +696,7 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
                  (A0 + 1000, 11, False, "after notice 1, before notices 2 and 3"),
                  (int(last_post) - 1, 11, False, "one millisecond before the last notice's earliest post"),
                  (int(last_post) + 1, 11, True, "just after the last notice's earliest post"),
-                 (A0 + 3000, 11, True, "after the bundle (the recorded churn frames came 2.8 to 2.9 s in)"),
+                 (A0 + 3000, 11, True, "after the bundle (where a churn's redial frame lands, past the last post)"),
                  (A1 + 1500, 11, True, "at the right pad's edge"),
                  (A1 + 1501, 11, False, "past the right pad"),
                  (A0 + 3000, None, False, "unkeyed (no asks list)")]
@@ -734,8 +736,8 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
                        ([sock(0, A0 - 5000, A0 - 100, [frame(A0 - 4000)]), redial], True,
                         "closed before the first post (every post found no open socket), the redial's frame after the last post"),
                        ([sock(0, A0 - 5000, A0 + 500, [frame(A0 - 4000)]), redial], True,
-                        "closing between notice 1 and notice 2 (posts 2 and 3 found no open socket: the recorded churn's shape, the socket closed 0.6 to 0.7 s "
-                        "into phase A in every churned drive, after the first post)"),
+                        "closing between notice 1 and notice 2 (posts 2 and 3 found no open socket: the churn's shape as modelled, the socket closing "
+                        "after the first post and before the second)"),
                        ([sock(0, A0 - 5000, None, [frame(A0 + 1500), frame(A0 + 3000)])], True,
                         "open across the posts but served its first frame only after notice 2 (posts 1 and 2 found it unserved)")]
         for socks, want, why in state_cells:

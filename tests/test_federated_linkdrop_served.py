@@ -674,22 +674,25 @@ class _LinkDrop(unittest.TestCase):
     wait_ms = 20000           # each point's visibles after a change (the card, the todo, the provisional row), waited for concurrently
     # The driver's waitFor caps by the mark each wait ends at: each a floor set well above the slowest wait recorded, not a
     # ratio of it (the ratios run from 2.8x to over 600x), with driver_budget_ms as the binding bound (BUDGET_JS: every wait
-    # draws on it). The spans by mark pair over every unmutated recorded drive as of the CI-shaped drive of 2026-09-20 at the
-    # round-5 code (`r5/lab-ci2.log`, the drive after `r5/lab-head2.log`, whose own record is the 45th; 45 drives, 27
-    # new-bundle and 18 old-hub; `python3 waits_census.py <report.json>...` over the builder's reports outside the repo; a census over a growing record is dated by construction: the 25-drive census
-    # quoted here before missed three bounds later drives moved, redialed2's maximum from 0.81 to 1.04 s, rowDown's minimum
-    # from 4.6 to 4.3 s and closed's maximum from 0.030 to 0.27 s, so a later drive may move one again and the caps are
-    # floors far above every bound, not fits): closed, drop -> closed, 0.008 to 0.27 s; rowDown, closed -> rowDown, 4.3 to
-    # 14.5 s (the supervisor's silent-poll window, longest under the old bundle's churn); rowUp, resume -> rowUp, 0.8 to
-    # 13.2 s (a quarter-second pass inside the supervisor's fast window, its steady 15 s pass outside it); redialed, rowUp ->
-    # redialed, 0.8 to 4.6 s; localUp, restarted -> localUp, 0.013 to 0.30 s (the restart itself, SIGTERM and the 3 s held
-    # down, is the control door's and not this wait's); redialed2, localUp -> redialed2, 0.011 to 1.04 s. held, A1 -> drop
-    # (every page holding one open relay socket before the drop), is new in round 3 and has no recorded span before it: the
-    # snapshot alone took 9 to 35 ms there, and in the six recorded drives as of that same drive (`r5/lab-ci2.log`) that carry
-    # the held wait (`drop` less `A1` over the report JSONs of `r5/reports-head1`, `reports-head2`, both classes, `reports-ci1` and
-    # `reports-ci2`, outside the repo; round 5 re-derived the count, which a hand-kept "five" had missed) the wait took 16 to 21
-    # ms with every page already holding one; its cap is closed's, a floor well above the mechanism's worst (a page lacks an open
-    # socket for the relay's 2 s retry plus the open, once per churn of the old bundle's socket), not a fit to those spans.
+    # draws on it). The spans are ONE derivation with the excuse and attach figures (`population_drive.py`, the tool
+    # _outline_caught_up_whole's docstring names, which reads every counted record's marks, prints the sentence below whole and
+    # under --check reads this comment for it, the markers folded; round 6, after this paragraph and the delivery sentence below
+    # were hand-kept copies of a population dated one drive apart). A census over a growing record is dated by construction:
+    # the 25-drive census quoted here before missed three bounds later drives moved (redialed2's maximum from 0.81 to 1.04 s,
+    # rowDown's minimum from 4.6 to 4.3 s, closed's maximum from 0.030 to 0.27 s), so a later drive may move one again and the
+    # caps are floors far above every bound, not fits.
+    # The spans by mark pair over every unmutated recorded drive as of the drive at `r8/lab-ci6.log` (2026-09-20; 71
+    # drives, 44 new-bundle and 27 old-hub): closed, drop -> closed, 0.008 to 0.267 s; rowDown, closed -> rowDown,
+    # 4.31 to 14.5 s; rowUp, resume -> rowUp, 0.762 to 13.2 s; redialed, rowUp -> redialed, 0.786 to 4.6 s; localUp,
+    # restarted -> localUp, 0.013 to 0.302 s; redialed2, localUp -> redialed2, 0.011 to 1.04 s; held, A1 -> drop, 9 to
+    # 35 ms over the 71 drives that carry the held wait.
+    # rowDown is the supervisor's silent-poll window, longest under the old bundle's churn; rowUp a quarter-second pass inside
+    # the supervisor's fast window and its steady 15 s pass outside it; localUp the reopen alone (the restart itself, SIGTERM and
+    # the 3 s held down, is the control door's and not this wait's). held, A1 -> drop (every page holding one open relay socket
+    # before the drop), is new in round 3 and has no recorded span before it: every drive since carries it (`out.phases.drop.held`
+    # in the record), and its span is the snapshot's own time with every page already holding one socket; its cap is closed's,
+    # a floor well above the mechanism's worst (a page lacks an open socket for the relay's 2 s retry plus the open, once per
+    # churn of the old bundle's socket), not a fit to those spans.
     waits_ms = {"held": 20000, "closed": 20000, "rowDown": 40000, "rowUp": 40000, "redialed": 30000, "localUp": 30000, "redialed2": 30000}
     page_wait_ms = 30000      # the start, per page: its load, its first relay socket, that socket's whole frame
     driver_budget_ms = 225000  # every wait the driver places draws on this one budget. The budget is a DEADLINE, not a meter of the
@@ -709,12 +712,13 @@ class _LinkDrop(unittest.TestCase):
     # (round 5), beside the visibility legs, and every delivery it measures is a wait that RESOLVED, before its cap; the dwell is
     # DOWN_WINDOW_MARGIN x wait_ms plus DOWN_READ_ROOM_MS of room for the reads that follow the wait, so the pin holds for every
     # drive whose link-up waits all resolved and showed, the reads inside the room, and reds only for a window shorter than that
-    # (tests/test_federated_linkdrop_driver_bound.py pins the relation). The slowest delivery recorded is the old bundle's, whose frozen feed page shows a change only at the next
-    # churned socket's whole frame, and a change whose three notices straddle a churn waits for the frame after that: 19,013 ms
-    # over eighteen recorded unmutated old-hub drives as of the drive at `r5/lab-ci2.log` (2026-09-20, the round-5 code, the
-    # drive the waits census above is dated to; `python3 population6.py old | xargs python3 analyse.py`, the builder's scripts
-    # over the report JSONs outside the repo, max of the phases' seen.waitedMs; the new bundle's is 1.35 s at most over the
-    # twenty-seven as of that drive). A dwell of 30 s, sized at twice the 12.9 s
+    # (tests/test_federated_linkdrop_driver_bound.py pins the relation). The old bundle's frozen feed page shows a change only at
+    # the next churned socket's whole frame, and a change whose three notices straddle a churn waits for the frame after that, so
+    # the slowest delivery recorded is the old bundle's, 19,013 ms over the 27 unmutated old-hub records as of the
+    # drive at `r8/lab-ci6.log` (2026-09-20), the maximum of the phases' seen.waitedMs; the new bundle's is 1,367 ms
+    # over the 44 new-bundle records as of that drive (one derivation with the waits paragraph above,
+    # `population_drive.py`, which prints this sentence whole and checks it here).
+    # A dwell of 30 s, sized at twice the 12.9 s
     # then recorded, redded on the very next drive (19.0 s): a threshold fitted to the data at hand is no threshold, which is
     # why the cap sizes it. driver_worst_case_s stays under DRIVER_TIMEOUT_S with the budget at driver_budget_ms (472.5 s for
     # the new class, 452.5 s for the old-hub class). It is also a quiescent tail well past one 4 s /tunnels poll.
@@ -1160,8 +1164,8 @@ class _LinkDrop(unittest.TestCase):
         patches, so the frame-only excuse was available in 49 of the 81 phase windows (A, B, C) over the 27 unmutated
         old-hub records in the builder's cache as of the drive at `r8/lab-ci6.log` (2026-09-20), load-bearing (a window with
         no patch) in 5 of the 49, and a planted gating miss (a phase's patches and rows removed from the record) stayed green
-        at both floors; keyed on the gap it is available in 5 of those 81 and load-bearing in 5, the phase-A windows of the
-        five drives whose Outline socket churned inside phase A, and the planted miss reds. Over all 81 windows the planted
+        at both floors; keyed on the gap it is available in 5 of those 81 and load-bearing in 5, the phase-A windows
+        of 5 of those records, and the planted miss reds. Over all 81 windows the planted
         miss (the phase's feed patches and rows removed, every frame kept) reds the floor in 76 and stays excused in 5: a
         real gating miss during a churn is indistinguishable from the churn in the record, the excuse's remaining hole and
         the price of excusing the churn at all. Every figure in this paragraph, the population, its drive and the counts, is

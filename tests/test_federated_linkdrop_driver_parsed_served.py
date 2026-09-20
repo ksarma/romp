@@ -8,16 +8,20 @@ Python matrix, which installs no node deps, it skips with a reason saying the sa
 tests/test_federated_linkdrop_driver_bound.py requires every wait the driver places to draw on its budget and every call
 on a playwright receiver to be one an allow-list names for that receiver's kind, because an auto-waiting read inherits
 playwright's 30 s default that no budget caps. Its instruments there are regular expressions over the driver text, keyed
-on a receiver written as a bare dotted name, and round 5's review measured that keying: fourteen spellings of the same
-receiver (an object literal, an array, a ternary, `null || pages.feed`, an arrow's or a return's value, a page awaited
-into a helper, optional chaining, bracket access, a space, a newline or a comment before the member, a second browser
-from firefox) reached none of them, a member read followed by a call (`pages.feed.request.get(url)`) ended the walk's
-chain silently, and a wait written `. waitFor`, `["goto"]` or `goto?.()` was no site to the wait census. The rule the
-review gave: a census over a FORM is keyed on the property, or it parses, or its message says which spellings it checks.
-This module parses.
+on a receiver written as a bare dotted name, and round 5's review measured that keying: spellings of the same receiver
+reached none of them (among them an object literal, an array, a ternary, `null || pages.feed`, an arrow's or a return's
+value, a page awaited into a helper, optional chaining, bracket access to the method, a comma operator, a receiver
+parenthesised before the await, a space or a comment before the member, a second browser from firefox; PLANTS below is
+the measured table, each row with the verdict this census must give it, and the review record outside the repo carries the
+regex census's verdict on each), a member read followed by a call (`pages.feed.request.get(url)`) ended the walk's chain
+silently, and a wait written `. waitFor`, `["goto"]` or `goto?.()` was no site to the wait census. The rule the review
+gave: a census over a FORM is keyed on the property, or it parses, or its message says which spellings it checks. This
+module parses.
 
-THE PARSER. The typescript package under vscode-extension/node_modules (the extension's devDependency; 5.9.3 as written),
-called from a small node helper (PARSE_HELPER) the census hands the sources to: `ts.createSourceFile(name, src, options,
+THE PARSER. The typescript package under vscode-extension/node_modules (the extension's devDependency, at the version
+vscode-extension/package-lock.json pins: setUpClass asserts the parser's own report of its version against the lock, so a
+lock refresh or a drifted node_modules is a red here, and the parse-failure message names the version), called from a small
+node helper (PARSE_HELPER) the census hands the sources to: `ts.createSourceFile(name, src, options,
 setParentNodes, ScriptKind.JS)` on each, every source marked an ES module up front (the driver is one, with top-level
 await; a synthetic cell without an import would otherwise parse `await (x)` as a call of a name), the
 tree returned as JSON (each node its kind, its start and end offset into the source, its children in the compiler's
@@ -999,11 +1003,12 @@ SEL = "cfg.provSel"
 # censuses 3, 4 and 5 (the owner's read-only prep over the round-4 head) but for computed-method, newline-chain, return-stmt,
 # param-default, method-ref-binding and reflect-get, the builder's from the round-4 fixlist's shapes (a returned receiver, a
 # computed member) and its own, and logical-or, the addendum's; timer-as-member, timer-import and identity-control are the
-# builder's; every row from getter-return on is the fixer pass's (the round's verifiers' shapes and the fixer's own). Through
-# the round-4 head's regex census thirteen of the builder's rows were red (var-held-page, var-held-locator, computed-method,
-# newline-chain, paren-receiver, param-default, space-before-dot-wait, method-ref-binding, reflect-get, third-fetch,
-# set-default-timeout, bracket-page-control, template-string; four of them by an accident of spelling) and the rest passed;
-# the review record outside the repo carries that table.
+# builder's; every row from getter-return on is the fixer pass's (the round's verifiers' shapes and the fixer's own), and the
+# rows from walked-param-identity on are round 6's (the maintainer's round 5 shapes and the method ruling's). Through the
+# round-4 head's regex census these rows were red and the rest passed: of the builder's, var-held-page, var-held-locator,
+# computed-method, newline-chain, paren-receiver, param-default, space-before-dot-wait, method-ref-binding, reflect-get,
+# third-fetch, set-default-timeout, bracket-page-control and template-string (four of them by an accident of spelling), and of
+# the fixer's, fetch-globalthis; the review record outside the repo carries that table, and no count is kept here.
 CONTROLS = ("count-control", "identity-control", "hook-control", "evaluate-fn-control", "bracket-locator-count-control")
 # the disclosed class, passing by disclosure (the rule is the module docstring's Disclosed paragraph; one witness row per member
 # here): a wait with no timer, promise, script, module or playwright name as a node, and a call on a root the walk resolves to
@@ -1234,6 +1239,11 @@ class TheDriverParsed(unittest.TestCase):
             raise AssertionError("the plants' anchor line is not exactly once in the driver: %d" % L.DRIVER.count(ANCHOR))
         sources = [("driver.mjs", L.DRIVER)] + [(name, planted(js)) for name, js, _ in PLANTS if js]
         cls.ts_version, cls.trees = parse_js(sources)
+        with open(os.path.join(EXT, "package-lock.json"), encoding="utf-8") as f:
+            pinned = json.load(f)["packages"]["node_modules/typescript"]["version"]
+        if cls.ts_version != pinned:
+            raise AssertionError("the parser is typescript %s but vscode-extension/package-lock.json pins %s: a refreshed lock or a drifted node_modules (the docstring "
+                                 "names the lock's version as the parser's, so the two must agree)" % (cls.ts_version, pinned))
 
     def _census(self, name, src):
         diagnostics, tree = self.trees[name]
