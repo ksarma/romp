@@ -78,8 +78,32 @@ test("the kernel ships no rows while the switch is off: the client needs no logi
 
 test("each OFF surface refuses loudly, never a silent no-op", () => {
   assert.match(KERNEL, /_USER_TODOS_OFF_ERR = "requests from sessions are turned off on this machine"/);
-  assert.ok((KERNEL.match(/self\._send\(409, json\.dumps\(\{"ok": False, "error": _USER_TODOS_OFF_ERR\}\)/g) || []).length >= 2,
-    "both POST /usertodo and /usertodo/withdraw answer 409");
+  // The switch's 409 for POST /usertodo and POST /usertodo/withdraw lives in the function each route hands its parsed
+  // body to (_user_todo_register_route, _user_todo_withdraw_route: one answer shared with the Codex postal tools), not
+  // in Handler.do_POST, so the pin follows each route block to its function by name and reads the 409 there. This is
+  // a TEXT pin keyed on where the 409 lives: it guards against the handler losing the route to the function, not
+  // against the 409 being right. The 409's correctness under the switch is proven by execution in
+  // tests/test_user_todo_route_answers.py (the golden of the routes' HTTP answers) and tests/test_user_todos_switch.py,
+  // not by this text read.
+  const routeFunction = (p: string, fn: string) => {
+    const at = KERNEL.indexOf(`if u.path == "${p}":`);
+    assert.ok(at > 0, `Handler.do_POST has a ${p} route`);
+    const rest = KERNEL.slice(at + 1), end = rest.search(/\n\s*if u\.path == "/);
+    const block = end > 0 ? rest.slice(0, end) : rest;
+    assert.ok(block.includes(`st, out = ${fn}(body)`) && block.includes("self._send(st, json.dumps(out)"),
+      `the ${p} route hands its parsed body to ${fn} and sends whatever it answers`);
+    const def = KERNEL.indexOf(`\ndef ${fn}(body):`);
+    assert.ok(def > 0, `${fn} is defined`);
+    return KERNEL.slice(def, KERNEL.indexOf("\ndef ", def + 1));
+  };
+  for (const [p, fn] of [["/usertodo", "_user_todo_register_route"], ["/usertodo/withdraw", "_user_todo_withdraw_route"]]) {
+    assert.match(routeFunction(p, fn), /if not _user_todos_on\(\):\n(?:\s*#[^\n]*\n)*\s*return 409, \{"ok": False, "error": _USER_TODOS_OFF_ERR\}/,
+      `the handler's ${p} route still hands its body to ${fn}, and that function still carries the switch's 409. `
+      + "A text pin on where the 409 lives: it guards against the handler losing the route to the function, not against "
+      + "the 409 being right. The 409's correctness under the switch is proven by execution in "
+      + "tests/test_user_todo_route_answers.py (the golden of the routes' HTTP answers) and tests/test_user_todos_switch.py, "
+      + "not by this text read");
+  }
   assert.match(KERNEL, /elif t == "userTodoAnswer"[\s\S]*?if not _user_todos_on\(\):\n\s+client\["send"\]\(json\.dumps\(\{"type": "warn", "text": _USER_TODOS_OFF_WARN, "sid": sid\}\)\)/,
     "userTodoAnswer warns with the switch's own text, ahead of the settled-row gate");
   assert.match(KERNEL, /elif t == "userTodoDismiss"[\s\S]*?"type": "warn", "text": _USER_TODOS_OFF_WARN/, "userTodoDismiss warns");
