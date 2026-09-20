@@ -158,20 +158,29 @@ class OneHeightBasis(unittest.TestCase):
         # Each member sits at var(--app-top) in a rule inside the mobile block (the lift's base rule is upstream's line and
         # stays byte-identical; the mobile block re-tops it, so a coarse desktop layout keeps the lift at the static body's
         # origin); the origin's rule must SURELY select the element (served_css.surely: its subject's restricting selectors
-        # all among the element's), and its top must BE the pan (a bare var(--app-top) or an alias declared as one,
+        # all among the element's, none selecting by a state the sheet cannot show), and its top must BE the pan (a bare var(--app-top) or an alias declared as one,
         # served_css.bare_var and aliases; round 5: a mention had counted, so top:calc(var(--app-top) - 40px) read as the
         # origin), the last top-edge declaration of its own rule, without !important. The cascade is judged over EVERY rule
         # whose subject CAN match the element (a subset or superset of its restricting selectors: iframe, .lifted, `*`,
         # iframe[id], iframe:not(.x); round 5: `*`, attribute selectors and functional pseudo-classes had been read as
         # selectors the element must carry), by specificity, then order, an !important winning outright however spaced
         # (served_css.important), over every property that sets the top edge (top and the inset, inset-block and
-        # inset-block-start shorthands, which the sheet uses fourteen times). A selector sharing no restricting selector
-        # with the member (body.picker-open #f-chat) is outside this reading; the served leg reads the boxes themselves.
+        # inset-block-start shorthands, which the sheet uses fourteen times, and `all`, the one shorthand that resets the
+        # position and the top edge together; round 6, 2026-09-20). A selector sharing no restricting selector with the
+        # member (body.picker-open #f-chat) is outside this reading; the served leg reads the boxes themselves. Round 6
+        # closed four more holes the plants had not covered: an origin's rule must carry no attribute selector or functional
+        # pseudo-class (served_css.surely refuses them: body:not(.picker-open) cannot be known to select the body, and the
+        # reading had dropped them as can_match rightly does); position:fixed is read through a custom-property indirection
+        # as the sizing is (served_css.is_fixed with the sheet); the alias table is per member (served_css.aliases with the
+        # element: a name a rule that can select the member re-declares to a constant is no alias of the pan there); and
+        # the page must link no external stylesheet and import none, or the parse refuses (the population claim below is
+        # over the rules the parse returns, and a linked or imported sheet adds or re-tops rules it never sees).
+        self.assertNotRegex(served_css.markup(self.html), r"<link\b[^>]*\brel\s*=\s*['\"]?stylesheet", "the landing links no external stylesheet: every rule the census judges is in a style element it parses")
         rules = served_css.rules(self.html)
         self.assertGreater(len(rules), 100, "the parse read the served stylesheets: %d rules" % len(rules))
         app_h = served_css.closure(rules, "--app-h")
         sized = lambda r: any(served_css.names_any(v, app_h) for _, v in r.decls)
-        fixed_c = sorted({c for r in rules if served_css.is_fixed(r) for c in served_css.subjects(r.selector)})
+        fixed_c = sorted({c for r in rules if served_css.is_fixed(r, rules) for c in served_css.subjects(r.selector)})
         sized_c = sorted({c for r in rules if sized(r) for c in served_css.subjects(r.selector)})
         self.assertTrue(fixed_c and sized_c, "derived population empty: fixed compounds %r, --app-h sized compounds %r" % (fixed_c, sized_c))
         known = {}   # canonical compound -> the element's known simple selectors
@@ -188,7 +197,7 @@ class OneHeightBasis(unittest.TestCase):
         # spans the whole layout viewport, so no bare band shows under it; moving it onto the band is a design change the
         # owner decides), so it is outside the census; a sizing by --app-h under EITHER of its selectors puts it in.
         settings = [r for r in rules if "#f-settings" in served_css.subjects(r.selector)]
-        self.assertTrue(any(served_css.is_fixed(r) for r in settings) and len({r.selector for r in settings}) >= 2,
+        self.assertTrue(any(served_css.is_fixed(r, rules) for r in settings) and len({r.selector for r in settings}) >= 2,
                         "the settings lift's rules sit under two selector strings with one subject: %r" % ([(r.at, r.selector) for r in settings],))
         self.assertIn("#f-settings", fixed_c)
         self.assertNotIn("#f-settings", fixed_h, "the settings lift is not sized by --app-h; when it is, it joins the census and takes the origin")
@@ -196,11 +205,11 @@ class OneHeightBasis(unittest.TestCase):
         # this list AND takes the pan (the loop below), or the band opens again under whatever it covers.
         self.assertEqual(fixed_h, ["body", "iframe.lifted"])
         mobile = ("@media " + km._MOBILE_MQ,)
-        app_top = served_css.aliases(rules, "--app-top")
-        is_origin = lambda p, v: p == "top" and served_css.bare_var(v) in app_top
-        top_edge = {"top", "inset", "inset-block", "inset-block-start"}
+        top_edge = {"top", "inset", "inset-block", "inset-block-start", "all"}
         for el in fixed_h:
             k = known[el]
+            app_top = served_css.aliases(rules, "--app-top", el)   # the pan's aliases FOR THIS ELEMENT (round 6)
+            is_origin = lambda p, v, names=app_top: p == "top" and served_css.bare_var(v) in names
             sure = [r for r in rules if any(served_css.surely(served_css.subject(m), k) for m in served_css.members(r.selector))]
             may = [r for r in rules if any(served_css.can_match(served_css.subject(m), el) for m in served_css.members(r.selector))]
             origins = [r for r in sure if r.at == mobile and any(is_origin(p, v) for p, v in r.decls)]
@@ -253,14 +262,73 @@ class ParsedSheetReads(unittest.TestCase):
         self.assertEqual([page[s:e] for s, e in served_css.comment_spans(page)], ["<!-- c -->"])
 
     def test_a_statement_at_rule_is_consumed_and_the_rule_after_it_is_read(self):
-        # @import url(x); had accumulated into the next rule's prelude, which then began with @ and was dropped with its
-        # declarations as a nested at-rule, silently
-        sheet = "<style>@import url(x.css);#planted{position:fixed;height:var(--app-h)}#q{color:red}</style>"
+        # a statement at-rule had accumulated into the next rule's prelude, which then began with @ and was dropped with its
+        # declarations as a nested at-rule, silently (round 6, 2026-09-20: the case had used @import, which refuses now)
+        sheet = '<style>@charset "utf-8";#planted{position:fixed;height:var(--app-h)}#q{color:red}</style>'
         self.assertEqual([r.selector for r in served_css.rules(sheet)], ["#planted", "#q"])
         sheet = "<style>#a{top:0}@layer base;#planted{position:fixed;height:var(--app-h)}</style>"
         self.assertEqual([r.selector for r in served_css.rules(sheet)], ["#a", "#planted"])
         with self.assertRaises(AssertionError):   # a ; that ends no statement at-rule is refused, not folded
             served_css.rules("<style>#a{top:0};#b{top:0}</style>")
+
+    def test_css_the_parser_cannot_read_refuses_the_way_an_unconsumed_style_tag_does(self):
+        # round 6 (2026-09-20): the parse refused an unconsumed <style opening and passed a <link rel=stylesheet> and an
+        # @import in silence, though the sheet either names is outside every rule it returns; the census then judged a
+        # population an external file could add to or re-top unseen. Both refuse now, unless the caller says the page links
+        # its stylesheets by design and wants the style elements alone
+        with self.assertRaises(AssertionError) as cm:
+            served_css.rules("<link rel=stylesheet href=x.css><style>#a{top:0}</style>")
+        self.assertIn("links 1 external stylesheet", str(cm.exception))
+        with self.assertRaises(AssertionError):
+            served_css.rules("<link href=x.css rel='stylesheet'><style>#a{top:0}</style>")
+        with self.assertRaises(AssertionError) as cm:
+            served_css.rules("<style>@import url(x.css);#a{top:0}</style>")
+        self.assertIn("@import", str(cm.exception))
+        with self.assertRaises(AssertionError):
+            served_css.rules('<style>@IMPORT "x.css";#a{top:0}</style>')
+        self.assertEqual([r.selector for r in served_css.rules("<link rel=stylesheet href=x.css><style>#a{top:0}</style>", linked=True)], ["#a"])
+        # a link inside a script string or an HTML comment is not a link element
+        self.assertEqual([r.selector for r in served_css.rules('<script>x="<link rel=stylesheet>";</script><!-- <link rel=stylesheet href=y.css> --><style>#a{top:0}</style>')], ["#a"])
+
+    def test_surely_refuses_a_selector_that_selects_by_a_state_the_sheet_cannot_show(self):
+        # round 6 (2026-09-20): surely() had dropped attribute selectors and functional pseudo-classes the way can_match
+        # rightly does, so body:not(.picker-open){top:var(--app-top)} was accepted as the body's origin: a rule that may not
+        # select the member at all. can_match keeps its reading (a MAY predicate)
+        for c in ("body:not(.picker-open)", ":is(#f-chat)", "body[data-x]", "body:where(.a)", "body:nth-child(2)", "[hidden]"):
+            self.assertFalse(served_css.surely(c, {"body"}), c)
+            self.assertTrue(served_css.can_match(c, "body"), c)
+        self.assertTrue(served_css.surely("body", {"body"}) and served_css.surely("*", {"body"}) and served_css.surely("body:hover", {"body", ":hover"}))
+        self.assertFalse(served_css.surely("body:hover", {"body"}))
+
+    def test_position_fixed_is_read_through_a_custom_property_as_the_sizing_is(self):
+        # round 6 (2026-09-20): is_fixed read the literal keyword while the sizing half of the census resolved var() to a
+        # fixed point, so a box whose position came through a var was never in the population. With the sheet, a bare var()
+        # resolves against every declaration of the name and against its fallback when undeclared
+        rules = served_css.rules("<style>:root{--pos:fixed;--abs:absolute;--via:var(--pos)}#p{position:var(--pos)}#q{position:var(--nope,fixed)}"
+                                 "#r{position:var(--abs)}#s{position:var(--via) !important}#t{position:var(--nope,var(--pos))}#u{position:var(--loop)}:root{--loop:var(--loop)}</style>")
+        by = {r.selector: r for r in rules if r.selector != ":root"}
+        self.assertTrue(served_css.is_fixed(by["#p"], rules))
+        self.assertTrue(served_css.is_fixed(by["#q"], rules), "the fallback text when the name is undeclared")
+        self.assertFalse(served_css.is_fixed(by["#r"], rules))
+        self.assertTrue(served_css.is_fixed(by["#s"], rules), "two levels of indirection, with !important")
+        self.assertTrue(served_css.is_fixed(by["#t"], rules), "a fallback that is itself a var()")
+        self.assertFalse(served_css.is_fixed(by["#u"], rules), "a self-referential name ends")
+        self.assertFalse(served_css.is_fixed(by["#p"]), "with no sheet the keyword alone is read")
+        # a name redeclared per element counts if ANY declaration reads fixed (over-inclusive by design)
+        rules = served_css.rules("<style>#a{--pos:fixed}#b{--pos:static}#c{position:var(--pos)}</style>")
+        self.assertTrue(served_css.is_fixed(rules[2], rules))
+
+    def test_an_alias_a_rule_that_can_select_the_member_redeclares_is_no_alias_for_it(self):
+        # round 6 (2026-09-20): aliases() read the sheet globally, so --x:var(--app-top) declared on the lift's own origin
+        # rule made top:var(--x) the pan even though the next rule re-declared --x:0 on the same element, and the whole
+        # census stayed green while the lift sat at layout y 0 under the pan
+        sheet = ("<style>@media (x){body.picker-open iframe.lifted{--x:var(--app-top);top:var(--x)}iframe.lifted{--x:0}"
+                 "#f-chat{--y:0}:root{--y:var(--app-top)}}</style>")
+        rules = served_css.rules(sheet)
+        self.assertEqual(sorted(served_css.aliases(rules, "--app-top")), ["--app-top", "--x", "--y"], "the sheet-global table")
+        self.assertEqual(sorted(served_css.aliases(rules, "--app-top", "iframe.lifted")), ["--app-top", "--y"],
+                         "--x is re-declared by a rule that can select the lift; --y only by #f-chat, which cannot")
+        self.assertEqual(sorted(served_css.aliases(rules, "--app-top", "#f-chat")), ["--app-top", "--x"])
 
     def test_can_match_reads_only_the_selectors_that_tell_elements_apart(self):
         # `*`, an attribute selector and a functional pseudo-class had been read as selectors the other compound must also
@@ -307,6 +375,7 @@ class ParsedSheetReads(unittest.TestCase):
         rules = served_css.rules("<style>:root{--x:var(--app-top)}:root{--y:calc(var(--x) - 4px)}:root{--z:var(--y,1px)}</style>")
         self.assertEqual(sorted(served_css.closure(rules, "--app-top")), ["--app-top", "--x", "--y", "--z"], "every mention, for the consumers tripwire")
         self.assertEqual(sorted(served_css.aliases(rules, "--app-top")), ["--app-top", "--x"], "the names whose value IS the pan, for the origin")
+        self.assertEqual(sorted(served_css.aliases(rules, "--app-top", "body")), ["--app-top", "--x"], "no rule re-declares --x: the member form agrees")
 
 
 class RefitsWhenTheVisibleHeightChanges(unittest.TestCase):

@@ -12,15 +12,23 @@ inside an HTML comment is comment text, not an element, round 5, 2026-09-20; the
 script elements and HTML comments must equal the number of elements consumed, or the parse refuses), strips its comments,
 and brace-matches it into Rule(index, at, selector, declarations, decls): `at` is the tuple of enclosing at-rule preludes
 (an @media query, a @supports condition), `declarations` the block's raw text, `decls` its (property, value) pairs split
-at ; outside parentheses and quotes; a statement at-rule (@import, @charset, @namespace, `@layer name;`: an at-prelude
-ended by ; with no block) is consumed and dropped, never folded into the next rule's prelude (round 5). Keywords and
-function names are compared case-insensitively, as CSS reads them (`position:FIXED`, `VAR(--app-h)`, `! IMPORTANT`).
+at ; outside parentheses and quotes; a statement at-rule (@charset, @namespace, `@layer name;`: an at-prelude ended by ;
+with no block) is consumed and dropped, never folded into the next rule's prelude (round 5). CSS the parser cannot read
+REFUSES rather than shrinking a census silently (round 6, 2026-09-20): a `<link rel=stylesheet>` in the live markup and
+an `@import` statement both raise, the way an unconsumed `<style` opening does, since what an external file adds or
+re-tops is outside every rule the parse returns (a rule the file merely moves still reds the pins that name it); a caller
+that reads a page which links its stylesheets by design passes `linked=True` and takes the style elements alone. Keywords
+and function names are compared case-insensitively, as CSS reads them (`position:FIXED`, `VAR(--app-h)`, `! IMPORTANT`).
 Custom properties: `closure(rules, "--app-h")` is the fixed point of the names whose declared value names var(--app-h) or
 a name already in the set, so a declaration keyed to the shell height through any depth of indirection is seen
 (`names_any(value, names)`); `bare_var(value)` is the one custom property a value consists of (`var(--app-top,0px)` and
-nothing outside the function; None for `calc(var(--app-top) - 40px)`), and `aliases(rules, name)` the fixed point of the
-names declared as a bare var() of one in the set, for a pin that needs the VALUE, not a mention; a property published
-only by script, never declared in the served CSS, is outside any served-CSS census by construction. Selectors:
+nothing outside the function; None for `calc(var(--app-top) - 40px)`), and `aliases(rules, name, member)` the fixed point
+of the names declared as a bare var() of one in the set, for a pin that needs the VALUE, not a mention, less any name a
+rule that can select `member` re-declares to something else (round 6, 2026-09-20: the table had been sheet-global, so an
+alias on one rule counted where the member's own rule re-declared it); `is_fixed(rule, rules)` reads position:fixed
+through the same indirection (a bare var() resolved against every declaration of the name, its fallback when undeclared;
+round 6). A property published only by script, never declared in the served CSS, is outside any served-CSS census by
+construction, and so is the sheet a `<link>` or an `@import` names (the parse refuses those, above). Selectors:
 `members(selector)` splits a comma list, `subject(member)` is the subject compound (the last compound of a complex
 selector), `parts(compound)` its simple selectors, `restricting(compound)` the ones that tell elements apart (a type, an
 id, a class, a plain pseudo-class or a pseudo-element; `*`, an attribute selector and a functional pseudo-class such as
@@ -28,7 +36,9 @@ id, a class, a plain pseudo-class or a pseudo-element; `*`, an attribute selecto
 compounds can select one element (one's restricting selectors are a subset of the other's: `iframe` and `iframe.lifted`,
 `body` and `body.picker-open`, `*` and anything; not `#f-chat` and `iframe.lifted`, which a static reading of the sheet
 cannot unite), `surely(compound, known)` whether a compound selects every element known to carry the simple selectors
-in `known` (its restricting selectors are all among them), `compound(known)` the canonical compound naming an element
+in `known` (its restricting selectors are all among them, and it carries no attribute selector or functional pseudo-class,
+which select by a state the sheet cannot show: `body:not(.picker-open)` may select the body or not, round 6, 2026-09-20;
+`*` alone passes), `compound(known)` the canonical compound naming an element
 known by a set of simple selectors (`iframe.lifted` for {iframe, .lifted}), `specificity(member)` the (ids, classes,
 types) triple, `important(value)` whether a declaration value ends in !important however spaced or cased.
 
@@ -90,14 +100,22 @@ def _script_spans(html):
     return [(m.start(1), m.end(1)) for m in _SCRIPT.finditer(markup(html))]
 
 
-def style_blocks(html):
+_LINK_SHEET = re.compile(r"<link\b[^>]*\brel\s*=\s*['\"]?stylesheet\b", re.I)
+
+
+def style_blocks(html, linked=False):
     """[(start, css)] for every live style element; refuses when a `<style` tag opening outside a script element or an
-    HTML comment was not consumed."""
+    HTML comment was not consumed, and when the live markup links an external stylesheet (`<link rel=stylesheet>`, outside
+    script elements), whose rules no parse of the page's style elements returns (round 6, 2026-09-20: the unconsumed tag
+    refused while the linked sheet passed in silence, which taught a reader that unread CSS is always caught); `linked=True`
+    states that the caller knows the page links its stylesheets and wants the style elements alone."""
     live = markup(html)
     blocks = [(m.start(1), m.group(1)) for m in _STYLE.finditer(live)]
     scripts = _script_spans(html)
     opens = [m.start() for m in _STYLE_OPEN.finditer(live) if _outside(m.start(), scripts)]
     assert len(opens) == len(blocks), "the served page opens %d style elements and the parser consumed %d" % (len(opens), len(blocks))
+    links = [m.start() for m in _LINK_SHEET.finditer(live) if _outside(m.start(), scripts)]
+    assert linked or not links, "the served page links %d external stylesheet(s) this parse does not read; pass linked=True to take the style elements alone" % len(links)
     return blocks
 
 
@@ -166,10 +184,11 @@ def declarations(block):
 _DECLARATION_AT = {"@font-face", "@page", "@counter-style", "@property", "@viewport", "@color-profile", "@font-palette-values", "@font-feature-values"}
 
 
-def rules(html):
-    """Every rule of every served style element, comments stripped, as Rule tuples in document order."""
+def rules(html, linked=False):
+    """Every rule of every served style element, comments stripped, as Rule tuples in document order; refuses a linked
+    stylesheet (style_blocks) and an `@import` statement (its sheet is outside this parse)."""
     out = []
-    for _, css in style_blocks(html):
+    for _, css in style_blocks(html, linked):
         css = _blank(css, css_comment_spans(css))
         stack, buf, i, n = [], "", 0, len(css)
         while i < n:
@@ -200,6 +219,7 @@ def rules(html):
                 # with no block. Round 5 (2026-09-20): it had accumulated into the NEXT rule's prelude, which then began
                 # with @ and was pushed as a nested at-rule, dropping that rule and its declarations silently.
                 assert buf.strip().startswith("@"), "a ; outside a declaration block that ends no statement at-rule: %r" % (buf.strip()[:80],)
+                assert not buf.strip().lower().startswith("@import"), "an @import in a served style element pulls in a sheet this parse does not read: %r" % (buf.strip()[:80],)
                 buf = ""
             else:
                 buf += ch
@@ -278,10 +298,17 @@ def can_match(a, b):
 
 def surely(compound, known):
     """Whether a compound selects every element known to carry the simple selectors in `known` (a set from
-    restricting()): each restricting selector of the compound is among them. `iframe` and `iframe.lifted` surely select
-    the element known as {iframe, .lifted}; `iframe.lifted.big` only may (can_match), the element may lack .big."""
-    rs = restricting(compound)
-    return rs is not None and rs <= set(known)
+    restricting()): each restricting selector of the compound is among them, and the compound carries no attribute selector
+    or functional pseudo-class. `iframe` and `iframe.lifted` surely select the element known as {iframe, .lifted};
+    `iframe.lifted.big` only may (can_match), the element may lack .big; `body:not(.picker-open)`, `:is(#f-chat)` and
+    `body[data-x]` only may too, they select by a state or an attribute the sheet cannot show (round 6, 2026-09-20: those
+    had been dropped from the reading, as can_match rightly drops them, so a rule that cannot select the member at all
+    was accepted as its origin). `*` alone restricts nothing and passes. The subject compound only is read: an
+    ancestor-conditioned origin (html.kb body) still passes, and the state question is the served leg's."""
+    found = parts(compound)
+    if found is None or any(p != "*" and _NEVER_RESTRICTS.match(p) for p in found):
+        return False
+    return {p for p in found if p != "*"} <= set(known)
 
 
 def compound(known):
@@ -307,8 +334,29 @@ def important(value):
     return bool(_IMPORTANT.search(value))
 
 
-def is_fixed(rule):
-    return any(p == "position" and v.split("!")[0].strip().lower() == "fixed" for p, v in rule.decls)
+def is_fixed(rule, rules_=None):
+    """Whether a rule declares position:fixed, the keyword read case-insensitively; with the sheet's rules given, through a
+    custom-property indirection too (round 6, 2026-09-20: `position:var(--pos)` with `:root{--pos:fixed}`, or
+    `position:var(--nope,fixed)`, had been read as not fixed while the sizing half of the census resolved its var() to a
+    fixed point): a bare var() value resolves against EVERY declaration of the name in the sheet (any of them reading fixed
+    counts, a name can be redeclared per element, so the reading is over-inclusive), and against its fallback text when the
+    name is undeclared, to a fixed point. Not read: a shorthand reset (`all:initial`) or a later `position` declaration that
+    un-fixes a member; the census reads the top-edge cascade only, and names `all` there."""
+    return any(p == "position" and _reads_fixed(v, rules_, ()) for p, v in rule.decls)
+
+
+def _reads_fixed(value, rules_, seen):
+    text = value.split("!")[0].strip()
+    if text.lower() == "fixed":
+        return True
+    name = bare_var(text)
+    if name is None or rules_ is None or name in seen:
+        return False
+    declared = [v for r in rules_ for p, v in r.decls if p == name]
+    if declared:
+        return any(_reads_fixed(v, rules_, seen + (name,)) for v in declared)
+    fallback = _BARE_VAR.match(text).group(2)
+    return fallback is not None and _reads_fixed(fallback.strip(), rules_, seen + (name,))
 
 
 def var_names(value):
@@ -342,17 +390,28 @@ def closure(rules_, name):
         names |= more
 
 
-def aliases(rules_, name):
+def aliases(rules_, name, member=None):
     """The custom properties declared as a BARE var() of name or of one already in the set, to a fixed point, with name
     itself: the names whose value IS the property's value (`--x:var(--app-top)`), not merely a function of it
-    (`--x:calc(var(--app-top) - 40px)` is in closure() and not here). For a pin that needs the value, not a mention."""
-    custom = [(p, v) for r in rules_ for p, v in r.decls if p.startswith("--")]
+    (`--x:calc(var(--app-top) - 40px)` is in closure() and not here). For a pin that needs the value, not a mention. With
+    `member`, a compound naming the element the pin is about, a name that any rule able to select that element declares to
+    something other than a bare var() of a name in the set is refused (round 6, 2026-09-20: the table had been sheet-global
+    with no cascade, so `--x:var(--app-top)` on one rule made `top:var(--x)` the pan even where the member's own rule
+    re-declared `--x:0`). This is not a cascade: a re-declaration on an ANCESTOR of the member, which the member would
+    inherit, is not read (no served rule takes that shape today), so the table stays over-inclusive there and the served
+    leg reads the boxes."""
+    custom = [(r, p, v) for r in rules_ for p, v in r.decls if p.startswith("--")]
     names = {name}
     while True:
-        more = {p for p, v in custom if p not in names and bare_var(v) in names}
+        more = {p for _, p, v in custom if p not in names and bare_var(v) in names}
         if not more:
-            return names
+            break
         names |= more
+    if member is None:
+        return names
+    selects = lambda r: any(can_match(subject(m), member) for m in members(r.selector))
+    refused = {p for r, p, v in custom if p != name and p in names and bare_var(v) not in names and selects(r)}
+    return names - refused
 
 
 def names_any(value, names):
