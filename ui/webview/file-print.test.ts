@@ -1747,7 +1747,7 @@ test("the census of the body's roots, its default refusing: every `body` token i
     assert.equal(bodyReady(bodyOf(r)), false, r + " alone: not in");
     for (const c of READY_ROOTS) assert.equal(bodyReady(bodyOf(r, c)), true, r + " over " + c + ": a line over content, in");
   }
-  assert.equal(bodyReady(bodyOf("div.fileview-unlisted")), false, "FAILS BEFORE: a child none of the lists names is not in; this census is what turns a new root into a red test rather than a dead button, on the receiver, argument, verb and write axes since the round-7 fixes");
+  assert.equal(bodyReady(bodyOf("div.fileview-unlisted")), false, "FAILS BEFORE: a child none of the lists names is not in; this census is what turns a new root into a red test rather than a dead button, on the receiver, argument, verb, assignment and write axes since the round-7 fixes (a seat's receiver by its binding, a node handed to a callee, a method call's name, a member assignment's name, a URL member written from a non-literal or an attribute set under a non-literal name)");
   for (const c of READY_ROOTS) assert.equal(bodyReady(bodyOf(c, "div.fileview-unlisted")), false, "an unlisted child beside " + c + ": not in");
   for (const r of NOT_READY_ROOTS) assert.equal(bodyReady(bodyOf(r), "pdf"), r === PDF_LOADER_ROOT, r + " alone under the PDF kind: " + (r === PDF_LOADER_ROOT ? "in (the pages attempt's loader; the PDF road reads nothing from the body)" : "not in"));
   assert.ok(NOT_READY_ROOTS.includes(PDF_LOADER_ROOT), "the PDF kind's exception is one of the wait roots");

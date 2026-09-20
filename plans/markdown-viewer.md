@@ -8262,7 +8262,8 @@ takes the PDF road), the pages' host once page 1 removed the loader, and the Cod
 prints the whole file (6 to 7 pages of a hundred paragraphs) and stays live. The unknown child answers NOT in, the safe
 side (the round-2 review, 2026-09-19: the first derivation read every child it had not seen as content, the permissive
 side for a print button, so an unwired pane would have had a live button and a silent print of whatever stood; the
-census below is what makes a root the viewer gains a red test rather than a dead button: since the round-7 fixes it refuses a seat it has not read on the receiver, argument, verb and write axes, so a root the viewer seats by any of them reds until read, and the promise holds on those four axes and on no other). The PDF kind is the one
+census below is what makes a root the viewer gains a red test rather than a dead button: since the round-7 fixes it refuses a seat it has not read on the receiver, argument, verb, assignment and write axes, by name:
+the receiver a seat stands on, read by its binding (a reflection global among them); a node of the tree handed to any callee; a method call, by its name; a member assignment, by its name, a computed name refused wherever it stands; and a write of a URL member from anything but a literal, read for whether the value can reach the network and what gates it, or of an attribute under a name the census cannot read as a literal. A root the viewer seats by any of the five reds until read, and the promise holds on those five axes and on no other: what a listed helper does with a node, what a listed receiver is and what a listed method does by its name are read by hand when listed, never derived). The PDF kind is the one
 exception, for the loader: `bodyReady` takes the file's kind (the host's `kind`, read at every observer callback and at
 the press through the driver's `ready`), and for a PDF the loader (`PDF_LOADER_ROOT`, `div.fileview-load`) reads as
 content, so the Comments panel's pages attempt with no frame kept, the loader alone in the body, leaves Print live and a
@@ -8331,8 +8332,11 @@ rather than passing under the entry's claim (the branch's verification pass find
 site is a second entry and fails until read (the round-6 review's cluster A, 2026-09-20: keyed on the function, receiver
 and form alone, one entry admitted every seat sharing the triple, so a second `main.appendChild` seating an unlisted root
 in the viewer's body passed under the entry hand-read for `main.appendChild(body)`; the table went from 60 entries keyed on
-the triple to 90 entries over 92 seats at the round-7 head, the rise being what the triple hid, and the census test's
-diagnostic derives both counts at every run); and a receiver bound by `let` or `var`, or a parameter written to, is
+the triple to 90 entries over 92 seats at the round-7 head, a rise of 30 entries, which is what the triple hid; the three
+numbers after the 60 are derived at every run and never carried: the record test counts the table's entries and their
+`times` in the census file and holds this sentence to them, and the census case prints the same two in its `second read:`
+diagnostic, `node esbuild.js --tests` in vscode-extension and then `node --test out-tests/ui/webview/file-print.test.js`);
+and a receiver bound by `let` or `var`, or a parameter written to, is
 reassignable and fails unless the entry pins what every write to it assigns (`holds`; the round-6 review's correctness-5:
 the entry for the viewer's `let sess = null` pinned its declaration and nothing about what it held at the seat, and the
 session tag is a const built by `el()` now)) and FAILS with its line otherwise, whatever produced
@@ -8356,7 +8360,9 @@ any callee passes only as a site `ARGS_READ_BY_HAND` lists, a URL member written
 a site `URL_WRITES_READ_BY_HAND` lists, each read for whether the value can carry a remote URL, whether that road reaches
 the network and what gates it, an attribute set under a name the census cannot read as a literal only as a site
 `ATTR_NAMES_READ_BY_HAND` lists, and a string road (`eval`, a timer's string, `new Function`, `import(...)`, a javascript:
-URL) fails. Item 7's first run, the census over the viewer at the round-7 head with those tables empty, refused 17 sites: 9
+URL) fails. Item 7's first run, the census over the viewer at the round-7 head with those tables empty, refused 17 sites
+(the count that run printed as its refusals, recorded here as that run's fact; the tables list the same 9 and 8 sites
+today, and the record test counts their entries in the census file and holds these numbers to them): 9
 nodes handed to five callees (`Array.from` over a child list five times, figureAnchor's `oneImg` and `linkAround` over the
 climbing parent, a seat's reference child, boundarySide's `leafIsText`) and 8 URL writes (two object URLs and an object
 URL with a page fragment, no network; two chunk script tags derived from the page's own bundle tag, a fetch from the
@@ -8488,7 +8494,15 @@ by their titles. Since the round-6 fixes (2026-09-20, after the round-5 review) 
 the leg's own source and holds the shape count and the two-URL count in this section to the rows built, and it derives
 two populations over the print test modules rather than recalling them, the sources read with their comments for these
 two: every filter-then-map-by-index chain, by the modules' syntax, and every line carrying a spelling of the retired
-sentence; each passes the sites read by hand and refuses every other with its module and line.
+sentence; each passes the sites read by hand and refuses every other with its module and line. Since the round-7 fixes
+(2026-09-20, after the round-6 review) it also derives the seat-keyed table's size and the argument axis's listed sites
+from the census file, the figure leg's per-engine rows from the table the leg builds, scans the whole section by slice and
+the ledger entry for the shape count, pins each of the two count sentences as one composition with the count inside it,
+and reads the post-filter census's shape space, saying what it does not read. Two pins the round-6 pre-answers proposed
+were dropped on the maintainer's word: a scan of P1 through this list for the shape count, and a guard refusing a heading
+of any level after the Print head. Fork PR #862 appends a section of its own to this plan, so either pin would collide
+with it and be re-cut around it; both are revisited after that PR lands, and the whole-section scan above covers the count
+meanwhile.
 tools/markdown-viewer-plan-print-vocabulary.test.mjs holds this section's words to CONTEXT.md's File comment entry: what
 the Comments panel draws over a PDF page is called comments here, never `annotation`, which that entry lists under
 _Avoid_ (a review finding, 2026-09-19).
