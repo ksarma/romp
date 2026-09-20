@@ -33,13 +33,6 @@ Commands (stdlib only):
     render [--active] [--link-base URL]
     list [--status a,b]          one JSON object per line
     set <slug> <key> <value>     rewrites one header line, leaves the body alone
-    touched <base> [--head H]    the `where:` line a branch's diff derives: every changed file, and for a
-                                 Python file outside tests/ the defs, methods and module-level names the
-                                 diff touches (H a commit, default HEAD, or WORKTREE for the tree on disk)
-    where-check <slug> <base> [--head H]
-                                 the names that derivation finds and the entry's `where:` line omits;
-                                 exit 1 with the list (the line is generated, never kept by hand:
-                                 hand-kept lines were under-derived three times on one PR, 2026-09-20)
     import <UPSTREAM.md> <dir>   the migration: one file per table row, re-runnable
     import --row '<row>' [<dir>] the straggler fix for a branch that still appended a row; refuses to
                                  touch an existing entry unless --replace (the row's title, where and
@@ -47,7 +40,6 @@ Commands (stdlib only):
                                  --force (the row wins wherever it says something)
 """
 import argparse
-import ast
 import json
 import re
 import signal
@@ -86,152 +78,6 @@ STATUS_DETAIL = "Status detail (migrated from the table): "
 ROW_HINT = "a table row; entries live in upstream/ now: run scripts/upstream-ledger.py import --row"
 TABLE_HEADER = "| What | Where it lives here | Status | Notes |"
 TABLE_SEPARATOR = "|---|---|---|---|"
-
-
-# ---------------------------------------------------------------- the where: line, derived from a diff
-
-HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
-
-
-def _range(base, head):
-    """`base..head`, or `base` alone for the working tree (head None): git then diffs the tree on disk."""
-    return ["%s..%s" % (base, head)] if head else [base]
-
-
-def _hunks(root, base, head, path):
-    """(old start, old count, new start, new count) per hunk of `git diff -U0 base head -- path`; a range printed with
-    no count is one line, a range of zero lines is one side's absence (a pure insertion has no old lines, a pure
-    deletion no new ones)."""
-    out = subprocess.run(["git", "-C", str(root), "diff", "-U0", *_range(base, head), "--", path],
-                         check=True, capture_output=True, text=True).stdout
-    hunks = []
-    for line in out.splitlines():
-        m = HUNK.match(line)
-        if m:
-            hunks.append(tuple(int(g) if g is not None else 1 for g in m.groups()))
-    return hunks
-
-
-def changed_lines(root, base, head, path):
-    """The new-side line numbers `git diff -U0 base head -- path` touches: each hunk's new range, read on the head's
-    blob. A hunk that only deletes has none; its lines are deleted_lines', read on the base's blob (2026-09-20, the
-    lenses over round 2's commit of fork PR #813: until then the new-side line a deletion left behind stood in for the
-    deleted lines, which named the PREVIOUS definition for a definition removed whole, and the removed one never)."""
-    return [n for _, _, start, count in _hunks(root, base, head, path) for n in range(start, start + count)]
-
-
-def deleted_lines(root, base, head, path):
-    """The old-side line numbers the same diff touches: each hunk's old range, read on the base's blob, so a removed
-    body still names its def and a definition the branch removes whole is named too (a pure insertion has none)."""
-    return [n for start, count, _, _ in _hunks(root, base, head, path) for n in range(start, start + count)]
-
-
-def names_by_line(source):
-    """Line -> the name a `where:` line owes for it: a def, a method (by its bare name, as the ledger's lines have always
-    named them), the target of a module-level or class-level assignment, or a class (by its own name, for its header and
-    decorators); a line in no such statement (imports, module docstrings, bare expressions) owes nothing. A nested def
-    belongs to the def it lives in: a closure is not named apart from its function.
-
-    The walk RECURSES through the compound statements a definition can nest under (If/Try/With/For/While and class
-    bodies), not just the module's top level, so a def under a module-level `try` or `if` and a class member are named
-    (round 3 of the review, 2026-09-20, over round 2's commit of fork PR #813; its correctness-3 and extra8-2, both refuters): the
-    old walk read one level and a change confined to such a definition derived a bare path, where-check then printing ok
-    for a `where:` line that named none of it. A definition's owned span starts at the FIRST of its decorator lines
-    (min decorator lineno), so a change confined to a decorator line names the def it decorates. A CLASS owns its header
-    and decorators (its own lines, down to its first body statement), so a base-class change or a class decorator names
-    the class and a class removed whole is named through its header; each member then owns its own lines (own() uses
-    setdefault, so the class header claimed only the lines above the body). A class IS a definition by the usage block's
-    words, so the success line and the usage block keep "every ... definition"; the alternative (dropping that phrase)
-    was declined here (round 3 of the review, 2026-09-20; its correctness-3/extra8-2 adjacent-gap ruling)."""
-    owed = {}
-
-    def start(node):
-        return min([node.lineno] + [d.lineno for d in getattr(node, "decorator_list", None) or []])
-
-    def own(node, name, end=None):
-        last = getattr(node, "end_lineno", node.lineno) if end is None else end
-        for n in range(start(node), last + 1):
-            owed.setdefault(n, name)
-
-    def targets(node):
-        names = []
-        for t in getattr(node, "targets", None) or [getattr(node, "target", None)]:
-            for leaf in ast.walk(t) if t is not None else ():
-                if isinstance(leaf, ast.Name):
-                    names.append(leaf.id)
-        return names
-
-    def walk(body):
-        for node in body:
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                own(node, node.name)                    # the whole def, a closure inside it folded in (setdefault)
-            elif isinstance(node, ast.ClassDef):
-                header_end = start(node.body[0]) - 1 if node.body else getattr(node, "end_lineno", node.lineno)
-                own(node, node.name, end=max(header_end, node.lineno))   # the class's own header and decorators
-                walk(node.body)                         # then each member owns its own lines
-            elif isinstance(node, (ast.Assign, ast.AnnAssign)):
-                for name in targets(node):
-                    own(node, name)
-            elif isinstance(node, (ast.If, ast.Try, ast.With, ast.AsyncWith, ast.For, ast.AsyncFor, ast.While)):
-                walk(getattr(node, "body", []) or [])
-                walk(getattr(node, "orelse", []) or [])
-                walk(getattr(node, "finalbody", []) or [])
-                for h in getattr(node, "handlers", []) or []:
-                    walk(getattr(h, "body", []) or [])
-
-    walk(ast.parse(source).body)
-    return owed
-
-
-def touched(root, base, head="HEAD"):
-    """{path: [names]} for every file `git diff --name-only base..head` lists: the names names_by_line owes for the
-    lines the diff touches in a Python file outside tests/ (sorted, unique), an empty list for a test module (named as a
-    whole: its tests are the module's own business), for any other file and for a file the head deleted. The lines the
-    change wrote are read from the head's blob, so the derivation names the commit it describes, and the lines it
-    removed from the base's blob, so a definition deleted whole is named as well (a file the branch added has no base
-    blob and removed nothing); `head` None reads the working tree, the tree a commit about to carry the line is made
-    from (the line derived at the commit itself is checked after, where-check)."""
-    files = subprocess.run(["git", "-C", str(root), "diff", "--name-only", *_range(base, head)],
-                           check=True, capture_output=True, text=True).stdout.split()
-    out = {}
-    for path in sorted(files):
-        names = []
-        if path.endswith(".py") and not path.startswith("tests/"):
-            if head:
-                blob = subprocess.run(["git", "-C", str(root), "show", "%s:%s" % (head, path)], capture_output=True, text=True)
-                source = blob.stdout if blob.returncode == 0 else None
-            else:
-                f = Path(root) / path
-                source = f.read_text(encoding="utf-8") if f.is_file() else None
-            if source is not None:
-                owed = names_by_line(source)
-                found = {owed[n] for n in changed_lines(root, base, head, path) if n in owed}
-                before = subprocess.run(["git", "-C", str(root), "show", "%s:%s" % (base, path)], capture_output=True, text=True)
-                if before.returncode == 0:
-                    owed_before = names_by_line(before.stdout)
-                    found |= {owed_before[n] for n in deleted_lines(root, base, head, path) if n in owed_before}
-                names = sorted(found)
-        out[path] = names
-    return out
-
-
-def derive_where(touched_map):
-    """The generated `where:` line: `path (name, name)` per Python file with touched names, the bare path otherwise."""
-    return ", ".join("%s (%s)" % (path, ", ".join(names)) if names else path for path, names in touched_map.items())
-
-
-def where_missing(where, touched_map):
-    """What the derivation finds and `where` omits: `path` for a file the line never names, `path: name` for a touched
-    name absent from the line as a whole word (the line may carry prose beside the names; a name it carries anywhere
-    counts, so `set_auth` in one file's clause also covers a `set_auth` touched in another)."""
-    missing = []
-    for path, names in touched_map.items():
-        if path not in where:
-            missing.append(path)
-        for name in names:
-            if not re.search(r"(?<![A-Za-z0-9_])%s(?![A-Za-z0-9_])" % re.escape(name), where):
-                missing.append("%s: %s" % (path, name))
-    return missing
 
 
 # ---------------------------------------------------------------- parsing and checking
@@ -1032,15 +878,6 @@ def main(argv=None):
     p.add_argument("key")
     p.add_argument("value")
 
-    p = sub.add_parser("touched", help="the where: line a branch's diff derives")
-    p.add_argument("base")
-    p.add_argument("--head", default="HEAD", help="a commit, or WORKTREE for the tree on disk (the line a commit is about to carry)")
-
-    p = sub.add_parser("where-check", help="the names the diff touches and the entry's where: line omits; exit 1 with the list")
-    p.add_argument("slug")
-    p.add_argument("base")
-    p.add_argument("--head", default="HEAD", help="a commit, or WORKTREE for the tree on disk")
-
     p = sub.add_parser("import", help="the table migration, or one straggler row")
     p.add_argument("paths", nargs="*", metavar="PATH",
                    help="the migration: <UPSTREAM.md> <dir>; with --row: at most one, the entry directory (default: the root's upstream/)")
@@ -1086,19 +923,6 @@ def main(argv=None):
                               "added": e.get("added"), "closed": e.get("closed") or None}, ensure_ascii=False))
     elif a.cmd == "set":
         print(set_key(resolve(entries_dir, a.slug), a.key, a.value))
-    elif a.cmd == "touched":
-        print(derive_where(touched(root, a.base, None if a.head == "WORKTREE" else a.head)))
-    elif a.cmd == "where-check":
-        path = resolve(entries_dir, a.slug)
-        entry = parse_entry(path.name, path.read_text(encoding="utf-8"))[0]
-        if entry is None:
-            print(f"{path.name}: the entry does not parse; run check", file=sys.stderr)
-            return 2
-        missing = where_missing(entry.get("where"), touched(root, a.base, None if a.head == "WORKTREE" else a.head))
-        if missing:
-            print("\n".join("where: omits %s" % m for m in missing))
-            return 1
-        print("ok: the where: line names every file and definition the diff %s..%s touches" % (a.base, a.head))
     elif a.cmd == "import":
         if a.row is not None:
             if len(a.paths) > 1:   # `source` used to take the first and the named directory was ignored (2026-09-06)
