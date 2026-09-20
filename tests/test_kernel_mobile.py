@@ -589,6 +589,12 @@ visualViewport.scale = 2; visualViewport.height = 230; visualViewport.offsetTop 
 out.pinchPanned = { appTop: appTop(), appH: appH(), barH: barH() };
 visualViewport.height = 422; visualViewport.offsetTop = 200; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
 out.kbDownZoomed = { appTop: appTop(), appH: appH(), barH: barH() };
+// round 4 (2026-09-20): the keyboard raised AGAIN while the zoom still holds. The clamp bounded what the run above published
+// and left the hold standing, so this run publishes the pan the keyboard was measured with (83, slack under the clamp:
+// 844 - 460). A clamp that wrote its result back had lowered the hold to 0 and laid the shell out at pan 0 under a
+// keyboard-sized --app-h, the band reopened for as long as the zoom held
+visualViewport.height = 230; visualViewport.offsetTop = 83; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+out.kbUpAgainZoomed = { appTop: appTop(), appH: appH(), barH: barH() };
 visualViewport.scale = 1; visualViewport.height = 844; visualViewport.offsetTop = 0; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
 out.zoomBack = { appTop: appTop(), appH: appH(), barH: barH() };
 // round 2 (2026-09-19): the geometric reading's EDGE. The bar is hidden when its box STARTS at or below the visible band's
@@ -634,9 +640,9 @@ visualViewport.height = 844; visualViewport.offsetTop = 0; fire(VV, 'resize'); f
 // round 2 (2026-09-19): the writer's other population. fit() publishes a pan only off a coarse pointer; a FINE pointer writes
 // 0px whatever the visual viewport says (no soft keyboard to pan for), so a fine-pointer window the mobile query still
 // matches by width alone (at or under 820 px) takes the fixed body at top 0. From a panned state, the pointer turns fine
-// (the stub answers the coarse probe; the layout query object was captured at parse and is not re-read). LAST in the driver:
-// the stub is a module-scope global, restored after. --mtabs-h is not read here: its value on a fine pointer under a fake pan
-// is an open question of the review (the rebound kbOpen carries no coarse guard), not settled by this change.
+// (the stub answers the coarse probe; the layout query object was captured at parse and is not re-read). The stub is a
+// module-scope global, restored before the next step. --mtabs-h is not read here: its value on a fine pointer under a fake pan
+// is an open question of the review (the strip's reading carries no coarse guard), not settled by this change.
 visualViewport.height = 460; visualViewport.offsetTop = 83; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
 const savedMatchMedia = global.matchMedia; global.matchMedia = () => ({ matches: false });
 fire(WIN, 'resize'); flush();
@@ -644,6 +650,17 @@ out.finePointer = { appTop: appTop(), appH: appH() };
 global.matchMedia = savedMatchMedia;
 visualViewport.height = 844; visualViewport.offsetTop = 0; fire(VV, 'resize'); flush();
 out.finePointerBack = { appTop: appTop(), appH: appH(), barH: barH() };
+// round 4 (2026-09-20): the 0px road updates the hold. From a pan (83) the pointer turns fine (0px published) and coarse again
+// under a zoom whose clamp is slack (230 * 2 = 460, so 844 - 460 leaves room for 83): the hold is the last value PUBLISHED, 0,
+// not the coarse pan from before the flip, which a hold the 0px road skipped would have republished
+visualViewport.height = 460; visualViewport.offsetTop = 83; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+global.matchMedia = () => ({ matches: false }); fire(WIN, 'resize'); flush();
+out.fineFromPan = appTop();
+global.matchMedia = savedMatchMedia;
+visualViewport.scale = 2; visualViewport.height = 230; visualViewport.offsetTop = 83; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+out.coarseAgainZoomed = { appTop: appTop(), appH: appH() };
+visualViewport.scale = 1; visualViewport.height = 844; visualViewport.offsetTop = 0; fire(VV, 'resize'); flush();
+out.coarseAgainBack = { appTop: appTop(), appH: appH(), barH: barH() };
 console.log(JSON.stringify(out));
 """
 
@@ -747,6 +764,10 @@ class MobileFitExecutes(unittest.TestCase):
         self.assertEqual(self.out["panAgain"], {"appTop": "83px", "appH": "460px", "barH": "0px"})
         self.assertEqual(self.out["pinchPanned"], {"appTop": "83px", "appH": "460px", "barH": "0px"}, "the hold, from a pan")
         self.assertEqual(self.out["kbDownZoomed"], {"appTop": "0px", "appH": "844px", "barH": "44px"}, "the clamp")
+        # round 4 (2026-09-20): the clamp bounds what is published and leaves the hold standing, so the keyboard raised again
+        # under the same zoom finds the pan it was measured with. A clamp that wrote its result back (the round-2 shape) had
+        # lowered the hold to 0 the first time it bound, and this run then published 0px under a keyboard-sized --app-h.
+        self.assertEqual(self.out["kbUpAgainZoomed"], {"appTop": "83px", "appH": "460px", "barH": "0px"}, "the hold survives the clamp")
         self.assertEqual(self.out["zoomBack"], {"appTop": "0px", "appH": "844px", "barH": "44px"})
 
     def test_a_bar_whose_box_starts_exactly_at_the_bands_bottom_edge_is_hidden(self):
@@ -806,6 +827,14 @@ class MobileFitExecutes(unittest.TestCase):
         # real query at 800 px. The base tree's only pin on this branch was its source text.
         self.assertEqual(self.out["finePointer"], {"appTop": "0px", "appH": "844px"})
         self.assertEqual(self.out["finePointerBack"], {"appTop": "0px", "appH": "844px", "barH": "44px"})
+
+    def test_the_hold_is_the_last_pan_published_on_every_road(self):
+        # round 4 (2026-09-20): the 0px road writes the hold too. From a pan (83) the pointer turns fine, so the page is laid out
+        # at 0px; coarse again under a zoom whose clamp is slack, the pinch branch holds the last value PUBLISHED, 0. A hold the
+        # 0px road skipped republished the coarse pan from before the flip (83px), a pan no run had published since.
+        self.assertEqual(self.out["fineFromPan"], "0px", "the fine pointer published 0px from the pan")
+        self.assertEqual(self.out["coarseAgainZoomed"], {"appTop": "0px", "appH": "460px"}, "the hold is the 0 the page is using")
+        self.assertEqual(self.out["coarseAgainBack"], {"appTop": "0px", "appH": "844px", "barH": "44px"})
 
 
 # A node stand-in for the installed phone app with a REAL class list: the shell's mobile script and

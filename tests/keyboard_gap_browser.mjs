@@ -163,6 +163,7 @@ try {
   out.kbUpAgain = await move(508, 83);
   out.pinchPanned = await move(254, 83, 2);      // pinched with the keyboard up: h = 254 * 2 = 508, the pan holds
   out.kbDownZoomed = await move(422, 200, 2);    // the keyboard goes while zoomed: h = 844 again, and a held pan would hang the body
+  out.kbUpAgainZoomed = await move(254, 83, 2);  // round 4: the keyboard raised again under the same zoom: the hold survived the clamp, the pan is 83 again
   out.zoomBack = await move(844, 0, 1);
   if (cfg.shots) await page.screenshot({ path: cfg.shots + "-settled.png" }).catch(() => {});
   await result({});

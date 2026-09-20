@@ -69833,7 +69833,10 @@ function wid(){try{return sessionStorage.getItem('romp:wid')||'';}catch(e){retur
 // keyboards and collapsing toolbars — where height*scale keeps a mobile pinch from re-fitting too.
 // Every run recomputes from scratch — never adjusts a stored value — so a viewport that grows back
 // (keyboard gone, app back in front) can never leave a stale, shorter --app-h behind.
-// [fork] D1 (2026-09-19): the pan fit() last published, the value its pinch branch holds and clamps (the note inside fit)
+// [fork] D1 (2026-09-19): the pan fit() last PUBLISHED, on every road that publishes one (the 0px road included), the value its
+// pinch branch holds. The one stored value in this script, and the sentence above is about --app-h, which every run still
+// recomputes from scratch: the hold is bounded at use (the clamp inside fit) and never adjusted in place, so a keyboard
+// raised again under a standing zoom finds the pan it was measured with, not a value the clamp lowered (round 4, 2026-09-20).
 var lastPan=0;
 function fit(){try{var vv=window.visualViewport;
 var coarse=window.matchMedia&&matchMedia('(pointer: coarse)').matches;
@@ -69853,13 +69856,17 @@ if(h)document.documentElement.style.setProperty('--app-h',h+'px');
 // than 1024 px publishes a pan no rule consumes and keeps its body in flow (tests/test_keyboard_gap_served.py drives
 // both; test_kernel_mobile's harness turns the pointer fine from a panned state). A PINCH (scale above 1.01) pans
 // the visual viewport too, with no keyboard behind it, so its offsetTop is never published and the last pan holds (a zoom
-// never re-lays the shell, the pinch-aware note above), CLAMPED to innerHeight - h (round 2, 2026-09-19): the same run
-// recomputes --app-h from the zoomed viewport, so a pan measured under a keyboard that has since gone would otherwise
-// place the body's bottom, the composer row, below the layout viewport until the zoom ended. The visual viewport's scroll
-// event, where a pan lands, is already bound below, so no new listener.
-if(!coarse||!vv)document.documentElement.style.setProperty('--app-top','0px');
+// never re-lays the shell, the pinch-aware note above), CLAMPED AT USE to innerHeight - h (round 2, 2026-09-19): the same
+// run recomputes --app-h from the zoomed viewport, so a pan measured under a keyboard that has since gone would otherwise
+// place the body's bottom, the composer row, below the layout viewport until the zoom ended. The clamp bounds what is
+// published and leaves the hold itself standing (round 4, 2026-09-20: it had written its result back, so the first time it
+// bound the held pan decayed to 0 and a keyboard raised again under the same zoom laid the shell out at pan 0 under a
+// keyboard-sized --app-h, the band reopened). The hold is the last value PUBLISHED, on every road: the 0px road writes it
+// too, so a pointer that turns fine and coarse again under a zoom holds the 0 the page is using, not the coarse pan from
+// before the flip. The visual viewport's scroll event, where a pan lands, is already bound below, so no new listener.
+if(!coarse||!vv)document.documentElement.style.setProperty('--app-top',(lastPan=0)+'px');
 else if((vv.scale||1)<=1.01)document.documentElement.style.setProperty('--app-top',(lastPan=Math.round(vv.offsetTop||0))+'px');
-else document.documentElement.style.setProperty('--app-top',(lastPan=Math.min(lastPan,Math.max(0,window.innerHeight-h)))+'px');
+else document.documentElement.style.setProperty('--app-top',Math.min(lastPan,Math.max(0,window.innerHeight-h))+'px');
 // iOS ignores interactive-widget and reveals a focused input by SCROLLING this overflow:hidden page
 // (a UA scroll bypasses the clamp) — the shell then sits a keyboard-height up until dragged back
 // (the user 2026-09-02). The layout must never scroll: undo any stray offset on the same events.

@@ -164,7 +164,7 @@ class KeyboardGap(unittest.TestCase):
         # the emulation held: the shell read the fake visual viewport, in a layout viewport of the descriptor's height
         for name, g in (("rest", rest), ("kbUp", up), ("pickerUp", r["pickerUp"]), ("kbDown", down), ("kbNoPan", nopan),
                         ("kbUpDeep", r["kbUpDeep"]), ("deepZoomed", r["deepZoomed"]), ("kbUpMid", r["kbUpMid"]),
-                        ("pinchPanned", r["pinchPanned"]), ("kbDownZoomed", r["kbDownZoomed"])):
+                        ("pinchPanned", r["pinchPanned"]), ("kbDownZoomed", r["kbDownZoomed"]), ("kbUpAgainZoomed", r["kbUpAgainZoomed"])):
             self.assertTrue(g["vv"]["fake"], where + name + ": the shell's visualViewport is the fake")
             self.assertIsNone(g["labVVError"], where + name)
             self.assertEqual(g["innerHeight"], LAYOUT_H, where + name + ": the layout viewport is the descriptor's")
@@ -278,6 +278,13 @@ class KeyboardGap(unittest.TestCase):
         self.assertLessEqual(dz["body"]["bottom"], LAYOUT_H + 0.5, where + "the body stays inside the layout viewport with the keyboard gone under a zoom: %r" % (dz,))
         self.assertLessEqual(dz["composerBottom"], LAYOUT_H - bar_h + 0.5, where + "the composer row is reachable, above the bar's strip: %r" % (dz,))
         self.assertEqual(_px(dz["appTop"]), 0, where + "the held pan is clamped to the viewport: %r" % (dz,))
+        # round 4 (2026-09-20): the keyboard raised AGAIN under the same zoom. The clamp bounded what the run above published and
+        # left the hold standing, so the pan is 83 again and the body is the band; a clamp that wrote back had lowered the
+        # hold to 0 and laid the body out at 0..508 under the pan, the band reopened for as long as the zoom held.
+        uz = r["kbUpAgainZoomed"]
+        self.assertEqual((_px(uz["appTop"]), _px(uz["appH"])), (KB_PAN, KB_H), where + "the hold survives the clamp: %r" % (uz,))
+        self.assertAlmostEqual(uz["body"]["top"], KB_PAN, delta=0.5, msg=where + "the body is back at the pan under the zoom: %r" % (uz,))
+        self.assertAlmostEqual(uz["body"]["bottom"], band_bottom, delta=0.5, msg=where + "%r" % (uz,))
         self.assertAlmostEqual(zb["composerBottom"], rest["composerBottom"], delta=0.5, msg=where + "%r" % (zb,))
         return r
 

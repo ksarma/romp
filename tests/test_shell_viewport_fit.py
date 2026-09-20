@@ -202,13 +202,17 @@ class RefitsWhenTheVisibleHeightChanges(unittest.TestCase):
         # vv.height at layout y 0 left the bottom offsetTop pixels of the screen bare under the composer. fit() publishes
         # the pan as --app-top under the same coarse guard (a fine pointer writes 0px whatever the visual viewport says; the
         # consumer is gated on the layout query, a different population, see the fit() comment). Under a pinch (scale above 1.01) the last pan
-        # holds, a zoom pans too and never re-lays the shell, CLAMPED to the layout viewport less the height the same run
-        # publishes, so a keyboard dismissed while zoomed cannot leave the body hanging below the viewport (round 2,
-        # 2026-09-19). Behaviour: test_kernel_mobile.MobileFitExecutes.
+        # holds, a zoom pans too and never re-lays the shell, CLAMPED AT USE to the layout viewport less the height the same
+        # run publishes, so a keyboard dismissed while zoomed cannot leave the body hanging below the viewport (round 2,
+        # 2026-09-19); the clamp bounds what is published and never writes back into the hold (round 4, 2026-09-20: it had,
+        # so the hold decayed to 0 the first time the clamp bound and a keyboard raised again under the zoom reopened the
+        # band), and the hold is the last value published on EVERY road, the 0px road included. Behaviour:
+        # test_kernel_mobile.MobileFitExecutes.
         self.assertIn("\nvar lastPan=0;\nfunction fit(){", self.js)
-        self.assertIn("if(!coarse||!vv)document.documentElement.style.setProperty('--app-top','0px');", self.js)
+        self.assertIn("if(!coarse||!vv)document.documentElement.style.setProperty('--app-top',(lastPan=0)+'px');", self.js)
         self.assertIn("else if((vv.scale||1)<=1.01)document.documentElement.style.setProperty('--app-top',(lastPan=Math.round(vv.offsetTop||0))+'px');\n"
-                      "else document.documentElement.style.setProperty('--app-top',(lastPan=Math.min(lastPan,Math.max(0,window.innerHeight-h)))+'px');", self.js)
+                      "else document.documentElement.style.setProperty('--app-top',Math.min(lastPan,Math.max(0,window.innerHeight-h))+'px');", self.js)
+        self.assertNotIn("lastPan=Math.min", self.js, "the clamp is at use: nothing writes its result back into the hold")
         # the write sits inside fit(), after the --app-h write and before the stray-scroll reset, so one frame publishes both
         self.assertLess(self.js.index("setProperty('--app-h',h+'px')"), self.js.index("setProperty('--app-top'"))
         self.assertLess(self.js.index("setProperty('--app-top'"), self.js.index("if(window.scrollY||document.documentElement.scrollTop)window.scrollTo(0,0);"))
