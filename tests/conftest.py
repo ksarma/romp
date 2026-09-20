@@ -1072,12 +1072,14 @@ def _sdk_judge_scope(start, last, end, windows):
     its last test's value that no window chain and no verdict accounts for) renders the found object as its before
     value and the value left as its after. The link clause to the first window's refusal (_sdk_found_refused) rides
     the start-to-end judgment ALONE, keyed on the object it renders as before, the one the scope found. The four other
-    roads carry no clause: the last-object roads render an object that is not the one the scope found (S10C's One
-    finds the refused object, swaps it out, its test builds and its teardown repoints the build: the verdict renders
-    the build alone, and a clause keyed on the found object would name one the line does not show), and the put-back
-    roads render the found object but end on it, so the clause's tail, the scope at whose end the slot no longer held
-    it, would be false there. A later case that needs a clause on one of them keys it on the object THAT road
-    renders, never on start.be (THE RULE in the design comment: identity on the rendered object, never a rendered
+    roads carry no clause: the last-object roads render the object the last test left, the found one only when no test
+    changed the slot (S10C's One finds the refused object, swaps it out, its test builds and its teardown repoints the
+    build: the verdict renders the build alone, and a clause keyed on the found object would name one the line does not
+    show; a scope whose tests leave the found object and whose teardown repoints it renders the found object, and there
+    the tail would be false too, the teardown having repointed the object rather than left the slot without it), and
+    the put-back roads render the found object but end on it, so the clause's tail, the scope at whose end the slot no
+    longer held it, would be false there. A later case that needs a clause on one of them keys it on the object THAT
+    road renders, never on start.be (THE RULE in the design comment: identity on the rendered object, never a rendered
     path). Never inside _sdk_judge, which is the function fixture's road too: a clause there would ride every
     test-window verdict whose before value is the refused object (S15's Two.a, which starts under the refused object
     and resets the slot: its own verdict carries no clause, and the module end's start-to-end verdict on the same
