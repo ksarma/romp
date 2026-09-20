@@ -134,7 +134,7 @@ def names_by_line(source):
 
     The walk RECURSES through the compound statements a definition can nest under (If/Try/With/For/While and class
     bodies), not just the module's top level, so a def under a module-level `try` or `if` and a class member are named
-    (2026-09-20, the lenses over round 2's commit of fork PR #813; its correctness-3 and extra8-2, both refuters): the
+    (round 3 of the review, 2026-09-20, over round 2's commit of fork PR #813; its correctness-3 and extra8-2, both refuters): the
     old walk read one level and a change confined to such a definition derived a bare path, where-check then printing ok
     for a `where:` line that named none of it. A definition's owned span starts at the FIRST of its decorator lines
     (min decorator lineno), so a change confined to a decorator line names the def it decorates. A CLASS owns its header

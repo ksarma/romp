@@ -246,7 +246,7 @@ def _read_settings(path):
         return None
     except UnicodeDecodeError:
         # bytes that are not UTF-8: loud like an unreadable file, so every cannot-tell caller handles it and the
-        # decode does not escape to its reader (fork PR #813, round 3 of the review; its extra7-1, ruled high)
+        # decode does not escape to its reader (fork PR #813, round 3 of the review, 2026-09-20; its extra7-1, ruled high)
         raise CredentialError("Claude Code settings file cannot be read: %s" % path)
     except OSError:
         raise CredentialError("Claude Code settings file cannot be read: %s" % path)

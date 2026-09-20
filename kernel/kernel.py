@@ -22443,8 +22443,16 @@ def _auth_both():
     Since 2026-09-08 it gates NOTHING in the UI (the Billing menu lists both choices always, greying the
     one this box cannot bill: _auth_avail) and rides the status payload for older clients only. Cheap
     per-push: _claude_account and helper_source's settings reads are both mtime-cached, and the key is an
-    attribute read."""
-    return _auth_key_present() and bool(_claude_account()) and jd._cred.helper_source() != "managed"
+    attribute read. The settings read has the cannot-tell arm _auth_avail has (the owner's lenses over round 3's
+    commit of fork PR #813, 2026-09-20; the reader lens's finding 2): a settings file that cannot be read just now
+    is not "managed", where the bare read was safe only by the short-circuit ahead of it (a key read microseconds
+    earlier had to have succeeded), and a rewrite landing between the two reads raised CredentialError out of the
+    pusher's identity tuple and build_session's authBoth field."""
+    try:
+        managed = jd._cred.helper_source() == "managed"
+    except jd._cred.CredentialError:
+        managed = False                        # the settings cannot be read just now: cannot tell, so not "managed"
+    return _auth_key_present() and bool(_claude_account()) and not managed
 
 
 def _auth_avail():

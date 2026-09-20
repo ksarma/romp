@@ -71,18 +71,38 @@ class CapSwitchOffer(unittest.TestCase):
 
     def test_no_path_flips_billing_without_the_explicit_pick_both_directions(self):
         # CENSUS PIN, ON THE PROPERTY (round 3 of the review, 2026-09-20; tests-2, regression-3 and kernel-3, all
-        # refuters): a new kernel call site that reaches SdkBackend.set_auth by ANY spelling must red this pin. The
-        # billing write flips which account a session bills; the pin exists so no AUTOMATIC path can (the user's
-        # binding ruling, 2026-08-30), and a new caller lands here first. A regex on `be.set_auth(` was blind three
-        # ways at once: the delta's guarded door is a getattr, set_auth_followers' door is a getattr, and a
-        # differently named receiver escapes the literal `be`. So the mechanism is an ast walk of both kernel files.
+        # refuters): a new kernel call site that reaches SdkBackend.set_auth must red this pin. The billing write flips
+        # which account a session bills; the pin exists so no AUTOMATIC path can (the user's binding ruling, 2026-08-30),
+        # and a new caller lands here first. A regex on `be.set_auth(` was blind three ways at once: the delta's guarded
+        # door is a getattr, set_auth_followers' door is a getattr, and a differently named receiver escapes the literal
+        # `be`. So the mechanism is an ast walk of both kernel files, keyed on the NAME a call needs rather than on the
+        # call's shape. WHAT IT SEES, stated in place of "any spelling" (the owner's lenses over round 3's commit,
+        # 2026-09-20; the census lens's six green spellings and the mutation lens's E6): every attribute reference to a
+        # reaching name on ANY receiver, called or not (be.set_auth(...), mgr.set_auth(...), functools.partial(be.set_auth,
+        # sid), f = be.set_auth), and every string constant EQUAL to a reaching name wherever it sits (getattr(be,
+        # "set_auth_guarded", None); name = "set_auth" then getattr(be, name)). Its stated limit: a name assembled at run
+        # time ("set_" + "auth", a format, a lookup table) is no constant, and no static walk sees it; that spelling is
+        # adversarial rather than accidental, and only a runtime spy on SdkBackend.set_auth under a kernel exercise would
+        # census it, which this file does not attempt.
         ROOT = os.path.dirname(HERE)
         sdk_src = Path(os.path.join(ROOT, "kernel", "sdk_backend.py")).read_text()
         ker_src = Path(os.path.join(ROOT, "kernel", "kernel.py")).read_text()
-        # (1) the SdkBackend methods that REACH set_auth: set_auth itself, and transitively any method whose body
-        # calls one already in the set. set_auth_guarded and set_auth_followers each run self.set_auth in their step;
-        # no other method reaches it. Derived, not listed, so a new reaching method both grows this set and, being a
-        # name the kernel census below looks for, cannot be called from kernel.py without redding.
+
+        def mentions(node, names):
+            """The names in `names` that `node` reaches for: an attribute reference (called or not) or a string constant
+            equal to one (a getattr door, a name bound to a variable); a docstring is a longer string and never equal."""
+            out = set()
+            for c in ast.walk(node):
+                if isinstance(c, ast.Attribute) and c.attr in names:
+                    out.add(c.attr)
+                elif isinstance(c, ast.Constant) and isinstance(c.value, str) and c.value in names:
+                    out.add(c.value)
+            return out
+        # (1) the SdkBackend methods that REACH set_auth: set_auth itself, and transitively any method whose body reaches
+        # for one already in the set, by attribute or by name (getattr(self, "set_auth") included). set_auth_guarded and
+        # set_auth_followers each run self.set_auth in their step; no other method reaches it. Derived, not listed, so a
+        # new reaching method both grows this set and, being a name the kernel census below looks for, cannot be called
+        # from kernel.py without redding.
         cls = next(n for n in ast.walk(ast.parse(sdk_src)) if isinstance(n, ast.ClassDef) and n.name == "SdkBackend")
         methods = {m.name: m for m in cls.body if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef))}
         reach = {"set_auth"}
@@ -90,20 +110,17 @@ class CapSwitchOffer(unittest.TestCase):
         while changed:
             changed = False
             for name, m in methods.items():
-                if name in reach:
-                    continue
-                if any(isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute) and c.func.attr in reach
-                       for c in ast.walk(m)):
+                if name not in reach and mentions(m, reach):
                     reach.add(name)
                     changed = True
         self.assertEqual(reach, {"set_auth", "set_auth_guarded", "set_auth_followers"},
                          "set_auth and the two entry points whose step runs it; a new reaching backend method reds here")
-        # (2) every kernel.py call site reaching one of those names by ANY spelling: a direct attribute call on ANY
-        # receiver (be.set_auth(, or a differently named receiver), and a getattr(x, "<name>", ...) door (the guarded
-        # door and the walk door are both getattrs; door()/walk() is a call on the local the getattr returned). A
-        # lambda-wrapped call is walked too. Recorded as (enclosing def, kind), so a docstring or comment mention (not
-        # a Call) never counts and a bare line-shift never moves the pin. A new site anywhere adds a tuple and reds.
-        sites, stack = [], []
+        # (2) every kernel.py site that reaches for one of those names, recorded as (enclosing def, kind): "call:" an
+        # attribute call on any receiver; "ref:" an attribute reference that is not the func of a call (a bound method
+        # handed on as a value: a partial, an alias); "name:" a string constant equal to the name (the getattr doors, a
+        # name bound to a variable). A docstring or comment mention never counts (a docstring is a longer string, a
+        # comment is not in the ast), and a bare line-shift never moves the pin. A new site anywhere adds a tuple and reds.
+        sites, stack, called = [], [], set()
 
         class V(ast.NodeVisitor):
             def visit_FunctionDef(self, n):
@@ -114,20 +131,26 @@ class CapSwitchOffer(unittest.TestCase):
 
             def visit_Call(self, n):
                 f = n.func
-                where = stack[-1] if stack else "<module>"
                 if isinstance(f, ast.Attribute) and f.attr in reach:
-                    sites.append((where, "call:" + f.attr))
-                if (isinstance(f, ast.Name) and f.id == "getattr" and len(n.args) >= 2
-                        and isinstance(n.args[1], ast.Constant) and n.args[1].value in reach):
-                    sites.append((where, "getattr:" + n.args[1].value))
+                    sites.append((stack[-1] if stack else "<module>", "call:" + f.attr))
+                    called.add(id(f))
                 self.generic_visit(n)
+
+            def visit_Attribute(self, n):
+                if n.attr in reach and id(n) not in called:
+                    sites.append((stack[-1] if stack else "<module>", "ref:" + n.attr))
+                self.generic_visit(n)
+
+            def visit_Constant(self, n):
+                if isinstance(n.value, str) and n.value in reach:
+                    sites.append((stack[-1] if stack else "<module>", "name:" + n.value))
 
         V().visit(ast.parse(ker_src))
         self.assertEqual(sorted(sites), [
             ("_apply_pending_ops", "call:set_auth"),               # the parked-op drain replays the user's OWN pick; its refusal is read
-            ("_billing_request", "getattr:set_auth_followers"),    # the --all-following walk door (the user's explicit verb)
+            ("_billing_request", "name:set_auth_followers"),       # the --all-following walk door (the user's explicit verb), a getattr
             ("_set_auth_or_park_verdict", "call:set_auth"),        # the fallback for a backend without the guarded door (a fake, the Codex backend)
-            ("_set_auth_or_park_verdict", "getattr:set_auth_guarded"),  # the guarded door every explicit per-session pick takes
+            ("_set_auth_or_park_verdict", "name:set_auth_guarded"),  # the guarded door every explicit per-session pick takes, a getattr
         ], "the ONLY kernel roads to set_auth are the explicit-pick helper (two spellings) and the parked replay: %r" % sorted(sites))
         # the verb's --now pick takes the same helper with the FIFO gate off, never a raw call of its own
         self.assertIn("_set_auth_or_park_verdict(be, sid, pick, park=False)", ker_src)

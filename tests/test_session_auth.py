@@ -1252,6 +1252,23 @@ class Availability(unittest.TestCase):
         a = km._auth_avail()
         self.assertEqual((a["login"], a["key"], a["acct"]), (False, True, ""))
 
+    def test_a_settings_file_that_cannot_be_read_just_now_is_cannot_tell_for_both_never_a_raise(self):
+        # the owner's lenses over round 3's commit of fork PR #813 (2026-09-20; the reader lens's finding 2): _auth_both's
+        # settings read (helper_source, for the managed-helper bar) had no CredentialError arm and was safe only by the
+        # short-circuit ahead of it, so a settings rewrite landing between the key read and this one raised out of the
+        # pusher's identity tuple and build_session's authBoth field. It takes _auth_avail's own arm now: a file that cannot
+        # be read just now is cannot tell, not "managed".
+        # ERROR BEFORE ITS ASSERTION at round 3's commit and at the round-3 base, at the call under test:
+        # CredentialError out of _auth_both, the raise this test exists to catch.
+        self._world(FAKE_KEY, "aaaaaaaaaaaa")
+
+        def unreadable():
+            raise km.jd._cred.CredentialError("Claude Code settings file cannot be read: settings.json")
+        km.jd._cred.helper_source = unreadable
+        self.assertTrue(km._auth_both(), "cannot tell is not a managed helper: both choices stand, as _auth_avail says")
+        a = km._auth_avail()
+        self.assertEqual((a["login"], a["key"]), (True, True), "the same read takes the same arm")
+
     def test_the_session_payload_always_carries_auth_and_gates_only_the_controls(self):
         import inspect
         src = inspect.getsource(km.build_session)

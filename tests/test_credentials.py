@@ -270,8 +270,12 @@ class SettingsReadCache(_Settings):
         p = os.path.join(self.cfg, "settings.json")
         Path(p).write_bytes(b'{"apiKeyHelper": "' + bytes([0xff, 0xfe]) + b'"}')
         for _ in range(3):
-            with self.assertRaisesRegex(cred.CredentialError, "cannot be read"):
+            with self.assertRaises(cred.CredentialError) as cm:
                 cred.helper_source()
+            # the STATIC words plus the path, never the offending bytes (the owner's lenses over round 3's commit, 2026-09-20;
+            # the mutation lens's A3: a message carrying the bytes stayed green under the regex alone). The row this reaches
+            # (SdkBackend._say_settings_unreadable) is the operator's own Log, and the bytes are the file's contents
+            self.assertEqual(str(cm.exception), "Claude Code settings file cannot be read: " + p)
         self._write("user", {"apiKeyHelper": "/u/helper.sh"})
         self.assertEqual(cred.helper_source(), "user", "valid UTF-8 again: read again at the next call")
 
