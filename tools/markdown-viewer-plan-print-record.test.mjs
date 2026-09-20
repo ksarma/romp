@@ -368,7 +368,7 @@ test('P2: only a placeholder that reaches the paper is counted, named and restor
   assert.ok(P2.includes('every other kept attribute leaves the figure on the paper as far as the flow reads, an svg\'s `transform`, `clip-path`, `mask` and `filter` among them (open point 8)'));
   // the round-3 history and the legs that hold it
   assert.ok(P2.includes('before the round-3 review (2026-09-20) the opacity was matched against one spelling of zero by a pattern and the placeholder\'s first element child alone was read'));
-  assert.ok(P2.includes('file-print-figure-browser.test.ts, in Chromium, Firefox and WebKit since the round-5 review: every one of 83 gated shapes built twice on one page, 74 at the round-3 review and nine more since the round-4 review'));
+  assert.ok(P2.includes('file-print-figure-browser.test.ts, in Chromium, Firefox and WebKit since the round-5 review: every one of ') && P2.includes(' gated shapes built twice on one page, ') && P2.includes(' at the round-3 review and ') && P2.includes(' more since the round-4 review'), 'the sentence around the shape count; the count and its history clause are the derived pin\'s alone (the round-6 review\'s copies-1: this module carried two literal copies)');
   assert.ok(read('ui', 'webview', 'file-print-egress-browser.test.ts').includes('test("(12) a gated svg at opacity 0e0 and a <picture> whose <img> is hidden, beside a plain placeholder, on three hosts, and a gated svg at opacity 0 on the plain placeholder\'s host:'), 'the egress leg\'s case (12), with the shared-host shape (round 5: the round-4 review\'s tests-4)');
   assert.ok(P2.includes('and since the round-4 review\'s tests-4 (2026-09-20) a gated svg at `opacity="0"` on the plain placeholder\'s own host'));
   assert.ok(P2.includes('file-print-egress-browser.test.ts case (12): a gated svg at `opacity="0e0"` and a `<picture>` whose `<img>` carries `hidden`'));
@@ -846,9 +846,12 @@ test('Derivations and their unknown cases: the paragraph stands between P7 and t
   // the shape count, ONE pin (the round-5 review's correctness-4 and regression-3: the number stood in five places and a
   // delta updated two): the count is of the rows the leg builds, read here by running its table; one regex over the P2, D
   // and Tests slices finds every copy, and each must be that count. D carries none (it says "every gated shape"), the
-  // ledger entry carries none (it points here), so the copies are P2's and the Tests list's, and a row added to the leg
-  // reds both at once.
+  // ledger entry carries none (it points here), and this module carries none (the round-6 review's copies-1, 2026-09-20:
+  // two of its pins spelled the count and the history clause by hand; they now pin the sentence around them, and the
+  // assertion below holds this module to no literal copy), so the copies are P2's and the Tests list's, and a row added
+  // to the leg reds both at once, here alone.
   const rows = figureRows();
+  assert.ok(!/\b\d+ gated shapes?\b/.test(read('tools', 'markdown-viewer-plan-print-record.test.mjs')), 'this module carries no literal copy of the shape count');
   const counts = (slice) => [...slice.matchAll(/\b(\d+) gated shapes?\b/g)].map((m) => Number(m[1]));
   assert.deepEqual({ P2: counts(P2), D: counts(D), TESTS: counts(TESTS) }, { P2: [rows.length], D: [], TESTS: [rows.length] }, 'the shape count, in P2 and the Tests list once each and nowhere else in the section\'s derivations, is the number of rows the leg builds (' + rows.length + ')');
   assert.ok(D.includes('the flow\'s answer equal to the browser\'s for the ungated twin of every gated shape, the spellings of zero among them'), 'D states the rule over every shape and counts none');
@@ -981,7 +984,7 @@ test('P2, P6, open point 8 and the guide carry the figure-level grant sentence: 
   const fig = read('ui', 'webview', 'file-print-figure-browser.test.ts');
   assert.ok(fig.includes('name: "svg>image[a]+defs>image[b]"') && fig.includes('fetches: ["a", "b"]') && fig.includes('name: "picture>source[a]+img[b]"') && fig.includes('fetches: ["a"]'), 'the figure leg holds the fetched URLs per shape, two hosts among them');
   assert.ok(TESTS.includes('a second oracle keyed on the URL, every placeholder whose figure paints restored the way "Print with them" restores it (`loadGatedFigure`, one at a time) and the remote URLs the page then asks for held per shape equal to the table\'s `fetches` column'));
-  assert.ok(TESTS.includes('every one of 83 gated shapes built twice on one page (74 at the round-3 review, nine added since the round-4 review, below)'));
+  assert.ok(TESTS.includes('every one of ') && TESTS.includes(' gated shapes built twice on one page (') && TESTS.includes(' at the round-3 review, ') && TESTS.includes(' added since the round-4 review, below)'), 'the sentence around the shape count; the count and its history clause are the derived pin\'s alone (the round-6 review\'s copies-1)');
   // the two-URL qualifier (the round-5 review's regression-5 and extra6-4): the number of added shapes with two URLs is
   // derived from the rows the leg builds whose html takes the second URL, not spelled by hand (the `fetches:` column no
   // longer marks them alone: since the round-6 Firefox fix two one-URL rows carry it per engine), and the ninth is the
