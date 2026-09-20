@@ -1278,7 +1278,7 @@ test("share ON on a page without the APIs: nav and res are null, marks empty, ws
   assert.equal("wsBytesByHost" in e, false, "a throwing federation reader reads as none");
 });
 
-// ── wsBytesByHost (2026-09-19): the per-position fold and the collector's baselines ──
+// ── wsBytesByHost (2026-09-19): the per-position rule and the collector's baselines ──
 
 test("bytesByHost: the minute's characters per remote host position from federation's totals against the minute's baselines, for the positions attached at the flush or delivered to in the minute; a position with no baseline counts from 0; every qualifying position keeps its own key, however many; a key off the h<n> pattern or a non-number is ignored; no position reads null", () => {
   const all = (m: Record<string, unknown>) => Object.keys(m);

@@ -95,6 +95,8 @@ def _record(m):
             f[k] = v
     if "gen" in m:
         f["genKey"] = True   # the key's presence, whatever its value (no content): drive_pair tells an unreadable gen from none
+    if "newGen" in m:
+        f["newGenKey"] = True   # the same for newGen, so a red shows a composed frame whose newGen the client reads as none apart from a per-cycle delta (diagnostic only)
     return f
 
 

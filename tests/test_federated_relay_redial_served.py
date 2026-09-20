@@ -248,7 +248,7 @@ class FederatedRelayRedial(unittest.TestCase):
         return frames
 
     def _first_pair(self):
-        """The pair the first socket's frames left the conn (held_pair), after asserting the drive: a feed full arrived on it."""
+        """The pair the first socket's frames left the conn (drive_pair), after asserting the drive: a feed full arrived on it."""
         first, _redial = self._relay()
         frames = self._frames_of(first[0])
         self.assertIn("feed", [f["t"] for f in frames], "the first relay socket received the remote's full frame: %r" % (frames,))
