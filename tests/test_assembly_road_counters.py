@@ -7,9 +7,14 @@ Ordering sensitivity of the two stage tests (2026-09-20). kernel/event_model.py 
 thread's stage-mark provider (_READ_STAGE_FN, installed by set_read_stage_provider; _SET_STAGE_FN and set_stage_provider are its
 pair), and every kernel load installs its own _current_read_stage and _set_stage there at module level, so the kernel loaded LAST
 in the process owns the slot. The event model is one object for the whole process: it is loaded under the fixed name
-romp_event_model, and load_source re-executes a name already in sys.modules into the same module object. 528 test files load
-their own kernel instance under 435 distinct module names (grep -l 'load_source("[a-z_0-9]*", .*romp-kernel' tests/*.py, counted
-2026-09-20; three of them hold the call only inside a string, so 525 files load a kernel in the pytest process, under 433 names).
+romp_event_model, and load_source re-executes a name already in sys.modules into the same module object, so kernel_module().em
+is this module's em (the one statement of that premise in this file; _boot_row_parse points here). 524 test files load their
+own kernel instance under 432 distinct module names, and 508 of the 524 make the call at module body depth (outside any def, so
+at collection) while 16 make it only inside a def (census 2026-09-20 by ast over tests/*.py: Call nodes whose func is
+load_source, a Name or an Attribute, with a str first argument and a second argument whose source segment contains romp-kernel,
+so a call inside a string literal is excluded by construction; the split is whether the Call has a FunctionDef ancestor). The
+same census as one line, run from the checkout root, printing files, names, module-level files and def-only files:
+python -c 'import ast,glob;T=[(f,s,ast.parse(s)) for f in glob.glob("tests/*.py") for s in [open(f).read()]];D={id(c) for f,s,t in T for d in ast.walk(t) if isinstance(d,(ast.FunctionDef,ast.AsyncFunctionDef,ast.Lambda)) for c in ast.walk(d)};R=[(f,c) for f,s,t in T for c in ast.walk(t) if isinstance(c,ast.Call) and getattr(c.func,"id",getattr(c.func,"attr",0))=="load_source" and len(c.args)>1 and isinstance(c.args[0],ast.Constant) and isinstance(c.args[0].value,str) and "romp-kernel" in (ast.get_source_segment(s,c.args[1]) or "")];F={f for f,c in R};M={f for f,c in R if id(c) not in D};print(len(F),len({c.args[0].value for f,c in R}),len(M),len(F-M))'
 This module takes its kernel through test_asm_checkpoint.kernel_module(), which loads romp_kernel_t323s4a once per process into
 the module-level cache _KM. test_whole_reads_and_hydrations_are_counted_under_the_calling_threads_stage and
 test_the_push_mark_is_restored_on_every_exit_and_the_pushs_reads_count_under_push mark the stage on that instance's _STAGE_TL and
@@ -20,30 +25,40 @@ bare module object this file imports, so setUp's kernel_module() returns the cac
 stays with the collection's last module-level kernel load (tests/test_ws_send_bounded.py, romp_kernel_wsbound, in the current
 file order). What moves it back is a test of pytest's own copy of tests/test_asm_checkpoint.py, imported as the package module
 tests.test_asm_checkpoint with a separate, empty _KM: its first kernel_module() call re-executes romp_kernel_t323s4a into the same
-module object and re-installs the providers (StringRowsAndRestoreSplit, HydrationAttribution, ClearedSessionDocument,
-CrossSessionRewoundCandidates, SeededDocumentMemo, and the setUpClass of PlannerOverRestored, ConvergeAssembly,
-ReadersOverRestoredHydrateOnlyWhatTheyNeed and KernelOverRestored). So the pair passes in a process only if one of those ran
-before it: alone (nothing fills the cache at collection) and in a full serial run (test_asm_checkpoint.py sorts before this file)
-it is green; under xdist (--dist load, the default with -n) every worker collects everything and takes a contiguous slice of the
-collection (chunk = items // workers // 4, xdist 3.8.0), and the pair is red on a worker whose slice holds no
-test_asm_checkpoint.py test. In the sweeps (run-sweep.sh: -n 10 under an 80G scope; 17,697 to 17,750 items, chunk 442 or 443)
-gw1's slice began past the last of them, which is why the pair was red on gw1 in every full xdist sweep of PRs that did not touch
-this module (four sightings, 2026-09-19/20) and green alone; in this tree at 20933397f (17,604 items, chunk 440, the last
-test_asm_checkpoint.py item at index 442, the pair at 511 and 516) gw1 holds both and the pair passes. setUp below saves the
-slot's pair, installs this kernel's providers through the public setters and restores the saved pair in a cleanup, so a
-later-loaded kernel's own tests are unaffected. Repro without xdist, as explicit node ids in this order: the roads test, the two
-stage tests, tests/test_intr_marks_memo.py::MarksMemo::test_a_cut_armed_after_the_key_and_before_the_persist_is_answered_but_not_persisted,
+module object and re-installs the providers. Nine of that file's 21 classes call kernel_module(): StringRowsAndRestoreSplit,
+HydrationAttribution, ClearedSessionDocument, CrossSessionRewoundCandidates, SeededDocumentMemo, and the setUpClass of
+PlannerOverRestored, ConvergeAssembly, ReadersOverRestoredHydrateOnlyWhatTheyNeed and KernelOverRestored; LazyBodies, the
+file's last class, is not one of them. So the pair passes in a process only if a test of one of the nine classes ran before it:
+alone (nothing fills the cache at collection) and in a full serial run (test_asm_checkpoint.py sorts before this file) it is
+green; under xdist (--dist load, the default with -n) every worker collects everything and takes a contiguous slice of the
+collection (chunk = items // workers // 4, xdist 3.8.0), and the pair is red on a worker whose slice holds no test of the nine
+classes (a slice holding LazyBodies' test and no other of that file's reds too). In the sweeps (run-sweep.sh: -n 10 under an
+80G scope; 17,697 to 17,750 items, chunk 442 or 443) gw1's slice began past the last item of the nine classes, which is why the
+pair was red on gw1 in every full xdist sweep of PRs that did not touch this module (four sightings, 2026-09-19/20) and green
+alone; in this tree at 20933397f (17,604 items, chunk 440, the last item of the nine classes, SeededDocumentMemo's, at index
+441, LazyBodies' at 442, the pair at 511 and 516; a 2026-09-20 recount of that collection gave 17,618 items with the same chunk
+and the same indices, and on this tree the two guard tests below sort before the pair and move it to 513 and 518 under the same
+chunk) gw1 holds the nine's last item and the pair, and the pair passes. setUp below saves the slot's pair, installs this kernel's
+providers through the public setters and restores the saved pair in a cleanup, so a later-loaded kernel's own tests are
+unaffected. Two repros without xdist, as explicit node ids in the order given. Both reproduce at the parent commit 20933397f, or
+on this tree with setUp's four provider lines (the two installs and their two cleanups) removed; on this tree with the binding,
+both orders are green (verified 2026-09-20, this tree and a copy with the four lines commented out). The first: the roads test,
+the two stage tests,
+tests/test_intr_marks_memo.py::MarksMemo::test_a_cut_armed_after_the_key_and_before_the_persist_is_answered_but_not_persisted,
 tests/test_ws_liveness.py::PhantomPanesAreDropped::test_a_the_beat_carries_a_ping_and_a_browser_answers_it (the last two run after
-the pair; they only fill the cache and take the slot at collection). A run-time kernel load between setUp's first call and the
-pair moves the slot the same way: the roads test, tests/test_pusher_cadence.py::EnvOverride::test_romp_push_min_interval_sets_the_constant
-(loads romp_kernel_cadence_env in its body), then the two stage tests."""
+the pair; they only fill the cache and take the slot at collection). The second, a run-time kernel load between setUp's first
+call and the pair, which moves the slot the same way: the roads test,
+tests/test_pusher_cadence.py::EnvOverride::test_romp_push_min_interval_sets_the_constant (loads romp_kernel_cadence_env in its
+body), then the two stage tests."""
 import json
 import os
+import subprocess
 import sys
 import unittest
 HERE = os.path.dirname(os.path.realpath(__file__))
+ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
-from test_asm_checkpoint import em, G, SID, NOW, Harness, kernel_module, _strip   # noqa: E402
+from test_asm_checkpoint import em, G, SID, NOW, Harness, kernel_module, _strip, BIN   # noqa: E402
 
 
 class AssemblyRoadCounters(Harness):
@@ -62,8 +77,9 @@ class AssemblyRoadCounters(Harness):
             em._ASM_STATS[k] = 0
 
     def _boot_row_parse(self):
-        """The boot-health row's `parse` as the kernel writes it, over THIS test's event model (the kernel module holds its own
-        instance; the row reads whichever `em` the kernel names)."""
+        """The boot-health row's `parse` as the kernel writes it. The row reads whichever `em` the kernel names; today km.em is em
+        (the module docstring: one event model object per process, loaded under one fixed name), so the km.em = em swap below
+        changes nothing and stands as a guard for a kernel loaded with another event model name."""
         km = kernel_module()
         saved = (km._append_restart_cut, km._BOOT_HEALTH_DONE[0], km.em); rows = []
         km._append_restart_cut = lambda row: rows.append(row); km._BOOT_HEALTH_DONE[0] = False; km.em = em
@@ -888,6 +904,56 @@ class AssemblyRoadCounters(Harness):
             km._push([client], live_map={})
         self.assertEqual(seen, ["connect", "push"], "a fresh client's push is marked connect; the pusher's push, push")
         self.assertIsNone(km._current_read_stage(), "restored after a raise out of the push")
+
+    def test_a_fresh_kernel_load_installs_its_own_pair_in_the_slot_in_a_child_process(self):
+        """Review round 1 (fresh-1, 2026-09-20): with setUp installing the providers itself, this module no longer reds when the
+        kernel's own module-level install is deleted, the two product lines in kernel/kernel.py below the _stage_marked and
+        _stage_default decorators, em.set_read_stage_provider(_current_read_stage) and em.set_stage_provider(_set_stage), which the
+        two stage tests caught before the binding and no other in-process test catches. This covers those two lines on their own,
+        independent of setUp's rebinding: a child process loads the event model under its fixed name, then bin/romp-kernel under a
+        private name, and reports whether the slot holds that kernel's _current_read_stage and _set_stage. A child process, not an
+        in-process load, because a fresh kernel load in this process would move the slot for the rest of the worker (the module
+        docstring's mechanism) and become the ordering hazard this module documents."""
+        code = ("import sys; sys.path.insert(0, %r)\n"                       # the tests dir, where romp_load lives
+                "from romp_load import load_source\n"
+                "em = load_source('romp_event_model', %r)\n"
+                "km = load_source('romp_kernel_fresh1_probe', %r)\n"
+                "print(em._READ_STAGE_FN[0] is km._current_read_stage, em._SET_STAGE_FN[0] is km._set_stage)\n"
+                % (HERE, os.path.join(BIN, "romp-event-model"), os.path.join(BIN, "romp-kernel")))
+        env = dict(os.environ)
+        env["ROMP_KERNEL_NO_OPEN"] = "1"                                     # as kernel_module() sets before its load
+        r = subprocess.run([sys.executable, "-c", code], cwd=ROOT, env=env, capture_output=True, text=True, timeout=120)
+        self.assertEqual(r.returncode, 0, "the child's loads failed; stderr:\n%s" % r.stderr[-2000:])
+        self.assertEqual(r.stdout.split(), ["True", "True"],
+                         "a fresh kernel's module-level install owns the slot (read provider, setter): stdout %r; stderr:\n%s"
+                         % (r.stdout, r.stderr[-2000:]))
+
+    def test_a_decoy_pair_in_the_slot_is_displaced_for_a_stage_tests_length_and_stands_again_after_it(self):
+        """Review round 1 (tests-4, 2026-09-20): the guard on setUp's binding itself. A decoy read provider (answers "decoy") and a
+        decoy setter go into the slot through the public setters; one of the two stage tests runs through a TestSuite into a
+        TestResult and passes, because setUp pointed the slot at this kernel for the test's length; and afterwards the decoy pair
+        is in the slot again, because setUp's cleanup put it back. With setUp's four provider lines removed this reds
+        deterministically in every collection, alone or in any order: the stage test's marks are read through the decoy and its
+        rows book `decoy:`, not `jobs.probe:`. The original defect did not have that property (red only on a worker whose slice
+        held no test of the nine calling classes, module docstring)."""
+        def decoy_read():
+            return "decoy"
+
+        def decoy_set(name):
+            return None
+        saved = (em._READ_STAGE_FN[0], em._SET_STAGE_FN[0])                 # this test's own setUp put this kernel's pair here
+        self.addCleanup(em.set_read_stage_provider, saved[0])
+        self.addCleanup(em.set_stage_provider, saved[1])
+        em.set_read_stage_provider(decoy_read)
+        em.set_stage_provider(decoy_set)
+        self.assertEqual(em._read_stage(), "decoy")
+        result = unittest.TestResult()
+        unittest.TestSuite([AssemblyRoadCounters("test_whole_reads_and_hydrations_are_counted_under_the_calling_threads_stage")]).run(result)
+        self.assertEqual(result.testsRun, 1)
+        self.assertTrue(result.wasSuccessful(), "the stage test under a decoy slot:\n%s"
+                        % "\n".join(text for _, text in result.failures + result.errors))
+        self.assertIs(em._READ_STAGE_FN[0], decoy_read, "setUp's cleanup put the decoy read provider back")
+        self.assertIs(em._SET_STAGE_FN[0], decoy_set, "and the decoy setter")
 
 if __name__ == "__main__":
     unittest.main()

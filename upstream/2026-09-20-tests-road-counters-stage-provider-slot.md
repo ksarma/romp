@@ -1,0 +1,11 @@
+---
+title: The stage tests in test_assembly_road_counters bind the event model's stage-provider slot to their own kernel for each test's length
+status: candidate
+where: tests/test_assembly_road_counters.py (AssemblyRoadCounters.setUp and the two guard tests)
+added: 2026-09-20
+pr: 868
+tier: docs
+offered:
+closed:
+---
+The two stage tests in tests/test_assembly_road_counters.py were red on one worker in every full xdist sweep of the fork's PRs that did not touch the module, and green alone. The cause: kernel/event_model.py holds one process-wide slot for the calling thread's stage-mark provider (_READ_STAGE_FN and _SET_STAGE_FN, set through set_read_stage_provider and set_stage_provider), and every kernel load installs its own _current_read_stage and _set_stage there at module level, so the kernel loaded last in the process owns the slot. The two tests mark the stage on their own kernel's thread-local (the kernel from test_asm_checkpoint.kernel_module(), loaded once per process) and read the count back through the slot, so with the slot pointing at another kernel the rows book `none`. Under xdist every worker collects everything, and the module-level kernel_module() calls in tests/test_intr_marks_memo.py and tests/test_merge_tx_sets_light.py fill that cache at collection, so the module's own kernel installs nothing at test time and the slot stays with the collection's last module-level kernel load. Upstream ships the file byte-identically, with the same unpatched setUp, the same process-wide slot design and both module-level callers, so the same red is due there under xdist. The change: setUp saves the slot's pair, installs this kernel's providers through the public setters and restores the saved pair in a cleanup, so a later-loaded kernel's own tests are unaffected. Two guard tests come with it: a child process loads the event model and then a kernel under a private name and reports that the slot holds that kernel's pair (the kernel's own module-level install, which the binding would otherwise stop the module from catching), and a decoy pair installed through the setters is displaced for one stage test's length and stands again after it (red in every collection if the binding is removed, a property the original defect lacked). Tests only.
