@@ -3,7 +3,7 @@ title: The ws liveness dispatch-return test waits for the second ping to leave b
 status: candidate
 where: tests/test_ws_liveness.py, class PhantomPanesAreDropped: test_c3_a_peer_is_never_judged_while_its_handler_is_inside_a_dispatch (the fix), test_c3c_a_ping_that_leaves_after_the_clear_is_a_new_outstanding_ping_stamped_as_it_left (the late order run on purpose), test_c3d_a_handler_returning_from_a_dispatch_between_the_judge_two_reads_is_not_dropped (the pin of the judge's read order), test_c3e_a_handler_entering_a_dispatch_between_the_judge_two_reads_is_not_dropped (the pin's other boundary), and the module-level _StampClearForcing and _SplitReadClient instruments; this entry: upstream/2026-09-20-ws-liveness-order.md
 added: 2026-09-20
-pr:
+pr: 880
 tier: docs
 offered:
 closed:
@@ -61,4 +61,4 @@ The test module is byte-identical between 5b8df8f5c and the project's tip as las
 
 docs (tier 0): tests only, no product code. Upstream's tier check treats docs as merge on green for every author.
 
-2026-09-20: built on the fork branch ws-liveness-order from 5b8df8f5c, one tests commit; `pr:` blank until the fork PR exists. Not offered; the offer is the user's per-change call.
+2026-09-20: built on the fork branch ws-liveness-order from 5b8df8f5c, two tests commits (the fix and pins, then a docstring-only commit replacing two pre-existing dashes) and this entry; filed as fork PR 880 (`pr:` above). Not offered; the offer is the user's per-change call.
