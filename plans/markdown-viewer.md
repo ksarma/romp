@@ -7985,14 +7985,17 @@ file-view-figure-floor-browser.test.ts); and the floor is read
 again at each change of the figure's own laid-out box (`watchFigureBoxes`: one ResizeObserver per open over the
 figures of the Rendered box, armed beside the load and error pair, re-armed at each text paint through the seam's
 onRendered and dropped with the viewer, running the same decision for the figure whose box changed; a report of 0 by 0
-runs no decision; the roads the product has to such a report are the viewer's hide and a gated placeholder's img until
-its click, and on both the show or the restore reports the real box, which is decided, while a decision over the hide's
-report would take a standing control off a figure that is merely hidden and the show would put it back, a remove and an
-add the reader never sees (found before the file review's round 3: decided over it, `figureBox` then fell back to the
-picture's own size and a figure hidden under the floor at its real width gained a control while hidden and lost it at
-the show); the skip decides
-nothing, so a LOADED figure whose real box is 0 by 0, an author's `<img hidden>` or `<img width="0">`, both kept by the
-sanitizer, gets no control by the floor and not by the skip: `figureBox` reads the laid-out box of a figure in the
+runs no decision, a rule over the report whatever produced it: a 0 by 0 report decides nothing, and the figure is decided
+by its load or its error, by the gate's restore or by its next report with a box (the file review's round 4, regression-3:
+the reason before it named two roads to such a report as the only ones, and a loaded figure the author gave no box was a
+third); the viewer's hide and a gated placeholder's img until its click are transient reports, on both of which the show
+or the restore reports the real box, which is decided, while a decision over the hide's report would take a standing
+control off a figure that is merely hidden and the show would put it back, a remove and an add the reader never sees
+(found before the file review's round 3: decided over it, `figureBox` then fell back to the picture's own size and a
+figure hidden under the floor at its real width gained a control while hidden and lost it at the show); the final report
+is a LOADED figure whose real box is 0 by 0, an author's `<img hidden>` or `<img width="0">`, both kept by the sanitizer,
+which reports 0 by 0 for as long as it stands and gets no control by the floor and not by the skip, which decides
+nothing: `figureBox` reads the laid-out box of a figure in the
 document as it is, 0 by 0 included, and falls back to the picture's own size only for a figure not in the document
 (mdBlock's box at the paint), so such a figure's load decides it under the floor (the file review's round 3,
 correctness-1: the fallback ran for any zero-sided rect, the hidden picture was measured over the floor at its own size,
@@ -8001,10 +8004,14 @@ author hid; the same read makes a load while the viewer is hidden a decision ove
 at that load and the show's report of the real box brings it back, where before the control stood through the hidden
 load; the floor leg drives both authored shapes beside prose, the click on the words, and the hidden load); the
 residual the skip leaves, a figure hidden after its load by any road but the viewer's own keeping a standing control
-over the prose before it until its next report with a box, has no road in the product (the sanitizer keeps an author's
-colour declarations alone, no sheet rule hides an author's figure by a class the author can write, and no viewer feature
-toggles an img after its load) and was reached by the author's closing pass after the file review's round 3 only by a stylesheet its probe injected, the
-control kept at the hide and a click on it opening the picture, so a road added later decides the figure itself or lifts
+until its next report with a box, has one road in the product, an expanded callout (`> [!note]+`, a `<details open>`)
+folded by the reader, on which the control is harmless by a mechanism that is not the skip: the fold reports nothing, so
+nothing reaches the observer while the callout is folded, the control is folded with the figure and stands over no prose,
+and the first report with a box after the reopen decides the figure again (the file review's round 4, ui-1, measured in
+the three engines from plain authored markdown: folded, the figure kept its box and its control, both out of the
+pointer's reach; reopened at the width it folded at, no report and the control stood; reopened after a narrowing, the
+report removed the control under the floor; the record before it said the product had no such road, reached only by an
+injected stylesheet), so a road added later that hides a figure and reports for it decides the figure itself or lifts
 the skip for it (recorded, not built against); the watch
 is armed at each text paint and not before the first, since the body is empty when the open arms it (the file review's
 round 3, tests-4: an arm there observed nothing on any road, measured in Chromium over the fresh open, the replace, Back,

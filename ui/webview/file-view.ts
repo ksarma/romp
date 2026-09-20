@@ -5058,18 +5058,28 @@ function armFigureControls(body: HTMLElement, filePath: string): () => void {
  *  re-measuring the 80ch column at a constant body width), with no call from any road (the file review's round 2: a call from
  *  the width watch's repaint ran on one road of two and missed the text-size step). The observer's first report describes each
  *  figure's box at observe(), the decision the paint took over a box not yet laid out, run again over the laid-out one; a report
- *  of 0 by 0 runs no decision. The roads the product has to such a report are the viewer's hide (display:none on the pane or its
- *  page) and a gated placeholder's img before its click, and on both the show or the restore reports the real box, which is
- *  decided; a decision over the hide's report would take a standing control off a figure that is merely hidden and the show
- *  would put it back, a remove and an add the reader never sees. The skip decides nothing, so it is no guard for a figure whose
- *  REAL box is 0 by 0 (an author's `hidden` or `width="0"`): that figure gets no control by the floor (figureBox reads its
- *  laid-out box, under the floor) at its load (the file review's round 3, correctness-1: the skip's reason had claimed the show
- *  or the restore reports every such figure's real box, false for one whose real box is 0 by 0). The residual the skip leaves:
- *  a figure hidden AFTER its load by any other road keeps a standing control, laid 28 px into the prose before it, until its
- *  next report with a box; the product has no such road (an author's style keeps its colour declarations alone, md-sanitize.ts;
- *  no sheet rule hides an author's figure by a class the author can write; no viewer feature toggles an img after its load),
- *  and the author's closing pass after the file review's round 3 reached it only with a stylesheet its probe injected (the control kept, a click on it opening
- *  the picture), so a road added later decides the figure itself or lifts this skip for it. Armed at
+ *  of 0 by 0 runs no decision: the skip is a rule over the report, whatever produced it. A 0 by 0 report decides nothing, and the
+ *  figure is decided by its load or its error (armFigureControls), by the gate's restore, or by its next report with a box (the
+ *  file review's round 4, regression-3: the reason before it named two roads to such a report as the only ones, and a loaded
+ *  figure the author gave no box was a third). Two reports are transient, the viewer's hide (display:none on the pane or its
+ *  page) and a gated placeholder's img before its click: the show or the restore reports the real box, which is decided, where
+ *  a decision over the hide's report would take a standing control off a figure that is merely hidden and the show would put it
+ *  back, a remove and an add the reader never sees; a figure the browser has not answered for at the paint's arm reports 0 by 0
+ *  too and is decided at its load, the report of its real box following. One report is final: a loaded figure whose REAL box is
+ *  0 by 0 (an author's `hidden` or `width="0"`) reports 0 by 0 for as long as it stands, and the skip is no guard for it and
+ *  needs to be none, since the floor refused it at its load (figureBox reads its laid-out box; the file review's round 3,
+ *  correctness-1: the skip's reason had claimed the show or the restore reports every such figure's real box). The residual the
+ *  skip leaves: a figure hidden AFTER its load by any other road keeps a standing control until its next report with a box. The
+ *  product has one such road, an expanded callout (`> [!note]+`, a `<details open>` in md-config.ts) folded by the reader, and
+ *  the control is harmless there, by a mechanism that is not this skip: the fold reports nothing (the engines report no box for
+ *  skipped content, so nothing reaches the observer while the callout is folded), the control is folded with the figure, so
+ *  neither is visible or hit-testable and the control stands over no prose, and the first report with a box after the reopen
+ *  decides the figure again, none firing when the box did not change while folded, where the standing control is already right
+ *  (the file review's round 4, ui-1, its probe folding the callout by a real click, measured in the three engines: folded at
+ *  1200 px, the figure kept its 735 by 73 box and its control, both checkVisibility() false and elementFromPoint over the
+ *  control's square answering the content laid out below the callout; reopened at 1200 px, no report and the control stood;
+ *  reopened after a narrowing to 420 px, the report of 334 by 33 removed the control under the floor). A road added later that
+ *  hides a figure and reports for it decides the figure itself or lifts this skip for it. Armed at
  *  each text paint (`onRendered` with any `why` but "reflow": a reflow keeps the figure nodes, a paint replaces them) over the
  *  figures the box holds then, and dropped by the function returned; the body is empty when the open arms this, before its
  *  first paint (renderBody runs after the setup), so nothing is observed until that paint. Null where ResizeObserver is missing
@@ -5078,18 +5088,21 @@ function watchFigureBoxes(body: HTMLElement, filePath: string, onRendered: (cb: 
   if (typeof ResizeObserver !== "function") return null;
   const ro = new ResizeObserver((entries) => {
     for (const e of entries) {
-      // A 0 by 0 report is skipped. The roads the product has to such a report are the viewer's hide (display:none on the pane or
-      // its page, the dashboard at a viewport where the pane hides) and a gated placeholder's img before its click, and on both
-      // the show or the restore reports the real box, which is decided; decided here, a standing control would leave at the hide
-      // and return at the show, a remove and an add the reader never sees (before the file review's round 3, with figureBox
-      // falling back to the picture's own size over a zero-sided rect, the hide ADDED a control to a figure under the floor at
-      // its real width and the show removed it). The skip decides nothing, so it is no guard for a figure whose real box is 0 by 0
-      // (an author's `hidden` or `width="0"`): that figure gets no control by the floor, at its load, since figureBox reads the
-      // laid-out box of a figure in the document as it is (the file review's round 3, correctness-1). The residual the skip
-      // leaves: a figure hidden after its load by any other road keeps a standing control over the prose before it until its
-      // next report with a box; no road in the product reaches it (the docstring above), and the author's closing pass after the file review's round 3 reached it
-      // only with an injected stylesheet. The load, the error (armFigureControls) and the gate's restore decide their figures
-      // themselves.
+      // A 0 by 0 report is skipped: a 0 by 0 report decides nothing, whatever produced it; the figure is decided by its load or
+      // its error (armFigureControls), by the gate's restore, or by its next report with a box (the file review's round 4,
+      // regression-3: the reason before it named the roads to such a report as two, and a loaded figure the author gave no box
+      // was a third). The viewer's hide (display:none on the pane or its page, the dashboard at a viewport where the pane hides)
+      // and a gated placeholder's img before its click are transient: the show or the restore reports the real box, which is
+      // decided; decided here, a standing control would leave at the hide and return at the show, a remove and an add the
+      // reader never sees (before the file review's round 3, with figureBox falling back to the picture's own size over a
+      // zero-sided rect, the hide ADDED a control to a figure under the floor at its real width and the show removed it). A
+      // loaded figure whose real box is 0 by 0 (an author's `hidden` or `width="0"`) is final: it reports 0 by 0 for as long as
+      // it stands, and the skip is no guard for it and needs to be none, since the floor refused it at its load, figureBox
+      // reading the laid-out box of a figure in the document as it is (the file review's round 3, correctness-1). The residual
+      // the skip leaves: a figure hidden after its load by any other road keeps a standing control until its next report with
+      // a box; the product's one such road, an expanded callout folded by the reader, reports nothing while folded and folds
+      // the control with the figure, and the first report with a box after the reopen decides the figure again (the docstring
+      // above; the file review's round 4, ui-1).
       if (e.contentRect.width === 0 || e.contentRect.height === 0) continue;
       const img = e.target;
       if (img.isConnected && figureState(img) !== "standin") decideFigureControl(img, filePath);

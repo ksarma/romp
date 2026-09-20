@@ -158,17 +158,21 @@ test("the one decision: figureWantsControl reads the figure's state by one rule 
   // substring inside the onRendered line before it
   assert.doesNotMatch(watch, /^\s*rearm\(\);\s*$/m, "no standalone arm: the paint's arm is the only one, and a line that observes nothing carries no pin");
   assert.equal((watch.match(/rearm\(\)/g) || []).length, 1, "rearm is called from the onRendered hook alone (its definition aside)");
-  // a 0 by 0 report is skipped, and the comment states the skip as a rule with its residual, not as a list of what a 0 by 0
-  // report is (the author's closing pass after the file review's round 3, behaviour-4): the roads the product has to such a report (the viewer's hide, a gated
-  // placeholder's img), whose show or restore reports the real box; what the skip is no guard for (a figure whose REAL box is
-  // 0 by 0, which the floor refuses at its load; the file review's round 3, correctness-1); and the residual, a figure hidden
-  // after its load by any other road keeping its control, which no road in the product reaches; the comment's prose is read with
-  // its line breaks collapsed, so a rewrap holds; file-view-figure-floor-browser.test.ts drives the hide, the show and both
-  // authored shapes
+  // a 0 by 0 report is skipped, and the comment states the skip as a rule over the report, whatever produced it (the file
+  // review's round 4, regression-3: the reason before it, narrowed in the file review's round 3 and stated with its residual by
+  // the author's closing pass after the file review's round 3, behaviour-4, still named its roads as a closed list, and a loaded
+  // figure the author gave no box was a road outside it): the transient reports (the viewer's hide, a gated placeholder's img),
+  // whose show or restore reports the real box; the final one (a figure whose REAL box is 0 by 0, which the floor refuses at
+  // its load; the file review's round 3, correctness-1); and the residual, a figure hidden after its load by any other road
+  // keeping its control, with the product's one road to it, an expanded callout folded by the reader, and why the control is
+  // harmless there (the file review's round 4, ui-1). The residual sentence is pinned whole, through the code line after it, so
+  // a clause appended to it cannot go stale unpinned; the comment's prose is read with its line breaks collapsed, so a rewrap
+  // holds; file-view-figure-floor-browser.test.ts drives the hide, the show and both authored shapes
   const skipProse = watch.replace(/^\s*\/\/ ?/gm, "").replace(/\s+/g, " ");
-  assert.match(skipProse, /A 0 by 0 report is skipped\. The roads the product has to such a report are the viewer's hide/, "the comment names the roads to the report");
-  assert.match(skipProse, /The skip decides nothing, so it is no guard for a figure whose real box is 0 by 0/, "and what it is not: the loaded figure with no box is the floor's");
-  assert.match(skipProse, /The residual the skip leaves: a figure hidden after its load by any other road keeps a standing control over the prose before it/, "and the residual it leaves");
+  assert.match(skipProse, /A 0 by 0 report is skipped: a 0 by 0 report decides nothing, whatever produced it; the figure is decided by its load or its error \(armFigureControls\), by the gate's restore, or by its next report with a box/, "the skip is a rule over the report, not a list of roads to it");
+  assert.match(skipProse, /The viewer's hide \(display:none on the pane or its page, the dashboard at a viewport where the pane hides\) and a gated placeholder's img before its click are transient: the show or the restore reports the real box, which is decided/, "the transient reports, examples and not the roads");
+  assert.match(skipProse, /A loaded figure whose real box is 0 by 0 \(an author's `hidden` or `width="0"`\) is final: it reports 0 by 0 for as long as it stands, and the skip is no guard for it and needs to be none, since the floor refused it at its load/, "the final report: the loaded figure with no box is the floor's");
+  assert.match(skipProse, /The residual the skip leaves: a figure hidden after its load by any other road keeps a standing control until its next report with a box; the product's one such road, an expanded callout folded by the reader, reports nothing while folded and folds the control with the figure, and the first report with a box after the reopen decides the figure again \(the docstring above; the file review's round 4, ui-1\)\. if \(e\.contentRect\.width === 0/, "the residual, whole, with the product's road to it and why it is harmless there, and nothing after it");
   assert.match(VIEW, /const figureWatch = watchFigureBoxes\(body, path, ctx\.onRendered\);\n\s*if \(figureWatch\) ctx\.onClose\(figureWatch\);/, "armed once per open beside the load and error pair, dropped through the close hooks");
   const paint = between(VIEW, "function addFigureControls(box: HTMLElement, filePath: string): void {", "\n}\n");
   assert.match(paint, /box\.querySelectorAll\("img"\)\.forEach\(\(img\) => \{ decideFigureControl\(img, filePath\); \}\);/, "the paint runs the same decision (a stand-in's only one)");
