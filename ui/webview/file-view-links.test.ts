@@ -12,6 +12,7 @@ import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import { inspect } from "node:util";
 import { hideEdges, staysEnumerable } from "../test-dom-shim";
+import { codeOnly } from "../test-code-only";   // the comment stripper mdBlock's order pin reads through (the compiler's ranges; file-view-seam.test.ts self-checks it)
 import * as fs from "node:fs";
 import * as path from "node:path";
 
@@ -612,6 +613,37 @@ test("linkMarkdownAnchors: a URL target opens a tab, a file target becomes a pat
   assert.equal(named.getAttribute("class"), null); assert.equal(named.getAttribute("title"), null);
 });
 
+test("linkMarkdownAnchors: the fence pass's re-parse product, an HTML anchor with no href carrying a plain `xlink:href` attribute (an svg anchor split across lines in a raw fence, re-parsed in body), is marked dead with the reason whether or not the author gave it an id or a name: it was a followable section link before the pass moved ahead of the link passes, and the sheet's bare `.fileview-md a` rule paints an href-less anchor in the link ink; the key is the attribute, so an author's HTML anchor spelled with xlink:href in the prose is marked too; an author's anchor target (an id or a name, no xlink attribute) stays unmarked", async () => {
+  // The shape is the POST-RE-PARSE one (the fork PR review's round 2, findings correctness-2, extra7-1 and tests-4, measured in
+  // Chromium, Firefox and WebKit, 2026-09-20): the HTML parser keeps `xlink:href` on an HTML <a> as an attribute of that name in
+  // no namespace, which mdBlock's fold (`a[*|href]`, a namespaced match) does not select, so no `href` is ever written on it and
+  // it reaches this module's href-less arm still carrying the attribute; the author's id arrives under the sanitizer's prefix.
+  // The one-line svg anchor is not this shape: the fold moves its namespaced xlink:href to `href` before this pass runs.
+  const { linkMarkdownAnchors, DEAD_LINK_TITLE } = await import("./file-view-links");
+  const split = (id: string | null, name: string | null) => {
+    const a = el("a", "", "top"); a.setAttribute("xlink:href", "#top");
+    if (id !== null) a.setAttribute("id", id);
+    if (name !== null) a.setAttribute("name", name);
+    return a;
+  };
+  const withId = split("user-content-split-id", null), withName = split(null, "user-content-split-name"), bare = split(null, null);
+  const inProse = split("user-content-prose-x", null);   // the same shape an author writes in prose, no fence and no re-parse: the key is the attribute
+  const target = el("a", "", ""); target.setAttribute("id", "user-content-results");            // an author's anchor target: exempt
+  const namedTarget = el("a", "", ""); namedTarget.setAttribute("name", "user-content-install");
+  const top = el("h2", "", "Top"); top.setAttribute("id", "top");                                // the split anchors' target exists, and still they are dead: they have no href to follow
+  const box = el("div", "fileview-md", top, el("pre", "", el("code", "", withId, withName, bare)), el("p", "", target, namedTarget, inProse));
+  linkMarkdownAnchors(box as unknown as HTMLElement, "/tmp/TESTHOST/notes-api/docs/guide.md");
+  for (const a of [withId, withName, bare, inProse]) {
+    assert.ok(a.classes.includes("fv-dead"), "marked dead, id or name notwithstanding, in a fence or in the prose: " + a.className + " id=" + a.getAttribute("id") + " name=" + a.getAttribute("name"));
+    assert.equal(a.getAttribute("title"), DEAD_LINK_TITLE, "and the title says why");
+    assert.equal(a.getAttribute("href"), null, "no href is minted: the anchor follows nothing"); assert.equal(a.dataset.act, undefined);
+    assert.ok(!a.classes.includes("fv-frag"), "not a section link: the fragment arm reads `href` alone");
+  }
+  assert.equal(withId.getAttribute("id"), "user-content-split-id", "the author's id stays: a `[x](#split-id)` elsewhere still lands here");
+  // the exempt case, pinned: an anchor target with no xlink attribute is neither classed nor titled
+  for (const a of [target, namedTarget]) { assert.equal(a.getAttribute("class"), null, "an author's anchor target is left alone: " + a.getAttribute("id") + a.getAttribute("name")); assert.equal(a.getAttribute("title"), null); }
+});
+
 test("in a rendered body the prose's bare paths link under the viewer's gate, a fenced block's URL links, and inline code's bare filename does not", async () => {
   const { linkifyFileText } = await import("./file-view-links");
   const md = "/tmp/TESTHOST/notes-api/docs/guide.md";
@@ -796,7 +828,7 @@ test("wantsOwnTab reads a Cmd/Ctrl-click or the middle button; openFileTab opens
 });
 
 // ── the viewer's wiring, at source ────────────────────────────────────────────────────────────────
-test("source: codeBlock and mdBlock run the one pass on the DOM they built; the markdown anchors are sorted before the fenced-block highlight and the text after it; marked's parse carries the link-target hook per call; mdBlock has no fallback (the Raw rows a failed render falls back to are codeBlock's, linkified there)", () => {
+test("source: codeBlock and mdBlock run the one pass on the DOM they built; in mdBlock the fenced-block highlight runs over the sanitizer's body, then over the adopted box the markdown anchors are sorted, then the text; marked's parse carries the link-target hook per call; mdBlock has no fallback (the Raw rows a failed render falls back to are codeBlock's, linkified there)", () => {
   assert.match(VIEW, /import \{ linkifyFileText, linkMarkdownAnchors, viewerWalkTokens, fragmentTarget, URL_LINK_CLASS, FRAG_LINK_CLASS \} from "\.\/file-view-links";/);
   const codeFn = VIEW.split("function codeBlock(text: string, path: string, wrapLines: boolean): HTMLElement {")[1].split("\n}\n")[0];
   assert.match(codeFn, /code\.innerHTML = wrapNumberedHtml\(hl !== null \? hl : escapeHtml\(text\)\);\n\s*linkifyFileText\(code, path\);/, "the wrap branch: after the rows are in the DOM");
@@ -809,15 +841,29 @@ test("source: codeBlock and mdBlock run the one pass on the DOM they built; the 
   // the viewer always builds the wrap view (each line its own .fv-cl row), which is what scrollToLine reads
   const openFnWrap = VIEW.split("export function openFileView(")[1].split("function offersDownload")[0];
   assert.ok((openFnWrap.match(/codeBlock\([^)]*\)/g) || []).every((c) => /, true\)$/.test(c)), "every codeBlock call in the viewer asks for wrap mode: " + (openFnWrap.match(/codeBlock\([^)]*\)/g) || []).join(" | "));
-  const anchorsAt = mdFn.indexOf("\n    linkMarkdownAnchors(box, doc.path);\n");
-  const hlAt = mdFn.indexOf('box.querySelectorAll("pre code").forEach');
-  const textAt = mdFn.indexOf('if (doc && doc.kind === "file") linkifyFileText(box, doc.path);');
-  assert.ok(anchorsAt > 0 && hlAt > anchorsAt && textAt > hlAt && mdFn.indexOf("return box;") > textAt, "anchors → highlight → text, then return");
+  // The order of mdBlock's three passes over the rendered document, read off comment-stripped code (codeOnly, ui/test-code-only.ts:
+  // a comment quoting a pinned line cannot satisfy an index compare). The fenced-block highlight (the fence pass: the highlight, the
+  // rows, Copy) runs first, over the sanitizer's body `clean`, before the figure chain and the adoption (2026-09-20: its rows
+  // re-parse markup, so the chain judges what the re-parse creates; where it sits between the sanitize and the chain is
+  // file-view-seam.test.ts's pin). Then, over the adopted `box`, the file kind's anchors, then the text. The text pass MUST follow
+  // the highlight: it writes anchors and spans into the code blocks' text nodes (inPre), which the highlight's innerHTML write would
+  // drop and the rows' re-parse would strip of their handler properties, and its line units in a fence are the `.cl` rows the pass
+  // makes. Until the move the anchors pass ran BEFORE the highlight; nothing depended on that order: the anchors pass writes
+  // attributes and handler properties on <a> elements and reads hrefs, names and ids, and the highlight reads a code element's
+  // className and textContent and creates spans (a fence marked made holds no anchor; an author's raw-HTML anchor inside a fence is
+  // the one the re-parse could reach, and it is stamped AFTER the re-parse now, so the handler properties, which no serialization
+  // carries, stand).
+  const mdCode = codeOnly(mdFn);
+  const hlAt = mdCode.indexOf('clean.querySelectorAll("pre code").forEach');
+  const anchorsAt = mdCode.indexOf("\n    linkMarkdownAnchors(box, doc.path);\n");
+  const textAt = mdCode.indexOf('if (doc && doc.kind === "file") linkifyFileText(box, doc.path);');
+  assert.ok(hlAt > 0 && anchorsAt > hlAt && textAt > anchorsAt && mdCode.indexOf("return box;") > textAt, "the highlight over `clean`, then the anchors, then the text over `box`, then return");
+  assert.equal(mdCode.indexOf('box.querySelectorAll("pre code")'), -1, "no second fence pass over the box");
   // no fallback in mdBlock since Slice 7 of plans/markdown-viewer.md (item 1): a throw propagates to renderBody, whose catch paints
   // the failure line and the text as Raw rows through codeBlock, which linkifies the rows it built (the wrap branch above)
   assert.equal(mdFn.indexOf("box.textContent = text;"), -1, "no bare-text fallback in mdBlock");
   assert.doesNotMatch(mdFn, /\brendered\s*=|if \(rendered/, "no `rendered` flag and no gate on it: both passes run on every render");
-  assert.ok(mdFn.indexOf('if (doc && doc.kind === "file") {') > 0 && mdFn.indexOf('if (doc && doc.kind === "file") {') < anchorsAt, "the file kind's anchors are sorted by the module");
+  assert.ok(mdCode.indexOf('if (doc && doc.kind === "file") {') > 0 && mdCode.indexOf('if (doc && doc.kind === "file") {') < anchorsAt, "the file kind's anchors are sorted by the module");
   assert.equal((mdFn.match(/querySelectorAll\(LINK_SEL\)/g) || []).length, 2, "the two link loops are the URL kind's (resolution against the URL) and the no-file arm's (a tab, or an in-document fv-anchor): neither runs over a file's anchors; both select LINK_SEL, every link element (md-sanitize-viewer-links.test.ts)");
   assert.doesNotMatch(mdFn, /querySelectorAll\("a\[href\]"\)/, "no a[href] loop is left: it missed an SVG anchor's xlink:href");
 });
