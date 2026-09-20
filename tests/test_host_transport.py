@@ -1792,6 +1792,244 @@ class BackendHostRules(unittest.TestCase):
         self.assertIn("hostAttachFailed", sb.read_reg(Path(d), SID) or {}, "a boot is not new information; the marker stays")
         self.assertTrue(any("stays stood down" in l for l in be._test_logs), "the boot says so")
 
+    # ── the read roads through the descent (the round-7 second addendum of fork PR #814's review, 2026-09-20) ──
+    # Each case plants the swap the reviewer's ruling names: hosts/ is a symlink to a directory of a peer's that holds a
+    # forged <sid>/ (identity.json, a journal, host.log), and the kernel's read on one road runs. Red at the addendum's
+    # head, where each read took a PATH and so read the peer's content through the link; green once the read takes a
+    # name under the descriptors of open_host_dirs_if_present, which refuses the link before anything under it is read
+    # and files one host.directory-refused row with the remedy.
+
+    def _peer(self, d, identity=None, journal=0, host_log=()):
+        """A peer's directory outside hosts/ with a forged <sid>/ in it, and hosts/ swapped for a symlink to it."""
+        peer = Path(d) / "peer"
+        (peer / SID).mkdir(parents=True, mode=0o755)
+        if identity is not None:
+            (peer / SID / "identity.json").write_text(json.dumps(identity))
+        if journal:
+            with open(peer / SID / "journal-0.jsonl", "w") as f:
+                for i in range(journal):
+                    f.write(json.dumps({"type": "assistant" if i % 2 == 0 else "result", "n": i, "peer": True}) + "\n")
+        if host_log:
+            (peer / SID / "host.log").write_text("".join(json.dumps(r) + "\n" for r in host_log))
+        hosts = Path(d) / "hosts"
+        self.assertFalse(hosts.exists(), "a fresh root: nothing of ours at hosts/")
+        hosts.symlink_to(peer)
+        return peer, hosts
+
+    def _refusal_rows(self, d):
+        p = Path(d) / sb.SESSION_EVENTS_FILE
+        rows = [json.loads(l) for l in p.read_text().splitlines()] if p.exists() else []
+        return [r for r in rows if r["kind"] == "host.directory-refused"]
+
+    def test_the_lease_applies_read_refuses_a_swapped_hosts_and_vouches_for_no_host(self):
+        """The connect road with hosts OFF: _host_lease_applies asks whether a host held the session by identity.json's
+        existence. Through the addendum's head that was `(hdir / "identity.json").exists()`, by path, so the peer's
+        identity.json behind the link answered True and the session took the host road over the peer's directory. Now
+        the read takes a name under the read roads' descent, which refuses the link: False, one host.directory-refused
+        row naming the link with the read roads' remedy (no 0700 clause: the mode is not that descent's condition), and
+        the session runs as the kernel child the setting asks for. Red before: `True is not False`."""
+        d, be = self._be()
+        Path(d, "session-hosts").write_text("off")
+        peer, hosts = self._peer(d, identity={"pid": 7, "start": "p"})
+        applies = be._host_lease_applies(types.SimpleNamespace(sid=SID, name="web"))
+        self.assertIs(applies, False, "a directory the descent refuses vouches for no host; through the link the peer's identity.json said True")
+        rows = self._refusal_rows(d)
+        self.assertEqual(len(rows), 1, self._kinds(d))
+        self.assertEqual(self._kinds(d), ["host.directory-refused"])
+        self.assertTrue(rows[0]["text"].startswith("the session host for web may have left records this kernel does not read: hosts directory %s is a symlink, not a directory. " % hosts), rows[0]["text"])
+        self.assertIn("A hosts/ or hosts/<sid>/ that is not a directory this user owns is refused; replace it with a directory, or point the state root elsewhere (ROMP_STATE_DIR or XDG_STATE_HOME)", rows[0]["text"])
+        self.assertNotIn("at 0700", rows[0]["text"], "the read roads' descent does not check the mode, so its remedy does not ask for it")
+        self.assertTrue(hosts.is_symlink(), "the link is left, not replaced")
+        self.assertEqual((peer / SID / "identity.json").read_text(), json.dumps({"pid": 7, "start": "p"}), "the peer's file untouched")
+
+    def test_the_leftover_trigger_refuses_a_swapped_hosts_before_the_spawn_and_replays_nothing_of_the_peers(self):
+        """The connect road with hosts ON and no lease: the leftover trigger asks whether hosts/<sid>/ stands. Through
+        the addendum's head that was `hdir.exists()`, by path, so the peer's <sid>/ behind the link put the peer's
+        leftover on the orphan road, whose reads (identity.json, the journal glob, the replay transport) took the link
+        and replayed the peer's journal into the session before the spawn road's own helper refused the link. Now the
+        trigger's descent refuses the link first: the launch is refused as the spawn road refuses its own (one
+        host.directory-refused row with the directory remedy, the launch error), the replay transport is never built,
+        no spawn runs. Red before: the replay transport was built over the peer's directory (`[-1] != []`), and a
+        host.tail-replayed row stood beside the refusal."""
+        d, be = self._be()
+        peer, hosts = self._peer(d, identity={"pid": 7, "start": "p"}, journal=3)
+        sb.write_reg(Path(d), SID, {"sid": SID, "name": "web", "alive": True, "lastSid": SID})
+        s = types.SimpleNamespace(sid=SID, name="web", _host_intent=True, _host=None, _host_is_attach=False,
+                                  _seed_for_dead_cli=lambda cli: None, _options_login="", _host_end_grace=None,
+                                  _on_cli_stderr=lambda line: None)
+        acks, spawned = [], []
+        with mock.patch.dict(sys.modules, {"claude_agent_sdk": self._sdk_stub()}), \
+             mock.patch.object(ht.HostTransport, "from_journal", classmethod(lambda cls, hdir, ack=-1, **kw: acks.append(ack) or types.SimpleNamespace(hdir=hdir))), \
+             mock.patch.object(be, "_replay_drain", mock.AsyncMock()), \
+             mock.patch.object(be, "_spawn_host", lambda *a, **k: spawned.append(a) or types.SimpleNamespace(poll=lambda: 1, returncode=1, pid=1)):
+            with self.assertRaises(sb.CLIConnectionErrorLike) as cm:
+                asyncio.run(be._host_transport_for(s, types.SimpleNamespace(), (None, None, None)))
+        self.assertEqual(acks, [], "nothing of the peer's is replayed: the replay transport was never built")
+        self.assertEqual(spawned, [], "no spawn: the launch is refused at the trigger")
+        self.assertEqual(self._kinds(d), ["host.directory-refused"], "one row, the refusal's kind, no host.tail-replayed")
+        msg = str(cm.exception)
+        self.assertTrue(msg.startswith("the session host was not started: hosts directory %s is a symlink, not a directory. A hosts/ or hosts/<sid>/ that is not a directory this user owns at 0700 is refused" % hosts), msg)
+        self.assertTrue(hosts.is_symlink(), "the link is left, not replaced")
+        self.assertEqual(sorted(os.listdir(peer / SID)), ["identity.json", "journal-0.jsonl"], "the peer's directory holds what the peer put there")
+
+    def test_the_orphan_road_refuses_a_swapped_hosts_and_replays_nothing_of_the_peers(self):
+        """The orphan road itself (_host_orphan_recover, the lease-less leftover arm): it reads identity.json to decide
+        whether the registry's hostAck names the host that wrote it, then replays the journal past that offset. Through
+        the addendum's head both took a path: the peer's identity.json, forged to the registry's hostAck, vouched for
+        the offset, and the peer's journal was replayed from it into the session. Now identity.json is read by name
+        under the read roads' descent, which refuses the link: one host.directory-refused row saying the journal is not
+        replayed, no replay transport, no watermark seed for the peer's CLI, and the road still clears the lease and
+        the registry's ack and asks the removal road, which refuses the same link on its own descent and logs it. Red
+        before: `[1] != []`, the peer's journal replayed from the offset the peer's identity vouched for."""
+        d, be = self._be()
+        sb.write_reg(Path(d), SID, {"sid": SID, "name": "web", "alive": True, "lastSid": SID,
+                                     "hostAck": {"host": "7:p", "cli": "8:c", "offset": 1}})
+        peer, hosts = self._peer(d, identity={"pid": 7, "start": "p"}, journal=3)
+        seeds, acks = [], []
+        s = types.SimpleNamespace(sid=SID, name="web", _host_intent=True, _host=None, _host_is_attach=False, _seed_for_dead_cli=seeds.append)
+        capture = classmethod(lambda cls, hdir, ack=-1, **kw: acks.append(ack) or types.SimpleNamespace(hdir=hdir))
+        with mock.patch.dict(sys.modules, {"claude_agent_sdk": self._sdk_stub()}), \
+             mock.patch.object(ht.HostTransport, "from_journal", capture), mock.patch.object(be, "_replay_drain", mock.AsyncMock()):
+            asyncio.run(be._host_orphan_recover(s, types.SimpleNamespace(), None, (None, None, None), died=False))
+        self.assertEqual(acks, [], "nothing of the peer's is replayed: the replay transport was never built")
+        self.assertEqual(seeds, [], "no watermark seed for a CLI the peer's identity named")
+        self.assertEqual(self._kinds(d), ["host.directory-refused"], "one row, the refusal's kind; no host.tail-replayed")
+        text = self._refusal_rows(d)[0]["text"]
+        self.assertTrue(text.startswith("the session host for web is gone, and its journal is not replayed: hosts directory %s is a symlink, not a directory. " % hosts), text)
+        self.assertIn("this user owns is refused", text)
+        self.assertTrue(any("not cleared" in l for l in be._test_logs), "the removal road refused the same link and said so")
+        reg = sb.read_reg(Path(d), SID) or {}
+        self.assertNotIn("hostAck", reg, "the road still drops the ack it could not vouch for")
+        self.assertTrue(hosts.is_symlink(), "the link is left, not replaced")
+        self.assertEqual(sorted(os.listdir(peer / SID)), ["identity.json", "journal-0.jsonl"], "the peer's directory holds what the peer put there")
+
+    def test_the_served_road_refuses_a_swapped_hosts_and_files_none_of_the_peers_rows(self):
+        """The served road (_file_host_log_rows, at the host's hello and at its exit): host.log's unfiled lines become
+        problem rows. Through the addendum's head the file was read by path, after the spawn road's descriptors were
+        closed, so a peer-authored host.log behind the link had its rows filed as this session's problem rows
+        (host.end-forced, host.hook-self-answered) and its line count kept as the registry's position. Now the file is
+        read by name under the read roads' descent, which refuses the link: one host.directory-refused row, none of the
+        peer's rows, no position. Red before: `'host.end-forced' unexpectedly found in [...]`."""
+        d, be = self._be()
+        rows = [{"t": 1, "kind": "end-forced", "cliPid": 5},
+                {"t": 2, "kind": "hook-self-answered", "event": "Stop", "callbackId": "hook_0", "parkedS": 480}]
+        peer, hosts = self._peer(d, host_log=rows)
+        sb.write_reg(Path(d), SID, {"sid": SID, "name": "web", "alive": True})
+        be._file_host_log_rows(types.SimpleNamespace(sid=SID, name="web", _host=None))
+        kinds = self._kinds(d)
+        self.assertNotIn("host.end-forced", kinds, "the peer's row was filed as this session's: the read took the link")
+        self.assertNotIn("host.hook-self-answered", kinds)
+        self.assertEqual(kinds, ["host.directory-refused"], "one row, the refusal's kind")
+        text = self._refusal_rows(d)[0]["text"]
+        self.assertTrue(text.startswith("the session host for web wrote a log this kernel does not read: hosts directory %s is a symlink, not a directory. " % hosts), text)
+        self.assertIsNone((sb.read_reg(Path(d), SID) or {}).get("hostLogPos"), "no position from a file that was not read")
+        self.assertTrue(hosts.is_symlink(), "the link is left, not replaced")
+        self.assertEqual((peer / SID / "host.log").read_text(), "".join(json.dumps(r) + "\n" for r in rows), "the peer's file untouched")
+
+
+class ReadDescent(unittest.TestCase):
+    """The read roads' descent and its three readers at function level (host_transport.open_host_dirs_if_present,
+    host_file_exists, read_host_file, host_sock_present; the round-7 second addendum of fork PR #814's review,
+    2026-09-20): the spawn road's precondition ported in the two parts that guard a read (each component opened
+    O_DIRECTORY|O_NOFOLLOW off the state root and fstat-verified a directory of this uid, the file or the name then taken
+    relative to the descriptor) and not in the third (the mode), with an absent component answered None."""
+
+    def _root(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        return Path(d)
+
+    def test_absent_answers_none_a_loose_directory_of_ours_is_admitted_and_every_other_shape_is_refused(self):
+        root = self._root()
+        self.assertIsNone(ht.open_host_dirs_if_present(root, SID), "no hosts/ at all: None, not a refusal")
+        hosts = root / "hosts"
+        hosts.mkdir(mode=0o775)                                        # loose, ours: an install from before 2026-09-19
+        self.assertIsNone(ht.open_host_dirs_if_present(root, SID), "hosts/ with no <sid>: None")
+        (hosts / SID).mkdir(mode=0o775)
+        dirs = ht.open_host_dirs_if_present(root, SID)
+        self.assertIsNotNone(dirs, "a loose directory of ours at both components is admitted: the mode is not this descent's condition")
+        with dirs:
+            self.assertEqual(os.fstat(dirs.hosts).st_ino, os.lstat(hosts).st_ino, "the first descriptor is hosts/")
+            self.assertEqual(os.fstat(dirs.dir).st_ino, os.lstat(hosts / SID).st_ino, "the second is hosts/<sid>/")
+        # the absence is its own class, a subclass, so the spawn road's callers see the refusal they always saw
+        with self.assertRaises(ht.HostDirRefused) as cm:
+            ht.open_host_dirs(self._root(), SID)
+        self.assertIsInstance(cm.exception, ht.HostDirAbsent)
+        self.assertIn("does not exist", str(cm.exception))
+        self.assertIsNone(cm.exception.errno)
+        # a link at hosts/, a link at <sid>, a file at <sid>: each refused under the parent class, never Absent
+        peer = self._root() / "peer"
+        (peer / SID).mkdir(parents=True, mode=0o755)
+        for arm, plant in (("link at hosts/", lambda r: (r / "hosts").symlink_to(peer)),
+                           ("link at <sid>", lambda r: ((r / "hosts").mkdir(mode=0o700), (r / "hosts" / SID).symlink_to(peer / SID))),
+                           ("file at <sid>", lambda r: ((r / "hosts").mkdir(mode=0o700), (r / "hosts" / SID).write_text("")))):
+            with self.subTest(arm=arm):
+                r = self._root()
+                plant(r)
+                with self.assertRaises(ht.HostDirRefused) as cm:
+                    ht.open_host_dirs_if_present(r, SID)
+                self.assertNotIsInstance(cm.exception, ht.HostDirAbsent, arm)
+                self.assertIn("is a symlink, not a directory" if "link" in arm else "is not a directory", str(cm.exception))
+                self.assertIn("hosts directory %s" % (r / "hosts") if arm == "link at hosts/" else "host directory %s" % (r / "hosts" / SID), str(cm.exception))
+        # a foreign uid at <sid>, by the fstat of the object opened (a stub keyed on the object, as the removal road's pin)
+        r = self._root()
+        (r / "hosts" / SID).mkdir(parents=True, mode=0o700)
+        st = os.lstat(r / "hosts" / SID)
+        ident, real_fstat = (st.st_dev, st.st_ino), os.fstat
+
+        def fstat(fd):
+            st = real_fstat(fd)
+            if isinstance(fd, int) and stat.S_ISDIR(st.st_mode) and (st.st_dev, st.st_ino) == ident:
+                fields = list(st); fields[4] = st.st_uid + 1
+                return os.stat_result(fields)
+            return st
+        with mock.patch.object(os, "fstat", fstat), self.assertRaises(ht.HostDirRefused) as cm:
+            ht.open_host_dirs_if_present(r, SID)
+        self.assertIn("belongs to uid %d, not to us (uid %d)" % (os.geteuid() + 1, os.geteuid()), str(cm.exception))
+
+    def test_the_readers_take_names_under_the_descriptor_and_a_link_at_the_name_is_refused_naming_the_file(self):
+        root = self._root()
+        sdir = root / "hosts" / SID
+        sdir.mkdir(parents=True, mode=0o700)
+        (sdir / "identity.json").write_text(json.dumps({"pid": 7, "start": "p"}))
+        peer = self._root() / "theirs.log"
+        peer.write_text("the peer's bytes")
+        (sdir / "host.log").symlink_to(peer)
+        (sdir / "a-dir").mkdir()
+        with ht.open_host_dirs_if_present(root, SID) as dirs:
+            self.assertEqual(ht.read_host_file("identity.json", dirs), json.dumps({"pid": 7, "start": "p"}).encode())
+            self.assertTrue(ht.host_file_exists("identity.json", dirs))
+            self.assertIsNone(ht.read_host_file("absent.json", dirs), "no entry at the name: None")
+            self.assertFalse(ht.host_file_exists("absent.json", dirs))
+            with self.assertRaises(ht.HostDirRefused) as cm:
+                ht.read_host_file("host.log", dirs)
+            self.assertEqual(cm.exception.file, "host.log", "the refusal names the file, so the caller's remedy is the file's")
+            self.assertIn("host.log in host directory %s is a symlink, not a regular file" % sdir, str(cm.exception))
+            self.assertFalse(ht.host_file_exists("host.log", dirs), "a link at the name is not the file")
+            self.assertEqual(peer.read_text(), "the peer's bytes", "nothing behind the link was opened")
+            with self.assertRaises(IsADirectoryError):
+                ht.read_host_file("a-dir", dirs)                    # the open's own error, not the class
+            self.assertFalse(ht.host_file_exists("a-dir", dirs))
+
+    def test_host_sock_present_reads_the_published_name_under_the_hosts_descriptor_and_not_the_path(self):
+        root = self._root()
+        (root / "hosts" / SID).mkdir(parents=True, mode=0o700)
+        name = ht.host_sock(root, SID).name
+        peer = self._root() / "peer"
+        (peer / SID).mkdir(parents=True, mode=0o755)
+        (peer / name).write_text("the peer's entry at the published name")
+        with ht.open_host_dirs_if_present(root, SID) as dirs:
+            self.assertFalse(ht.host_sock_present(dirs, name), "nothing published")
+            (root / "hosts" / name).touch()
+            self.assertTrue(ht.host_sock_present(dirs, name), "an entry at the name in the verified hosts/")
+            os.unlink(root / "hosts" / name)
+            os.rename(root / "hosts", root / "hosts.moved")          # the swap, after the descent
+            (root / "hosts").symlink_to(peer)
+            self.assertTrue(ht.host_sock(root, SID).exists(), "by PATH the peer's entry answers: the read the poll made through round 7")
+            self.assertFalse(ht.host_sock_present(dirs, name), "by NAME under the descriptor it does not: the descriptor names the directory the spec was written in")
+            (root / "hosts.moved" / name).touch()
+            self.assertTrue(ht.host_sock_present(dirs, name), "and an entry in that directory does")
+
 
 class Pins(unittest.TestCase):
     @unittest.skipUnless(SDK, "the SDK is not importable here")

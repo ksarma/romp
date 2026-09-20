@@ -13731,10 +13731,33 @@ class SdkBackend:
         the lease alone, the leftover was never entered with the setting off: its tail was lost and its
         directory, hostAck and hostLogPos stood until the setting came back and the stale tail replayed into a
         session that had run turns as a plain child since (the commit-8 review's item 1)."""
-        if _ht().host_lease_state(read_lease(self.state_dir, sess.sid), time.time()) in ("attach", "orphan"):
+        ht = _ht()
+        if ht.host_lease_state(read_lease(self.state_dir, sess.sid), time.time()) in ("attach", "orphan"):
             return True
-        hdir = _ht().host_dir(self.state_dir, sess.sid)
-        return (hdir / "identity.json").exists() or any(hdir.glob("journal-*.jsonl"))
+        # identity.json's existence through the read roads' descent (open_host_dirs_if_present; the round-7 second
+        # addendum of the review, 2026-09-20): hosts/ and <sid> each opened O_DIRECTORY|O_NOFOLLOW and verified (a
+        # directory, this uid's), the file stat'd by NAME under the second. Through round 7 this read took a path, so a
+        # hosts/ swapped for a symlink to a peer's directory answered True off the peer's identity.json. A refusal (a
+        # link, a non-directory, a foreign uid) is filed as a problem row with the remedy and answers False: no host this
+        # kernel can vouch for held the session, and with hosts off the session runs as a kernel child; an absent
+        # directory answers False with no row.
+        try:
+            dirs = ht.open_host_dirs_if_present(self.state_dir, sess.sid)
+        except ht.HostDirRefused as e:
+            self._refused_directory_row(sess, e, "may have left records this kernel does not read", mode_checked=False)
+            return False
+        if dirs is None:
+            return False
+        with dirs:
+            if ht.host_file_exists("identity.json", dirs):
+                return True
+        hdir = ht.host_dir(self.state_dir, sess.sid)
+        # UNCONVERTED (the round-7 second addendum, 2026-09-20): the journal listing is a GLOB over the directory, by
+        # path; its descriptor form is a scandir off the <sid> descriptor with a name match (the shape _rmtree_at has),
+        # a change of mechanism and not a swap of one call, so it is its own PR by the reviewer's rule. Reached only
+        # after the descent above verified hosts/<sid>/ as a directory of ours; a re-point landing between that descent
+        # and this line is read here.
+        return any(hdir.glob("journal-*.jsonl"))
 
     def _kernel_identity(self) -> dict:
         h = self._lease_holder()
@@ -13754,7 +13777,6 @@ class SdkBackend:
         now = time.time()
         lease = read_lease(self.state_dir, sess.sid)
         state = ht.host_lease_state(lease, now)
-        hdir = ht.host_dir(self.state_dir, sess.sid)
         if state == "orphan" and self._host_recently_ended.get(sess.sid) == self._holder_ident(lease):
             # the host this kernel just asked to end (an effort change's reconnect, a kill): its lease removal
             # races our reconnect; it ended, it did not die. Wait for the lease to go (bounded), then proceed.
@@ -13766,11 +13788,26 @@ class SdkBackend:
         if state == "orphan":
             await self._host_orphan_recover(sess, opts, lease, msg_classes, died=True)
             lease, state = None, "none"
-        elif state == "none" and lease is None and hdir.exists():
-            # a leftover directory with no lease: the host ended on its own (its idle grace, unattended) after
-            # records no kernel consumed. Replay that tail through the same road (no wait: no holder to wait
-            # for; no host.died row: nothing died), then clear the directory.
-            await self._host_orphan_recover(sess, opts, None, msg_classes, died=False)
+        elif state == "none" and lease is None:
+            # the leftover trigger: whether hosts/<sid>/ stands, read through the read roads' descent (round 7's second
+            # addendum of the review, 2026-09-20; host_transport.open_host_dirs_if_present: hosts/ and <sid> each opened
+            # O_DIRECTORY|O_NOFOLLOW and verified a directory of this uid, None when either is absent). Through round 7
+            # this was `hdir.exists()`, by path, so a hosts/ swapped for a symlink to a peer's directory holding <sid>/
+            # put the peer's leftover on the orphan road, whose reads then took the link. A refusal (a link at either
+            # component, a non-directory, another uid's directory) is the LAUNCH's refusal, filed as the spawn road
+            # files its own (_refuse_host_directory: one host.directory-refused row with the directory remedy, then the
+            # launch error): every road from here either replays under that directory or spawns into it, and the spawn
+            # road's helpers would refuse the same object a few syscalls later with the same row.
+            try:
+                leftover = ht.open_host_dirs_if_present(self.state_dir, sess.sid)
+            except ht.HostDirRefused as e:
+                self._refuse_host_directory(sess, e)
+            if leftover is not None:
+                leftover.close()
+                # a leftover directory with no lease: the host ended on its own (its idle grace, unattended) after
+                # records no kernel consumed. Replay that tail through the same road (no wait: no holder to wait
+                # for; no host.died row: nothing died), then clear the directory.
+                await self._host_orphan_recover(sess, opts, None, msg_classes, died=False)
         # every road from here that is not an attach LAUNCHES a CLI (a kernel child, a fresh host); the launch stamp and
         # the fresh-CLI block are made per CLI, not here: at the host's hello (_on_host_hello) or, for a kernel child,
         # at the connect (2026-09-14)
@@ -13880,7 +13917,12 @@ class SdkBackend:
                 # the road _spawn_road_failed exists to close; Popen's own OSError joining it is intended.
                 self._spawn_road_failed(sess, e, "the host process could not be started (its directory descent, its host.stderr open or the process start failed)")
             deadline = time.time() + ht.SOCKET_WAIT_S
-            while not sock.exists():                          # loop-ok: a bounded wait on the socket appearing
+            # the poll takes the published NAME under the held hosts/ descriptor (host_sock_present; the round-7 second
+            # addendum, 2026-09-20): through round 7 it was `sock.exists()`, by path, so a hosts/ re-pointed during the
+            # wait was polled through the link and a peer's entry at <sid8>.sock ended the wait; now the wait ends on an
+            # entry in the directory the spec was written in and nowhere else. The connect that follows the wait
+            # (_new_host_transport, HostTransport.connect) still takes the path: named unconverted at that line.
+            while not ht.host_sock_present(dirs, sock.name):  # loop-ok: a bounded wait on the socket appearing
                 if proc.poll() is not None:
                     # the host's last word when it left one (an SDK pin mismatch names both versions and the repin
                     # command there; a spawn failure its exception type, with the version it ran beside it when the
@@ -14004,17 +14046,33 @@ class SdkBackend:
         kernel-4 of round 5, kernel-2 and tests-1 of round 6). What does reach here with an errno behind it, since
         round 7 (2026-09-20): a directory-shape errno from the two helpers (a regular file, a FIFO, a dangling symlink
         or a symlink to a file at hosts/ or hosts/<sid>/, a plain-file state root, a re-point to a dangling link), which
-        write_spawn_spec words as a refusal under this class (host_transport.HELPER_SHAPE_ERRNOS)."""
+        write_spawn_spec words as a refusal under this class (host_transport.HELPER_SHAPE_ERRNOS). Since the round-7
+        second addendum (2026-09-20) the connect road's leftover trigger in _host_transport_for hands here too: its
+        descent refused, so the launch that would follow is refused before its own helpers run, with this row and this
+        error."""
+        said = self._refused_directory_row(sess, e, "was not started")
+        raise CLIConnectionErrorLike("the session host " + said)
+
+    def _refused_directory_row(self, sess, e, did: str, mode_checked: bool = True) -> str:
+        """One host.directory-refused problem row for a refusal of the descent (host_transport.HostDirRefused) on any
+        road, the shape _refuse_host_directory has filed since round 4 of the review and the read roads file since the
+        round-7 second addendum (2026-09-20): `did` is the road's clause ("was not started" on the spawn road and at the
+        connect road's leftover trigger; what was not read on the read roads), then the reason with its path, then the
+        remedy worded for the shape: a file's when the refusal names a link at spawn.json, host.stderr, identity.json or
+        host.log (`e.file`), else the directory's. `mode_checked` is False on the read roads, whose descent verifies a
+        directory of this uid at each component and not its mode (open_host_dirs_if_present says why), so their remedy
+        does not ask for 0700. Returns `said` for the caller's launch error, when it raises one."""
         if getattr(e, "file", None):
             remedy = ("A %s under hosts/<sid>/ that is a symlink is refused; remove the link, or point the state root "
                       "elsewhere (ROMP_STATE_DIR or XDG_STATE_HOME)" % e.file)
         else:
-            remedy = ("A hosts/ or hosts/<sid>/ that is not a directory this user owns at 0700 is refused; "
-                      "replace it with a directory, or point the state root elsewhere (ROMP_STATE_DIR or XDG_STATE_HOME)")
-        said = "was not started: %s. %s" % (e, remedy)
+            remedy = ("A hosts/ or hosts/<sid>/ that is not a directory this user owns%s is refused; "
+                      "replace it with a directory, or point the state root elsewhere (ROMP_STATE_DIR or XDG_STATE_HOME)"
+                      % (" at 0700" if mode_checked else ""))
+        said = "%s: %s. %s" % (did, e, remedy)
         problem_row(self.state_dir, "the session host for %s %s" % (sess.name, said), "host.directory-refused",
                     sid=sess.sid, name=sess.name, log=self._log)
-        raise CLIConnectionErrorLike("the session host " + said)
+        return said
 
     def _spawn_road_failed(self, sess, e, what: str) -> None:
         """A filesystem failure on the spawn road that is not a refusal: an OSError whose errno is outside the shape
@@ -14123,14 +14181,46 @@ class SdkBackend:
                     self._log("host (%s): still waiting for the dead host's CLI (pid %d) to finish its turn" % (sess.name, pid))
         reg = read_reg(self.state_dir, sess.sid) or {}
         ack = reg.get("hostAck") if isinstance(reg.get("hostAck"), dict) else {}
+        # identity.json through the read roads' descent (open_host_dirs_if_present and read_host_file; the round-7 second
+        # addendum of the review, 2026-09-20): hosts/ and <sid> each opened O_DIRECTORY|O_NOFOLLOW and verified (a
+        # directory, this uid's), the file opened by NAME under the second with O_NOFOLLOW. Through round 7 this read
+        # took a path, so a hosts/ swapped for a symlink to a peer's directory read the peer's identity, which then
+        # vouched for the registry's hostAck and set the replay's offset. A refusal (a link at either component or at
+        # the file, a non-directory, a foreign uid) is filed as a problem row with the remedy, and the road replays
+        # NOTHING from under that directory: the journal reads below are by path (unconverted, next comment) and would
+        # take the link, so they are not reached on the refused road; the lease and the registry's ack still go, and
+        # remove_host_dir refuses the same object on its own descent and logs it.
+        ident, refused, raw = None, None, None
         try:
-            ident = json.loads((hdir / "identity.json").read_text())
-            ident = "%s:%s" % (ident.get("pid"), ident.get("start"))
-        except Exception:
-            ident = None
+            dirs = ht.open_host_dirs_if_present(self.state_dir, sess.sid)
+            if dirs is not None:
+                with dirs:
+                    raw = ht.read_host_file("identity.json", dirs)
+        except ht.HostDirRefused as e:
+            refused = e
+            self._refused_directory_row(sess, e, "is gone, and its journal is not replayed", mode_checked=False)
+        except OSError:
+            raw = None
+        if raw is not None:
+            try:
+                ident = json.loads(raw)
+                ident = "%s:%s" % (ident.get("pid"), ident.get("start"))
+            except Exception:
+                ident = None
         offset = int(ack.get("offset", -1)) if (ack and ident and str(ack.get("host") or "") == ident) else -1
-        has_tail = any(True for _ in ht.sh.read_journal_dir(hdir, offset + 1)) if any(hdir.glob("journal-*.jsonl")) else False
-        if not died:
+        if refused is not None:
+            has_tail = False
+        else:
+            # UNCONVERTED (the round-7 second addendum, 2026-09-20), three sites by path: the journal listing here is a
+            # GLOB over the directory, and sh.read_journal_dir (kernel/session_host.py) lists the segments with the same
+            # glob and opens gaps.json and each segment by the paths it yields, here for the tail's existence and below,
+            # through HostTransport.from_journal, for the replay itself. The descriptor form is a scandir off the <sid>
+            # descriptor with a name match and opens by name under it (the shape _rmtree_at has), a rewrite of that
+            # function and its callers and not a swap of one call: its own PR by the reviewer's rule. Reached only after
+            # the descent above verified hosts/<sid>/ as a directory of ours; a re-point landing between that descent and
+            # these reads is read through the link.
+            has_tail = any(True for _ in ht.sh.read_journal_dir(hdir, offset + 1)) if any(hdir.glob("journal-*.jsonl")) else False
+        if not died and refused is None:
             if has_tail:
                 # a row only when there IS a tail: a failed spawn's leftovers (an empty journal, an identity, no
                 # lease) are cleared quietly (the commit-8 review's item 4)
@@ -14378,12 +14468,31 @@ class SdkBackend:
         row that no road had filed is dropped by this road once a refused launch followed it, and filed as this
         host's when none did; the spawn watermark the refused roads read past (host_log_mark, in bytes) does not
         reach this road. Both are pinned as the head's behaviour in tests/test_session_host_sdk_pin.py; the queued
-        served-road change, by the reviewer's ruling, is where this road is bounded on the watermark."""
-        p = _ht().host_dir(self.state_dir, sess.sid) / "host.log"
+        served-road change, by the reviewer's ruling, is where this road is bounded on the watermark.
+
+        The file is read through the read roads' descent (open_host_dirs_if_present and read_host_file; the round-7
+        second addendum of the review, 2026-09-20): hosts/ and <sid> each opened O_DIRECTORY|O_NOFOLLOW and verified (a
+        directory, this uid's), host.log opened by NAME under the second with O_NOFOLLOW. Through round 7 this read took
+        a path (`host_dir(...) / "host.log"`, `read_text()`), at the hello and at the exit, after the spawn road's
+        descriptors were closed, so a hosts/ swapped for a symlink fed this road a peer-authored host.log whose rows it
+        filed as this session's problem rows. A refusal (a link at either component or at the file, a non-directory, a
+        foreign uid) is filed as one host.directory-refused row with the remedy and nothing under that directory is
+        read; an absent directory or file is the no-log case it always was."""
+        ht = _ht()
         try:
-            lines = p.read_text().splitlines()
+            dirs = ht.open_host_dirs_if_present(self.state_dir, sess.sid)
+            if dirs is None:
+                return
+            with dirs:
+                raw = ht.read_host_file("host.log", dirs)
+        except ht.HostDirRefused as e:
+            self._refused_directory_row(sess, e, "wrote a log this kernel does not read", mode_checked=False)
+            return
         except OSError:
             return
+        if raw is None:
+            return
+        lines = raw.decode("utf-8", "replace").splitlines()
         t = sess._host
         h = (t.hello.get("host") or {}) if (t is not None and getattr(t, "hello", None)) else {}
         ident = "%s:%s" % (h.get("pid"), h.get("start")) if h else ""

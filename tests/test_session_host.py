@@ -3018,6 +3018,27 @@ class PreludeRefusalRead(unittest.TestCase):
         self.last_exc = cm.exception                    # the exception itself, for a case that reads its class or its errno
         return str(cm.exception)
 
+    def _connect_outcome(self, timeout=60):
+        """The connect road once, as _connect runs it, returning (what the road returned, the exception it raised): for a
+        case whose red-before is a road that did NOT raise and handed back a transport (the round-7 second addendum's
+        poll case), so the red lands on the case's own assertion and not on _connect's assertRaises."""
+        real_popen = subprocess.Popen
+
+        def popen(argv, **kw):
+            for plant in self.before_popen:
+                plant()
+            proc = real_popen(argv, **kw)
+            self.addCleanup(HostProcess._kill_group, proc)
+            self.hosts.append(proc)
+            return proc
+        with mock.patch.dict(os.environ, self.host_env), mock.patch.object(sb.subprocess, "Popen", popen):
+            for name in sb.AUTH_ENV_NAMES:
+                os.environ.pop(name, None)
+            try:
+                return asyncio.run(asyncio.wait_for(self.be._host_transport_for(self.sess, self.opts, (None, None, None)), timeout)), None
+            except Exception as e:
+                return None, e
+
     def _events(self):
         p = Path(self.state) / sb.SESSION_EVENTS_FILE
         return [json.loads(l) for l in p.read_text().splitlines()] if p.exists() else []
@@ -3130,9 +3151,12 @@ class PreludeRefusalRead(unittest.TestCase):
                 events = self._events()
                 if point != "before-popen":
                     self.assertEqual(self.hosts, [], "no host process was started: the launch was refused before Popen")
-                    self.assertTrue(msg.startswith("the session host was not started: hosts directory %s " % hosts), msg)
-                    self.assertIn("is not a directory" if point == "before-spec" else "is a symlink, not a directory", msg,
-                                  "before the spec write hosts_dir's lstat refuses the link; after it the descent's open does")
+                    # the descent's open refuses the link at every point: before the spec write it is the connect road's
+                    # leftover trigger (the round-7 second addendum, 2026-09-20: through round 7 the
+                    # trigger read `hdir.exists()` by path, the peer's <sid>/ entered the orphan road through the link and
+                    # hosts_dir's lstat refused the link only afterwards, reading "is not a directory"), after it the
+                    # road's own descent or the launcher's
+                    self.assertTrue(msg.startswith("the session host was not started: hosts directory %s is a symlink, not a directory" % hosts), msg)
                     self.assertIn("ROMP_STATE_DIR", msg, "the remedy rides with the reason")
                     self.assertEqual([r["kind"] for r in events], ["host.directory-refused"], "one row, its own kind")
                     self.assertIn(os.fspath(hosts), events[0]["text"], "the row names the link")
@@ -3305,7 +3329,14 @@ class PreludeRefusalRead(unittest.TestCase):
         host.directory-refused row, errno None on the exception, no Popen, the plant standing. Round 5's `errno is None`
         key filed none of these (the card read "[Errno 17] File exists", no row, no remedy), where round 4's head filed
         all of them; the wrap now keys on the errno set of the shape class. Red at the round-6 head on every arm: a
-        CLIConnectionErrorLike with errno 17 and no row."""
+        CLIConnectionErrorLike with errno 17 and no row. Since the round-7 second addendum (2026-09-20) the connect road's
+        leftover trigger runs the read roads' descent BEFORE the spawn road, so a shape standing at either component when
+        the connect starts is refused there, by that descent's O_DIRECTORY|O_NOFOLLOW open, and never reaches the
+        helpers: a regular file or a FIFO is worded "is not a directory" as the wrap words EEXIST, and the two links are
+        worded as the descent words a link, "is a symlink, not a directory". Everything else the case reads holds
+        unchanged (the directory remedy, one row, errno None, no Popen, the plant standing). The wrap's errno-set key
+        stays driven at function level (tests/test_host_transport.py SpawnSpec) and on this road by the re-pointed case
+        below, whose plant lands after the trigger."""
         for where in ("hosts", "hosts/<sid>"):
             for shape in ("regular file", "fifo", "symlink to a file", "dangling symlink"):
                 with self.subTest(where=where, shape=shape):
@@ -3321,13 +3352,14 @@ class PreludeRefusalRead(unittest.TestCase):
                     self._plant_shape(target, shape)
                     before = os.lstat(target)
                     msg = self._connect()
-                    self.assertTrue(msg.startswith("the session host was not started: %s %s is not a directory. " % (what, target)), msg)
+                    why = "is a symlink, not a directory" if "symlink" in shape else "is not a directory"
+                    self.assertTrue(msg.startswith("the session host was not started: %s %s %s. " % (what, target, why)), msg)
                     self.assertIn(self._DIRECTORY_REMEDY, msg)
                     self.assertIsInstance(self.last_exc, sb.CLIConnectionErrorLike, repr(self.last_exc))
                     self.assertIsNone(getattr(self.last_exc, "errno", None), "a refusal carries no errno")
                     events = self._events()
                     self.assertEqual([r["kind"] for r in events], ["host.directory-refused"], "one row, the refusal class's kind")
-                    self.assertIn("%s %s is not a directory" % (what, target), events[0]["text"])
+                    self.assertIn("%s %s %s" % (what, target, why), events[0]["text"])
                     self.assertEqual(self.hosts, [], "no host process was started")
                     self.assertFalse(os.path.exists(self.marker), "the CLI never started")
                     self.assertEqual(os.lstat(target)[:2], before[:2], "the plant stands as planted")
@@ -3592,6 +3624,48 @@ class PreludeRefusalRead(unittest.TestCase):
         reg = sb.read_reg(Path(state), SID) or {}
         self.assertIsNone(reg.get("hostLogPos"), "no host.log in the verified directory: no position recorded")
         self.assertEqual((peer / SID / "host.log").read_text(), planted, "the peer's file untouched")
+
+    def test_the_spawn_waits_poll_reads_the_published_name_under_the_held_hosts_so_a_peers_entry_behind_a_swap_does_not_end_the_wait(self):
+        """The spawn wait's poll through the descent (the round-7 second addendum of the review, 2026-09-20), on the
+        production road: hosts/ is renamed aside and a symlink put in its place pointing at a directory of the peer's,
+        planted after both descents and before the host process exists (inside the Popen wrapper); the peer's directory
+        holds an empty <sid>/ and a regular file of the peer's at the published name, <sid8>.sock. Through round 7 the
+        poll was `sock.exists()`, by PATH: it read the peer's entry through the link, the wait ended at once and the road
+        handed back a transport aimed at the published path, which the connect would then have followed through the link
+        to whatever the peer put at the name. Now the poll stats the published NAME under the hosts/ descriptor the road
+        holds (host_sock_present), the directory the spec was written in, where nothing is published: the wait runs on,
+        reads the host's exit (its spec is absent through the link, so it exits 1 with its traceback on the descriptor the
+        launcher opened before the swap), and the road raises the exited-before-socket error with its row; the peer's
+        entry stands untouched and no transport is built. Red before: the road returned a HostTransport."""
+        state = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, state, True)
+        self._harness(state)
+        hosts, moved = Path(state) / "hosts", Path(state) / "hosts.moved"
+        peer = Path(self.scratch) / "peer"
+        (peer / SID).mkdir(parents=True, mode=0o755)
+        published = peer / sh.sock_names(SID)[0]
+        published.write_text("the peer's entry at the published name")
+
+        def swap():
+            os.rename(hosts, moved)
+            hosts.symlink_to(peer)
+        self.before_popen.append(swap)
+        out, exc = self._connect_outcome()
+        self.assertIsNone(out, "the wait ended on the peer's entry at the published name, read through the link, and handed back a transport: %r" % (out,))
+        self.assertIsInstance(exc, sb.CLIConnectionErrorLike, repr(exc))
+        msg = str(exc)
+        self.assertIn("exited before serving its socket (code 1)", msg, "the wait ran on past the peer's entry and read the host's exit")
+        self.assertIn("see hosts/%s/host.stderr when host.log is missing" % SID, msg, "host.stderr grew: read through the held descriptor")
+        self.assertEqual(len(self.hosts), 1, "one host was started, holding the descriptor the kernel opened before the swap")
+        self.assertEqual(self.hosts[0].wait(10), 1)
+        self.assertTrue(hosts.is_symlink(), "the link is left, not replaced")
+        self.assertEqual(published.read_text(), "the peer's entry at the published name", "the peer's entry untouched")
+        self.assertEqual(sorted(os.listdir(peer)), sorted([SID, published.name]), "the peer's directory holds what the peer put there")
+        self.assertEqual(os.listdir(peer / SID), [], "and its <sid>/ received nothing")
+        self.assertFalse((moved / published.name).exists(), "nothing was published in the directory the kernel verified")
+        self.assertEqual([r["kind"] for r in self._events()], ["host.exited-before-socket"])
+        self.assertFalse(os.path.exists(self.marker), "the CLI never started: its marker is absent")
+        self.assertIsNone(sb.read_lease(state, SID), "no lease was ever written")
 
     def test_the_spawn_wait_reads_the_exit_of_a_host_refused_before_its_cli_and_finds_no_lease_and_no_cli(self):
         self._harness(padded_root(self, sh.SOCK_PATH_MAX + 1, os.path.join("hosts", SID[:8] + ".sock")))

@@ -129,6 +129,17 @@ class HostDirRefused(OSError):
     file = None                                  # the file name when the refusal is a link at spawn.json or host.stderr
 
 
+class HostDirAbsent(HostDirRefused):
+    """The descent met NO ENTRY at `hosts/` or at `<sid>` (the open's ENOENT), told from every other refusal because
+    on the READ roads it is an answer and not a fault: no host directory means no host held the session (the connect
+    road's leftover trigger and _host_lease_applies, the orphan road, the served road, since the round-7 second addendum
+    of the review, 2026-09-20, which moved those reads onto descriptors). A subclass, so every site that catches
+    HostDirRefused sees what it saw before (the spawn road's helpers make both directories before its descent, so an
+    absence there stays the fault it is, filed with the directory remedy; the removal road logs it as not cleared);
+    open_host_dirs_if_present turns this one refusal into None and lets every other propagate. Built from one text
+    argument like its parent, so `errno` is None and the shape class stays an errno set on the helpers' side alone."""
+
+
 _DIR_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
 
 
@@ -152,7 +163,7 @@ def _open_dir_nofollow(name, what: str, shown: Path, dir_fd=None, private: bool 
                 is_link = False
             raise HostDirRefused("%s %s %s" % (what, shown, "is a symlink, not a directory" if is_link else "is not a directory")) from None
         if e.errno == errno.ENOENT:
-            raise HostDirRefused("%s %s does not exist" % (what, shown)) from None
+            raise HostDirAbsent("%s %s does not exist" % (what, shown)) from None
         raise
     try:
         st = os.fstat(fd)
@@ -175,11 +186,14 @@ class HostDirs:
     so no component of the path can be re-pointed under it: a descriptor names an inode, not a path (round 4 of the
     review, 2026-09-20: through round 3 the launcher opened hosts/<sid>/host.stderr by path before Popen, and a
     hosts/ swapped for a symlink after the spec was written had that file, carrying the host's traceback with the
-    absolute state root in it, written into the link's target). Not every read: the spawn wait's own poll of the
-    published path (`while not sock.exists()` in _host_transport_for) and the kernel's first connect to it take that
-    PATH, not a name under these descriptors, so a hosts/ re-pointed during the spawn wait is read there through the
-    link (a stat, then a connect, no write). That residual is named in the PR's record, under the same precondition
-    every residual here shares: a state root that is not 0700 while a session starts. On this deployment the root reads
+    absolute state root in it, written into the link's target). The spawn wait's poll of the published socket takes the
+    NAME under `hosts` too (host_sock_present; the round-7 second addendum, 2026-09-20, which also moved the connect
+    road's, the orphan road's and the served road's reads onto the descriptors of open_host_dirs_if_present). What
+    still takes a PATH after the wait is the connect itself, HostTransport.connect's asyncio.open_unix_connection: a
+    Unix socket is connected by a path in its address and no descriptor-relative form exists for it, so a hosts/
+    re-pointed between the poll and the connect is connected through the link (a connect, no write). That site is
+    named unconverted at its line and in the PR's record, under the same precondition every residual here shares: a
+    state root that is not 0700 while a session starts. On this deployment the root reads
     0700 because kernel/judge.py chmods it at import, best-effort (the OSError swallowed, the mode read back once and
     reported on stderr when it is not 0700), and nothing re-checks or guards it afterwards (extra6-1, round 5 of the
     review, 2026-09-20: an attempt at startup, not a standing property of the box). `path` is `hosts/<sid>/` as the
@@ -216,14 +230,91 @@ def open_host_dirs(state_dir, sid: str) -> HostDirs:
     root, where hosts/ lives. The caller holds the descriptors for as long as its writes and reads under the directory
     run (sdk_backend._host_transport_for keeps them across the spawn wait, so its reads of host.stderr's size and
     host.log go to the directory the spec was written in, whatever hosts/ names by then) and closes them after."""
+    return _descend(state_dir, sid, private=True)
+
+
+def _descend(state_dir, sid: str, private: bool) -> HostDirs:
+    """The two opens of the descent, shared by the spawn road (open_host_dirs, `private`: the mode is a condition) and
+    the read roads (open_host_dirs_if_present, the mode is not): `hosts/` by path off the state root, then `<sid>` by
+    name under it, each O_DIRECTORY|O_NOFOLLOW and fstat-verified by _open_dir_nofollow."""
     hosts_path = Path(state_dir) / "hosts"
-    hfd = _open_dir_nofollow(str(hosts_path), "hosts directory", hosts_path)
+    hfd = _open_dir_nofollow(str(hosts_path), "hosts directory", hosts_path, private=private)
     try:
-        dfd = _open_dir_nofollow(str(sid), "host directory", hosts_path / str(sid), dir_fd=hfd)
+        dfd = _open_dir_nofollow(str(sid), "host directory", hosts_path / str(sid), dir_fd=hfd, private=private)
     except BaseException:
         os.close(hfd)
         raise
     return HostDirs(hfd, dfd, hosts_path / str(sid))
+
+
+def open_host_dirs_if_present(state_dir, sid: str):
+    """The READ roads' descent (the round-7 second addendum of the review, 2026-09-20): the same two O_DIRECTORY|O_NOFOLLOW
+    opens and fstat checks as open_host_dirs, and None instead of a refusal when `hosts/` or `<sid>` has no entry
+    (HostDirAbsent), because on these roads an absent directory is the ordinary answer: no host held the session
+    (_host_lease_applies and the leftover trigger of the connect road), nothing to replay (the orphan road), no log yet
+    (the served road, at a hello before the host's first row). Every other refusal propagates as HostDirRefused with the
+    reason and the path, for the caller to file as a problem row: a link at either component (the open's ENOTDIR under
+    O_DIRECTORY|O_NOFOLLOW on Linux, ELOOP elsewhere; nothing behind the link is ever opened), a non-directory, or a
+    directory another uid owns (the fstat of the object opened). Through round 7 those reads took a PATH (`(hdir /
+    "identity.json").exists()`, `hdir.exists()`, `(hdir / "identity.json").read_text()`, `p.read_text()` for host.log,
+    `sock.exists()` for the poll), so a hosts/ swapped for a symlink to a peer's directory was read through the link: the
+    peer's identity.json vouched for a hostAck, the peer's host.log rows were filed as this session's problem rows, and a
+    peer's leftover directory entered the orphan road. Now each of those reads takes a NAME relative to the descriptor
+    this returns (host_file_exists, read_host_file, host_sock_present), and a swap is refused with a row.
+    THE MODE IS NOT A CONDITION HERE (private=False, the removal road's position and its reason: what a read must not do
+    is follow a link or read another uid's directory; a loose hosts/ of ours is hosts_dir's repair on the launch that
+    follows), and for a reason of the read roads' own: they run BEFORE the spawn road's two helpers, which are where a
+    loose hosts/ of ours is tightened, and hosts/ on every install from before 2026-09-19 reads 0775 under the live
+    umask until the first spawn after that repair lands. A read descent that required 0700 would refuse every session's
+    first connect on such an install at the leftover trigger, before the road that repairs the mode could run. So the
+    spawn road's precondition is ported in its two parts that guard a READ (a directory at each component, this uid's,
+    reached through no link) and not in the third (no group or other bits), which guards a write against a peer in the
+    group creating names beside ours; a peer's entry at `<sid>` under a loose hosts/ of ours is still refused here by
+    the uid check, and a link there by the O_NOFOLLOW open. The caller closes the descriptors (a `with`, or close())."""
+    try:
+        return _descend(state_dir, sid, private=False)
+    except HostDirAbsent:
+        return None
+
+
+def host_file_exists(name: str, dirs: HostDirs) -> bool:
+    """Whether a regular file stands at `hosts/<sid>/<name>`: a stat by NAME relative to the verified `<sid>` descriptor
+    with no symlink followed, so a link at the name is not the file and nothing outside the directory is consulted.
+    The connect road's read of identity.json's existence (_host_lease_applies; the round-7 second addendum)."""
+    try:
+        st = os.stat(name, dir_fd=dirs.dir, follow_symlinks=False)
+    except OSError:
+        return False
+    return stat.S_ISREG(st.st_mode)
+
+
+def read_host_file(name: str, dirs: HostDirs):
+    """The bytes of `hosts/<sid>/<name>` read whole through the descent, or None when no entry stands at the name:
+    opened by NAME relative to the verified `<sid>` descriptor with O_NOFOLLOW (_open_file_nofollow, so a symlink at the
+    name is refused under HostDirRefused naming the file, as at spawn.json and host.stderr), read, closed. The read
+    roads' one file read (the round-7 second addendum of the review, 2026-09-20): identity.json on the orphan road,
+    host.log on the served road. Any other OSError (a directory at the name reads EISDIR) propagates as itself."""
+    try:
+        fd = _open_file_nofollow(name, os.O_RDONLY, dirs)
+    except FileNotFoundError:
+        return None
+    with os.fdopen(fd, "rb") as f:
+        return f.read()
+
+
+def host_sock_present(dirs: HostDirs, name: str) -> bool:
+    """Whether an entry stands at the published socket's NAME (`host_sock(...).name`, `<sid8>.sock`) in the verified
+    `hosts/`: a stat by name relative to the `hosts` descriptor, no symlink followed. The spawn wait's poll
+    (_host_transport_for; the round-7 second addendum, 2026-09-20: through round 7 it was `sock.exists()`, by PATH, so a
+    hosts/ re-pointed during the wait was polled through the link and a peer's entry at the name ended the wait). The
+    question is existence, as the poll asked it by path: the spawn road unlinks the name under this descriptor before
+    it spawns, and the host publishes by renaming its bound socket onto it; what stands there is connected to next, by
+    path (HostTransport.connect, the one site left on a path), and a non-socket fails that connect loudly."""
+    try:
+        os.stat(name, dir_fd=dirs.hosts, follow_symlinks=False)
+    except OSError:
+        return False
+    return True
 
 
 def _open_file_nofollow(name: str, flags: int, dirs: HostDirs) -> int:
@@ -327,8 +418,9 @@ def remove_host_dir(state_dir, sid: str, log=None) -> bool:
     (2026-09-20): these roads ran shutil.rmtree on a path with errors ignored, and with `hosts/` swapped for a symlink to
     a peer's directory the leftover arm of the connect road (a `hosts/<sid>/` seen through the link, no lease) deleted
     the peer's `<sid>/` through it, a write onto a target of the peer's choosing on the road every session start takes.
-    The reads that arm makes before this call (the directory's existence, identity.json, the journal's tail) still take
-    paths and are named as the residual in the PR's record; they are the orphan road's, not this fix's."""
+    The reads that arm makes before this call take the descent since the round-7 second addendum (the directory's
+    existence through open_host_dirs_if_present, identity.json through read_host_file); the journal's tail still takes
+    a path (a glob and the reads that follow it, sh.read_journal_dir), named unconverted at its call sites."""
     hosts_path = Path(state_dir) / "hosts"
     try:
         hfd = _open_dir_nofollow(str(hosts_path), "hosts directory", hosts_path, private=False)
@@ -771,6 +863,14 @@ class HostTransport(_Base):
             self._synth = asyncio.Queue()
             self._ready = True
             return
+        # UNCONVERTED (the round-7 second addendum of the review, 2026-09-20, which moved the kernel's other reads under
+        # hosts/ onto descriptors): a Unix socket is connected by the PATH in its address, and connect(2) has no
+        # dir_fd-relative form, so this one read of hosts/ stays by path on its three roads (the attach by lease, the first
+        # connect after the spawn wait, the end by lease). The descriptor-relative spellings (a connect through
+        # /proc/self/fd/<hosts fd>/<name>, or a chdir on the descriptor) are a change of mechanism, its own PR by the
+        # reviewer's rule, not a mechanical conversion. What a re-point of hosts/ between the poll and this line gets: a
+        # connect through the link, no write; the peer's server then holds the attach frame (the kernel's identity and an
+        # offset) and can answer hello. Under the same precondition as every residual: a state root a peer can write.
         self._reader, self._writer = await asyncio.open_unix_connection(self.sock_path)
         self._writer.write(sh.encode_frame({"t": "attach", "kernel": self.kernel, "ack": self.ack_offset}))
         await self._writer.drain()
@@ -1024,6 +1124,13 @@ class HostTransport(_Base):
             if item is None:
                 return
             yield item
+        # UNCONVERTED (the round-7 second addendum, 2026-09-20): sh.read_journal_dir lists the orphan's segments with a
+        # GLOB over the directory (kernel/session_host.py, `d.glob("journal-*.jsonl")`) and then opens each segment and
+        # gaps.json by the paths the glob yields; its interface is a directory path. The descriptor form is a scandir
+        # off the verified <sid> descriptor with a name match and opens by name under it, the shape _rmtree_at already
+        # has, but it is a rewrite of the function and its callers, not a swap of one call: its own PR by the reviewer's
+        # rule. The replay transport reaches here from _host_orphan_recover only after that road's descent has verified
+        # hosts/<sid>/ and read identity.json through it; a re-point landing between that read and this one is read here.
         for off, rec in sh.read_journal_dir(self.journal_dir, self.ack_offset + 1):
             self.ack_offset = off
             if self.on_ack:
